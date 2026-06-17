@@ -21,8 +21,9 @@ export function exportRecordingsToExcel(
   recordings: RecordingEntry[],
   filename = "platehunter-export"
 ) {
+  // Column order exactly matches spec: A B C D E F
   const rows = recordings
-    .filter((r) => !r.plate.startsWith("📍"))
+    .filter((r) => !r.plate.startsWith("📍")) // skip manual pins from export
     .map((r) => ({
       "رقم اللوحة": r.plate,
       "نوع السيارة": r.vehicleType ?? "",
@@ -39,21 +40,24 @@ export function exportRecordingsToExcel(
 
   const ws = XLSX.utils.json_to_sheet(rows);
 
+  // Column widths
   ws["!cols"] = [
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 28 },
-    { wch: 20 },
-    { wch: 18 },
-    { wch: 55 },
+    { wch: 14 }, // رقم اللوحة
+    { wch: 12 }, // نوع السيارة
+    { wch: 28 }, // الشارع
+    { wch: 20 }, // الحي
+    { wch: 18 }, // تاريخ التسجيل
+    { wch: 55 }, // رابط الموقع
   ];
 
+  // Header style — bold RTL
   const headerStyle = { font: { bold: true }, alignment: { horizontal: "right" } };
   const headers = ["A1", "B1", "C1", "D1", "E1", "F1"];
   headers.forEach((cell) => {
     if (ws[cell]) ws[cell].s = headerStyle;
   });
 
+  // Make maps link column clickable
   rows.forEach((row, i) => {
     const cellRef = `F${i + 2}`;
     if (ws[cellRef] && row["رابط الموقع"]) {
@@ -66,6 +70,10 @@ export function exportRecordingsToExcel(
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
+/**
+ * Read a bank Excel file and return an array of raw plate strings.
+ * Tries to auto-detect the column containing plate numbers.
+ */
 export function readBankExcel(file: File): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -74,15 +82,15 @@ export function readBankExcel(file: File): Promise<string[]> {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, {
+        const rows: Record<string, string>[][] = XLSX.utils.sheet_to_json(ws, {
           header: 1,
           raw: false,
-        }) as unknown[][];
+        }) as Record<string, string>[][];
 
+        // Flatten all cells and return non-empty strings
         const plates: string[] = [];
         for (const row of rows) {
-          if (!row || !Array.isArray(row)) continue;
-          for (const cell of row) {
+          for (const cell of row as string[]) {
             const val = String(cell ?? "").trim();
             if (val && val.length >= 4) plates.push(val);
           }
@@ -97,11 +105,22 @@ export function readBankExcel(file: File): Promise<string[]> {
   });
 }
 
+// =====================================================================
+// Phase 5 additions — generic table reading (with optional password),
+// watermarked export, and unified save/share.
+// =====================================================================
+
 export interface ExcelTable {
   headers: string[];
   rows: Record<string, string>[];
 }
 
+/**
+ * Reads any uploaded Excel file into a generic {headers, rows} table.
+ * Always goes through the server route (/api/excel/parse) so password-
+ * protected files can be handled consistently — see that route's
+ * comments for the honest limits of what decryption can cover.
+ */
 export async function parseExcelFile(file: File, password?: string): Promise<ExcelTable> {
   const formData = new FormData();
   formData.append("file", file);
@@ -122,6 +141,13 @@ export interface WatermarkInfo {
   userId: string;
 }
 
+/**
+ * Builds an .xlsx Blob from arbitrary rows. If a watermark is supplied,
+ * embeds a traceability stamp (who exported it, exactly when, and their
+ * account id) both in the workbook's metadata and as a trailing row in
+ * the sheet — a digital tracking mark rather than a visual stamped
+ * image (true visual watermarking needs a heavier library).
+ */
 export function buildExcelBlob(
   rows: Record<string, unknown>[],
   sheetName: string,
@@ -147,16 +173,24 @@ export function buildExcelBlob(
   });
 }
 
+/**
+ * Single unified "save/share" action. On devices that support the Web
+ * Share API with files (most modern Android browsers, and Safari on
+ * iOS 16+), this opens the native share sheet — letting the agent pick
+ * WhatsApp, Excel, Drive, or "Save to Files" themselves. Where that
+ * isn't supported, it falls back to a normal browser download.
+ */
 export async function shareOrDownloadExcel(blob: Blob, filename: string): Promise<"shared" | "downloaded"> {
   try {
     const file = new File([blob], filename, { type: blob.type });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nav = navigator as any;
     if (nav.canShare && nav.canShare({ files: [file] })) {
       await nav.share({ files: [file], title: filename });
       return "shared";
     }
   } catch {
-    // fall through
+    // User cancelled the share sheet, or share failed — fall through to download.
   }
 
   const url = URL.createObjectURL(blob);
@@ -168,4 +202,39 @@ export async function shareOrDownloadExcel(blob: Blob, filename: string): Promis
   a.remove();
   URL.revokeObjectURL(url);
   return "downloaded";
+}
+
+/**
+ * Builds a human-readable "label: value" block from a result row, in
+ * the exact column order the user selected. Used for both the Copy
+ * button (clipboard) and the Share button (Web Share API text), so a
+ * single result can be pasted into WhatsApp, SMS, etc. with all the
+ * fields the agent actually cares about — nothing more, nothing less.
+ */
+export function buildRowSummaryText(row: Record<string, unknown>): string {
+  return Object.entries(row)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([label, value]) => `${label}: ${value}`)
+    .join("\n");
+}
+
+/**
+ * Shares plain text via the native Share sheet (WhatsApp, SMS, etc.).
+ * Falls back to clipboard copy with a return flag so the caller can
+ * show "تم النسخ" instead of a false "تمت المشاركة" on browsers that
+ * don't support Web Share for text (mainly older desktop browsers).
+ */
+export async function shareOrCopyText(text: string): Promise<"shared" | "copied"> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nav = navigator as any;
+  if (nav.share) {
+    try {
+      await nav.share({ text });
+      return "shared";
+    } catch {
+      // user cancelled the share sheet — treat as a no-op, not an error
+    }
+  }
+  await navigator.clipboard.writeText(text);
+  return "copied";
 }

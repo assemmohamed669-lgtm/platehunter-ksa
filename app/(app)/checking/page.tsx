@@ -165,7 +165,7 @@ export default function CheckingPage() {
           return (
             <div
               key={entry.localId}
-              className={`rounded-xl border p-3 ${
+              className={`rtl-text rounded-xl border p-3 ${
                 isDup ? "border-alert/60 bg-alert/10" : "border-border bg-surface"
               }`}
             >

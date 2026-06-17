@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Upload, FileSpreadsheet, X, Lock, AlertCircle, Download } from "lucide-react";
+import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download } from "lucide-react";
 import { parseExcelFile, type ExcelTable } from "@/lib/excel";
 
 interface Props {
@@ -83,7 +83,7 @@ export default function FileUploadBox({
           <div className="flex items-center gap-2 min-w-0">
             <FileSpreadsheet size={18} className="shrink-0 text-primary" />
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-ink">{parsedFile.name}</p>
+              <p className="rtl-text truncate text-sm font-medium text-ink">{parsedFile.name}</p>
               <p className="text-xs text-muted">{parsedRowCount} صف</p>
             </div>
           </div>
@@ -97,10 +97,10 @@ export default function FileUploadBox({
             </button>
             <button
               onClick={onClear}
-              title="مسح"
+              title="حذف الملف"
               className="rounded-full border border-border p-1.5 text-muted hover:text-danger transition"
             >
-              <X size={14} />
+              <Trash2 size={14} />
             </button>
           </div>
         </div>

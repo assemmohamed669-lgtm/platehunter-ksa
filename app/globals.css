@@ -70,3 +70,24 @@ html.oled .surface-card {
   border: none;
   min-width: 0.5rem;
 }
+
+/* ---------------------------------------------------------------------
+   RTL text-integrity fix (Sorting / Checking / Text Paste modules).
+   `unicode-bidi: plaintext` lets the browser resolve each element's
+   paragraph direction from its actual Unicode content instead of
+   inheriting a forced direction — this is what stops mixed Arabic/Latin/
+   digit strings (plate numbers, street names pulled from uploaded
+   Excel files) from visually reordering or "flipping".
+--------------------------------------------------------------------- */
+.rtl-text {
+  direction: rtl;
+  unicode-bidi: plaintext;
+}
+
+/* unicode-bidi is NOT an inherited CSS property, so this explicitly
+   cascades the fix to every nested element too — table cells, list
+   items, and inline spans rendering dynamic text pulled from
+   uploaded Excel files. */
+.rtl-text * {
+  unicode-bidi: plaintext;
+}

@@ -5,8 +5,9 @@
  */
 
 const DB_NAME = "platehunter";
-const DB_VERSION = 1;
+const DB_VERSION = 2; // bumped: v2 adds the uploaded_files store below
 const STORE = "recordings";
+const FILES_STORE = "uploaded_files";
 
 export interface RecordingEntry {
   localId: string;           // uuid generated locally
@@ -23,6 +24,23 @@ export interface RecordingEntry {
   synced: boolean;
 }
 
+/**
+ * A file the agent uploaded into the Sorting module ("data" or
+ * "referral" slot). Persisted so it survives refreshes/app restarts —
+ * the agent only has to upload it once, and explicitly deletes it via
+ * the trash icon when they're done with it.
+ */
+export interface UploadedFileRecord {
+  key: string;                       // `${agentId}:${slot}`
+  agentId: string;
+  slot: "data" | "referral";
+  fileName: string;
+  headers: string[];
+  rows: Record<string, string>[];
+  uploadedAt: string;
+  fileBlob?: Blob;                   // original bytes, so "download" still works after a refresh
+}
+
 let _db: IDBDatabase | null = null;
 
 function openDB(): Promise<IDBDatabase> {
@@ -37,6 +55,10 @@ function openDB(): Promise<IDBDatabase> {
         const store = db.createObjectStore(STORE, { keyPath: "localId" });
         store.createIndex("synced", "synced", { unique: false });
         store.createIndex("agentId", "agentId", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(FILES_STORE)) {
+        const filesStore = db.createObjectStore(FILES_STORE, { keyPath: "key" });
+        filesStore.createIndex("agentId", "agentId", { unique: false });
       }
     };
 
@@ -126,6 +148,44 @@ export async function updateGeodata(
         store.put(entry);
       }
     };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// =====================================================================
+// Uploaded Sorting files (data/referral) — persisted until the agent
+// explicitly deletes them via the trash icon.
+// =====================================================================
+
+export async function saveUploadedFile(record: UploadedFileRecord): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FILES_STORE, "readwrite");
+    tx.objectStore(FILES_STORE).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getUploadedFile(
+  agentId: string,
+  slot: "data" | "referral"
+): Promise<UploadedFileRecord | null> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FILES_STORE, "readonly");
+    const req = tx.objectStore(FILES_STORE).get(`${agentId}:${slot}`);
+    req.onsuccess = () => resolve((req.result as UploadedFileRecord) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteUploadedFile(agentId: string, slot: "data" | "referral"): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FILES_STORE, "readwrite");
+    tx.objectStore(FILES_STORE).delete(`${agentId}:${slot}`);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
