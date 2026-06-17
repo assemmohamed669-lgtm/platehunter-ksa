@@ -558,7 +558,7 @@ export default function SortingPage() {
             <FileUploadBox
               title="ملف الداتا للبحث بداخله"
               parsedFile={dataFile}
-              parsedRowCount={dataTable?.rows.length ?? null}
+              parsedRowCount={(dataTable as any)?.rows?.length ?? null}
               onParsed={(table, file) => {
                 setDataTable(table);
                 setDataFile(file);
@@ -571,7 +571,7 @@ export default function SortingPage() {
           )}
           {dataTable && (
             <div className="flex items-center justify-between rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm text-ink">
-              <span>ملف الداتا: {dataTable.rows.length} صف</span>
+              <span>ملف الداتا: {(dataTable as any)?.rows?.length ?? 0} صف</span>
               <button
                 onClick={() => { setDataTable(null); setDataFile(null); }}
                 className="text-xs text-muted hover:text-danger"
