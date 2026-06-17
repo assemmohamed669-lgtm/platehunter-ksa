@@ -3,12 +3,8 @@
  * FormData: { file: File, password?: string }
  *
  * Parses an uploaded Excel file into { headers, rows }. If a password is
- * supplied, first attempts to decrypt the file (best-effort — coverage
- * depends on which encryption scheme the original file used; classic
- * "Agile"/"Standard" OOXML encryption is supported, older or custom
- * schemes may not be). Decryption runs server-side because the
- * underlying libraries expect Node's Buffer, which isn't reliably
- * available in the browser bundle.
+ * supplied, it returns an error stating that password-protected files 
+ * are not currently supported due to library constraints.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -29,21 +25,12 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     let buffer = Buffer.from(arrayBuffer);
 
+    // تم إلغاء فك التشفير عبر officecrypto-js لعدم توفر المكتبة
     if (password) {
-      try {
-        // officecrypto-js: pure-JS decryption for password-protected
-        // OOXML files (xlsx/docx). Best-effort — see note above.
-        const officecrypto = await import("officecrypto-js");
-        buffer = await officecrypto.decrypt(buffer, { password });
-      } catch {
-        return NextResponse.json(
-          {
-            error:
-              "تعذّر فك التشفير. تأكد من كلمة المرور، أو أن نوع الحماية غير مدعوم — جرّب إزالة الحماية من برنامج Excel وإعادة الرفع.",
-          },
-          { status: 400 }
-        );
-      }
+      return NextResponse.json(
+        { error: "ملفات Excel المحمية بكلمة مرور غير مدعومة حالياً." },
+        { status: 400 }
+      );
     }
 
     let wb: XLSX.WorkBook;
@@ -52,9 +39,7 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json(
         {
-          error: password
-            ? "فُكّ التشفير لكن تعذّرت قراءة محتوى الملف."
-            : "تعذّرت قراءة الملف. إذا كان محميًا بكلمة مرور، أدخلها في الحقل المخصص.",
+          error: "تعذّرت قراءة الملف. إذا كان محميًا بكلمة مرور، يرجى إزالة الحماية أولاً قبل رفعه.",
         },
         { status: 400 }
       );
