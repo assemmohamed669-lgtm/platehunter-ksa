@@ -1,89 +1,83 @@
 # قناص اللوحات — PlateHunter KSA
 
-PWA scaffold for vehicle-recovery field agents, built with Next.js (App
-Router) + Tailwind CSS + Supabase. This is **Phase 1** of the master spec:
-navigation shell + authentication with device binding and single-session
-enforcement. Phases 2–4 (voice recorder/GPS capture, Whisper transcription,
-sorting & Excel export) build on top of this foundation.
+PWA ميداني كامل لفرق استرداد المركبات في السعودية.
 
-## What's included (Phase 1)
+## كل المراحل ✅
 
-- **RTL Arabic UI** with the green / dark-green theme and an OLED
-  battery-saver mode (toggle in the header, persisted per device).
-- **Bottom navigation** with the four tabs: الفرز، التشيك، التسجيل، الخرائط
-  (each currently a placeholder describing what its phase will add).
-- **Username/password login** (agents never see an email — usernames are
-  mapped internally to `username@platehunter.local` for Supabase Auth).
-- **Hardware/device lock**: on first login, the device is bound to the
-  account via `handle_device_login()`. A login from a different device is
-  rejected until an admin clears `device_fingerprint` for that agent.
-- **Single active session**: every successful login rotates a
-  `session_token`. `SessionGuard` listens for that change via Supabase
-  Realtime and signs out any other open session immediately.
+### 1. الهيكل وتسجيل الدخول
+- واجهة عربية كاملة (RTL) بالثيم الأخضر/الأسود + وضع OLED
+- شريط تنقل تحتي: الفرز / التشيك / التسجيل / الخرائط
+- تسجيل دخول username/password، قفل الجهاز، جلسة واحدة نشطة
 
-## Setup
+### 2. التسجيل الميداني + GPS
+- تسجيل صوتي (اضغط واتكلم)، GPS تلقائي كل 5 ثوانٍ + دبوس يدوي
+- Geocoding لاسم الشارع والحي، عمل offline كامل مع مزامنة تلقائية
+- تمييز اللوحات المكررة بالبرتقالي، تشغيل صوت بسرعات متعددة
 
-1. **Install dependencies**
+### 3. التفريغ الذكي بالـ AI
+- OpenAI Whisper مضبوط على اللهجة السعودية وصيغة اللوحة
+- تحويل لصيغة مدمجة (أبح١٢٣٤ ← أبح1234)، اكتشاف نوع المركبة
 
-   ```bash
-   npm install
-   ```
+### 4. الفرز + التشيك + الخرائط + الأدمن (جديد) ✅
+- **الفرز**: استيراد Excel من البنك، تحويل الحروف الإنجليزية لعربية تلقائيًا
+  (A→ا, B→ب, J→ح...)، مطابقة مع السجلات الميدانية، تمييز أخضر فاتح للمتطابق
+- **التشيك**: عرض كل السجلات مع بحث فوري، إحصائيات (إجمالي/مزامَن/مكرر)،
+  تصدير Excel بالأعمدة الست المطلوبة (رقم اللوحة، نوع السيارة، الشارع،
+  الحي، تاريخ التسجيل، رابط الموقع)
+- **الخرائط**: خريطة تفاعلية (Leaflet + OpenStreetMap، بدون مفتاح API)
+  تعرض كل نقاط التسجيل والدبابيس اليدوية بألوان مختلفة
+- **لوحة الأدمن** (`/admin`، تظهر تلقائيًا لو role=admin):
+  - إنشاء حسابات عملاء جدد (يبني المستخدم في Supabase Auth + جدول profiles)
+  - إعادة ضبط قفل الجهاز لأي عميل
+  - تفعيل/تعطيل أي حساب
+  - تفعيل/تغيير/إلغاء "كلمة مرور التصدير والاستيراد" المذكورة في الطلب
+    (محفوظة مشفّرة في قاعدة البيانات عبر pgcrypto، وليست مجرد شكل واجهة)
 
-2. **Create a Supabase project**, then in the SQL editor run
-   `supabase/schema.sql`. This creates the `profiles` table, RLS policies,
-   the `handle_device_login` function, and enables Realtime on `profiles`.
+---
 
-3. **Copy environment variables**
+## إعداد المشروع (خطوات Netlify)
 
-   ```bash
-   cp .env.local.example .env.local
-   ```
+### 1. قاعدة البيانات — Supabase
+شغّل ملفات SQL بالترتيب من Supabase SQL Editor:
+1. `supabase/schema.sql` — جدول profiles + قفل الجهاز + جلسة واحدة
+2. `supabase/schema_phase2.sql` — جدول recordings
+3. `supabase/schema_phase4_settings.sql` — كلمة مرور التصدير/الاستيراد
+4. `supabase/schema_phase4_admin_seed.sql` — إنشاء أول حساب أدمن
+   (عدّل الـ UUID بداخله أولاً كما هو موضّح في الملف)
 
-   Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   from Supabase → Project Settings → API.
+من Project Settings > API احفظ ثلاث قيم:
+- Project URL
+- anon public key
+- **service_role key** (سري! يُستخدم فقط في إنشاء حسابات العملاء من لوحة الأدمن)
 
-4. **Create an agent**
-   - Supabase Dashboard → Authentication → Users → Add user.
-     - Email: `agent01@platehunter.local` (must match `<username>@platehunter.local`)
-     - Set a password.
-   - In the SQL editor:
-     ```sql
-     insert into public.profiles (id, username, role)
-     values ('<the new user's UUID>', 'agent01', 'agent');
-     ```
-   - The agent can now log in with username `agent01` and that password.
-     The first login on a device binds the account to it.
+### 2. GitHub
+ارفع محتويات المجلد كله (بدون node_modules) على repo خاص.
 
-5. **Resetting a device** (admin task): set
-   `device_fingerprint = null` for that agent's row in `profiles`. Their
-   next login will bind to whichever device they use.
+### 3. Netlify
+اربط الـ repo، وفي Environment Variables أضف:
+```
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+OPENAI_API_KEY=sk-...
+```
+⚠️ تأكد إن `SUPABASE_SERVICE_ROLE_KEY` و`OPENAI_API_KEY` **بدون** بريفكس
+`NEXT_PUBLIC_` — لو حطيتهم بالخطأ بالبريفكس ده هيبانوا في كود المتصفح
+لأي زائر، وده خطر أمني.
 
-6. **Run the app**
+### 4. أول دخول — حساب الأدمن
+بعد تشغيل `schema_phase4_admin_seed.sql`، سجّل دخول بـ `admin` وكلمة
+المرور اللي اخترتها. هيظهر زرار "الأدمن" في الهيدر، ومنه تقدر تنشئ كل
+حسابات العملاء الباقية بدون لمس قاعدة البيانات يدويًا تاني.
 
-   ```bash
-   npm run dev
-   ```
+---
 
-## Notes & next steps
-
-- **Device lock caveat**: browsers don't expose a real hardware serial
-  number. `lib/device.ts` persists a UUID in `localStorage` plus a coarse
-  browser/screen signature — this behaves as a hardware lock in normal use,
-  but clearing site data or reinstalling the PWA changes it (which is why
-  the admin-reset flow exists).
-- **PWA icons**: `public/manifest.json` references `icon-192.png` and
-  `icon-512.png` — add real app icons before shipping.
-- **Offline mode, GPS tracking, and audio recording** (Phase 2) will store
-  data in IndexedDB and sync to Supabase. Given the app continuously
-  records agent location and audio in the field, plan for: agent consent
-  /authorization documentation, a data-retention policy, and review against
-  Saudi Arabia's Personal Data Protection Law (PDPL) before deployment.
-- **Phase 2** — `app/(app)/registration`: Web Audio recorder, background
-  GPS pings (5s interval) + manual pin, reverse geocoding for
-  street/district, IndexedDB-backed offline queue with background sync.
-- **Phase 3** — Whisper transcription endpoint (server route using
-  `OPENAI_API_KEY`), Saudi plate-format parsing and the
-  English→Arabic bank-letter mapping table.
-- **Phase 4** — `app/(app)/checking` and `app/(app)/sorting`: virtualized
-  50k+ row table with duplicate highlighting, bank-list import/matching,
-  and the `.xlsx` export (columns A–F as specified).
+## ملاحظات تقنية
+- الخرائط تستخدم OpenStreetMap (مجاني، بدون مفتاح). لو احتجت طبقات أو
+  خرائط حرارية أكثر تفصيلاً مستقبلاً، Mapbox أو Google Maps يحتاجوا مفتاح
+  API مدفوع.
+- الـ Geocoding (الشارع/الحي) عبر Nominatim المجاني، وله حد استخدام معقول
+  لكن غير مخصص لحجم مرور هائل — لو الفريق كبر جدًا قد تحتاجوا خدمة مدفوعة.
+- "قفل الجهاز" مبني على معرّف محفوظ في المتصفح + بصمة جهاز تقريبية، وليس
+  رقم سيريال هاردوير حقيقي (المتصفحات لا تسمح بالوصول لذلك) — لكنه يحقق
+  نفس الأثر العملي المطلوب في الطلب.

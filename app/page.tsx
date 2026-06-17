@@ -11,7 +11,7 @@ export default function HomePage() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
-        router.replace("/registration");
+        router.replace("/dashboard");
       } else {
         router.replace("/login");
       }

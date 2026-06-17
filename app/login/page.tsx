@@ -40,7 +40,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace("/registration");
+    router.replace("/dashboard");
   }
 
   return (
