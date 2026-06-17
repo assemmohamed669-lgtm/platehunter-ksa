@@ -82,15 +82,16 @@ export function readBankExcel(file: File): Promise<string[]> {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows: Record<string, string>[][] = XLSX.utils.sheet_to_json(ws, {
+        const rows = XLSX.utils.sheet_to_json(ws, {
           header: 1,
           raw: false,
-        }) as Record<string, string>[][];
+        }) as unknown[][];
 
         // Flatten all cells and return non-empty strings
         const plates: string[] = [];
         for (const row of rows) {
-          for (const cell of row as string[]) {
+          if (!row || !Array.isArray(row)) continue;
+          for (const cell of row) {
             const val = String(cell ?? "").trim();
             if (val && val.length >= 4) plates.push(val);
           }
@@ -157,49 +158,4 @@ export function buildExcelBlob(
   const wb = XLSX.utils.book_new();
 
   if (watermark) {
-    const stamp = `🔒 صدّر هذا الملف: ${watermark.username} (${watermark.userId}) — ${new Date().toLocaleString("ar-SA")}`;
-    wb.Props = {
-      ...(wb.Props ?? {}),
-      Company: stamp,
-      Comments: stamp,
-    };
-    XLSX.utils.sheet_add_aoa(ws, [[stamp]], { origin: -1 });
-  }
-
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  return new Blob([wbout], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-}
-
-/**
- * Single unified "save/share" action. On devices that support the Web
- * Share API with files (most modern Android browsers, and Safari on
- * iOS 16+), this opens the native share sheet — letting the agent pick
- * WhatsApp, Excel, Drive, or "Save to Files" themselves. Where that
- * isn't supported, it falls back to a normal browser download.
- */
-export async function shareOrDownloadExcel(blob: Blob, filename: string): Promise<"shared" | "downloaded"> {
-  try {
-    const file = new File([blob], filename, { type: blob.type });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = navigator as any;
-    if (nav.canShare && nav.canShare({ files: [file] })) {
-      await nav.share({ files: [file], title: filename });
-      return "shared";
-    }
-  } catch {
-    // User cancelled the share sheet, or share failed — fall through to download.
-  }
-
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  return "downloaded";
-}
+    const stamp = `🔒 صدّر هذا الملف: ${watermark.username} (${water
