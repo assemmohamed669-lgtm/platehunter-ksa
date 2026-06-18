@@ -1,14 +1,6 @@
 /**
  * POST /api/excel/parse
- * FormData: { file: File, password?: string }
- *
- * Parses an uploaded Excel file into { headers, rows }. If a password is
- * supplied, first attempts to decrypt the file (best-effort — coverage
- * depends on which encryption scheme the original file used; classic
- * "Agile"/"Standard" OOXML encryption is supported, older or custom
- * schemes may not be). Decryption runs server-side because the
- * underlying libraries expect Node's Buffer, which isn't reliably
- * available in the browser bundle.
+ * FormData: { file: File }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -20,42 +12,23 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const password = (formData.get("password") as string | null) || undefined;
 
     if (!file) {
       return NextResponse.json({ error: "لم يتم إرسال ملف." }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
-    let buffer = Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(arrayBuffer);
 
-    if (password) {
-      try {
-        // officecrypto-js: pure-JS decryption for password-protected
-        // OOXML files (xlsx/docx). Best-effort — see note above.
-        const officecrypto = await import("officecrypto-js");
-        buffer = await officecrypto.decrypt(buffer, { password });
-      } catch {
-        return NextResponse.json(
-          {
-            error:
-              "تعذّر فك التشفير. تأكد من كلمة المرور، أو أن نوع الحماية غير مدعوم — جرّب إزالة الحماية من برنامج Excel وإعادة الرفع.",
-          },
-          { status: 400 }
-        );
-      }
-    }
-
+    // ملاحظة: تم إزالة officecrypto-js لأنه يسبب خطأ في البناء وغير متوفر.
+    // المكتبة xlsx تدعم قراءة ملفات Excel بشكل مباشر.
+    
     let wb: XLSX.WorkBook;
     try {
       wb = XLSX.read(buffer, { type: "buffer" });
     } catch {
       return NextResponse.json(
-        {
-          error: password
-            ? "فُكّ التشفير لكن تعذّرت قراءة محتوى الملف."
-            : "تعذّرت قراءة الملف. إذا كان محميًا بكلمة مرور، أدخلها في الحقل المخصص.",
-        },
+        { error: "تعذّرت قراءة الملف. تأكد من أن الملف ليس محميًا بكلمة مرور." },
         { status: 400 }
       );
     }
