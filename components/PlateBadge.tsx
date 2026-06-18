@@ -1,9 +1,34 @@
 /**
  * Renders a plate string (e.g. "أبح1234") as individual glowing cells —
  * the app's signature visual motif, evoking a digital plate-scanner readout.
- * A blank space in `value` renders as a narrow gap, useful for grouping
- * letters vs. numbers (e.g. "أبح" + " " + "1234").
+ *
+ * Mixed Arabic-letter + digit strings need special handling: Arabic
+ * letters read right-to-left (so the first letter in the string should
+ * end up as the *rightmost* cell), while digits always read left-to-right
+ * even inside RTL text (a basic rule of Unicode bidi). Flexbox's own
+ * `direction` property can't express this — it would reverse digits too,
+ * showing "4321" instead of "1234" — so the correct on-screen order is
+ * computed here explicitly: digits keep their natural order and sit on
+ * the left, Arabic letters are reversed and sit on the right. A blank
+ * space in `value` still renders as a narrow visual gap.
  */
+function buildScreenOrder(value: string): string[] {
+  const chars = Array.from(value);
+  const digits: string[] = [];
+  const letters: string[] = [];
+
+  for (const ch of chars) {
+    if (ch === " ") continue; // spaces don't participate in reordering
+    if (/[0-9٠-٩]/.test(ch)) digits.push(ch);
+    else letters.push(ch);
+  }
+
+  // Pure-digit or pure-letter strings (e.g. a plain word like "قنص" with
+  // no numbers) still go through the same logic and come out correct:
+  // letters-only reverses to put the first letter on the right.
+  return [...digits, ...letters.reverse()];
+}
+
 export default function PlateBadge({
   value,
   size = "md",
@@ -11,7 +36,7 @@ export default function PlateBadge({
   value: string;
   size?: "sm" | "md";
 }) {
-  const chars = Array.from(value);
+  const cells = buildScreenOrder(value);
   const sizeClasses =
     size === "sm"
       ? "min-w-[1.75rem] h-9 text-base"
@@ -19,15 +44,11 @@ export default function PlateBadge({
 
   return (
     <div className="plate-readout">
-      {chars.map((ch, i) =>
-        ch === " " ? (
-          <span key={i} className="plate-cell plate-cell--space" />
-        ) : (
-          <span key={i} className={`plate-cell ${sizeClasses}`}>
-            {ch}
-          </span>
-        )
-      )}
+      {cells.map((ch, i) => (
+        <span key={i} className={`plate-cell ${sizeClasses}`}>
+          {ch}
+        </span>
+      ))}
     </div>
   );
 }

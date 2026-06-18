@@ -2,7 +2,13 @@
  * POST /api/excel/parse
  * FormData: { file: File, password?: string }
  *
- * Parses an uploaded Excel file into { headers, rows }.
+ * Parses an uploaded Excel file into { headers, rows }. If a password is
+ * supplied, first attempts to decrypt the file (best-effort — coverage
+ * depends on which encryption scheme the original file used; classic
+ * "Agile"/"Standard" OOXML encryption is supported, older or custom
+ * schemes may not be). Decryption runs server-side because the
+ * underlying libraries expect Node's Buffer, which isn't reliably
+ * available in the browser bundle.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -20,17 +26,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "لم يتم إرسال ملف." }, { status: 400 });
     }
 
-    if (password) {
-      return NextResponse.json(
-        {
-          error: "عذراً، ميزة فك تشفير الملفات المحمية بكلمة مرور غير متاحة حالياً. يرجى إزالة كلمة المرور من ملف Excel وإعادة الرفع.",
-        },
-        { status: 400 }
-      );
-    }
-
     const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    let buffer = Buffer.from(arrayBuffer);
+
+    if (password) {
+      try {
+        // officecrypto-js: pure-JS decryption for password-protected
+        // OOXML files (xlsx/docx). Best-effort — see note above.
+        const officecrypto = await import("officecrypto-js");
+        buffer = await officecrypto.decrypt(buffer, { password });
+      } catch {
+        return NextResponse.json(
+          {
+            error:
+              "تعذّر فك التشفير. تأكد من كلمة المرور، أو أن نوع الحماية غير مدعوم — جرّب إزالة الحماية من برنامج Excel وإعادة الرفع.",
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     let wb: XLSX.WorkBook;
     try {
@@ -38,7 +52,9 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json(
         {
-          error: "تعذّرت قراءة الملف. تأكد من أن الملف بصيغة Excel سليمة.",
+          error: password
+            ? "فُكّ التشفير لكن تعذّرت قراءة محتوى الملف."
+            : "تعذّرت قراءة الملف. إذا كان محميًا بكلمة مرور، أدخلها في الحقل المخصص.",
         },
         { status: 400 }
       );

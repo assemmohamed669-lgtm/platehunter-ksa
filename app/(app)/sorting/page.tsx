@@ -14,6 +14,7 @@ import {
   ClipboardPaste,
   FileSpreadsheet,
   Download,
+  ExternalLink,
   ChevronDown,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
@@ -22,7 +23,8 @@ import { supabase } from "@/lib/supabaseClient";
 import {
   type ExcelTable,
   buildExcelBlob,
-  shareOrDownloadExcel,
+  downloadExcelBlob,
+  openExcelBlob,
   buildRowSummaryText,
   shareOrCopyText,
 } from "@/lib/excel";
@@ -44,16 +46,15 @@ import {
 const ZOOM_CLASSES = ["text-xs", "text-sm", "text-base", "text-lg"];
 const PAGE_SIZE = 50;
 
-// Decent default guess for which columns should start checked, based on
-// common header keywords — the user can freely change the selection
-// afterwards since the picker always lists the file's *real* headers.
+// Pre-select exactly the columns the spec calls out as defaults: Vehicle
+// Type, Manufacturer, Vehicle Color, and GPS Link (Plate Number is always
+// shown separately, not part of this toggle list). Every other detected
+// column starts unchecked — the user opts into them deliberately.
 function guessDefaultColumns(headers: string[], exclude?: string | null): string[] {
-  const keywords = ["نوع", "حي", "شارع", "تاريخ", "GPS", "رابط", "موقع", "شاص"];
-  const guessed = headers.filter(
+  const keywords = ["نوع", "ماركة", "الشركة", "الصانع", "manufacturer", "اللون", "color", "gps", "رابط", "موقع"];
+  return headers.filter(
     (h) => h !== exclude && keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
   );
-  if (guessed.length > 0) return guessed;
-  return headers.filter((h) => h !== exclude).slice(0, 4);
 }
 
 function findGpsColumn(headers: string[]): string | null {
@@ -282,11 +283,19 @@ export default function SortingPage() {
     return row;
   }
 
-  async function handleExportAll() {
+  async function handleDownloadAll() {
     setExportingAll(true);
     const rows = matchedResults.map(buildRowObject);
     const blob = buildExcelBlob(rows, "نتائج الفرز");
-    await shareOrDownloadExcel(blob, `فرز-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    downloadExcelBlob(blob, `فرز-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setExportingAll(false);
+  }
+
+  async function handleOpenAll() {
+    setExportingAll(true);
+    const rows = matchedResults.map(buildRowObject);
+    const blob = buildExcelBlob(rows, "نتائج الفرز");
+    await openExcelBlob(blob, `فرز-${new Date().toISOString().slice(0, 10)}.xlsx`);
     setExportingAll(false);
   }
 
@@ -323,10 +332,16 @@ export default function SortingPage() {
     return row;
   }
 
-  async function handleExportPaste() {
+  async function handleDownloadPaste() {
     const rows = pasteResults.map(buildPasteRowObject);
     const blob = buildExcelBlob(rows, "نتائج اللصق");
-    await shareOrDownloadExcel(blob, `لصق-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    downloadExcelBlob(blob, `لصق-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  async function handleOpenPaste() {
+    const rows = pasteResults.map(buildPasteRowObject);
+    const blob = buildExcelBlob(rows, "نتائج اللصق");
+    await openExcelBlob(blob, `لصق-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   // ── Shared per-row action buttons (Copy / Share) — defined at module
@@ -455,7 +470,7 @@ export default function SortingPage() {
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-3 gap-2 text-center">
                 {[
-                  { label: "تطابق مستخرج", val: matchedResults.length, color: "text-glow" },
+                  { label: "عدد السيارات المطلوبة", val: matchedResults.length, color: "text-glow" },
                   { label: "إجمالي الإحالة", val: referralTable?.rows.length ?? 0, color: "text-ink" },
                   { label: "إجمالي الداتا", val: dataTable?.rows.length ?? 0, color: "text-ink" },
                 ].map((s) => (
@@ -472,6 +487,8 @@ export default function SortingPage() {
                   {fuzzyCount} لوحة مشتبه بها (تطابق تقريبي من أصل {exactCount + fuzzyCount}) — تحقق منها يدويًا.
                 </div>
               )}
+
+              <h2 className="text-base font-bold text-ink">السيارات المطلوبة للسحب</h2>
 
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
@@ -569,14 +586,24 @@ export default function SortingPage() {
                 )}
               </div>
 
-              <button
-                onClick={handleExportAll}
-                disabled={exportingAll}
-                className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
-              >
-                <Download size={16} />
-                {exportingAll ? "جارٍ التصدير..." : "تصدير / مشاركة النتيجة الكاملة"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDownloadAll}
+                  disabled={exportingAll}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
+                >
+                  <Download size={16} />
+                  تحميل الملف
+                </button>
+                <button
+                  onClick={handleOpenAll}
+                  disabled={exportingAll}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary/50 py-3 text-sm font-bold text-primary transition hover:bg-primary/10 disabled:opacity-60"
+                >
+                  <ExternalLink size={16} />
+                  فتح الملف
+                </button>
+              </div>
             </div>
           )}
         </>
@@ -646,13 +673,22 @@ export default function SortingPage() {
                 </button>
               )}
 
-              <button
-                onClick={handleExportPaste}
-                className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
-              >
-                <Download size={16} />
-                تصدير / مشاركة هذه النتائج
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDownloadPaste}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+                >
+                  <Download size={16} />
+                  تحميل الملف
+                </button>
+                <button
+                  onClick={handleOpenPaste}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary/50 py-3 text-sm font-bold text-primary transition hover:bg-primary/10"
+                >
+                  <ExternalLink size={16} />
+                  فتح الملف
+                </button>
+              </div>
             </div>
           )}
 

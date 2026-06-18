@@ -20,10 +20,7 @@ export default function HomePage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-night">
-      {/* تم إضافة تنسيق inline لضمان عرض النص بالترتيب الصحيح */}
-      <div style={{ direction: "ltr", unicodeBidi: "bidi-override" }}>
-        <PlateBadge value="قنص1234" />
-      </div>
+      <PlateBadge value="قنص1234" />
       <p className="text-sm text-muted">جاري التحميل...</p>
     </main>
   );
