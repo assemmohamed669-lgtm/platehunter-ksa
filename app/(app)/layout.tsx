@@ -70,7 +70,7 @@ export default function AppShellLayout({
           </div>
         </header>
 
-        <main className="mx-auto max-w-md px-4 py-5">{children}</main>
+        <main className="mx-auto w-full max-w-md px-4 py-5 min-h-[calc(100dvh-9rem)]">{children}</main>
 
         <BottomNav />
       </div>

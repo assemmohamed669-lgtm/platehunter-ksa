@@ -55,28 +55,36 @@ export default function DashboardPage() {
     month: "long",
     day: "numeric",
   });
-  const timeStr = now.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const timeStr = now.toLocaleTimeString("ar-SA", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-col items-center gap-2 py-2 text-center">
+    <div className="flex flex-col gap-4 h-full min-h-[calc(100dvh-9rem)]">
+      {/* Clock */}
+      <div className="flex flex-col items-center gap-1 pt-2 text-center">
         <PlateBadge value="قنص1234" size="sm" />
         <p className="text-xs text-muted" dir="rtl">{dateStr}</p>
-        <p className="font-mono text-lg font-bold text-glow" dir="ltr">{timeStr}</p>
+        <p className="font-mono text-2xl font-black text-glow" dir="ltr">{timeStr}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      {/* Tiles grid — flex-1 to fill remaining height */}
+      <div className="grid grid-cols-2 gap-3 flex-1" style={{ gridAutoRows: "1fr" }}>
         {TILES.map(({ href, label, desc, icon: Icon }) => (
           <Link
             key={href}
             href={href}
-            className="flex flex-col items-center gap-2 rounded-2xl border border-border bg-surface p-5 text-center transition hover:border-primary/60 hover:shadow-glow active:scale-95"
+            className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-surface p-4 text-center transition hover:border-primary/60 hover:shadow-glow active:scale-95 min-h-[120px]"
           >
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-dark text-primary">
-              <Icon size={26} />
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-dark text-primary">
+              <Icon size={32} />
             </div>
-            <span className="text-sm font-bold text-ink">{label}</span>
-            <span className="text-xs text-muted">{desc}</span>
+            <div>
+              <p className="text-base font-bold text-ink">{label}</p>
+              <p className="text-xs text-muted leading-tight">{desc}</p>
+            </div>
           </Link>
         ))}
       </div>
