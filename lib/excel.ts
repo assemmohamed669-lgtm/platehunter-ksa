@@ -201,18 +201,14 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
       const isAndroid = /android/i.test(navigator.userAgent);
       const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
-      if (isAndroid) {
-        // Android intent to open directly in Excel
-        window.location.href = `intent://${url.replace(/^https?:\/\//, "")}#Intent;action=android.intent.action.VIEW;type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;package=com.microsoft.office.excel;S.browser_fallback_url=${encodeURIComponent(url)};end`;
-        return "opened";
-      } else if (isIOS) {
+      if (isIOS) {
+        // iOS: ms-excel protocol
         window.location.href = `ms-excel:ofv|u|${url}`;
-        return "opened";
       } else {
-        // Desktop: open URL directly
-        window.open(url, "_blank");
-        return "opened";
+        // Android + Desktop: open public URL — OS will ask "open with Excel"
+        window.location.href = url;
       }
+      return "opened";
     }
   } catch { /* fallback to download */ }
 
