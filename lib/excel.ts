@@ -187,19 +187,35 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
 }
 
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
-  // On iOS: try Web Share API to open native share sheet
-  const nav = navigator as any;
-  if (/iphone|ipad|ipod/i.test(navigator.userAgent) && nav.share) {
-    try {
-      const file = new File([blob], filename, { type: blob.type });
-      if (nav.canShare && nav.canShare({ files: [file] })) {
-        await nav.share({ files: [file], title: filename });
+  // Try uploading to Supabase Storage and opening via intent (Android) or ms-excel (desktop)
+  try {
+    const { supabase } = await import("./supabaseClient");
+    const path = `temp/${Date.now()}_${filename}`;
+    const { error } = await supabase.storage.from("exports").upload(path, blob, {
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      upsert: true,
+    });
+    if (!error) {
+      const { data } = supabase.storage.from("exports").getPublicUrl(path);
+      const url = data.publicUrl;
+      const isAndroid = /android/i.test(navigator.userAgent);
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+      if (isAndroid) {
+        // Android intent to open directly in Excel
+        window.location.href = `intent://${url.replace(/^https?:\/\//, "")}#Intent;action=android.intent.action.VIEW;type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;package=com.microsoft.office.excel;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+        return "opened";
+      } else if (isIOS) {
+        window.location.href = `ms-excel:ofv|u|${url}`;
+        return "opened";
+      } else {
+        // Desktop: open URL directly
+        window.open(url, "_blank");
         return "opened";
       }
-    } catch { /* cancelled */ }
-  }
+    }
+  } catch { /* fallback to download */ }
 
-  // On Android/Desktop: download — Chrome shows "Open" button in download bar
   downloadExcelBlob(blob, filename);
   return "downloaded";
 }
