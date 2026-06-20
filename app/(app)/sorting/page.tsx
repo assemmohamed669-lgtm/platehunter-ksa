@@ -590,18 +590,18 @@ export default function SortingPage() {
                 <button
                   onClick={handleDownloadAll}
                   disabled={exportingAll}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60"
                 >
                   <Download size={16} />
-                  تحميل الملف
+                  حفظ الملف
                 </button>
                 <button
                   onClick={handleOpenAll}
                   disabled={exportingAll}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary/50 py-3 text-sm font-bold text-primary transition hover:bg-primary/10 disabled:opacity-60"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
                 >
                   <ExternalLink size={16} />
-                  فتح الملف
+                  فتح في Excel
                 </button>
               </div>
             </div>
@@ -676,17 +676,17 @@ export default function SortingPage() {
               <div className="flex gap-2">
                 <button
                   onClick={handleDownloadPaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
                 >
                   <Download size={16} />
-                  تحميل الملف
+                  حفظ الملف
                 </button>
                 <button
                   onClick={handleOpenPaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary/50 py-3 text-sm font-bold text-primary transition hover:bg-primary/10"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
                 >
                   <ExternalLink size={16} />
-                  فتح الملف
+                  فتح في Excel
                 </button>
               </div>
             </div>
