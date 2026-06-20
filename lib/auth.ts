@@ -12,7 +12,8 @@ import {
  * This mapping is internal — agents never see or type an email.
  */
 function usernameToEmail(username: string): string {
-  return `${username.trim().toLowerCase()}@platehunter.local`;
+  const u = username.trim().toLowerCase();
+  return u.includes("@") ? u : `${u}@platehunter.local`;
 }
 
 export type LoginErrorCode =
