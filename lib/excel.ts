@@ -114,18 +114,35 @@ export interface ExcelTable {
 }
 
 export async function parseExcelFile(file: File, password?: string): Promise<ExcelTable> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (password) formData.append("password", password);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target!.result as ArrayBuffer);
+        const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellText: true };
+        if (password) (opts as Record<string, unknown>).password = password;
 
-  const res = await fetch("/api/excel/parse", { method: "POST", body: formData });
-  const json = await res.json();
+        const wb = XLSX.read(data, opts);
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, {
+          raw: false,
+          defval: "",
+        }) as Record<string, string>[];
 
-  if (!res.ok) {
-    throw new Error(json.error ?? "فشل قراءة الملف.");
-  }
+        if (rows.length === 0) {
+          reject(new Error("الملف فارغ أو لا يحتوي على بيانات."));
+          return;
+        }
 
-  return { headers: json.headers as string[], rows: json.rows as Record<string, string>[] };
+        const headers = Object.keys(rows[0]);
+        resolve({ headers, rows });
+      } catch {
+        reject(new Error("تعذّرت قراءة الملف — قد يكون محمياً بكلمة مرور."));
+      }
+    };
+    reader.onerror = () => reject(new Error("تعذّرت قراءة الملف."));
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 export interface WatermarkInfo {

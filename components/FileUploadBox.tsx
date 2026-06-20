@@ -37,11 +37,14 @@ export default function FileUploadBox({
       setPendingFile(null);
       setNeedsPassword(false);
     } catch (err) {
-      // First attempt without a password failed — most likely the file
-      // is password-protected, so prompt for one instead of just failing.
-      setPendingFile(file);
-      setNeedsPassword(true);
-      setError(err instanceof Error ? err.message : "تعذّرت قراءة الملف.");
+      const msg = err instanceof Error ? err.message : "تعذّرت قراءة الملف.";
+      const isPasswordError = msg.includes("محمياً") || msg.includes("كلمة مرور");
+      if (isPasswordError) {
+        setPendingFile(file);
+        setNeedsPassword(true);
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
