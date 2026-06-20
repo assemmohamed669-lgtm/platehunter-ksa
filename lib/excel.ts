@@ -22,15 +22,22 @@ export function exportRecordingsToExcel(
   filename = "platehunter-export"
 ) {
   const rows = recordings
-    .filter((r) => !r.plate.startsWith("📍")) 
-    .map((r) => ({
-      "رقم اللوحة": r.plate,
-      "نوع السيارة": r.vehicleType ?? "",
-      الشارع: r.street ?? "",
-      الحي: r.district ?? "",
-      "تاريخ التسجيل": formatDate(r.recordedAt),
-      "رابط الموقع": r.mapsLink ?? "",
-    }));
+    .filter((r) => !r.plate.startsWith("📍"))
+    .map((r) => {
+      const gpsLink = r.mapsLink ?? "";
+      const coords = r.lat && r.lng ? `${r.lat},${r.lng}` : "";
+      return {
+        "رقم اللوحة": r.plate,
+        "GPS": gpsLink,
+        "تاريخ التسجيل": formatDate(r.recordedAt),
+        "الحي": r.district ?? "",
+        "الشارع": r.street ?? "",
+        "ملاحظات": r.notes ?? "",
+        "نوع السيارة": r.vehicleType ?? "",
+        "اسم المسجّل": r.recorderName ?? "",
+        "موقع الشارع": coords,
+      };
+    });
 
   if (rows.length === 0) {
     alert("لا توجد بيانات للتصدير.");
@@ -40,24 +47,22 @@ export function exportRecordingsToExcel(
   const ws = XLSX.utils.json_to_sheet(rows);
 
   ws["!cols"] = [
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 28 },
-    { wch: 20 },
-    { wch: 18 },
-    { wch: 55 },
+    { wch: 14 }, // رقم اللوحة
+    { wch: 55 }, // GPS
+    { wch: 22 }, // تاريخ التسجيل
+    { wch: 18 }, // الحي
+    { wch: 26 }, // الشارع
+    { wch: 30 }, // ملاحظات
+    { wch: 14 }, // نوع السيارة
+    { wch: 18 }, // اسم المسجّل
+    { wch: 26 }, // موقع الشارع
   ];
 
-  const headerStyle = { font: { bold: true }, alignment: { horizontal: "right" } };
-  const headers = ["A1", "B1", "C1", "D1", "E1", "F1"];
-  headers.forEach((cell) => {
-    if (ws[cell]) ws[cell].s = headerStyle;
-  });
-
+  // GPS column as clickable hyperlinks
   rows.forEach((row, i) => {
-    const cellRef = `F${i + 2}`;
-    if (ws[cellRef] && row["رابط الموقع"]) {
-      ws[cellRef].l = { Target: row["رابط الموقع"], Tooltip: "فتح في الخريطة" };
+    const cellRef = `B${i + 2}`;
+    if (ws[cellRef] && row["GPS"]) {
+      ws[cellRef].l = { Target: row["GPS"], Tooltip: "فتح في الخريطة" };
     }
   });
 

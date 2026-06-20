@@ -21,6 +21,8 @@ export interface RecordingEntry {
   recordedAt: string;        // ISO timestamp
   audioBlobBase64?: string;  // base64 encoded audio
   mapsLink?: string;
+  notes?: string;            // ملاحظات يدوية
+  recorderName?: string;     // اسم المسجّل
   synced: boolean;
 }
 
@@ -125,6 +127,24 @@ export async function deleteRecording(localId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).delete(localId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function updateNotes(localId: string, notes: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const req = store.get(localId);
+    req.onsuccess = () => {
+      const entry = req.result as RecordingEntry;
+      if (entry) {
+        entry.notes = notes;
+        store.put(entry);
+      }
+    };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
