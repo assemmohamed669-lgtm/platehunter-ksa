@@ -187,15 +187,21 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
 }
 
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
-  try {
-    const file = new File([blob], filename, { type: blob.type });
-    const nav = navigator as any;
-    if (nav.canShare && nav.canShare({ files: [file] })) {
+  const file = new File([blob], filename, {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const nav = navigator as any;
+
+  // Try Web Share API (opens native share sheet on iOS/Android → pick Excel)
+  if (nav.share) {
+    try {
       await nav.share({ files: [file], title: filename });
       return "opened";
+    } catch {
+      // User cancelled or share not supported — fall through to download
     }
-  } catch {
   }
+
   downloadExcelBlob(blob, filename);
   return "downloaded";
 }
