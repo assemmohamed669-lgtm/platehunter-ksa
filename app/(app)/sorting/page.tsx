@@ -287,7 +287,7 @@ export default function SortingPage() {
     setExportingAll(true);
     const rows = matchedResults.map(buildRowObject);
     const blob = buildExcelBlob(rows, "نتائج الفرز");
-    downloadExcelBlob(blob, `فرز-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    downloadExcelBlob(blob, `فرز-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`);
     setExportingAll(false);
   }
 
@@ -295,7 +295,7 @@ export default function SortingPage() {
     setExportingAll(true);
     const rows = matchedResults.map(buildRowObject);
     const blob = buildExcelBlob(rows, "نتائج الفرز");
-    const filename = `فرز-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const filename = `فرز-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
     await openExcelBlob(blob, filename);
     setExportingAll(false);
   }
@@ -336,13 +336,13 @@ export default function SortingPage() {
   async function handleDownloadPaste() {
     const rows = pasteResults.map(buildPasteRowObject);
     const blob = buildExcelBlob(rows, "نتائج اللصق");
-    downloadExcelBlob(blob, `لصق-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    downloadExcelBlob(blob, `لصق-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`);
   }
 
   async function handleOpenPaste() {
     const rows = pasteResults.map(buildPasteRowObject);
     const blob = buildExcelBlob(rows, "نتائج اللصق");
-    const filename = `لصق-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const filename = `لصق-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
     await openExcelBlob(blob, filename);
   }
 
