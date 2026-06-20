@@ -189,7 +189,7 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
   const nav = navigator as any;
 
-  // Try Web Share API — use octet-stream so Android Chrome accepts the file type
+  // 1. Try Web Share API (iOS + some Android)
   if (nav.share) {
     try {
       const file = new File([blob], filename, { type: "application/octet-stream" });
@@ -198,10 +198,28 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
         return "opened";
       }
     } catch {
-      // User cancelled or share failed — fall through to download
+      // cancelled or unsupported
     }
   }
 
+  // 2. Try window.open with blob URL — Android may show "open with Excel"
+  try {
+    const url = URL.createObjectURL(
+      new Blob([await blob.arrayBuffer()], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      })
+    );
+    const win = window.open(url, "_blank");
+    if (win) {
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      return "opened";
+    }
+    URL.revokeObjectURL(url);
+  } catch {
+    // blocked by browser
+  }
+
+  // 3. Fallback: download
   downloadExcelBlob(blob, filename);
   return "downloaded";
 }
