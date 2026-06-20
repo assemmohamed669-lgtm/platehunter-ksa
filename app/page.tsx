@@ -9,6 +9,11 @@ export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
+    // Detect password recovery redirect from Supabase email link
+    if (window.location.hash.includes("type=recovery")) {
+      router.replace("/auth/reset-password");
+      return;
+    }
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
         router.replace("/dashboard");
