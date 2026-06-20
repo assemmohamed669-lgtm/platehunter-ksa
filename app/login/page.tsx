@@ -20,7 +20,11 @@ export default function LoginPage() {
       setError(reason);
       window.sessionStorage.removeItem("pk_logout_reason");
     }
-  }, []);
+    // Detect Supabase password recovery redirect (hash contains type=recovery)
+    if (window.location.hash.includes("type=recovery")) {
+      router.replace("/auth/reset-password");
+    }
+  }, [router]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
