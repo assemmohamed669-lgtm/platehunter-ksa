@@ -34,6 +34,7 @@ import {
 import { parsePlateFromTranscript, findDuplicates } from "@/lib/plateParser";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
+import { exportRecordingsToExcel } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -53,6 +54,46 @@ function uid(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+// ── Web Speech API types ────────────────────────────────────────────────────
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+}
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  [index: number]: SpeechRecognitionResult;
+}
+interface SpeechRecognitionResult {
+  readonly length: number;
+  [index: number]: SpeechRecognitionAlternative;
+  readonly isFinal: boolean;
+}
+interface SpeechRecognitionAlternative {
+  readonly transcript: string;
+  readonly confidence: number;
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+}
+
+function createSpeechRecognition(): SpeechRecognitionInstance | null {
+  const W = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+  };
+  const SR = W.SpeechRecognition ?? W.webkitSpeechRecognition;
+  if (!SR) return null;
+  return new SR();
+}
+
 export default function RegistrationPage() {
   const [agentId, setAgentId] = useState<string | null>(null);
   const [gps, setGps] = useState<GpsCoords | null>(null);
@@ -63,6 +104,7 @@ export default function RegistrationPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState<string>("");
 
   // Recordings list
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
@@ -76,10 +118,14 @@ export default function RegistrationPage() {
   // Pin counter
   const [pinCount, setPinCount] = useState(0);
 
-  // MediaRecorder
+  // MediaRecorder (for saving audio blob)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const gpsAtRecordRef = useRef<GpsCoords | null>(null);
+
+  // Speech recognition
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const finalTranscriptRef = useRef<string>("");
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -121,9 +167,52 @@ export default function RegistrationPage() {
     setDuplicates(findDuplicates(recs.map((r) => r.plate)));
   }, []);
 
-  // ── Voice recording ─────────────────────────────────────────────────
+  // ── Web Speech API recording ─────────────────────────────────────────
   async function startRecording() {
     setRecordingError(null);
+    setLiveTranscript("");
+    finalTranscriptRef.current = "";
+
+    // Check Speech Recognition support
+    const recognition = createSpeechRecognition();
+    if (!recognition) {
+      setRecordingError("المتصفح لا يدعم التعرف الصوتي. استخدم Chrome أو Edge.");
+      return;
+    }
+
+    recognition.lang = "ar-SA";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      let final = finalTranscriptRef.current;
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          final += result[0].transcript + " ";
+        } else {
+          interim += result[0].transcript;
+        }
+      }
+      finalTranscriptRef.current = final;
+      setLiveTranscript(final + interim);
+    };
+
+    recognition.onerror = (event: { error: string }) => {
+      if (event.error !== "aborted") {
+        setRecordingError(`خطأ في التعرف الصوتي: ${event.error}`);
+      }
+    };
+
+    recognition.onend = () => {
+      // Only process if we were still recording (not manually stopped)
+    };
+
+    recognitionRef.current = recognition;
+
+    // Also start MediaRecorder to save audio blob
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       gpsAtRecordRef.current = gpsService.getLastCoords();
@@ -141,90 +230,88 @@ export default function RegistrationPage() {
 
       mr.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
-        handleRecordingStop();
       };
 
       mr.start(100);
       mediaRecorderRef.current = mr;
-      setIsRecording(true);
-    } catch (err) {
-      setRecordingError("تعذّر الوصول للميكروفون. تحقق من الأذونات.");
-      console.error(err);
+    } catch {
+      // If mic access fails for MediaRecorder, still allow speech recognition
     }
+
+    recognition.start();
+    setIsRecording(true);
   }
 
-  function stopRecording() {
+  async function stopRecording() {
+    if (!isRecording) return;
+
+    recognitionRef.current?.stop();
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
+    setIsTranscribing(true);
+
+    // Small delay to let final results come in
+    await new Promise((r) => setTimeout(r, 600));
+
+    const transcript = finalTranscriptRef.current.trim() || liveTranscript.trim();
+    setLiveTranscript("");
+
+    await saveTranscript(transcript);
+    setIsTranscribing(false);
   }
 
-  async function handleRecordingStop() {
+  async function saveTranscript(transcript: string) {
     if (!agentId) return;
-    const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-    if (blob.size < 100) return; // too short, ignore
 
-    setIsTranscribing(true);
-    try {
-      // Convert blob to base64 for IndexedDB storage
-      const arrayBuffer = await blob.arrayBuffer();
-      const base64 = btoa(
-        String.fromCharCode(...new Uint8Array(arrayBuffer))
-      );
+    let plate = "";
+    let vehicleType: string | undefined;
 
-      // Send to Whisper
-      const formData = new FormData();
-      formData.append("audio", blob, "recording.webm");
-
-      let plate = "";
-      let vehicleType: string | undefined;
-
-      if (isOnline) {
-        const res = await fetch("/api/transcribe", {
-          method: "POST",
-          body: formData,
-        });
-        const json = await res.json();
-        if (json.transcript) {
-          const parsed = parsePlateFromTranscript(json.transcript);
-          plate = parsed.plate;
-          vehicleType = parsed.vehicleType;
-        } else {
-          plate = "خطأ في التفريغ";
-        }
-      } else {
-        plate = "لم يتم التفريغ (بدون إنترنت)";
-      }
-
-      const coords = gpsAtRecordRef.current;
-      const localId = uid();
-      const entry: RecordingEntry = {
-        localId,
-        agentId,
-        plate,
-        vehicleType,
-        lat: coords?.lat,
-        lng: coords?.lng,
-        recordedAt: new Date().toISOString(),
-        audioBlobBase64: base64,
-        mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
-        synced: false,
-      };
-
-      await saveRecording(entry);
-
-      // Geocode in background
-      if (coords) {
-        reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
-          await updateGeodata(localId, addr.street, addr.district);
-          if (agentId) loadRecordings(agentId);
-        });
-      }
-
-      await loadRecordings(agentId);
-      if (isOnline) syncPending(agentId);
-    } finally {
-      setIsTranscribing(false);
+    if (transcript) {
+      const parsed = parsePlateFromTranscript(transcript);
+      plate = parsed.plate;
+      vehicleType = parsed.vehicleType;
     }
+
+    if (!plate) {
+      plate = "لم يُتعرف على اللوحة";
+    }
+
+    // Get audio blob if available
+    let base64 = "";
+    if (chunksRef.current.length > 0) {
+      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      if (blob.size > 100) {
+        const arrayBuffer = await blob.arrayBuffer();
+        base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      }
+    }
+
+    const coords = gpsAtRecordRef.current;
+    const localId = uid();
+    const entry: RecordingEntry = {
+      localId,
+      agentId,
+      plate,
+      vehicleType,
+      lat: coords?.lat,
+      lng: coords?.lng,
+      recordedAt: new Date().toISOString(),
+      audioBlobBase64: base64 || undefined,
+      mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
+      synced: false,
+    };
+
+    await saveRecording(entry);
+
+    if (coords) {
+      reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
+        await updateGeodata(localId, addr.street, addr.district);
+        if (agentId) loadRecordings(agentId);
+      });
+    }
+
+    await loadRecordings(agentId);
+    if (isOnline) syncPending(agentId);
   }
 
   // ── Manual GPS pin ──────────────────────────────────────────────────
@@ -302,6 +389,13 @@ export default function RegistrationPage() {
     loadRecordings(agentId);
   }
 
+  function handleExport() {
+    exportRecordingsToExcel(
+      recordings,
+      `platehunter-${new Date().toISOString().slice(0, 10)}`
+    );
+  }
+
   // ── Duplicate colour ────────────────────────────────────────────────
   function dupClass(plate: string): string {
     if (duplicates.has(plate.replace(/\s/g, "").toLowerCase())) {
@@ -311,6 +405,7 @@ export default function RegistrationPage() {
   }
 
   const pendingCount = recordings.filter((r) => !r.synced).length;
+  const exportableCount = recordings.filter((r) => !r.plate.startsWith("📍")).length;
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
@@ -338,6 +433,15 @@ export default function RegistrationPage() {
             >
               <RefreshCw size={11} />
               {pendingCount} معلّق
+            </button>
+          )}
+          {exportableCount > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-1 text-xs text-ink hover:border-primary hover:text-primary transition"
+            >
+              <Download size={11} />
+              Excel
             </button>
           )}
         </div>
@@ -390,11 +494,18 @@ export default function RegistrationPage() {
           )}
         </button>
 
+        {/* Live transcript */}
+        {(isRecording || isTranscribing) && liveTranscript && (
+          <div className="mx-4 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
+            {liveTranscript}
+          </div>
+        )}
+
         <p className="text-sm text-muted">
           {isRecording
             ? "جارٍ التسجيل... ارفع إصبعك للإيقاف"
             : isTranscribing
-            ? "جارٍ التفريغ الذكي..."
+            ? "جارٍ معالجة الصوت..."
             : "اضغط واتكلم"}
         </p>
 

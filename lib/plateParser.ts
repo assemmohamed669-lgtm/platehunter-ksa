@@ -128,16 +128,20 @@ export function parsePlateFromTranscript(transcript: string): {
   );
   text = text.replace(validChars, "").replace(/\s+/g, " ").trim();
 
-  // Try to extract pattern: 3 Arabic letters + 4 digits (with optional spaces)
+  // Try to extract pattern: 1-3 Arabic letters followed by 1-4 digits
+  // Allow flexible spacing between letters and digits as speech may add spaces
   const platePattern =
-    /([اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]{1,3})\s*(\d{1,4})/;
+    /([اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]\s*[اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]?\s*[اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]?)\s*(\d[\d\s]{0,6}\d|\d)/;
   const match = text.match(platePattern);
 
   if (match) {
     const letters = match[1].replace(/\s/g, "");
     const digits = match[2].replace(/\s/g, "");
-    const plate = `${letters}${digits}`;
-    return { plate, vehicleType };
+    // Only accept if digits are 1-4 chars (valid plate number)
+    if (digits.length >= 1 && digits.length <= 4) {
+      const plate = `${letters}${digits}`;
+      return { plate, vehicleType };
+    }
   }
 
   // Fallback: just strip spaces from whatever text we have
