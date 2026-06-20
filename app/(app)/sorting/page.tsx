@@ -296,11 +296,8 @@ export default function SortingPage() {
     const rows = matchedResults.map(buildRowObject);
     const blob = buildExcelBlob(rows, "نتائج الفرز");
     const filename = `فرز-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const result = await openExcelBlob(blob, filename);
+    await openExcelBlob(blob, filename);
     setExportingAll(false);
-    if (result === "downloaded") {
-      alert("✅ تم حفظ الملف — افتح مجلد التنزيلات واضغط عليه لفتحه في Excel");
-    }
   }
 
   // ── Paste-text path: only matches are kept ──────────────────────────
@@ -346,10 +343,7 @@ export default function SortingPage() {
     const rows = pasteResults.map(buildPasteRowObject);
     const blob = buildExcelBlob(rows, "نتائج اللصق");
     const filename = `لصق-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const result = await openExcelBlob(blob, filename);
-    if (result === "downloaded") {
-      alert("✅ تم حفظ الملف — افتح مجلد التنزيلات واضغط عليه لفتحه في Excel");
-    }
+    await openExcelBlob(blob, filename);
   }
 
   // ── Shared per-row action buttons (Copy / Share) — defined at module
