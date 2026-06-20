@@ -187,39 +187,19 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
 }
 
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
+  // On iOS: try Web Share API to open native share sheet
   const nav = navigator as any;
-
-  // 1. Try Web Share API (iOS + some Android)
-  if (nav.share) {
+  if (/iphone|ipad|ipod/i.test(navigator.userAgent) && nav.share) {
     try {
-      const file = new File([blob], filename, { type: "application/octet-stream" });
+      const file = new File([blob], filename, { type: blob.type });
       if (nav.canShare && nav.canShare({ files: [file] })) {
         await nav.share({ files: [file], title: filename });
         return "opened";
       }
-    } catch {
-      // cancelled or unsupported
-    }
+    } catch { /* cancelled */ }
   }
 
-  // 2. Try window.open with blob URL — Android may show "open with Excel"
-  try {
-    const url = URL.createObjectURL(
-      new Blob([await blob.arrayBuffer()], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      })
-    );
-    const win = window.open(url, "_blank");
-    if (win) {
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-      return "opened";
-    }
-    URL.revokeObjectURL(url);
-  } catch {
-    // blocked by browser
-  }
-
-  // 3. Fallback: download
+  // On Android/Desktop: download — Chrome shows "Open" button in download bar
   downloadExcelBlob(blob, filename);
   return "downloaded";
 }
