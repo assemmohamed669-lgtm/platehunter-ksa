@@ -18,15 +18,14 @@ function buildScreenOrder(value: string): string[] {
   const letters: string[] = [];
 
   for (const ch of chars) {
-    if (ch === " ") continue; // spaces don't participate in reordering
+    if (ch === " ") continue;
     if (/[0-9٠-٩]/.test(ch)) digits.push(ch);
     else letters.push(ch);
   }
 
-  // Pure-digit or pure-letter strings (e.g. a plain word like "قنص" with
-  // no numbers) still go through the same logic and come out correct:
-  // letters-only reverses to put the first letter on the right.
-  return [...digits, ...letters.reverse()];
+  // Saudi plate format: letters right-to-left then digits left-to-right.
+  // Visual order in LTR box row: letters (ق ن ص) then digits (1 2 3 4).
+  return [...letters, ...digits];
 }
 
 export default function PlateBadge({
@@ -43,7 +42,7 @@ export default function PlateBadge({
       : "min-w-[2.25rem] h-11 text-xl";
 
   return (
-    <div className="plate-readout">
+    <div className="plate-readout" dir="ltr">
       {cells.map((ch, i) => (
         <span key={i} className={`plate-cell ${sizeClasses}`}>
           {ch}
