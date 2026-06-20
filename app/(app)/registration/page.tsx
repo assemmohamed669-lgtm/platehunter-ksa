@@ -180,7 +180,7 @@ export default function RegistrationPage() {
       return;
     }
 
-    recognition.lang = "ar-SA";
+    recognition.lang = "ar";
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
