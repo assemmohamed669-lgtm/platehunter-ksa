@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- App background - dark green -->
+  <rect width="512" height="512" rx="80" fill="#0B3D2E"/>
+
+  <!-- Plate outer shape (white, thick black border) -->
+  <rect x="24" y="136" width="464" height="240" rx="20" fill="white" stroke="#1a1a1a" stroke-width="10"/>
+
+  <!-- KSA right strip background -->
+  <rect x="404" y="141" width="79" height="230" rx="0 16 16 0" fill="#e0e0e0"/>
+  <!-- KSA strip left border -->
+  <line x1="404" y1="141" x2="404" y2="371" stroke="#1a1a1a" stroke-width="6"/>
+
+  <!-- Horizontal center divider -->
+  <line x1="29" y1="256" x2="404" y2="256" stroke="#1a1a1a" stroke-width="5"/>
+
+  <!-- Vertical divider (number section | letters section) -->
+  <line x1="150" y1="141" x2="150" y2="371" stroke="#1a1a1a" stroke-width="5"/>
+
+  <!-- TOP LEFT: Arabic numeral ١ -->
+  <text x="87" y="226" font-family="'Tahoma','Arial',sans-serif" font-size="72" font-weight="900" text-anchor="middle" fill="#1a1a1a">١</text>
+
+  <!-- TOP RIGHT: Arabic letters ق ن ص -->
+  <text x="278" y="223" font-family="'Tahoma','Arial',sans-serif" font-size="68" font-weight="900" text-anchor="middle" fill="#1a1a1a" direction="rtl">ق ن ص</text>
+
+  <!-- BOTTOM LEFT: English numeral 1 -->
+  <text x="87" y="342" font-family="'Arial','Helvetica',sans-serif" font-size="72" font-weight="900" text-anchor="middle" fill="#1a1a1a">1</text>
+
+  <!-- BOTTOM RIGHT: English letters X N G -->
+  <text x="278" y="338" font-family="'Arial','Helvetica',sans-serif" font-size="58" font-weight="900" text-anchor="middle" fill="#1a1a1a" letter-spacing="6">XNG</text>
+
+  <!-- KSA strip: Saudi emblem (simplified palm + swords) -->
+  <!-- Palm tree trunk -->
+  <rect x="439" y="210" width="6" height="40" fill="#1a1a1a"/>
+  <!-- Palm fronds -->
+  <ellipse cx="442" cy="205" rx="18" ry="8" fill="#1a1a1a" transform="rotate(-30 442 205)"/>
+  <ellipse cx="442" cy="205" rx="18" ry="8" fill="#1a1a1a" transform="rotate(30 442 205)"/>
+  <ellipse cx="442" cy="202" rx="12" ry="6" fill="#1a1a1a" transform="rotate(-70 442 202)"/>
+  <ellipse cx="442" cy="202" rx="12" ry="6" fill="#1a1a1a" transform="rotate(70 442 202)"/>
+  <!-- Crossed swords -->
+  <line x1="424" y1="258" x2="460" y2="278" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+  <line x1="460" y1="258" x2="424" y2="278" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- KSA text -->
+  <text x="442" y="308" font-family="'Arial',sans-serif" font-size="14" text-anchor="middle" fill="#1a1a1a">السعودية</text>
+  <text x="442" y="332" font-family="'Arial',sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#1a1a1a">K S A</text>
+
+  <!-- Green stripe at bottom of KSA strip -->
+  <rect x="416" y="348" width="52" height="10" rx="3" fill="#006400"/>
+  <!-- Black circle -->
+  <circle cx="442" cy="370" r="8" fill="#1a1a1a"/>
+</svg>

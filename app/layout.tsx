@@ -6,6 +6,10 @@ export const metadata: Metadata = {
   title: "قناص اللوحات | PlateHunter KSA",
   description: "تطبيق ميداني لفرق استرداد المركبات في السعودية",
   manifest: "/manifest.json",
+  icons: [
+    { rel: "icon", url: "/icon.svg", type: "image/svg+xml" },
+    { rel: "apple-touch-icon", url: "/icon-192.png" },
+  ],
 };
 
 export const viewport: Viewport = {

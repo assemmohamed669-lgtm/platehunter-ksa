@@ -6,7 +6,7 @@ import { useRouter, usePathname } from "next/navigation";
 import SessionGuard from "@/components/SessionGuard";
 import BottomNav from "@/components/BottomNav";
 import ThemeToggle from "@/components/ThemeToggle";
-import PlateBadge from "@/components/PlateBadge";
+import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import { logoutAgent } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
@@ -44,7 +44,7 @@ export default function AppShellLayout({
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur">
           <div className="flex items-center gap-2">
             {!isHome && <BackButton />}
-            <PlateBadge value="قنص" size="sm" />
+            <PlateIcon size={56} />
             <span className="text-sm font-bold text-ink">قناص اللوحات</span>
           </div>
           <div className="flex items-center gap-2">
