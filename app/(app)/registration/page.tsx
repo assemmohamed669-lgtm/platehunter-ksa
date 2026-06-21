@@ -82,6 +82,7 @@ function playMatchAlert() {
 // ── Web Speech API types ─────────────────────────────────────────────────────
 interface SpeechRecognitionEvent {
   results: SpeechRecognitionResultList;
+  resultIndex: number;
 }
 interface SpeechRecognitionResultList {
   readonly length: number;
