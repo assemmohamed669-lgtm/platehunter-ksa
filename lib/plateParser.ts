@@ -37,6 +37,47 @@ export const VALID_AR_LETTERS = new Set([
 // Vehicle types the agent may mention
 const VEHICLE_TYPES = ["ونيت", "فان", "دباب", "مصدومة"];
 
+// Arabic letter names → the actual letter (speech recognizer returns names, not chars)
+// Sorted longest-first so "باء" matches before "با"
+const LETTER_NAMES: [string, string][] = [
+  ["ألف",  "ا"], ["الف",  "ا"],
+  ["باء",  "ب"], ["بَاء", "ب"], ["با",   "ب"], ["بي",   "ب"],
+  ["تاء",  "ت"], ["تَاء", "ت"],
+  ["ثاء",  "ث"],
+  ["جيم",  "ج"],
+  ["حاء",  "ح"], ["حَاء", "ح"], ["حا",   "ح"],
+  ["خاء",  "خ"],
+  ["دال",  "د"], ["دَال", "د"],
+  ["ذال",  "ذ"],
+  ["راء",  "ر"], ["رَاء", "ر"],
+  ["زاي",  "ز"],
+  ["سين",  "س"], ["سِين", "س"],
+  ["شين",  "ش"],
+  ["صاد",  "ص"], ["صَاد", "ص"],
+  ["ضاد",  "ض"],
+  ["طاء",  "ط"], ["طَاء", "ط"],
+  ["ظاء",  "ظ"],
+  ["عين",  "ع"], ["عَين", "ع"],
+  ["غين",  "غ"],
+  ["فاء",  "ف"],
+  ["قاف",  "ق"], ["قَاف", "ق"],
+  ["كاف",  "ك"], ["كَاف", "ك"],
+  ["لام",  "ل"], ["لَام", "ل"],
+  ["ميم",  "م"], ["مِيم", "م"],
+  ["نون",  "ن"], ["نُون", "ن"],
+  ["هاء",  "هـ"],["هَاء","هـ"],
+  ["واو",  "و"], ["وَاو", "و"],
+  ["ياء",  "ي"], ["يَاء", "ي"], ["يا",   "ي"],
+];
+
+function replaceLetterNames(text: string): string {
+  let result = text;
+  for (const [name, letter] of LETTER_NAMES) {
+    result = result.replace(new RegExp(name, "g"), ` ${letter} `);
+  }
+  return result.replace(/\s+/g, " ").trim();
+}
+
 // Spoken Arabic numbers → Western digits
 const SPOKEN_NUMBERS: Record<string, string> = {
   صفر: "0",
@@ -116,31 +157,41 @@ export function parsePlateFromTranscript(transcript: string): {
     }
   }
 
-  // Normalize
+  // Replace letter names first (speech recognizer returns "باء" not "ب")
+  text = replaceLetterNames(text);
+
+  // Normalize numerals and spoken number words
   text = normalizeNumerals(text);
   text = replaceSpokenNumbers(text);
 
   // Remove everything except valid plate letters, digits, and spaces
-  // Valid letters already cover ا-ي range but we be explicit
   const validChars = new RegExp(
     `[^اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي٠-٩0-9\\s]`,
     "g"
   );
   text = text.replace(validChars, "").replace(/\s+/g, " ").trim();
 
-  // Try to extract pattern: 1-3 Arabic letters followed by 1-4 digits
-  // Allow flexible spacing between letters and digits as speech may add spaces
-  const platePattern =
-    /([اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]\s*[اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]?\s*[اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]?)\s*(\d[\d\s]{0,6}\d|\d)/;
-  const match = text.match(platePattern);
+  const AR_LETTER = "[اأإبتثجحخدذرزسشصضطظعغفقكلمنهوي]";
+  const lettersGroup = `(${AR_LETTER}(?:\\s*${AR_LETTER}){0,2})`;
+  const digitsGroup  = `(\\d(?:\\s*\\d){0,3})`;
 
-  if (match) {
-    const letters = match[1].replace(/\s/g, "");
-    const digits = match[2].replace(/\s/g, "");
-    // Only accept if digits are 1-4 chars (valid plate number)
+  // Pattern 1: letters then digits  (بصي 1480)
+  const m1 = text.match(new RegExp(`${lettersGroup}\\s*${digitsGroup}`));
+  if (m1) {
+    const letters = m1[1].replace(/\s/g, "");
+    const digits  = m1[2].replace(/\s/g, "");
     if (digits.length >= 1 && digits.length <= 4) {
-      const plate = `${letters}${digits}`;
-      return { plate, vehicleType };
+      return { plate: `${letters}${digits}`, vehicleType };
+    }
+  }
+
+  // Pattern 2: digits then letters  (1480 بصي) — some speakers say it this way
+  const m2 = text.match(new RegExp(`${digitsGroup}\\s*${lettersGroup}`));
+  if (m2) {
+    const digits  = m2[1].replace(/\s/g, "");
+    const letters = m2[2].replace(/\s/g, "");
+    if (digits.length >= 1 && digits.length <= 4) {
+      return { plate: `${letters}${digits}`, vehicleType };
     }
   }
 
