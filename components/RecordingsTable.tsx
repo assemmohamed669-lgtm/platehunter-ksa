@@ -14,6 +14,7 @@ import {
   CheckSquare,
   Square,
 } from "lucide-react";
+import PlateBadge from "@/components/PlateBadge";
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates } from "@/lib/plateParser";
 
@@ -206,9 +207,11 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany }: 
                           ? <CheckCircle2 size={10} className="text-primary shrink-0" />
                           : <Clock size={10} className="text-muted shrink-0" />
                         }
-                        <span className={`font-bold ${isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
-                          {entry.plate}
-                        </span>
+                        {isPin ? (
+                          <span className="font-bold text-primary">{entry.plate}</span>
+                        ) : (
+                          <PlateBadge value={entry.plate} size="sm" />
+                        )}
                         {isDup && (
                           <span className="rounded-full bg-alert/20 px-1 py-0.5 text-[9px] font-bold text-alert leading-none">
                             مكرر
