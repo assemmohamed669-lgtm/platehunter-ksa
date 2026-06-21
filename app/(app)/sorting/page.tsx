@@ -18,8 +18,8 @@ import {
   ChevronDown,
   CheckSquare,
   Square,
+  Trash2,
 } from "lucide-react";
-import PlateBadge from "@/components/PlateBadge";
 import FileUploadBox from "@/components/FileUploadBox";
 import { supabase } from "@/lib/supabaseClient";
 import {
@@ -53,7 +53,7 @@ const PAGE_SIZE = 50;
 // shown separately, not part of this toggle list). Every other detected
 // column starts unchecked — the user opts into them deliberately.
 function guessDefaultColumns(headers: string[], exclude?: string | null): string[] {
-  const keywords = ["نوع", "ماركة", "الشركة", "الصانع", "manufacturer", "اللون", "color", "gps", "رابط", "موقع"];
+  const keywords = ["نوع", "ماركة", "الشركة", "الصانع", "manufacturer", "اللون", "لون", "color", "gps", "رابط", "موقع", "شارع", "حي", "منطقة"];
   return headers.filter(
     (h) => h !== exclude && keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
   );
@@ -391,6 +391,17 @@ export default function SortingPage() {
     );
   }
 
+  function deleteResult(i: number) {
+    const toRemove = displayResults[i];
+    setResults((prev) => prev ? prev.filter((r) => r !== toRemove) : null);
+    setSelectedResults(new Set());
+  }
+
+  function deletePasteResult(i: number) {
+    setPasteResults((prev) => prev.filter((_, idx) => idx !== i));
+    setSelectedPaste(new Set());
+  }
+
   if (!hydrated) {
     return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
   }
@@ -596,8 +607,8 @@ export default function SortingPage() {
                                 {isSelected ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                               </button>
                             </td>
-                            <td className="border-l border-border px-3 py-2">
-                              <PlateBadge value={plate} size="xs" />
+                            <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">
+                              {plate}
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap">
                               {isExact
@@ -636,6 +647,9 @@ export default function SortingPage() {
                                 </button>
                                 <button onClick={() => shareRowToWhatsApp(buildRowObject(r))} className="text-muted hover:text-primary transition">
                                   <Share2 size={13} />
+                                </button>
+                                <button onClick={() => deleteResult(i)} className="text-muted hover:text-danger transition">
+                                  <Trash2 size={13} />
                                 </button>
                               </div>
                             </td>
@@ -769,8 +783,8 @@ export default function SortingPage() {
                                 {isSelected ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                               </button>
                             </td>
-                            <td className="border-l border-border px-3 py-2">
-                              <PlateBadge value={p.converted} size="xs" />
+                            <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">
+                              {p.converted}
                             </td>
                             {[...outputCols].map((col) => {
                               const val = p.row[col] ?? "";
@@ -792,6 +806,9 @@ export default function SortingPage() {
                                 </button>
                                 <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} className="text-muted hover:text-primary transition">
                                   <Share2 size={13} />
+                                </button>
+                                <button onClick={() => deletePasteResult(i)} className="text-muted hover:text-danger transition">
+                                  <Trash2 size={13} />
                                 </button>
                               </div>
                             </td>
