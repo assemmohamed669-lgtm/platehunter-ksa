@@ -16,6 +16,8 @@ import {
   Download,
   ExternalLink,
   ChevronDown,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -43,7 +45,7 @@ import {
   type UploadedFileRecord,
 } from "@/lib/idb";
 
-const ZOOM_CLASSES = ["text-xs", "text-sm", "text-base", "text-lg"];
+const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
 
 // Pre-select exactly the columns the spec calls out as defaults: Vehicle
@@ -107,8 +109,11 @@ export default function SortingPage() {
 
   const [results, setResults] = useState<MatchResult[] | null>(null);
   const [sorted, setSorted] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
+  const [selectedPaste, setSelectedPaste] = useState<Set<number>>(new Set());
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [nearestActive, setNearestActive] = useState(false);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
@@ -352,6 +357,40 @@ export default function SortingPage() {
   const exactCount = results ? results.filter((r) => r.status === "exact").length : 0;
   const fuzzyCount = results ? results.filter((r) => r.status === "fuzzy").length : 0;
 
+  function shareRowToWhatsApp(rowObj: Record<string, unknown>) {
+    const text = buildRowSummaryText(rowObj);
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+
+  function shareSelectedToWhatsApp(indices: Set<number>, source: "files" | "paste") {
+    const rows = source === "files"
+      ? displayResults.filter((_, i) => indices.has(i)).map(buildRowObject)
+      : pasteResults.filter((_, i) => indices.has(i)).map(buildPasteRowObject);
+    const text = `*السيارات المطلوبة للسحب (${rows.length})*\n\n` +
+      rows.map((r, i) => `${i + 1}. 🚗 ${r["رقم اللوحة"]}\n` +
+        Object.entries(r).filter(([k]) => k !== "رقم اللوحة" && r[k])
+          .map(([k, v]) => `${k}: ${v}`).join("\n")
+      ).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+
+  function toggleResult(i: number) {
+    setSelectedResults((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  }
+  function toggleAllResults() {
+    setSelectedResults((prev) =>
+      prev.size === displayResults.length ? new Set() : new Set(displayResults.map((_, i) => i))
+    );
+  }
+  function togglePaste(i: number) {
+    setSelectedPaste((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  }
+  function toggleAllPaste() {
+    setSelectedPaste((prev) =>
+      prev.size === pasteResults.length ? new Set() : new Set(pasteResults.map((_, i) => i))
+    );
+  }
+
   if (!hydrated) {
     return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
   }
@@ -490,103 +529,143 @@ export default function SortingPage() {
                 </div>
               )}
 
-              <h2 className="text-base font-bold text-ink">السيارات المطلوبة للسحب</h2>
-
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setZoom((z) => Math.max(0, z - 1))}
-                    className="rounded-full border border-border p-1.5 text-muted hover:text-ink"
-                  >
+                <h2 className="text-base font-bold text-ink">السيارات المطلوبة للسحب</h2>
+                {gpsCol && (
+                  <button onClick={handleNearest} disabled={locating}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${
+                      nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"
+                    }`}>
+                    <Navigation size={13} />
+                    {locating ? "جارٍ..." : "الأقرب"}
+                  </button>
+                )}
+              </div>
+
+              {/* Zoom + select all */}
+              <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setZoom((z) => Math.max(0, z - 1))} disabled={zoom === 0}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 hover:text-ink transition">
                     <ZoomOut size={14} />
                   </button>
-                  <button
-                    onClick={() => setZoom((z) => Math.min(3, z + 1))}
-                    className="rounded-full border border-border p-1.5 text-muted hover:text-ink"
-                  >
+                  <span className="text-xs text-muted w-10 text-center">{Math.round(ZOOM_LEVELS[zoom] * 100)}%</span>
+                  <button onClick={() => setZoom((z) => Math.min(ZOOM_LEVELS.length - 1, z + 1))} disabled={zoom === ZOOM_LEVELS.length - 1}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 hover:text-ink transition">
                     <ZoomIn size={14} />
                   </button>
                 </div>
-                {gpsCol && (
-                  <button
-                    onClick={handleNearest}
-                    disabled={locating}
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${
-                      nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"
-                    }`}
-                  >
-                    <Navigation size={13} />
-                    {locating ? "جارٍ تحديد الموقع..." : "الأقرب لموقعي"}
-                  </button>
-                )}
+                <button onClick={toggleAllResults}
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                  {selectedResults.size === displayResults.length && displayResults.length > 0
+                    ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                  {selectedResults.size === displayResults.length && displayResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                </button>
               </div>
 
-              <div className="flex flex-col gap-2">
-                {displayResults.slice(0, visibleCount).map((r, i) => {
-                  const plate = plateForRow(r);
-                  const gpsLink = gpsCol ? r.dataRow?.[gpsCol] ?? "" : "";
-                  return (
-                    <div
-                      key={i}
-                      className={`rounded-xl border p-3 ${ZOOM_CLASSES[zoom]} ${
-                        r.status === "exact" ? "border-glow/60 bg-glow/10 shadow-glow" : "border-alert/50 bg-alert/10"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <PlateBadge value={plate} size="sm" />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {r.status === "exact" ? (
-                            <span className="flex items-center gap-1 text-xs font-bold text-glow">
-                              <CheckCircle2 size={13} /> مطابقة كاملة
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1 text-xs font-bold text-alert">
-                              <AlertTriangle size={13} /> {r.similarity}%
-                            </span>
-                          )}
-                          <ResultActions rowObj={buildRowObject(r)} />
-                        </div>
-                      </div>
-
-                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
-                        {[...outputCols].map(
-                          (col) =>
-                            r.dataRow?.[col] && (
-                              <span key={col}>
-                                {col}: {r.dataRow[col]}
-                              </span>
-                            )
-                        )}
-                        {nearestActive && "_dist" in r && Number.isFinite((r as { _dist: number })._dist) && (
-                          <span className="font-bold text-primary">
-                            📍 {(r as { _dist: number })._dist.toFixed(1)} كم
-                          </span>
-                        )}
-                      </div>
-
-                      {gpsLink && (
-                        <a href={gpsLink} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-primary underline">
-                          فتح في الخريطة
-                        </a>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {displayResults.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد تطابقات.</p>}
-
-                {displayResults.length > visibleCount && (
-                  <button
-                    onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}
-                    className="flex items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-sm text-muted hover:text-ink transition"
-                  >
-                    <ChevronDown size={15} />
-                    تحميل المزيد ({displayResults.length - visibleCount} متبقي)
-                  </button>
-                )}
+              {/* Table */}
+              <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+                <div style={{ fontSize: `${ZOOM_LEVELS[zoom] * 12}px`, minWidth: "max-content" }}>
+                  <table className="border-collapse w-full" style={{ direction: "rtl" }}>
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-surface-2 text-muted">
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
+                        <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                        <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">نوع التطابق</th>
+                        {[...outputCols].map((col) => (
+                          <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
+                        ))}
+                        {[...referralExtraCols].map((col) => (
+                          <th key={`ref-${col}`} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
+                        ))}
+                        {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
+                        <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayResults.slice(0, visibleCount).map((r, i) => {
+                        const plate = plateForRow(r);
+                        const isExact = r.status === "exact";
+                        const isSelected = selectedResults.has(i);
+                        return (
+                          <tr key={i} className={`border-b border-border transition ${
+                            isSelected ? "bg-primary/15" : isExact ? "bg-glow/5 hover:bg-glow/15" : "bg-alert/5 hover:bg-alert/10"
+                          }`}>
+                            <td className="border-l border-border px-2 py-2 text-center">
+                              <button onClick={() => toggleResult(i)} className="text-muted hover:text-primary transition">
+                                {isSelected ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                              </button>
+                            </td>
+                            <td className="border-l border-border px-3 py-2">
+                              <PlateBadge value={plate} size="sm" />
+                            </td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                              {isExact
+                                ? <span className="flex items-center gap-1 font-bold text-glow"><CheckCircle2 size={12} /> مطابقة</span>
+                                : <span className="flex items-center gap-1 font-bold text-alert"><AlertTriangle size={12} /> {r.similarity}%</span>
+                              }
+                            </td>
+                            {[...outputCols].map((col) => {
+                              const val = r.dataRow?.[col] ?? "";
+                              return (
+                                <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                                  {/^https?:\/\//i.test(String(val))
+                                    ? <a href={String(val)} target="_blank" rel="noopener noreferrer" className="text-primary underline">📍 خريطة</a>
+                                    : String(val) || "—"}
+                                </td>
+                              );
+                            })}
+                            {[...referralExtraCols].map((col) => (
+                              <td key={`ref-${col}`} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                                {r.referralRow[col] || "—"}
+                              </td>
+                            ))}
+                            {nearestActive && "_dist" in r && (
+                              <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">
+                                {Number.isFinite((r as { _dist: number })._dist)
+                                  ? `${(r as { _dist: number })._dist.toFixed(1)} كم` : "—"}
+                              </td>
+                            )}
+                            <td className="px-2 py-2">
+                              <div className="flex items-center gap-2">
+                                <button onClick={async () => {
+                                  await navigator.clipboard.writeText(buildRowSummaryText(buildRowObject(r)));
+                                  setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1200);
+                                }} className="text-muted hover:text-primary transition">
+                                  {copiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                </button>
+                                <button onClick={() => shareRowToWhatsApp(buildRowObject(r))} className="text-muted hover:text-primary transition">
+                                  <Share2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {displayResults.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد تطابقات.</p>}
+                </div>
               </div>
+
+              {displayResults.length > visibleCount && (
+                <button onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-sm text-muted hover:text-ink transition">
+                  <ChevronDown size={15} />
+                  تحميل المزيد ({displayResults.length - visibleCount} متبقي)
+                </button>
+              )}
+
+              {/* Bulk action bar */}
+              {selectedResults.size > 0 && (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-lg">
+                  <span className="text-xs font-bold text-ink">{selectedResults.size} محددة</span>
+                  <button onClick={() => shareSelectedToWhatsApp(selectedResults, "files")}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
+                    <Share2 size={13} /> واتساب
+                  </button>
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <button
@@ -642,53 +721,115 @@ export default function SortingPage() {
           )}
 
           {pasteRan && pasteResults.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {pasteResults.slice(0, pasteVisibleCount).map((p, i) => (
-                <div key={i} className="rounded-xl border border-glow/60 bg-glow/10 p-3 shadow-glow">
-                  <div className="flex items-center justify-between">
-                    <PlateBadge value={p.converted} size="sm" />
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 size={16} className="text-glow" />
-                      <ResultActions rowObj={buildPasteRowObject(p)} />
-                    </div>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
-                    {[...outputCols].map(
-                      (col) =>
-                        p.row[col] && (
-                          <span key={col}>
-                            {col}: {p.row[col]}
-                          </span>
-                        )
-                    )}
-                  </div>
+            <div className="flex flex-col gap-3">
+              {/* Zoom + select all */}
+              <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setZoom((z) => Math.max(0, z - 1))} disabled={zoom === 0}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 hover:text-ink transition">
+                    <ZoomOut size={14} />
+                  </button>
+                  <span className="text-xs text-muted w-10 text-center">{Math.round(ZOOM_LEVELS[zoom] * 100)}%</span>
+                  <button onClick={() => setZoom((z) => Math.min(ZOOM_LEVELS.length - 1, z + 1))} disabled={zoom === ZOOM_LEVELS.length - 1}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 hover:text-ink transition">
+                    <ZoomIn size={14} />
+                  </button>
                 </div>
-              ))}
+                <button onClick={toggleAllPaste}
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                  {selectedPaste.size === pasteResults.length && pasteResults.length > 0
+                    ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                  {selectedPaste.size === pasteResults.length && pasteResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                </button>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+                <div style={{ fontSize: `${ZOOM_LEVELS[zoom] * 12}px`, minWidth: "max-content" }}>
+                  <table className="border-collapse w-full" style={{ direction: "rtl" }}>
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-surface-2 text-muted">
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
+                        <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                        {[...outputCols].map((col) => (
+                          <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
+                        ))}
+                        <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pasteResults.slice(0, pasteVisibleCount).map((p, i) => {
+                        const isSelected = selectedPaste.has(i);
+                        return (
+                          <tr key={i} className={`border-b border-border transition ${
+                            isSelected ? "bg-primary/15" : "bg-glow/5 hover:bg-glow/15"
+                          }`}>
+                            <td className="border-l border-border px-2 py-2 text-center">
+                              <button onClick={() => togglePaste(i)} className="text-muted hover:text-primary transition">
+                                {isSelected ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                              </button>
+                            </td>
+                            <td className="border-l border-border px-3 py-2">
+                              <PlateBadge value={p.converted} size="sm" />
+                            </td>
+                            {[...outputCols].map((col) => {
+                              const val = p.row[col] ?? "";
+                              return (
+                                <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                                  {/^https?:\/\//i.test(val)
+                                    ? <a href={val} target="_blank" rel="noopener noreferrer" className="text-primary underline">📍 خريطة</a>
+                                    : val || "—"}
+                                </td>
+                              );
+                            })}
+                            <td className="px-2 py-2">
+                              <div className="flex items-center gap-2">
+                                <button onClick={async () => {
+                                  await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRowObject(p)));
+                                  setCopiedIdx(i + 10000); setTimeout(() => setCopiedIdx(null), 1200);
+                                }} className="text-muted hover:text-primary transition">
+                                  {copiedIdx === i + 10000 ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                </button>
+                                <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} className="text-muted hover:text-primary transition">
+                                  <Share2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
 
               {pasteResults.length > pasteVisibleCount && (
-                <button
-                  onClick={() => setPasteVisibleCount((v) => v + PAGE_SIZE)}
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-sm text-muted hover:text-ink transition"
-                >
+                <button onClick={() => setPasteVisibleCount((v) => v + PAGE_SIZE)}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-sm text-muted hover:text-ink transition">
                   <ChevronDown size={15} />
                   تحميل المزيد ({pasteResults.length - pasteVisibleCount} متبقي)
                 </button>
               )}
 
+              {/* Bulk action bar */}
+              {selectedPaste.size > 0 && (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                  <span className="text-xs font-bold text-ink">{selectedPaste.size} محددة</span>
+                  <button onClick={() => shareSelectedToWhatsApp(selectedPaste, "paste")}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night">
+                    <Share2 size={13} /> واتساب
+                  </button>
+                </div>
+              )}
+
               <div className="flex gap-2">
-                <button
-                  onClick={handleDownloadPaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
-                >
-                  <Download size={16} />
-                  حفظ الملف
+                <button onClick={handleDownloadPaste}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
+                  <Download size={16} /> حفظ الملف
                 </button>
-                <button
-                  onClick={handleOpenPaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
-                >
-                  <ExternalLink size={16} />
-                  فتح في Excel
+                <button onClick={handleOpenPaste}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
+                  <ExternalLink size={16} /> فتح في Excel
                 </button>
               </div>
             </div>
