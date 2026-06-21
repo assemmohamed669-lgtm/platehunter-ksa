@@ -208,6 +208,14 @@ export default function RegistrationPage() {
   // Match modal
   const [matchedPlate, setMatchedPlate] = useState<MatchedPlate | null>(null);
 
+  // Debug panel
+  const [debugVisible, setDebugVisible] = useState(false);
+  const [debugRaw, setDebugRaw] = useState("");
+  const [debugFinal, setDebugFinal] = useState("");
+  const [debugPlate, setDebugPlate] = useState("");
+  const [debugVehicle, setDebugVehicle] = useState("");
+  const [debugNotes, setDebugNotes] = useState("");
+
   // MediaRecorder
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -320,6 +328,8 @@ export default function RegistrationPage() {
       }
       finalTranscriptRef.current = final;
       setLiveTranscript(final + interim);
+      // Debug: show raw text as it arrives
+      setDebugRaw(final + interim);
     };
 
     recognition.onerror = (event: { error: string }) => {
@@ -376,10 +386,28 @@ export default function RegistrationPage() {
     let plate = "";
     let vehicleType: string | undefined;
 
+    // Debug: record final transcript before parsing
+    setDebugFinal(transcript || "(فارغ)");
+    setDebugPlate("");
+    setDebugVehicle("");
+    setDebugNotes("");
+
     if (transcript) {
       const parsed = parsePlateFromTranscript(transcript);
       plate = parsed.plate;
       vehicleType = parsed.vehicleType;
+
+      // Debug: show parsing results
+      setDebugPlate(plate || "(لم يُستخرج)");
+      setDebugVehicle(vehicleType || "(لم يُستخرج)");
+      // Notes: anything left after removing plate and vehicle type
+      const notesGuess = transcript
+        .replace(plate, "")
+        .replace(vehicleType ?? "", "")
+        .trim();
+      setDebugNotes(notesGuess || "(لا يوجد)");
+    } else {
+      setDebugPlate("(transcript فارغ)");
     }
 
     if (!plate) plate = "لم يُتعرف على اللوحة";
@@ -742,6 +770,55 @@ export default function RegistrationPage() {
             </span>
           )}
         </button>
+      </div>
+
+      {/* Debug Panel */}
+      <div className="rounded-xl border border-border bg-surface">
+        <button
+          onClick={() => setDebugVisible((v) => !v)}
+          className="flex w-full items-center justify-between px-4 py-3 text-xs font-bold text-muted hover:text-ink transition"
+        >
+          <span>🛠 Debug Panel (تشخيص التفريغ الصوتي)</span>
+          <span>{debugVisible ? "▲ إخفاء" : "▼ إظهار"}</span>
+        </button>
+        {debugVisible && (
+          <div className="border-t border-border px-4 pb-4 pt-3 flex flex-col gap-3" dir="rtl">
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">1 — Raw Transcript (النص الخام)</p>
+              <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink font-mono">
+                {debugRaw || "(لم يبدأ التسجيل بعد)"}
+              </pre>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">2 — Final Transcript (النص النهائي)</p>
+              <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink font-mono">
+                {debugFinal || "(لم ينته التسجيل بعد)"}
+              </pre>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">3 — Plate Parsing Result (رقم اللوحة)</p>
+              <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
+                debugPlate && !debugPlate.startsWith("(") ? "bg-primary/10 text-primary font-bold" : "bg-surface-2 text-alert"
+              }`}>
+                {debugPlate || "(لم يُنفَّذ بعد)"}
+              </pre>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">4 — Vehicle Type Result (نوع السيارة)</p>
+              <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
+                debugVehicle && !debugVehicle.startsWith("(") ? "bg-primary/10 text-primary" : "bg-surface-2 text-muted"
+              }`}>
+                {debugVehicle || "(لم يُنفَّذ بعد)"}
+              </pre>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">5 — Notes Result (الملاحظات المتبقية)</p>
+              <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted font-mono">
+                {debugNotes || "(لم يُنفَّذ بعد)"}
+              </pre>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Manual plate entry */}
