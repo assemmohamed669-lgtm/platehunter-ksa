@@ -225,6 +225,7 @@ export default function RegistrationPage() {
   // Speech recognition
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const finalTranscriptRef = useRef<string>("");
+  const liveTranscriptRef  = useRef<string>("");   // ref so stopRecording always sees latest value
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -304,6 +305,7 @@ export default function RegistrationPage() {
     setRecordingError(null);
     setLiveTranscript("");
     finalTranscriptRef.current = "";
+    liveTranscriptRef.current  = "";
 
     const recognition = createSpeechRecognition();
     if (!recognition) {
@@ -319,7 +321,8 @@ export default function RegistrationPage() {
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let final = finalTranscriptRef.current;
-      for (let i = 0; i < event.results.length; i++) {
+      // Start from resultIndex — avoids re-adding already-finalized segments
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
           final += result[0].transcript + " ";
@@ -328,8 +331,8 @@ export default function RegistrationPage() {
         }
       }
       finalTranscriptRef.current = final;
+      liveTranscriptRef.current  = final + interim;   // always current, no React batching
       setLiveTranscript(final + interim);
-      // Debug: show raw text as it arrives
       setDebugRaw(final + interim);
     };
 
@@ -375,8 +378,10 @@ export default function RegistrationPage() {
     setIsRecording(false);
     setIsTranscribing(true);
     await new Promise((r) => setTimeout(r, 600));
-    const transcript = finalTranscriptRef.current.trim() || liveTranscript.trim();
+    // Use ref values — never stale unlike React state
+    const transcript = finalTranscriptRef.current.trim() || liveTranscriptRef.current.trim();
     setLiveTranscript("");
+    liveTranscriptRef.current = "";
     await saveTranscript(transcript);
     setIsTranscribing(false);
   }
