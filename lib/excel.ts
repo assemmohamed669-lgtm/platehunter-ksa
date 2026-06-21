@@ -187,31 +187,34 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
 }
 
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
-  // Try uploading to Supabase Storage and opening via intent (Android) or ms-excel (desktop)
+  // On native Android (Capacitor): write to filesystem then open with FileOpener
   try {
-    const { supabase } = await import("./supabaseClient");
-    const path = `temp/${Date.now()}_${filename}`;
-    const { error } = await supabase.storage.from("exports").upload(path, blob, {
-      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      upsert: true,
-    });
-    if (!error) {
-      const { data } = supabase.storage.from("exports").getPublicUrl(path);
-      const url = data.publicUrl;
-      const isAndroid = /android/i.test(navigator.userAgent);
-      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const { Capacitor } = await import("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      const { Filesystem, Directory } = await import("@capacitor/filesystem");
+      const { FileOpener } = await import("@capacitor-community/file-opener");
 
-      if (isIOS) {
-        // iOS: ms-excel protocol
-        window.location.href = `ms-excel:ofv|u|${url}`;
-      } else {
-        // Android + Desktop: open public URL — OS will ask "open with Excel"
-        window.location.href = url;
-      }
+      const arrayBuffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+
+      const { uri } = await Filesystem.writeFile({
+        path: filename,
+        data: base64,
+        directory: Directory.Cache,
+      });
+
+      await FileOpener.open({
+        filePath: uri,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       return "opened";
     }
-  } catch { /* fallback to download */ }
+  } catch { /* not native or plugin unavailable */ }
 
+  // Web fallback: download normally
   downloadExcelBlob(blob, filename);
   return "downloaded";
 }

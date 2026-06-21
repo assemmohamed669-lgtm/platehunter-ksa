@@ -9,6 +9,11 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@capacitor-community/file-opener": "^8.0.1",
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/filesystem": "^8.1.2",
     "@supabase/supabase-js": "^2.45.4",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.383.0",
