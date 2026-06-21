@@ -40,7 +40,7 @@ export default function TestSpeech() {
     <div style={{ padding: 24, fontFamily: 'monospace', direction: 'ltr' }}>
       <button
         onClick={startTest}
-        style={{ padding: '16px 32px', fontSize: 18, display: 'block', marginBottom: 24 }}
+        style={{ padding: '16px 32px', fontSize: 18, display: 'block', marginBottom: 24, background: '#00cc44', color: '#000', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
       >
         Test Speech
       </button>
