@@ -35,11 +35,13 @@ export default function PlateBadge({
   size = "md",
 }: {
   value: string;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
 }) {
   const cells = buildScreenOrder(value);
   const sizeClasses =
-    size === "sm"
+    size === "xs"
+      ? "min-w-[1.1rem] h-5 text-[10px]"
+      : size === "sm"
       ? "min-w-[1.75rem] h-9 text-base"
       : size === "lg"
       ? "min-w-[3.5rem] h-16 text-3xl"

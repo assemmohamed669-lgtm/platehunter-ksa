@@ -597,7 +597,7 @@ export default function SortingPage() {
                               </button>
                             </td>
                             <td className="border-l border-border px-3 py-2">
-                              <PlateBadge value={plate} size="sm" />
+                              <PlateBadge value={plate} size="xs" />
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap">
                               {isExact
@@ -770,7 +770,7 @@ export default function SortingPage() {
                               </button>
                             </td>
                             <td className="border-l border-border px-3 py-2">
-                              <PlateBadge value={p.converted} size="sm" />
+                              <PlateBadge value={p.converted} size="xs" />
                             </td>
                             {[...outputCols].map((col) => {
                               const val = p.row[col] ?? "";
