@@ -345,10 +345,15 @@ export default function RegistrationPage() {
 
     recognitionRef.current = recognition;
 
+    // SR must start FIRST — on Android, getUserMedia blocks the mic for SR
+    gpsAtRecordRef.current = gpsService.getLastCoords();
+    chunksRef.current = [];
+    recognition.start();
+    setIsRecording(true);
+
+    // MediaRecorder is secondary (audio playback only) — start after SR
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      gpsAtRecordRef.current = gpsService.getLastCoords();
-      chunksRef.current = [];
 
       const mr = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -365,11 +370,8 @@ export default function RegistrationPage() {
       mr.start(100);
       mediaRecorderRef.current = mr;
     } catch {
-      // Continue without audio blob if mic access fails
+      // MediaRecorder unavailable (mic already held by SR on some devices) — no audio blob
     }
-
-    recognition.start();
-    setIsRecording(true);
   }
 
   async function stopRecording() {
