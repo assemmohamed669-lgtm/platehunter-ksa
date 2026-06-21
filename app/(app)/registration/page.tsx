@@ -108,6 +108,7 @@ interface SpeechRecognitionInstance extends EventTarget {
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
+  onstart: (() => void) | null;
 }
 
 function createSpeechRecognition(): SpeechRecognitionInstance | null {
@@ -226,7 +227,11 @@ export default function RegistrationPage() {
   // Speech recognition
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const finalTranscriptRef = useRef<string>("");
-  const liveTranscriptRef  = useRef<string>("");   // ref so stopRecording always sees latest value
+  const liveTranscriptRef  = useRef<string>("");
+  const isRecordingRef     = useRef<boolean>(false); // ref so onend auto-restart sees current state
+
+  // SR status for debug
+  const [debugStatus, setDebugStatus] = useState("");
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -305,6 +310,7 @@ export default function RegistrationPage() {
   async function startRecording() {
     setRecordingError(null);
     setLiveTranscript("");
+    setDebugStatus("");
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
 
@@ -315,14 +321,17 @@ export default function RegistrationPage() {
     }
 
     recognition.lang = "ar-SA";
-    recognition.continuous = true;
+    recognition.continuous = false;  // continuous=true silently fails on Android WebView
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setDebugStatus("✅ STARTED");
+    };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let final = finalTranscriptRef.current;
-      // Start from resultIndex — avoids re-adding already-finalized segments
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
@@ -332,14 +341,24 @@ export default function RegistrationPage() {
         }
       }
       finalTranscriptRef.current = final;
-      liveTranscriptRef.current  = final + interim;   // always current, no React batching
+      liveTranscriptRef.current  = final + interim;
       setLiveTranscript(final + interim);
       setDebugRaw(final + interim);
     };
 
     recognition.onerror = (event: { error: string }) => {
-      if (event.error !== "aborted") {
+      setDebugStatus(`❌ ERROR: ${event.error}`);
+      if (event.error !== "aborted" && event.error !== "no-speech") {
         setRecordingError(`خطأ في التعرف الصوتي: ${event.error}`);
+      }
+    };
+
+    // With continuous=false, SR stops after each utterance.
+    // Auto-restart while user is still holding the button.
+    recognition.onend = () => {
+      setDebugStatus((prev) => prev.startsWith("✅") ? "🔄 RESTARTING…" : prev);
+      if (isRecordingRef.current) {
+        try { recognition.start(); } catch { /* stopping */ }
       }
     };
 
@@ -347,12 +366,14 @@ export default function RegistrationPage() {
     gpsAtRecordRef.current = gpsService.getLastCoords();
     chunksRef.current = [];
 
+    isRecordingRef.current = true;
     recognition.start();
     setIsRecording(true);
   }
 
   async function stopRecording() {
     if (!isRecording) return;
+    isRecordingRef.current = false;   // must clear BEFORE .stop() so onend doesn't restart
     recognitionRef.current?.stop();
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
@@ -765,6 +786,15 @@ export default function RegistrationPage() {
         </button>
         {debugVisible && (
           <div className="border-t border-border px-4 pb-4 pt-3 flex flex-col gap-3" dir="rtl">
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">0 — SR Status (حالة التعرف الصوتي)</p>
+              <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
+                debugStatus.startsWith("✅") || debugStatus.startsWith("🔄") ? "bg-primary/10 text-primary" :
+                debugStatus.startsWith("❌") ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"
+              }`}>
+                {debugStatus || "(لم يبدأ بعد)"}
+              </pre>
+            </div>
             <div>
               <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">1 — Raw Transcript (النص الخام)</p>
               <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink font-mono">
