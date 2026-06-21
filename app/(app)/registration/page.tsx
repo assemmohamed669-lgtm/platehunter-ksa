@@ -212,6 +212,7 @@ export default function RegistrationPage() {
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugRaw, setDebugRaw] = useState("");
   const [debugFinal, setDebugFinal] = useState("");
+  const [debugNormalized, setDebugNormalized] = useState("");
   const [debugPlate, setDebugPlate] = useState("");
   const [debugVehicle, setDebugVehicle] = useState("");
   const [debugNotes, setDebugNotes] = useState("");
@@ -388,6 +389,7 @@ export default function RegistrationPage() {
 
     // Debug: record final transcript before parsing
     setDebugFinal(transcript || "(فارغ)");
+    setDebugNormalized("");
     setDebugPlate("");
     setDebugVehicle("");
     setDebugNotes("");
@@ -397,15 +399,10 @@ export default function RegistrationPage() {
       plate = parsed.plate;
       vehicleType = parsed.vehicleType;
 
-      // Debug: show parsing results
+      setDebugNormalized(parsed.normalized || "(فارغ)");
       setDebugPlate(plate || "(لم يُستخرج)");
       setDebugVehicle(vehicleType || "(لم يُستخرج)");
-      // Notes: anything left after removing plate and vehicle type
-      const notesGuess = transcript
-        .replace(plate, "")
-        .replace(vehicleType ?? "", "")
-        .trim();
-      setDebugNotes(notesGuess || "(لا يوجد)");
+      setDebugNotes(parsed.notes || "(لا يوجد)");
     } else {
       setDebugPlate("(transcript فارغ)");
     }
@@ -790,13 +787,19 @@ export default function RegistrationPage() {
               </pre>
             </div>
             <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">2 — Final Transcript (النص النهائي)</p>
-              <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink font-mono">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">2 — Original Transcript (النص الأصلي من SR)</p>
+              <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink font-mono" dir="rtl">
                 {debugFinal || "(لم ينته التسجيل بعد)"}
               </pre>
             </div>
             <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">3 — Plate Parsing Result (رقم اللوحة)</p>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">3 — Normalized Transcript (بعد التطبيع)</p>
+              <pre className="whitespace-pre-wrap break-all rounded-lg bg-primary/5 border border-primary/20 px-3 py-2 text-xs text-ink font-mono" dir="rtl">
+                {debugNormalized || "(لم يُطبَّع بعد)"}
+              </pre>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">4 — Plate Parsing Result (رقم اللوحة)</p>
               <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
                 debugPlate && !debugPlate.startsWith("(") ? "bg-primary/10 text-primary font-bold" : "bg-surface-2 text-alert"
               }`}>
@@ -804,7 +807,7 @@ export default function RegistrationPage() {
               </pre>
             </div>
             <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">4 — Vehicle Type Result (نوع السيارة)</p>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">5 — Vehicle Type Result (نوع السيارة)</p>
               <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
                 debugVehicle && !debugVehicle.startsWith("(") ? "bg-primary/10 text-primary" : "bg-surface-2 text-muted"
               }`}>
@@ -812,7 +815,7 @@ export default function RegistrationPage() {
               </pre>
             </div>
             <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">5 — Notes Result (الملاحظات المتبقية)</p>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">6 — Notes Result (الملاحظات المتبقية)</p>
               <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted font-mono">
                 {debugNotes || "(لم يُنفَّذ بعد)"}
               </pre>
