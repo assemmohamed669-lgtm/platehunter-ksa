@@ -23,9 +23,11 @@ function buildScreenOrder(value: string): string[] {
     else letters.push(ch);
   }
 
-  // Saudi plate format: letters right-to-left then digits left-to-right.
-  // Visual order in LTR box row: letters (ق ن ص) then digits (1 2 3 4).
-  return [...letters, ...digits];
+  // Saudi plate visual layout (LTR box): digits on the left, letters on the right.
+  // Letters must be reversed so the first letter in the string (e.g. ب in بصي)
+  // ends up at the far right — matching how plates are read right-to-left.
+  // e.g. "بصي1480" → [1][4][8][0][ي][ص][ب]  (ب = rightmost)
+  return [...digits, ...letters.reverse()];
 }
 
 export default function PlateBadge({
