@@ -314,7 +314,7 @@ export default function RegistrationPage() {
       return;
     }
 
-    recognition.lang = "ar";
+    recognition.lang = "ar-SA";
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
