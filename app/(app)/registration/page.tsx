@@ -12,19 +12,15 @@ import {
   MapPin,
   Wifi,
   WifiOff,
-  Trash2,
-  Play,
-  Pause,
   Download,
   RefreshCw,
-  CheckCircle2,
   AlertCircle,
-  Clock,
   FileUp,
   X,
   AlertTriangle,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
+import RecordingsTable from "@/components/RecordingsTable";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import {
@@ -778,124 +774,26 @@ export default function RegistrationPage() {
         </p>
       </div>
 
-      {/* Recordings list */}
-      {recordings.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <h2 className="text-sm font-bold text-ink">السجلات</h2>
-          {recordings.map((entry) => (
-            <div
-              key={entry.localId}
-              className={`rounded-xl border p-3 transition ${dupClass(entry.plate)}`}
-            >
-              {/* Top row: plate + sync status */}
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  {entry.plate.startsWith("📍") ? (
-                    <span className="text-sm font-bold text-primary">{entry.plate}</span>
-                  ) : (
-                    <PlateBadge value={entry.plate} size="sm" />
-                  )}
-                  {entry.vehicleType && (
-                    <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                      {entry.vehicleType}
-                    </span>
-                  )}
-                  {duplicates.has(entry.plate.replace(/\s/g, "").toLowerCase()) && (
-                    <span className="rounded-full bg-alert/20 px-2 py-0.5 text-xs font-bold text-alert">
-                      مكرر!
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {entry.synced ? (
-                    <CheckCircle2 size={14} className="text-primary" />
-                  ) : (
-                    <Clock size={14} className="text-muted" />
-                  )}
-                  <button
-                    onClick={() => handleDelete(entry.localId)}
-                    className="text-muted hover:text-danger transition"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Location */}
-              {(entry.street || entry.lat) && (
-                <div className="mb-1.5 flex items-center gap-1 text-xs text-muted">
-                  <MapPin size={11} />
-                  {entry.street
-                    ? `${entry.street}${entry.district ? " • " + entry.district : ""}`
-                    : `${entry.lat?.toFixed(4)}°N, ${entry.lng?.toFixed(4)}°E`}
-                  {entry.mapsLink && (
-                    <a
-                      href={entry.mapsLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mr-1 text-primary underline"
-                    >
-                      خريطة
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {/* Timestamp */}
-              <p className="mb-2 text-xs text-muted">{formatDate(entry.recordedAt)}</p>
-
-              {/* Notes input */}
-              {!entry.plate.startsWith("📍") && (
-                <input
-                  type="text"
-                  placeholder="ملاحظات... (اختياري)"
-                  value={entry.notes ?? ""}
-                  onChange={(e) => handleNotesChange(entry.localId, e.target.value)}
-                  className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs text-ink placeholder:text-muted focus:border-primary focus:outline-none"
-                  dir="rtl"
-                />
-              )}
-
-              {/* Audio player */}
-              {entry.audioBlobBase64 && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => togglePlay(entry)}
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-primary hover:bg-primary/30 transition"
-                  >
-                    {playingId === entry.localId ? <Pause size={14} /> : <Play size={14} />}
-                  </button>
-                  <div className="flex gap-1">
-                    {SPEEDS.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => setSpeed(entry.localId, s)}
-                        className={`rounded-full px-2 py-0.5 text-xs transition ${
-                          (playSpeed[entry.localId] ?? 1) === s
-                            ? "bg-primary text-night font-bold"
-                            : "border border-border text-muted hover:text-ink"
-                        }`}
-                      >
-                        {s}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {recordings.length === 0 && !isTranscribing && (
-        <div className="flex flex-col items-center gap-2 py-10 text-center">
-          <Mic size={32} className="text-muted/40" />
-          <p className="text-sm text-muted">
-            لا توجد سجلات بعد.
-            <br />
-            اضغط على الزر واتكلم لتسجيل لوحة.
-          </p>
-        </div>
+      {/* Recordings table */}
+      {recordings.length > 0 ? (
+        <RecordingsTable
+          recordings={recordings}
+          onDelete={handleDelete}
+          onDeleteMany={async (ids) => {
+            for (const id of ids) await handleDelete(id);
+          }}
+        />
+      ) : (
+        !isTranscribing && (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            <Mic size={32} className="text-muted/40" />
+            <p className="text-sm text-muted">
+              لا توجد سجلات بعد.
+              <br />
+              اضغط على الزر واتكلم لتسجيل لوحة.
+            </p>
+          </div>
+        )
       )}
     </div>
   );

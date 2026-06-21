@@ -1,42 +1,16 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import {
-  Search,
-  Download,
-  RefreshCw,
-  Trash2,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
-  Database,
-  MapPin,
-} from "lucide-react";
+import { useState, useEffect } from "react";
+import { Download, RefreshCw } from "lucide-react";
+import RecordingsTable from "@/components/RecordingsTable";
 import { getAllRecordings, deleteRecording, type RecordingEntry } from "@/lib/idb";
 import { syncPending } from "@/lib/sync";
-import { findDuplicates } from "@/lib/plateParser";
 import { exportRecordingsToExcel } from "@/lib/excel";
 import { supabase } from "@/lib/supabaseClient";
-
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-}
-
-const COLUMNS: { key: keyof RecordingEntry; label: string }[] = [
-  { key: "plate",        label: "رقم اللوحة" },
-  { key: "vehicleType",  label: "نوع السيارة" },
-  { key: "street",       label: "الشارع" },
-  { key: "district",     label: "الحي" },
-  { key: "recordedAt",   label: "التاريخ" },
-  { key: "notes",        label: "ملاحظات" },
-  { key: "recorderName", label: "المسجّل" },
-];
 
 export default function CheckingPage() {
   const [agentId, setAgentId] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
-  const [search, setSearch] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportPass, setExportPass] = useState("");
@@ -70,6 +44,11 @@ export default function CheckingPage() {
     if (agentId) load(agentId);
   }
 
+  async function handleDeleteMany(ids: string[]) {
+    for (const id of ids) await deleteRecording(id);
+    if (agentId) load(agentId);
+  }
+
   async function handleExport() {
     setExportPassError(null);
     setVerifyingExport(true);
@@ -85,30 +64,6 @@ export default function CheckingPage() {
     setShowExportModal(false);
     setExportPass("");
   }
-
-  const duplicates = useMemo(
-    () => findDuplicates(recordings.map((r) => r.plate)),
-    [recordings]
-  );
-
-  const filtered = useMemo(() => {
-    if (!search) return recordings;
-    const q = search.toLowerCase();
-    return recordings.filter(
-      (r) =>
-        r.plate.toLowerCase().includes(q) ||
-        r.street?.toLowerCase().includes(q) ||
-        r.district?.toLowerCase().includes(q) ||
-        r.vehicleType?.includes(q) ||
-        r.recorderName?.toLowerCase().includes(q)
-    );
-  }, [recordings, search]);
-
-  const stats = {
-    total: recordings.length,
-    synced: recordings.filter((r) => r.synced).length,
-    dups: duplicates.size,
-  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -137,135 +92,16 @@ export default function CheckingPage() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {[
-          { label: "إجمالي", val: stats.total, color: "text-ink", icon: <Database size={14}/> },
-          { label: "مزامَن", val: stats.synced, color: "text-primary", icon: <CheckCircle2 size={14}/> },
-          { label: "مكرر",   val: stats.dups,   color: "text-alert",   icon: <AlertCircle size={14}/> },
-        ].map((s) => (
-          <div key={s.label} className="rounded-xl border border-border bg-surface p-3">
-            <div className={`flex items-center justify-center gap-1 ${s.color} mb-1`}>
-              {s.icon}
-              <span className="text-xl font-black">{s.val}</span>
-            </div>
-            <p className="text-xs text-muted">{s.label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="ابحث بالرقم أو الشارع أو الحي..."
-          className="w-full rounded-lg border border-border bg-surface-2 py-2.5 pr-9 pl-4 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
-          dir="rtl"
-        />
-      </div>
-
       {/* Table */}
-      {filtered.length > 0 ? (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="min-w-full border-collapse text-xs" style={{ direction: "rtl" }}>
-            <thead>
-              <tr className="bg-surface-2 text-muted">
-                <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">#</th>
-                {COLUMNS.map((col) => (
-                  <th key={col.key} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">
-                    {col.label}
-                  </th>
-                ))}
-                <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((entry, i) => {
-                const isDup = duplicates.has(entry.plate.replace(/\s/g, "").toLowerCase());
-                return (
-                  <tr
-                    key={entry.localId}
-                    className={`border-b border-border transition ${
-                      isDup ? "bg-alert/10 hover:bg-alert/20" : "hover:bg-surface-2"
-                    }`}
-                  >
-                    {/* Row number + sync status */}
-                    <td className="border-l border-border px-2 py-2 text-center">
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-muted">{i + 1}</span>
-                        {entry.synced
-                          ? <CheckCircle2 size={11} className="text-primary" />
-                          : <Clock size={11} className="text-muted" />
-                        }
-                      </div>
-                    </td>
-
-                    {COLUMNS.map((col) => {
-                      const raw = entry[col.key];
-                      const val = col.key === "recordedAt"
-                        ? formatDate(String(raw ?? ""))
-                        : String(raw ?? "");
-
-                      return (
-                        <td key={col.key} className="border-l border-border px-3 py-2">
-                          {col.key === "plate" ? (
-                            <div className="flex items-center gap-1.5 whitespace-nowrap">
-                              <span className={`font-bold ${isDup ? "text-alert" : "text-ink"}`}>
-                                {entry.plate.startsWith("📍") ? entry.plate : val}
-                              </span>
-                              {isDup && (
-                                <span className="rounded-full bg-alert/20 px-1.5 py-0.5 text-[10px] font-bold text-alert">
-                                  مكرر
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-ink">{val || "—"}</span>
-                          )}
-                        </td>
-                      );
-                    })}
-
-                    {/* GPS link */}
-                    <td className="border-l border-border px-3 py-2">
-                      {entry.mapsLink ? (
-                        <a
-                          href={entry.mapsLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-primary underline whitespace-nowrap"
-                        >
-                          <MapPin size={11} /> خريطة
-                        </a>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-
-                    {/* Delete */}
-                    <td className="px-2 py-2 text-center">
-                      <button
-                        onClick={() => handleDelete(entry.localId)}
-                        className="text-muted hover:text-danger transition"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+      {recordings.length > 0 ? (
+        <RecordingsTable
+          recordings={recordings}
+          onDelete={handleDelete}
+          onDeleteMany={handleDeleteMany}
+        />
       ) : (
-        <div className="flex flex-col items-center gap-2 py-12 text-center">
-          <Database size={36} className="text-muted/30" />
-          <p className="text-sm text-muted">
-            {search ? "لا توجد نتائج للبحث." : "لا توجد سجلات بعد."}
-          </p>
+        <div className="flex flex-col items-center gap-2 py-16 text-center">
+          <p className="text-sm text-muted">لا توجد سجلات بعد.</p>
         </div>
       )}
 
