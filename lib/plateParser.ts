@@ -144,9 +144,8 @@ export function parsePlateFromTranscript(transcript: string): {
     }
   }
 
-  // Fallback: just strip spaces from whatever text we have
-  const plate = text.replace(/\s/g, "");
-  return { plate: plate || transcript.trim(), vehicleType };
+  // No valid plate found — return empty so caller shows "لم يُتعرف على اللوحة"
+  return { plate: "", vehicleType };
 }
 
 /**

@@ -197,6 +197,10 @@ export default function RegistrationPage() {
   const [playSpeed, setPlaySpeed] = useState<Record<string, number>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Manual plate entry
+  const [manualInput, setManualInput] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
+
   // Pin counter
   const [pinCount, setPinCount] = useState(0);
 
@@ -424,6 +428,59 @@ export default function RegistrationPage() {
       });
     } else {
       checkPlateMatch(plate, entry);
+    }
+
+    await loadRecordings(agentId);
+    if (isOnline) syncPending(agentId);
+  }
+
+  // ── Manual plate entry ──────────────────────────────────────────────
+  async function handleManualSave() {
+    if (!agentId) return;
+    const raw = manualInput.trim();
+    if (!raw) return;
+
+    // Parse: digits + Arabic letters only, spaces allowed between
+    const { plate, vehicleType } = parsePlateFromTranscript(raw);
+    // If parser fails, use raw input stripped of spaces as-is (user typed it explicitly)
+    const finalPlate = plate || raw.replace(/\s+/g, "");
+    if (!finalPlate) {
+      setManualError("أدخل رقم اللوحة");
+      return;
+    }
+    setManualError(null);
+
+    const coords = gpsService.getLastCoords();
+    const localId = uid();
+    const entry: RecordingEntry = {
+      localId,
+      agentId,
+      plate: finalPlate,
+      vehicleType,
+      lat: coords?.lat,
+      lng: coords?.lng,
+      recordedAt: new Date().toISOString(),
+      mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
+      recorderName,
+      synced: false,
+    };
+
+    await saveRecording(entry);
+    setManualInput("");
+
+    if (coords) {
+      reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
+        await updateGeodata(localId, addr.street, addr.district);
+        if (agentId) {
+          const updated = await getAllRecordings(agentId);
+          const updatedEntry = updated.find((r) => r.localId === localId);
+          if (updatedEntry) checkPlateMatch(finalPlate, updatedEntry);
+          setRecordings(updated);
+          setDuplicates(findDuplicates(updated.map((r) => r.plate)));
+        }
+      });
+    } else {
+      checkPlateMatch(finalPlate, entry);
     }
 
     await loadRecordings(agentId);
@@ -689,6 +746,36 @@ export default function RegistrationPage() {
             </span>
           )}
         </button>
+      </div>
+
+      {/* Manual plate entry */}
+      <div className="rounded-2xl border border-border bg-surface px-4 py-4">
+        <p className="mb-3 text-sm font-bold text-ink" dir="rtl">إدخال يدوي للوحة</p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            inputMode="text"
+            placeholder="مثال: ق ن ص 1 2 3 4"
+            value={manualInput}
+            onChange={(e) => setManualInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleManualSave()}
+            className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-base text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+            dir="rtl"
+          />
+          <button
+            onClick={handleManualSave}
+            disabled={!manualInput.trim()}
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
+          >
+            حفظ
+          </button>
+        </div>
+        {manualError && (
+          <p className="mt-1 text-xs text-danger">{manualError}</p>
+        )}
+        <p className="mt-2 text-xs text-muted" dir="rtl">
+          اكتب الحروف والأرقام مع مسافة بينها أو بدون
+        </p>
       </div>
 
       {/* Recordings list */}
