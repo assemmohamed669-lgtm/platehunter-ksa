@@ -48,15 +48,10 @@ import {
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
 
-// Pre-select exactly the columns the spec calls out as defaults: Vehicle
-// Type, Manufacturer, Vehicle Color, and GPS Link (Plate Number is always
-// shown separately, not part of this toggle list). Every other detected
-// column starts unchecked — the user opts into them deliberately.
+// Select ALL columns by default so every field from the uploaded file shows
+// immediately — the user can uncheck any column they don't need.
 function guessDefaultColumns(headers: string[], exclude?: string | null): string[] {
-  const keywords = ["نوع", "ماركة", "الشركة", "الصانع", "manufacturer", "اللون", "لون", "color", "gps", "رابط", "موقع", "شارع", "حي", "منطقة"];
-  return headers.filter(
-    (h) => h !== exclude && keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
-  );
+  return headers.filter((h) => h !== exclude);
 }
 
 function findGpsColumn(headers: string[]): string | null {
@@ -448,9 +443,9 @@ export default function SortingPage() {
       {/* Output columns picker (shared — built from the data file's real headers) */}
       {dataTable && (
         <div className="rounded-xl border border-border bg-surface p-3">
-          <p className="mb-2 text-sm font-bold text-ink">أعمدة النتيجة النهائية</p>
+          <p className="mb-2 text-sm font-bold text-ink">الأعمدة الظاهرة في النتائج</p>
           <p className="mb-2 text-xs text-muted">
-            عمود اللوحة المكتشف: <span className="text-primary">{dataPlateCol}</span> (يظهر دائمًا كـ «رقم اللوحة»)
+            كل الأعمدة مفعّلة تلقائياً — اضغط على أي عمود لإخفائه أو إظهاره. عمود اللوحة: <span className="text-primary">{dataPlateCol}</span>
           </p>
           <div className="flex flex-wrap gap-2">
             {dataTable.headers
