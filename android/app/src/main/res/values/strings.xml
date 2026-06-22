@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">قناص اللوحات</string>
+    <string name="title_activity_main">قناص اللوحات</string>
+    <string name="package_name">com.platehunter.ksa</string>
+    <string name="custom_url_scheme">com.platehunter.ksa</string>
+</resources>

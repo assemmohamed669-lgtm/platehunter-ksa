@@ -377,12 +377,22 @@ export default function RegistrationPage() {
     recognitionRef.current?.stop();
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
-    setIsTranscribing(true);
-    await new Promise((r) => setTimeout(r, 600));
-    // Use ref values — never stale unlike React state
-    const transcript = finalTranscriptRef.current.trim() || liveTranscriptRef.current.trim();
+
+    // Wait for the last onresult to deliver its final result
+    await new Promise((r) => setTimeout(r, 400));
+
+    const transcript = finalTranscriptRef.current.trim();
     setLiveTranscript("");
     liveTranscriptRef.current = "";
+    finalTranscriptRef.current = "";
+
+    if (!transcript) {
+      setDebugFinal("(فارغ — لم يُحفظ)");
+      setDebugPlate("(transcript فارغ — لم يُحفظ)");
+      return;
+    }
+
+    setIsTranscribing(true);
     await saveTranscript(transcript);
     setIsTranscribing(false);
   }
@@ -390,30 +400,20 @@ export default function RegistrationPage() {
   async function saveTranscript(transcript: string) {
     if (!agentId) return;
 
-    let plate = "";
-    let vehicleType: string | undefined;
-
-    // Debug: record final transcript before parsing
-    setDebugFinal(transcript || "(فارغ)");
+    setDebugFinal(transcript);
     setDebugNormalized("");
     setDebugPlate("");
     setDebugVehicle("");
     setDebugNotes("");
 
-    if (transcript) {
-      const parsed = parsePlateFromTranscript(transcript);
-      plate = parsed.plate;
-      vehicleType = parsed.vehicleType;
+    const parsed = parsePlateFromTranscript(transcript);
+    const plate = parsed.plate;           // "" if nothing found — intentional
+    const vehicleType = parsed.vehicleType;
 
-      setDebugNormalized(parsed.normalized || "(فارغ)");
-      setDebugPlate(plate || "(لم يُستخرج)");
-      setDebugVehicle(vehicleType || "(لم يُستخرج)");
-      setDebugNotes(parsed.notes || "(لا يوجد)");
-    } else {
-      setDebugPlate("(transcript فارغ)");
-    }
-
-    if (!plate) plate = "لم يُتعرف على اللوحة";
+    setDebugNormalized(parsed.normalized || "(فارغ)");
+    setDebugPlate(plate || "(لم يُستخرج)");
+    setDebugVehicle(vehicleType || "(لم يُستخرج)");
+    setDebugNotes(parsed.notes || "(لا يوجد)");
 
     let base64 = "";
     if (chunksRef.current.length > 0) {
@@ -870,6 +870,12 @@ export default function RegistrationPage() {
       </div>
 
       {/* Recordings table */}
+      {isTranscribing && (
+        <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3" dir="rtl">
+          <RefreshCw size={15} className="animate-spin shrink-0 text-primary" />
+          <span className="text-sm text-primary">جارٍ معالجة اللوحة...</span>
+        </div>
+      )}
       {recordings.length > 0 ? (
         <RecordingsTable
           recordings={recordings}
