@@ -452,6 +452,8 @@ export default function RegistrationPage() {
           setRecordings(updated);
           setDuplicates(findDuplicates(updated.map((r) => r.plate)));
         }
+      }).catch(() => {
+        checkPlateMatch(plate, entry);
       });
     } else {
       checkPlateMatch(plate, entry);
@@ -505,6 +507,8 @@ export default function RegistrationPage() {
           setRecordings(updated);
           setDuplicates(findDuplicates(updated.map((r) => r.plate)));
         }
+      }).catch(() => {
+        checkPlateMatch(finalPlate, entry);
       });
     } else {
       checkPlateMatch(finalPlate, entry);
