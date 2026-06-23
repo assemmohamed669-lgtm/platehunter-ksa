@@ -262,7 +262,7 @@ export default function RegistrationPage() {
       }
     });
 
-    gpsService.startTracking();
+    gpsService.startTracking().catch(() => {});
     const unsub = gpsService.subscribe((coords) => {
       setGps(coords);
       if (coords) {
