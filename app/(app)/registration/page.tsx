@@ -842,6 +842,30 @@ export default function RegistrationPage() {
         </button>
       </div>
 
+      {/* ── جدول التسجيلات الصوتية ── */}
+      {(() => {
+        const voiceRecs = recordings.filter((r) => !r.isManual);
+        if (voiceRecs.length === 0 && !isTranscribing) return null;
+        return (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-bold text-ink" dir="rtl">التسجيلات الصوتية ({voiceRecs.length})</p>
+            {isTranscribing && (
+              <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3" dir="rtl">
+                <RefreshCw size={15} className="animate-spin shrink-0 text-primary" />
+                <span className="text-sm text-primary">جارٍ معالجة اللوحة...</span>
+              </div>
+            )}
+            {voiceRecs.length > 0 && (
+              <RecordingsTable
+                recordings={voiceRecs}
+                onDelete={handleDelete}
+                onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+              />
+            )}
+          </div>
+        );
+      })()}
+
       {/* Debug Panel */}
       <div className="rounded-xl border border-border bg-surface">
         <button
@@ -964,13 +988,6 @@ export default function RegistrationPage() {
         </p>
       </div>
 
-      {/* Recordings table */}
-      {isTranscribing && (
-        <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3" dir="rtl">
-          <RefreshCw size={15} className="animate-spin shrink-0 text-primary" />
-          <span className="text-sm text-primary">جارٍ معالجة اللوحة...</span>
-        </div>
-      )}
       {/* ── جدول الإدخال اليدوي ── */}
       {(() => {
         const manualRecs = recordings.filter((r) => r.isManual);
