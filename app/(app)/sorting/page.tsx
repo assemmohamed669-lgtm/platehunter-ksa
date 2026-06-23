@@ -124,34 +124,40 @@ export default function SortingPage() {
 
   // ── Bootstrap: identity + restore persisted files from IndexedDB ────
   // Files use the "local" key so they persist regardless of auth state.
+  // try/finally guarantees setHydrated(true) is always called even if IDB fails.
   useEffect(() => {
     (async () => {
       supabase.auth.getUser().then(({ data }) => {
         if (data.user) setAgentId(data.user.id);
       });
 
-      const [dataRec, refRec] = await Promise.all([
-        getUploadedFile("local", "data"),
-        getUploadedFile("local", "referral"),
-      ]);
+      try {
+        const [dataRec, refRec] = await Promise.all([
+          getUploadedFile("local", "data"),
+          getUploadedFile("local", "referral"),
+        ]);
 
-      if (dataRec) {
-        setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
-        setDataFile(
-          new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          })
-        );
+        if (dataRec) {
+          setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
+          setDataFile(
+            new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, {
+              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            })
+          );
+        }
+        if (refRec) {
+          setReferralTable({ headers: refRec.headers, rows: refRec.rows });
+          setReferralFile(
+            new File([refRec.fileBlob ?? new Blob()], refRec.fileName, {
+              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            })
+          );
+        }
+      } catch (e) {
+        console.warn("Failed to restore files from IDB:", e);
+      } finally {
+        setHydrated(true);
       }
-      if (refRec) {
-        setReferralTable({ headers: refRec.headers, rows: refRec.rows });
-        setReferralFile(
-          new File([refRec.fileBlob ?? new Blob()], refRec.fileName, {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          })
-        );
-      }
-      setHydrated(true);
     })();
   }, []);
 
