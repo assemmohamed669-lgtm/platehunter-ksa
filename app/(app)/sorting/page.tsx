@@ -90,7 +90,7 @@ function ResultActions({ rowObj }: ResultActionsProps) {
 export default function SortingPage() {
   const [tab, setTab] = useState<"files" | "paste">("files");
   const [agentId, setAgentId] = useState<string>("");
-  const [hydrated, setHydrated] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(true);
 
   // Uploaded tables (persisted in IndexedDB — see bootstrap effect below)
   const [dataTable, setDataTable] = useState<ExcelTable | null>(null);
@@ -127,17 +127,17 @@ export default function SortingPage() {
   //  1. Await auth first to get uid (needed for one-time migration).
   //  2. Try "local" key; if missing, try old uid-based key and migrate.
   //  3. 5-second fallback timer prevents infinite loading if IDB hangs.
-  //  4. try/finally guarantees setHydrated(true) is always called.
+  //  4. try/finally guarantees setFilesLoading(false) is always called.
   useEffect(() => {
-    const fallback = setTimeout(() => setHydrated(true), 5000);
+    const fallback = setTimeout(() => setFilesLoading(false), 5000);
 
     (async () => {
-      // Step 1 — auth (needed to find old uid-keyed records)
+      // Step 1 — auth via getSession() (reads local cache, works offline, no network call)
       let uid = "";
       try {
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData.user) { uid = userData.user.id; setAgentId(uid); }
-      } catch { /* offline or expired — uid stays "" */ }
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) { uid = session.user.id; setAgentId(uid); }
+      } catch { /* ignore */ }
 
       try {
         // Step 2 — load from "local" key (current format)
@@ -178,7 +178,7 @@ export default function SortingPage() {
         console.warn("IDB restore failed:", e);
       } finally {
         clearTimeout(fallback);
-        setHydrated(true);
+        setFilesLoading(false);
       }
     })();
 
@@ -427,10 +427,6 @@ export default function SortingPage() {
     setSelectedPaste(new Set());
   }
 
-  if (!hydrated) {
-    return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
-  }
-
   return (
     <div className="rtl-text flex flex-col gap-4" dir="rtl">
       <div>
@@ -461,14 +457,17 @@ export default function SortingPage() {
       </div>
 
       {/* Shared: Data file upload (used by both tabs) */}
-      <FileUploadBox
-        title="ملف الداتا"
-        hint="بيانات الميدان — يُستخدم في كلا المسارين"
-        parsedFile={dataFile}
-        parsedRowCount={dataTable?.rows.length ?? null}
-        onParsed={(table, file) => persistAndSet("data", table, file)}
-        onClear={() => clearSlot("data")}
-      />
+      {filesLoading
+        ? <div className="rounded-xl border border-dashed border-border bg-surface p-4 text-center text-xs text-muted">جارٍ استرجاع الملف المحفوظ…</div>
+        : <FileUploadBox
+            title="ملف الداتا"
+            hint="بيانات الميدان — يُستخدم في كلا المسارين"
+            parsedFile={dataFile}
+            parsedRowCount={dataTable?.rows.length ?? null}
+            onParsed={(table, file) => persistAndSet("data", table, file)}
+            onClear={() => clearSlot("data")}
+          />
+      }
 
       {/* Output columns picker (shared — built from the data file's real headers) */}
       {dataTable && (
