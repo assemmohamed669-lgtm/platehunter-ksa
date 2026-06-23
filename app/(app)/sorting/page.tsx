@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ListFilter,
   CheckCircle2,
@@ -21,7 +21,6 @@ import {
   Trash2,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import { supabase } from "@/lib/supabaseClient";
 import {
   type ExcelTable,
   buildExcelBlob,
@@ -89,8 +88,8 @@ function ResultActions({ rowObj }: ResultActionsProps) {
 
 export default function SortingPage() {
   const [tab, setTab] = useState<"files" | "paste">("files");
-  const [agentId, setAgentId] = useState<string>("");
   const [filesLoading, setFilesLoading] = useState(true);
+  const didLoad = useRef(false);
 
   // Uploaded tables (persisted in IndexedDB — see bootstrap effect below)
   const [dataTable, setDataTable] = useState<ExcelTable | null>(null);
@@ -123,66 +122,34 @@ export default function SortingPage() {
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
 
   // ── Bootstrap: restore persisted files from IndexedDB ──────────────
-  // Rules:
-  //  1. Await auth first to get uid (needed for one-time migration).
-  //  2. Try "local" key; if missing, try old uid-based key and migrate.
-  //  3. 5-second fallback timer prevents infinite loading if IDB hangs.
-  //  4. try/finally guarantees setFilesLoading(false) is always called.
   useEffect(() => {
-    const fallback = setTimeout(() => setFilesLoading(false), 5000);
+    if (didLoad.current) return;
+    didLoad.current = true;
 
-    (async () => {
-      // Step 1 — auth via getSession() (reads local cache, works offline, no network call)
-      let uid = "";
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) { uid = session.user.id; setAgentId(uid); }
-      } catch { /* ignore */ }
-
-      try {
-        // Step 2 — load from "local" key (current format)
-        let dataRec = await getUploadedFile("local", "data");
-        let refRec  = await getUploadedFile("local", "referral");
-
-        // Step 3 — one-time migration from old uid-keyed format
-        if (!dataRec && uid) {
-          const old = await getUploadedFile(uid, "data");
-          if (old) {
-            dataRec = { ...old, key: "local:data", agentId: "local" };
-            saveUploadedFile(dataRec).catch(() => {});
-          }
-        }
-        if (!refRec && uid) {
-          const old = await getUploadedFile(uid, "referral");
-          if (old) {
-            refRec = { ...old, key: "local:referral", agentId: "local" };
-            saveUploadedFile(refRec).catch(() => {});
-          }
-        }
-
-        if (dataRec) {
-          setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
+    getUploadedFile("local", "data")
+      .then((d) => {
+        if (d) {
+          setDataTable({ headers: d.headers, rows: d.rows });
           setDataFile(new File(
-            [dataRec.fileBlob ?? new Blob()], dataRec.fileName,
+            [d.fileBlob ?? new Blob()], d.fileName,
             { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
           ));
         }
-        if (refRec) {
-          setReferralTable({ headers: refRec.headers, rows: refRec.rows });
-          setReferralFile(new File(
-            [refRec.fileBlob ?? new Blob()], refRec.fileName,
-            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
-          ));
-        }
-      } catch (e) {
-        console.warn("IDB restore failed:", e);
-      } finally {
-        clearTimeout(fallback);
-        setFilesLoading(false);
-      }
-    })();
+      })
+      .catch(() => {})
+      .finally(() => setFilesLoading(false));
 
-    return () => clearTimeout(fallback);
+    getUploadedFile("local", "referral")
+      .then((r) => {
+        if (r) {
+          setReferralTable({ headers: r.headers, rows: r.rows });
+          setReferralFile(new File(
+            [r.fileBlob ?? new Blob()], r.fileName,
+            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+          ));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers) : null;
