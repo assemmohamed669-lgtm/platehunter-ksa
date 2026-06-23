@@ -809,24 +809,6 @@ export default function RegistrationPage() {
               {pendingCount} معلّق
             </button>
           )}
-          {exportableCount > 0 && (
-            <button
-              onClick={handleExport}
-              className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-1 text-xs text-ink hover:border-primary hover:text-primary transition"
-            >
-              <Download size={11} />
-              Excel
-            </button>
-          )}
-          {exportableCount > 0 && (
-            <button
-              onClick={handleShareExcel}
-              className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-1 text-xs text-ink hover:border-primary hover:text-primary transition"
-            >
-              <Share2 size={11} />
-              مشاركة
-            </button>
-          )}
         </div>
       </div>
 
@@ -967,6 +949,24 @@ export default function RegistrationPage() {
           </div>
         );
       })()}
+
+      {/* ── أزرار Excel والمشاركة ── */}
+      {exportableCount > 0 && (
+        <div className="flex gap-2">
+          <button
+            onClick={handleShareExcel}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+          >
+            <Share2 size={16} /> مشاركة Excel
+          </button>
+          <button
+            onClick={handleExport}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+          >
+            <Download size={16} /> فتح في Excel
+          </button>
+        </div>
+      )}
 
       {/* Debug Panel */}
       <div className="rounded-xl border border-border bg-surface">
