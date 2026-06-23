@@ -38,7 +38,7 @@ import {
 import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, readBankExcel, buildExcelBlob } from "@/lib/excel";
+import { exportRecordingsToExcel, readBankExcel, buildExcelBlob, openExcelBlob } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -691,11 +691,23 @@ export default function RegistrationPage() {
     );
   }
 
-  function handleExport() {
-    exportRecordingsToExcel(
-      recordings,
-      `platehunter-${new Date().toISOString().slice(0, 10)}`
-    );
+  async function handleExport() {
+    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const rows = recordings
+      .filter((r) => !r.plate.startsWith("📍"))
+      .map((r) => ({
+        "رقم اللوحة": r.plate,
+        "GPS": r.mapsLink ?? "",
+        "تاريخ التسجيل": r.recordedAt,
+        "الحي": r.district ?? "",
+        "الشارع": r.street ?? "",
+        "نوع السيارة": r.vehicleType ?? "",
+        "ملاحظات": r.notes ?? "",
+        "اسم المسجّل": r.recorderName ?? "",
+      }));
+    if (rows.length === 0) return;
+    const blob = buildExcelBlob(rows, "اللوحات");
+    await openExcelBlob(blob, filename);
   }
 
   async function shareBlob(blob: Blob, filename: string, title: string) {
