@@ -391,6 +391,10 @@ export function matchReferralAgainstData(
     const exact = dataNormMap.get(norm);
     if (exact) return { referralRow: refRow, dataRow: exact, status: "exact" as const };
 
+    if (dataNormMap.size > 50_000) {
+      return { referralRow: refRow, status: "none" as const };
+    }
+
     let best: { row: Record<string, string>; sim: number } | null = null;
     for (const [dataNorm, row] of dataNormMap) {
       if (Math.abs(dataNorm.length - norm.length) > 1) continue;
