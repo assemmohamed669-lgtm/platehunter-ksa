@@ -23,6 +23,7 @@ export interface RecordingEntry {
   mapsLink?: string;
   notes?: string;            // ملاحظات يدوية
   recorderName?: string;     // اسم المسجّل
+  isManual?: boolean;        // true = إدخال يدوي، false/undefined = تسجيل صوتي
   synced: boolean;
 }
 

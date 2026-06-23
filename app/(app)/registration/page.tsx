@@ -214,6 +214,9 @@ export default function RegistrationPage() {
   // Match modal
   const [matchedPlate, setMatchedPlate] = useState<MatchedPlate | null>(null);
 
+  // Matched recordings (IDs of recordings that triggered check alert)
+  const [matchedIds, setMatchedIds] = useState<Set<string>>(new Set());
+
   // Debug panel
   const [debugVisible, setDebugVisible] = useState(false);
   const [debugRaw, setDebugRaw] = useState("");
@@ -323,6 +326,7 @@ export default function RegistrationPage() {
     if (checkPlates.size === 0) return;
     const norm = normalizePlate(plate);
     if (checkPlates.has(norm)) {
+      setMatchedIds((prev) => new Set(prev).add(entry.localId));
       playMatchAlert();
       setMatchedPlate({
         plate,
@@ -519,6 +523,7 @@ export default function RegistrationPage() {
       recordedAt: new Date().toISOString(),
       mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
       recorderName,
+      isManual: true,
       synced: false,
     };
 
@@ -940,43 +945,70 @@ export default function RegistrationPage() {
           <span className="text-sm text-primary">جارٍ معالجة اللوحة...</span>
         </div>
       )}
-      {recordings.length > 0 ? (
-        <>
-          <RecordingsTable
-            recordings={recordings}
-            onDelete={handleDelete}
-            onDeleteMany={async (ids) => {
-              for (const id of ids) await handleDelete(id);
-            }}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleShareExcel}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
-            >
-              <Share2 size={16} />
-              مشاركة Excel
-            </button>
-            <button
-              onClick={handleExport}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
-            >
-              <Download size={16} />
-              فتح في Excel
-            </button>
+      {/* ── جدول الإدخال اليدوي ── */}
+      {(() => {
+        const manualRecs = recordings.filter((r) => r.isManual);
+        return manualRecs.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-bold text-ink">الإدخال اليدوي</p>
+            <RecordingsTable
+              recordings={manualRecs}
+              onDelete={handleDelete}
+              onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+            />
+            <div className="flex gap-2">
+              <button onClick={handleShareExcel}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
+                <Share2 size={16} /> مشاركة Excel
+              </button>
+              <button onClick={handleExport}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
+                <Download size={16} /> فتح في Excel
+              </button>
+            </div>
           </div>
-        </>
-      ) : (
-        !isTranscribing && (
-          <div className="flex flex-col items-center gap-2 py-10 text-center">
-            <Mic size={32} className="text-muted/40" />
-            <p className="text-sm text-muted">
-              لا توجد سجلات بعد.
-              <br />
-              اضغط على الزر واتكلم لتسجيل لوحة.
-            </p>
+        ) : null;
+      })()}
+
+      {/* ── جدول اللوحات المطلوبة (المطابقة مع ملف التشييك) ── */}
+      {(() => {
+        const matchedRecs = recordings.filter((r) => matchedIds.has(r.localId));
+        return matchedRecs.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-bold text-primary">اللوحات المطلوبة ({matchedRecs.length})</p>
+            <RecordingsTable
+              recordings={matchedRecs}
+              onDelete={handleDelete}
+              onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+            />
+            <div className="flex gap-2">
+              <button onClick={async () => {
+                const blob = buildExcelBlob(
+                  matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
+                  "المطلوبة"
+                );
+                const file = new File([blob], `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, { type: blob.type });
+                try { await navigator.share({ files: [file], title: "اللوحات المطلوبة" }); } catch { /* user cancelled */ }
+              }}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
+                <Share2 size={16} /> مشاركة المطلوبة
+              </button>
+            </div>
           </div>
-        )
+        ) : null;
+      })()}
+
+      {recordings.filter((r) => !r.isManual && !matchedIds.has(r.localId)).length === 0 &&
+       recordings.filter((r) => r.isManual).length === 0 &&
+       !isTranscribing && (
+        <div className="flex flex-col items-center gap-2 py-10 text-center">
+          <Mic size={32} className="text-muted/40" />
+          <p className="text-sm text-muted">
+            لا توجد سجلات بعد.
+            <br />
+            اضغط على الزر واتكلم لتسجيل لوحة.
+          </p>
+        </div>
       )}
     </div>
   );
