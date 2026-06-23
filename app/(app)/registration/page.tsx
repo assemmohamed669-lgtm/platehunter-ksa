@@ -691,9 +691,8 @@ export default function RegistrationPage() {
     );
   }
 
-  async function handleExport() {
-    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const rows = recordings
+  function buildRows(recs: typeof recordings) {
+    return recs
       .filter((r) => !r.plate.startsWith("📍"))
       .map((r) => ({
         "رقم اللوحة": r.plate,
@@ -705,9 +704,22 @@ export default function RegistrationPage() {
         "ملاحظات": r.notes ?? "",
         "اسم المسجّل": r.recorderName ?? "",
       }));
+  }
+
+  async function handleExport(recs = recordings) {
+    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const rows = buildRows(recs);
     if (rows.length === 0) return;
     const blob = buildExcelBlob(rows, "اللوحات");
     await openExcelBlob(blob, filename);
+  }
+
+  async function handleShareExcelFor(recs = recordings) {
+    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const rows = buildRows(recs);
+    if (rows.length === 0) return;
+    const blob = buildExcelBlob(rows, "اللوحات");
+    await shareBlob(blob, filename, "سجلات اللوحات");
   }
 
   async function shareBlob(blob: Blob, filename: string, title: string) {
@@ -751,19 +763,7 @@ export default function RegistrationPage() {
   }
 
   async function handleShareExcel() {
-    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const rows = recordings
-      .filter((r) => !r.plate.startsWith("📍"))
-      .map((r) => ({
-        "رقم اللوحة": r.plate,
-        "GPS": r.mapsLink ?? "",
-        "تاريخ التسجيل": r.recordedAt,
-        "الحي": r.district ?? "",
-        "الشارع": r.street ?? "",
-        "نوع السيارة": r.vehicleType ?? "",
-      }));
-    const blob = buildExcelBlob(rows, "اللوحات");
-    await shareBlob(blob, filename, "سجلات اللوحات");
+    await handleShareExcelFor(recordings);
   }
 
   function dupClass(plate: string): string {
@@ -950,23 +950,27 @@ export default function RegistrationPage() {
         );
       })()}
 
-      {/* ── أزرار Excel والمشاركة ── */}
-      {exportableCount > 0 && (
-        <div className="flex gap-2">
-          <button
-            onClick={handleShareExcel}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
-          >
-            <Share2 size={16} /> مشاركة Excel
-          </button>
-          <button
-            onClick={handleExport}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
-          >
-            <Download size={16} /> فتح في Excel
-          </button>
-        </div>
-      )}
+      {/* ── أزرار Excel والمشاركة (صوتي فقط) ── */}
+      {(() => {
+        const voiceOnly = recordings.filter((r) => !r.isManual && !r.plate.startsWith("📍"));
+        if (voiceOnly.length === 0) return null;
+        return (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleShareExcelFor(voiceOnly)}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+            >
+              <Share2 size={16} /> مشاركة Excel
+            </button>
+            <button
+              onClick={() => handleExport(voiceOnly)}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+            >
+              <Download size={16} /> فتح في Excel
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Debug Panel */}
       <div className="rounded-xl border border-border bg-surface">
@@ -1101,11 +1105,11 @@ export default function RegistrationPage() {
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
             />
             <div className="flex gap-2">
-              <button onClick={handleShareExcel}
+              <button onClick={() => handleShareExcelFor(manualRecs)}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
                 <Share2 size={16} /> مشاركة Excel
               </button>
-              <button onClick={handleExport}
+              <button onClick={() => handleExport(manualRecs)}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
                 <Download size={16} /> فتح في Excel
               </button>
