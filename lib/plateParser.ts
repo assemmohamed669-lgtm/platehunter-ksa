@@ -132,7 +132,11 @@ function removeDiacritics(text: string): string {
 function replaceAll(text: string, pairs: [string, string][]): string {
   let result = text;
   for (const [from, to] of pairs) {
-    result = result.replace(new RegExp(from, "g"), ` ${to} `);
+    // Only match when not surrounded by Arabic chars (prevents "با" eating "دبا")
+    result = result.replace(
+      new RegExp(`(?<![\\u0600-\\u06FF])${from}(?![\\u0600-\\u06FF])`, "g"),
+      ` ${to} `
+    );
   }
   return result.replace(/\s+/g, " ").trim();
 }
