@@ -38,7 +38,7 @@ import {
 import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, readBankExcel } from "@/lib/excel";
+import { exportRecordingsToExcel, readBankExcel, buildExcelBlob } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -638,7 +638,6 @@ export default function RegistrationPage() {
 
   async function handleShareExcel() {
     const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const { buildExcelBlob } = await import("@/lib/excel");
     const rows = recordings
       .filter((r) => !r.plate.startsWith("📍"))
       .map((r) => ({
@@ -650,11 +649,12 @@ export default function RegistrationPage() {
         "نوع السيارة": r.vehicleType ?? "",
       }));
     const blob = buildExcelBlob(rows, "اللوحات");
-    const file = new File([blob], filename, { type: blob.type });
-    const nav = navigator as Navigator & { share?: (data: ShareData & { files?: File[] }) => Promise<void> };
-    if (nav.share && nav.canShare?.({ files: [file] })) {
-      await nav.share({ files: [file], title: "سجلات اللوحات" });
-    } else {
+    const file = new File([blob], filename, {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    try {
+      await navigator.share({ files: [file], title: "سجلات اللوحات" });
+    } catch {
       handleExport();
     }
   }
