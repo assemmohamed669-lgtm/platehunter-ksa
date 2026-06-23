@@ -908,6 +908,34 @@ export default function RegistrationPage() {
         )}
       </div>
 
+      {/* ── جدول اللوحات المطلوبة (المطابقة مع ملف التشييك) ── */}
+      {(() => {
+        const matchedRecs = recordings.filter((r) => matchedIds.has(r.localId));
+        return matchedRecs.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-bold text-primary">اللوحات المطلوبة ({matchedRecs.length})</p>
+            <RecordingsTable
+              recordings={matchedRecs}
+              onDelete={handleDelete}
+              onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+            />
+            <div className="flex gap-2">
+              <button onClick={async () => {
+                const blob = buildExcelBlob(
+                  matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
+                  "المطلوبة"
+                );
+                const file = new File([blob], `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, { type: blob.type });
+                try { await navigator.share({ files: [file], title: "اللوحات المطلوبة" }); } catch { /* user cancelled */ }
+              }}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
+                <Share2 size={16} /> مشاركة المطلوبة
+              </button>
+            </div>
+          </div>
+        ) : null;
+      })()}
+
       {/* Manual plate entry */}
       <div className="rounded-2xl border border-border bg-surface px-4 py-4">
         <p className="mb-3 text-sm font-bold text-ink" dir="rtl">إدخال يدوي للوحة</p>
@@ -964,34 +992,6 @@ export default function RegistrationPage() {
               <button onClick={handleExport}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
                 <Download size={16} /> فتح في Excel
-              </button>
-            </div>
-          </div>
-        ) : null;
-      })()}
-
-      {/* ── جدول اللوحات المطلوبة (المطابقة مع ملف التشييك) ── */}
-      {(() => {
-        const matchedRecs = recordings.filter((r) => matchedIds.has(r.localId));
-        return matchedRecs.length > 0 ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-bold text-primary">اللوحات المطلوبة ({matchedRecs.length})</p>
-            <RecordingsTable
-              recordings={matchedRecs}
-              onDelete={handleDelete}
-              onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
-            />
-            <div className="flex gap-2">
-              <button onClick={async () => {
-                const blob = buildExcelBlob(
-                  matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
-                  "المطلوبة"
-                );
-                const file = new File([blob], `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, { type: blob.type });
-                try { await navigator.share({ files: [file], title: "اللوحات المطلوبة" }); } catch { /* user cancelled */ }
-              }}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
-                <Share2 size={16} /> مشاركة المطلوبة
               </button>
             </div>
           </div>
