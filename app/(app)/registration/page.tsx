@@ -30,6 +30,9 @@ import {
   deleteRecording,
   updateGeodata,
   updateNotes,
+  saveUploadedFile,
+  getUploadedFile,
+  deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
 import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
@@ -236,12 +239,23 @@ export default function RegistrationPage() {
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
-        setAgentId(data.user.id);
+        const uid = data.user.id;
+        setAgentId(uid);
         setRecorderName(emailToName(data.user.email ?? ""));
-        loadRecordings(data.user.id);
-        registerOnlineSync(data.user.id);
+        loadRecordings(uid);
+        registerOnlineSync(uid);
+
+        // Restore persisted check file
+        const checkRec = await getUploadedFile(uid, "check");
+        if (checkRec) {
+          const plates = new Set(
+            checkRec.rows.map((r) => r.plate).filter(Boolean)
+          );
+          setCheckPlates(plates);
+          setCheckFileName(checkRec.fileName);
+        }
       }
     });
 
@@ -286,6 +300,19 @@ export default function RegistrationPage() {
       );
       setCheckPlates(normalized);
       setCheckFileName(file.name);
+
+      // Persist to IndexedDB
+      if (agentId) {
+        await saveUploadedFile({
+          key: `${agentId}:check`,
+          agentId,
+          slot: "check",
+          fileName: file.name,
+          headers: ["plate"],
+          rows: [...normalized].map((p) => ({ plate: p })),
+          uploadedAt: new Date().toISOString(),
+        });
+      }
     } catch {
       alert("تعذّر قراءة ملف التشييك.");
     }
@@ -713,7 +740,7 @@ export default function RegistrationPage() {
           <div className="flex items-center gap-2 shrink-0">
             {checkFileName && (
               <button
-                onClick={() => { setCheckPlates(new Set()); setCheckFileName(""); }}
+                onClick={async () => { setCheckPlates(new Set()); setCheckFileName(""); if (agentId) await deleteUploadedFile(agentId, "check"); }}
                 className="text-muted hover:text-danger transition"
               >
                 <X size={14} />

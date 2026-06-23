@@ -35,7 +35,7 @@ export interface RecordingEntry {
 export interface UploadedFileRecord {
   key: string;                       // `${agentId}:${slot}`
   agentId: string;
-  slot: "data" | "referral";
+  slot: "data" | "referral" | "check";
   fileName: string;
   headers: string[];
   rows: Record<string, string>[];
@@ -190,7 +190,7 @@ export async function saveUploadedFile(record: UploadedFileRecord): Promise<void
 
 export async function getUploadedFile(
   agentId: string,
-  slot: "data" | "referral"
+  slot: "data" | "referral" | "check"
 ): Promise<UploadedFileRecord | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -201,7 +201,7 @@ export async function getUploadedFile(
   });
 }
 
-export async function deleteUploadedFile(agentId: string, slot: "data" | "referral"): Promise<void> {
+export async function deleteUploadedFile(agentId: string, slot: "data" | "referral" | "check"): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readwrite");
