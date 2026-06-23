@@ -18,6 +18,7 @@ import {
   FileUp,
   X,
   AlertTriangle,
+  Share2,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -608,6 +609,29 @@ export default function RegistrationPage() {
     );
   }
 
+  async function handleShareExcel() {
+    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const { buildExcelBlob } = await import("@/lib/excel");
+    const rows = recordings
+      .filter((r) => !r.plate.startsWith("📍"))
+      .map((r) => ({
+        "رقم اللوحة": r.plate,
+        "GPS": r.mapsLink ?? "",
+        "تاريخ التسجيل": r.recordedAt,
+        "الحي": r.district ?? "",
+        "الشارع": r.street ?? "",
+        "نوع السيارة": r.vehicleType ?? "",
+      }));
+    const blob = buildExcelBlob(rows, "اللوحات");
+    const file = new File([blob], filename, { type: blob.type });
+    const nav = navigator as Navigator & { share?: (data: ShareData & { files?: File[] }) => Promise<void> };
+    if (nav.share && nav.canShare?.({ files: [file] })) {
+      await nav.share({ files: [file], title: "سجلات اللوحات" });
+    } else {
+      handleExport();
+    }
+  }
+
   function dupClass(plate: string): string {
     if (duplicates.has(plate.replace(/\s/g, "").toLowerCase())) {
       return "border-alert bg-alert/10";
@@ -658,6 +682,15 @@ export default function RegistrationPage() {
             >
               <Download size={11} />
               Excel
+            </button>
+          )}
+          {exportableCount > 0 && (
+            <button
+              onClick={handleShareExcel}
+              className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-1 text-xs text-ink hover:border-primary hover:text-primary transition"
+            >
+              <Share2 size={11} />
+              مشاركة
             </button>
           )}
         </div>
