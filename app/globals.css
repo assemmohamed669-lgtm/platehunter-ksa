@@ -12,11 +12,13 @@
 html,
 body {
   height: 100%;
+  overflow-x: hidden;
 }
 
 body {
   @apply bg-night text-ink font-sans antialiased;
   transition: background-color 0.2s ease;
+  overflow-x: hidden;
 }
 
 /* OLED battery-saver mode: pure black background everywhere. */
