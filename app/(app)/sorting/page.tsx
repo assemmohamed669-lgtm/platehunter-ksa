@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   ListFilter,
   CheckCircle2,
@@ -21,6 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
+import { supabase } from "@/lib/supabaseClient";
 import {
   type ExcelTable,
   buildExcelBlob,
@@ -88,8 +89,8 @@ function ResultActions({ rowObj }: ResultActionsProps) {
 
 export default function SortingPage() {
   const [tab, setTab] = useState<"files" | "paste">("files");
-  const [filesLoading, setFilesLoading] = useState(true);
-  const didLoad = useRef(false);
+  const [agentId, setAgentId] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
 
   // Uploaded tables (persisted in IndexedDB — see bootstrap effect below)
   const [dataTable, setDataTable] = useState<ExcelTable | null>(null);
@@ -121,35 +122,29 @@ export default function SortingPage() {
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
 
-  // ── Bootstrap: restore persisted files from IndexedDB ──────────────
+  // ── Bootstrap: restore persisted files from IndexedDB ────────────────
+  // Uses a fixed "local" key (no auth dependency) so files always persist.
   useEffect(() => {
-    if (didLoad.current) return;
-    didLoad.current = true;
-
-    getUploadedFile("local", "data")
-      .then((d) => {
-        if (d) {
-          setDataTable({ headers: d.headers, rows: d.rows });
-          setDataFile(new File(
-            [d.fileBlob ?? new Blob()], d.fileName,
-            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
-          ));
+    Promise.all([
+      getUploadedFile("local", "data"),
+      getUploadedFile("local", "referral"),
+    ])
+      .then(([dataRec, refRec]) => {
+        if (dataRec) {
+          setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
+          setDataFile(new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }));
+        }
+        if (refRec) {
+          setReferralTable({ headers: refRec.headers, rows: refRec.rows });
+          setReferralFile(new File([refRec.fileBlob ?? new Blob()], refRec.fileName, {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }));
         }
       })
       .catch(() => {})
-      .finally(() => setFilesLoading(false));
-
-    getUploadedFile("local", "referral")
-      .then((r) => {
-        if (r) {
-          setReferralTable({ headers: r.headers, rows: r.rows });
-          setReferralFile(new File(
-            [r.fileBlob ?? new Blob()], r.fileName,
-            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
-          ));
-        }
-      })
-      .catch(() => {});
+      .finally(() => setHydrated(true));
   }, []);
 
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers) : null;
@@ -218,7 +213,6 @@ export default function SortingPage() {
   // ── Run matching ──────────────────────────────────────────────────
   function runSort() {
     if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
-    // Iterate data rows → results follow data file order
     const matched = matchDataAgainstReferral(
       dataTable.rows,
       dataPlateCol,
@@ -267,7 +261,6 @@ export default function SortingPage() {
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
 
   function plateForRow(r: MatchResult): string {
-    // Show plate from data row (results now follow data file order)
     const raw = String(r.dataRow?.[dataPlateCol ?? ""] ?? r.referralRow[referralPlateCol ?? ""] ?? "");
     return bankPlateToArabic(raw);
   }
@@ -394,6 +387,10 @@ export default function SortingPage() {
     setSelectedPaste(new Set());
   }
 
+  if (!hydrated) {
+    return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
+  }
+
   return (
     <div className="rtl-text flex flex-col gap-4" dir="rtl">
       <div>
@@ -424,17 +421,14 @@ export default function SortingPage() {
       </div>
 
       {/* Shared: Data file upload (used by both tabs) */}
-      {filesLoading
-        ? <div className="rounded-xl border border-dashed border-border bg-surface p-4 text-center text-xs text-muted">جارٍ استرجاع الملف المحفوظ…</div>
-        : <FileUploadBox
-            title="ملف الداتا"
-            hint="بيانات الميدان — يُستخدم في كلا المسارين"
-            parsedFile={dataFile}
-            parsedRowCount={dataTable?.rows.length ?? null}
-            onParsed={(table, file) => persistAndSet("data", table, file)}
-            onClear={() => clearSlot("data")}
-          />
-      }
+      <FileUploadBox
+        title="ملف الداتا"
+        hint="بيانات الميدان — يُستخدم في كلا المسارين"
+        parsedFile={dataFile}
+        parsedRowCount={dataTable?.rows.length ?? null}
+        onParsed={(table, file) => persistAndSet("data", table, file)}
+        onClear={() => clearSlot("data")}
+      />
 
       {/* Output columns picker (shared — built from the data file's real headers) */}
       {dataTable && (

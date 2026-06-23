@@ -22,8 +22,7 @@ export default function FileUploadBox({
   onClear,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // useId() is SSR-safe; replace colons so htmlFor works on Android WebView
-  const inputId = useId().replace(/:/g, "fi-");
+  const inputId = useId();
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -125,7 +124,6 @@ export default function FileUploadBox({
         <Upload size={16} />
         {loading ? "جارٍ القراءة..." : "اختر ملف Excel"}
       </label>
-      {/* position off-screen instead of display:none — display:none blocks file picker on Android WebView */}
       <input
         ref={inputRef}
         id={inputId}

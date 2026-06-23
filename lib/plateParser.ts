@@ -372,7 +372,7 @@ export function similarityPercent(a: string, b: string): number {
   return Math.round((1 - dist / maxLen) * 100);
 }
 
-// Match by iterating DATA rows — results follow data file order, not referral order.
+// Iterates DATA rows so results follow the data file order (not referral order).
 export function matchDataAgainstReferral(
   dataRows: Record<string, string>[],
   dataPlateCol: string,
@@ -392,10 +392,7 @@ export function matchDataAgainstReferral(
     if (!norm) continue;
 
     const exact = refNormMap.get(norm);
-    if (exact) {
-      results.push({ referralRow: exact, dataRow, status: "exact" });
-      continue;
-    }
+    if (exact) { results.push({ referralRow: exact, dataRow, status: "exact" }); continue; }
 
     if (refNormMap.size <= 50_000) {
       let best: { row: Record<string, string>; sim: number } | null = null;
@@ -404,9 +401,7 @@ export function matchDataAgainstReferral(
         const sim = similarityPercent(norm, refNorm);
         if (sim >= fuzzyThreshold && (!best || sim > best.sim)) best = { row, sim };
       }
-      if (best) {
-        results.push({ referralRow: best.row, dataRow, status: "fuzzy", similarity: best.sim });
-      }
+      if (best) results.push({ referralRow: best.row, dataRow, status: "fuzzy", similarity: best.sim });
     }
   }
   return results;
