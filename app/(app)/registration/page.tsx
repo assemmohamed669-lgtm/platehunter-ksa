@@ -653,14 +653,32 @@ export default function RegistrationPage() {
         "الشارع": r.street ?? "",
         "نوع السيارة": r.vehicleType ?? "",
       }));
+
+    const nav = navigator as any;
+    if (!nav.share) { handleExport(); return; }
+
+    // Try file share first
     const blob = buildExcelBlob(rows, "اللوحات");
     const file = new File([blob], filename, {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
+    if (nav.canShare?.({ files: [file] })) {
+      try {
+        await nav.share({ files: [file], title: "سجلات اللوحات" });
+        return;
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+      }
+    }
+
+    // Fallback: share as text (WhatsApp receives it fine)
+    const text = rows.map((r) =>
+      `${r["رقم اللوحة"]}${r["الحي"] ? " — " + r["الحي"] : ""}${r["الشارع"] ? " / " + r["الشارع"] : ""}`
+    ).join("\n");
     try {
-      await navigator.share({ files: [file], title: "سجلات اللوحات" });
-    } catch {
-      handleExport();
+      await nav.share({ text: `سجلات اللوحات:\n${text}`, title: "سجلات اللوحات" });
+    } catch (e: any) {
+      if (e?.name !== "AbortError") handleExport();
     }
   }
 
@@ -943,12 +961,16 @@ export default function RegistrationPage() {
             />
             <div className="flex gap-2">
               <button onClick={async () => {
-                const blob = buildExcelBlob(
-                  matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
-                  "المطلوبة"
-                );
+                const nav = navigator as any;
+                if (!nav.share) return;
+                const rows = matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" }));
+                const blob = buildExcelBlob(rows, "المطلوبة");
                 const file = new File([blob], `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, { type: blob.type });
-                try { await navigator.share({ files: [file], title: "اللوحات المطلوبة" }); } catch { /* user cancelled */ }
+                if (nav.canShare?.({ files: [file] })) {
+                  try { await nav.share({ files: [file], title: "اللوحات المطلوبة" }); return; } catch (e: any) { if (e?.name === "AbortError") return; }
+                }
+                const text = rows.map((r) => `${r["رقم اللوحة"]}${r["الحي"] ? " — " + r["الحي"] : ""}${r["الشارع"] ? " / " + r["الشارع"] : ""}`).join("\n");
+                try { await nav.share({ text: `اللوحات المطلوبة:\n${text}`, title: "اللوحات المطلوبة" }); } catch { /* cancelled */ }
               }}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
                 <Share2 size={16} /> مشاركة المطلوبة
