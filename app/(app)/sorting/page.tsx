@@ -32,7 +32,7 @@ import {
 } from "@/lib/excel";
 import {
   detectPlateColumn,
-  matchReferralAgainstData,
+  matchDataAgainstReferral,
   bankPlateToArabic,
   normalizePlate,
   type MatchResult,
@@ -221,11 +221,12 @@ export default function SortingPage() {
   // ── Run matching ──────────────────────────────────────────────────
   function runSort() {
     if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
-    const matched = matchReferralAgainstData(
-      referralTable.rows,
-      referralPlateCol,
+    // Iterate data rows → results follow data file order
+    const matched = matchDataAgainstReferral(
       dataTable.rows,
-      dataPlateCol
+      dataPlateCol,
+      referralTable.rows,
+      referralPlateCol
     );
     setResults(matched);
     setSorted(true);
@@ -269,7 +270,8 @@ export default function SortingPage() {
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
 
   function plateForRow(r: MatchResult): string {
-    const raw = String(r.referralRow[referralPlateCol ?? ""] ?? "");
+    // Show plate from data row (results now follow data file order)
+    const raw = String(r.dataRow?.[dataPlateCol ?? ""] ?? r.referralRow[referralPlateCol ?? ""] ?? "");
     return bankPlateToArabic(raw);
   }
 

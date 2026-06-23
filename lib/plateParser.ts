@@ -372,6 +372,46 @@ export function similarityPercent(a: string, b: string): number {
   return Math.round((1 - dist / maxLen) * 100);
 }
 
+// Match by iterating DATA rows — results follow data file order, not referral order.
+export function matchDataAgainstReferral(
+  dataRows: Record<string, string>[],
+  dataPlateCol: string,
+  referralRows: Record<string, string>[],
+  referralPlateCol: string,
+  fuzzyThreshold = 88,
+): MatchResult[] {
+  const refNormMap = new Map<string, Record<string, string>>();
+  for (const row of referralRows) {
+    const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
+    if (norm) refNormMap.set(norm, row);
+  }
+
+  const results: MatchResult[] = [];
+  for (const dataRow of dataRows) {
+    const norm = normalizePlate(bankPlateToArabic(String(dataRow[dataPlateCol] ?? "")));
+    if (!norm) continue;
+
+    const exact = refNormMap.get(norm);
+    if (exact) {
+      results.push({ referralRow: exact, dataRow, status: "exact" });
+      continue;
+    }
+
+    if (refNormMap.size <= 50_000) {
+      let best: { row: Record<string, string>; sim: number } | null = null;
+      for (const [refNorm, row] of refNormMap) {
+        if (Math.abs(refNorm.length - norm.length) > 1) continue;
+        const sim = similarityPercent(norm, refNorm);
+        if (sim >= fuzzyThreshold && (!best || sim > best.sim)) best = { row, sim };
+      }
+      if (best) {
+        results.push({ referralRow: best.row, dataRow, status: "fuzzy", similarity: best.sim });
+      }
+    }
+  }
+  return results;
+}
+
 export function matchReferralAgainstData(
   referralRows: Record<string, string>[],
   referralPlateCol: string,

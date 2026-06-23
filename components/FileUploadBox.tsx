@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download } from "lucide-react";
 import { parseExcelFile, type ExcelTable } from "@/lib/excel";
 
@@ -22,7 +22,8 @@ export default function FileUploadBox({
   onClear,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const inputId = useId();
+  // useId() generates IDs like ":r0:" — colons break htmlFor on Android WebView
+  const inputId = useRef(`file-input-${Math.random().toString(36).slice(2)}`).current;
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -124,12 +125,13 @@ export default function FileUploadBox({
         <Upload size={16} />
         {loading ? "جارٍ القراءة..." : "اختر ملف Excel"}
       </label>
+      {/* position off-screen instead of display:none — display:none blocks file picker on Android WebView */}
       <input
         ref={inputRef}
         id={inputId}
         type="file"
         accept=".xlsx,.xls,.csv"
-        className="hidden"
+        style={{ position: "absolute", left: "-9999px", width: "1px", height: "1px", opacity: 0, overflow: "hidden" }}
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) handleFile(file);
