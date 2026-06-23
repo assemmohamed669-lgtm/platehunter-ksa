@@ -641,6 +641,46 @@ export default function RegistrationPage() {
     );
   }
 
+  async function shareBlob(blob: Blob, filename: string, title: string) {
+    // On native Android: write to cache then share via native intent
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { Filesystem, Directory } = await import("@capacitor/filesystem");
+        const { Share } = await import("@capacitor/share");
+        const arrayBuffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const { uri } = await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Cache });
+        await Share.share({ title, url: uri, dialogTitle: "مشاركة الملف" });
+        return;
+      }
+    } catch (e: any) {
+      if (e?.name === "AbortError") return;
+    }
+
+    // Web fallback: navigator.share with file
+    const nav = navigator as any;
+    if (nav.share) {
+      const file = new File([blob], filename, { type: blob.type });
+      try {
+        await nav.share({ files: [file], title });
+        return;
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+      }
+    }
+
+    // Last resort: download
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleShareExcel() {
     const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
     const rows = recordings
@@ -653,33 +693,8 @@ export default function RegistrationPage() {
         "الشارع": r.street ?? "",
         "نوع السيارة": r.vehicleType ?? "",
       }));
-
-    const nav = navigator as any;
-    if (!nav.share) { handleExport(); return; }
-
-    // Try file share first
     const blob = buildExcelBlob(rows, "اللوحات");
-    const file = new File([blob], filename, {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    if (nav.canShare?.({ files: [file] })) {
-      try {
-        await nav.share({ files: [file], title: "سجلات اللوحات" });
-        return;
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
-      }
-    }
-
-    // Fallback: share as text (WhatsApp receives it fine)
-    const text = rows.map((r) =>
-      `${r["رقم اللوحة"]}${r["الحي"] ? " — " + r["الحي"] : ""}${r["الشارع"] ? " / " + r["الشارع"] : ""}`
-    ).join("\n");
-    try {
-      await nav.share({ text: `سجلات اللوحات:\n${text}`, title: "سجلات اللوحات" });
-    } catch (e: any) {
-      if (e?.name !== "AbortError") handleExport();
-    }
+    await shareBlob(blob, filename, "سجلات اللوحات");
   }
 
   function dupClass(plate: string): string {
@@ -961,16 +976,11 @@ export default function RegistrationPage() {
             />
             <div className="flex gap-2">
               <button onClick={async () => {
-                const nav = navigator as any;
-                if (!nav.share) return;
-                const rows = matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" }));
-                const blob = buildExcelBlob(rows, "المطلوبة");
-                const file = new File([blob], `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, { type: blob.type });
-                if (nav.canShare?.({ files: [file] })) {
-                  try { await nav.share({ files: [file], title: "اللوحات المطلوبة" }); return; } catch (e: any) { if (e?.name === "AbortError") return; }
-                }
-                const text = rows.map((r) => `${r["رقم اللوحة"]}${r["الحي"] ? " — " + r["الحي"] : ""}${r["الشارع"] ? " / " + r["الشارع"] : ""}`).join("\n");
-                try { await nav.share({ text: `اللوحات المطلوبة:\n${text}`, title: "اللوحات المطلوبة" }); } catch { /* cancelled */ }
+                const blob = buildExcelBlob(
+                  matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
+                  "المطلوبة"
+                );
+                await shareBlob(blob, `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, "اللوحات المطلوبة");
               }}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
                 <Share2 size={16} /> مشاركة المطلوبة
