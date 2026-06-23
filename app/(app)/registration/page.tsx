@@ -785,9 +785,7 @@ export default function RegistrationPage() {
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
         <button
-          onPointerDown={startRecording}
-          onPointerUp={stopRecording}
-          onPointerLeave={stopRecording}
+          onClick={() => isRecording ? stopRecording() : startRecording()}
           disabled={isTranscribing}
           className={`relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-150 select-none
             ${isRecording
@@ -817,10 +815,10 @@ export default function RegistrationPage() {
 
         <p className="text-sm text-muted">
           {isRecording
-            ? "جارٍ التسجيل... ارفع إصبعك للإيقاف"
+            ? "جارٍ التسجيل... اضغط مرة ثانية للإيقاف"
             : isTranscribing
             ? "جارٍ معالجة الصوت..."
-            : "اضغط واتكلم"}
+            : "اضغط للتسجيل"}
         </p>
 
         {recordingError && (
