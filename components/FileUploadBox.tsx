@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download } from "lucide-react";
 import { parseExcelFile, type ExcelTable } from "@/lib/excel";
 
@@ -22,6 +22,7 @@ export default function FileUploadBox({
   onClear,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const inputId = useId();
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -116,16 +117,16 @@ export default function FileUploadBox({
       <p className="mb-2 text-sm font-bold text-ink">{title}</p>
       {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
 
-      <button
-        onClick={() => inputRef.current?.click()}
-        disabled={loading}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-3 text-sm text-muted transition hover:border-primary hover:text-primary disabled:opacity-60"
+      <label
+        htmlFor={inputId}
+        className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-3 text-sm text-muted transition hover:border-primary hover:text-primary ${loading ? "pointer-events-none opacity-60" : ""}`}
       >
         <Upload size={16} />
         {loading ? "جارٍ القراءة..." : "اختر ملف Excel"}
-      </button>
+      </label>
       <input
         ref={inputRef}
+        id={inputId}
         type="file"
         accept=".xlsx,.xls,.csv"
         className="hidden"
