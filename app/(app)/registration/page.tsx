@@ -346,6 +346,62 @@ export default function RegistrationPage() {
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
 
+    // ── Native Android: Capacitor Speech Recognition ──────────────────
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { SpeechRecognition } = await import("@capacitor-community/speech-recognition") as any;
+
+        setIsRecording(true);
+        isRecordingRef.current = true;
+        gpsAtRecordRef.current = gpsService.getLastCoords();
+        chunksRef.current = [];
+        setDebugStatus("✅ STARTED (Native)");
+
+        await SpeechRecognition.requestPermissions();
+
+        // Auto-restart loop — keeps listening until user taps stop
+        while (isRecordingRef.current) {
+          try {
+            const result = await SpeechRecognition.start({
+              language: "ar-SA",
+              maxResults: 1,
+              partialResults: false,
+              popup: false,
+            });
+            const text: string = result?.matches?.[0] ?? "";
+            if (text) {
+              finalTranscriptRef.current = (finalTranscriptRef.current + " " + text).trim() + " ";
+              setLiveTranscript(finalTranscriptRef.current);
+              setDebugRaw(finalTranscriptRef.current);
+            }
+          } catch { break; }
+        }
+
+        isRecordingRef.current = false;
+        setIsRecording(false);
+        const transcript = finalTranscriptRef.current.trim();
+        setLiveTranscript("");
+        liveTranscriptRef.current = "";
+        finalTranscriptRef.current = "";
+
+        if (!transcript) {
+          setDebugFinal("(فارغ — لم يُحفظ)");
+          setDebugPlate("(transcript فارغ — لم يُحفظ)");
+          return;
+        }
+        setIsTranscribing(true);
+        await saveTranscript(transcript);
+        setIsTranscribing(false);
+        return;
+      }
+    } catch (err) {
+      console.warn("Capacitor SR unavailable, falling back to Web SR:", err);
+      isRecordingRef.current = false;
+      setIsRecording(false);
+    }
+
+    // ── Web fallback (browser / Chrome) ───────────────────────────────
     const recognition = createSpeechRecognition();
     if (!recognition) {
       setRecordingError("المتصفح لا يدعم التعرف الصوتي. استخدم Chrome أو Edge.");
@@ -353,24 +409,19 @@ export default function RegistrationPage() {
     }
 
     recognition.lang = "ar-SA";
-    recognition.continuous = false;  // continuous=true silently fails on Android WebView
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
-    recognition.onstart = () => {
-      setDebugStatus("✅ STARTED");
-    };
+    recognition.onstart = () => { setDebugStatus("✅ STARTED"); };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let final = finalTranscriptRef.current;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (result.isFinal) {
-          final += result[0].transcript + " ";
-        } else {
-          interim += result[0].transcript;
-        }
+        if (result.isFinal) { final += result[0].transcript + " "; }
+        else { interim += result[0].transcript; }
       }
       finalTranscriptRef.current = final;
       liveTranscriptRef.current  = final + interim;
@@ -385,8 +436,6 @@ export default function RegistrationPage() {
       }
     };
 
-    // With continuous=false, SR stops after each utterance.
-    // Auto-restart while user is still holding the button.
     recognition.onend = () => {
       setDebugStatus((prev) => prev.startsWith("✅") ? "🔄 RESTARTING…" : prev);
       if (isRecordingRef.current) {
@@ -397,7 +446,6 @@ export default function RegistrationPage() {
     recognitionRef.current = recognition;
     gpsAtRecordRef.current = gpsService.getLastCoords();
     chunksRef.current = [];
-
     isRecordingRef.current = true;
     recognition.start();
     setIsRecording(true);
@@ -405,12 +453,22 @@ export default function RegistrationPage() {
 
   async function stopRecording() {
     if (!isRecording) return;
-    isRecordingRef.current = false;   // must clear BEFORE .stop() so onend doesn't restart
-    recognitionRef.current?.stop();
-    mediaRecorderRef.current?.stop();
+    isRecordingRef.current = false;
     setIsRecording(false);
 
-    // Wait for the last onresult to deliver its final result
+    // Native: stop Capacitor SR — startRecording's loop handles the rest
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { SpeechRecognition } = await import("@capacitor-community/speech-recognition") as any;
+        try { await SpeechRecognition.stop(); } catch {}
+        return;
+      }
+    } catch {}
+
+    // Web fallback
+    recognitionRef.current?.stop();
+    mediaRecorderRef.current?.stop();
     await new Promise((r) => setTimeout(r, 400));
 
     const transcript = finalTranscriptRef.current.trim();
@@ -423,7 +481,6 @@ export default function RegistrationPage() {
       setDebugPlate("(transcript فارغ — لم يُحفظ)");
       return;
     }
-
     setIsTranscribing(true);
     await saveTranscript(transcript);
     setIsTranscribing(false);
