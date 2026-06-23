@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download } from "lucide-react";
 import { parseExcelFile, type ExcelTable } from "@/lib/excel";
 
@@ -22,8 +22,8 @@ export default function FileUploadBox({
   onClear,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // useId() generates IDs like ":r0:" — colons break htmlFor on Android WebView
-  const inputId = useRef(`file-input-${Math.random().toString(36).slice(2)}`).current;
+  // useId() is SSR-safe; replace colons so htmlFor works on Android WebView
+  const inputId = useId().replace(/:/g, "fi-");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
