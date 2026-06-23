@@ -123,18 +123,16 @@ export default function SortingPage() {
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
 
   // ── Bootstrap: identity + restore persisted files from IndexedDB ────
+  // Files use the "local" key so they persist regardless of auth state.
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data.user) {
-        setHydrated(true);
-        return;
-      }
-      const uid = data.user.id;
-      setAgentId(uid);
+    (async () => {
+      supabase.auth.getUser().then(({ data }) => {
+        if (data.user) setAgentId(data.user.id);
+      });
 
       const [dataRec, refRec] = await Promise.all([
-        getUploadedFile(uid, "data"),
-        getUploadedFile(uid, "referral"),
+        getUploadedFile("local", "data"),
+        getUploadedFile("local", "referral"),
       ]);
 
       if (dataRec) {
@@ -154,7 +152,7 @@ export default function SortingPage() {
         );
       }
       setHydrated(true);
-    });
+    })();
   }, []);
 
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers) : null;
@@ -180,8 +178,8 @@ export default function SortingPage() {
   const persistAndSet = useCallback(
     async (slot: "data" | "referral", table: ExcelTable, file: File) => {
       const record: UploadedFileRecord = {
-        key: `${agentId}:${slot}`,
-        agentId,
+        key: `local:${slot}`,
+        agentId: "local",
         slot,
         fileName: file.name,
         headers: table.headers,
@@ -202,11 +200,11 @@ export default function SortingPage() {
       setResults(null);
       setSorted(false);
     },
-    [agentId]
+    []
   );
 
   async function clearSlot(slot: "data" | "referral") {
-    if (agentId) await deleteUploadedFile(agentId, slot);
+    await deleteUploadedFile("local", slot);
     if (slot === "data") {
       setDataTable(null);
       setDataFile(null);
