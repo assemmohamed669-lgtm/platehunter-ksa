@@ -122,43 +122,67 @@ export default function SortingPage() {
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
 
-  // ── Bootstrap: identity + restore persisted files from IndexedDB ────
-  // Files use the "local" key so they persist regardless of auth state.
-  // try/finally guarantees setHydrated(true) is always called even if IDB fails.
+  // ── Bootstrap: restore persisted files from IndexedDB ──────────────
+  // Rules:
+  //  1. Await auth first to get uid (needed for one-time migration).
+  //  2. Try "local" key; if missing, try old uid-based key and migrate.
+  //  3. 5-second fallback timer prevents infinite loading if IDB hangs.
+  //  4. try/finally guarantees setHydrated(true) is always called.
   useEffect(() => {
+    const fallback = setTimeout(() => setHydrated(true), 5000);
+
     (async () => {
-      supabase.auth.getUser().then(({ data }) => {
-        if (data.user) setAgentId(data.user.id);
-      });
+      // Step 1 — auth (needed to find old uid-keyed records)
+      let uid = "";
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData.user) { uid = userData.user.id; setAgentId(uid); }
+      } catch { /* offline or expired — uid stays "" */ }
 
       try {
-        const [dataRec, refRec] = await Promise.all([
-          getUploadedFile("local", "data"),
-          getUploadedFile("local", "referral"),
-        ]);
+        // Step 2 — load from "local" key (current format)
+        let dataRec = await getUploadedFile("local", "data");
+        let refRec  = await getUploadedFile("local", "referral");
+
+        // Step 3 — one-time migration from old uid-keyed format
+        if (!dataRec && uid) {
+          const old = await getUploadedFile(uid, "data");
+          if (old) {
+            dataRec = { ...old, key: "local:data", agentId: "local" };
+            saveUploadedFile(dataRec).catch(() => {});
+          }
+        }
+        if (!refRec && uid) {
+          const old = await getUploadedFile(uid, "referral");
+          if (old) {
+            refRec = { ...old, key: "local:referral", agentId: "local" };
+            saveUploadedFile(refRec).catch(() => {});
+          }
+        }
 
         if (dataRec) {
           setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
-          setDataFile(
-            new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, {
-              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            })
-          );
+          setDataFile(new File(
+            [dataRec.fileBlob ?? new Blob()], dataRec.fileName,
+            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+          ));
         }
         if (refRec) {
           setReferralTable({ headers: refRec.headers, rows: refRec.rows });
-          setReferralFile(
-            new File([refRec.fileBlob ?? new Blob()], refRec.fileName, {
-              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            })
-          );
+          setReferralFile(new File(
+            [refRec.fileBlob ?? new Blob()], refRec.fileName,
+            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+          ));
         }
       } catch (e) {
-        console.warn("Failed to restore files from IDB:", e);
+        console.warn("IDB restore failed:", e);
       } finally {
+        clearTimeout(fallback);
         setHydrated(true);
       }
     })();
+
+    return () => clearTimeout(fallback);
   }, []);
 
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers) : null;
