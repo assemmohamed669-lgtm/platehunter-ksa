@@ -941,13 +941,31 @@ export default function RegistrationPage() {
         </div>
       )}
       {recordings.length > 0 ? (
-        <RecordingsTable
-          recordings={recordings}
-          onDelete={handleDelete}
-          onDeleteMany={async (ids) => {
-            for (const id of ids) await handleDelete(id);
-          }}
-        />
+        <>
+          <RecordingsTable
+            recordings={recordings}
+            onDelete={handleDelete}
+            onDeleteMany={async (ids) => {
+              for (const id of ids) await handleDelete(id);
+            }}
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleShareExcel}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+            >
+              <Share2 size={16} />
+              مشاركة Excel
+            </button>
+            <button
+              onClick={handleExport}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+            >
+              <Download size={16} />
+              فتح في Excel
+            </button>
+          </div>
+        </>
       ) : (
         !isTranscribing && (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
