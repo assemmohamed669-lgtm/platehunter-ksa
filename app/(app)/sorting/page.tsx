@@ -170,13 +170,22 @@ export default function SortingPage() {
   const referralPlateCol = referralTable ? detectPlateColumn(referralTable.headers) : null;
   const gpsCol = dataTable ? findGpsColumn(dataTable.headers) : null;
 
-  // Seed a sensible default column selection the first time each table loads
+  // Seed default column selection whenever a table loads (data or referral)
   useEffect(() => {
-    if (dataTable && outputCols.size === 0) {
+    if (dataTable) {
       setOutputCols(new Set(guessDefaultColumns(dataTable.headers, dataPlateCol)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataTable]);
+
+  useEffect(() => {
+    if (referralTable) {
+      const refPlate = detectPlateColumn(referralTable.headers);
+      const defRef = referralTable.headers.filter((h) => h !== refPlate && matchesPreferred(h));
+      setReferralExtraCols(new Set(defRef));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [referralTable]);
 
   function toggleSet(set: Set<string>, key: string, setter: (s: Set<string>) => void) {
     const next = new Set(set);
