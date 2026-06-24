@@ -180,7 +180,7 @@ describe("parsePlateFromTranscript", () => {
     expect(r.vehicleType).toBe("فان");
   });
 
-  // Observation words → notes
+  // Observation words → notes (AFTER plate)
   it("captures direction words as notes after the plate", () => {
     const r = parsePlateFromTranscript("حمن 8531 بيلف يمين");
     expect(r.plate).toBe("حمن8531");
@@ -194,10 +194,31 @@ describe("parsePlateFromTranscript", () => {
     expect(r.notes).toBeTruthy();
   });
 
-  it("captures جراج يمين as notes", () => {
+  it("captures جراج يمين as notes after the plate", () => {
     const r = parsePlateFromTranscript("ابك 5632 جراج يمين");
     expect(r.plate).toBe("ابك5632");
     expect(r.notes).toContain("جراج");
+  });
+
+  // Observation words → notes (BEFORE plate)
+  it("captures notes that appear BEFORE the plate letters", () => {
+    const r = parsePlateFromTranscript("بيلف يمين حمن 8531");
+    expect(r.plate).toBe("حمن8531");
+    expect(r.notes).toContain("بيلف");
+    expect(r.notes).toContain("يمين");
+  });
+
+  it("captures جراج يمين before plate and مركونه after", () => {
+    const r = parsePlateFromTranscript("جراج يمين حمن 8531 مركونه");
+    expect(r.plate).toBe("حمن8531");
+    expect(r.notes).toContain("جراج");
+    expect(r.notes).toContain("يمين");
+  });
+
+  it("handles individual plate letters with notes before them", () => {
+    const r = parsePlateFromTranscript("بيلف يمين ح م ن 8531");
+    expect(r.plate).toBe("حمن8531");
+    expect(r.notes).toContain("يمين");
   });
 });
 

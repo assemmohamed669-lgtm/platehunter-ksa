@@ -252,45 +252,67 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
   const normalized = text;
 
-  // ── 9. Token scan (primary extraction) ───────────────────────────────────
-  //  Each token is independently classified as letter(s), digits, or noise.
-  //  This handles noise between letters and digits, and scattered digit tokens.
+  // ── 9. Token scan (proximity-based extraction) ───────────────────────────
+  //  Find digit tokens first, then scan BACKWARD from the first digit to
+  //  collect plate letters. This way observations before OR after the plate
+  //  always end up in notes regardless of order.
   const tokens = normalized.split(/\s+/).filter(Boolean);
 
-  const letterBuf: string[] = [];   // valid plate letters, up to 3
-  const digitTokens: string[] = []; // digit strings to concatenate
-  const usedIdx = new Set<number>();
-
+  const digitTokenIndices: number[] = [];
+  const digitTokenValues: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i];
-    if (/^\d+$/.test(tok) && tok.length <= 4) {
-      digitTokens.push(tok);
-      usedIdx.add(i);
-    } else if (letterBuf.length < 3 && (tok.length <= 2 || isAllPlateLetters(tok))) {
-      // Accept 1-2 char tokens AND tokens made entirely of valid plate letters (e.g. "حمن", "ابك")
-      const letters = extractLettersFromToken(tok);
-      if (letters.length > 0) {
-        letterBuf.push(...letters.slice(0, 3 - letterBuf.length));
-        usedIdx.add(i);
-      }
+    if (/^\d+$/.test(tokens[i]) && tokens[i].length <= 4) {
+      digitTokenIndices.push(i);
+      digitTokenValues.push(tokens[i]);
     }
   }
 
-  // Combine digit tokens:
-  // – all single digits (0-9) → concatenate  e.g. 5 9 3 2 → "5932"
-  // – any token ≥ 10        → additive Arabic compound  e.g. 5 + 20 → "25"
-  const digitNums = digitTokens.map(Number);
-  const digits = digitNums.some((v) => v >= 10)
-    ? String(digitNums.reduce((a, b) => a + b, 0)).slice(0, 4)
-    : digitTokens.join("").slice(0, 4);
-  const letters = letterBuf.join("");
+  const usedIdx = new Set<number>(digitTokenIndices);
+  const letterBuf: string[] = [];
 
   let plate = "";
   let notes = "";
 
-  if (digits) {
-    plate = letters + digits;
-    // Notes = tokens not used for the plate
+  if (digitTokenIndices.length > 0) {
+    const firstDigitIdx = digitTokenIndices[0];
+
+    // Scan BACKWARD from the first digit token — letters adjacent to digits win
+    for (let i = firstDigitIdx - 1; i >= 0 && letterBuf.length < 3; i--) {
+      const tok = tokens[i];
+      if (tok.length <= 2 || (tok.length <= 4 && isAllPlateLetters(tok))) {
+        const letters = extractLettersFromToken(tok);
+        if (letters.length > 0) {
+          // unshift preserves left-to-right order when prepending
+          letterBuf.unshift(...letters.slice(0, 3 - letterBuf.length));
+          usedIdx.add(i);
+        }
+      }
+    }
+
+    // If still short, scan FORWARD from the last digit token (letters after digits)
+    if (letterBuf.length < 3) {
+      const lastDigitIdx = digitTokenIndices[digitTokenIndices.length - 1];
+      for (let i = lastDigitIdx + 1; i < tokens.length && letterBuf.length < 3; i++) {
+        const tok = tokens[i];
+        if (tok.length <= 2 || (tok.length <= 4 && isAllPlateLetters(tok))) {
+          const letters = extractLettersFromToken(tok);
+          if (letters.length > 0) {
+            letterBuf.push(...letters.slice(0, 3 - letterBuf.length));
+            usedIdx.add(i);
+          }
+        }
+      }
+    }
+
+    // Combine digit tokens:
+    // – all single digits (0-9) → concatenate  e.g. 5 9 3 2 → "5932"
+    // – any token ≥ 10        → additive Arabic compound  e.g. 5 + 20 → "25"
+    const digitNums = digitTokenValues.map(Number);
+    const digits = digitNums.some((v) => v >= 10)
+      ? String(digitNums.reduce((a, b) => a + b, 0)).slice(0, 4)
+      : digitTokenValues.join("").slice(0, 4);
+
+    plate = letterBuf.join("") + digits;
     notes = tokens.filter((_, i) => !usedIdx.has(i)).join(" ");
   }
 
