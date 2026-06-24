@@ -48,10 +48,18 @@ import {
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
 
-// Select ALL columns by default so every field from the uploaded file shows
-// immediately — the user can uncheck any column they don't need.
+// Preferred columns to show by default in results
+const PREFERRED_COLS = ["نوع السيارة", "الماركة", "GPS", "الموقع", "الحي", "لون السيارة", "اللون", "سنة الصنع", "السنة"];
+
+function matchesPreferred(header: string): boolean {
+  return PREFERRED_COLS.some((p) => header.includes(p) || p.includes(header));
+}
+
+// Return preferred columns if any match; otherwise return all.
 function guessDefaultColumns(headers: string[], exclude?: string | null): string[] {
-  return headers.filter((h) => h !== exclude);
+  const filtered = headers.filter((h) => h !== exclude);
+  const preferred = filtered.filter(matchesPreferred);
+  return preferred.length > 0 ? preferred : filtered;
 }
 
 function findGpsColumn(headers: string[]): string | null {
@@ -141,6 +149,9 @@ export default function SortingPage() {
           setReferralFile(new File([refRec.fileBlob ?? new Blob()], refRec.fileName, {
             type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           }));
+          const refPlate = detectPlateColumn(refRec.headers);
+          const defRef = refRec.headers.filter((h) => h !== refPlate && matchesPreferred(h));
+          setReferralExtraCols(new Set(defRef));
         }
       })
       .catch(() => {})
@@ -187,7 +198,9 @@ export default function SortingPage() {
       } else {
         setReferralTable(table);
         setReferralFile(file);
-        setReferralExtraCols(new Set());
+        const refPlate = detectPlateColumn(table.headers);
+        const defRef = table.headers.filter((h) => h !== refPlate && matchesPreferred(h));
+        setReferralExtraCols(new Set(defRef));
       }
       setResults(null);
       setSorted(false);
