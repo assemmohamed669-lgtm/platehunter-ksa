@@ -27,6 +27,7 @@ import {
   buildExcelBlob,
   downloadExcelBlob,
   openExcelBlob,
+  shareExcelBlob,
   buildRowSummaryText,
   shareOrCopyText,
 } from "@/lib/excel";
@@ -398,28 +399,14 @@ export default function SortingPage() {
     const rows = matchedResults.map(buildRowObject);
     const blob = buildExcelBlob(rows, "نتائج الفرز");
     const filename = `فرز-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
-    const file = new File([blob], filename, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    try {
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: "نتائج الفرز" });
-      } else {
-        downloadExcelBlob(blob, filename);
-      }
-    } catch {}
+    await shareExcelBlob(blob, filename, "نتائج الفرز");
   }
 
   async function handleSharePaste() {
     const rows = pasteResults.map(buildPasteRowObject);
     const blob = buildExcelBlob(rows, "نتائج اللصق");
     const filename = `لصق-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
-    const file = new File([blob], filename, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    try {
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: "نتائج اللصق" });
-      } else {
-        downloadExcelBlob(blob, filename);
-      }
-    } catch {}
+    await shareExcelBlob(blob, filename, "نتائج اللصق");
   }
 
   // ── Shared per-row action buttons (Copy / Share) — defined at module

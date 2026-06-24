@@ -219,6 +219,43 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
   return "downloaded";
 }
 
+export async function shareExcelBlob(blob: Blob, filename: string, title: string): Promise<void> {
+  // On native Android (Capacitor): write to cache then share via native share sheet
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      const { Filesystem, Directory } = await import("@capacitor/filesystem");
+      const { Share } = await import("@capacitor/share");
+
+      const arrayBuffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+
+      const { uri } = await Filesystem.writeFile({
+        path: filename,
+        data: base64,
+        directory: Directory.Cache,
+      });
+
+      await Share.share({ title, url: uri, dialogTitle: title });
+      return;
+    }
+  } catch { /* not native or plugin unavailable */ }
+
+  // Web fallback: Web Share API with file, then download
+  const file = new File([blob], filename, { type: blob.type });
+  const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+  if (nav.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return;
+    } catch { /* user cancelled or not supported */ }
+  }
+  downloadExcelBlob(blob, filename);
+}
+
 export function buildRowSummaryText(row: Record<string, unknown>): string {
   return Object.entries(row)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
