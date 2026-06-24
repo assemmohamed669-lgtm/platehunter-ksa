@@ -129,7 +129,7 @@ export default function FileUploadBox({
         id={inputId}
         type="file"
         accept=".xlsx,.xls,.csv"
-        style={{ position: "absolute", left: "-9999px", width: "1px", height: "1px", opacity: 0, overflow: "hidden" }}
+        style={{ position: "fixed", left: "-9999px", top: "-9999px", width: "1px", height: "1px", opacity: 0 }}
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) handleFile(file);
