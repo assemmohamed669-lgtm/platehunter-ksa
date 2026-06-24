@@ -580,7 +580,7 @@ export default function RegistrationPage() {
     }
     setManualError(null);
 
-    const coords = gpsService.getLastCoords();
+    const coords = gps ?? gpsService.getLastCoords();
     const localId = uid();
     const entry: RecordingEntry = {
       localId,
