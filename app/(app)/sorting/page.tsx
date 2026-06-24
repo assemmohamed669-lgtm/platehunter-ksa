@@ -118,7 +118,7 @@ export default function SortingPage() {
   // Paste-text path — now filtered to matches only
   const [pasteText, setPasteText] = useState("");
   const [pasteResults, setPasteResults] = useState<
-    { converted: string; row: Record<string, string> }[]
+    { converted: string; referralRow: Record<string, string>; dataRow?: Record<string, string> }[]
   >([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
@@ -340,13 +340,24 @@ export default function SortingPage() {
     setExportingAll(false);
   }
 
-  // ── Paste-text path: only matches are kept ──────────────────────────
+  // ── Paste-text path: compare against referral, enrich from data ────
   function runPasteSort() {
-    if (!dataTable || !dataPlateCol) return;
+    if (!referralTable || !referralPlateCol) return;
+
+    // Build referral map (the "wanted" list)
+    const referralMap = new Map<string, Record<string, string>>();
+    for (const row of referralTable.rows) {
+      const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
+      if (norm) referralMap.set(norm, row);
+    }
+
+    // Build data map (optional — enriches with field data)
     const dataMap = new Map<string, Record<string, string>>();
-    for (const row of dataTable.rows) {
-      const norm = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
-      if (norm) dataMap.set(norm, row);
+    if (dataTable && dataPlateCol) {
+      for (const row of dataTable.rows) {
+        const norm = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
+        if (norm) dataMap.set(norm, row);
+      }
     }
 
     const tokens = pasteText
@@ -354,12 +365,14 @@ export default function SortingPage() {
       .map((t) => t.trim())
       .filter(Boolean);
 
-    const matches: { converted: string; row: Record<string, string> }[] = [];
+    const matches: { converted: string; referralRow: Record<string, string>; dataRow?: Record<string, string> }[] = [];
     for (const token of tokens) {
       const converted = bankPlateToArabic(token);
       const norm = normalizePlate(converted);
-      const row = dataMap.get(norm);
-      if (row) matches.push({ converted, row });
+      const referralRow = referralMap.get(norm);
+      if (referralRow) {
+        matches.push({ converted, referralRow, dataRow: dataMap.get(norm) });
+      }
     }
 
     setPasteResults(matches);
@@ -367,9 +380,10 @@ export default function SortingPage() {
     setPasteVisibleCount(PAGE_SIZE);
   }
 
-  function buildPasteRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
+  function buildPasteRowObject(p: { converted: string; referralRow: Record<string, string>; dataRow?: Record<string, string> }): Record<string, unknown> {
     const row: Record<string, unknown> = { "رقم اللوحة": p.converted };
-    for (const col of displayCols) row[col] = p.row[col] ?? "";
+    for (const col of displayCols) row[col] = p.dataRow?.[col] ?? "";
+    for (const col of referralExtraCols) row[col] = p.referralRow[col] ?? "";
     return row;
   }
 
@@ -753,6 +767,44 @@ export default function SortingPage() {
       {/* ════════════ PASTE PATH ════════════ */}
       {tab === "paste" && (
         <div className="flex flex-col gap-3">
+          {/* Referral file upload */}
+          <FileUploadBox
+            title="ملف الإحالة"
+            hint="قائمة البنك — اللوحات الملصوقة ستُقارن بهذا الملف"
+            parsedFile={referralFile}
+            parsedRowCount={referralTable?.rows.length ?? null}
+            onParsed={(table, file) => persistAndSet("referral", table, file)}
+            onClear={() => clearSlot("referral")}
+          />
+
+          {/* Referral extra cols picker */}
+          {referralTable && (
+            <div className="rounded-xl border border-border bg-surface p-3">
+              <p className="mb-2 text-sm font-bold text-ink">أعمدة الإحالة الظاهرة في النتائج</p>
+              <p className="mb-2 text-xs text-muted">
+                عمود اللوحة المكتشف: <span className="text-primary">{referralPlateCol}</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {referralTable.headers
+                  .filter((h) => h !== referralPlateCol)
+                  .map((h) => (
+                    <button
+                      key={h}
+                      onClick={() => toggleSet(referralExtraCols, h, setReferralExtraCols)}
+                      className={`rounded-full px-3 py-1 text-xs transition ${
+                        referralExtraCols.has(h)
+                          ? "bg-primary text-night font-bold"
+                          : "border border-border text-muted"
+                      }`}
+                    >
+                      {h}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* Paste input */}
           <div>
             <label className="mb-1 block text-sm font-bold text-ink">اللوحات الملصوقة</label>
             <textarea
@@ -767,7 +819,7 @@ export default function SortingPage() {
 
           <button
             onClick={runPasteSort}
-            disabled={!dataTable || !pasteText.trim()}
+            disabled={!referralTable || !pasteText.trim()}
             className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night disabled:opacity-50"
           >
             <ListFilter size={16} />
@@ -776,7 +828,7 @@ export default function SortingPage() {
 
           {pasteRan && (
             <p className="text-xs text-muted">
-              {pasteResults.length} تطابق وُجد داخل ملف الداتا (يُعرض المتطابق فقط)
+              {pasteResults.length} لوحة مطلوبة وُجدت في الإحالة (يُعرض المتطابق فقط)
             </p>
           )}
 
@@ -814,6 +866,9 @@ export default function SortingPage() {
                         {displayCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                         ))}
+                        {[...referralExtraCols].map((col) => (
+                          <th key={`ref-${col}`} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
+                        ))}
                         <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
                       </tr>
                     </thead>
@@ -833,7 +888,7 @@ export default function SortingPage() {
                               {p.converted}
                             </td>
                             {displayCols.map((col) => {
-                              const val = p.row[col] ?? "";
+                              const val = p.dataRow?.[col] ?? "";
                               return (
                                 <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                                   {/^https?:\/\//i.test(val)
@@ -842,6 +897,11 @@ export default function SortingPage() {
                                 </td>
                               );
                             })}
+                            {[...referralExtraCols].map((col) => (
+                              <td key={`ref-${col}`} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                                {p.referralRow[col] || "—"}
+                              </td>
+                            ))}
                             <td className="px-2 py-2">
                               <div className="flex items-center gap-2">
                                 <button onClick={async () => {
@@ -899,10 +959,10 @@ export default function SortingPage() {
           )}
 
           {pasteRan && pasteResults.length === 0 && (
-            <p className="py-6 text-center text-sm text-muted">لا توجد تطابقات داخل ملف الداتا.</p>
+            <p className="py-6 text-center text-sm text-muted">لا توجد لوحات مطلوبة ضمن القائمة الملصوقة.</p>
           )}
 
-          {!dataTable && <p className="text-xs text-alert">رفع «ملف الداتا» بالأعلى مطلوب أولًا قبل الفرز.</p>}
+          {!referralTable && <p className="text-xs text-alert">رفع «ملف الإحالة» مطلوب أولاً قبل الفرز.</p>}
         </div>
       )}
     </div>
