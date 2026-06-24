@@ -33,6 +33,8 @@ import {
 import {
   detectPlateColumn,
   matchDataAgainstReferral,
+  buildReferralIndex,
+  matchChunkAgainstIndex,
   bankPlateToArabic,
   normalizePlate,
   type MatchResult,
@@ -227,15 +229,24 @@ export default function SortingPage() {
   async function runSort() {
     if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
     setSorting(true);
-    // Yield to the browser so the loading state renders before the heavy computation
-    await new Promise<void>((resolve) => setTimeout(resolve, 30));
-    const matched = matchDataAgainstReferral(
-      dataTable.rows,
-      dataPlateCol,
-      referralTable.rows,
-      referralPlateCol
-    );
-    setResults(matched);
+
+    // Yield so React renders "جارٍ الفرز..." before heavy work starts
+    await new Promise<void>((r) => setTimeout(r, 30));
+
+    // Build referral index once
+    const index = buildReferralIndex(referralTable.rows, referralPlateCol);
+
+    // Process data in chunks of 300 — yield between chunks to keep UI alive
+    const CHUNK = 300;
+    const allResults: MatchResult[] = [];
+    for (let i = 0; i < dataTable.rows.length; i += CHUNK) {
+      allResults.push(
+        ...matchChunkAgainstIndex(dataTable.rows.slice(i, i + CHUNK), dataPlateCol, index)
+      );
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+
+    setResults(allResults);
     setSorted(true);
     setNearestActive(false);
     setVisibleCount(PAGE_SIZE);

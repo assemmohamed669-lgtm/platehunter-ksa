@@ -377,39 +377,46 @@ export function similarityPercent(a: string, b: string): number {
   return Math.round((1 - dist / maxLen) * 100);
 }
 
-// Iterates DATA rows so results follow the data file order (not referral order).
-// Fuzzy search uses first-char bucketing: at ≥88% threshold on 7-char plates,
-// any matching plate must share the same first character (1-edit in first char → 85.7% < 88%).
-export function matchDataAgainstReferral(
-  dataRows: Record<string, string>[],
-  dataPlateCol: string,
+// Pre-built index for referral file — call once, reuse across chunks.
+export interface ReferralIndex {
+  exact: Map<string, Record<string, string>>;
+  byFirstChar: Map<string, Array<{ norm: string; row: Record<string, string> }>>;
+}
+
+export function buildReferralIndex(
   referralRows: Record<string, string>[],
   referralPlateCol: string,
-  fuzzyThreshold = 88,
-): MatchResult[] {
-  const refNormMap = new Map<string, Record<string, string>>();
-  const refByFirstChar = new Map<string, Array<{ norm: string; row: Record<string, string> }>>();
-
+): ReferralIndex {
+  const exact = new Map<string, Record<string, string>>();
+  const byFirstChar = new Map<string, Array<{ norm: string; row: Record<string, string> }>>();
   for (const row of referralRows) {
     const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
     if (!norm) continue;
-    refNormMap.set(norm, row);
+    exact.set(norm, row);
     const key = norm[0];
-    if (!refByFirstChar.has(key)) refByFirstChar.set(key, []);
-    refByFirstChar.get(key)!.push({ norm, row });
+    if (!byFirstChar.has(key)) byFirstChar.set(key, []);
+    byFirstChar.get(key)!.push({ norm, row });
   }
+  return { exact, byFirstChar };
+}
 
+// Match a single chunk of data rows against a pre-built referral index.
+export function matchChunkAgainstIndex(
+  dataChunk: Record<string, string>[],
+  dataPlateCol: string,
+  index: ReferralIndex,
+  fuzzyThreshold = 88,
+): MatchResult[] {
   const results: MatchResult[] = [];
-  for (const dataRow of dataRows) {
+  for (const dataRow of dataChunk) {
     const norm = normalizePlate(bankPlateToArabic(String(dataRow[dataPlateCol] ?? "")));
     if (!norm) continue;
-
-    const exact = refNormMap.get(norm);
+    const exact = index.exact.get(norm);
     if (exact) { results.push({ referralRow: exact, dataRow, status: "exact" }); continue; }
-
-    if (refNormMap.size <= 50_000) {
+    if (index.exact.size <= 50_000) {
       let best: { row: Record<string, string>; sim: number } | null = null;
-      const candidates = refByFirstChar.get(norm[0]) ?? [];
+      // First-char bucketing: at >=88% on 7-char plates, first-char edits score 85.7% < threshold
+      const candidates = index.byFirstChar.get(norm[0]) ?? [];
       for (const { norm: refNorm, row } of candidates) {
         if (Math.abs(refNorm.length - norm.length) > 1) continue;
         const sim = similarityPercent(norm, refNorm);
@@ -419,6 +426,18 @@ export function matchDataAgainstReferral(
     }
   }
   return results;
+}
+
+// Convenience wrapper (used by tests + paste path).
+export function matchDataAgainstReferral(
+  dataRows: Record<string, string>[],
+  dataPlateCol: string,
+  referralRows: Record<string, string>[],
+  referralPlateCol: string,
+  fuzzyThreshold = 88,
+): MatchResult[] {
+  const index = buildReferralIndex(referralRows, referralPlateCol);
+  return matchChunkAgainstIndex(dataRows, dataPlateCol, index, fuzzyThreshold);
 }
 
 export function matchReferralAgainstData(
