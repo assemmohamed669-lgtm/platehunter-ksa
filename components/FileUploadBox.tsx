@@ -118,23 +118,21 @@ export default function FileUploadBox({
       {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
 
       <label
-        htmlFor={inputId}
-        className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-3 text-sm text-muted transition hover:border-primary hover:text-primary ${loading ? "pointer-events-none opacity-60" : ""}`}
+        className={`relative flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-3 text-sm text-muted transition hover:border-primary hover:text-primary ${loading ? "pointer-events-none opacity-60" : ""}`}
       >
         <Upload size={16} />
         {loading ? "جارٍ القراءة..." : "اختر ملف Excel"}
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleFile(file);
+          }}
+        />
       </label>
-      <input
-        ref={inputRef}
-        id={inputId}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        style={{ position: "fixed", left: "-9999px", top: "-9999px", width: "1px", height: "1px", opacity: 0 }}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
-        }}
-      />
 
       {needsPassword && (
         <div className="mt-2.5 flex flex-col gap-2">
