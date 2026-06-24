@@ -30,7 +30,7 @@ function rowToText(entry: RecordingEntry): string {
   if (entry.district)     lines.push(`الحي: ${entry.district}`);
   if (entry.notes)        lines.push(`ملاحظات: ${entry.notes}`);
   if (entry.recorderName) lines.push(`المسجّل: ${entry.recorderName}`);
-  if (entry.mapsLink)     lines.push(`📍 ${entry.mapsLink}`);
+  if (entry.mapsLink)     lines.push(`📍 الموقع على الخريطة: ${entry.mapsLink}`);
   lines.push(`التاريخ: ${formatDate(entry.recordedAt)}`);
   return lines.join("\n");
 }

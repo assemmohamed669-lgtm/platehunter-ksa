@@ -157,6 +157,22 @@ export function buildExcelBlob(
   watermark?: WatermarkInfo
 ): Blob {
   const ws = XLSX.utils.json_to_sheet(rows);
+
+  // Make URL cells proper hyperlinks
+  const ref = ws["!ref"];
+  if (ref) {
+    const range = XLSX.utils.decode_range(ref);
+    for (let R = range.s.r; R <= range.e.r; R++) {
+      for (let C = range.s.c; C <= range.e.c; C++) {
+        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[cellRef];
+        if (cell && typeof cell.v === "string" && /^https?:\/\//i.test(cell.v)) {
+          cell.l = { Target: cell.v };
+        }
+      }
+    }
+  }
+
   const wb = XLSX.utils.book_new();
 
   if (watermark) {
