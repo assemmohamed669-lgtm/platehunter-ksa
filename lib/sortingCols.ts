@@ -15,7 +15,19 @@ export const PREFERRED_COLS = [
   "لون السيارة", "اللون", "لون",
   // Year
   "سنة الصنع", "السنة", "سنة", "موديل", "Year Model",
+  // Street — mandatory (always shown)
+  "الشارع", "شارع", "العنوان", "عنوان",
 ];
+
+// Columns that must always appear in results — user cannot hide them.
+export const MANDATORY_COLS = [
+  "الشارع", "شارع", "العنوان", "عنوان",
+];
+
+export function isMandatory(header: string): boolean {
+  const h = header.trim();
+  return MANDATORY_COLS.some((m) => h === m || h.includes(m) || m.includes(h));
+}
 
 export function matchesPreferred(header: string): boolean {
   const h = header.trim();

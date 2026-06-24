@@ -41,6 +41,7 @@ import {
 import {
   matchesPreferred,
   guessDefaultColumns,
+  isMandatory,
 } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink } from "@/lib/gps";
 import {
@@ -285,6 +286,13 @@ export default function SortingPage() {
     [results]
   );
 
+  // Always show mandatory cols first, then the rest of the selected cols
+  const displayCols = useMemo(() => {
+    const mandatoryCols = dataTable?.headers.filter((h) => h !== dataPlateCol && isMandatory(h)) ?? [];
+    const rest = [...outputCols].filter((h) => !isMandatory(h));
+    return [...new Set([...mandatoryCols, ...rest])];
+  }, [dataTable, dataPlateCol, outputCols]);
+
   const displayResults = useMemo(() => {
     if (!nearestActive || !userLoc || !gpsCol) return matchedResults;
     return [...matchedResults]
@@ -304,7 +312,12 @@ export default function SortingPage() {
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
     const row: Record<string, unknown> = { "رقم اللوحة": plateForRow(r) };
-    for (const col of outputCols) row[col] = r.dataRow?.[col] ?? "";
+    // Always include mandatory columns first, then the rest of outputCols
+    const allCols = [
+      ...(dataTable?.headers.filter((h) => h !== dataPlateCol && isMandatory(h)) ?? []),
+      ...[...outputCols].filter((h) => !isMandatory(h)),
+    ];
+    for (const col of allCols) row[col] = r.dataRow?.[col] ?? "";
     for (const col of referralExtraCols) row[col] = r.referralRow[col] ?? "";
     row["نوع التطابق"] = r.status === "exact" ? "مطابقة كاملة" : `مشتبه به (${r.similarity}%)`;
     return row;
@@ -356,7 +369,7 @@ export default function SortingPage() {
 
   function buildPasteRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
     const row: Record<string, unknown> = { "رقم اللوحة": p.converted };
-    for (const col of outputCols) row[col] = p.row[col] ?? "";
+    for (const col of displayCols) row[col] = p.row[col] ?? "";
     return row;
   }
 
@@ -472,22 +485,32 @@ export default function SortingPage() {
         <div className="rounded-xl border border-border bg-surface p-3">
           <p className="mb-2 text-sm font-bold text-ink">الأعمدة الظاهرة في النتائج</p>
           <p className="mb-2 text-xs text-muted">
-            كل الأعمدة مفعّلة تلقائياً — اضغط على أي عمود لإخفائه أو إظهاره. عمود اللوحة: <span className="text-primary">{dataPlateCol}</span>
+            اضغط على أي عمود لإخفائه أو إظهاره. عمود اللوحة: <span className="text-primary">{dataPlateCol}</span>
           </p>
           <div className="flex flex-wrap gap-2">
             {dataTable.headers
               .filter((h) => h !== dataPlateCol)
-              .map((h) => (
-                <button
-                  key={h}
-                  onClick={() => toggleSet(outputCols, h, setOutputCols)}
-                  className={`rounded-full px-3 py-1 text-xs transition ${
-                    outputCols.has(h) ? "bg-primary text-night font-bold" : "border border-border text-muted"
-                  }`}
-                >
-                  {h}
-                </button>
-              ))}
+              .map((h) => {
+                const mandatory = isMandatory(h);
+                const active = mandatory || outputCols.has(h);
+                return (
+                  <button
+                    key={h}
+                    onClick={() => { if (!mandatory) toggleSet(outputCols, h, setOutputCols); }}
+                    disabled={mandatory}
+                    title={mandatory ? "عمود إجباري — لا يمكن إخفاؤه" : undefined}
+                    className={`rounded-full px-3 py-1 text-xs transition ${
+                      active
+                        ? mandatory
+                          ? "bg-primary text-night font-bold opacity-80 cursor-default"
+                          : "bg-primary text-night font-bold"
+                        : "border border-border text-muted"
+                    }`}
+                  >
+                    {h}{mandatory ? " 🔒" : ""}
+                  </button>
+                );
+              })}
           </div>
         </div>
       )}
@@ -606,7 +629,7 @@ export default function SortingPage() {
                         <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                         <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                         <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">نوع التطابق</th>
-                        {[...outputCols].map((col) => (
+                        {displayCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                         ))}
                         {[...referralExtraCols].map((col) => (
@@ -639,7 +662,7 @@ export default function SortingPage() {
                                 : <span className="flex items-center gap-1 font-bold text-alert"><AlertTriangle size={12} /> {r.similarity}%</span>
                               }
                             </td>
-                            {[...outputCols].map((col) => {
+                            {displayCols.map((col) => {
                               const val = r.dataRow?.[col] ?? "";
                               return (
                                 <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
@@ -788,7 +811,7 @@ export default function SortingPage() {
                       <tr className="bg-surface-2 text-muted">
                         <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                         <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                        {[...outputCols].map((col) => (
+                        {displayCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                         ))}
                         <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
@@ -809,7 +832,7 @@ export default function SortingPage() {
                             <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">
                               {p.converted}
                             </td>
-                            {[...outputCols].map((col) => {
+                            {displayCols.map((col) => {
                               const val = p.row[col] ?? "";
                               return (
                                 <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
