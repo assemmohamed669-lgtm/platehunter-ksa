@@ -222,6 +222,62 @@ describe("parsePlateFromTranscript", () => {
   });
 });
 
+// ─── Egyptian & colloquial dialect ───────────────────────────────────────────
+describe("parsePlateFromTranscript — Egyptian & colloquial dialect", () => {
+  // Short letter names (Egyptian)
+  it("'را' recognized as ر (Egyptian short for راء)", () => {
+    const r = parsePlateFromTranscript("حا را با 8531");
+    expect(r.plate).toBe("حرب8531");
+  });
+
+  it("'طا' recognized as ط (Egyptian short for طاء)", () => {
+    const r = parsePlateFromTranscript("طا را سين 4521");
+    expect(r.plate).toBe("طرس4521");
+  });
+
+  it("'كي' recognized as ك (Egyptian letter name)", () => {
+    const r = parsePlateFromTranscript("كي دال سين 8531");
+    expect(r.plate).toBe("كدس8531");
+  });
+
+  // Egyptian ق (glottal stop — SR may return ءاف or آف instead of قاف)
+  it("'ءاف' recognized as ق (Egyptian ق glottal stop transcription)", () => {
+    const r = parsePlateFromTranscript("ءاف را دال 4521");
+    expect(r.plate).toBe("قرد4521");
+  });
+
+  it("'آف' recognized as ق (alternative glottal stop transcription)", () => {
+    const r = parsePlateFromTranscript("آف را دال 4521");
+    expect(r.plate).toBe("قرد4521");
+  });
+
+  // Egyptian colloquial numbers
+  it("'اتنين' recognized as 2 (Egyptian for اثنين)", () => {
+    const r = parsePlateFromTranscript("حمن واحد اتنين تلاتة اربعة");
+    expect(r.plate).toBe("حمن1234");
+  });
+
+  it("'تمانية' recognized as 8 (Egyptian for ثمانية)", () => {
+    const r = parsePlateFromTranscript("درق تمانية خمسة تلاتة واحد");
+    expect(r.plate).toBe("درق8531");
+  });
+
+  it("'تلاتين' recognized as 30 (Egyptian colloquial)", () => {
+    const r = parsePlateFromTranscript("حمن تلاتين");
+    expect(r.plate).toBe("حمن30");
+  });
+
+  it("'حداشر' recognized as 11 (Egyptian colloquial)", () => {
+    const r = parsePlateFromTranscript("حمن حداشر");
+    expect(r.plate).toBe("حمن11");
+  });
+
+  it("'اتناشر' recognized as 12 (Egyptian colloquial)", () => {
+    const r = parsePlateFromTranscript("حمن اتناشر");
+    expect(r.plate).toBe("حمن12");
+  });
+});
+
 // ─── normalizePlate — ى handling ─────────────────────────────────────────────
 describe("normalizePlate ى normalization", () => {
   it("treats ى as equivalent to ي for matching", () => {
