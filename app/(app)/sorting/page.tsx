@@ -117,6 +117,8 @@ export default function SortingPage() {
   const [sorting, setSorting] = useState(false);
   const [showExcelMenuFiles, setShowExcelMenuFiles] = useState(false);
   const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
+  const [dataColsOpen, setDataColsOpen] = useState(false);
+  const [referralColsOpen, setReferralColsOpen] = useState(false);
 
   // Paste-text path — now filtered to matches only
   const [pasteText, setPasteText] = useState("");
@@ -200,12 +202,14 @@ export default function SortingPage() {
         setDataTable(table);
         setDataFile(file);
         setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers))));
+        setDataColsOpen(false);
       } else {
         setReferralTable(table);
         setReferralFile(file);
         const refPlate = detectPlateColumn(table.headers);
         const defRef = table.headers.filter((h) => h !== refPlate && matchesPreferred(h));
         setReferralExtraCols(new Set(defRef));
+        setReferralColsOpen(false);
       }
       setResults(null);
       setSorted(false);
@@ -505,36 +509,49 @@ export default function SortingPage() {
 
       {/* Output columns picker (shared — built from the data file's real headers) */}
       {dataTable && (
-        <div className="rounded-xl border border-border bg-surface p-3">
-          <p className="mb-2 text-sm font-bold text-ink">الأعمدة الظاهرة في النتائج</p>
-          <p className="mb-2 text-xs text-muted">
-            اضغط على أي عمود لإخفائه أو إظهاره. عمود اللوحة: <span className="text-primary">{dataPlateCol}</span>
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {dataTable.headers
-              .filter((h) => h !== dataPlateCol)
-              .map((h) => {
-                const mandatory = isMandatory(h);
-                const active = mandatory || outputCols.has(h);
-                return (
-                  <button
-                    key={h}
-                    onClick={() => { if (!mandatory) toggleSet(outputCols, h, setOutputCols); }}
-                    disabled={mandatory}
-                    title={mandatory ? "عمود إجباري — لا يمكن إخفاؤه" : undefined}
-                    className={`rounded-full px-3 py-1 text-xs transition ${
-                      active
-                        ? mandatory
-                          ? "bg-primary text-night font-bold opacity-80 cursor-default"
-                          : "bg-primary text-night font-bold"
-                        : "border border-border text-muted"
-                    }`}
-                  >
-                    {h}{mandatory ? " 🔒" : ""}
-                  </button>
-                );
-              })}
-          </div>
+        <div className="rounded-xl border border-border bg-surface">
+          <button
+            onClick={() => setDataColsOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
+          >
+            <span>الأعمدة الظاهرة في النتائج</span>
+            <ChevronDown
+              size={16}
+              className={`text-muted transition-transform duration-200 ${dataColsOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          {dataColsOpen && (
+            <div className="border-t border-border px-3 pb-3 pt-2">
+              <p className="mb-2 text-xs text-muted">
+                اضغط على أي عمود لإخفائه أو إظهاره. عمود اللوحة: <span className="text-primary">{dataPlateCol}</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {dataTable.headers
+                  .filter((h) => h !== dataPlateCol)
+                  .map((h) => {
+                    const mandatory = isMandatory(h);
+                    const active = mandatory || outputCols.has(h);
+                    return (
+                      <button
+                        key={h}
+                        onClick={() => { if (!mandatory) toggleSet(outputCols, h, setOutputCols); }}
+                        disabled={mandatory}
+                        title={mandatory ? "عمود إجباري — لا يمكن إخفاؤه" : undefined}
+                        className={`rounded-full px-3 py-1 text-xs transition ${
+                          active
+                            ? mandatory
+                              ? "bg-primary text-night font-bold opacity-80 cursor-default"
+                              : "bg-primary text-night font-bold"
+                            : "border border-border text-muted"
+                        }`}
+                      >
+                        {h}{mandatory ? " 🔒" : ""}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -551,28 +568,41 @@ export default function SortingPage() {
           />
 
           {referralTable && (
-            <div className="rounded-xl border border-border bg-surface p-3">
-              <p className="mb-2 text-sm font-bold text-ink">أعمدة الإحالة الإضافية</p>
-              <p className="mb-2 text-xs text-muted">
-                عمود اللوحة المكتشف: <span className="text-primary">{referralPlateCol}</span>
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {referralTable.headers
-                  .filter((h) => h !== referralPlateCol)
-                  .map((h) => (
-                    <button
-                      key={h}
-                      onClick={() => toggleSet(referralExtraCols, h, setReferralExtraCols)}
-                      className={`rounded-full px-3 py-1 text-xs transition ${
-                        referralExtraCols.has(h)
-                          ? "bg-primary text-night font-bold"
-                          : "border border-border text-muted"
-                      }`}
-                    >
-                      {h}
-                    </button>
-                  ))}
-              </div>
+            <div className="rounded-xl border border-border bg-surface">
+              <button
+                onClick={() => setReferralColsOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
+              >
+                <span>أعمدة الإحالة الإضافية</span>
+                <ChevronDown
+                  size={16}
+                  className={`text-muted transition-transform duration-200 ${referralColsOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {referralColsOpen && (
+                <div className="border-t border-border px-3 pb-3 pt-2">
+                  <p className="mb-2 text-xs text-muted">
+                    عمود اللوحة المكتشف: <span className="text-primary">{referralPlateCol}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {referralTable.headers
+                      .filter((h) => h !== referralPlateCol)
+                      .map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => toggleSet(referralExtraCols, h, setReferralExtraCols)}
+                          className={`rounded-full px-3 py-1 text-xs transition ${
+                            referralExtraCols.has(h)
+                              ? "bg-primary text-night font-bold"
+                              : "border border-border text-muted"
+                          }`}
+                        >
+                          {h}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
