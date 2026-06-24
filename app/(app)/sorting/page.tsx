@@ -392,7 +392,7 @@ export default function SortingPage() {
   }
 
   return (
-    <div className="rtl-text flex flex-col gap-4" dir="rtl">
+    <div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl">
       <div>
         <h1 className="text-lg font-bold text-ink">الفرز</h1>
         <p className="text-xs text-muted">مطابقة الإحالة (البنك) مع بيانات الميدان</p>

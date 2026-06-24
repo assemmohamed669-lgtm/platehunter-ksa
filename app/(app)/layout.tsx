@@ -40,7 +40,7 @@ export default function AppShellLayout({
 
   return (
     <SessionGuard>
-      <div className="min-h-screen bg-night pb-24">
+      <div className="min-h-screen bg-night pb-24 overflow-x-hidden w-full">
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur">
           <div className="flex items-center gap-2">
             {!isHome && <BackButton />}
@@ -70,7 +70,7 @@ export default function AppShellLayout({
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-md px-4 py-5 min-h-[calc(100dvh-9rem)]">{children}</main>
+        <main className="mx-auto w-full max-w-md px-4 py-5 min-h-[calc(100dvh-9rem)] overflow-x-hidden">{children}</main>
 
         <BottomNav />
       </div>
