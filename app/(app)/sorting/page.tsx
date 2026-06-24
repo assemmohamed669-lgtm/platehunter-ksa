@@ -230,42 +230,61 @@ export default function SortingPage() {
   async function runSort() {
     if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
     setSorting(true);
-
-    // Yield so React renders "جارٍ الفرز..." before heavy work starts
     await new Promise<void>((r) => setTimeout(r, 30));
 
-    // Build referral index once
-    const index = buildReferralIndex(referralTable.rows, referralPlateCol);
+    try {
+      const allResults: MatchResult[] = [];
 
-    // Process data in chunks of 300 — yield between chunks to keep UI alive
-    const CHUNK = 300;
-    const allResults: MatchResult[] = [];
-    for (let i = 0; i < dataTable.rows.length; i += CHUNK) {
-      allResults.push(
-        ...matchChunkAgainstIndex(dataTable.rows.slice(i, i + CHUNK), dataPlateCol, index)
+      if (dataTable.rows.length > referralTable.rows.length) {
+        // Data is the large file: build data map in 10K chunks (fewer yields),
+        // then do 3782 exact lookups against it — fast regardless of data size.
+        const dataExact = new Map<string, Record<string, string>>();
+        const BUILD_CHUNK = 10_000;
+        for (let i = 0; i < dataTable.rows.length; i += BUILD_CHUNK) {
+          for (const row of dataTable.rows.slice(i, i + BUILD_CHUNK)) {
+            const n = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
+            if (n) dataExact.set(n, row);
+          }
+          await new Promise<void>((r) => setTimeout(r, 0));
+        }
+        for (const refRow of referralTable.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(refRow[referralPlateCol] ?? "")));
+          if (!n) continue;
+          const dataRow = dataExact.get(n);
+          if (dataRow) allResults.push({ referralRow: refRow, dataRow, status: "exact" });
+        }
+      } else {
+        // Referral is the large file: iterate data in small chunks
+        const index = buildReferralIndex(referralTable.rows, referralPlateCol);
+        const CHUNK = 300;
+        for (let i = 0; i < dataTable.rows.length; i += CHUNK) {
+          allResults.push(...matchChunkAgainstIndex(dataTable.rows.slice(i, i + CHUNK), dataPlateCol, index));
+          await new Promise<void>((r) => setTimeout(r, 0));
+        }
+      }
+
+      const sampleData = dataTable.rows.slice(0, 3).map((r) =>
+        normalizePlate(bankPlateToArabic(String(r[dataPlateCol] ?? "")))
       );
-      await new Promise<void>((r) => setTimeout(r, 0));
+      const sampleRef = referralTable.rows.slice(0, 3).map((r) =>
+        normalizePlate(bankPlateToArabic(String(r[referralPlateCol] ?? "")))
+      );
+      setDebugInfo(
+        `داتا: ${dataTable.rows.length} | إحالة: ${referralTable.rows.length} | تطابقات: ${allResults.length}\n` +
+        `عمود داتا: ${dataPlateCol} | عمود إحالة: ${referralPlateCol}\n` +
+        `نماذج داتا: ${sampleData.join(" / ")}\n` +
+        `نماذج إحالة: ${sampleRef.join(" / ")}`
+      );
+
+      setResults(allResults);
+      setSorted(true);
+      setNearestActive(false);
+      setVisibleCount(PAGE_SIZE);
+    } catch (err) {
+      setDebugInfo(`خطأ: ${String(err)}`);
+    } finally {
+      setSorting(false);
     }
-
-    // Debug: capture sample plates to diagnose empty results
-    const sampleData = dataTable.rows.slice(0, 3).map((r) =>
-      normalizePlate(bankPlateToArabic(String(r[dataPlateCol] ?? "")))
-    );
-    const sampleRef = referralTable.rows.slice(0, 3).map((r) =>
-      normalizePlate(bankPlateToArabic(String(r[referralPlateCol] ?? "")))
-    );
-    setDebugInfo(
-      `داتا: ${dataTable.rows.length} صف | إحالة: ${referralTable.rows.length} صف | تطابقات: ${allResults.length}\n` +
-      `عمود داتا: ${dataPlateCol} | عمود إحالة: ${referralPlateCol}\n` +
-      `نماذج داتا: ${sampleData.join(" / ")}\n` +
-      `نماذج إحالة: ${sampleRef.join(" / ")}`
-    );
-
-    setResults(allResults);
-    setSorted(true);
-    setNearestActive(false);
-    setVisibleCount(PAGE_SIZE);
-    setSorting(false);
   }
 
   async function handleNearest() {
