@@ -134,41 +134,48 @@ interface MatchedPlate {
   mapsLink?: string;
 }
 
-function MatchModal({ match, onClose }: { match: MatchedPlate; onClose: () => void }) {
+function MatchModal({ matches, onClose }: { matches: MatchedPlate[]; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-primary p-6 text-center shadow-2xl">
-        <div className="mb-3 flex items-center justify-center gap-2">
+      <div className="w-full max-w-sm rounded-2xl bg-primary p-6 shadow-2xl max-h-[85vh] flex flex-col">
+        <div className="mb-4 flex items-center justify-center gap-2 shrink-0">
           <AlertTriangle size={28} className="text-night animate-bounce" />
-          <span className="text-xl font-black text-night">لوحة متطابقة!</span>
+          <span className="text-xl font-black text-night">
+            {matches.length === 1 ? "لوحة متطابقة!" : `${matches.length} لوحات متطابقة!`}
+          </span>
         </div>
 
-        <div className="mb-4 flex justify-center">
-          <PlateBadge value={match.plate} size="lg" />
+        <div className="flex flex-col gap-3 overflow-y-auto flex-1">
+          {matches.map((match, i) => (
+            <div key={i} className="rounded-xl bg-white/15 p-3 text-center">
+              <div className="mb-2 flex justify-center">
+                <PlateBadge value={match.plate} size="lg" />
+              </div>
+              {match.vehicleType && (
+                <p className="mb-1 text-base font-bold text-night">{match.vehicleType}</p>
+              )}
+              {(match.street || match.district) && (
+                <p className="mb-1 text-sm text-night/80">
+                  {match.street}{match.district ? ` • ${match.district}` : ""}
+                </p>
+              )}
+              {match.mapsLink && (
+                <a
+                  href={match.mapsLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-bold text-night underline"
+                >
+                  📍 افتح الموقع في الخريطة
+                </a>
+              )}
+            </div>
+          ))}
         </div>
-
-        {match.vehicleType && (
-          <p className="mb-1 text-lg font-bold text-night">{match.vehicleType}</p>
-        )}
-        {(match.street || match.district) && (
-          <p className="mb-1 text-sm text-night/80">
-            {match.street}{match.district ? ` • ${match.district}` : ""}
-          </p>
-        )}
-        {match.mapsLink && (
-          <a
-            href={match.mapsLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mb-4 inline-block text-sm font-bold text-night underline"
-          >
-            📍 افتح الموقع في الخريطة
-          </a>
-        )}
 
         <button
           onClick={onClose}
-          className="mt-4 w-full rounded-xl bg-night py-3 text-base font-bold text-primary transition hover:bg-night/80"
+          className="mt-4 w-full rounded-xl bg-night py-3 text-base font-bold text-primary transition hover:bg-night/80 shrink-0"
         >
           إغلاق
         </button>
@@ -212,7 +219,7 @@ export default function RegistrationPage() {
   const checkFileRef = useRef<HTMLInputElement | null>(null);
 
   // Match modal
-  const [matchedPlate, setMatchedPlate] = useState<MatchedPlate | null>(null);
+  const [matchedPlates, setMatchedPlates] = useState<MatchedPlate[]>([]);
 
   // Matched recordings (IDs of recordings that triggered check alert)
   const [matchedIds, setMatchedIds] = useState<Set<string>>(new Set());
@@ -328,13 +335,16 @@ export default function RegistrationPage() {
     if (checkPlates.has(norm)) {
       setMatchedIds((prev) => new Set(prev).add(entry.localId));
       playMatchAlert();
-      setMatchedPlate({
-        plate,
-        vehicleType: entry.vehicleType,
-        street: entry.street,
-        district: entry.district,
-        mapsLink: entry.mapsLink,
-      });
+      setMatchedPlates((prev) => [
+        ...prev,
+        {
+          plate,
+          vehicleType: entry.vehicleType,
+          street: entry.street,
+          district: entry.district,
+          mapsLink: entry.mapsLink,
+        },
+      ]);
     }
   }
 
@@ -713,7 +723,7 @@ export default function RegistrationPage() {
     const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) return;
-    const blob = buildExcelBlob(rows, "اللوحات");
+    const blob = buildExcelBlob(rows, "تسجيل");
     await openExcelBlob(blob, filename);
   }
 
@@ -721,7 +731,7 @@ export default function RegistrationPage() {
     const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) return;
-    const blob = buildExcelBlob(rows, "اللوحات");
+    const blob = buildExcelBlob(rows, "تسجيل");
     await shareBlob(blob, filename, "سجلات اللوحات");
   }
 
@@ -783,8 +793,8 @@ export default function RegistrationPage() {
   return (
     <div className="flex flex-col gap-4">
       {/* Match modal */}
-      {matchedPlate && (
-        <MatchModal match={matchedPlate} onClose={() => setMatchedPlate(null)} />
+      {matchedPlates.length > 0 && (
+        <MatchModal matches={matchedPlates} onClose={() => setMatchedPlates([])} />
       )}
 
       {/* Header bar */}
