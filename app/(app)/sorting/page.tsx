@@ -111,6 +111,7 @@ export default function SortingPage() {
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const [exportingAll, setExportingAll] = useState(false);
+  const [sorting, setSorting] = useState(false);
 
   // Paste-text path — now filtered to matches only
   const [pasteText, setPasteText] = useState("");
@@ -223,8 +224,11 @@ export default function SortingPage() {
   }
 
   // ── Run matching ──────────────────────────────────────────────────
-  function runSort() {
+  async function runSort() {
     if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
+    setSorting(true);
+    // Yield to the browser so the loading state renders before the heavy computation
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
     const matched = matchDataAgainstReferral(
       dataTable.rows,
       dataPlateCol,
@@ -235,6 +239,7 @@ export default function SortingPage() {
     setSorted(true);
     setNearestActive(false);
     setVisibleCount(PAGE_SIZE);
+    setSorting(false);
   }
 
   async function handleNearest() {
@@ -508,10 +513,11 @@ export default function SortingPage() {
           {dataTable && referralTable && (
             <button
               onClick={runSort}
-              className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+              disabled={sorting}
+              className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-70"
             >
               <ListFilter size={18} />
-              ابدأ الفرز
+              {sorting ? "جارٍ الفرز..." : "ابدأ الفرز"}
             </button>
           )}
 

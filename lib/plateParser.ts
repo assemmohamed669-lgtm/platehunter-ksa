@@ -349,21 +349,26 @@ export interface MatchResult {
   similarity?: number;
 }
 
+// Two-row Levenshtein: O(n) space instead of O(nm), no per-call allocation
+let _levPrev: number[] = [];
+let _levCurr: number[] = [];
+
 export function levenshtein(a: string, b: string): number {
   const m = a.length, n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  if (_levPrev.length < n + 1) { _levPrev = new Array(n + 1); _levCurr = new Array(n + 1); }
+  for (let j = 0; j <= n; j++) _levPrev[j] = j;
   for (let i = 1; i <= m; i++) {
+    _levCurr[0] = i;
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i-1] === b[j-1]
-        ? dp[i-1][j-1]
-        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      _levCurr[j] = a[i - 1] === b[j - 1]
+        ? _levPrev[j - 1]
+        : 1 + Math.min(_levPrev[j], _levCurr[j - 1], _levPrev[j - 1]);
     }
+    const tmp = _levPrev; _levPrev = _levCurr; _levCurr = tmp;
   }
-  return dp[m][n];
+  return _levPrev[n];
 }
 
 export function similarityPercent(a: string, b: string): number {
@@ -373,6 +378,8 @@ export function similarityPercent(a: string, b: string): number {
 }
 
 // Iterates DATA rows so results follow the data file order (not referral order).
+// Fuzzy search uses first-char bucketing: at ≥88% threshold on 7-char plates,
+// any matching plate must share the same first character (1-edit in first char → 85.7% < 88%).
 export function matchDataAgainstReferral(
   dataRows: Record<string, string>[],
   dataPlateCol: string,
@@ -381,9 +388,15 @@ export function matchDataAgainstReferral(
   fuzzyThreshold = 88,
 ): MatchResult[] {
   const refNormMap = new Map<string, Record<string, string>>();
+  const refByFirstChar = new Map<string, Array<{ norm: string; row: Record<string, string> }>>();
+
   for (const row of referralRows) {
     const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
-    if (norm) refNormMap.set(norm, row);
+    if (!norm) continue;
+    refNormMap.set(norm, row);
+    const key = norm[0];
+    if (!refByFirstChar.has(key)) refByFirstChar.set(key, []);
+    refByFirstChar.get(key)!.push({ norm, row });
   }
 
   const results: MatchResult[] = [];
@@ -396,7 +409,8 @@ export function matchDataAgainstReferral(
 
     if (refNormMap.size <= 50_000) {
       let best: { row: Record<string, string>; sim: number } | null = null;
-      for (const [refNorm, row] of refNormMap) {
+      const candidates = refByFirstChar.get(norm[0]) ?? [];
+      for (const { norm: refNorm, row } of candidates) {
         if (Math.abs(refNorm.length - norm.length) > 1) continue;
         const sim = similarityPercent(norm, refNorm);
         if (sim >= fuzzyThreshold && (!best || sim > best.sim)) best = { row, sim };
