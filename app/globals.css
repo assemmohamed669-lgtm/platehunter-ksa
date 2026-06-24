@@ -59,10 +59,10 @@ html.oled .surface-card {
   min-width: 2.25rem;
   height: 2.75rem;
   border-radius: 0.375rem;
-  background: linear-gradient(180deg, #0d2a20 0%, #081a14 100%);
-  border: 1px solid #1e4536;
-  color: #39ff9e;
-  text-shadow: 0 0 8px rgba(57, 255, 158, 0.55);
+  background: linear-gradient(180deg, #0D1B12 0%, #0A1410 100%);
+  border: 1px solid #2D4A35;
+  color: #3FB950;
+  text-shadow: 0 0 6px rgba(63, 185, 80, 0.4);
   font-size: 1.25rem;
   letter-spacing: 0.05em;
 }
