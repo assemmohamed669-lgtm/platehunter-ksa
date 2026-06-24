@@ -723,7 +723,7 @@ export default function RegistrationPage() {
     const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) return;
-    const blob = buildExcelBlob(rows, "تسجيل");
+    const blob = buildExcelBlob(rows, "اللوحات");
     await openExcelBlob(blob, filename);
   }
 
@@ -731,7 +731,7 @@ export default function RegistrationPage() {
     const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) return;
-    const blob = buildExcelBlob(rows, "تسجيل");
+    const blob = buildExcelBlob(rows, "اللوحات");
     await shareBlob(blob, filename, "سجلات اللوحات");
   }
 
