@@ -797,7 +797,18 @@ export default function SortingPage() {
         <div className="flex flex-col gap-3">
           {/* Paste input */}
           <div>
-            <label className="mb-1 block text-sm font-bold text-ink">اللوحات الملصوقة</label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="text-sm font-bold text-ink">اللوحات الملصوقة</label>
+              {pasteText && (
+                <button
+                  onClick={() => setPasteText("")}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-error"
+                >
+                  <Trash2 size={13} />
+                  مسح
+                </button>
+              )}
+            </div>
             <textarea
               value={pasteText}
               onChange={(e) => setPasteText(e.target.value)}
