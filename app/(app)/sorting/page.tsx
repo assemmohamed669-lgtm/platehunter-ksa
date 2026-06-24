@@ -32,7 +32,6 @@ import {
 } from "@/lib/excel";
 import {
   detectPlateColumn,
-  matchDataAgainstReferral,
   buildReferralIndex,
   matchChunkAgainstIndex,
   bankPlateToArabic,
@@ -122,7 +121,6 @@ export default function SortingPage() {
   >([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
-  const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
   // ── Bootstrap: restore persisted files from IndexedDB ────────────────
   // Uses a fixed "local" key (no auth dependency) so files always persist.
@@ -235,53 +233,30 @@ export default function SortingPage() {
     try {
       const allResults: MatchResult[] = [];
 
-      if (dataTable.rows.length > referralTable.rows.length) {
-        // Data is the large file: build data map in 10K chunks (fewer yields),
-        // then do 3782 exact lookups against it — fast regardless of data size.
-        const dataExact = new Map<string, Record<string, string>>();
-        const BUILD_CHUNK = 10_000;
-        for (let i = 0; i < dataTable.rows.length; i += BUILD_CHUNK) {
-          for (const row of dataTable.rows.slice(i, i + BUILD_CHUNK)) {
-            const n = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
-            if (n) dataExact.set(n, row);
-          }
-          await new Promise<void>((r) => setTimeout(r, 0));
-        }
-        for (const refRow of referralTable.rows) {
-          const n = normalizePlate(bankPlateToArabic(String(refRow[referralPlateCol] ?? "")));
-          if (!n) continue;
-          const dataRow = dataExact.get(n);
-          if (dataRow) allResults.push({ referralRow: refRow, dataRow, status: "exact" });
-        }
-      } else {
-        // Referral is the large file: iterate data in small chunks
-        const index = buildReferralIndex(referralTable.rows, referralPlateCol);
-        const CHUNK = 300;
-        for (let i = 0; i < dataTable.rows.length; i += CHUNK) {
-          allResults.push(...matchChunkAgainstIndex(dataTable.rows.slice(i, i + CHUNK), dataPlateCol, index));
-          await new Promise<void>((r) => setTimeout(r, 0));
-        }
+      // Always iterate data rows so results come out in data-file order (field survey order).
+      // Build a referral map first (referral is usually small — ≤ 10K rows).
+      const referralMap = new Map<string, Record<string, string>>();
+      for (const refRow of referralTable.rows) {
+        const n = normalizePlate(bankPlateToArabic(String(refRow[referralPlateCol] ?? "")));
+        if (n) referralMap.set(n, refRow);
       }
-
-      const sampleData = dataTable.rows.slice(0, 3).map((r) =>
-        normalizePlate(bankPlateToArabic(String(r[dataPlateCol] ?? "")))
-      );
-      const sampleRef = referralTable.rows.slice(0, 3).map((r) =>
-        normalizePlate(bankPlateToArabic(String(r[referralPlateCol] ?? "")))
-      );
-      setDebugInfo(
-        `داتا: ${dataTable.rows.length} | إحالة: ${referralTable.rows.length} | تطابقات: ${allResults.length}\n` +
-        `عمود داتا: ${dataPlateCol} | عمود إحالة: ${referralPlateCol}\n` +
-        `نماذج داتا: ${sampleData.join(" / ")}\n` +
-        `نماذج إحالة: ${sampleRef.join(" / ")}`
-      );
+      const CHUNK = 300;
+      for (let i = 0; i < dataTable.rows.length; i += CHUNK) {
+        for (const dataRow of dataTable.rows.slice(i, i + CHUNK)) {
+          const n = normalizePlate(bankPlateToArabic(String(dataRow[dataPlateCol] ?? "")));
+          if (!n) continue;
+          const refRow = referralMap.get(n);
+          if (refRow) allResults.push({ referralRow: refRow, dataRow, status: "exact" });
+        }
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
 
       setResults(allResults);
       setSorted(true);
       setNearestActive(false);
       setVisibleCount(PAGE_SIZE);
     } catch (err) {
-      setDebugInfo(`خطأ: ${String(err)}`);
+      console.error(err);
     } finally {
       setSorting(false);
     }
@@ -564,12 +539,6 @@ export default function SortingPage() {
               <ListFilter size={18} />
               {sorting ? "جارٍ الفرز..." : "ابدأ الفرز"}
             </button>
-          )}
-
-          {debugInfo && (
-            <div className="rounded-xl border border-border bg-surface p-3 text-xs text-muted font-mono whitespace-pre-wrap" dir="ltr">
-              {debugInfo}
-            </div>
           )}
 
           {sorted && results && (
