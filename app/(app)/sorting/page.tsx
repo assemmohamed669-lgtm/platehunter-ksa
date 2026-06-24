@@ -236,27 +236,31 @@ export default function SortingPage() {
   async function runSort() {
     if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
     setSorting(true);
-    await new Promise<void>((r) => setTimeout(r, 30));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     try {
       const allResults: MatchResult[] = [];
 
-      // Always iterate data rows so results come out in data-file order (field survey order).
-      // Build a referral map first (referral is usually small — ≤ 10K rows).
       const referralMap = new Map<string, Record<string, string>>();
       for (const refRow of referralTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(refRow[referralPlateCol] ?? "")));
         if (n) referralMap.set(n, refRow);
       }
-      const CHUNK = 300;
-      for (let i = 0; i < dataTable.rows.length; i += CHUNK) {
-        for (const dataRow of dataTable.rows.slice(i, i + CHUNK)) {
+
+      const rows = dataTable.rows;
+      const len = rows.length;
+      const CHUNK = 8000;
+
+      for (let i = 0; i < len; i += CHUNK) {
+        const end = Math.min(i + CHUNK, len);
+        for (let j = i; j < end; j++) {
+          const dataRow = rows[j];
           const n = normalizePlate(bankPlateToArabic(String(dataRow[dataPlateCol] ?? "")));
           if (!n) continue;
           const refRow = referralMap.get(n);
           if (refRow) allResults.push({ referralRow: refRow, dataRow, status: "exact" });
         }
-        await new Promise<void>((r) => setTimeout(r, 0));
+        if (end < len) await new Promise<void>((r) => setTimeout(r, 0));
       }
 
       setResults(allResults);
