@@ -114,6 +114,8 @@ export default function SortingPage() {
   const [locating, setLocating] = useState(false);
   const [exportingAll, setExportingAll] = useState(false);
   const [sorting, setSorting] = useState(false);
+  const [showExcelMenuFiles, setShowExcelMenuFiles] = useState(false);
+  const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
 
   // Paste-text path — now filtered to matches only
   const [pasteText, setPasteText] = useState("");
@@ -390,6 +392,34 @@ export default function SortingPage() {
     const blob = buildExcelBlob(rows, "نتائج اللصق");
     const filename = `لصق-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
     await openExcelBlob(blob, filename);
+  }
+
+  async function handleShareAll() {
+    const rows = matchedResults.map(buildRowObject);
+    const blob = buildExcelBlob(rows, "نتائج الفرز");
+    const filename = `فرز-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
+    const file = new File([blob], filename, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    try {
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: "نتائج الفرز" });
+      } else {
+        downloadExcelBlob(blob, filename);
+      }
+    } catch {}
+  }
+
+  async function handleSharePaste() {
+    const rows = pasteResults.map(buildPasteRowObject);
+    const blob = buildExcelBlob(rows, "نتائج اللصق");
+    const filename = `لصق-${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.xlsx`;
+    const file = new File([blob], filename, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    try {
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: "نتائج اللصق" });
+      } else {
+        downloadExcelBlob(blob, filename);
+      }
+    } catch {}
   }
 
   // ── Shared per-row action buttons (Copy / Share) — defined at module
@@ -734,21 +764,40 @@ export default function SortingPage() {
               )}
 
               <div className="flex gap-2">
+                {/* Excel button with فتح / تنزيل dropdown */}
+                <div className="relative flex-1">
+                  <button
+                    onClick={() => setShowExcelMenuFiles((v) => !v)}
+                    disabled={exportingAll}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60"
+                  >
+                    <ExternalLink size={16} />
+                    فتح في Excel
+                  </button>
+                  {showExcelMenuFiles && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuFiles(false)} />
+                      <div className="absolute bottom-full mb-1 right-0 z-20 w-full rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+                        <button onClick={() => { handleOpenAll(); setShowExcelMenuFiles(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-2 transition">
+                          <ExternalLink size={14} /> فتح
+                        </button>
+                        <button onClick={() => { handleDownloadAll(); setShowExcelMenuFiles(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-2 transition">
+                          <Download size={14} /> تنزيل
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {/* Share file button */}
                 <button
-                  onClick={handleDownloadAll}
-                  disabled={exportingAll}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60"
-                >
-                  <Download size={16} />
-                  حفظ الملف
-                </button>
-                <button
-                  onClick={handleOpenAll}
+                  onClick={handleShareAll}
                   disabled={exportingAll}
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
                 >
-                  <ExternalLink size={16} />
-                  فتح في Excel
+                  <Share2 size={16} />
+                  مشاركة
                 </button>
               </div>
             </div>
@@ -893,13 +942,38 @@ export default function SortingPage() {
               )}
 
               <div className="flex gap-2">
-                <button onClick={handleDownloadPaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
-                  <Download size={16} /> حفظ الملف
-                </button>
-                <button onClick={handleOpenPaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
-                  <ExternalLink size={16} /> فتح في Excel
+                {/* Excel button with فتح / تنزيل dropdown */}
+                <div className="relative flex-1">
+                  <button
+                    onClick={() => setShowExcelMenuPaste((v) => !v)}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+                  >
+                    <ExternalLink size={16} />
+                    فتح في Excel
+                  </button>
+                  {showExcelMenuPaste && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
+                      <div className="absolute bottom-full mb-1 right-0 z-20 w-full rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-2 transition">
+                          <ExternalLink size={14} /> فتح
+                        </button>
+                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-2 transition">
+                          <Download size={14} /> تنزيل
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {/* Share file button */}
+                <button
+                  onClick={handleSharePaste}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+                >
+                  <Share2 size={16} />
+                  مشاركة
                 </button>
               </div>
             </div>
