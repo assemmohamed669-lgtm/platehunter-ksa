@@ -122,6 +122,7 @@ export default function SortingPage() {
   >([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
   // ── Bootstrap: restore persisted files from IndexedDB ────────────────
   // Uses a fixed "local" key (no auth dependency) so files always persist.
@@ -245,6 +246,20 @@ export default function SortingPage() {
       );
       await new Promise<void>((r) => setTimeout(r, 0));
     }
+
+    // Debug: capture sample plates to diagnose empty results
+    const sampleData = dataTable.rows.slice(0, 3).map((r) =>
+      normalizePlate(bankPlateToArabic(String(r[dataPlateCol] ?? "")))
+    );
+    const sampleRef = referralTable.rows.slice(0, 3).map((r) =>
+      normalizePlate(bankPlateToArabic(String(r[referralPlateCol] ?? "")))
+    );
+    setDebugInfo(
+      `داتا: ${dataTable.rows.length} صف | إحالة: ${referralTable.rows.length} صف | تطابقات: ${allResults.length}\n` +
+      `عمود داتا: ${dataPlateCol} | عمود إحالة: ${referralPlateCol}\n` +
+      `نماذج داتا: ${sampleData.join(" / ")}\n` +
+      `نماذج إحالة: ${sampleRef.join(" / ")}`
+    );
 
     setResults(allResults);
     setSorted(true);
@@ -530,6 +545,12 @@ export default function SortingPage() {
               <ListFilter size={18} />
               {sorting ? "جارٍ الفرز..." : "ابدأ الفرز"}
             </button>
+          )}
+
+          {debugInfo && (
+            <div className="rounded-xl border border-border bg-surface p-3 text-xs text-muted font-mono whitespace-pre-wrap" dir="ltr">
+              {debugInfo}
+            </div>
           )}
 
           {sorted && results && (
