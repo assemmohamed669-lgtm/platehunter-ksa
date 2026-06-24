@@ -37,6 +37,10 @@ import {
   normalizePlate,
   type MatchResult,
 } from "@/lib/plateParser";
+import {
+  matchesPreferred,
+  guessDefaultColumns,
+} from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink } from "@/lib/gps";
 import {
   saveUploadedFile,
@@ -47,28 +51,6 @@ import {
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
-
-// Preferred columns to show by default in results
-const PREFERRED_COLS = [
-  "الماركة", "ماركة",
-  "GPS", "جي بي اس", "الموقع",
-  "النوع", "نوع السيارة", "نوع المركبة",
-  "الحي", "حي",
-  "لون السيارة", "اللون", "لون",
-  "سنة الصنع", "السنة", "سنة", "موديل",
-];
-
-function matchesPreferred(header: string): boolean {
-  const h = header.trim();
-  return PREFERRED_COLS.some((p) => h === p || h.includes(p) || p.includes(h));
-}
-
-// Return preferred columns if any match; otherwise return all.
-function guessDefaultColumns(headers: string[], exclude?: string | null): string[] {
-  const filtered = headers.filter((h) => h !== exclude);
-  const preferred = filtered.filter(matchesPreferred);
-  return preferred.length > 0 ? preferred : filtered;
-}
 
 function findGpsColumn(headers: string[]): string | null {
   return headers.find((h) => /GPS|رابط|موقع|خريطة/i.test(h)) ?? null;
