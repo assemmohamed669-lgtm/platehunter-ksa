@@ -166,6 +166,39 @@ describe("parsePlateFromTranscript", () => {
     const r = parsePlateFromTranscript("حمن فقط");
     expect(r.plate).toBe("");
   });
+
+  // Vehicle type detection
+  it("extracts ونيت as vehicleType and keeps plate correct", () => {
+    const r = parsePlateFromTranscript("ونيت حمن 8531");
+    expect(r.plate).toBe("حمن8531");
+    expect(r.vehicleType).toBe("ونيت");
+  });
+
+  it("extracts فان as vehicleType", () => {
+    const r = parsePlateFromTranscript("فان درق 4121");
+    expect(r.plate).toBe("درق4121");
+    expect(r.vehicleType).toBe("فان");
+  });
+
+  // Observation words → notes
+  it("captures direction words as notes after the plate", () => {
+    const r = parsePlateFromTranscript("حمن 8531 بيلف يمين");
+    expect(r.plate).toBe("حمن8531");
+    expect(r.notes).toContain("يمين");
+  });
+
+  it("captures مركونه as notes (not vehicleType)", () => {
+    const r = parsePlateFromTranscript("درق 4121 مركونه");
+    expect(r.plate).toBe("درق4121");
+    expect(r.vehicleType).toBeUndefined();
+    expect(r.notes).toBeTruthy();
+  });
+
+  it("captures جراج يمين as notes", () => {
+    const r = parsePlateFromTranscript("ابك 5632 جراج يمين");
+    expect(r.plate).toBe("ابك5632");
+    expect(r.notes).toContain("جراج");
+  });
 });
 
 // ─── normalizePlate — ى handling ─────────────────────────────────────────────

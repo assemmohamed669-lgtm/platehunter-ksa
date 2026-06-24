@@ -498,6 +498,7 @@ export default function RegistrationPage() {
     const parsed = parsePlateFromTranscript(transcript);
     const plate = parsed.plate;           // "" if nothing found — intentional
     const vehicleType = parsed.vehicleType;
+    const parsedNotes = parsed.notes || undefined;
 
     setDebugNormalized(parsed.normalized || "(فارغ)");
     setDebugPlate(plate || "(لم يُستخرج)");
@@ -520,6 +521,7 @@ export default function RegistrationPage() {
       agentId,
       plate,
       vehicleType,
+      notes: parsedNotes,
       lat: coords?.lat,
       lng: coords?.lng,
       recordedAt: new Date().toISOString(),
@@ -559,7 +561,7 @@ export default function RegistrationPage() {
     if (!raw) return;
 
     // Parse: digits + Arabic letters only, spaces allowed between
-    const { plate, vehicleType } = parsePlateFromTranscript(raw);
+    const { plate, vehicleType, notes: parsedNotes } = parsePlateFromTranscript(raw);
     // If parser fails, use raw input stripped of spaces as-is (user typed it explicitly)
     const finalPlate = plate || raw.replace(/\s+/g, "");
     if (!finalPlate) {
@@ -575,6 +577,7 @@ export default function RegistrationPage() {
       agentId,
       plate: finalPlate,
       vehicleType,
+      notes: parsedNotes || undefined,
       lat: coords?.lat,
       lng: coords?.lng,
       recordedAt: new Date().toISOString(),
