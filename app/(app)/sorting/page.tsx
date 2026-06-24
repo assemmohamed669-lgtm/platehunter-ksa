@@ -49,10 +49,18 @@ const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
 
 // Preferred columns to show by default in results
-const PREFERRED_COLS = ["نوع السيارة", "الماركة", "GPS", "الموقع", "الحي", "لون السيارة", "اللون", "سنة الصنع", "السنة"];
+const PREFERRED_COLS = [
+  "الماركة", "ماركة",
+  "GPS", "جي بي اس", "الموقع",
+  "النوع", "نوع السيارة", "نوع المركبة",
+  "الحي", "حي",
+  "لون السيارة", "اللون", "لون",
+  "سنة الصنع", "السنة", "سنة", "موديل",
+];
 
 function matchesPreferred(header: string): boolean {
-  return PREFERRED_COLS.some((p) => header.includes(p) || p.includes(header));
+  const h = header.trim();
+  return PREFERRED_COLS.some((p) => h === p || h.includes(p) || p.includes(h));
 }
 
 // Return preferred columns if any match; otherwise return all.
