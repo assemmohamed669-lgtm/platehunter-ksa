@@ -23,7 +23,7 @@ export const EN_TO_AR: Record<string, string> = {
 };
 
 export const VALID_AR_LETTERS = new Set([
-  "ا","ب","ح","د","ر","س","ص","ط","ع","ق","ك","ل","م","ن","هـ","و","ي",
+  "ا","ب","ح","د","ر","س","ص","ط","ع","ق","ك","ل","م","ن","هـ","و","ي","ى",
 ]);
 
 // ─── Vehicle types ─────────────────────────────────────────────────────────
@@ -145,6 +145,19 @@ function normalizeNumerals(text: string): string {
   return text.replace(/[٠-٩]/g, (d) => ARABIC_INDIC[d] ?? d);
 }
 
+// Returns true if every character in the token is a valid Saudi plate letter.
+// Handles "هـ" (two chars) and standalone "ه" (which SR may return without tatweel).
+function isAllPlateLetters(tok: string): boolean {
+  let i = 0;
+  while (i < tok.length) {
+    if (tok[i] === "ه" && tok[i + 1] === "ـ") { i += 2; continue; }
+    if (tok[i] === "ه") { i++; continue; }
+    if (VALID_AR_LETTERS.has(tok[i])) { i++; continue; }
+    return false;
+  }
+  return i > 0;
+}
+
 // Extract valid plate letters from a single token, treating "هـ" as one unit.
 function extractLettersFromToken(token: string): string[] {
   const result: string[] = [];
@@ -172,7 +185,7 @@ export function bankPlateToArabic(raw: string): string {
 }
 
 export function normalizePlate(plate: string): string {
-  return plate.replace(/\s/g, "").replace(/أ|إ/g, "ا").trim().toLowerCase();
+  return plate.replace(/\s/g, "").replace(/أ|إ/g, "ا").replace(/ى/g, "ي").trim().toLowerCase();
 }
 
 export function findDuplicates(plates: string[]): Set<string> {
@@ -219,6 +232,9 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // 3. Normalize standalone ه → هـ (SR often omits the tatweel)
   text = text.replace(/ه(?!ـ)/g, "هـ");
 
+  // 3b. Normalize ى (alef maqsura) → ي — both are valid plate letters, treated as equivalent
+  text = text.replace(/ى/g, "ي");
+
   // 4. Replace letter names
   text = replaceAll(text, LETTER_NAMES);
 
@@ -250,8 +266,8 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
     if (/^\d+$/.test(tok) && tok.length <= 4) {
       digitTokens.push(tok);
       usedIdx.add(i);
-    } else if (letterBuf.length < 3 && tok.length <= 2) {
-      // Only accept short tokens (1-char letter or 2-char "هـ") — rejects noise words
+    } else if (letterBuf.length < 3 && (tok.length <= 2 || isAllPlateLetters(tok))) {
+      // Accept 1-2 char tokens AND tokens made entirely of valid plate letters (e.g. "حمن", "ابك")
       const letters = extractLettersFromToken(tok);
       if (letters.length > 0) {
         letterBuf.push(...letters.slice(0, 3 - letterBuf.length));

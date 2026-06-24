@@ -15,8 +15,6 @@ export const PREFERRED_COLS = [
   "لون السيارة", "اللون", "لون",
   // Year
   "سنة الصنع", "السنة", "سنة", "موديل", "Year Model",
-  // Street — mandatory (always shown)
-  "الشارع", "شارع", "العنوان", "عنوان",
 ];
 
 // Columns that must always appear in results — user cannot hide them.

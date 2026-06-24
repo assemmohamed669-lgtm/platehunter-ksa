@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript } from "@/lib/plateParser";
 
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {
@@ -106,6 +106,72 @@ describe("matchDataAgainstReferral", () => {
     const arabicData = [{ "رقم اللوحة": "نكد5678", "GPS": "link" }];
     const results = matchDataAgainstReferral(arabicData, "رقم اللوحة", englishReferral, "Plate Number");
     expect(results.filter((r) => r.status === "exact")).toHaveLength(1);
+  });
+});
+
+// ─── parsePlateFromTranscript ─────────────────────────────────────────────────
+describe("parsePlateFromTranscript", () => {
+  // User-provided examples — SR returns letters as a combined token
+  it("parses حمن8531 when SR returns letters as one token", () => {
+    const r = parsePlateFromTranscript("حمن 8531");
+    expect(r.plate).toBe("حمن8531");
+  });
+
+  it("parses حرب1149 when SR returns letters as one token", () => {
+    const r = parsePlateFromTranscript("حرب 1149");
+    expect(r.plate).toBe("حرب1149");
+  });
+
+  it("parses منل9864 when SR returns letters as one token", () => {
+    const r = parsePlateFromTranscript("منل 9864");
+    expect(r.plate).toBe("منل9864");
+  });
+
+  it("parses ابك5632 when SR returns letters as one token", () => {
+    const r = parsePlateFromTranscript("ابك 5632");
+    expect(r.plate).toBe("ابك5632");
+  });
+
+  it("parses درق4121 when SR returns letters as one token", () => {
+    const r = parsePlateFromTranscript("درق 4121");
+    expect(r.plate).toBe("درق4121");
+  });
+
+  // Letters said individually still work
+  it("parses letters given individually separated by spaces", () => {
+    const r = parsePlateFromTranscript("د ر ق 4121");
+    expect(r.plate).toBe("درق4121");
+  });
+
+  // ى (alef maqsura) treated as ي
+  it("normalizes ى to ي in the plate", () => {
+    const r = parsePlateFromTranscript("دوى 5521");
+    expect(r.plate).toBe("دوي5521");
+  });
+
+  // Full 3-letter token with noise words should still work
+  it("extracts plate from transcript with noise words", () => {
+    const r = parsePlateFromTranscript("اللوحة حمن 8531 صالون");
+    expect(r.plate).toBe("حمن8531");
+  });
+
+  // Letter names still work
+  it("parses letter names like حاء ميم نون", () => {
+    const r = parsePlateFromTranscript("حاء ميم نون 8531");
+    expect(r.plate).toBe("حمن8531");
+  });
+
+  // Partial — only letters without digits
+  it("returns empty plate if no digits found", () => {
+    const r = parsePlateFromTranscript("حمن فقط");
+    expect(r.plate).toBe("");
+  });
+});
+
+// ─── normalizePlate — ى handling ─────────────────────────────────────────────
+describe("normalizePlate ى normalization", () => {
+  it("treats ى as equivalent to ي for matching", () => {
+    expect(normalizePlate("دوى5521")).toBe("دوي5521");
   });
 });
 
