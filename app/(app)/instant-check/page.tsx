@@ -59,9 +59,13 @@ function createSpeechRecognition(): SpeechRecognitionInstance | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
-function ResultCard({ result, plateCol }: { result: PlateResult; plateCol: string | null }) {
+function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string> }) {
   const extras = result.row
-    ? Object.entries(result.row).filter(([k, v]) => k !== plateCol && String(v).trim())
+    ? Object.entries(result.row).filter(([k, v]) => {
+        if (k === plateCol || !String(v).trim()) return false;
+        if (selectedCols && selectedCols.size > 0 && !selectedCols.has(k)) return false;
+        return true;
+      })
     : [];
   return (
     <div
@@ -133,14 +137,23 @@ export default function InstantCheckPage() {
               type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             })
           );
+          const plate = detectPlateColumn(rec.headers);
+          setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate)));
         }
       })
       .catch(() => {});
   }, []);
 
-  const autoCheckPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
-  const [plateColOverride, setPlateColOverride] = useState<string | null>(null);
-  const checkPlateCol = plateColOverride ?? autoCheckPlateCol;
+  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+  const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
+
+  function toggleCheckCol(col: string) {
+    setSelectedCheckCols((prev) => {
+      const next = new Set(prev);
+      next.has(col) ? next.delete(col) : next.add(col);
+      return next;
+    });
+  }
 
   function searchInCheck(rawPlate: string): PlateResult | null {
     if (!checkTable || !checkPlateCol) return null;
@@ -330,7 +343,8 @@ export default function InstantCheckPage() {
     await saveUploadedFile(record);
     setCheckTable(table);
     setCheckFile(file);
-    setPlateColOverride(null);
+    const plate = detectPlateColumn(table.headers);
+    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate)));
     setCheckColsOpen(false);
     // clear previous results when file changes
     setManualResult(null);
@@ -342,6 +356,7 @@ export default function InstantCheckPage() {
     await deleteUploadedFile("local", "check");
     setCheckTable(null);
     setCheckFile(null);
+    setSelectedCheckCols(new Set());
     setManualResult(null);
     setCameraResult(null);
     setPttResults([]);
@@ -379,28 +394,38 @@ export default function InstantCheckPage() {
               />
             </button>
             {checkColsOpen && (
-              <div className="border-t border-border px-3 pb-3 pt-2">
-                <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
-                <div className="flex flex-wrap gap-2">
-                  {checkTable.headers.map((h) => (
-                    <button
-                      key={h}
-                      onClick={() => setPlateColOverride(h === checkPlateCol && plateColOverride ? null : h)}
-                      className={`rounded-full border px-3 py-1 text-xs transition ${
-                        h === checkPlateCol
-                          ? "border-primary bg-primary/20 text-primary font-bold"
-                          : "border-border text-muted hover:border-primary/50 hover:text-ink"
-                      }`}
-                    >
-                      {h}
-                    </button>
-                  ))}
+              <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+                {/* Fixed plate search col */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] text-muted shrink-0">عمود البحث:</span>
+                  <span className="rounded-full border border-primary bg-primary/20 px-2.5 py-0.5 text-xs font-bold text-primary">
+                    {checkPlateCol ?? "—"}
+                  </span>
+                  {!checkPlateCol && (
+                    <span className="text-[11px] text-danger">لم يُعثر تلقائياً</span>
+                  )}
                 </div>
-                {!checkPlateCol && (
-                  <p className="mt-2 text-xs text-danger">
-                    تحذير: لم يُعثر على عمود رقم اللوحة — اضغط على العمود الصحيح
-                  </p>
-                )}
+                {/* Multi-select display cols */}
+                <div>
+                  <p className="mb-1.5 text-[11px] text-muted">أعمدة النتيجة — اضغط لإظهار/إخفاء:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {checkTable.headers
+                      .filter((h) => h !== checkPlateCol)
+                      .map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => toggleCheckCol(h)}
+                          className={`rounded-full border px-3 py-1 text-xs transition ${
+                            selectedCheckCols.has(h)
+                              ? "bg-primary text-night font-bold border-primary"
+                              : "border-border text-muted"
+                          }`}
+                        >
+                          {h}
+                        </button>
+                      ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -461,7 +486,7 @@ export default function InstantCheckPage() {
                 )}
               </div>
               {manualResult && (
-                <ResultCard result={manualResult} plateCol={checkPlateCol} />
+                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
               )}
               {manualInput && !manualResult && (
                 <p className="text-xs text-muted text-center">جارٍ البحث...</p>
@@ -524,7 +549,7 @@ export default function InstantCheckPage() {
                 <p className="text-center text-xs text-danger">{cameraError}</p>
               )}
               {cameraResult && (
-                <ResultCard result={cameraResult} plateCol={checkPlateCol} />
+                <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
               )}
             </div>
           )}
@@ -572,7 +597,7 @@ export default function InstantCheckPage() {
                     </button>
                   </div>
                   {pttResults.map((r, i) => (
-                    <ResultCard key={i} result={r} plateCol={checkPlateCol} />
+                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
                   ))}
                 </div>
               )}

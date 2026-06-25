@@ -82,6 +82,17 @@ export default function SortingPage() {
   const [dailyPlateColOverride, setDailyPlateColOverride] = useState<string | null>(null);
   const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
 
+  // Multi-select display cols for daily file (which daily cols show alongside data cols in new sort results)
+  const [dailyDisplayCols, setDailyDisplayCols] = useState<Set<string>>(new Set());
+
+  function toggleDailyDisplayCol(col: string) {
+    setDailyDisplayCols((prev) => {
+      const next = new Set(prev);
+      next.has(col) ? next.delete(col) : next.add(col);
+      return next;
+    });
+  }
+
   // ── Full sort ──
   const [results, setResults] = useState<MatchResult[] | null>(null);
   const [sorted, setSorted] = useState(false);
@@ -905,8 +916,8 @@ export default function SortingPage() {
                 hint="قائمة البنك لليوم — مؤقت (لا يُحفظ)"
                 parsedFile={dailyFile}
                 parsedRowCount={dailyTable?.rows.length ?? null}
-                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setDailyPlateColOverride(null); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
-                onClear={() => { setDailyTable(null); setDailyFile(null); setDailyPlateColOverride(null); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
+                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setDailyPlateColOverride(null); const p = detectPlateColumn(table.headers); setDailyDisplayCols(new Set(table.headers.filter(h => h !== p))); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
+                onClear={() => { setDailyTable(null); setDailyFile(null); setDailyPlateColOverride(null); setDailyDisplayCols(new Set()); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
                 showReplaceButtons
               />
               {dailyTable && (
@@ -922,22 +933,34 @@ export default function SortingPage() {
                     />
                   </button>
                   {dailyColsOpen && (
-                    <div className="border-t border-border px-3 pb-3 pt-2">
-                      <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {dailyTable.headers.map((h) => (
-                          <button
-                            key={h}
-                            onClick={() => setDailyPlateColOverride(h === effectiveDailyPlateCol && dailyPlateColOverride ? null : h)}
-                            className={`rounded-full border px-3 py-1 text-xs transition ${
-                              h === effectiveDailyPlateCol
-                                ? "border-primary bg-primary/20 text-primary font-bold"
-                                : "border-border text-muted hover:border-primary/50 hover:text-ink"
-                            }`}
-                          >
-                            {h}
-                          </button>
-                        ))}
+                    <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+                      {/* Fixed plate col badge */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] text-muted shrink-0">عمود اللوحة:</span>
+                        <span className="rounded-full border border-primary bg-primary/20 px-2.5 py-0.5 text-xs font-bold text-primary">
+                          {effectiveDailyPlateCol ?? "—"}
+                        </span>
+                      </div>
+                      {/* Multi-select display cols */}
+                      <div>
+                        <p className="mb-1.5 text-[11px] text-muted">أعمدة تظهر في النتائج — اضغط لإظهار/إخفاء:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {dailyTable.headers
+                            .filter((h) => h !== effectiveDailyPlateCol)
+                            .map((h) => (
+                              <button
+                                key={h}
+                                onClick={() => toggleDailyDisplayCol(h)}
+                                className={`rounded-full border px-3 py-1 text-xs transition ${
+                                  dailyDisplayCols.has(h)
+                                    ? "bg-primary text-night font-bold border-primary"
+                                    : "border-border text-muted"
+                                }`}
+                              >
+                                {h}
+                              </button>
+                            ))}
+                        </div>
                       </div>
                     </div>
                   )}

@@ -23,7 +23,15 @@ export default function CheckingPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
-  const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
+  const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
+
+  function toggleCheckCol(col: string) {
+    setSelectedCheckCols((prev) => {
+      const next = new Set(prev);
+      next.has(col) ? next.delete(col) : next.add(col);
+      return next;
+    });
+  }
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -40,6 +48,8 @@ export default function CheckingPage() {
         setCheckFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }));
+        const plate = detectPlateColumn(rec.headers);
+        setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate)));
       }
     }).catch(() => {});
   }, []);
@@ -96,7 +106,8 @@ export default function CheckingPage() {
     });
     setCheckTable(table);
     setCheckFile(file);
-    setCheckPlateColOverride(null);
+    const plate = detectPlateColumn(table.headers);
+    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate)));
     setCheckColsOpen(false);
   }
 
@@ -104,7 +115,7 @@ export default function CheckingPage() {
     await deleteUploadedFile("local", "check");
     setCheckTable(null);
     setCheckFile(null);
-    setCheckPlateColOverride(null);
+    setSelectedCheckCols(new Set());
   }
 
   return (
@@ -159,25 +170,32 @@ export default function CheckingPage() {
               />
             </button>
             {checkColsOpen && (() => {
-              const autoPlateCol = detectPlateColumn(checkTable.headers);
-              const effectivePlateCol = checkPlateColOverride ?? autoPlateCol;
+              const plateCol = detectPlateColumn(checkTable.headers);
               return (
-                <div className="border-t border-border px-3 pb-3 pt-2">
-                  <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {checkTable.headers.map((h) => (
-                      <button
-                        key={h}
-                        onClick={() => setCheckPlateColOverride(h === effectivePlateCol && checkPlateColOverride ? null : h)}
-                        className={`rounded-full border px-3 py-1 text-xs transition ${
-                          h === effectivePlateCol
-                            ? "border-primary bg-primary/20 text-primary font-bold"
-                            : "border-border text-muted hover:border-primary/50 hover:text-ink"
-                        }`}
-                      >
-                        {h}
-                      </button>
-                    ))}
+                <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] text-muted shrink-0">عمود البحث:</span>
+                    <span className="rounded-full border border-primary bg-primary/20 px-2.5 py-0.5 text-xs font-bold text-primary">
+                      {plateCol ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="mb-1.5 text-[11px] text-muted">الأعمدة — اضغط لتفعيل/إيقاف:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {checkTable.headers.filter((h) => h !== plateCol).map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => toggleCheckCol(h)}
+                          className={`rounded-full border px-3 py-1 text-xs transition ${
+                            selectedCheckCols.has(h)
+                              ? "bg-primary text-night font-bold border-primary"
+                              : "border-border text-muted"
+                          }`}
+                        >
+                          {h}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               );
