@@ -218,8 +218,13 @@ export default function RegistrationPage() {
   const [checkPlates, setCheckPlates] = useState<Set<string>>(new Set());
   const [checkFileName, setCheckFileName] = useState<string>("");
   const [checkHeaders, setCheckHeaders] = useState<string[]>([]);
+  const [checkRows, setCheckRows] = useState<Record<string, string>[]>([]);
+  const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
   const checkFileRef = useRef<HTMLInputElement | null>(null);
+
+  const autoCheckPlateCol = checkHeaders.length ? detectPlateColumn(checkHeaders) : null;
+  const selectedCheckPlateCol = checkPlateColOverride ?? autoCheckPlateCol;
 
   // Match modal
   const [matchedPlates, setMatchedPlates] = useState<MatchedPlate[]>([]);
@@ -272,6 +277,7 @@ export default function RegistrationPage() {
           setCheckPlates(plates);
           setCheckFileName(checkRec.fileName);
           setCheckHeaders(checkRec.headers);
+          setCheckRows(checkRec.rows);
         }
       }
     });
@@ -321,6 +327,8 @@ export default function RegistrationPage() {
       setCheckPlates(normalized);
       setCheckFileName(file.name);
       setCheckHeaders(table.headers);
+      setCheckRows(table.rows);
+      setCheckPlateColOverride(null);
       setCheckColsOpen(false);
 
       if (agentId) {
@@ -339,6 +347,18 @@ export default function RegistrationPage() {
     }
     e.target.value = "";
   }
+
+  // Rebuild plates Set whenever the user changes the plate column override
+  useEffect(() => {
+    if (!checkRows.length || !selectedCheckPlateCol) return;
+    const normalized = new Set(
+      checkRows
+        .map((r) => normalizePlate(bankPlateToArabic(String(r[selectedCheckPlateCol] ?? ""))))
+        .filter(Boolean)
+    );
+    setCheckPlates(normalized);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkPlateColOverride, checkRows]);
 
   function checkPlateMatch(plate: string, entry: RecordingEntry) {
     if (checkPlates.size === 0) return;
@@ -853,7 +873,7 @@ export default function RegistrationPage() {
           <div className="flex items-center gap-2 shrink-0">
             {checkFileName && (
               <button
-                onClick={async () => { setCheckPlates(new Set()); setCheckFileName(""); setCheckHeaders([]); setCheckColsOpen(false); if (agentId) await deleteUploadedFile(agentId, "check"); }}
+                onClick={async () => { setCheckPlates(new Set()); setCheckFileName(""); setCheckHeaders([]); setCheckRows([]); setCheckPlateColOverride(null); setCheckColsOpen(false); if (agentId) await deleteUploadedFile(agentId, "check"); }}
                 className="text-muted hover:text-danger transition"
               >
                 <X size={14} />
@@ -888,18 +908,20 @@ export default function RegistrationPage() {
             </button>
             {checkColsOpen && (
               <div className="border-t border-border px-3 pb-3 pt-2">
+                <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
                 <div className="flex flex-wrap gap-2">
                   {checkHeaders.map((h) => (
-                    <span
+                    <button
                       key={h}
-                      className={`rounded-full border px-3 py-1 text-xs ${
-                        h === detectPlateColumn(checkHeaders)
-                          ? "border-primary/50 bg-primary/10 text-primary"
-                          : "border-border bg-surface-2 text-muted"
+                      onClick={() => setCheckPlateColOverride(h === selectedCheckPlateCol && checkPlateColOverride ? null : h)}
+                      className={`rounded-full border px-3 py-1 text-xs transition ${
+                        h === selectedCheckPlateCol
+                          ? "border-primary bg-primary/20 text-primary font-bold"
+                          : "border-border text-muted hover:border-primary/50 hover:text-ink"
                       }`}
                     >
                       {h}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </div>

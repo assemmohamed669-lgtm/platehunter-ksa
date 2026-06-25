@@ -76,6 +76,12 @@ export default function SortingPage() {
   const [referralColsOpen, setReferralColsOpen] = useState(false);
   const [dailyColsOpen, setDailyColsOpen] = useState(false);
 
+  // User-overridable plate column selection (null = use auto-detected)
+  const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
+  const [referralPlateColOverride, setReferralPlateColOverride] = useState<string | null>(null);
+  const [dailyPlateColOverride, setDailyPlateColOverride] = useState<string | null>(null);
+  const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
+
   // ── Full sort ──
   const [results, setResults] = useState<MatchResult[] | null>(null);
   const [sorted, setSorted] = useState(false);
@@ -175,6 +181,7 @@ export default function SortingPage() {
       if (slot === "data") {
         setDataTable(table);
         setDataFile(file);
+        setDataPlateColOverride(null);
         setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers))));
         setDataColsOpen(false);
         setResults(null);
@@ -182,6 +189,7 @@ export default function SortingPage() {
       } else {
         setReferralTable(table);
         setReferralFile(file);
+        setReferralPlateColOverride(null);
         const refPlate = detectPlateColumn(table.headers);
         setReferralExtraCols(
           new Set(table.headers.filter((h) => h !== refPlate && matchesPreferred(h)))
@@ -199,10 +207,12 @@ export default function SortingPage() {
     if (slot === "data") {
       setDataTable(null);
       setDataFile(null);
+      setDataPlateColOverride(null);
       setOutputCols(new Set());
     } else {
       setReferralTable(null);
       setReferralFile(null);
+      setReferralPlateColOverride(null);
       setReferralExtraCols(new Set());
     }
     setResults(null);
@@ -223,11 +233,18 @@ export default function SortingPage() {
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
   const gpsCol = dataTable ? findGpsColumn(dataTable.headers) : null;
 
+  // Effective plate cols — user override takes priority over auto-detect
+  const effectiveDataPlateCol = dataPlateColOverride ?? dataPlateCol;
+  const effectiveReferralPlateCol = referralPlateColOverride ?? referralPlateCol;
+  const effectiveDailyPlateCol = dailyPlateColOverride ?? dailyPlateCol;
+  const effectiveCheckPlateCol = checkPlateColOverride ?? checkPlateCol;
+
   const displayCols = useMemo(() => {
-    const mandatory = dataTable?.headers.filter((h) => h !== dataPlateCol && isMandatory(h)) ?? [];
+    const mandatory = dataTable?.headers.filter((h) => h !== effectiveDataPlateCol && isMandatory(h)) ?? [];
     const rest = [...outputCols].filter((h) => !isMandatory(h));
     return [...new Set([...mandatory, ...rest])];
-  }, [dataTable, dataPlateCol, outputCols]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataTable, effectiveDataPlateCol, outputCols]);
 
   const matchedResults = useMemo(
     () => (results ? results.filter((r) => r.status !== "none") : []),
@@ -247,17 +264,17 @@ export default function SortingPage() {
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
 
   const fuzzyCount = results ? results.filter((r) => r.status === "fuzzy").length : 0;
-  const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== dataPlateCol) : [];
+  const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
 
   // ── Full sort ──
   async function runSort() {
-    if (!dataTable || !referralTable || !dataPlateCol || !referralPlateCol) return;
+    if (!dataTable || !referralTable || !effectiveDataPlateCol || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
       const referralMap = new Map<string, Record<string, string>>();
       for (const refRow of referralTable.rows) {
-        const n = normalizePlate(bankPlateToArabic(String(refRow[referralPlateCol] ?? "")));
+        const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveReferralPlateCol] ?? "")));
         if (n) referralMap.set(n, refRow);
       }
       const allResults: MatchResult[] = [];
@@ -267,7 +284,7 @@ export default function SortingPage() {
         const end = Math.min(i + CHUNK, rows.length);
         for (let j = i; j < end; j++) {
           const dataRow = rows[j];
-          const n = normalizePlate(bankPlateToArabic(String(dataRow[dataPlateCol] ?? "")));
+          const n = normalizePlate(bankPlateToArabic(String(dataRow[effectiveDataPlateCol] ?? "")));
           if (!n) continue;
           const refRow = referralMap.get(n);
           if (refRow) allResults.push({ referralRow: refRow, dataRow, status: "exact" });
@@ -289,28 +306,28 @@ export default function SortingPage() {
 
   // ── New sort ──
   async function runNewSort() {
-    if (!dailyTable || !checkTable || !dataTable || !dailyPlateCol || !checkPlateCol || !dataPlateCol) return;
+    if (!dailyTable || !checkTable || !dataTable || !effectiveDailyPlateCol || !effectiveCheckPlateCol || !effectiveDataPlateCol) return;
     setNewSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
       const checkSet = new Set(
         checkTable.rows
-          .map((r) => normalizePlate(bankPlateToArabic(String(r[checkPlateCol] ?? ""))))
+          .map((r) => normalizePlate(bankPlateToArabic(String(r[effectiveCheckPlateCol] ?? ""))))
           .filter(Boolean)
       );
       const newRefRows = dailyTable.rows.filter((row) => {
-        const n = normalizePlate(bankPlateToArabic(String(row[dailyPlateCol] ?? "")));
+        const n = normalizePlate(bankPlateToArabic(String(row[effectiveDailyPlateCol] ?? "")));
         return n && !checkSet.has(n);
       });
       setNewPlatesCount(newRefRows.length);
       const dataMap = new Map<string, Record<string, string>>();
       for (const row of dataTable.rows) {
-        const n = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
+        const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
         if (n) dataMap.set(n, row);
       }
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
-        const n = normalizePlate(bankPlateToArabic(String(refRow[dailyPlateCol] ?? "")));
+        const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveDailyPlateCol] ?? "")));
         if (!n) continue;
         const dataRow = dataMap.get(n);
         if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
@@ -517,34 +534,54 @@ export default function SortingPage() {
               />
             </button>
             {dataColsOpen && (
-              <div className="border-t border-border px-3 pb-3 pt-2">
-                <p className="mb-2 text-xs text-muted">
-                  عمود اللوحة: <span className="text-primary">{dataPlateCol}</span>
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {dataTable.headers
-                    .filter((h) => h !== dataPlateCol)
-                    .map((h) => {
-                      const mandatory = isMandatory(h);
-                      const active = mandatory || outputCols.has(h);
-                      return (
-                        <button
-                          key={h}
-                          onClick={() => { if (!mandatory) toggleSet(outputCols, h, setOutputCols); }}
-                          disabled={mandatory}
-                          title={mandatory ? "عمود إجباري" : undefined}
-                          className={`rounded-full px-3 py-1 text-xs transition ${
-                            active
-                              ? mandatory
-                                ? "bg-primary text-night font-bold opacity-80 cursor-default"
-                                : "bg-primary text-night font-bold"
-                              : "border border-border text-muted"
-                          }`}
-                        >
-                          {h}{mandatory ? " 🔒" : ""}
-                        </button>
-                      );
-                    })}
+              <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+                {/* Plate col selector */}
+                <div>
+                  <p className="mb-1.5 text-[11px] text-muted">عمود اللوحة — اضغط للتغيير:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {dataTable.headers.map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setDataPlateColOverride(h === effectiveDataPlateCol && dataPlateColOverride ? null : h)}
+                        className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                          h === effectiveDataPlateCol
+                            ? "border-primary bg-primary/20 text-primary font-bold"
+                            : "border-border text-muted hover:border-primary/50 hover:text-ink"
+                        }`}
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Output col toggles */}
+                <div>
+                  <p className="mb-1.5 text-[11px] text-muted">أعمدة النتائج:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {dataTable.headers
+                      .filter((h) => h !== effectiveDataPlateCol)
+                      .map((h) => {
+                        const mandatory = isMandatory(h);
+                        const active = mandatory || outputCols.has(h);
+                        return (
+                          <button
+                            key={h}
+                            onClick={() => { if (!mandatory) toggleSet(outputCols, h, setOutputCols); }}
+                            disabled={mandatory}
+                            title={mandatory ? "عمود إجباري" : undefined}
+                            className={`rounded-full px-3 py-1 text-xs transition ${
+                              active
+                                ? mandatory
+                                  ? "bg-primary text-night font-bold opacity-80 cursor-default"
+                                  : "bg-primary text-night font-bold"
+                                : "border border-border text-muted"
+                            }`}
+                          >
+                            {h}{mandatory ? " 🔒" : ""}
+                          </button>
+                        );
+                      })}
+                  </div>
                 </div>
               </div>
             )}
@@ -789,23 +826,43 @@ export default function SortingPage() {
                     />
                   </button>
                   {referralColsOpen && (
-                    <div className="border-t border-border px-3 pb-3 pt-2">
-                      <p className="mb-2 text-xs text-muted">
-                        عمود اللوحة: <span className="text-primary">{referralPlateCol}</span>
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {referralTable.headers
-                          .filter((h) => h !== referralPlateCol)
-                          .map((h) => (
-                            <button key={h}
-                              onClick={() => toggleSet(referralExtraCols, h, setReferralExtraCols)}
-                              className={`rounded-full px-3 py-1 text-xs transition ${
-                                referralExtraCols.has(h) ? "bg-primary text-night font-bold" : "border border-border text-muted"
+                    <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+                      {/* Plate col selector */}
+                      <div>
+                        <p className="mb-1.5 text-[11px] text-muted">عمود اللوحة — اضغط للتغيير:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {referralTable.headers.map((h) => (
+                            <button
+                              key={h}
+                              onClick={() => setReferralPlateColOverride(h === effectiveReferralPlateCol && referralPlateColOverride ? null : h)}
+                              className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                                h === effectiveReferralPlateCol
+                                  ? "border-primary bg-primary/20 text-primary font-bold"
+                                  : "border-border text-muted hover:border-primary/50 hover:text-ink"
                               }`}
                             >
                               {h}
                             </button>
                           ))}
+                        </div>
+                      </div>
+                      {/* Extra cols toggles */}
+                      <div>
+                        <p className="mb-1.5 text-[11px] text-muted">أعمدة إضافية في النتائج:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {referralTable.headers
+                            .filter((h) => h !== effectiveReferralPlateCol)
+                            .map((h) => (
+                              <button key={h}
+                                onClick={() => toggleSet(referralExtraCols, h, setReferralExtraCols)}
+                                className={`rounded-full px-3 py-1 text-xs transition ${
+                                  referralExtraCols.has(h) ? "bg-primary text-night font-bold" : "border border-border text-muted"
+                                }`}
+                              >
+                                {h}
+                              </button>
+                            ))}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -848,8 +905,8 @@ export default function SortingPage() {
                 hint="قائمة البنك لليوم — مؤقت (لا يُحفظ)"
                 parsedFile={dailyFile}
                 parsedRowCount={dailyTable?.rows.length ?? null}
-                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
-                onClear={() => { setDailyTable(null); setDailyFile(null); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
+                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setDailyPlateColOverride(null); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
+                onClear={() => { setDailyTable(null); setDailyFile(null); setDailyPlateColOverride(null); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
                 showReplaceButtons
               />
               {dailyTable && (
@@ -866,18 +923,20 @@ export default function SortingPage() {
                   </button>
                   {dailyColsOpen && (
                     <div className="border-t border-border px-3 pb-3 pt-2">
+                      <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
                       <div className="flex flex-wrap gap-2">
                         {dailyTable.headers.map((h) => (
-                          <span
+                          <button
                             key={h}
-                            className={`rounded-full border px-3 py-1 text-xs ${
-                              h === dailyPlateCol
-                                ? "border-primary/50 bg-primary/10 text-primary"
-                                : "border-border bg-surface-2 text-muted"
+                            onClick={() => setDailyPlateColOverride(h === effectiveDailyPlateCol && dailyPlateColOverride ? null : h)}
+                            className={`rounded-full border px-3 py-1 text-xs transition ${
+                              h === effectiveDailyPlateCol
+                                ? "border-primary bg-primary/20 text-primary font-bold"
+                                : "border-border text-muted hover:border-primary/50 hover:text-ink"
                             }`}
                           >
                             {h}
-                          </span>
+                          </button>
                         ))}
                       </div>
                     </div>

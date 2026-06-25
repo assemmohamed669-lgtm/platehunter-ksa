@@ -138,7 +138,9 @@ export default function InstantCheckPage() {
       .catch(() => {});
   }, []);
 
-  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+  const autoCheckPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+  const [plateColOverride, setPlateColOverride] = useState<string | null>(null);
+  const checkPlateCol = plateColOverride ?? autoCheckPlateCol;
 
   function searchInCheck(rawPlate: string): PlateResult | null {
     if (!checkTable || !checkPlateCol) return null;
@@ -328,6 +330,7 @@ export default function InstantCheckPage() {
     await saveUploadedFile(record);
     setCheckTable(table);
     setCheckFile(file);
+    setPlateColOverride(null);
     setCheckColsOpen(false);
     // clear previous results when file changes
     setManualResult(null);
@@ -377,23 +380,25 @@ export default function InstantCheckPage() {
             </button>
             {checkColsOpen && (
               <div className="border-t border-border px-3 pb-3 pt-2">
+                <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
                 <div className="flex flex-wrap gap-2">
                   {checkTable.headers.map((h) => (
-                    <span
+                    <button
                       key={h}
-                      className={`rounded-full border px-3 py-1 text-xs ${
+                      onClick={() => setPlateColOverride(h === checkPlateCol && plateColOverride ? null : h)}
+                      className={`rounded-full border px-3 py-1 text-xs transition ${
                         h === checkPlateCol
-                          ? "border-primary/50 bg-primary/10 text-primary"
-                          : "border-border bg-surface-2 text-muted"
+                          ? "border-primary bg-primary/20 text-primary font-bold"
+                          : "border-border text-muted hover:border-primary/50 hover:text-ink"
                       }`}
                     >
                       {h}
-                    </span>
+                    </button>
                   ))}
                 </div>
                 {!checkPlateCol && (
                   <p className="mt-2 text-xs text-danger">
-                    تحذير: لم يُعثر على عمود رقم اللوحة تلقائياً
+                    تحذير: لم يُعثر على عمود رقم اللوحة — اضغط على العمود الصحيح
                   </p>
                 )}
               </div>

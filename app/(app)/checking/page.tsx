@@ -7,6 +7,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import { getAllRecordings, deleteRecording, type RecordingEntry, saveUploadedFile, getUploadedFile, deleteUploadedFile } from "@/lib/idb";
 import { syncPending } from "@/lib/sync";
 import { exportRecordingsToExcel, type ExcelTable } from "@/lib/excel";
+import { detectPlateColumn } from "@/lib/plateParser";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function CheckingPage() {
@@ -22,6 +23,7 @@ export default function CheckingPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
+  const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -94,6 +96,7 @@ export default function CheckingPage() {
     });
     setCheckTable(table);
     setCheckFile(file);
+    setCheckPlateColOverride(null);
     setCheckColsOpen(false);
   }
 
@@ -101,6 +104,7 @@ export default function CheckingPage() {
     await deleteUploadedFile("local", "check");
     setCheckTable(null);
     setCheckFile(null);
+    setCheckPlateColOverride(null);
   }
 
   return (
@@ -154,20 +158,30 @@ export default function CheckingPage() {
                 className={`text-muted transition-transform duration-200 ${checkColsOpen ? "rotate-180" : ""}`}
               />
             </button>
-            {checkColsOpen && (
-              <div className="border-t border-border px-3 pb-3 pt-2">
-                <div className="flex flex-wrap gap-2">
-                  {checkTable.headers.map((h) => (
-                    <span
-                      key={h}
-                      className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-muted"
-                    >
-                      {h}
-                    </span>
-                  ))}
+            {checkColsOpen && (() => {
+              const autoPlateCol = detectPlateColumn(checkTable.headers);
+              const effectivePlateCol = checkPlateColOverride ?? autoPlateCol;
+              return (
+                <div className="border-t border-border px-3 pb-3 pt-2">
+                  <p className="mb-1.5 text-[11px] text-muted">اضغط على عمود لتحديده كعمود اللوحة:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {checkTable.headers.map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setCheckPlateColOverride(h === effectivePlateCol && checkPlateColOverride ? null : h)}
+                        className={`rounded-full border px-3 py-1 text-xs transition ${
+                          h === effectivePlateCol
+                            ? "border-primary bg-primary/20 text-primary font-bold"
+                            : "border-border text-muted hover:border-primary/50 hover:text-ink"
+                        }`}
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>
