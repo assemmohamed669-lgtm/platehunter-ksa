@@ -98,6 +98,9 @@ export default function SortingPage() {
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [referralTable, setReferralTable] = useState<ExcelTable | null>(null);
   const [referralFile, setReferralFile] = useState<File | null>(null);
+  const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
+  const [checkFile, setCheckFile] = useState<File | null>(null);
+  const [checkColsOpen, setCheckColsOpen] = useState(false);
 
   // Column selection — built from the *real* headers of each uploaded file
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
@@ -134,8 +137,9 @@ export default function SortingPage() {
     Promise.all([
       getUploadedFile("local", "data"),
       getUploadedFile("local", "referral"),
+      getUploadedFile("local", "check"),
     ])
-      .then(([dataRec, refRec]) => {
+      .then(([dataRec, refRec, checkRec]) => {
         if (dataRec) {
           setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
           setDataFile(new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, {
@@ -150,6 +154,12 @@ export default function SortingPage() {
           const refPlate = detectPlateColumn(refRec.headers);
           const defRef = refRec.headers.filter((h) => h !== refPlate && matchesPreferred(h));
           setReferralExtraCols(new Set(defRef));
+        }
+        if (checkRec) {
+          setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
+          setCheckFile(new File([checkRec.fileBlob ?? new Blob()], checkRec.fileName, {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }));
         }
       })
       .catch(() => {})
@@ -184,9 +194,9 @@ export default function SortingPage() {
     setter(next);
   }
 
-  // ── Persisted upload handlers (data / referral slots) ───────────────
+  // ── Persisted upload handlers (data / referral / check slots) ──────
   const persistAndSet = useCallback(
-    async (slot: "data" | "referral", table: ExcelTable, file: File) => {
+    async (slot: "data" | "referral" | "check", table: ExcelTable, file: File) => {
       const record: UploadedFileRecord = {
         key: `local:${slot}`,
         agentId: "local",
@@ -203,33 +213,44 @@ export default function SortingPage() {
         setDataFile(file);
         setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers))));
         setDataColsOpen(false);
-      } else {
+        setResults(null);
+        setSorted(false);
+      } else if (slot === "referral") {
         setReferralTable(table);
         setReferralFile(file);
         const refPlate = detectPlateColumn(table.headers);
         const defRef = table.headers.filter((h) => h !== refPlate && matchesPreferred(h));
         setReferralExtraCols(new Set(defRef));
         setReferralColsOpen(false);
+        setResults(null);
+        setSorted(false);
+      } else {
+        setCheckTable(table);
+        setCheckFile(file);
+        setCheckColsOpen(false);
       }
-      setResults(null);
-      setSorted(false);
     },
     []
   );
 
-  async function clearSlot(slot: "data" | "referral") {
+  async function clearSlot(slot: "data" | "referral" | "check") {
     await deleteUploadedFile("local", slot);
     if (slot === "data") {
       setDataTable(null);
       setDataFile(null);
       setOutputCols(new Set());
-    } else {
+      setResults(null);
+      setSorted(false);
+    } else if (slot === "referral") {
       setReferralTable(null);
       setReferralFile(null);
       setReferralExtraCols(new Set());
+      setResults(null);
+      setSorted(false);
+    } else {
+      setCheckTable(null);
+      setCheckFile(null);
     }
-    setResults(null);
-    setSorted(false);
   }
 
   // ── Run matching ──────────────────────────────────────────────────
@@ -604,6 +625,46 @@ export default function SortingPage() {
                           {h}
                         </button>
                       ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Check file */}
+          <FileUploadBox
+            title="ملف التشييك"
+            hint="ملف مرجعي للتحقق — يبقى محفوظاً بعد الخروج"
+            parsedFile={checkFile}
+            parsedRowCount={checkTable?.rows.length ?? null}
+            onParsed={(table, file) => persistAndSet("check", table, file)}
+            onClear={() => clearSlot("check")}
+            showReplaceButtons
+          />
+
+          {checkTable && (
+            <div className="rounded-xl border border-border bg-surface">
+              <button
+                onClick={() => setCheckColsOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
+              >
+                <span>رؤوس أعمدة ملف التشييك ({checkTable.headers.length})</span>
+                <ChevronDown
+                  size={16}
+                  className={`text-muted transition-transform duration-200 ${checkColsOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {checkColsOpen && (
+                <div className="border-t border-border px-3 pb-3 pt-2">
+                  <div className="flex flex-wrap gap-2">
+                    {checkTable.headers.map((h) => (
+                      <span
+                        key={h}
+                        className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-muted"
+                      >
+                        {h}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}

@@ -11,6 +11,8 @@ interface Props {
   parsedFile: File | null;
   parsedRowCount: number | null;
   onClear: () => void;
+  /** When true: shows تغيير + مسح buttons instead of download + trash */
+  showReplaceButtons?: boolean;
 }
 
 export default function FileUploadBox({
@@ -20,6 +22,7 @@ export default function FileUploadBox({
   parsedFile,
   parsedRowCount,
   onClear,
+  showReplaceButtons = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
@@ -92,20 +95,50 @@ export default function FileUploadBox({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
-            <button
-              onClick={handleDownloadOriginal}
-              title="تنزيل"
-              className="rounded-full border border-border p-1.5 text-muted hover:text-primary transition"
-            >
-              <Download size={14} />
-            </button>
-            <button
-              onClick={onClear}
-              title="حذف الملف"
-              className="rounded-full border border-border p-1.5 text-muted hover:text-danger transition"
-            >
-              <Trash2 size={14} />
-            </button>
+            {showReplaceButtons ? (
+              <>
+                <label
+                  className={`cursor-pointer rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition ${loading ? "pointer-events-none opacity-50" : ""}`}
+                  title="استبدال الملف"
+                >
+                  {loading ? "جارٍ..." : "تغيير"}
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleFile(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                <button
+                  onClick={onClear}
+                  title="حذف الملف نهائياً"
+                  className="rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-danger transition"
+                >
+                  مسح
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleDownloadOriginal}
+                  title="تنزيل"
+                  className="rounded-full border border-border p-1.5 text-muted hover:text-primary transition"
+                >
+                  <Download size={14} />
+                </button>
+                <button
+                  onClick={onClear}
+                  title="حذف الملف"
+                  className="rounded-full border border-border p-1.5 text-muted hover:text-danger transition"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
