@@ -221,7 +221,6 @@ export default function RegistrationPage() {
   const [checkHeaders, setCheckHeaders] = useState<string[]>([]);
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
   const [checkColsOpen, setCheckColsOpen] = useState(false);
-  const checkFileRef = useRef<HTMLInputElement | null>(null);
 
   const checkPlateCol = checkHeaders.length ? detectPlateColumn(checkHeaders) : null;
 
@@ -272,8 +271,8 @@ export default function RegistrationPage() {
         loadRecordings(uid);
         registerOnlineSync(uid);
 
-        // Restore persisted check file
-        const checkRec = await getUploadedFile(uid, "check");
+        // Restore check file — read from shared "local:check" (managed by صفحة التشييك)
+        const checkRec = await getUploadedFile("local", "check");
         if (checkRec) {
           const plateCol = detectPlateColumn(checkRec.headers) ?? checkRec.headers[0];
           const plates = new Set(
@@ -318,41 +317,6 @@ export default function RegistrationPage() {
     setRecordings(recs);
     setDuplicates(findDuplicates(recs.map((r) => r.plate)));
   }, []);
-
-  // ── Check file upload ────────────────────────────────────────────────
-  async function handleCheckFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const table = await parseExcelFile(file);
-      const plateCol = detectPlateColumn(table.headers) ?? table.headers[0];
-      const normalized = new Set(
-        table.rows
-          .map((r) => normalizePlate(bankPlateToArabic(String(r[plateCol] ?? ""))))
-          .filter(Boolean)
-      );
-      setCheckPlates(normalized);
-      setCheckFileName(file.name);
-      setCheckHeaders(table.headers);
-      setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plateCol && matchesPreferred(h))));
-      setCheckColsOpen(false);
-
-      if (agentId) {
-        await saveUploadedFile({
-          key: `${agentId}:check`,
-          agentId,
-          slot: "check",
-          fileName: file.name,
-          headers: table.headers,
-          rows: table.rows,
-          uploadedAt: new Date().toISOString(),
-        });
-      }
-    } catch {
-      alert("تعذّر قراءة ملف التشييك.");
-    }
-    e.target.value = "";
-  }
 
   function checkPlateMatch(plate: string, entry: RecordingEntry) {
     if (checkPlates.size === 0) return;
@@ -850,44 +814,19 @@ export default function RegistrationPage() {
         </div>
       </div>
 
-      {/* Check file upload */}
+      {/* Check file — read-only from صفحة التشييك */}
       <div className="rounded-xl border border-border bg-surface px-4 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <FileUp size={15} className="shrink-0 text-muted" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-ink">ملف التشييك</p>
-              {checkFileName ? (
-                <p className="truncate text-xs text-primary">{checkFileName} — {checkPlates.size} لوحة</p>
-              ) : (
-                <p className="text-xs text-muted">ارفع ملف Excel للمطابقة الفورية</p>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {checkFileName && (
-              <button
-                onClick={async () => { setCheckPlates(new Set()); setCheckFileName(""); setCheckHeaders([]); setSelectedCheckCols(new Set()); setCheckColsOpen(false); if (agentId) await deleteUploadedFile(agentId, "check"); }}
-                className="text-muted hover:text-danger transition"
-              >
-                <X size={14} />
-              </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <FileUp size={15} className={checkFileName ? "shrink-0 text-brand" : "shrink-0 text-muted"} />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink">ملف التشييك</p>
+            {checkFileName ? (
+              <p className="truncate text-xs text-primary">{checkFileName} — {checkPlates.size} لوحة</p>
+            ) : (
+              <p className="text-xs text-muted">ارفعه من صفحة <span className="font-bold text-ink">التشييك</span></p>
             )}
-            <button
-              onClick={() => checkFileRef.current?.click()}
-              className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs font-medium text-ink hover:border-primary hover:text-primary transition"
-            >
-              {checkFileName ? "تغيير" : "رفع"}
-            </button>
           </div>
         </div>
-        <input
-          ref={checkFileRef}
-          type="file"
-          accept=".xlsx,.xls"
-          className="hidden"
-          onChange={handleCheckFileUpload}
-        />
         {checkHeaders.length > 0 && (
           <div className="mt-2 rounded-xl border border-border bg-surface">
             <button
