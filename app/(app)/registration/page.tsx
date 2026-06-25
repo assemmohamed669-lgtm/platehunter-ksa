@@ -37,6 +37,7 @@ import {
   type RecordingEntry,
 } from "@/lib/idb";
 import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
+import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob } from "@/lib/excel";
@@ -283,7 +284,7 @@ export default function RegistrationPage() {
           setCheckPlates(plates);
           setCheckFileName(checkRec.fileName);
           setCheckHeaders(checkRec.headers);
-          setSelectedCheckCols(new Set(checkRec.headers.filter((h) => h !== plateCol)));
+          setSelectedCheckCols(new Set(checkRec.headers.filter((h) => h !== plateCol && matchesPreferred(h))));
         }
       }
     });
@@ -333,7 +334,7 @@ export default function RegistrationPage() {
       setCheckPlates(normalized);
       setCheckFileName(file.name);
       setCheckHeaders(table.headers);
-      setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plateCol)));
+      setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plateCol && matchesPreferred(h))));
       setCheckColsOpen(false);
 
       if (agentId) {

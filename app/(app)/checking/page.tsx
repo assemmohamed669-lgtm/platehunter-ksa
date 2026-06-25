@@ -8,6 +8,7 @@ import { getAllRecordings, deleteRecording, type RecordingEntry, saveUploadedFil
 import { syncPending } from "@/lib/sync";
 import { exportRecordingsToExcel, type ExcelTable } from "@/lib/excel";
 import { detectPlateColumn } from "@/lib/plateParser";
+import { matchesPreferred } from "@/lib/sortingCols";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function CheckingPage() {
@@ -49,7 +50,7 @@ export default function CheckingPage() {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }));
         const plate = detectPlateColumn(rec.headers);
-        setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate)));
+        setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate && matchesPreferred(h))));
       }
     }).catch(() => {});
   }, []);

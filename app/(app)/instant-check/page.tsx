@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Camera, Type, Mic, ChevronDown, X, CheckCircle, XCircle, Loader2, Trash2 } from "lucide-react";
+import { Camera, Type, Mic, ChevronDown, X, CheckCircle, XCircle, Loader2, Trash2, MapPin } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript } from "@/lib/plateParser";
+import { matchesPreferred } from "@/lib/sortingCols";
+import { toMapsLink } from "@/lib/gps";
 
 type CheckMode = "manual" | "camera" | "ptt";
 
@@ -58,6 +60,15 @@ function createSpeechRecognition(): SpeechRecognitionInstance | null {
   return new SR();
 }
 
+function buildGpsLink(value: string): string | null {
+  const v = String(value).trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  const m = v.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+  if (m) return toMapsLink(parseFloat(m[1]), parseFloat(m[2]));
+  return null;
+}
+
 // ── Result card ───────────────────────────────────────────────────────────────
 function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string> }) {
   const extras = result.row
@@ -86,12 +97,27 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
       </div>
       {result.found && extras.length > 0 ? (
         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-1">
-          {extras.map(([k, v]) => (
-            <div key={k} className="flex flex-col min-w-0">
-              <span className="text-[10px] text-muted leading-tight">{k}</span>
-              <span className="text-xs text-ink truncate">{String(v)}</span>
-            </div>
-          ))}
+          {extras.map(([k, v]) => {
+            const gpsLink = buildGpsLink(String(v));
+            return (
+              <div key={k} className="flex flex-col min-w-0">
+                <span className="text-[10px] text-muted leading-tight">{k}</span>
+                {gpsLink ? (
+                  <a
+                    href={gpsLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-primary"
+                  >
+                    <MapPin size={11} className="shrink-0" />
+                    خريطة
+                  </a>
+                ) : (
+                  <span className="text-xs text-ink truncate">{String(v)}</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : !result.found ? (
         <p className="text-xs text-danger">غير موجود في ملف التشييك</p>
@@ -138,7 +164,7 @@ export default function InstantCheckPage() {
             })
           );
           const plate = detectPlateColumn(rec.headers);
-          setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate)));
+          setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate && matchesPreferred(h))));
         }
       })
       .catch(() => {});
@@ -344,7 +370,7 @@ export default function InstantCheckPage() {
     setCheckTable(table);
     setCheckFile(file);
     const plate = detectPlateColumn(table.headers);
-    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate)));
+    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate && matchesPreferred(h))));
     setCheckColsOpen(false);
     // clear previous results when file changes
     setManualResult(null);

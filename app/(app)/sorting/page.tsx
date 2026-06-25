@@ -37,7 +37,7 @@ import {
   type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { haversineKm, extractLatLngFromMapsLink } from "@/lib/gps";
+import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
 import {
   saveUploadedFile,
   getUploadedFile,
@@ -916,7 +916,7 @@ export default function SortingPage() {
                 hint="قائمة البنك لليوم — مؤقت (لا يُحفظ)"
                 parsedFile={dailyFile}
                 parsedRowCount={dailyTable?.rows.length ?? null}
-                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setDailyPlateColOverride(null); const p = detectPlateColumn(table.headers); setDailyDisplayCols(new Set(table.headers.filter(h => h !== p))); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
+                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setDailyPlateColOverride(null); const p = detectPlateColumn(table.headers); setDailyDisplayCols(new Set(table.headers.filter(h => h !== p && matchesPreferred(h)))); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
                 onClear={() => { setDailyTable(null); setDailyFile(null); setDailyPlateColOverride(null); setDailyDisplayCols(new Set()); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
                 showReplaceButtons
               />
@@ -1075,9 +1075,13 @@ export default function SortingPage() {
                           const val = r.dataRow?.[col] ?? "";
                           return (
                             <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                              {/^https?:\/\//i.test(String(val))
-                                ? <a href={String(val)} target="_blank" rel="noopener noreferrer" className="text-primary underline">📍 خريطة</a>
-                                : String(val) || "—"}
+                              {(() => {
+                                const v = String(val).trim();
+                                if (/^https?:\/\//i.test(v)) return <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                const m = v.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+                                if (m) return <a href={toMapsLink(parseFloat(m[1]), parseFloat(m[2]))} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                return <>{v || "—"}</>;
+                              })()}
                             </td>
                           );
                         })}
@@ -1205,9 +1209,13 @@ export default function SortingPage() {
                           const val = r.dataRow?.[col] ?? "";
                           return (
                             <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                              {/^https?:\/\//i.test(String(val))
-                                ? <a href={String(val)} target="_blank" rel="noopener noreferrer" className="text-primary underline">📍 خريطة</a>
-                                : String(val) || "—"}
+                              {(() => {
+                                const v = String(val).trim();
+                                if (/^https?:\/\//i.test(v)) return <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                const m = v.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+                                if (m) return <a href={toMapsLink(parseFloat(m[1]), parseFloat(m[2]))} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                return <>{v || "—"}</>;
+                              })()}
                             </td>
                           );
                         })}
