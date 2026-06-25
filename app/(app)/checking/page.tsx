@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { Download, RefreshCw, ChevronDown } from "lucide-react";
 import RecordingsTable from "@/components/RecordingsTable";
-import { getAllRecordings, deleteRecording, type RecordingEntry } from "@/lib/idb";
+import FileUploadBox from "@/components/FileUploadBox";
+import { getAllRecordings, deleteRecording, type RecordingEntry, saveUploadedFile, getUploadedFile, deleteUploadedFile } from "@/lib/idb";
 import { syncPending } from "@/lib/sync";
-import { exportRecordingsToExcel } from "@/lib/excel";
+import { exportRecordingsToExcel, type ExcelTable } from "@/lib/excel";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function CheckingPage() {
@@ -17,6 +18,11 @@ export default function CheckingPage() {
   const [exportPassError, setExportPassError] = useState<string | null>(null);
   const [verifyingExport, setVerifyingExport] = useState(false);
 
+  // Check file
+  const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
+  const [checkFile, setCheckFile] = useState<File | null>(null);
+  const [checkColsOpen, setCheckColsOpen] = useState(false);
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) {
@@ -24,6 +30,16 @@ export default function CheckingPage() {
         load(data.user.id);
       }
     });
+
+    // Load check file from IDB (shared "local" slot — same slot used by sorting page)
+    getUploadedFile("local", "check").then((rec) => {
+      if (rec) {
+        setCheckTable({ headers: rec.headers, rows: rec.rows });
+        setCheckFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }));
+      }
+    }).catch(() => {});
   }, []);
 
   async function load(aid: string) {
@@ -60,9 +76,31 @@ export default function CheckingPage() {
       setExportPassError("كلمة المرور غير صحيحة.");
       return;
     }
-    exportRecordingsToExcel(recordings, `platehunter-${new Date().toISOString().slice(0,10)}`);
+    exportRecordingsToExcel(recordings, `platehunter-${new Date().toISOString().slice(0, 10)}`);
     setShowExportModal(false);
     setExportPass("");
+  }
+
+  async function handleCheckFileParsed(table: ExcelTable, file: File) {
+    await saveUploadedFile({
+      key: "local:check",
+      agentId: "local",
+      slot: "check",
+      fileName: file.name,
+      headers: table.headers,
+      rows: table.rows,
+      uploadedAt: new Date().toISOString(),
+      fileBlob: file,
+    });
+    setCheckTable(table);
+    setCheckFile(file);
+    setCheckColsOpen(false);
+  }
+
+  async function handleCheckFileClear() {
+    await deleteUploadedFile("local", "check");
+    setCheckTable(null);
+    setCheckFile(null);
   }
 
   return (
@@ -90,6 +128,48 @@ export default function CheckingPage() {
             تصدير
           </button>
         </div>
+      </div>
+
+      {/* ── ملف التشييك ── */}
+      <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3">
+        <p className="text-sm font-bold text-ink">ملف التشييك</p>
+        <p className="text-xs text-muted">القائمة المرجعية — يُستخدم في «الفرز الجديد» بصفحة الفرز</p>
+        <FileUploadBox
+          title=""
+          parsedFile={checkFile}
+          parsedRowCount={checkTable?.rows.length ?? null}
+          onParsed={handleCheckFileParsed}
+          onClear={handleCheckFileClear}
+          showReplaceButtons
+        />
+        {checkTable && (
+          <div className="rounded-xl border border-border bg-surface">
+            <button
+              onClick={() => setCheckColsOpen((v) => !v)}
+              className="flex w-full items-center justify-between px-3 py-2 text-sm font-bold text-ink"
+            >
+              <span>الأعمدة ({checkTable.headers.length})</span>
+              <ChevronDown
+                size={14}
+                className={`text-muted transition-transform duration-200 ${checkColsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {checkColsOpen && (
+              <div className="border-t border-border px-3 pb-3 pt-2">
+                <div className="flex flex-wrap gap-2">
+                  {checkTable.headers.map((h) => (
+                    <span
+                      key={h}
+                      className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-muted"
+                    >
+                      {h}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Table */}
