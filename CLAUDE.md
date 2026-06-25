@@ -9,6 +9,8 @@
 - **Production URL:** https://platehunter-ksa.vercel.app
 - **Repo:** https://github.com/assemmohamed669-lgtm/platehunter-ksa
 - **Mobile:** Capacitor APK — يتحمل الـ bundle من الـ Vercel URL مباشرة
+  - تغييرات JS/TS تظهر تلقائياً بعد `git push` بدون بناء APK جديد
+  - بناء APK جديد مطلوب فقط لتغييرات Java/Kotlin أو AndroidManifest
 
 ---
 
@@ -46,16 +48,74 @@ npx vitest              # watch mode
 
 ```
 lib/
-  plateParser.ts          # منطق مقارنة اللوحات (levenshtein, normalizePlate, bankPlateToArabic, buildReferralIndex, matchChunkAgainstIndex)
-  sortingCols.ts          # PREFERRED_COLS, matchesPreferred, guessDefaultColumns
+  plateParser.ts     # normalizePlate, bankPlateToArabic, detectPlateColumn,
+                     # similarityPercent, levenshtein, parsePlateFromTranscript,
+                     # buildReferralIndex, matchChunkAgainstIndex
+  sortingCols.ts     # PREFERRED_COLS, matchesPreferred(h), guessDefaultColumns, isMandatory
+  gps.ts             # toMapsLink(lat,lng), extractLatLngFromMapsLink(url), haversineKm
+  excel.ts           # parseExcelFile — يفضّل ورقة "تشييك" على أول ورقة
+                     # exportRecordingsToExcel, buildExcelBlob, shareExcelBlob
+  idb.ts             # IndexedDB: saveUploadedFile, getUploadedFile, deleteUploadedFile
+                     # getAllRecordings, saveRecording, deleteRecording
 
 app/(app)/
-  sorting/page.tsx        # صفحة الفرز — رفع ملفين Excel واختيار أعمدة ومقارنة اللوحات
+  sorting/page.tsx        # صفحة الفرز — رفع ملفين Excel ومقارنة اللوحات
+  instant-check/page.tsx  # صفحة التشييك (الـ tab الرئيسي) — يدوي + كاميرا + صوت
+  checking/page.tsx       # سجلات التشييك الميداني + إدارة ملف التشييك
+  registration/page.tsx   # تسجيل اللوحات بالصوت — يقرأ ملف التشييك للمقارنة
+
+app/api/
+  read-plate/route.ts     # OCR الكاميرا — claude-sonnet-4-6
+
+components/
+  PlateBadge.tsx      # عرض اللوحة (أرقام يسار / حروف يمين)، sizes: xs/sm/md/lg
+  FileUploadBox.tsx   # مكوّن رفع ملفات Excel مع showReplaceButtons
+  BottomNav.tsx       # التنقل: الرئيسية / الفرز / التسجيل / تشييك / الخرائط
 
 __tests__/
-  plateParser.test.ts     # 28 اختبار على منطق اللوحات
-  sortingCols.test.ts     # 25 اختبار على الأعمدة التلقائية
+  plateParser.test.ts  # 44 اختبار على منطق اللوحات
+  sortingCols.test.ts  # 25 اختبار على الأعمدة التلقائية
 ```
+
+---
+
+## نمط IDB المشترك (local:check)
+
+جميع الصفحات تشارك **نفس slot** لملف التشييك:
+
+```ts
+// الحفظ (instant-check فقط هو اللي يرفع ويحذف)
+saveUploadedFile({ key: "local:check", agentId: "local", slot: "check", ... })
+
+// القراءة (كل الصفحات)
+getUploadedFile("local", "check")
+
+// الحذف (instant-check فقط)
+deleteUploadedFile("local", "check")
+```
+
+- **`/instant-check`** (tab "تشييك" في BottomNav) — يرفع / يغيّر / يحذف ملف التشييك
+- **`/checking`** — يقرأ نفس الملف (read-only في السياق، لكن فيه FileUploadBox أيضاً)
+- **`/registration`** — يقرأ فقط، بدون زر رفع
+
+---
+
+## صفحة التشييك `/instant-check` — كيف تشتغل
+
+### الملف: `app/(app)/instant-check/page.tsx`
+
+1. عند التحميل: يقرأ `local:check` من IDB
+2. يبني `checkIndex: Map<normalizedPlate, row>` بـ `useMemo` — O(1) lookup
+3. ثلاث طرق للبحث: **يدوي** / **كاميرا** / **صوت (PTT)**
+4. `searchInCheck(rawPlate)`:
+   - exact: `checkIndex.get(normalized)` — فوري
+   - fuzzy: يلف على الـ Map مع first-char skip + threshold 88%
+   - عند أي تطابق: `playMatchAlert()` (3 beeps)
+5. `ResultCard`: يعرض `PlateBadge` + CheckCircle2 (exact) أو AlertTriangle (fuzzy %) أو XCircle (غير موجود)
+
+### OCR الكاميرا: `app/api/read-plate/route.ts`
+- Model: **`claude-sonnet-4-6`**
+- البرومبت: يشجّع على best-guess حتى لو الصورة غير واضحة، لا يرجع NONE إلا لو مافيش لوحة خالص
 
 ---
 
@@ -63,11 +123,11 @@ __tests__/
 
 1. المستخدم يرفع **ملف داتا** (بيانات التفريغ الميداني) و**ملف إحالة** (قائمة البنك/الشركة)
 2. البرنامج يكتشف عمود رقم اللوحة تلقائياً (`detectPlateColumn`)
-3. يعرض كل أعمدة كل ملف ويختار تلقائياً الأعمدة المفيدة (`guessDefaultColumns`)
+3. يختار تلقائياً الأعمدة المفيدة بـ `matchesPreferred(h)` (GPS، الحي، الطراز، اللون، السنة...)
 4. عند ضغط "ابدأ الفرز":
-   - لو الداتا أكبر من الإحالة → يبني map للداتا (10K chunk) ويبحث في الإحالة الصغيرة (O(1) per row)
-   - لو الإحالة أكبر → يبني index للإحالة ويلف على الداتا (300 chunk مع yield)
-5. يعرض النتائج: رقم اللوحة + نوع التطابق (exact/fuzzy) + الأعمدة المختارة
+   - لو الداتا أكبر → يبني Map للداتا (8K chunk) ويبحث في الإحالة الصغيرة O(1)
+   - لو الإحالة أكبر → يبني index للإحالة ويلف على الداتا (8K chunk مع yield)
+5. GPS cells تظهر كـ links — يدعم URL مباشر وكذلك تنسيق `lat,lng`
 
 ---
 
@@ -83,41 +143,42 @@ normalizePlate("أ ب ح 1234") // → "ابح1234"
 ```ts
 bankPlateToArabic("NKD 5678") // → "نكد5678"
 // خريطة: N→ن, K→ك, D→د, H→هـ, U→و, V→ي, A→ا, B→ب ...
-// الحروف اللي ملهاش تعريب تبقى كما هي
 ```
 
 ### Levenshtein — Two-row optimization
-- الفكرة: بدل 2D matrix → صفين فقط بـ module-level buffers
-- عشان 7-char لوحات سعودية: threshold 88% = لازم يشتركوا في أول حرف
+- بدل 2D matrix → صفين فقط بـ module-level buffers
+- threshold 88% مع first-char optimization (لوحات 7 أحرف)
 
-### اختيار الأعمدة التلقائي
-`PREFERRED_COLS` في `lib/sortingCols.ts` — يشمل:
-- الماركة / طراز المركبة / صانع المركبة / Vehicle Name
-- GPS
-- النوع / نوع السيارة / نوع المركبة
-- الحي
-- لون / لون السيارة / لون المركبة الأساسي
-- سنة الصنع / Year Model
+### اختيار الأعمدة التلقائي — `matchesPreferred(h)`
+يختار: الماركة / طراز / صانع / Vehicle Name / GPS / النوع / الحي / اللون / سنة الصنع / Year Model
 
 **لا يختار:** رقم الهيكل / Chassis Number / البنك / Agency / F-Account number
+
+### قراءة Excel — `parseExcelFile`
+- يفضّل الورقة المسماة **"تشييك"** على أول ورقة في الملف
+- إذا لم توجد ورقة بهذا الاسم → يقرأ الأولى
 
 ---
 
 ## حالة العمل الحالية
 
 ### مكتمل ✅
-- [x] TDD cycle كامل على `plateParser.ts` (44 اختبار تعدي)
+- [x] TDD cycle كامل على `plateParser.ts` (44 اختبار)
 - [x] استخراج `sortingCols.ts` بـ tests
 - [x] Async chunked matching — الصفحة لا تتجمد
-- [x] إصلاح التجمد مع ملفات الداتا الكبيرة (464K صف)
-  - الخوارزمية الجديدة: لما الداتا أكبر → بني data map → ابحث في الإحالة الصغيرة
-  - من 6+ ثانية انتظار → ~1 ثانية
-- [x] Debug panel يظهر عدد الصفوف والتطابقات وعينات اللوحات
+- [x] إصلاح التجمد مع ملفات الداتا الكبيرة (464K صف) → ~1 ثانية
+- [x] صفحة التشييك `/instant-check` — يدوي + كاميرا + صوت مع PlateBadge result card
+- [x] Map index O(1) + fuzzy (88%) + playMatchAlert في instant-check
+- [x] Camera OCR بـ claude-sonnet-4-6 مع prompt محسّن
+- [x] ملف التشييك مشترك بين كل الصفحات عبر `local:check` IDB slot
+- [x] GPS links في sorting و instant-check (URL و lat,lng)
+- [x] `matchesPreferred` لاختيار الأعمدة تلقائياً في كل الصفحات
+- [x] `parseExcelFile` يفضّل ورقة "تشييك"
 
 ### معلق ⏳
-- [ ] إزالة debug panel بعد تأكيد الفرز يشتغل صح على الموبايل والويب
-- [ ] بناء APK جديد — فيه إصلاح `MainActivity.java` لـ file picker على Android
-  - الإصلاح موجود في الكود لكن مش متبني في APK بعد
+- [ ] بناء APK جديد — إصلاح `MainActivity.java` لـ file picker على Android
+  - التغيير موجود في الكود لكن مش متبني في APK بعد
+  - بناء: `npx cap build android` ثم رفع على GitHub Releases
 
 ---
 
