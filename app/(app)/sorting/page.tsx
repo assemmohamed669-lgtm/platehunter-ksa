@@ -74,6 +74,7 @@ export default function SortingPage() {
   const [dataColsOpen, setDataColsOpen] = useState(false);
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
   const [referralColsOpen, setReferralColsOpen] = useState(false);
+  const [dailyColsOpen, setDailyColsOpen] = useState(false);
 
   // ── Full sort ──
   const [results, setResults] = useState<MatchResult[] | null>(null);
@@ -847,10 +848,42 @@ export default function SortingPage() {
                 hint="قائمة البنك لليوم — مؤقت (لا يُحفظ)"
                 parsedFile={dailyFile}
                 parsedRowCount={dailyTable?.rows.length ?? null}
-                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setNewResults(null); setNewSorted(false); }}
-                onClear={() => { setDailyTable(null); setDailyFile(null); setNewResults(null); setNewSorted(false); }}
+                onParsed={(table, file) => { setDailyTable(table); setDailyFile(file); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
+                onClear={() => { setDailyTable(null); setDailyFile(null); setNewResults(null); setNewSorted(false); setDailyColsOpen(false); }}
                 showReplaceButtons
               />
+              {dailyTable && (
+                <div className="rounded-xl border border-border bg-surface">
+                  <button
+                    onClick={() => setDailyColsOpen((v) => !v)}
+                    className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
+                  >
+                    <span>الأعمدة ({dailyTable.headers.length})</span>
+                    <ChevronDown
+                      size={14}
+                      className={`text-muted transition-transform duration-200 ${dailyColsOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  {dailyColsOpen && (
+                    <div className="border-t border-border px-3 pb-3 pt-2">
+                      <div className="flex flex-wrap gap-2">
+                        {dailyTable.headers.map((h) => (
+                          <span
+                            key={h}
+                            className={`rounded-full border px-3 py-1 text-xs ${
+                              h === dailyPlateCol
+                                ? "border-primary/50 bg-primary/10 text-primary"
+                                : "border-border bg-surface-2 text-muted"
+                            }`}
+                          >
+                            {h}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {dataTable && checkTable && dailyTable && (
                 <button onClick={runNewSort} disabled={newSorting}
                   className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-70">

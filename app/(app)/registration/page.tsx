@@ -19,6 +19,7 @@ import {
   X,
   AlertTriangle,
   Share2,
+  ChevronDown,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -35,10 +36,10 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, readBankExcel, buildExcelBlob, openExcelBlob } from "@/lib/excel";
+import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -216,6 +217,8 @@ export default function RegistrationPage() {
   // Check file (bank list for matching)
   const [checkPlates, setCheckPlates] = useState<Set<string>>(new Set());
   const [checkFileName, setCheckFileName] = useState<string>("");
+  const [checkHeaders, setCheckHeaders] = useState<string[]>([]);
+  const [checkColsOpen, setCheckColsOpen] = useState(false);
   const checkFileRef = useRef<HTMLInputElement | null>(null);
 
   // Match modal
@@ -260,11 +263,15 @@ export default function RegistrationPage() {
         // Restore persisted check file
         const checkRec = await getUploadedFile(uid, "check");
         if (checkRec) {
+          const plateCol = detectPlateColumn(checkRec.headers) ?? "plate";
           const plates = new Set(
-            checkRec.rows.map((r) => r.plate).filter(Boolean)
+            checkRec.rows
+              .map((r) => normalizePlate(bankPlateToArabic(String(r[plateCol] ?? ""))))
+              .filter(Boolean)
           );
           setCheckPlates(plates);
           setCheckFileName(checkRec.fileName);
+          setCheckHeaders(checkRec.headers);
         }
       }
     });
@@ -304,22 +311,26 @@ export default function RegistrationPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const plates = await readBankExcel(file);
+      const table = await parseExcelFile(file);
+      const plateCol = detectPlateColumn(table.headers) ?? table.headers[0];
       const normalized = new Set(
-        plates.map((p) => normalizePlate(bankPlateToArabic(p))).filter(Boolean)
+        table.rows
+          .map((r) => normalizePlate(bankPlateToArabic(String(r[plateCol] ?? ""))))
+          .filter(Boolean)
       );
       setCheckPlates(normalized);
       setCheckFileName(file.name);
+      setCheckHeaders(table.headers);
+      setCheckColsOpen(false);
 
-      // Persist to IndexedDB
       if (agentId) {
         await saveUploadedFile({
           key: `${agentId}:check`,
           agentId,
           slot: "check",
           fileName: file.name,
-          headers: ["plate"],
-          rows: [...normalized].map((p) => ({ plate: p })),
+          headers: table.headers,
+          rows: table.rows,
           uploadedAt: new Date().toISOString(),
         });
       }
@@ -842,7 +853,7 @@ export default function RegistrationPage() {
           <div className="flex items-center gap-2 shrink-0">
             {checkFileName && (
               <button
-                onClick={async () => { setCheckPlates(new Set()); setCheckFileName(""); if (agentId) await deleteUploadedFile(agentId, "check"); }}
+                onClick={async () => { setCheckPlates(new Set()); setCheckFileName(""); setCheckHeaders([]); setCheckColsOpen(false); if (agentId) await deleteUploadedFile(agentId, "check"); }}
                 className="text-muted hover:text-danger transition"
               >
                 <X size={14} />
@@ -863,6 +874,38 @@ export default function RegistrationPage() {
           className="hidden"
           onChange={handleCheckFileUpload}
         />
+        {checkHeaders.length > 0 && (
+          <div className="mt-2 rounded-xl border border-border bg-surface">
+            <button
+              onClick={() => setCheckColsOpen((v) => !v)}
+              className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
+            >
+              <span>الأعمدة ({checkHeaders.length})</span>
+              <ChevronDown
+                size={14}
+                className={`text-muted transition-transform duration-200 ${checkColsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {checkColsOpen && (
+              <div className="border-t border-border px-3 pb-3 pt-2">
+                <div className="flex flex-wrap gap-2">
+                  {checkHeaders.map((h) => (
+                    <span
+                      key={h}
+                      className={`rounded-full border px-3 py-1 text-xs ${
+                        h === detectPlateColumn(checkHeaders)
+                          ? "border-primary/50 bg-primary/10 text-primary"
+                          : "border-border bg-surface-2 text-muted"
+                      }`}
+                    >
+                      {h}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* GPS status */}
