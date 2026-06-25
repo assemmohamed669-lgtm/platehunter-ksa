@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Camera, Type, Mic, ChevronDown, X, CheckCircle, XCircle, Loader2, Trash2, MapPin } from "lucide-react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { Camera, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
+import PlateBadge from "@/components/PlateBadge";
 
 type CheckMode = "manual" | "camera" | "ptt";
 
@@ -15,7 +16,25 @@ interface PlateResult {
   plate: string;
   normalized: string;
   found: boolean;
+  matchType?: "exact" | "fuzzy";
+  similarity?: number;
   row?: Record<string, string>;
+}
+
+function playMatchAlert() {
+  try {
+    const ctx = new AudioContext();
+    [0, 0.18, 0.36].forEach((delay) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880; osc.type = "sine";
+      gain.gain.setValueAtTime(0.5, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.18);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.2);
+    });
+  } catch { /* audio unavailable */ }
 }
 
 // ── Speech recognition types ─────────────────────────────────────────────────
@@ -71,6 +90,19 @@ function buildGpsLink(value: string): string | null {
 
 // ── Result card ───────────────────────────────────────────────────────────────
 function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string> }) {
+  if (!result.found) {
+    return (
+      <div className="rounded-xl border border-danger/40 bg-danger/10 p-4 flex items-center gap-3">
+        <XCircle size={20} className="text-danger shrink-0" />
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-ink">{result.plate}</p>
+          <p className="text-xs text-danger">غير موجود في ملف التشييك</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isFuzzy = result.matchType === "fuzzy";
   const extras = result.row
     ? Object.entries(result.row).filter(([k, v]) => {
         if (k === plateCol || !String(v).trim()) return false;
@@ -78,39 +110,34 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
         return true;
       })
     : [];
+
   return (
-    <div
-      className={`rounded-xl border p-4 ${
-        result.found ? "border-brand/40 bg-brand/10" : "border-danger/40 bg-danger/10"
-      }`}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        {result.found ? (
-          <CheckCircle size={18} className="text-brand shrink-0" />
-        ) : (
-          <XCircle size={18} className="text-danger shrink-0" />
-        )}
-        <span className="text-sm font-bold text-ink">{result.plate}</span>
-        {result.normalized !== result.plate.replace(/\s+/g, "") && (
-          <span className="text-xs text-muted">← {result.normalized}</span>
-        )}
+    <div className={`rounded-xl border-2 p-4 ${isFuzzy ? "border-alert/60 bg-alert/10" : "border-brand/60 bg-brand/10"}`}>
+      {/* Header */}
+      <div className="flex items-center justify-center gap-2 mb-3">
+        {isFuzzy
+          ? <AlertTriangle size={16} className="text-alert shrink-0" />
+          : <CheckCircle2 size={16} className="text-brand shrink-0" />}
+        <span className={`text-xs font-bold ${isFuzzy ? "text-alert" : "text-brand"}`}>
+          {isFuzzy ? `مشتبه به ${result.similarity}%` : "موجود!"}
+        </span>
       </div>
-      {result.found && extras.length > 0 ? (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-1">
+      {/* Plate badge */}
+      <div className="flex justify-center mb-3">
+        <PlateBadge value={result.plate} size="md" />
+      </div>
+      {/* Extra details */}
+      {extras.length > 0 && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-white/10 pt-3 mt-1">
           {extras.map(([k, v]) => {
             const gpsLink = buildGpsLink(String(v));
             return (
               <div key={k} className="flex flex-col min-w-0">
                 <span className="text-[10px] text-muted leading-tight">{k}</span>
                 {gpsLink ? (
-                  <a
-                    href={gpsLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-xs text-primary"
-                  >
-                    <MapPin size={11} className="shrink-0" />
-                    خريطة
+                  <a href={gpsLink} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-primary">
+                    <MapPin size={11} className="shrink-0" />خريطة
                   </a>
                 ) : (
                   <span className="text-xs text-ink truncate">{String(v)}</span>
@@ -119,9 +146,7 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
             );
           })}
         </div>
-      ) : !result.found ? (
-        <p className="text-xs text-danger">غير موجود في ملف التشييك</p>
-      ) : null}
+      )}
     </div>
   );
 }
@@ -171,6 +196,16 @@ export default function InstantCheckPage() {
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
 
+  const checkIndex = useMemo(() => {
+    if (!checkTable || !checkPlateCol) return new Map<string, Record<string, string>>();
+    const map = new Map<string, Record<string, string>>();
+    for (const row of checkTable.rows) {
+      const key = normalizePlate(bankPlateToArabic(String(row[checkPlateCol] ?? "")));
+      if (key) map.set(key, row);
+    }
+    return map;
+  }, [checkTable, checkPlateCol]);
+
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -180,13 +215,33 @@ export default function InstantCheckPage() {
   }
 
   function searchInCheck(rawPlate: string): PlateResult | null {
-    if (!checkTable || !checkPlateCol) return null;
+    if (!checkPlateCol || checkIndex.size === 0) return null;
     const normalized = normalizePlate(bankPlateToArabic(rawPlate));
     if (!normalized) return null;
-    const row = checkTable.rows.find(
-      (r) => normalizePlate(bankPlateToArabic(String(r[checkPlateCol] ?? ""))) === normalized
-    );
-    return { plate: rawPlate, normalized, found: !!row, row };
+
+    // O(1) exact lookup
+    const exactRow = checkIndex.get(normalized);
+    if (exactRow) {
+      playMatchAlert();
+      return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
+    }
+
+    // Fuzzy fallback (88% threshold, first-char optimization)
+    if (normalized.length >= 4) {
+      let bestSim = 0;
+      let bestRow: Record<string, string> | undefined;
+      for (const [key, row] of checkIndex) {
+        if (key[0] !== normalized[0]) continue;
+        const sim = similarityPercent(normalized, key);
+        if (sim > bestSim) { bestSim = sim; bestRow = row; }
+      }
+      if (bestSim >= 88 && bestRow) {
+        playMatchAlert();
+        return { plate: rawPlate, normalized, found: true, matchType: "fuzzy", similarity: Math.round(bestSim), row: bestRow };
+      }
+    }
+
+    return { plate: rawPlate, normalized, found: false };
   }
 
   // ── Manual ────────────────────────────────────────────────────────────────
