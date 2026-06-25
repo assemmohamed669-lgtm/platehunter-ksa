@@ -124,7 +124,8 @@ export async function parseExcelFile(file: File, password?: string): Promise<Exc
         if (password) (opts as Record<string, unknown>).password = password;
 
         const wb = XLSX.read(data, opts);
-        const ws = wb.Sheets[wb.SheetNames[0]];
+        const sheetName = wb.SheetNames.find((n) => n.trim() === "تشييك") ?? wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
         const rows = XLSX.utils.sheet_to_json(ws, {
           raw: false,
           defval: "",
