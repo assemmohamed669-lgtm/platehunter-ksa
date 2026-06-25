@@ -1,29 +1,319 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { ScanLine, Camera, Type, Mic, ChevronDown } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Camera, Type, Mic, ChevronDown, X, CheckCircle, XCircle, Loader2, Trash2 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript } from "@/lib/plateParser";
 
+type CheckMode = "manual" | "camera" | "ptt";
+
+interface PlateResult {
+  plate: string;
+  normalized: string;
+  found: boolean;
+  row?: Record<string, string>;
+}
+
+// ── Speech recognition types ─────────────────────────────────────────────────
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  [index: number]: SpeechRecognitionResult;
+}
+interface SpeechRecognitionResult {
+  readonly length: number;
+  [index: number]: SpeechRecognitionAlternative;
+  readonly isFinal: boolean;
+}
+interface SpeechRecognitionAlternative {
+  readonly transcript: string;
+  readonly confidence: number;
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+}
+
+function createSpeechRecognition(): SpeechRecognitionInstance | null {
+  const W = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+  };
+  const SR = W.SpeechRecognition ?? W.webkitSpeechRecognition;
+  if (!SR) return null;
+  return new SR();
+}
+
+// ── Result card ───────────────────────────────────────────────────────────────
+function ResultCard({ result, plateCol }: { result: PlateResult; plateCol: string | null }) {
+  const extras = result.row
+    ? Object.entries(result.row).filter(([k, v]) => k !== plateCol && String(v).trim())
+    : [];
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        result.found ? "border-brand/40 bg-brand/10" : "border-danger/40 bg-danger/10"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        {result.found ? (
+          <CheckCircle size={18} className="text-brand shrink-0" />
+        ) : (
+          <XCircle size={18} className="text-danger shrink-0" />
+        )}
+        <span className="text-sm font-bold text-ink">{result.plate}</span>
+        {result.normalized !== result.plate.replace(/\s+/g, "") && (
+          <span className="text-xs text-muted">← {result.normalized}</span>
+        )}
+      </div>
+      {result.found && extras.length > 0 ? (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-1">
+          {extras.map(([k, v]) => (
+            <div key={k} className="flex flex-col min-w-0">
+              <span className="text-[10px] text-muted leading-tight">{k}</span>
+              <span className="text-xs text-ink truncate">{String(v)}</span>
+            </div>
+          ))}
+        </div>
+      ) : !result.found ? (
+        <p className="text-xs text-danger">غير موجود في ملف التشييك</p>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
+  const [mode, setMode] = useState<CheckMode>("manual");
 
+  // Manual
+  const [manualInput, setManualInput] = useState("");
+  const [manualResult, setManualResult] = useState<PlateResult | null>(null);
+
+  // Camera
+  const [cameraImage, setCameraImage] = useState<string | null>(null);
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [cameraResult, setCameraResult] = useState<PlateResult | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // PTT
+  const [pttListening, setPttListening] = useState(false);
+  const [pttLiveText, setPttLiveText] = useState("");
+  const [pttResults, setPttResults] = useState<PlateResult[]>([]);
+  const [pttError, setPttError] = useState<string | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const isListeningRef = useRef(false);
+
+  // Load check file from IDB on mount
   useEffect(() => {
-    getUploadedFile("local", "check").then((rec) => {
-      if (rec) {
-        setCheckTable({ headers: rec.headers, rows: rec.rows });
-        setCheckFile(
-          new File([rec.fileBlob ?? new Blob()], rec.fileName, {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          })
-        );
-      }
-    }).catch(() => {});
+    getUploadedFile("local", "check")
+      .then((rec) => {
+        if (rec) {
+          setCheckTable({ headers: rec.headers, rows: rec.rows });
+          setCheckFile(
+            new File([rec.fileBlob ?? new Blob()], rec.fileName, {
+              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            })
+          );
+        }
+      })
+      .catch(() => {});
   }, []);
 
+  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+
+  function searchInCheck(rawPlate: string): PlateResult | null {
+    if (!checkTable || !checkPlateCol) return null;
+    const normalized = normalizePlate(bankPlateToArabic(rawPlate));
+    if (!normalized) return null;
+    const row = checkTable.rows.find(
+      (r) => normalizePlate(bankPlateToArabic(String(r[checkPlateCol] ?? ""))) === normalized
+    );
+    return { plate: rawPlate, normalized, found: !!row, row };
+  }
+
+  // ── Manual ────────────────────────────────────────────────────────────────
+  function handleManualChange(value: string) {
+    setManualInput(value);
+    if (!value.trim()) {
+      setManualResult(null);
+      return;
+    }
+    setManualResult(searchInCheck(value.trim()));
+  }
+
+  // ── Camera ────────────────────────────────────────────────────────────────
+  function handleCameraCapture(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCameraError(null);
+    setCameraResult(null);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      setCameraImage(dataUrl);
+      setCameraLoading(true);
+      try {
+        const base64 = dataUrl.split(",")[1];
+        const res = await fetch("/api/read-plate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64, mediaType: file.type || "image/jpeg" }),
+        });
+        const json = await res.json();
+        if (json.plate) {
+          setCameraResult(searchInCheck(json.plate));
+        } else {
+          setCameraError("لم يتم التعرف على لوحة في الصورة");
+        }
+      } catch {
+        setCameraError("حدث خطأ أثناء قراءة الصورة");
+      } finally {
+        setCameraLoading(false);
+        if (cameraInputRef.current) cameraInputRef.current.value = "";
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function resetCamera() {
+    setCameraImage(null);
+    setCameraResult(null);
+    setCameraError(null);
+  }
+
+  // ── PTT ───────────────────────────────────────────────────────────────────
+  // addResult: parse one utterance and append to results list
+  function addPttResult(utterance: string) {
+    const { plate } = parsePlateFromTranscript(utterance);
+    if (!plate) return;
+    const result = searchInCheck(plate);
+    if (result) {
+      setPttResults((prev) => [result, ...prev]);
+    }
+  }
+
+  async function startPtt() {
+    setPttError(null);
+    setPttLiveText("");
+    isListeningRef.current = true;
+    setPttListening(true);
+
+    // Native (Capacitor)
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
+        await SpeechRecognition.requestPermissions();
+        while (isListeningRef.current) {
+          try {
+            const result = await SpeechRecognition.start({
+              language: "ar-SA",
+              maxResults: 1,
+              partialResults: false,
+              popup: false,
+            });
+            const text: string = result?.matches?.[0] ?? "";
+            if (text) {
+              setPttLiveText(text);
+              addPttResult(text);
+            }
+          } catch {
+            break;
+          }
+        }
+        setPttListening(false);
+        isListeningRef.current = false;
+        return;
+      }
+    } catch {}
+
+    // Web fallback
+    const recognition = createSpeechRecognition();
+    if (!recognition) {
+      setPttError("المتصفح لا يدعم التعرف الصوتي — استخدم Chrome أو Edge");
+      setPttListening(false);
+      isListeningRef.current = false;
+      return;
+    }
+
+    recognition.lang = "ar-SA";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += t;
+        else interim += t;
+      }
+      setPttLiveText((finalText || interim).trim());
+      if (finalText.trim()) addPttResult(finalText.trim());
+    };
+
+    recognition.onerror = (event: { error: string }) => {
+      if (event.error !== "aborted" && event.error !== "no-speech") {
+        setPttError(`خطأ: ${event.error}`);
+      }
+    };
+
+    recognition.onend = () => {
+      if (isListeningRef.current) {
+        try { recognition.start(); } catch {}
+      } else {
+        setPttListening(false);
+      }
+    };
+
+    recognition.start();
+  }
+
+  async function stopPtt() {
+    isListeningRef.current = false;
+    setPttListening(false);
+    setPttLiveText("");
+
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
+        try { await SpeechRecognition.stop(); } catch {}
+        return;
+      }
+    } catch {}
+
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+  }
+
+  // ── IDB handlers ─────────────────────────────────────────────────────────
   async function handleParsed(table: ExcelTable, file: File) {
     const record: UploadedFileRecord = {
       key: "local:check",
@@ -39,26 +329,34 @@ export default function InstantCheckPage() {
     setCheckTable(table);
     setCheckFile(file);
     setCheckColsOpen(false);
+    // clear previous results when file changes
+    setManualResult(null);
+    setCameraResult(null);
+    setPttResults([]);
   }
 
   async function handleClear() {
     await deleteUploadedFile("local", "check");
     setCheckTable(null);
     setCheckFile(null);
+    setManualResult(null);
+    setCameraResult(null);
+    setPttResults([]);
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-lg font-bold text-ink">التشييك</h1>
-        <p className="text-xs text-muted">القائمة المرجعية للفرز الجديد</p>
+        <p className="text-xs text-muted">فحص لوحات السيارات مقابل ملف الإحالة</p>
       </div>
 
       {/* ── ملف التشييك ── */}
       <div className="flex flex-col gap-2">
         <FileUploadBox
           title="ملف التشييك"
-          hint="ارفع ملف الإحالة الكامل كمرجع — يُستخدم في «الفرز الجديد» بصفحة الفرز"
+          hint="القائمة المرجعية للفرز الجديد"
           parsedFile={checkFile}
           parsedRowCount={checkTable?.rows.length ?? null}
           onParsed={handleParsed}
@@ -81,43 +379,202 @@ export default function InstantCheckPage() {
               <div className="border-t border-border px-3 pb-3 pt-2">
                 <div className="flex flex-wrap gap-2">
                   {checkTable.headers.map((h) => (
-                    <span key={h} className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-muted">
+                    <span
+                      key={h}
+                      className={`rounded-full border px-3 py-1 text-xs ${
+                        h === checkPlateCol
+                          ? "border-primary/50 bg-primary/10 text-primary"
+                          : "border-border bg-surface-2 text-muted"
+                      }`}
+                    >
                       {h}
                     </span>
                   ))}
                 </div>
+                {!checkPlateCol && (
+                  <p className="mt-2 text-xs text-danger">
+                    تحذير: لم يُعثر على عمود رقم اللوحة تلقائياً
+                  </p>
+                )}
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* ── قيد التطوير ── */}
-      <div className="rounded-2xl border border-border bg-surface p-5">
-        <div className="mb-3 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-dark text-primary">
-            <ScanLine size={20} />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-ink">تشييك فوري — قيد التطوير</h2>
-            <p className="text-xs text-muted">الجزء القادم</p>
-          </div>
+      {/* ── No file notice ── */}
+      {!checkTable && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+          ارفع ملف التشييك أولاً لتفعيل البحث
         </div>
-        <div className="space-y-3 text-sm leading-relaxed text-muted">
-          <div className="flex items-start gap-2">
-            <Camera size={16} className="mt-0.5 shrink-0 text-primary" />
-            <span>تصوير اللوحة بالكاميرا وقراءتها بالذكاء الاصطناعي (ANPR) ومطابقتها فورًا.</span>
+      )}
+
+      {/* ── Mode tabs + content (only shown when file is loaded) ── */}
+      {checkTable && (
+        <>
+          {/* Tabs */}
+          <div className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-surface-2 p-1">
+            {(
+              [
+                { key: "manual", Icon: Type, label: "يدوي" },
+                { key: "camera", Icon: Camera, label: "كاميرا" },
+                { key: "ptt", Icon: Mic, label: "صوت" },
+              ] as const
+            ).map(({ key, Icon, label }) => (
+              <button
+                key={key}
+                onClick={() => setMode(key)}
+                className={`flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-sm font-bold transition ${
+                  mode === key ? "bg-primary text-night" : "text-muted"
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
           </div>
-          <div className="flex items-start gap-2">
-            <Type size={16} className="mt-0.5 shrink-0 text-primary" />
-            <span>إدخال يدوي سريع لرقم اللوحة مع بحث فوري في المحفظة.</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <Mic size={16} className="mt-0.5 shrink-0 text-primary" />
-            <span>اضغط واتكلم (Push to Talk) لقول عدة لوحات متتالية ومطابقتها دفعة واحدة.</span>
-          </div>
-        </div>
-      </div>
+
+          {/* ── Manual ── */}
+          {mode === "manual" && (
+            <div className="flex flex-col gap-3">
+              <div className="relative">
+                <input
+                  value={manualInput}
+                  onChange={(e) => handleManualChange(e.target.value)}
+                  placeholder="أدخل رقم اللوحة — مثال: أبح1234"
+                  className="w-full rounded-xl border border-border bg-surface-2 py-3 pl-10 pr-4 text-right text-ink placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                  dir="rtl"
+                  autoComplete="off"
+                />
+                {manualInput && (
+                  <button
+                    onClick={() => handleManualChange("")}
+                    className="absolute left-3 top-1/2 -translate-y-1/2"
+                  >
+                    <X size={16} className="text-muted" />
+                  </button>
+                )}
+              </div>
+              {manualResult && (
+                <ResultCard result={manualResult} plateCol={checkPlateCol} />
+              )}
+              {manualInput && !manualResult && (
+                <p className="text-xs text-muted text-center">جارٍ البحث...</p>
+              )}
+            </div>
+          )}
+
+          {/* ── Camera ── */}
+          {mode === "camera" && (
+            <div className="flex flex-col gap-3">
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleCameraCapture}
+              />
+
+              {!cameraImage ? (
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  disabled={cameraLoading}
+                  className="flex h-36 w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 text-muted transition active:scale-95"
+                >
+                  <Camera size={28} />
+                  <span className="text-sm">التقط صورة اللوحة</span>
+                </button>
+              ) : (
+                <div className="relative overflow-hidden rounded-xl border border-border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={cameraImage} alt="لوحة" className="w-full object-cover max-h-48" />
+                  {cameraLoading && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
+                      <Loader2 size={28} className="animate-spin text-white" />
+                      <span className="text-sm text-white">جاري قراءة اللوحة...</span>
+                    </div>
+                  )}
+                  {!cameraLoading && (
+                    <button
+                      onClick={resetCamera}
+                      className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5"
+                    >
+                      <X size={14} className="text-white" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!cameraLoading && cameraImage && (
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted"
+                >
+                  التقط صورة أخرى
+                </button>
+              )}
+
+              {cameraError && (
+                <p className="text-center text-xs text-danger">{cameraError}</p>
+              )}
+              {cameraResult && (
+                <ResultCard result={cameraResult} plateCol={checkPlateCol} />
+              )}
+            </div>
+          )}
+
+          {/* ── PTT ── */}
+          {mode === "ptt" && (
+            <div className="flex flex-col items-center gap-4">
+              {/* Big mic button */}
+              <button
+                onClick={pttListening ? stopPtt : startPtt}
+                className={`flex h-28 w-28 flex-col items-center justify-center gap-1.5 rounded-full border-4 transition active:scale-95 ${
+                  pttListening
+                    ? "border-brand bg-brand/20 text-brand animate-pulse"
+                    : "border-border bg-surface-2 text-muted"
+                }`}
+              >
+                <Mic size={32} />
+                <span className="text-xs font-bold">
+                  {pttListening ? "إيقاف" : "ابدأ"}
+                </span>
+              </button>
+
+              {pttListening && (
+                <p className="text-center text-xs text-muted">
+                  {pttLiveText ? `"${pttLiveText}"` : "جاري الاستماع..."}
+                </p>
+              )}
+
+              {pttError && (
+                <p className="text-center text-xs text-danger">{pttError}</p>
+              )}
+
+              {pttResults.length > 0 && (
+                <div className="w-full flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted">
+                      {pttResults.length} نتيجة
+                    </span>
+                    <button
+                      onClick={() => setPttResults([])}
+                      className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
+                    >
+                      <Trash2 size={12} />
+                      مسح
+                    </button>
+                  </div>
+                  {pttResults.map((r, i) => (
+                    <ResultCard key={i} result={r} plateCol={checkPlateCol} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
