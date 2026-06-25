@@ -137,7 +137,7 @@ interface MatchedPlate {
 function MatchModal({ matches, onClose }: { matches: MatchedPlate[]; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-primary p-6 shadow-2xl max-h-[85vh] flex flex-col">
+      <div className="w-full max-w-sm rounded-2xl bg-brand p-6 shadow-2xl max-h-[85vh] flex flex-col">
         <div className="mb-4 flex items-center justify-center gap-2 shrink-0">
           <AlertTriangle size={28} className="text-night animate-bounce" />
           <span className="text-xl font-black text-night">
@@ -175,7 +175,7 @@ function MatchModal({ matches, onClose }: { matches: MatchedPlate[]; onClose: ()
 
         <button
           onClick={onClose}
-          className="mt-4 w-full rounded-xl bg-night py-3 text-base font-bold text-primary transition hover:bg-night/80 shrink-0"
+          className="mt-4 w-full rounded-xl bg-night py-3 text-base font-bold text-brand transition hover:bg-night/80 shrink-0"
         >
           إغلاق
         </button>
@@ -889,7 +889,7 @@ export default function RegistrationPage() {
               ? "bg-danger shadow-[0_0_32px_rgba(239,68,68,0.6)] scale-110"
               : isTranscribing
               ? "bg-surface-2 cursor-wait"
-              : "bg-primary shadow-glow active:scale-95"
+              : "bg-brand shadow-brand-glow active:scale-95"
             }`}
         >
           {isRecording ? (
@@ -905,7 +905,7 @@ export default function RegistrationPage() {
         </button>
 
         {(isRecording || isTranscribing) && liveTranscript && (
-          <div className="mx-4 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
+          <div className="mx-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
             {liveTranscript}
           </div>
         )}
@@ -947,9 +947,9 @@ export default function RegistrationPage() {
           <div className="flex flex-col gap-2">
             <p className="text-sm font-bold text-ink" dir="rtl">التسجيلات الصوتية ({voiceRecs.length})</p>
             {isTranscribing && (
-              <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3" dir="rtl">
-                <RefreshCw size={15} className="animate-spin shrink-0 text-primary" />
-                <span className="text-sm text-primary">جارٍ معالجة اللوحة...</span>
+              <div className="flex items-center gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3" dir="rtl">
+                <RefreshCw size={15} className="animate-spin shrink-0 text-brand" />
+                <span className="text-sm text-brand">جارٍ معالجة اللوحة...</span>
               </div>
             )}
             {voiceRecs.length > 0 && (
@@ -1054,7 +1054,7 @@ export default function RegistrationPage() {
         const matchedRecs = recordings.filter((r) => matchedIds.has(r.localId));
         return matchedRecs.length > 0 ? (
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-bold text-primary">اللوحات المطلوبة ({matchedRecs.length})</p>
+            <p className="text-sm font-bold text-brand">اللوحات المطلوبة ({matchedRecs.length})</p>
             <RecordingsTable
               recordings={matchedRecs}
               onDelete={handleDelete}
@@ -1068,7 +1068,7 @@ export default function RegistrationPage() {
                 );
                 await shareBlob(blob, `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, "اللوحات المطلوبة");
               }}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
                 <Share2 size={16} /> مشاركة المطلوبة
               </button>
             </div>
@@ -1093,7 +1093,7 @@ export default function RegistrationPage() {
           <button
             onClick={handleManualSave}
             disabled={!manualInput.trim()}
-            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
+            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
           >
             حفظ
           </button>

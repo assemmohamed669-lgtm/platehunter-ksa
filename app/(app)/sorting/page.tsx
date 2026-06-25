@@ -686,7 +686,7 @@ export default function SortingPage() {
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-3 gap-2 text-center">
                 {[
-                  { label: "عدد السيارات المطلوبة", val: matchedResults.length, color: "text-glow" },
+                  { label: "عدد السيارات المطلوبة", val: matchedResults.length, color: "text-brand-glow" },
                   { label: "إجمالي الإحالة", val: referralTable?.rows.length ?? 0, color: "text-ink" },
                   { label: "إجمالي الداتا", val: dataTable?.rows.length ?? 0, color: "text-ink" },
                 ].map((s) => (
@@ -764,7 +764,7 @@ export default function SortingPage() {
                         const isSelected = selectedResults.has(i);
                         return (
                           <tr key={i} className={`border-b border-border transition ${
-                            isSelected ? "bg-primary/15" : isExact ? "bg-glow/5 hover:bg-glow/15" : "bg-alert/5 hover:bg-alert/10"
+                            isSelected ? "bg-primary/15" : isExact ? "bg-brand/5 hover:bg-brand/15" : "bg-alert/5 hover:bg-alert/10"
                           }`}>
                             <td className="border-l border-border px-2 py-2 text-center">
                               <button onClick={() => toggleResult(i)} className="text-muted hover:text-primary transition">
@@ -776,7 +776,7 @@ export default function SortingPage() {
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap">
                               {isExact
-                                ? <span className="flex items-center gap-1 font-bold text-glow"><CheckCircle2 size={12} /> مطابقة</span>
+                                ? <span className="flex items-center gap-1 font-bold text-brand-glow"><CheckCircle2 size={12} /> مطابقة</span>
                                 : <span className="flex items-center gap-1 font-bold text-alert"><AlertTriangle size={12} /> {r.similarity}%</span>
                               }
                             </td>
@@ -971,7 +971,7 @@ export default function SortingPage() {
                         const isSelected = selectedPaste.has(i);
                         return (
                           <tr key={i} className={`border-b border-border transition ${
-                            isSelected ? "bg-primary/15" : "bg-glow/5 hover:bg-glow/15"
+                            isSelected ? "bg-primary/15" : "bg-brand/5 hover:bg-brand/15"
                           }`}>
                             <td className="border-l border-border px-2 py-2 text-center">
                               <button onClick={() => togglePaste(i)} className="text-muted hover:text-primary transition">

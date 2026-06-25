@@ -31,7 +31,7 @@ export default function BottomNav() {
               <Icon
                 size={22}
                 strokeWidth={active ? 2.5 : 2}
-                className={active ? "drop-shadow-[0_0_6px_rgba(57,255,158,0.6)]" : ""}
+                className={active ? "drop-shadow-[0_0_6px_rgba(107,163,232,0.55)]" : ""}
               />
               <span className={active ? "font-bold" : ""}>{label}</span>
             </Link>

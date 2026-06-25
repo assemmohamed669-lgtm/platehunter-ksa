@@ -43,8 +43,8 @@ export default function MapsPage() {
       {/* Legend + stats */}
       <div className="grid grid-cols-3 gap-2 text-center">
         {[
-          { label: "إجمالي النقاط", val: withGps.length, color: "#1FAE6E", icon: <Navigation size={14}/> },
-          { label: "تسجيلات صوتية", val: voiceRecs.length, color: "#1FAE6E", icon: <Mic size={14}/> },
+          { label: "إجمالي النقاط", val: withGps.length, color: "#4A82BF", icon: <Navigation size={14}/> },
+          { label: "تسجيلات صوتية", val: voiceRecs.length, color: "#4A82BF", icon: <Mic size={14}/> },
           { label: "دبابيس يدوية", val: manualPins.length, color: "#3B82F6", icon: <MapPin size={14}/> },
         ].map((s) => (
           <div key={s.label} className="rounded-xl border border-border bg-surface p-3">
