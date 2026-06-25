@@ -55,7 +55,7 @@ function findGpsColumn(headers: string[]): string | null {
 export default function SortingPage() {
   // ── Mode ──
   const [operationMode, setOperationMode] = useState<"paste" | "sort" | null>(null);
-  const [sortMode, setSortMode] = useState<"full" | "new">("full");
+  const [sortMode, setSortMode] = useState<"full" | "new">("new");
   const [hydrated, setHydrated] = useState(false);
 
   // ── Persisted files ──
@@ -746,20 +746,20 @@ export default function SortingPage() {
         <div className="flex flex-col gap-3">
           <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
             <button
-              onClick={() => setSortMode("full")}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${
-                sortMode === "full" ? "bg-primary text-night font-bold" : "text-muted"
-              }`}
-            >
-              <FileSpreadsheet size={15} /> فرز كلي
-            </button>
-            <button
               onClick={() => setSortMode("new")}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${
                 sortMode === "new" ? "bg-primary text-night font-bold" : "text-muted"
               }`}
             >
               <ScanLine size={15} /> فرز جديد
+            </button>
+            <button
+              onClick={() => setSortMode("full")}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${
+                sortMode === "full" ? "bg-primary text-night font-bold" : "text-muted"
+              }`}
+            >
+              <FileSpreadsheet size={15} /> فرز كلي
             </button>
           </div>
 
