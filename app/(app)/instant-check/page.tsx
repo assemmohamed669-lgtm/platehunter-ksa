@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Camera, Type, Mic, ChevronDown, X, CheckCircle, XCircle, Loader2, Trash2, MapPin } from "lucide-react";
-import FileUploadBox from "@/components/FileUploadBox";
-import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
+import { Camera, Type, Mic, ChevronDown, X, CheckCircle, XCircle, Loader2, Trash2, MapPin, FileText } from "lucide-react";
+import { getUploadedFile } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
@@ -129,7 +128,7 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
-  const [checkFile, setCheckFile] = useState<File | null>(null);
+  const [checkFileName, setCheckFileName] = useState<string>("");
   const [checkColsOpen, setCheckColsOpen] = useState(false);
   const [mode, setMode] = useState<CheckMode>("manual");
 
@@ -152,17 +151,13 @@ export default function InstantCheckPage() {
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
 
-  // Load check file from IDB on mount
+  // Load check file from IDB on mount (read-only — managed by صفحة التشييك)
   useEffect(() => {
     getUploadedFile("local", "check")
       .then((rec) => {
         if (rec) {
           setCheckTable({ headers: rec.headers, rows: rec.rows });
-          setCheckFile(
-            new File([rec.fileBlob ?? new Blob()], rec.fileName, {
-              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            })
-          );
+          setCheckFileName(rec.fileName);
           const plate = detectPlateColumn(rec.headers);
           setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate && matchesPreferred(h))));
         }
@@ -354,40 +349,6 @@ export default function InstantCheckPage() {
     }
   }
 
-  // ── IDB handlers ─────────────────────────────────────────────────────────
-  async function handleParsed(table: ExcelTable, file: File) {
-    const record: UploadedFileRecord = {
-      key: "local:check",
-      agentId: "local",
-      slot: "check",
-      fileName: file.name,
-      headers: table.headers,
-      rows: table.rows,
-      uploadedAt: new Date().toISOString(),
-      fileBlob: file,
-    };
-    await saveUploadedFile(record);
-    setCheckTable(table);
-    setCheckFile(file);
-    const plate = detectPlateColumn(table.headers);
-    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate && matchesPreferred(h))));
-    setCheckColsOpen(false);
-    // clear previous results when file changes
-    setManualResult(null);
-    setCameraResult(null);
-    setPttResults([]);
-  }
-
-  async function handleClear() {
-    await deleteUploadedFile("local", "check");
-    setCheckTable(null);
-    setCheckFile(null);
-    setSelectedCheckCols(new Set());
-    setManualResult(null);
-    setCameraResult(null);
-    setPttResults([]);
-  }
-
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-4">
@@ -396,17 +357,21 @@ export default function InstantCheckPage() {
         <p className="text-xs text-muted">فحص لوحات السيارات مقابل ملف الإحالة</p>
       </div>
 
-      {/* ── ملف التشييك ── */}
+      {/* ── ملف التشييك (read-only — managed by صفحة التشييك) ── */}
       <div className="flex flex-col gap-2">
-        <FileUploadBox
-          title="ملف التشييك"
-          hint="القائمة المرجعية للفرز الجديد"
-          parsedFile={checkFile}
-          parsedRowCount={checkTable?.rows.length ?? null}
-          onParsed={handleParsed}
-          onClear={handleClear}
-          showReplaceButtons
-        />
+        <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText size={15} className={checkTable ? "text-brand shrink-0" : "text-muted shrink-0"} />
+            {checkTable ? (
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-ink truncate">{checkFileName}</p>
+                <p className="text-[10px] text-muted">{checkTable.rows.length.toLocaleString()} صف</p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted">لا يوجد ملف — ارفعه من صفحة <span className="font-bold text-ink">التشييك</span></p>
+            )}
+          </div>
+        </div>
         {checkTable && (
           <div className="rounded-xl border border-border bg-surface">
             <button
@@ -461,7 +426,7 @@ export default function InstantCheckPage() {
       {/* ── No file notice ── */}
       {!checkTable && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
-          ارفع ملف التشييك أولاً لتفعيل البحث
+          اذهب لصفحة <strong className="text-amber-300">التشييك</strong> وارفع ملف التشييك أولاً
         </div>
       )}
 
