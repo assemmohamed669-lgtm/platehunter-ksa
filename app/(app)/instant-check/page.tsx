@@ -297,8 +297,13 @@ export default function InstantCheckPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
         });
-        if (!res.ok) throw new Error(`http_${res.status}`);
-        const json = await res.json();
+        const json = await res.json().catch(() => ({ plate: null, error: `http_${res.status}` }));
+        if (!res.ok) {
+          const reason = json?.error ?? "";
+          if (reason === "missing_api_key") throw new Error("api_key");
+          if (reason === "invalid_model") throw new Error("model");
+          throw new Error(`http_${res.status}`);
+        }
         if (json.plate) {
           setCameraResult(searchInCheck(json.plate));
         } else {
@@ -306,12 +311,14 @@ export default function InstantCheckPage() {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "";
-        if (msg.includes("413") || msg.includes("414")) {
+        if (msg === "api_key") {
+          setCameraError("مفتاح الـ API غير مضبوط على Vercel — راجع إعدادات المشروع");
+        } else if (msg === "model") {
+          setCameraError("اسم النموذج غير صحيح في إعدادات الخادم");
+        } else if (msg.includes("413") || msg.includes("414")) {
           setCameraError("الصورة كبيرة جداً — جرّب مرة أخرى");
-        } else if (msg.includes("http_5")) {
-          setCameraError("خطأ في الخادم — تحقق من الإنترنت وأعد المحاولة");
         } else {
-          setCameraError("تعذّرت قراءة الصورة — جرّب مرة أخرى");
+          setCameraError("تعذّرت قراءة الصورة — تحقق من الإنترنت وأعد المحاولة");
         }
       } finally {
         setCameraLoading(false);

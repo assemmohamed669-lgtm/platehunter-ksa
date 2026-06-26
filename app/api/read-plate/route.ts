@@ -44,7 +44,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ plate: text });
   } catch (err) {
-    console.error("read-plate error:", err);
-    return NextResponse.json({ plate: null, error: "server_error" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("read-plate error:", msg);
+    // Surface the reason so the client can show a useful message
+    const reason = msg.toLowerCase().includes("api key") || msg.toLowerCase().includes("auth")
+      ? "missing_api_key"
+      : msg.toLowerCase().includes("model")
+      ? "invalid_model"
+      : "server_error";
+    return NextResponse.json({ plate: null, error: reason, detail: msg }, { status: 500 });
   }
 }
