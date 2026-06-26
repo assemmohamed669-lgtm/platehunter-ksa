@@ -251,7 +251,9 @@ export default function InstantCheckPage() {
       setManualResult(null);
       return;
     }
-    setManualResult(searchInCheck(value.trim()));
+    // Use parsePlateFromTranscript to support letter names, Arabic-Indic numerals, spaces
+    const { plate } = parsePlateFromTranscript(value.trim());
+    setManualResult(searchInCheck(plate || value.trim()));
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -545,24 +547,32 @@ export default function InstantCheckPage() {
           {/* ── Manual ── */}
           {mode === "manual" && (
             <div className="flex flex-col gap-3">
-              <div className="relative">
-                <input
-                  value={manualInput}
-                  onChange={(e) => handleManualChange(e.target.value)}
-                  placeholder="أدخل رقم اللوحة — مثال: أبح1234"
-                  className="w-full rounded-xl border border-border bg-surface-2 py-3 pl-10 pr-4 text-right text-ink placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                  dir="rtl"
-                  autoComplete="off"
-                />
-                {manualInput && (
-                  <button
-                    onClick={() => handleManualChange("")}
-                    className="absolute left-3 top-1/2 -translate-y-1/2"
-                  >
-                    <X size={16} className="text-muted" />
-                  </button>
-                )}
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    value={manualInput}
+                    onChange={(e) => handleManualChange(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleManualChange(manualInput)}
+                    placeholder="مثال: ق ن ص 1 2 3 4"
+                    className="w-full rounded-xl border border-border bg-surface-2 py-3 pl-10 pr-4 text-right text-ink placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    dir="rtl"
+                    autoComplete="off"
+                    inputMode="text"
+                    type="text"
+                  />
+                  {manualInput && (
+                    <button
+                      onClick={() => handleManualChange("")}
+                      className="absolute left-3 top-1/2 -translate-y-1/2"
+                    >
+                      <X size={16} className="text-muted" />
+                    </button>
+                  )}
+                </div>
               </div>
+              <p className="text-xs text-muted" dir="rtl">
+                اكتب الحروف والأرقام مع مسافة بينها أو بدون
+              </p>
               {manualResult && (
                 <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
               )}
