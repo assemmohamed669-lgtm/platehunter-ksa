@@ -264,17 +264,118 @@ describe("parsePlateFromTranscript — Egyptian & colloquial dialect", () => {
 
   it("'تلاتين' recognized as 30 (Egyptian colloquial)", () => {
     const r = parsePlateFromTranscript("حمن تلاتين");
-    expect(r.plate).toBe("حمن30");
+    expect(r.plate).toBe("حمن0030");
   });
 
   it("'حداشر' recognized as 11 (Egyptian colloquial)", () => {
     const r = parsePlateFromTranscript("حمن حداشر");
-    expect(r.plate).toBe("حمن11");
+    expect(r.plate).toBe("حمن0011");
   });
 
   it("'اتناشر' recognized as 12 (Egyptian colloquial)", () => {
     const r = parsePlateFromTranscript("حمن اتناشر");
-    expect(r.plate).toBe("حمن12");
+    expect(r.plate).toBe("حمن0012");
+  });
+});
+
+// ─── Compound Arabic numbers ──────────────────────────────────────────────────
+describe("parsePlateFromTranscript — compound Arabic numbers", () => {
+  // و-prefixed tens (e.g. "خمسة وسبعين" = 75)
+  it("parses و-prefixed ten: واحد وسبعين = 71 → 0071", () => {
+    const r = parsePlateFromTranscript("حمن واحد وسبعين");
+    expect(r.plate).toBe("حمن0071");
+  });
+
+  it("parses و-prefixed ten: خمسة وعشرين = 25 → 0025", () => {
+    const r = parsePlateFromTranscript("حمن خمسة وعشرين");
+    expect(r.plate).toBe("حمن0025");
+  });
+
+  it("parses و-prefixed ten: ثلاثة وثلاثين = 33 → 0033", () => {
+    const r = parsePlateFromTranscript("درق ثلاثة وثلاثين");
+    expect(r.plate).toBe("درق0033");
+  });
+
+  // Hundreds
+  it("parses مئة alone = 100 → 0100", () => {
+    const r = parsePlateFromTranscript("حمن مئة");
+    expect(r.plate).toBe("حمن0100");
+  });
+
+  it("parses مية alone = 100 → 0100 (dialect)", () => {
+    const r = parsePlateFromTranscript("حمن مية");
+    expect(r.plate).toBe("حمن0100");
+  });
+
+  it("parses سبعمية = 700 → 0700", () => {
+    const r = parsePlateFromTranscript("حمن سبعمية");
+    expect(r.plate).toBe("حمن0700");
+  });
+
+  it("parses مئة وخمسة = 105 → 0105", () => {
+    const r = parsePlateFromTranscript("درق مئة وخمسة");
+    expect(r.plate).toBe("درق0105");
+  });
+
+  it("parses سبعمية وواحد وعشرين = 721 → 0721", () => {
+    const r = parsePlateFromTranscript("حمن سبعمية وواحد وعشرين");
+    expect(r.plate).toBe("حمن0721");
+  });
+
+  // Thousands
+  it("parses 1000 digit-by-digit: واحد صفر صفر صفر", () => {
+    // ألف standalone is ambiguous with the letter name for ا — use digit-by-digit
+    const r = parsePlateFromTranscript("حمن واحد صفر صفر صفر");
+    expect(r.plate).toBe("حمن1000");
+  });
+
+  it("parses ألفين = 2000", () => {
+    const r = parsePlateFromTranscript("حمن ألفين");
+    expect(r.plate).toBe("حمن2000");
+  });
+
+  it("parses سبعة آلاف = 7000", () => {
+    const r = parsePlateFromTranscript("حمن سبعة آلاف");
+    expect(r.plate).toBe("حمن7000");
+  });
+
+  it("parses ألف وخمسمية = 1500", () => {
+    const r = parsePlateFromTranscript("حمن ألف وخمسمية");
+    expect(r.plate).toBe("حمن1500");
+  });
+
+  it("parses سبعة آلاف ومئة وواحد وسبعين = 7171", () => {
+    const r = parsePlateFromTranscript("حمن سبعة آلاف ومئة وواحد وسبعين");
+    expect(r.plate).toBe("حمن7171");
+  });
+
+  it("parses ألف وخمسمية وأربعة وعشرين = 1524", () => {
+    const r = parsePlateFromTranscript("درق ألف وخمسمية وأربعة وعشرين");
+    expect(r.plate).toBe("درق1524");
+  });
+});
+
+// ─── Alef variants (أ إ آ → ا) ──────────────────────────────────────────────
+describe("parsePlateFromTranscript — alef variants", () => {
+  it("handles إ (kasra) as ا: إبل 8089", () => {
+    const r = parsePlateFromTranscript("إبل 8089");
+    expect(r.plate).toBe("ابل8089");
+  });
+
+  it("handles أ (hamza above) as ا: أبل 8089", () => {
+    const r = parsePlateFromTranscript("أبل 8089");
+    expect(r.plate).toBe("ابل8089");
+  });
+
+  it("handles آ (madda) as ا: آبل 8089", () => {
+    const r = parsePlateFromTranscript("آبل 8089");
+    expect(r.plate).toBe("ابل8089");
+  });
+
+  it("handles إبل as letter names in plate: ابل8089", () => {
+    const r = parsePlateFromTranscript("إبل 8089 ونيت");
+    expect(r.plate).toBe("ابل8089");
+    expect(r.vehicleType).toBe("ونيت");
   });
 });
 
@@ -282,6 +383,150 @@ describe("parsePlateFromTranscript — Egyptian & colloquial dialect", () => {
 describe("normalizePlate ى normalization", () => {
   it("treats ى as equivalent to ي for matching", () => {
     expect(normalizePlate("دوى5521")).toBe("دوي5521");
+  });
+});
+
+// ─── normalizePlate — zero-padding ────────────────────────────────────────────
+describe("normalizePlate zero-padding", () => {
+  it("zero-pads 2-digit plate to 4: حكل80 → حكل0080", () => {
+    expect(normalizePlate("حكل80")).toBe("حكل0080");
+  });
+
+  it("zero-pads 1-digit plate to 4: حكل8 → حكل0008", () => {
+    expect(normalizePlate("حكل8")).toBe("حكل0008");
+  });
+
+  it("zero-pads 3-digit plate to 4: حكل800 → حكل0800", () => {
+    expect(normalizePlate("حكل800")).toBe("حكل0800");
+  });
+
+  it("keeps 4-digit plate unchanged: حكل8000 → حكل8000", () => {
+    expect(normalizePlate("حكل8000")).toBe("حكل8000");
+  });
+
+  it("idempotent: padding twice gives same result", () => {
+    expect(normalizePlate("حكل0080")).toBe("حكل0080");
+  });
+});
+
+// ─── Real-world voice scenarios ──────────────────────────────────────────────
+describe("parsePlateFromTranscript — real-world voice scenarios", () => {
+  // ── Plate extraction ────────────────────────────────────────────────────────
+  it("روع7171 via spoken compound number", () => {
+    const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين");
+    expect(r.plate).toBe("روع7171");
+  });
+
+  it("روع7171 — letters as one token", () => {
+    const r = parsePlateFromTranscript("روع 7171");
+    expect(r.plate).toBe("روع7171");
+  });
+
+  it("حمن3594 via spoken compound number", () => {
+    const r = parsePlateFromTranscript("حمن ثلاثة آلاف وخمسمية وأربعة وتسعين");
+    expect(r.plate).toBe("حمن3594");
+  });
+
+  it("درق4121 — letters individually spoken", () => {
+    const r = parsePlateFromTranscript("دال راء قاف أربعة آلاف ومئة وواحد وعشرين");
+    expect(r.plate).toBe("درق4121");
+  });
+
+  // ── Vehicle type before plate ────────────────────────────────────────────────
+  it("ونيت before plate → vehicleType", () => {
+    const r = parsePlateFromTranscript("ونيت روع سبعة آلاف ومئة وواحد وسبعين");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBe("ونيت");
+    expect(r.notes).not.toContain("ونيت");
+  });
+
+  it("فان before plate → vehicleType", () => {
+    const r = parsePlateFromTranscript("فان روع سبعة آلاف ومئة وواحد وسبعين");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBe("فان");
+  });
+
+  it("دباب before plate → vehicleType", () => {
+    const r = parsePlateFromTranscript("دباب حمن ثلاثة آلاف وتسعمية وواحد وعشرين");
+    expect(r.plate).toBe("حمن3921");
+    expect(r.vehicleType).toBe("دباب");
+  });
+
+  it("صالون before plate → vehicleType", () => {
+    const r = parsePlateFromTranscript("صالون درق أربعة آلاف ومئة وواحد وعشرين");
+    expect(r.plate).toBe("درق4121");
+    expect(r.vehicleType).toBe("صالون");
+  });
+
+  it("vehicle type after plate still detected", () => {
+    const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين ونيت");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBe("ونيت");
+  });
+
+  // ── Notes after plate ────────────────────────────────────────────────────────
+  it("جراج يمين → notes", () => {
+    const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين جراج يمين");
+    expect(r.plate).toBe("روع7171");
+    expect(r.notes).toContain("جراج");
+    expect(r.notes).toContain("يمين");
+    expect(r.vehicleType).toBeUndefined();
+  });
+
+  it("الشارع بيلف يمين → notes", () => {
+    const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين الشارع بيلف يمين");
+    expect(r.plate).toBe("روع7171");
+    expect(r.notes).toContain("يمين");
+  });
+
+  it("مصدومة → notes (not vehicleType)", () => {
+    const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين مصدومة");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBeUndefined();
+    expect(r.notes).toContain("مصدومة");
+  });
+
+  it("مركونة → notes", () => {
+    const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين مركونة");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBeUndefined();
+    expect(r.notes).toContain("مركون");
+  });
+
+  it("جراج يسار → notes", () => {
+    const r = parsePlateFromTranscript("حمن ثلاثة آلاف وخمسمية وأربعة وتسعين جراج يسار");
+    expect(r.plate).toBe("حمن3594");
+    expect(r.notes).toContain("جراج");
+    expect(r.notes).toContain("يسار");
+  });
+
+  it("واقفة في الشارع → notes", () => {
+    const r = parsePlateFromTranscript("روع 7171 واقفة في الشارع");
+    expect(r.plate).toBe("روع7171");
+    expect(r.notes).toContain("واقف");
+  });
+
+  // ── Combined: vehicleType + plate + notes ───────────────────────────────────
+  it("ونيت + plate + جراج يمين → all three fields", () => {
+    const r = parsePlateFromTranscript("ونيت روع سبعة آلاف ومئة وواحد وسبعين جراج يمين");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBe("ونيت");
+    expect(r.notes).toContain("جراج");
+    expect(r.notes).toContain("يمين");
+  });
+
+  it("فان + plate + مصدومة → type + plate + notes", () => {
+    const r = parsePlateFromTranscript("فان روع سبعة آلاف ومئة وواحد وسبعين مصدومة");
+    expect(r.plate).toBe("روع7171");
+    expect(r.vehicleType).toBe("فان");
+    expect(r.notes).toContain("مصدومة");
+  });
+
+  it("دباب + plate + مركونة في الجراج → type + plate + notes", () => {
+    const r = parsePlateFromTranscript("دباب حمن ثلاثة آلاف وتسعمية وواحد وعشرين مركونة في الجراج");
+    expect(r.plate).toBe("حمن3921");
+    expect(r.vehicleType).toBe("دباب");
+    expect(r.notes).toContain("مركون");
   });
 });
 
