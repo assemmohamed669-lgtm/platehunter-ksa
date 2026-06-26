@@ -36,13 +36,15 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
+import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
+
+const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -211,6 +213,7 @@ export default function RegistrationPage() {
   // Manual plate entry
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
+  const [manualPlatePreview, setManualPlatePreview] = useState("");
 
   // Pin counter
   const [pinCount, setPinCount] = useState(0);
@@ -587,19 +590,42 @@ export default function RegistrationPage() {
   }
 
   // ── Manual plate entry ──────────────────────────────────────────────
+  function handleManualChange(val: string) {
+    // Convert English letters to Arabic plate equivalents
+    const converted = val.toUpperCase().split("").map((ch) => EN_TO_AR[ch] ?? ch).join("");
+    setManualInput(converted);
+
+    // Detect invalid Arabic letters (ت ث ج خ ذ ز ش ض ظ غ ف)
+    const invalid: string[] = [];
+    for (const ch of converted) {
+      if (INVALID_AR_LETTERS_SET.has(ch) && !invalid.includes(ch)) invalid.push(ch);
+    }
+
+    if (invalid.length > 0) {
+      setManualError(`حروف غير موجودة في اللوحات السعودية: ${invalid.join(" ")}`);
+      setManualPlatePreview("");
+    } else {
+      setManualError(null);
+      setManualPlatePreview(converted.replace(/\s+/g, ""));
+    }
+  }
+
+  function dismissManualError() {
+    setManualError(null);
+    setManualInput("");
+    setManualPlatePreview("");
+  }
+
   async function handleManualSave() {
     if (!agentId) return;
     const raw = manualInput.trim();
-    if (!raw) return;
+    if (!raw || manualError) return;
 
-    // Parse: digits + Arabic letters only, spaces allowed between
-    const { plate, vehicleType, notes: parsedNotes } = parsePlateFromTranscript(raw);
-    // If parser fails, use raw input stripped of spaces as-is (user typed it explicitly)
-    const finalPlate = plate || raw.replace(/\s+/g, "");
-    if (!finalPlate) {
-      setManualError("أدخل رقم اللوحة");
-      return;
-    }
+    const finalPlate = raw.replace(/\s+/g, "");
+    if (!finalPlate) { setManualError("أدخل رقم اللوحة"); return; }
+
+    setManualInput("");
+    setManualPlatePreview("");
     setManualError(null);
 
     const coords = gps ?? gpsService.getLastCoords();
@@ -608,8 +634,6 @@ export default function RegistrationPage() {
       localId,
       agentId,
       plate: finalPlate,
-      vehicleType,
-      notes: parsedNotes || undefined,
       lat: coords?.lat,
       lng: coords?.lng,
       recordedAt: new Date().toISOString(),
@@ -620,7 +644,6 @@ export default function RegistrationPage() {
     };
 
     await saveRecording(entry);
-    setManualInput("");
 
     if (coords) {
       reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
@@ -632,9 +655,7 @@ export default function RegistrationPage() {
           setRecordings(updated);
           setDuplicates(findDuplicates(updated.map((r) => r.plate)));
         }
-      }).catch(() => {
-        checkPlateMatch(finalPlate, entry);
-      });
+      }).catch(() => { checkPlateMatch(finalPlate, entry); });
     } else {
       checkPlateMatch(finalPlate, entry);
     }
@@ -729,16 +750,21 @@ export default function RegistrationPage() {
   function buildRows(recs: typeof recordings) {
     return recs
       .filter((r) => !r.plate.startsWith("📍"))
-      .map((r) => ({
-        "رقم اللوحة": r.plate,
-        "GPS": r.mapsLink ?? "",
-        "تاريخ التسجيل": r.recordedAt,
-        "الحي": r.district ?? "",
-        "الشارع": r.street ?? "",
-        "نوع السيارة": r.vehicleType ?? "",
-        "ملاحظات": r.notes ?? "",
-        "اسم المسجّل": r.recorderName ?? "",
-      }));
+      .map((r) => {
+        const norm = normalizePlate(r.plate);
+        const status = checkPlates.has(norm) ? "مطلوبة" : duplicates.has(norm) ? "مكررة" : "";
+        return {
+          "رقم اللوحة": r.plate,
+          "الحالة": status,
+          "GPS": r.mapsLink ?? "",
+          "تاريخ التسجيل": r.recordedAt,
+          "الحي": r.district ?? "",
+          "الشارع": r.street ?? "",
+          "نوع السيارة": r.vehicleType ?? "",
+          "ملاحظات": r.notes ?? "",
+          "اسم المسجّل": r.recorderName ?? "",
+        };
+      });
   }
 
   async function handleExport(recs = recordings) {
@@ -994,6 +1020,7 @@ export default function RegistrationPage() {
                 recordings={voiceRecs}
                 onDelete={handleDelete}
                 onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+                checkPlates={checkPlates}
               />
             )}
           </div>
@@ -1096,6 +1123,7 @@ export default function RegistrationPage() {
               recordings={matchedRecs}
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+              checkPlates={checkPlates}
             />
             <div className="flex gap-2">
               <button onClick={async () => {
@@ -1122,24 +1150,41 @@ export default function RegistrationPage() {
             inputMode="text"
             placeholder="مثال: ق ن ص 1 2 3 4"
             value={manualInput}
-            onChange={(e) => setManualInput(e.target.value)}
+            onChange={(e) => handleManualChange(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleManualSave()}
-            className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-base text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+            className={`flex-1 rounded-xl border bg-surface-2 px-3 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none ${
+              manualError ? "border-danger focus:border-danger" : "border-border focus:border-primary"
+            }`}
             dir="rtl"
           />
           <button
             onClick={handleManualSave}
-            disabled={!manualInput.trim()}
+            disabled={!manualInput.trim() || !!manualError}
             className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
           >
             حفظ
           </button>
         </div>
-        {manualError && (
-          <p className="mt-1 text-xs text-danger">{manualError}</p>
+
+        {/* PlateBadge preview */}
+        {manualPlatePreview && !manualError && (
+          <div className="mt-3 flex justify-center">
+            <PlateBadge value={manualPlatePreview} size="md" />
+          </div>
         )}
+
+        {/* Error with dismiss button */}
+        {manualError && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-danger/10 px-3 py-2">
+            <p className="text-xs text-danger">{manualError}</p>
+            <button onClick={dismissManualError} className="shrink-0 text-danger hover:text-danger/70 transition">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         <p className="mt-2 text-xs text-muted" dir="rtl">
-          اكتب الحروف والأرقام مع مسافة بينها أو بدون
+          يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...)
         </p>
       </div>
 
@@ -1153,6 +1198,7 @@ export default function RegistrationPage() {
               recordings={manualRecs}
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+              checkPlates={checkPlates}
             />
             <div className="flex gap-2">
               <button onClick={() => handleShareExcelFor(manualRecs)}

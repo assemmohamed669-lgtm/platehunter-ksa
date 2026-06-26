@@ -15,7 +15,7 @@ import {
   Square,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
-import { findDuplicates } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate } from "@/lib/plateParser";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -39,11 +39,12 @@ interface Props {
   recordings: RecordingEntry[];
   onDelete: (id: string) => void;
   onDeleteMany?: (ids: string[]) => void;
+  checkPlates?: Set<string>;
 }
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, checkPlates }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -173,7 +174,9 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany }: 
             </thead>
             <tbody>
               {recordings.map((entry, i) => {
-                const isDup = duplicates.has(entry.plate.replace(/\s/g, "").toLowerCase());
+                const normPlate = normalizePlate(entry.plate);
+                const isDup = duplicates.has(normPlate);
+                const isMatched = !!(checkPlates?.has(normPlate));
                 const isSelected = selected.has(entry.localId);
                 const isPin = entry.plate.startsWith("📍");
                 return (
@@ -182,6 +185,8 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany }: 
                     className={`border-b border-border transition ${
                       isSelected
                         ? "bg-primary/15"
+                        : isMatched
+                        ? "bg-brand/10"
                         : isDup
                         ? "bg-alert/10"
                         : i % 2 === 0
@@ -206,12 +211,17 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany }: 
                           ? <CheckCircle2 size={10} className="text-primary shrink-0" />
                           : <Clock size={10} className="text-muted shrink-0" />
                         }
-                        <span className={`font-bold ${isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
+                        <span className={`font-bold ${isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
                           {entry.plate}
                         </span>
-                        {isDup && (
+                        {isMatched && (
+                          <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
+                            مطلوبة
+                          </span>
+                        )}
+                        {isDup && !isMatched && (
                           <span className="rounded-full bg-alert/20 px-1 py-0.5 text-[9px] font-bold text-alert leading-none">
-                            مكرر
+                            مكررة
                           </span>
                         )}
                       </div>
