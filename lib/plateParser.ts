@@ -236,8 +236,18 @@ export function bankPlateToArabic(raw: string): string {
 }
 
 export function normalizePlate(plate: string): string {
-  const base = plate.replace(/\s/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").trim().toLowerCase();
-  return base.replace(/(\d+)$/, (m) => m.padStart(4, "0"));
+  const s = plate
+    .replace(/\s/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .trim()
+    .toLowerCase();
+  if (!s) return "";
+  // Separate letters from digits to handle reversed plates (5052حبك → حبك5052)
+  const digitMatch = s.match(/\d+/);
+  if (!digitMatch) return s;
+  const letters = s.replace(/\d+/g, "");
+  return letters + digitMatch[0].padStart(4, "0");
 }
 
 export function findDuplicates(plates: string[]): Set<string> {

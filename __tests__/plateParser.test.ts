@@ -409,6 +409,25 @@ describe("normalizePlate zero-padding", () => {
   });
 });
 
+// ─── normalizePlate — reversed plates ────────────────────────────────────────
+describe("normalizePlate reversed plates", () => {
+  it("fixes reversed Arabic plate: 5052حبك → حبك5052", () => {
+    expect(normalizePlate("5052حبك")).toBe("حبك5052");
+  });
+
+  it("fixes reversed plate with spaces: 5052 ح ب ك → حبك5052", () => {
+    expect(normalizePlate("5052 ح ب ك")).toBe("حبك5052");
+  });
+
+  it("fixes reversed plate with short digits: 80حكل → حكل0080", () => {
+    expect(normalizePlate("80حكل")).toBe("حكل0080");
+  });
+
+  it("fixes reversed plate already zero-padded: 0080حكل → حكل0080", () => {
+    expect(normalizePlate("0080حكل")).toBe("حكل0080");
+  });
+});
+
 // ─── Real-world voice scenarios ──────────────────────────────────────────────
 describe("parsePlateFromTranscript — real-world voice scenarios", () => {
   // ── Plate extraction ────────────────────────────────────────────────────────

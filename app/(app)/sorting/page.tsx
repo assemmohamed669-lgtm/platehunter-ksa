@@ -116,6 +116,7 @@ export default function SortingPage() {
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
+  const [pasteSource, setPasteSource] = useState<"data" | "referral" | "check">("data");
   const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string> }[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
@@ -275,7 +276,11 @@ export default function SortingPage() {
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
 
   const fuzzyCount = results ? results.filter((r) => r.status === "fuzzy").length : 0;
-  const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
+  const pasteAllCols = (() => {
+    if (pasteSource === "referral" && referralTable) return referralTable.headers.filter((h) => h !== effectiveReferralPlateCol);
+    if (pasteSource === "check" && checkTable) return checkTable.headers.filter((h) => h !== effectiveCheckPlateCol);
+    return dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
+  })();
 
   // ── Full sort ──
   async function runSort() {
@@ -440,17 +445,25 @@ export default function SortingPage() {
 
   // ── Paste sort ──
   function runPasteSort() {
-    if (!dataTable || !dataPlateCol) return;
-    const dataMap = new Map<string, Record<string, string>>();
-    for (const row of dataTable.rows) {
-      const norm = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
-      if (norm) dataMap.set(norm, row);
+    const sourceTable =
+      pasteSource === "referral" ? referralTable :
+      pasteSource === "check" ? checkTable :
+      dataTable;
+    const sourcePlateCol =
+      pasteSource === "referral" ? effectiveReferralPlateCol :
+      pasteSource === "check" ? effectiveCheckPlateCol :
+      effectiveDataPlateCol;
+    if (!sourceTable || !sourcePlateCol || !pasteText.trim()) return;
+    const sourceMap = new Map<string, Record<string, string>>();
+    for (const row of sourceTable.rows) {
+      const norm = normalizePlate(bankPlateToArabic(String(row[sourcePlateCol] ?? "")));
+      if (norm) sourceMap.set(norm, row);
     }
     const tokens = pasteText.split(/[\n,،]+/).map((t) => t.trim()).filter(Boolean);
     const matches: { converted: string; row: Record<string, string> }[] = [];
     for (const token of tokens) {
       const converted = bankPlateToArabic(token);
-      const row = dataMap.get(normalizePlate(converted));
+      const row = sourceMap.get(normalizePlate(converted));
       if (row) matches.push({ converted, row });
     }
     setPasteResults(matches);
@@ -646,16 +659,46 @@ export default function SortingPage() {
               className="rtl-text w-full rounded-xl border border-border bg-surface-2 p-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
+          {/* Source selector: which file to search against */}
+          <div className="flex gap-1.5" dir="rtl">
+            {(["data", "referral", "check"] as const).map((src) => {
+              const label = src === "data" ? "ملف داتا" : src === "referral" ? "ملف إحالة" : "ملف تشييك";
+              const available = src === "data" ? !!dataTable : src === "referral" ? !!referralTable : !!checkTable;
+              return (
+                <button
+                  key={src}
+                  onClick={() => { setPasteSource(src); setPasteRan(false); }}
+                  disabled={!available}
+                  className={`flex-1 rounded-xl border py-2 text-xs font-bold transition ${
+                    pasteSource === src
+                      ? "border-primary bg-primary/10 text-primary"
+                      : available
+                      ? "border-border bg-surface-2 text-muted hover:border-primary/30 hover:text-ink"
+                      : "border-border bg-surface-2 text-muted/30 cursor-not-allowed"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <button
             onClick={runPasteSort}
-            disabled={!dataTable || !pasteText.trim()}
+            disabled={
+              !pasteText.trim() ||
+              (pasteSource === "data" && (!dataTable || !effectiveDataPlateCol)) ||
+              (pasteSource === "referral" && (!referralTable || !effectiveReferralPlateCol)) ||
+              (pasteSource === "check" && (!checkTable || !effectiveCheckPlateCol))
+            }
             className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night disabled:opacity-50"
           >
             <ListFilter size={16} /> فرز
           </button>
           {pasteRan && (
             <p className="text-xs text-muted">
-              {pasteResults.length} لوحة وُجدت في ملف الداتا (يُعرض المتطابق فقط)
+              {pasteResults.length} لوحة وُجدت في{" "}
+              {pasteSource === "referral" ? "ملف الإحالة" : pasteSource === "check" ? "ملف التشييك" : "ملف الداتا"}{" "}
+              (يُعرض المتطابق فقط)
             </p>
           )}
           {pasteRan && pasteResults.length > 0 && (
