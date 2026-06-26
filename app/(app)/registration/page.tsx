@@ -15,7 +15,6 @@ import {
   Download,
   RefreshCw,
   AlertCircle,
-  FileUp,
   X,
   AlertTriangle,
   Share2,
@@ -23,6 +22,7 @@ import {
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
+import FileUploadBox from "@/components/FileUploadBox";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import {
@@ -40,7 +40,7 @@ import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToAr
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob } from "@/lib/excel";
+import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -217,7 +217,7 @@ export default function RegistrationPage() {
 
   // Check file (bank list for matching)
   const [checkPlates, setCheckPlates] = useState<Set<string>>(new Set());
-  const [checkFileName, setCheckFileName] = useState<string>("");
+  const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkHeaders, setCheckHeaders] = useState<string[]>([]);
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
   const [checkColsOpen, setCheckColsOpen] = useState(false);
@@ -271,7 +271,7 @@ export default function RegistrationPage() {
         loadRecordings(uid);
         registerOnlineSync(uid);
 
-        // Restore check file — read from shared "local:check" (managed by صفحة التشييك)
+        // Restore check file — read from shared "local:check" slot
         const checkRec = await getUploadedFile("local", "check");
         if (checkRec) {
           const plateCol = detectPlateColumn(checkRec.headers) ?? checkRec.headers[0];
@@ -281,7 +281,9 @@ export default function RegistrationPage() {
               .filter(Boolean)
           );
           setCheckPlates(plates);
-          setCheckFileName(checkRec.fileName);
+          setCheckFile(new File([checkRec.fileBlob ?? new Blob()], checkRec.fileName, {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }));
           setCheckHeaders(checkRec.headers);
           setSelectedCheckCols(new Set(checkRec.headers.filter((h) => h !== plateCol && matchesPreferred(h))));
         }
@@ -317,6 +319,37 @@ export default function RegistrationPage() {
     setRecordings(recs);
     setDuplicates(findDuplicates(recs.map((r) => r.plate)));
   }, []);
+
+  async function handleCheckFile(table: ExcelTable, file: File) {
+    const plateCol = detectPlateColumn(table.headers) ?? table.headers[0];
+    const plates = new Set(
+      table.rows
+        .map((r) => normalizePlate(bankPlateToArabic(String(r[plateCol] ?? ""))))
+        .filter(Boolean)
+    );
+    await saveUploadedFile({
+      key: "local:check",
+      agentId: "local",
+      slot: "check",
+      fileName: file.name,
+      headers: table.headers,
+      rows: table.rows,
+      uploadedAt: new Date().toISOString(),
+      fileBlob: file,
+    });
+    setCheckPlates(plates);
+    setCheckFile(file);
+    setCheckHeaders(table.headers);
+    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plateCol && matchesPreferred(h))));
+  }
+
+  async function handleDeleteCheck() {
+    await deleteUploadedFile("local", "check");
+    setCheckPlates(new Set());
+    setCheckFile(null);
+    setCheckHeaders([]);
+    setSelectedCheckCols(new Set());
+  }
 
   function checkPlateMatch(plate: string, entry: RecordingEntry) {
     if (checkPlates.size === 0) return;
@@ -814,19 +847,17 @@ export default function RegistrationPage() {
         </div>
       </div>
 
-      {/* Check file — read-only from صفحة التشييك */}
-      <div className="rounded-xl border border-border bg-surface px-4 py-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <FileUp size={15} className={checkFileName ? "shrink-0 text-brand" : "shrink-0 text-muted"} />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">ملف التشييك</p>
-            {checkFileName ? (
-              <p className="truncate text-xs text-primary">{checkFileName} — {checkPlates.size} لوحة</p>
-            ) : (
-              <p className="text-xs text-muted">ارفعه من صفحة <span className="font-bold text-ink">التشييك</span></p>
-            )}
-          </div>
-        </div>
+      {/* Check file */}
+      <div className="flex flex-col gap-2">
+        <FileUploadBox
+          title="ملف التشييك"
+          hint="القائمة المرجعية للمطابقة"
+          parsedFile={checkFile}
+          parsedRowCount={checkPlates.size || null}
+          onParsed={handleCheckFile}
+          onClear={handleDeleteCheck}
+          showReplaceButtons
+        />
         {checkHeaders.length > 0 && (
           <div className="mt-2 rounded-xl border border-border bg-surface">
             <button
