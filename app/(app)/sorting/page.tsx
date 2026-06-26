@@ -66,7 +66,7 @@ export default function SortingPage() {
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
-  const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string> }[]>([]);
+  const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string>; isRequired: boolean }[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteVisibleCount, setPasteVisibleCount] = useState(PAGE_SIZE);
   const [selectedPaste, setSelectedPaste] = useState<Set<number>>(new Set());
@@ -303,17 +303,30 @@ export default function SortingPage() {
   // ── Paste sort ──
   function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
+
+    // Build data lookup map
     const sourceMap = new Map<string, Record<string, string>>();
     for (const row of dataTable.rows) {
       const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
       if (n) sourceMap.set(n, row);
     }
+
+    // Build referral set for "مطلوبة" cross-check
+    const referralSet = new Set<string>();
+    if (referralTable && effectiveReferralPlateCol) {
+      for (const row of referralTable.rows) {
+        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        if (n) referralSet.add(n);
+      }
+    }
+
     const tokens = pasteText.split(/[\n,،]+/).map((t) => t.trim()).filter(Boolean);
-    const matches: { converted: string; row: Record<string, string> }[] = [];
+    const matches: { converted: string; row: Record<string, string>; isRequired: boolean }[] = [];
     for (const token of tokens) {
       const converted = bankPlateToArabic(token);
-      const row = sourceMap.get(normalizePlate(converted));
-      if (row) matches.push({ converted, row });
+      const norm = normalizePlate(converted);
+      const row = sourceMap.get(norm);
+      if (row) matches.push({ converted, row, isRequired: referralSet.has(norm) });
     }
     setPasteResults(matches); setPasteRan(true); setPasteVisibleCount(PAGE_SIZE);
   }
@@ -707,6 +720,7 @@ export default function SortingPage() {
                     <tr className="bg-surface-2 text-muted">
                       <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
                       {pasteAllCols.map((col) => (
                         <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                       ))}
@@ -724,6 +738,12 @@ export default function SortingPage() {
                             </button>
                           </td>
                           <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{p.converted}</td>
+                          <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                            {p.isRequired
+                              ? <span className="flex items-center gap-1 font-bold text-brand-glow text-xs"><CheckCircle2 size={12} /> مطلوبة</span>
+                              : <span className="text-xs text-muted">—</span>
+                            }
+                          </td>
                           {pasteAllCols.map((col) => {
                             const val = p.row[col] ?? "";
                             return (
