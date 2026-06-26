@@ -300,9 +300,10 @@ export default function InstantCheckPage() {
         const json = await res.json().catch(() => ({ plate: null, error: `http_${res.status}` }));
         if (!res.ok) {
           const reason = json?.error ?? "";
+          const detail = json?.detail ? String(json.detail) : "";
           if (reason === "missing_api_key") throw new Error("api_key");
           if (reason === "invalid_model") throw new Error("model");
-          throw new Error(`http_${res.status}`);
+          throw new Error(`http_${res.status}:${detail}`);
         }
         if (json.plate) {
           setCameraResult(searchInCheck(json.plate));
@@ -312,13 +313,13 @@ export default function InstantCheckPage() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "";
         if (msg === "api_key") {
-          setCameraError("مفتاح الـ API غير مضبوط على Vercel — راجع إعدادات المشروع");
+          setCameraError("GOOGLE_API_KEY غير مضبوط على Vercel");
         } else if (msg === "model") {
-          setCameraError("اسم النموذج غير صحيح في إعدادات الخادم");
+          setCameraError("خطأ في إعدادات الخادم");
         } else if (msg.includes("413") || msg.includes("414")) {
           setCameraError("الصورة كبيرة جداً — جرّب مرة أخرى");
         } else {
-          setCameraError("تعذّرت قراءة الصورة — تحقق من الإنترنت وأعد المحاولة");
+          setCameraError(`خطأ: ${msg || "server_error"}`);
         }
       } finally {
         setCameraLoading(false);
