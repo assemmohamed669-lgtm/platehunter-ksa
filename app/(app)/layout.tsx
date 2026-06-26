@@ -8,6 +8,7 @@ import BottomNav from "@/components/BottomNav";
 import ThemeToggle from "@/components/ThemeToggle";
 import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
+import IncomingExcelHandler from "@/components/IncomingExcelHandler";
 import { logoutAgent } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -73,6 +74,7 @@ export default function AppShellLayout({
         <main className="mx-auto w-full max-w-md px-4 py-5 min-h-[calc(100dvh-9rem)] overflow-x-hidden">{children}</main>
 
         <BottomNav />
+        <IncomingExcelHandler />
       </div>
     </SessionGuard>
   );
