@@ -257,6 +257,27 @@ export default function InstantCheckPage() {
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
+  function resizeImageForOCR(dataUrl: string): Promise<string> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1280;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round((height * MAX) / width); width = MAX; }
+          else { width = Math.round((width * MAX) / height); height = MAX; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  }
+
   function handleCameraCapture(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -269,20 +290,29 @@ export default function InstantCheckPage() {
       setCameraImage(dataUrl);
       setCameraLoading(true);
       try {
-        const base64 = dataUrl.split(",")[1];
+        const resized = await resizeImageForOCR(dataUrl);
+        const base64 = resized.split(",")[1];
         const res = await fetch("/api/read-plate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64, mediaType: file.type || "image/jpeg" }),
+          body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
         });
+        if (!res.ok) throw new Error(`http_${res.status}`);
         const json = await res.json();
         if (json.plate) {
           setCameraResult(searchInCheck(json.plate));
         } else {
-          setCameraError("لم يتم التعرف على لوحة في الصورة");
+          setCameraError("لم يُتعرَّف على لوحة في الصورة — جرّب زاوية أوضح");
         }
-      } catch {
-        setCameraError("حدث خطأ أثناء قراءة الصورة");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("413") || msg.includes("414")) {
+          setCameraError("الصورة كبيرة جداً — جرّب مرة أخرى");
+        } else if (msg.includes("http_5")) {
+          setCameraError("خطأ في الخادم — تحقق من الإنترنت وأعد المحاولة");
+        } else {
+          setCameraError("تعذّرت قراءة الصورة — جرّب مرة أخرى");
+        }
       } finally {
         setCameraLoading(false);
         if (cameraInputRef.current) cameraInputRef.current.value = "";
