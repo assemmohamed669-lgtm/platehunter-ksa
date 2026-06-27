@@ -354,20 +354,23 @@ export default function SortingPage() {
   return (
     <div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl">
 
-      {/* ── Paste results modal ── */}
+      {/* ── Paste results modal — Excel-style grid ── */}
       {pasteModalOpen && pasteResults.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
-          <div className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl bg-surface shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70">
+          <div
+            className="w-full sm:max-w-4xl rounded-t-2xl sm:rounded-2xl bg-surface shadow-2xl flex flex-col"
+            style={{ maxHeight: "92vh" }}
+          >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
               <div className="flex items-center gap-2">
                 <CheckCircle2 size={18} className="text-brand" />
-                <span className="font-black text-brand">
+                <span className="font-black text-brand text-sm">
                   {pasteResults.length === 1 ? "لوحة مطلوبة" : `${pasteResults.length} لوحات مطلوبة`}
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={sharePasteToWhatsApp} className="rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-ink transition">
+                <button onClick={sharePasteToWhatsApp} title="مشاركة الكل" className="rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-ink transition">
                   <Share2 size={15} />
                 </button>
                 <button onClick={() => setPasteModalOpen(false)} className="rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-ink transition">
@@ -376,55 +379,126 @@ export default function SortingPage() {
               </div>
             </div>
 
-            {/* Cards */}
-            <div className="flex flex-col gap-3 overflow-y-auto flex-1 p-4">
-              {pasteResults.map((p, i) => (
-                <div key={i} className="rounded-xl border border-brand/30 bg-brand/5 p-4">
-                  {/* Plate + badge */}
-                  <div className="mb-3 flex items-center justify-between">
-                    <PlateBadge value={p.converted} size="sm" />
-                    <span className="flex items-center gap-1 rounded-full bg-brand/20 px-2.5 py-1 text-xs font-bold text-brand">
-                      <CheckCircle2 size={11} /> مطلوبة
-                    </span>
-                  </div>
-                  {/* All details */}
-                  <div className="flex flex-col gap-1.5" dir="rtl">
-                    {Object.entries(p.row)
-                      .filter(([k]) => k !== effectiveDataPlateCol)
-                      .map(([k, v]) => {
-                        if (!v) return null;
-                        const isUrl = /^https?:\/\//i.test(v);
-                        const isCoords = /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/.test(v.trim());
+            {/* Table — scrolls horizontally + vertically */}
+            <div className="overflow-auto flex-1" style={{ direction: "rtl" }}>
+              <table className="border-collapse" style={{ minWidth: "max-content", width: "100%" }}>
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-surface-2 text-muted">
+                    <th className="border-b border-l border-border px-2 py-2 text-center text-xs font-bold whitespace-nowrap">#</th>
+                    <th className="border-b border-l border-border px-3 py-2 text-right text-xs font-bold whitespace-nowrap">رقم اللوحة</th>
+                    {pasteAllCols.map((col) => (
+                      <th key={col} className="border-b border-l border-border px-3 py-2 text-right text-xs font-bold whitespace-nowrap">
+                        {col}
+                      </th>
+                    ))}
+                    <th className="border-b border-border px-2 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {pasteResults.map((p, i) => (
+                    <tr
+                      key={i}
+                      className={`border-b border-border transition ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}
+                    >
+                      {/* Row number */}
+                      <td className="border-l border-border px-2 py-2 text-center text-xs text-muted whitespace-nowrap">
+                        {i + 1}
+                      </td>
+
+                      {/* Plate + مطلوبة badge */}
+                      <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <PlateBadge value={p.converted} size="xs" />
+                          <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
+                            مطلوبة
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Data columns */}
+                      {pasteAllCols.map((col) => {
+                        const v = String(p.row[col] ?? "");
+                        const isUrl = !!v && /^https?:\/\//i.test(v);
+                        const isCoords = !!v && /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/.test(v.trim());
                         return (
-                          <div key={k} className="flex items-start gap-2 text-sm">
-                            <span className="shrink-0 text-muted w-24 text-right">{k}:</span>
+                          <td key={col} className="border-l border-border px-3 py-2 text-sm whitespace-nowrap">
                             {isUrl ? (
-                              <a href={v} target="_blank" rel="noopener noreferrer" className="text-primary underline flex items-center gap-1">📍 خريطة</a>
+                              <a href={v} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-primary underline">
+                                📍 خريطة
+                              </a>
                             ) : isCoords ? (() => {
-                              const [lat, lng] = v.split(",").map(Number);
-                              return <a href={toMapsLink(lat, lng)} target="_blank" rel="noopener noreferrer" className="text-primary underline flex items-center gap-1">📍 خريطة</a>;
-                            })() : (
-                              <span className="text-ink break-all">{v}</span>
+                              const parts = v.split(",");
+                              const lat = Number(parts[0]);
+                              const lng = Number(parts[1]);
+                              return (
+                                <a href={toMapsLink(lat, lng)} target="_blank" rel="noopener noreferrer"
+                                  className="flex items-center gap-1 text-primary underline">
+                                  📍 خريطة
+                                </a>
+                              );
+                            })() : v ? (
+                              <span className="text-ink">{v}</span>
+                            ) : (
+                              <span className="text-muted">—</span>
                             )}
-                          </div>
+                          </td>
                         );
                       })}
-                  </div>
-                  {/* Per-card WhatsApp share */}
-                  <button
-                    onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))}
-                    className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-muted hover:text-ink transition"
-                  >
-                    <Share2 size={12} /> مشاركة واتساب
-                  </button>
-                </div>
-              ))}
+
+                      {/* Per-row WhatsApp share */}
+                      <td className="px-2 py-2">
+                        <button
+                          onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))}
+                          title="مشاركة واتساب"
+                          className="text-muted hover:text-primary transition"
+                        >
+                          <Share2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             {/* Footer */}
-            <div className="border-t border-border p-4 shrink-0">
-              <button onClick={() => setPasteModalOpen(false)}
-                className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
+            <div className="border-t border-border px-4 py-3 shrink-0 flex items-center justify-between gap-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSharePaste}
+                  className="flex items-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted hover:text-ink transition"
+                >
+                  <Share2 size={13} /> واتساب
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowExcelMenuPaste((v) => !v)}
+                    className="flex items-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted hover:text-ink transition"
+                  >
+                    <Download size={13} /> Excel
+                  </button>
+                  {showExcelMenuPaste && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
+                      <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                          <ExternalLink size={13} /> فتح
+                        </button>
+                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                          <Download size={13} /> تنزيل
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setPasteModalOpen(false)}
+                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-night transition hover:bg-primary/90"
+              >
                 إغلاق
               </button>
             </div>
