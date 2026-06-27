@@ -69,7 +69,7 @@ export default function SortingPage() {
   const [pasteText, setPasteText] = useState("");
   const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string> }[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
-  const [pasteModalOpen, setPasteModalOpen] = useState(false);
+  const [pasteZoom, setPasteZoom] = useState(1); // 0 = 70%, 1 = 80%, … ZOOM_LEVELS index
   const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
 
   // ── Bootstrap ──
@@ -96,6 +96,35 @@ export default function SortingPage() {
       })
       .catch(() => {})
       .finally(() => setHydrated(true));
+  }, []);
+
+  // Re-load a slot from IDB when IncomingExcelHandler saves a new file while this page is already open
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { slot } = (e as CustomEvent<{ slot: string }>).detail;
+      if (slot === "referral") {
+        getUploadedFile("local", "referral").then((rec) => {
+          if (!rec) return;
+          setReferralTable({ headers: rec.headers, rows: rec.rows });
+          setReferralFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+          setReferralPlateColOverride(null);
+          setResults(null); setSorted(false);
+          const p = detectPlateColumn(rec.headers);
+          setReferralExtraCols(new Set(rec.headers.filter((h) => h !== p && matchesPreferred(h))));
+        });
+      } else if (slot === "data") {
+        getUploadedFile("local", "data").then((rec) => {
+          if (!rec) return;
+          setDataTable({ headers: rec.headers, rows: rec.rows });
+          setDataFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+          setDataPlateColOverride(null);
+          setResults(null); setSorted(false);
+          setOutputCols(new Set(guessDefaultColumns(rec.headers, detectPlateColumn(rec.headers))));
+        });
+      }
+    };
+    window.addEventListener("idbFileUpdated", handler);
+    return () => window.removeEventListener("idbFileUpdated", handler);
   }, []);
 
   useEffect(() => {
@@ -317,7 +346,7 @@ export default function SortingPage() {
     }
     setPasteResults(matches);
     setPasteRan(true);
-    if (matches.length > 0) setPasteModalOpen(true);
+
   }
 
   // ── WhatsApp ──
@@ -354,157 +383,7 @@ export default function SortingPage() {
   return (
     <div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl">
 
-      {/* ── Paste results modal — Excel-style grid ── */}
-      {pasteModalOpen && pasteResults.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70">
-          <div
-            className="w-full sm:max-w-4xl rounded-t-2xl sm:rounded-2xl bg-surface shadow-2xl flex flex-col"
-            style={{ maxHeight: "92vh" }}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={18} className="text-brand" />
-                <span className="font-black text-brand text-sm">
-                  {pasteResults.length === 1 ? "لوحة مطلوبة" : `${pasteResults.length} لوحات مطلوبة`}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={sharePasteToWhatsApp} title="مشاركة الكل" className="rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-ink transition">
-                  <Share2 size={15} />
-                </button>
-                <button onClick={() => setPasteModalOpen(false)} className="rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-ink transition">
-                  <X size={15} />
-                </button>
-              </div>
-            </div>
 
-            {/* Table — scrolls horizontally + vertically */}
-            <div className="overflow-auto flex-1" style={{ direction: "rtl" }}>
-              <table className="border-collapse" style={{ minWidth: "max-content", width: "100%" }}>
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-surface-2 text-muted">
-                    <th className="border-b border-l border-border px-2 py-2 text-center text-xs font-bold whitespace-nowrap">#</th>
-                    <th className="border-b border-l border-border px-3 py-2 text-right text-xs font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {pasteAllCols.map((col) => (
-                      <th key={col} className="border-b border-l border-border px-3 py-2 text-right text-xs font-bold whitespace-nowrap">
-                        {col}
-                      </th>
-                    ))}
-                    <th className="border-b border-border px-2 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {pasteResults.map((p, i) => (
-                    <tr
-                      key={i}
-                      className={`border-b border-border transition ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}
-                    >
-                      {/* Row number */}
-                      <td className="border-l border-border px-2 py-2 text-center text-xs text-muted whitespace-nowrap">
-                        {i + 1}
-                      </td>
-
-                      {/* Plate + مطلوبة badge */}
-                      <td className="border-l border-border px-3 py-2 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <PlateBadge value={p.converted} size="xs" />
-                          <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
-                            مطلوبة
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Data columns */}
-                      {pasteAllCols.map((col) => {
-                        const v = String(p.row[col] ?? "");
-                        const isUrl = !!v && /^https?:\/\//i.test(v);
-                        const isCoords = !!v && /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/.test(v.trim());
-                        return (
-                          <td key={col} className="border-l border-border px-3 py-2 text-sm whitespace-nowrap">
-                            {isUrl ? (
-                              <a href={v} target="_blank" rel="noopener noreferrer"
-                                className="flex items-center gap-1 text-primary underline">
-                                📍 خريطة
-                              </a>
-                            ) : isCoords ? (() => {
-                              const parts = v.split(",");
-                              const lat = Number(parts[0]);
-                              const lng = Number(parts[1]);
-                              return (
-                                <a href={toMapsLink(lat, lng)} target="_blank" rel="noopener noreferrer"
-                                  className="flex items-center gap-1 text-primary underline">
-                                  📍 خريطة
-                                </a>
-                              );
-                            })() : v ? (
-                              <span className="text-ink">{v}</span>
-                            ) : (
-                              <span className="text-muted">—</span>
-                            )}
-                          </td>
-                        );
-                      })}
-
-                      {/* Per-row WhatsApp share */}
-                      <td className="px-2 py-2">
-                        <button
-                          onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))}
-                          title="مشاركة واتساب"
-                          className="text-muted hover:text-primary transition"
-                        >
-                          <Share2 size={13} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Footer */}
-            <div className="border-t border-border px-4 py-3 shrink-0 flex items-center justify-between gap-2">
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSharePaste}
-                  className="flex items-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted hover:text-ink transition"
-                >
-                  <Share2 size={13} /> واتساب
-                </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowExcelMenuPaste((v) => !v)}
-                    className="flex items-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted hover:text-ink transition"
-                  >
-                    <Download size={13} /> Excel
-                  </button>
-                  {showExcelMenuPaste && (
-                    <>
-                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
-                      <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                          <ExternalLink size={13} /> فتح
-                        </button>
-                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                          <Download size={13} /> تنزيل
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => setPasteModalOpen(false)}
-                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-night transition hover:bg-primary/90"
-              >
-                إغلاق
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* Header */}
       <div>
         <h1 className="text-lg font-bold text-ink">الفرز</h1>
@@ -846,30 +725,74 @@ export default function SortingPage() {
         )}
 
         {pasteRan && pasteResults.length > 0 && (
-          <div className="flex items-center justify-between rounded-xl border border-brand/40 bg-brand/5 px-3 py-2.5">
-            <span className="text-sm font-bold text-brand">{pasteResults.length} لوحة مطلوبة</span>
-            <div className="flex gap-2">
-              <button onClick={() => setPasteModalOpen(true)}
-                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-night transition hover:bg-brand/90">
-                عرض التفاصيل
-              </button>
-              <button onClick={handleSharePaste} className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary">
-                <Share2 size={13} />
-              </button>
-              <div className="relative">
-                <button onClick={() => setShowExcelMenuPaste((v) => !v)} className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary">
-                  <Download size={13} />
-                </button>
-                {showExcelMenuPaste && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
-                    <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-                      <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2"><ExternalLink size={13} /> فتح</button>
-                      <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2"><Download size={13} /> تنزيل</button>
-                    </div>
-                  </>
-                )}
+          <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
+            {/* Header row */}
+            <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 size={13} className="text-brand" />
+                <span className="text-xs font-bold text-brand">{pasteResults.length} لوحة مطلوبة</span>
               </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPasteZoom((z) => Math.max(z - 1, 0))}
+                  disabled={pasteZoom === 0}
+                  className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted disabled:opacity-30 hover:text-ink transition"
+                >
+                  <ZoomOut size={11} />
+                </button>
+                <span className="w-7 text-center text-[10px] text-muted">
+                  {Math.round(ZOOM_LEVELS[pasteZoom] * 100)}%
+                </span>
+                <button
+                  onClick={() => setPasteZoom((z) => Math.min(z + 1, ZOOM_LEVELS.length - 1))}
+                  disabled={pasteZoom === ZOOM_LEVELS.length - 1}
+                  className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted disabled:opacity-30 hover:text-ink transition"
+                >
+                  <ZoomIn size={11} />
+                </button>
+                <button
+                  onClick={handleSharePaste}
+                  className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
+                >
+                  <Share2 size={11} />
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowExcelMenuPaste((v) => !v)}
+                    className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
+                  >
+                    <Download size={11} />
+                  </button>
+                  {showExcelMenuPaste && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
+                      <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                          <ExternalLink size={13} /> فتح
+                        </button>
+                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                          <Download size={13} /> تنزيل
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Plates grid — all inline, no pagination */}
+            <div className="flex flex-wrap gap-1 p-2.5" style={{ direction: "rtl" }}>
+              {pasteResults.map((p, i) => (
+                <span
+                  key={i}
+                  className="rounded border border-brand/40 bg-brand/10 font-mono font-bold text-brand leading-none"
+                  style={{ fontSize: `${ZOOM_LEVELS[pasteZoom] * 11}px`, padding: "3px 6px" }}
+                >
+                  {p.converted}
+                </span>
+              ))}
             </div>
           </div>
         )}

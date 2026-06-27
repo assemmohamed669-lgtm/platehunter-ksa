@@ -65,6 +65,9 @@ export default function IncomingExcelHandler() {
       };
       await saveUploadedFile(record);
 
+      // Notify any already-open page that IDB was updated (handles same-page navigation)
+      window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: { slot } }));
+
       setPending(null);
       router.push(slot === "check" ? "/instant-check" : "/sorting");
     } catch (err) {
