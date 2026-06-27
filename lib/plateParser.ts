@@ -231,22 +231,27 @@ function extractLettersFromToken(token: string): string[] {
 // ─── Exported public helpers ────────────────────────────────────────────────
 
 export function bankPlateToArabic(raw: string): string {
-  // Fast path: if no ASCII letters (A-Z/a-z), just strip spaces — avoids split/map/join
-  // This covers the common case of Arabic plate data in the data file (464K rows)
+  // Fast path: if no ASCII letters (A-Z/a-z), keep only Arabic chars + digits.
+  // This strips spaces, dashes, dots, slashes and any other punctuation that
+  // sometimes appears in bank referral files (e.g. "أبح-1234", "أبح/1234").
   let hasAscii = false;
   for (let i = 0; i < raw.length; i++) {
     const c = raw.charCodeAt(i);
     if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { hasAscii = true; break; }
   }
-  if (!hasAscii) return raw.replace(/\s+/g, "");
+  if (!hasAscii) return raw.replace(/[^؀-ۿ0-9٠-٩]/g, "");
 
-  // Slow path: convert English plate letters to Arabic
+  // Slow path: convert English plate letters to Arabic.
+  // Keep: digits, mapped Arabic equiv of EN letters, existing Arabic chars.
+  // Skip: spaces, dashes, dots, slashes, and any other punctuation.
   const upper = raw.toUpperCase();
   let result = "";
   for (let i = 0; i < upper.length; i++) {
-    const c = upper[i];
-    if (c === " " || c === "\t") continue;
-    result += EN_TO_AR[c] ?? c;
+    const code = upper.charCodeAt(i);
+    if (code >= 48 && code <= 57) { result += upper[i]; continue; }   // digit: keep
+    if (code >= 65 && code <= 90) { result += EN_TO_AR[upper[i]] ?? upper[i]; continue; } // EN letter → Arabic
+    if (code >= 0x0600) { result += upper[i]; continue; }              // Arabic char: keep
+    // else: space, dash, dot, slash, etc. → skip
   }
   return result;
 }
@@ -255,17 +260,16 @@ export function normalizePlate(plate: string): string {
   if (!plate) return "";
 
   // Scan for chars that require normalization:
-  // spaces (≤32), alef variants (أ=1571, إ=1573, آ=1570), ى=1609,
-  // uppercase ASCII (65-90), Arabic-Indic digits ٠-٩ (1632-1641)
+  // any non-digit ASCII (spaces, dashes, dots, slashes, letters…), alef variants,
+  // ى=1609, Arabic-Indic digits ٠-٩ (1632-1641)
   let needsClean = false;
   for (let i = plate.length - 1; i >= 0; i--) {
     const c = plate.charCodeAt(i);
     if (
-      c <= 32 ||
-      (c >= 65 && c <= 90) ||
-      c === 1571 || c === 1573 || c === 1570 ||
-      c === 1609 ||
-      (c >= 1632 && c <= 1641)  // ٠-٩ Arabic-Indic numerals
+      (c <= 127 && (c < 48 || c > 57)) || // any non-digit ASCII char
+      c === 1571 || c === 1573 || c === 1570 || // أ إ آ
+      c === 1609 ||                              // ى
+      (c >= 1632 && c <= 1641)                   // ٠-٩ Arabic-Indic
     ) {
       needsClean = true;
       break;
@@ -274,11 +278,10 @@ export function normalizePlate(plate: string): string {
 
   const s = needsClean
     ? plate
-        .replace(/\s/g, "")
         .replace(/[أإآ]/g, "ا")
         .replace(/ى/g, "ي")
         .replace(/[٠-٩]/g, (d) => ARABIC_INDIC[d] ?? d)
-        .toLowerCase()
+        .replace(/[^؀-ۿ0-9]/g, "") // strip everything that isn't Arabic or a digit
     : plate;
 
   if (!s) return "";
