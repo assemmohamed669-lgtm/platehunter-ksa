@@ -19,11 +19,11 @@
 // ─── English → Arabic plate letter mapping ────────────────────────────────
 export const EN_TO_AR: Record<string, string> = {
   A: "ا", B: "ب", J: "ح", D: "د", R: "ر", S: "س", X: "ص", T: "ط",
-  E: "ع", G: "ق", K: "ك", L: "ل", Z: "م", N: "ن", H: "هـ", U: "و", V: "ي",
+  E: "ع", G: "ق", K: "ك", L: "ل", Z: "م", N: "ن", H: "ه", U: "و", V: "ي",
 };
 
 export const VALID_AR_LETTERS = new Set([
-  "ا","ب","ح","د","ر","س","ص","ط","ع","ق","ك","ل","م","ن","هـ","و","ي","ى",
+  "ا","ب","ح","د","ر","س","ص","ط","ع","ق","ك","ل","م","ن","هـ","ه","و","ي","ى",
 ]);
 
 // ─── Vehicle types ─────────────────────────────────────────────────────────
@@ -269,6 +269,7 @@ export function normalizePlate(plate: string): string {
       (c <= 127 && (c < 48 || c > 57)) || // any non-digit ASCII char
       c === 1571 || c === 1573 || c === 1570 || // أ إ آ
       c === 1609 ||                              // ى
+      c === 1600 ||                              // ـ tatweel elongation mark
       (c >= 1632 && c <= 1641)                   // ٠-٩ Arabic-Indic
     ) {
       needsClean = true;
@@ -280,6 +281,7 @@ export function normalizePlate(plate: string): string {
     ? plate
         .replace(/[أإآ]/g, "ا")
         .replace(/ى/g, "ي")
+        .replace(/ـ/g, "")            // strip tatweel (not a plate letter)
         .replace(/[٠-٩]/g, (d) => ARABIC_INDIC[d] ?? d)
         .replace(/[^؀-ۿ0-9]/g, "") // strip everything that isn't Arabic or a digit
     : plate;
@@ -512,6 +514,21 @@ export function detectPlateColumn(headers: string[]): string | null {
     keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
   );
   return found ?? headers[0] ?? null;
+}
+
+/**
+ * Returns ALL headers that look like plate columns (not just the first one).
+ * Some bank files have both an English column ("Plate Number") and an Arabic
+ * column ("The plate number in Arabic" / "رقم اللوحة عربي"). Indexing both
+ * ensures matching works regardless of how the data file encodes the same plate.
+ * Uses stricter keywords than detectPlateColumn (excludes "رقم" alone to
+ * avoid matching chassis-number columns like "رقم الهيكل").
+ */
+export function detectAllPlateColumns(headers: string[]): string[] {
+  const keywords = ["لوحة", "اللوحة", "plate"];
+  return headers.filter((h) =>
+    keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
+  );
 }
 
 /**

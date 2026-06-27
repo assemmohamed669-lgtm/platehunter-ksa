@@ -4,9 +4,9 @@ import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matc
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {
   it("converts mapped English letters to Arabic and strips spaces", () => {
-    // N→ن  K→ك  D→د  |  H→هـ  U→و  V→ي  |  A→ا  B→ب  D→د
+    // N→ن  K→ك  D→د  |  H→ه  U→و  V→ي  |  A→ا  B→ب  D→د
     expect(bankPlateToArabic("NKD 5678")).toBe("نكد5678");
-    expect(bankPlateToArabic("HUV 9999")).toBe("هـوي9999");
+    expect(bankPlateToArabic("HUV 9999")).toBe("هوي9999");
     expect(bankPlateToArabic("ABD 1234")).toBe("ابد1234");
   });
 
