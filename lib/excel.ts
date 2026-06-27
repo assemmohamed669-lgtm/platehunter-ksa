@@ -207,19 +207,37 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     });
     if (raw2d.length === 0) throw new Error("empty");
 
-    const headers = (raw2d[0] as unknown[])
+    // Find the actual header row — skip title/logo rows above the table.
+    const PLATE_KWS = ["لوحة", "اللوحة", "plate"];
+    let headerRowIdx = -1;
+    const scanLimit = Math.min(raw2d.length, 15);
+    for (let ri = 0; ri < scanLimit && headerRowIdx < 0; ri++) {
+      const cells = raw2d[ri] as unknown[];
+      if (cells.some((c) => PLATE_KWS.some((k) => String(c ?? "").toLowerCase().includes(k)))) {
+        headerRowIdx = ri;
+      }
+    }
+    if (headerRowIdx < 0) {
+      for (let ri = 0; ri < scanLimit; ri++) {
+        const nonEmpty = (raw2d[ri] as unknown[]).filter((c) => String(c ?? "").trim()).length;
+        if (nonEmpty >= 2) { headerRowIdx = ri; break; }
+      }
+    }
+    if (headerRowIdx < 0) headerRowIdx = 0;
+
+    const headers = (raw2d[headerRowIdx] as unknown[])
       .map((h) => String(h ?? "").trim())
       .filter(Boolean);
     if (headers.length === 0) throw new Error("empty");
 
-    const rows: Record<string, string>[] = new Array(raw2d.length - 1);
-    for (let i = 1; i < raw2d.length; i++) {
+    const rows: Record<string, string>[] = [];
+    for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as unknown[];
       const obj: Record<string, string> = {};
       for (let j = 0; j < headers.length; j++) {
         obj[headers[j]] = String(r[j] ?? "");
       }
-      rows[i - 1] = obj;
+      rows.push(obj);
     }
 
     if (rows.length === 0) throw new Error("empty");

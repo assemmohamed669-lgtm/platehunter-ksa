@@ -684,8 +684,28 @@ export default function SortingPage() {
       )}
 
       {sorted && results && matchedResults.length === 0 && (
-        <div className="rounded-2xl border border-border bg-surface p-4 text-center">
-          <p className="text-sm text-muted">لا توجد تطابقات.</p>
+        <div className="rounded-2xl border border-alert/30 bg-surface p-4 space-y-3">
+          <p className="text-sm font-bold text-alert text-center">لا توجد تطابقات</p>
+          <div className="text-xs text-muted space-y-1.5 font-mono bg-surface-2 rounded-lg p-3">
+            <p className="text-ink font-sans font-semibold text-[11px] mb-2">تشخيص — ما الذي تم اكتشافه؟</p>
+            <p>📂 عمود لوحة الداتا: <span className="text-ink">{effectiveDataPlateCol ?? "—"}</span></p>
+            <p>📋 عمود لوحة الإحالة: <span className="text-ink">{effectiveReferralPlateCol ?? "—"}</span></p>
+            <p>📊 عينة داتا (أول 3):&nbsp;
+              <span className="text-ink">{
+                dataTable?.rows.slice(0, 8)
+                  .map((r) => normalizePlate(bankPlateToArabic(String(r[effectiveDataPlateCol ?? ""] ?? ""))))
+                  .filter(Boolean).slice(0, 3).join(" | ") || "لا توجد"
+              }</span>
+            </p>
+            <p>📊 عينة إحالة (أول 3):&nbsp;
+              <span className="text-ink">{
+                referralTable?.rows.slice(0, 8)
+                  .map((r) => normalizePlate(bankPlateToArabic(String(r[effectiveReferralPlateCol ?? ""] ?? ""))))
+                  .filter(Boolean).slice(0, 3).join(" | ") || "لا توجد"
+              }</span>
+            </p>
+          </div>
+          <p className="text-[11px] text-muted text-center">صوّر هذه المعلومات وأرسلها لتشخيص المشكلة</p>
         </div>
       )}
 

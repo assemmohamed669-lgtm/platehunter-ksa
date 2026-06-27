@@ -51,7 +51,27 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       return;
     }
 
-    const headers = (raw2d[0] as any[])
+    // Find the actual header row — skip title/logo rows above the table.
+    // Strategy: find the first row (within the first 15) that contains a
+    // plate-related keyword; fall back to the first row with >= 2 non-empty cells.
+    const PLATE_KWS = ["لوحة", "اللوحة", "plate"];
+    let headerRowIdx = -1;
+    const scanLimit = Math.min(raw2d.length, 15);
+    for (let ri = 0; ri < scanLimit && headerRowIdx < 0; ri++) {
+      const cells = raw2d[ri] as any[];
+      if (cells.some((c: any) => PLATE_KWS.some((k) => String(c ?? "").toLowerCase().includes(k)))) {
+        headerRowIdx = ri;
+      }
+    }
+    if (headerRowIdx < 0) {
+      for (let ri = 0; ri < scanLimit; ri++) {
+        const nonEmpty = (raw2d[ri] as any[]).filter((c: any) => String(c ?? "").trim()).length;
+        if (nonEmpty >= 2) { headerRowIdx = ri; break; }
+      }
+    }
+    if (headerRowIdx < 0) headerRowIdx = 0;
+
+    const headers = (raw2d[headerRowIdx] as any[])
       .map((h: any) => String(h ?? "").trim())
       .filter(Boolean);
 
@@ -61,14 +81,14 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
     }
 
     // Build objects from the 2-D array — avoids SheetJS internal formatting per cell
-    const rows: Record<string, string>[] = new Array(raw2d.length - 1);
-    for (let i = 1; i < raw2d.length; i++) {
+    const rows: Record<string, string>[] = [];
+    for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as any[];
       const obj: Record<string, string> = {};
       for (let j = 0; j < headers.length; j++) {
         obj[headers[j]] = String(r[j] ?? "");
       }
-      rows[i - 1] = obj;
+      rows.push(obj);
     }
 
     postMessage({ success: true, headers, rows });
