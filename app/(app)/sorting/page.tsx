@@ -782,17 +782,66 @@ export default function SortingPage() {
               </div>
             </div>
 
-            {/* Plates grid — all inline, no pagination */}
-            <div className="flex flex-wrap gap-1 p-2.5" style={{ direction: "rtl" }}>
-              {pasteResults.map((p, i) => (
-                <span
-                  key={i}
-                  className="rounded border border-brand/40 bg-brand/10 font-mono font-bold text-brand leading-none"
-                  style={{ fontSize: `${ZOOM_LEVELS[pasteZoom] * 11}px`, padding: "3px 6px" }}
-                >
-                  {p.converted}
-                </span>
-              ))}
+            {/* Table — scrolls both axes, all rows shown */}
+            <div className="overflow-auto" style={{ maxHeight: "60vh", direction: "rtl" }}>
+              <div style={{ fontSize: `${ZOOM_LEVELS[pasteZoom] * 12}px`, minWidth: "max-content", width: "100%" }}>
+                <table className="border-collapse w-full">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-surface-2 text-muted">
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
+                      <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      {pasteAllCols.map((col) => (
+                        <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
+                          {col}
+                        </th>
+                      ))}
+                      <th className="border-b border-border px-2 py-1.5" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pasteResults.map((p, i) => (
+                      <tr
+                        key={i}
+                        className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}
+                      >
+                        <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
+                        <td className="border-l border-border px-2 py-1.5 whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <PlateBadge value={p.converted} size="xs" />
+                            <span className="rounded-full bg-brand/20 px-1 py-0.5 font-bold text-brand leading-none" style={{ fontSize: "0.75em" }}>
+                              مطلوبة
+                            </span>
+                          </div>
+                        </td>
+                        {pasteAllCols.map((col) => {
+                          const v = String(p.row[col] ?? "");
+                          const isUrl = !!v && /^https?:\/\//i.test(v);
+                          const isCoords = !!v && /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/.test(v.trim());
+                          return (
+                            <td key={col} className="border-l border-border px-3 py-1.5 whitespace-nowrap">
+                              {isUrl ? (
+                                <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
+                              ) : isCoords ? (() => {
+                                const [lat, lng] = v.split(",").map(Number);
+                                return <a href={toMapsLink(lat, lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>;
+                              })() : v ? (
+                                <span className="text-ink">{v}</span>
+                              ) : (
+                                <span className="text-muted">—</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="px-2 py-1.5">
+                          <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} className="text-muted hover:text-primary transition">
+                            <Share2 size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
