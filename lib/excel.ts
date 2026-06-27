@@ -115,36 +115,121 @@ export interface ExcelTable {
 }
 
 export async function parseExcelFile(file: File, password?: string): Promise<ExcelTable> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target!.result as ArrayBuffer);
-        const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellText: true };
-        if (password) (opts as Record<string, unknown>).password = password;
+  const buffer = await file.arrayBuffer();
 
-        const wb = XLSX.read(data, opts);
-        const sheetName = wb.SheetNames.find((n) => n.trim() === "تشييك") ?? wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, {
-          raw: false,
-          defval: "",
-        }) as Record<string, string>[];
-
-        if (rows.length === 0) {
-          reject(new Error("الملف فارغ أو لا يحتوي على بيانات."));
+  // Try Web Worker first — parsing runs off the main thread so the UI stays responsive
+  if (typeof Worker !== "undefined") {
+    try {
+      const result = await new Promise<ExcelTable>((resolve, reject) => {
+        let worker: Worker;
+        try {
+          worker = new Worker(new URL("./xlsxWorker.ts", import.meta.url));
+        } catch {
+          reject(new Error("__WORKER_UNAVAILABLE__"));
           return;
         }
 
-        const headers = Object.keys(rows[0]);
-        resolve({ headers, rows });
-      } catch {
-        reject(new Error("تعذّرت قراءة الملف — قد يكون محمياً بكلمة مرور."));
+        const timer = setTimeout(() => {
+          worker.terminate();
+          reject(new Error("__WORKER_UNAVAILABLE__"));
+        }, 120_000);
+
+        worker.onmessage = (e: MessageEvent) => {
+          clearTimeout(timer);
+          worker.terminate();
+          const d = e.data as {
+            success: boolean;
+            headers?: string[];
+            rows?: Record<string, string>[];
+            error?: string;
+          };
+          if (d.success && d.headers && d.rows) {
+            if (d.rows.length === 0) {
+              reject(new Error("الملف فارغ أو لا يحتوي على بيانات."));
+            } else {
+              resolve({ headers: d.headers, rows: d.rows });
+            }
+          } else {
+            reject(new Error(d.error ?? "تعذّرت قراءة الملف."));
+          }
+        };
+
+        worker.onerror = () => {
+          clearTimeout(timer);
+          worker.terminate();
+          reject(new Error("__WORKER_UNAVAILABLE__"));
+        };
+
+        // No transfer — keep buffer available for the sync fallback
+        worker.postMessage({ buffer, password });
+      });
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      // Only fall through on worker init/communication failures; re-throw real parse errors
+      if (msg !== "__WORKER_UNAVAILABLE__") throw err;
+    }
+  }
+
+  // Synchronous fallback (main-thread; may briefly freeze UI on very large files)
+  return _parseExcelSync(new Uint8Array(buffer), password);
+}
+
+function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
+  let sheetName: string | undefined;
+  try {
+    const wbMeta = XLSX.read(data, { type: "array", bookSheets: true });
+    sheetName =
+      wbMeta.SheetNames.find((n) => n.trim() === "تشييك") ?? wbMeta.SheetNames[0];
+  } catch { /* password-protected */ }
+
+  const opts: XLSX.ParsingOptions = {
+    type: "array",
+    raw: true,
+    cellStyles: false,
+    sheetStubs: false,
+  };
+  if (password) (opts as Record<string, unknown>).password = password;
+  if (sheetName) (opts as Record<string, unknown>).sheets = [sheetName];
+
+  try {
+    const wb = XLSX.read(data, opts);
+    const finalSheet =
+      sheetName ??
+      wb.SheetNames.find((n) => n.trim() === "تشييك") ??
+      wb.SheetNames[0];
+    const ws = wb.Sheets[finalSheet];
+
+    const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+      header: 1,
+      raw: true,
+      defval: null,
+    });
+    if (raw2d.length === 0) throw new Error("empty");
+
+    const headers = (raw2d[0] as unknown[])
+      .map((h) => String(h ?? "").trim())
+      .filter(Boolean);
+    if (headers.length === 0) throw new Error("empty");
+
+    const rows: Record<string, string>[] = new Array(raw2d.length - 1);
+    for (let i = 1; i < raw2d.length; i++) {
+      const r = raw2d[i] as unknown[];
+      const obj: Record<string, string> = {};
+      for (let j = 0; j < headers.length; j++) {
+        obj[headers[j]] = String(r[j] ?? "");
       }
-    };
-    reader.onerror = () => reject(new Error("تعذّرت قراءة الملف."));
-    reader.readAsArrayBuffer(file);
-  });
+      rows[i - 1] = obj;
+    }
+
+    if (rows.length === 0) throw new Error("empty");
+    return { headers, rows };
+  } catch (err) {
+    if (err instanceof Error && err.message === "empty") {
+      throw new Error("الملف فارغ أو لا يحتوي على بيانات.");
+    }
+    throw new Error("تعذّرت قراءة الملف — قد يكون محمياً بكلمة مرور.");
+  }
 }
 
 export interface WatermarkInfo {

@@ -231,23 +231,73 @@ function extractLettersFromToken(token: string): string[] {
 // ─── Exported public helpers ────────────────────────────────────────────────
 
 export function bankPlateToArabic(raw: string): string {
-  const cleaned = raw.toUpperCase().replace(/\s+/g, "");
-  return cleaned.split("").map((ch) => EN_TO_AR[ch] ?? ch).join("");
+  // Fast path: if no ASCII letters (A-Z/a-z), just strip spaces — avoids split/map/join
+  // This covers the common case of Arabic plate data in the data file (464K rows)
+  let hasAscii = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw.charCodeAt(i);
+    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { hasAscii = true; break; }
+  }
+  if (!hasAscii) return raw.replace(/\s+/g, "");
+
+  // Slow path: convert English plate letters to Arabic
+  const upper = raw.toUpperCase();
+  let result = "";
+  for (let i = 0; i < upper.length; i++) {
+    const c = upper[i];
+    if (c === " " || c === "\t") continue;
+    result += EN_TO_AR[c] ?? c;
+  }
+  return result;
 }
 
 export function normalizePlate(plate: string): string {
-  const s = plate
-    .replace(/\s/g, "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .trim()
-    .toLowerCase();
+  if (!plate) return "";
+
+  // Scan for chars that require regex normalization:
+  // spaces (≤32), alef variants (أ=1571, إ=1573, آ=1570), ى=1609, uppercase ASCII (65-90)
+  let needsClean = false;
+  for (let i = plate.length - 1; i >= 0; i--) {
+    const c = plate.charCodeAt(i);
+    if (
+      c <= 32 ||
+      (c >= 65 && c <= 90) ||
+      c === 1571 || c === 1573 || c === 1570 ||
+      c === 1609
+    ) {
+      needsClean = true;
+      break;
+    }
+  }
+
+  const s = needsClean
+    ? plate.replace(/\s/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").toLowerCase()
+    : plate;
+
   if (!s) return "";
+
   // Separate letters from digits to handle reversed plates (5052حبك → حبك5052)
-  const digitMatch = s.match(/\d+/);
-  if (!digitMatch) return s;
-  const letters = s.replace(/\d+/g, "");
-  return letters + digitMatch[0].padStart(4, "0");
+  // Manual scan is faster than regex for 464K+ calls in the sort loop
+  let dStart = -1, dEnd = -1, inRun = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 48 && c <= 57) {
+      if (!inRun) { dStart = i; inRun = true; }
+      dEnd = i;
+    } else if (inRun) {
+      break; // end of first contiguous digit run
+    }
+  }
+
+  if (dStart === -1) return s; // no digits
+
+  // Remove ALL digit chars for letters; use first digit run as the number component
+  let letters = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57) letters += s[i];
+  }
+  return letters + s.slice(dStart, dEnd + 1).padStart(4, "0");
 }
 
 export function findDuplicates(plates: string[]): Set<string> {

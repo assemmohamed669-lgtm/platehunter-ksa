@@ -200,7 +200,7 @@ export default function SortingPage() {
       }
       const allResults: MatchResult[] = [];
       const rows = dataTable.rows;
-      const CHUNK = 8000;
+      const CHUNK = 16000;
       for (let i = 0; i < rows.length; i += CHUNK) {
         const end = Math.min(i + CHUNK, rows.length);
         for (let j = i; j < end; j++) {
