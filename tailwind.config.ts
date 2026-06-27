@@ -10,38 +10,39 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Base surfaces
-        night: "#0D1117",        // app background (dark neutral)
-        "night-oled": "#000000", // OLED battery-saver background
-        surface: "#161B22",      // cards, nav bar
-        "surface-2": "#21262D",  // elevated surfaces / inputs
-        border: "#30363D",
+        // Base surfaces — light mode (off-white, easy on eyes)
+        night: "#F3F5F7",        // app background — cool off-white
+        "night-oled": "#FFFFFF", // brightest white variant
+        surface: "#FFFFFF",      // cards, nav bar — pure white
+        "surface-2": "#EBEEf2",  // inputs, elevated surfaces — light cool gray
+        border: "#CDD2D8",       // subtle separator lines
 
-        // UI accent (calm blue-grey — general interactive elements)
-        primary: "#4A82BF",      // calm blue: buttons, active states, focus rings
-        "primary-dark": "#1C3A5E",
-        glow: "#6E9FD4",         // lighter blue: highlights, active nav
+        // UI accent — deep blue, high contrast on white
+        primary: "#1A6CC4",      // rich blue: buttons, active states, focus rings
+        "primary-dark": "#DBE9F8", // light blue tint: subtle chip backgrounds
+        glow: "#0969DA",         // vivid blue: highlights, active nav
 
-        // Match / Recording green (strict use: voice recording, manual entry, match alert)
-        brand: "#2EA043",
-        "brand-dark": "#0F3A1F",
-        "brand-glow": "#3FB950",
+        // Match / Recording green — deepened for white backgrounds
+        brand: "#1A7F37",
+        "brand-dark": "#DAFBE1",
+        "brand-glow": "#2DA44E",
 
-        // Text
-        ink: "#E6EDF3",
-        muted: "#8B949E",
+        // Text — dark charcoal for maximum readability on white
+        ink: "#1A1F24",          // near-black charcoal (softer than pure black)
+        muted: "#57606A",        // medium warm gray — always readable on white
 
         // Status
-        alert: "#D29922",        // amber warning
-        danger: "#F85149",       // soft red / errors
+        alert: "#9A6700",        // amber (adjusted for light bg)
+        danger: "#CF222E",       // clear red (adjusted for light bg)
       },
       fontFamily: {
         sans: ["var(--font-tajawal)", "Tahoma", "sans-serif"],
         mono: ["var(--font-plex-mono)", "ui-monospace", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 10px rgba(74, 130, 191, 0.35)",
-        "brand-glow": "0 0 10px rgba(63, 185, 80, 0.35)",
+        glow: "0 0 10px rgba(26, 108, 196, 0.20)",
+        "brand-glow": "0 0 10px rgba(26, 127, 55, 0.20)",
+        card: "0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)",
       },
     },
   },

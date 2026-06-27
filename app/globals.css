@@ -21,14 +21,19 @@ body {
   overflow-x: hidden;
 }
 
-/* OLED battery-saver mode: pure black background everywhere. */
+/* Pure-white variant (was OLED saver, now brightest-white preference) */
 html.oled body {
   @apply bg-night-oled;
 }
 
 html.oled .surface-card {
-  background-color: #060606;
-  border-color: #131313;
+  background-color: #FFFFFF;
+  border-color: #D0D5DB;
+}
+
+/* Subtle card elevation for light mode — replaces dark-mode depth illusion */
+.surface-card {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07), 0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 /* Hide scrollbars on the bottom nav row without losing scroll on mobile */
@@ -59,10 +64,11 @@ html.oled .surface-card {
   min-width: 2.25rem;
   height: 2.75rem;
   border-radius: 0.375rem;
-  background: linear-gradient(180deg, #0D1B12 0%, #0A1410 100%);
-  border: 1px solid #2D4A35;
-  color: #3FB950;
-  text-shadow: 0 0 6px rgba(63, 185, 80, 0.4);
+  background: linear-gradient(180deg, #FFFFFF 0%, #F4F9F4 100%);
+  border: 1.5px solid #1A7F37;
+  color: #155C2A;
+  text-shadow: none;
+  box-shadow: 0 1px 3px rgba(26, 127, 55, 0.12);
   font-size: 1.25rem;
   letter-spacing: 0.05em;
 }
