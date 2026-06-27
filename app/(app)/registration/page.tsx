@@ -1166,12 +1166,6 @@ export default function RegistrationPage() {
           </button>
         </div>
 
-        {/* PlateBadge preview */}
-        {manualPlatePreview && !manualError && (
-          <div className="mt-3 flex justify-center">
-            <PlateBadge value={manualPlatePreview} size="md" />
-          </div>
-        )}
 
         {/* Error with dismiss button */}
         {manualError && (
