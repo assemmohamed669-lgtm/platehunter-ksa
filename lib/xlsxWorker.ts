@@ -51,25 +51,24 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       return;
     }
 
-    // Find the actual header row — skip title/logo rows above the table.
-    // Strategy: find the first row (within the first 15) that contains a
-    // plate-related keyword; fall back to the first row with >= 2 non-empty cells.
+    // Find the actual header row — skip title/email/instruction rows above the table.
+    // Among all rows in the first 200: pick the row that has the most non-empty cells
+    // AND contains a plate-related keyword (short column name, not instruction paragraph).
+    // If no keyword found anywhere, pick the densest row as fallback.
     const PLATE_KWS = ["لوحة", "اللوحة", "plate"];
-    let headerRowIdx = -1;
-    const scanLimit = Math.min(raw2d.length, 15);
-    for (let ri = 0; ri < scanLimit && headerRowIdx < 0; ri++) {
+    const SCAN = Math.min(raw2d.length, 200);
+    let bestKwRow = -1, bestKwCount = -1;
+    let bestDenseRow = 0, bestDenseCount = 0;
+    for (let ri = 0; ri < SCAN; ri++) {
       const cells = raw2d[ri] as any[];
-      if (cells.some((c: any) => PLATE_KWS.some((k) => String(c ?? "").toLowerCase().includes(k)))) {
-        headerRowIdx = ri;
-      }
+      const nonEmpty = cells.filter((c: any) => String(c ?? "").trim()).length;
+      if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
+      const hasKw = cells.some((c: any) =>
+        PLATE_KWS.some((k) => String(c ?? "").toLowerCase().includes(k))
+      );
+      if (hasKw && nonEmpty > bestKwCount) { bestKwCount = nonEmpty; bestKwRow = ri; }
     }
-    if (headerRowIdx < 0) {
-      for (let ri = 0; ri < scanLimit; ri++) {
-        const nonEmpty = (raw2d[ri] as any[]).filter((c: any) => String(c ?? "").trim()).length;
-        if (nonEmpty >= 2) { headerRowIdx = ri; break; }
-      }
-    }
-    if (headerRowIdx < 0) headerRowIdx = 0;
+    const headerRowIdx = bestKwRow >= 0 ? bestKwRow : bestDenseRow;
 
     const headers = (raw2d[headerRowIdx] as any[])
       .map((h: any) => String(h ?? "").trim())

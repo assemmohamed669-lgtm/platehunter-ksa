@@ -207,23 +207,21 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     });
     if (raw2d.length === 0) throw new Error("empty");
 
-    // Find the actual header row — skip title/logo rows above the table.
+    // Find the actual header row — skip title/email/instruction rows above the table.
     const PLATE_KWS = ["لوحة", "اللوحة", "plate"];
-    let headerRowIdx = -1;
-    const scanLimit = Math.min(raw2d.length, 15);
-    for (let ri = 0; ri < scanLimit && headerRowIdx < 0; ri++) {
+    const SCAN = Math.min(raw2d.length, 200);
+    let bestKwRow = -1, bestKwCount = -1;
+    let bestDenseRow = 0, bestDenseCount = 0;
+    for (let ri = 0; ri < SCAN; ri++) {
       const cells = raw2d[ri] as unknown[];
-      if (cells.some((c) => PLATE_KWS.some((k) => String(c ?? "").toLowerCase().includes(k)))) {
-        headerRowIdx = ri;
-      }
+      const nonEmpty = cells.filter((c) => String(c ?? "").trim()).length;
+      if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
+      const hasKw = cells.some((c) =>
+        PLATE_KWS.some((k) => String(c ?? "").toLowerCase().includes(k))
+      );
+      if (hasKw && nonEmpty > bestKwCount) { bestKwCount = nonEmpty; bestKwRow = ri; }
     }
-    if (headerRowIdx < 0) {
-      for (let ri = 0; ri < scanLimit; ri++) {
-        const nonEmpty = (raw2d[ri] as unknown[]).filter((c) => String(c ?? "").trim()).length;
-        if (nonEmpty >= 2) { headerRowIdx = ri; break; }
-      }
-    }
-    if (headerRowIdx < 0) headerRowIdx = 0;
+    const headerRowIdx = bestKwRow >= 0 ? bestKwRow : bestDenseRow;
 
     const headers = (raw2d[headerRowIdx] as unknown[])
       .map((h) => String(h ?? "").trim())
