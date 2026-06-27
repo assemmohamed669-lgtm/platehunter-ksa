@@ -805,9 +805,9 @@ export default function SortingPage() {
                         className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}
                       >
                         <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
-                        <td className="border-l border-border px-2 py-1.5 whitespace-nowrap">
-                          <div className="flex items-center gap-1">
-                            <PlateBadge value={p.converted} size="xs" />
+                        <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-ink">{p.converted}</span>
                             <span className="rounded-full bg-brand/20 px-1 py-0.5 font-bold text-brand leading-none" style={{ fontSize: "0.75em" }}>
                               مطلوبة
                             </span>
