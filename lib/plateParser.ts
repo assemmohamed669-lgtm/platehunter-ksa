@@ -514,6 +514,30 @@ export function detectPlateColumn(headers: string[]): string | null {
   return found ?? headers[0] ?? null;
 }
 
+/**
+ * Returns the normalized plate with its Arabic letter portion reversed.
+ * Some referral files encode Arabic letters LTR (e.g. "ر د أ 2812" for a
+ * plate whose canonical Arabic form is "أدر2812"). Adding the reversed form
+ * to lookup maps ensures matching works regardless of encoding direction.
+ * "هـ" (U+0647 + U+0640) is treated as a single unit.
+ */
+export function reversePlateLetters(normalized: string): string {
+  let i = 0;
+  while (i < normalized.length && (normalized.charCodeAt(i) < 48 || normalized.charCodeAt(i) > 57)) i++;
+  if (i === 0 || i === normalized.length) return normalized;
+  const letterPart = normalized.slice(0, i);
+  const digitPart = normalized.slice(i);
+  const units: string[] = [];
+  for (let j = 0; j < letterPart.length; j++) {
+    if (letterPart.charCodeAt(j) === 0x0647 && letterPart.charCodeAt(j + 1) === 0x0640) {
+      units.push("هـ"); j++;
+    } else {
+      units.push(letterPart[j]);
+    }
+  }
+  return units.reverse().join("") + digitPart;
+}
+
 export interface MatchResult {
   referralRow: Record<string, string>;
   dataRow?: Record<string, string>;
@@ -565,6 +589,8 @@ export function buildReferralIndex(
     const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
     if (!norm) continue;
     exact.set(norm, row);
+    const rev = reversePlateLetters(norm);
+    if (rev !== norm) exact.set(rev, row);
     const key = norm[0];
     if (!byFirstChar.has(key)) byFirstChar.set(key, []);
     byFirstChar.get(key)!.push({ norm, row });
@@ -623,7 +649,10 @@ export function matchReferralAgainstData(
   for (const row of dataRows) {
     const raw  = String(row[dataPlateCol] ?? "");
     const norm = normalizePlate(bankPlateToArabic(raw));
-    if (norm) dataNormMap.set(norm, row);
+    if (!norm) continue;
+    dataNormMap.set(norm, row);
+    const rev = reversePlateLetters(norm);
+    if (rev !== norm) dataNormMap.set(rev, row);
   }
 
   return referralRows.map((refRow) => {

@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, bankPlateToArabic, normalizePlate, type MatchResult,
+  detectPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
@@ -225,7 +225,10 @@ export default function SortingPage() {
       const referralMap = new Map<string, Record<string, string>>();
       for (const refRow of referralTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveReferralPlateCol] ?? "")));
-        if (n) referralMap.set(n, refRow);
+        if (!n) continue;
+        referralMap.set(n, refRow);
+        const nRev = reversePlateLetters(n);
+        if (nRev !== n) referralMap.set(nRev, refRow);
       }
       const allResults: MatchResult[] = [];
       const rows = dataTable.rows;
@@ -252,9 +255,14 @@ export default function SortingPage() {
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
-      const checkSet = new Set(
-        checkTable.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[effectiveCheckPlateCol] ?? "")))).filter(Boolean)
-      );
+      const checkSet = new Set<string>();
+      for (const r of checkTable.rows) {
+        const n = normalizePlate(bankPlateToArabic(String(r[effectiveCheckPlateCol] ?? "")));
+        if (!n) continue;
+        checkSet.add(n);
+        const nRev = reversePlateLetters(n);
+        if (nRev !== n) checkSet.add(nRev);
+      }
       const newRefRows = referralTable.rows.filter((row) => {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
         return n && !checkSet.has(n);
@@ -263,7 +271,10 @@ export default function SortingPage() {
       const dataMap = new Map<string, Record<string, string>>();
       for (const row of dataTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
-        if (n) dataMap.set(n, row);
+        if (!n) continue;
+        dataMap.set(n, row);
+        const nRev = reversePlateLetters(n);
+        if (nRev !== n) dataMap.set(nRev, row);
       }
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
