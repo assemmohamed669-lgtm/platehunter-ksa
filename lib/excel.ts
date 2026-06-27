@@ -208,30 +208,48 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     if (raw2d.length === 0) throw new Error("empty");
 
     // Find the actual header row — skip email/instruction rows above the data table.
-    // Score each row by number of cells that have a plate keyword in a SHORT value (< 50 chars).
-    // Column headers are short; instruction paragraphs are long — this separates them.
+    // Pass 1 (exact): row with a known plate column name. Pass 2 (keyword): short cells.
+    const EXACT_PLATE_COLS = [
+      "plate number",
+      "the plate number in arabic",
+      "رقم اللوحة",
+      "رقم اللوحة عربي",
+    ];
     const PLATE_KWS = ["لوحة", "اللوحة", "plate"];
     const SCAN = Math.min(raw2d.length, 600);
-    let bestKwRow = -1, bestKwScore = 0, bestKwNonEmpty = -1;
-    let bestDenseRow = 0, bestDenseCount = 0;
+
+    let headerRowIdx = -1;
+
+    // Pass 1: exact match
     for (let ri = 0; ri < SCAN; ri++) {
       const cells = raw2d[ri] as unknown[];
-      const nonEmpty = cells.filter((c) => String(c ?? "").trim()).length;
-      if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
-      let kwScore = 0;
-      for (const c of cells) {
-        const v = String(c ?? "").trim();
-        if (v.length > 0 && v.length < 50 && PLATE_KWS.some((k) => v.toLowerCase().includes(k))) {
-          kwScore++;
+      const hasExact = cells.some((c) =>
+        EXACT_PLATE_COLS.includes(String(c ?? "").trim().toLowerCase())
+      );
+      if (hasExact) { headerRowIdx = ri; break; }
+    }
+
+    // Pass 2: keyword scoring in short cells
+    if (headerRowIdx < 0) {
+      let bestKwRow = -1, bestKwScore = 0, bestKwNonEmpty = -1;
+      let bestDenseRow = 0, bestDenseCount = 0;
+      for (let ri = 0; ri < SCAN; ri++) {
+        const cells = raw2d[ri] as unknown[];
+        const nonEmpty = cells.filter((c) => String(c ?? "").trim()).length;
+        if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
+        let kwScore = 0;
+        for (const c of cells) {
+          const v = String(c ?? "").trim();
+          if (v.length > 0 && v.length < 50 && PLATE_KWS.some((k) => v.toLowerCase().includes(k))) {
+            kwScore++;
+          }
+        }
+        if (kwScore > bestKwScore || (kwScore > 0 && kwScore === bestKwScore && nonEmpty > bestKwNonEmpty)) {
+          bestKwScore = kwScore; bestKwNonEmpty = nonEmpty; bestKwRow = ri;
         }
       }
-      if (kwScore > bestKwScore || (kwScore > 0 && kwScore === bestKwScore && nonEmpty > bestKwNonEmpty)) {
-        bestKwScore = kwScore;
-        bestKwNonEmpty = nonEmpty;
-        bestKwRow = ri;
-      }
+      headerRowIdx = (bestKwRow >= 0 && bestKwScore > 0) ? bestKwRow : bestDenseRow;
     }
-    const headerRowIdx = (bestKwRow >= 0 && bestKwScore > 0) ? bestKwRow : bestDenseRow;
 
     const headers = (raw2d[headerRowIdx] as unknown[])
       .map((h) => String(h ?? "").trim())
