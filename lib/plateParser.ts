@@ -254,8 +254,9 @@ export function bankPlateToArabic(raw: string): string {
 export function normalizePlate(plate: string): string {
   if (!plate) return "";
 
-  // Scan for chars that require regex normalization:
-  // spaces (≤32), alef variants (أ=1571, إ=1573, آ=1570), ى=1609, uppercase ASCII (65-90)
+  // Scan for chars that require normalization:
+  // spaces (≤32), alef variants (أ=1571, إ=1573, آ=1570), ى=1609,
+  // uppercase ASCII (65-90), Arabic-Indic digits ٠-٩ (1632-1641)
   let needsClean = false;
   for (let i = plate.length - 1; i >= 0; i--) {
     const c = plate.charCodeAt(i);
@@ -263,7 +264,8 @@ export function normalizePlate(plate: string): string {
       c <= 32 ||
       (c >= 65 && c <= 90) ||
       c === 1571 || c === 1573 || c === 1570 ||
-      c === 1609
+      c === 1609 ||
+      (c >= 1632 && c <= 1641)  // ٠-٩ Arabic-Indic numerals
     ) {
       needsClean = true;
       break;
@@ -271,7 +273,12 @@ export function normalizePlate(plate: string): string {
   }
 
   const s = needsClean
-    ? plate.replace(/\s/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").toLowerCase()
+    ? plate
+        .replace(/\s/g, "")
+        .replace(/[أإآ]/g, "ا")
+        .replace(/ى/g, "ي")
+        .replace(/[٠-٩]/g, (d) => ARABIC_INDIC[d] ?? d)
+        .toLowerCase()
     : plate;
 
   if (!s) return "";
