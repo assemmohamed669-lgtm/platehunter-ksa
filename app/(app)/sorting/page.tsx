@@ -321,11 +321,7 @@ export default function SortingPage() {
   function plateForRow(r: MatchResult): string {
     const ref = bankPlateToArabic(String(r.referralRow[referralPlateCol ?? ""] ?? ""));
     const data = bankPlateToArabic(String(r.dataRow?.[dataPlateCol ?? ""] ?? ""));
-    if (!data) return ref;
-    if (!ref) return data;
-    // If data letters are the mirror of referral letters, show referral (canonical bank format)
-    if (reversePlateLetters(normalizePlate(data)) === normalizePlate(ref)) return ref;
-    return data;
+    return ref || data;
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
