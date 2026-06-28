@@ -175,13 +175,41 @@ export async function parseExcelFile(file: File, password?: string): Promise<Exc
   return _parseExcelSync(new Uint8Array(buffer), password);
 }
 
+const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
+
+function _sheetHasPlateCol(data: Uint8Array, sheetName: string, password?: string): boolean {
+  try {
+    const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    if (password) (opts as Record<string, unknown>).password = password;
+    const wb = XLSX.read(data, opts);
+    const ws = wb.Sheets[sheetName];
+    if (!ws) return false;
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false });
+    return rows.slice(0, 20).some((row) =>
+      (row as unknown[]).some((c) => {
+        const v = String(c ?? "").trim().toLowerCase();
+        return PLATE_DETECT_KWS.some((k) => v.includes(k));
+      })
+    );
+  } catch { return false; }
+}
+
 function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
   let sheetName: string | undefined;
+  let allSheetNames: string[] = [];
   try {
     const wbMeta = XLSX.read(data, { type: "array", bookSheets: true });
-    sheetName =
-      wbMeta.SheetNames.find((n) => n.trim() === "تشييك") ?? wbMeta.SheetNames[0];
+    allSheetNames = wbMeta.SheetNames;
   } catch { /* password-protected */ }
+
+  // Multi-sheet detection: scan each sheet for a plate column.
+  // Single-sheet files skip this loop — no overhead.
+  if (allSheetNames.length > 1) {
+    for (const name of allSheetNames) {
+      if (_sheetHasPlateCol(data, name, password)) { sheetName = name; break; }
+    }
+  }
+  sheetName = sheetName ?? allSheetNames[0];
 
   const opts: XLSX.ParsingOptions = {
     type: "array",
@@ -194,10 +222,7 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
 
   try {
     const wb = XLSX.read(data, opts);
-    const finalSheet =
-      sheetName ??
-      wb.SheetNames.find((n) => n.trim() === "تشييك") ??
-      wb.SheetNames[0];
+    const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
 
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, {

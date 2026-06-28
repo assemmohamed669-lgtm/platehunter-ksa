@@ -13,14 +13,37 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
 
     // Pass 1: read sheet names only — no cell data parsed (very fast)
     let sheetName: string | undefined;
+    let allSheetNames: string[] = [];
     try {
       const wbMeta = XLSX.read(data, { type: "array", bookSheets: true });
-      sheetName =
-        wbMeta.SheetNames.find((n: string) => n.trim() === "تشييك") ??
-        wbMeta.SheetNames[0];
+      allSheetNames = wbMeta.SheetNames;
     } catch {
       /* password-protected — sheetName stays undefined; detect after full parse */
     }
+
+    // Pass 1.5 (only for multi-sheet files): scan each sheet for a plate column header.
+    // Single-sheet files skip this block — zero overhead.
+    const PLATE_DET_KWS = ["لوحة", "اللوحة", "plate"];
+    if (allSheetNames.length > 1) {
+      for (const name of allSheetNames) {
+        try {
+          const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+          if (password) (scanOpts as Record<string, unknown>).password = password;
+          const wbScan = XLSX.read(data, scanOpts);
+          const wsScan = wbScan.Sheets[name];
+          if (!wsScan) continue;
+          const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false });
+          const hasPlate = scanRows.slice(0, 20).some((row: any[]) =>
+            row.some((c: any) => {
+              const v = String(c ?? "").trim().toLowerCase();
+              return PLATE_DET_KWS.some((k) => v.includes(k));
+            })
+          );
+          if (hasPlate) { sheetName = name; break; }
+        } catch { continue; }
+      }
+    }
+    sheetName = sheetName ?? allSheetNames[0];
 
     // Pass 2: parse only the target sheet with performance-optimised options
     const opts: XLSX.ParsingOptions = {
@@ -33,10 +56,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
     if (sheetName) (opts as Record<string, unknown>).sheets = [sheetName];
 
     const wb = XLSX.read(data, opts);
-    const finalSheet =
-      sheetName ??
-      wb.SheetNames.find((n: string) => n.trim() === "تشييك") ??
-      wb.SheetNames[0];
+    const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
 
     // 2-D array mode is faster than auto-object mode in sheet_to_json

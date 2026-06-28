@@ -1,16 +1,32 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle } from "lucide-react";
+import { Camera, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
-import { type ExcelTable } from "@/lib/excel";
+import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
+const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
+
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+interface CheckHit {
+  id: string;
+  plate: string;
+  row: Record<string, string>;
+  lat?: number;
+  lng?: number;
+  mapsLink?: string;
+  checkedAt: string;
+}
 
 type CheckMode = "manual" | "camera" | "ptt";
 
@@ -181,6 +197,12 @@ export default function InstantCheckPage() {
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
 
+  // Check hits history (session-only)
+  const [manualHits, setManualHits] = useState<CheckHit[]>([]);
+  const [copiedHitId, setCopiedHitId] = useState<string | null>(null);
+  const [hitsZoom, setHitsZoom] = useState(3);
+  const [hitsSelected, setHitsSelected] = useState<Set<string>>(new Set());
+
   // Load check file from IDB on mount
   useEffect(() => {
     getUploadedFile("local", "check")
@@ -278,7 +300,91 @@ export default function InstantCheckPage() {
   function handleManualSearch() {
     const raw = manualInput.trim();
     if (!raw || manualError) return;
-    setManualResult(searchInCheck(raw));
+    const result = searchInCheck(raw);
+    setManualResult(result);
+    if (result?.found) {
+      const hitId = String(Date.now());
+      const hit: CheckHit = { id: hitId, plate: result.plate, row: result.row ?? {}, checkedAt: new Date().toISOString() };
+      setManualHits((prev) => [hit, ...prev]);
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
+          },
+          () => {},
+          { timeout: 6000, maximumAge: 30000 }
+        );
+      }
+    }
+  }
+
+  // ── Hit helpers ────────────────────────────────────────────────────────────
+  function formatHitText(hit: CheckHit): string {
+    const lines = [`🚗 لوحة مطلوبة: ${hit.plate}`];
+    for (const [k, v] of Object.entries(hit.row)) {
+      if (k === checkPlateCol || !String(v).trim()) continue;
+      if (selectedCheckCols.size > 0 && !selectedCheckCols.has(k)) continue;
+      lines.push(`${k}: ${v}`);
+    }
+    if (hit.mapsLink) lines.push(`📍 الموقع: ${hit.mapsLink}`);
+    lines.push(`التاريخ: ${formatDate(hit.checkedAt)}`);
+    return lines.join("\n");
+  }
+
+  function shareHitWhatsApp(hit: CheckHit) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(formatHitText(hit))}`, "_blank");
+  }
+
+  async function copyHit(hit: CheckHit) {
+    await navigator.clipboard.writeText(formatHitText(hit));
+    setCopiedHitId(hit.id);
+    setTimeout(() => setCopiedHitId(null), 1200);
+  }
+
+  function deleteHit(id: string) {
+    setManualHits((prev) => prev.filter((h) => h.id !== id));
+    setHitsSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
+  }
+
+  function toggleHitSelect(id: string) {
+    setHitsSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  function toggleHitsAll() {
+    setHitsSelected(hitsSelected.size === manualHits.length && manualHits.length > 0
+      ? new Set()
+      : new Set(manualHits.map((h) => h.id))
+    );
+  }
+
+  function shareSelectedHits() {
+    const hits = manualHits.filter((h) => hitsSelected.has(h.id));
+    const text = hits.map((h, i) => `${i + 1}. ${formatHitText(h)}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(`*لوحات مطلوبة (${hits.length})*\n\n${text}`)}`, "_blank");
+  }
+
+  function buildHitsRows() {
+    return manualHits.map((hit) => {
+      const obj: Record<string, unknown> = { "رقم اللوحة": hit.plate };
+      for (const [k, v] of Object.entries(hit.row)) {
+        if (k !== checkPlateCol) obj[k] = v;
+      }
+      obj["GPS"] = hit.mapsLink ?? "";
+      obj["التاريخ"] = formatDate(hit.checkedAt);
+      return obj;
+    });
+  }
+
+  async function exportHitsExcel() {
+    const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
+    await openExcelBlob(blob, `لوحات-مطلوبة-${Date.now()}.xlsx`);
+  }
+
+  async function shareHitsExcel() {
+    const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
+    await shareExcelBlob(blob, "لوحات-مطلوبة.xlsx", "لوحات مطلوبة");
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -674,6 +780,138 @@ export default function InstantCheckPage() {
               {manualResult && (
                 <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
               )}
+
+              {/* ── Hits history table ── */}
+              {manualHits.length > 0 && (() => {
+                const scale = HIT_ZOOM_LEVELS[hitsZoom];
+                const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+                const allSel = hitsSelected.size === manualHits.length;
+                const someSel = hitsSelected.size > 0;
+                return (
+                  <div className="flex flex-col gap-2 pt-2 border-t border-border mt-2">
+                    {/* Stats */}
+                    <div className="rounded-xl border border-border bg-surface p-2 text-center">
+                      <p className="text-lg font-black text-brand">{manualHits.length}</p>
+                      <p className="text-[11px] text-muted">إجمالي</p>
+                    </div>
+
+                    {/* Zoom + select all */}
+                    <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setHitsZoom((z) => Math.max(z - 1, 0))} disabled={hitsZoom === 0}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                          <ZoomOut size={14} />
+                        </button>
+                        <span className="text-xs text-muted w-10 text-center">{Math.round(scale * 100)}%</span>
+                        <button onClick={() => setHitsZoom((z) => Math.min(z + 1, HIT_ZOOM_LEVELS.length - 1))} disabled={hitsZoom === HIT_ZOOM_LEVELS.length - 1}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                          <ZoomIn size={14} />
+                        </button>
+                      </div>
+                      <button onClick={toggleHitsAll}
+                        className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                        {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                        {allSel ? "إلغاء الكل" : "تحديد الكل"}
+                      </button>
+                    </div>
+
+                    {/* Table */}
+                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "50vh" }}>
+                      <div style={{ fontSize: `${scale * 12}px`, minWidth: "max-content" }}>
+                        <table className="border-collapse w-full" style={{ direction: "rtl" }}>
+                          <thead className="sticky top-0 z-10">
+                            <tr className="bg-surface-2 text-muted">
+                              <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                              {dynCols.map((h) => (
+                                <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                              ))}
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
+                              <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {manualHits.map((hit, i) => (
+                              <tr key={hit.id}
+                                className={`border-b border-border transition ${hitsSelected.has(hit.id) ? "bg-primary/15" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                                <td className="border-l border-border px-2 py-2 text-center">
+                                  <button onClick={() => toggleHitSelect(hit.id)} className="text-muted hover:text-primary transition">
+                                    {hitsSelected.has(hit.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                  </button>
+                                </td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
+                                  {hit.plate}
+                                </td>
+                                {dynCols.map((h) => (
+                                  <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                                    {hit.row[h] || "—"}
+                                  </td>
+                                ))}
+                                <td className="border-l border-border px-3 py-2">
+                                  {hit.mapsLink ? (
+                                    <a href={hit.mapsLink} target="_blank" rel="noopener noreferrer"
+                                      className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                                      <MapPin size={10} /> خريطة
+                                    </a>
+                                  ) : (
+                                    <span className="text-muted text-[10px]">جاري...</span>
+                                  )}
+                                </td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
+                                  {formatDate(hit.checkedAt)}
+                                </td>
+                                <td className="px-2 py-2">
+                                  <div className="flex items-center gap-2">
+                                    <button onClick={() => copyHit(hit)} title="نسخ" className="text-muted hover:text-primary transition">
+                                      {copiedHitId === hit.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                    </button>
+                                    <button onClick={() => shareHitWhatsApp(hit)} title="واتساب" className="text-muted hover:text-primary transition">
+                                      <Share2 size={13} />
+                                    </button>
+                                    <button onClick={() => deleteHit(hit.id)} title="حذف" className="text-muted hover:text-danger transition">
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Bulk action bar */}
+                    {someSel && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-lg">
+                        <span className="text-xs font-bold text-ink">{hitsSelected.size} محددة</span>
+                        <div className="flex gap-2">
+                          <button onClick={shareSelectedHits}
+                            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition">
+                            <Share2 size={13} /> واتساب
+                          </button>
+                          <button onClick={() => { const ids = Array.from(hitsSelected); setManualHits((prev) => prev.filter((h) => !ids.includes(h.id))); setHitsSelected(new Set()); }}
+                            className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition">
+                            <Trash2 size={13} /> مسح
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Export / Share Excel */}
+                    <div className="flex gap-2">
+                      <button onClick={exportHitsExcel}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
+                        <Download size={14} /> فتح في Excel
+                      </button>
+                      <button onClick={shareHitsExcel}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                        <Share2 size={14} /> مشاركة Excel
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
