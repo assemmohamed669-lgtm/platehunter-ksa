@@ -66,7 +66,10 @@ export function mapEgyptianSpeech(transcript: string): string {
   return transcript
     .trim()
     .split(/\s+/)
-    .map((w) => EGYPTIAN_LETTERS[w] ?? w)
+    .map((w) => {
+      const clean = w.replace(/[ؐ-ًؚ-ٟ]/g, "");
+      return EGYPTIAN_LETTERS[clean] ?? clean;
+    })
     .join("");
 }
 
