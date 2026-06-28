@@ -657,7 +657,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 // ─── Fuzzy matching helpers ────────────────────────────────────────────────
 
 export function detectPlateColumn(headers: string[]): string | null {
-  const keywords = ["لوحة", "اللوحة", "plate", "رقم"];
+  const keywords = ["لوحة", "اللوحة", "plate"];
   const found = headers.find((h) =>
     keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
   );
