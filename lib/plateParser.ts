@@ -658,10 +658,13 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
 export function detectPlateColumn(headers: string[]): string | null {
   const keywords = ["لوحة", "اللوحة", "plate"];
-  const found = headers.find((h) =>
+  const matches = headers.filter((h) =>
     keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
   );
-  return found ?? headers[0] ?? null;
+  if (matches.length === 0) return headers[0] ?? null;
+  // Prefer the column that includes "عربي" or "arabic" — it has the full Arabic plate
+  const preferred = matches.find((h) => /عربي|arabic/i.test(h));
+  return preferred ?? matches[0];
 }
 
 /**

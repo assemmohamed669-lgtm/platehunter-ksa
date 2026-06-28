@@ -119,22 +119,25 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       headerRowIdx = (bestKwRow >= 0 && bestKwScore > 0) ? bestKwRow : bestDenseRow;
     }
 
-    const headers = (raw2d[headerRowIdx] as any[])
-      .map((h: any) => String(h ?? "").trim())
-      .filter(Boolean);
+    // Map each non-empty header to its ACTUAL column position so that empty
+    // header columns (merged cells, gaps) don't cause value misalignment.
+    const rawHeaderCells = (raw2d[headerRowIdx] as any[]).map((h: any) => String(h ?? "").trim());
+    const headerCols: Array<{ name: string; col: number }> = [];
+    rawHeaderCells.forEach((name, col) => { if (name) headerCols.push({ name, col }); });
+    const headers = headerCols.map((hc) => hc.name);
 
     if (headers.length === 0) {
       postMessage({ success: false, error: "الملف فارغ أو لا يحتوي على بيانات." });
       return;
     }
 
-    // Build objects from the 2-D array — avoids SheetJS internal formatting per cell
+    // Build objects from the 2-D array using actual column positions
     const rows: Record<string, string>[] = [];
     for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as any[];
       const obj: Record<string, string> = {};
-      for (let j = 0; j < headers.length; j++) {
-        obj[headers[j]] = String(r[j] ?? "");
+      for (const { name, col } of headerCols) {
+        obj[name] = String(r[col] ?? "");
       }
       rows.push(obj);
     }

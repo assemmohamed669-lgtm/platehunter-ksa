@@ -10,9 +10,9 @@ describe("bankPlateToArabic", () => {
     expect(bankPlateToArabic("ABD 1234")).toBe("ابد1234");
   });
 
-  it("keeps unmapped English letters unchanged (C has no Arabic mapping)", () => {
-    // A→ا  B→ب  C→C (kept as-is, no mapping exists)
-    expect(bankPlateToArabic("ABC 1234")).toBe("ابC1234");
+  it("maps C to ح (same as J — some bank files use C for ح)", () => {
+    // A→ا  B→ب  C→ح (C was added to EN_TO_AR for bank files that use C instead of J)
+    expect(bankPlateToArabic("ABC 1234")).toBe("ابح1234");
   });
 
   it("strips spaces from Arabic-only input", () => {
