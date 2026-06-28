@@ -754,6 +754,8 @@ export function buildReferralIndex(
     const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
     if (!norm) continue;
     exact.set(norm, row);
+    const rev = reversePlateLetters(norm);
+    if (rev !== norm) exact.set(rev, row);
     const key = norm[0];
     if (!byFirstChar.has(key)) byFirstChar.set(key, []);
     byFirstChar.get(key)!.push({ norm, row });
@@ -814,6 +816,8 @@ export function matchReferralAgainstData(
     const norm = normalizePlate(bankPlateToArabic(raw));
     if (!norm) continue;
     dataNormMap.set(norm, row);
+    const rev = reversePlateLetters(norm);
+    if (rev !== norm) dataNormMap.set(rev, row);
   }
 
   return referralRows.map((refRow) => {
