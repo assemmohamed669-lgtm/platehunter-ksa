@@ -366,12 +366,12 @@ export default function InstantCheckPage() {
     // أول محاولة: ترجمة حرف حرف بالنطق المصري ("دال حه ره واحد اتنين...")
     const egyptianMapped = mapEgyptianSpeech(utterance);
     const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
-    const hasLetters = /[؀-ۿ]/.test(egyptianNorm);
-    const hasDigits  = /[0-9]/.test(egyptianNorm);
+    const letterPart     = egyptianNorm.replace(/[0-9]/g, "");
+    const hasDigits      = /[0-9]/.test(egyptianNorm);
+    // لوحة سعودية صحيحة: 1-3 حروف + أرقام — لو أكثر من 3 حروف يعني كلمات ما اتحولتش
+    const isPlausiblePlate = hasDigits && letterPart.length >= 1 && letterPart.length <= 3;
 
-    // لو الناتج فيه حروف وأرقام → لوحة صحيحة، استخدمها
-    // لو لأ → فال باك على parsePlateFromTranscript (يفهم الأسماء الفصيحة وغيرها)
-    const plate = (hasLetters && hasDigits)
+    const plate = isPlausiblePlate
       ? egyptianMapped
       : (parsePlateFromTranscript(utterance).plate || "");
 

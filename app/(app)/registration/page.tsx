@@ -36,7 +36,7 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, EN_TO_AR } from "@/lib/plateParser";
+import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -530,15 +530,36 @@ export default function RegistrationPage() {
     setDebugVehicle("");
     setDebugNotes("");
 
-    const parsed = parsePlateFromTranscript(transcript);
-    const plate = parsed.plate;           // "" if nothing found — intentional
-    const vehicleType = parsed.vehicleType;
-    const parsedNotes = parsed.notes || undefined;
+    // أول محاولة: النطق المصري حرف حرف ("دال حه ره واحد اتنين...")
+    const egyptianMapped = mapEgyptianSpeech(transcript);
+    const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
+    const letterPart     = egyptianNorm.replace(/[0-9]/g, "");
+    const hasDigits      = /[0-9]/.test(egyptianNorm);
+    // لوحة سعودية صحيحة: 1-3 حروف + أرقام — لو أكثر من 3 حروف يعني كلمات ما اتحولتش
+    const isPlausiblePlate = hasDigits && letterPart.length >= 1 && letterPart.length <= 3;
 
-    setDebugNormalized(parsed.normalized || "(فارغ)");
+    let plate: string;
+    let vehicleType: string | undefined;
+    let parsedNotes: string | undefined;
+    let parsedNormalized: string;
+
+    if (isPlausiblePlate) {
+      plate = egyptianMapped;
+      parsedNormalized = egyptianNorm;
+      vehicleType = undefined;
+      parsedNotes = undefined;
+    } else {
+      const parsed = parsePlateFromTranscript(transcript);
+      plate = parsed.plate;
+      vehicleType = parsed.vehicleType;
+      parsedNotes = parsed.notes || undefined;
+      parsedNormalized = parsed.normalized || "";
+    }
+
+    setDebugNormalized(parsedNormalized || "(فارغ)");
     setDebugPlate(plate || "(لم يُستخرج)");
     setDebugVehicle(vehicleType || "(لم يُستخرج)");
-    setDebugNotes(parsed.notes || "(لا يوجد)");
+    setDebugNotes(parsedNotes || "(لا يوجد)");
 
     let base64 = "";
     if (chunksRef.current.length > 0) {
