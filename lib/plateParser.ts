@@ -73,6 +73,97 @@ export function mapEgyptianSpeech(transcript: string): string {
     .join("");
 }
 
+export interface MultiPlateResult {
+  plate: string;
+  vehicleType?: string;
+  notes: string;
+  normalized: string;
+}
+
+/**
+ * يستخرج عدة لوحات من تسجيل صوتي واحد.
+ * الترتيب المتوقع: [ملاحظات] [حروف اللوحة] [أرقام اللوحة] [نوع السيارة] [تكرار]
+ * كل لوحة = 1-3 حروف سعودية + 4 أرقام.
+ */
+export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
+  type Kind = "letter" | "digit" | "vehicle" | "other";
+  interface Tok { value: string; kind: Kind }
+
+  // ── Step 1: tokenise + classify ──────────────────────────────────────────
+  const flat: Tok[] = [];
+  for (const raw of transcript.trim().split(/\s+/).filter(Boolean)) {
+    const clean = raw.replace(/[ؐ-ًؚ-ٟ]/g, "").replace(/ـ/g, ""); // strip diacritics + tatweel
+    const mapped = EGYPTIAN_LETTERS[clean] ?? clean;
+
+    // Single valid Saudi plate letter after Egyptian mapping
+    if (mapped.length === 1 && VALID_AR_LETTERS.has(mapped)) {
+      flat.push({ value: mapped, kind: "letter" }); continue;
+    }
+    // Single mapped digit ("واحد"→"1")
+    if (/^\d$/.test(mapped)) {
+      flat.push({ value: mapped, kind: "digit" }); continue;
+    }
+    // SR returned digit string "1234" directly → split into individual digits
+    if (/^\d{1,4}$/.test(clean)) {
+      for (const d of clean) flat.push({ value: d, kind: "digit" }); continue;
+    }
+    // 1-3 Arabic chars that are all valid plate letters (e.g. "دحر" said as one word)
+    if (/^[؀-ۿ]{1,3}$/.test(clean) && [...clean].every(c => VALID_AR_LETTERS.has(c))) {
+      for (const c of clean) flat.push({ value: c, kind: "letter" }); continue;
+    }
+    // Vehicle type keyword
+    const vt = VEHICLE_TYPES.find((v) => raw.includes(v));
+    if (vt) { flat.push({ value: vt, kind: "vehicle" }); continue; }
+    // Everything else: note word
+    flat.push({ value: raw, kind: "other" });
+  }
+
+  // ── Step 2: state machine ────────────────────────────────────────────────
+  const results: MultiPlateResult[] = [];
+  let noteBuf: string[] = [];
+  let letterBuf: string[] = [];
+  let digitBuf: string[] = [];
+  let vtBuf = "";
+
+  function commit() {
+    if (letterBuf.length === 0 || digitBuf.length === 0) {
+      noteBuf.push(...letterBuf); letterBuf = []; digitBuf = []; vtBuf = ""; return;
+    }
+    const plate = letterBuf.join("") + digitBuf.join("").slice(0, 4).padStart(4, "0");
+    results.push({
+      plate,
+      vehicleType: vtBuf || undefined,
+      notes: noteBuf.join(" "),
+      normalized: normalizePlate(plate),
+    });
+    noteBuf = []; letterBuf = []; digitBuf = []; vtBuf = "";
+  }
+
+  type State = "pre" | "letters" | "digits" | "post";
+  let state: State = "pre";
+
+  for (let i = 0; i < flat.length; i++) {
+    const t = flat[i];
+    if (state === "pre") {
+      if (t.kind === "letter") { letterBuf.push(t.value); state = "letters"; }
+      else                     { noteBuf.push(t.value); }
+    } else if (state === "letters") {
+      if      (t.kind === "letter" && letterBuf.length < 3) { letterBuf.push(t.value); }
+      else if (t.kind === "digit")                          { digitBuf.push(t.value); state = "digits"; }
+      else { noteBuf.push(...letterBuf); letterBuf = []; state = "pre"; i--; }
+    } else if (state === "digits") {
+      if (t.kind === "digit" && digitBuf.length < 4) { digitBuf.push(t.value); }
+      else { state = "post"; i--; }
+    } else { // post
+      if      (t.kind === "vehicle" && !vtBuf) { vtBuf = t.value; }
+      else if (t.kind === "letter")            { commit(); letterBuf.push(t.value); state = "letters"; }
+      else                                     { commit(); noteBuf.push(t.value); state = "pre"; }
+    }
+  }
+  if (state === "digits" || state === "post") commit();
+  return results;
+}
+
 // ─── English → Arabic plate letter mapping ────────────────────────────────
 export const EN_TO_AR: Record<string, string> = {
   A: "ا", B: "ب", J: "ح", D: "د", R: "ر", S: "س", X: "ص", T: "ط",

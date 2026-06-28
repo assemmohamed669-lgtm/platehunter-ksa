@@ -36,7 +36,7 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
+import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -526,40 +526,30 @@ export default function RegistrationPage() {
 
     setDebugFinal(transcript);
     setDebugNormalized("");
-    setDebugPlate("");
+    setDebugPlate("جارٍ الاستخراج...");
     setDebugVehicle("");
     setDebugNotes("");
 
-    // أول محاولة: النطق المصري حرف حرف ("دال حه ره واحد اتنين...")
-    const egyptianMapped = mapEgyptianSpeech(transcript);
-    const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
-    const letterPart     = egyptianNorm.replace(/[0-9]/g, "");
-    const hasDigits      = /[0-9]/.test(egyptianNorm);
-    // لوحة سعودية صحيحة: 1-3 حروف + أرقام — لو أكثر من 3 حروف يعني كلمات ما اتحولتش
-    const isPlausiblePlate = hasDigits && letterPart.length >= 1 && letterPart.length <= 3;
+    // استخرج كل اللوحات من التسجيل (مهما كان عددها)
+    let plates = extractMultiplePlates(transcript);
 
-    let plate: string;
-    let vehicleType: string | undefined;
-    let parsedNotes: string | undefined;
-    let parsedNormalized: string;
-
-    if (isPlausiblePlate) {
-      plate = egyptianMapped;
-      parsedNormalized = egyptianNorm;
-      vehicleType = undefined;
-      parsedNotes = undefined;
-    } else {
+    // Fallback: لو ما أنتجت لوحة → جرب parsePlateFromTranscript
+    if (plates.length === 0) {
       const parsed = parsePlateFromTranscript(transcript);
-      plate = parsed.plate;
-      vehicleType = parsed.vehicleType;
-      parsedNotes = parsed.notes || undefined;
-      parsedNormalized = parsed.normalized || "";
+      if (parsed.plate) {
+        plates = [{ plate: parsed.plate, vehicleType: parsed.vehicleType, notes: parsed.notes, normalized: parsed.normalized }];
+      }
     }
 
-    setDebugNormalized(parsedNormalized || "(فارغ)");
-    setDebugPlate(plate || "(لم يُستخرج)");
-    setDebugVehicle(vehicleType || "(لم يُستخرج)");
-    setDebugNotes(parsedNotes || "(لا يوجد)");
+    if (plates.length === 0) {
+      setDebugPlate("(لم يُستخرج)");
+      setDebugNotes("(لا توجد لوحات)");
+      return;
+    }
+
+    setDebugPlate(plates.map((p) => p.plate).join(" | "));
+    setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
+    setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
     let base64 = "";
     if (chunksRef.current.length > 0) {
@@ -571,39 +561,46 @@ export default function RegistrationPage() {
     }
 
     const coords = gpsAtRecordRef.current;
-    const localId = uid();
-    const entry: RecordingEntry = {
-      localId,
-      agentId,
-      plate,
-      vehicleType,
-      notes: parsedNotes,
-      lat: coords?.lat,
-      lng: coords?.lng,
-      recordedAt: new Date().toISOString(),
-      audioBlobBase64: base64 || undefined,
-      mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
-      recorderName,
-      synced: false,
-    };
+    const savedIds: string[] = [];
 
-    await saveRecording(entry);
+    for (const { plate, vehicleType, notes } of plates) {
+      const localId = uid();
+      savedIds.push(localId);
+      const entry: RecordingEntry = {
+        localId,
+        agentId,
+        plate,
+        vehicleType,
+        notes: notes || undefined,
+        lat: coords?.lat,
+        lng: coords?.lng,
+        recordedAt: new Date().toISOString(),
+        audioBlobBase64: base64 || undefined,
+        mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
+        recorderName,
+        synced: false,
+      };
+      await saveRecording(entry);
+      if (!coords) checkPlateMatch(plate, entry);
+    }
 
     if (coords) {
-      reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
-        await updateGeodata(localId, addr.street, addr.district);
-        if (agentId) {
-          const updated = await getAllRecordings(agentId);
-          const updatedEntry = updated.find((r) => r.localId === localId);
-          if (updatedEntry) checkPlateMatch(plate, updatedEntry);
-          setRecordings(updated);
-          setDuplicates(findDuplicates(updated.map((r) => r.plate)));
-        }
-      }).catch(() => {
-        checkPlateMatch(plate, entry);
-      });
-    } else {
-      checkPlateMatch(plate, entry);
+      reverseGeocode(coords.lat, coords.lng)
+        .then(async (addr) => {
+          for (const localId of savedIds) {
+            await updateGeodata(localId, addr.street, addr.district);
+          }
+          if (agentId) {
+            const updated = await getAllRecordings(agentId);
+            for (const localId of savedIds) {
+              const updatedEntry = updated.find((r) => r.localId === localId);
+              if (updatedEntry) checkPlateMatch(updatedEntry.plate, updatedEntry);
+            }
+            setRecordings(updated);
+            setDuplicates(findDuplicates(updated.map((r) => r.plate)));
+          }
+        })
+        .catch(() => {});
     }
 
     await loadRecordings(agentId);
