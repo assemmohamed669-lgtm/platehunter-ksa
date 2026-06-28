@@ -5,7 +5,7 @@ import { Camera, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Tras
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
 import PlateBadge from "@/components/PlateBadge";
@@ -363,7 +363,18 @@ export default function InstantCheckPage() {
   // ── PTT ───────────────────────────────────────────────────────────────────
   // addResult: parse one utterance and append to results list
   function addPttResult(utterance: string) {
-    const { plate } = parsePlateFromTranscript(utterance);
+    // أول محاولة: ترجمة حرف حرف بالنطق المصري ("دال حه ره واحد اتنين...")
+    const egyptianMapped = mapEgyptianSpeech(utterance);
+    const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
+    const hasLetters = /[؀-ۿ]/.test(egyptianNorm);
+    const hasDigits  = /[0-9]/.test(egyptianNorm);
+
+    // لو الناتج فيه حروف وأرقام → لوحة صحيحة، استخدمها
+    // لو لأ → فال باك على parsePlateFromTranscript (يفهم الأسماء الفصيحة وغيرها)
+    const plate = (hasLetters && hasDigits)
+      ? egyptianMapped
+      : (parsePlateFromTranscript(utterance).plate || "");
+
     if (!plate) return;
     const result = searchInCheck(plate);
     if (result) {
