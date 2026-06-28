@@ -319,7 +319,7 @@ export default function SortingPage() {
 
   // ── Row helpers ──
   function plateForRow(r: MatchResult): string {
-    return bankPlateToArabic(String(r.dataRow?.[dataPlateCol ?? ""] ?? r.referralRow[referralPlateCol ?? ""] ?? ""));
+    return bankPlateToArabic(String(r.referralRow[referralPlateCol ?? ""] ?? r.dataRow?.[dataPlateCol ?? ""] ?? ""));
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
