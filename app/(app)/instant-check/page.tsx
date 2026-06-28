@@ -5,10 +5,12 @@ import { Camera, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Tras
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
 import PlateBadge from "@/components/PlateBadge";
+
+const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 
 type CheckMode = "manual" | "camera" | "ptt";
 
@@ -160,6 +162,8 @@ export default function InstantCheckPage() {
 
   // Manual
   const [manualInput, setManualInput] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualPlatePreview, setManualPlatePreview] = useState("");
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
 
   // Camera
@@ -245,15 +249,36 @@ export default function InstantCheckPage() {
   }
 
   // ── Manual ────────────────────────────────────────────────────────────────
-  function handleManualChange(value: string) {
-    setManualInput(value);
-    if (!value.trim()) {
-      setManualResult(null);
-      return;
+  function handleManualChange(val: string) {
+    const converted = val.toUpperCase().split("").map((ch) => EN_TO_AR[ch] ?? ch).join("");
+    setManualInput(converted);
+    setManualResult(null);
+
+    const invalid: string[] = [];
+    for (const ch of converted) {
+      if (INVALID_AR_LETTERS_SET.has(ch) && !invalid.includes(ch)) invalid.push(ch);
     }
-    // Use parsePlateFromTranscript to support letter names, Arabic-Indic numerals, spaces
-    const { plate } = parsePlateFromTranscript(value.trim());
-    setManualResult(searchInCheck(plate || value.trim()));
+
+    if (invalid.length > 0) {
+      setManualError(`حروف غير موجودة في اللوحات السعودية: ${invalid.join(" ")}`);
+      setManualPlatePreview("");
+    } else {
+      setManualError(null);
+      setManualPlatePreview(converted.replace(/\s+/g, ""));
+    }
+  }
+
+  function dismissManualError() {
+    setManualError(null);
+    setManualInput("");
+    setManualPlatePreview("");
+    setManualResult(null);
+  }
+
+  function handleManualSearch() {
+    const raw = manualInput.trim();
+    if (!raw || manualError) return;
+    setManualResult(searchInCheck(raw));
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -465,6 +490,9 @@ export default function InstantCheckPage() {
     const plate = detectPlateColumn(table.headers);
     setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate && matchesPreferred(h))));
     setCheckColsOpen(false);
+    setManualInput("");
+    setManualError(null);
+    setManualPlatePreview("");
     setManualResult(null);
     setCameraResult(null);
     setPttResults([]);
@@ -475,6 +503,9 @@ export default function InstantCheckPage() {
     setCheckTable(null);
     setCheckFile(null);
     setSelectedCheckCols(new Set());
+    setManualInput("");
+    setManualError(null);
+    setManualPlatePreview("");
     setManualResult(null);
     setCameraResult(null);
     setPttResults([]);
@@ -586,36 +617,51 @@ export default function InstantCheckPage() {
           {mode === "manual" && (
             <div className="flex flex-col gap-3">
               <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input
-                    value={manualInput}
-                    onChange={(e) => handleManualChange(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleManualChange(manualInput)}
-                    placeholder="مثال: ق ن ص 1 2 3 4"
-                    className="w-full rounded-xl border border-border bg-surface-2 py-3 pl-10 pr-4 text-right text-ink placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                    dir="rtl"
-                    autoComplete="off"
-                    inputMode="text"
-                    type="text"
-                  />
-                  {manualInput && (
-                    <button
-                      onClick={() => handleManualChange("")}
-                      className="absolute left-3 top-1/2 -translate-y-1/2"
-                    >
-                      <X size={16} className="text-muted" />
-                    </button>
-                  )}
-                </div>
+                <input
+                  type="text"
+                  inputMode="text"
+                  placeholder="مثال: ق ن ص 1 2 3 4"
+                  value={manualInput}
+                  onChange={(e) => handleManualChange(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleManualSearch()}
+                  className={`flex-1 rounded-xl border bg-surface-2 px-3 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none ${
+                    manualError ? "border-danger focus:border-danger" : "border-border focus:border-primary"
+                  }`}
+                  dir="rtl"
+                  autoComplete="off"
+                />
+                <button
+                  onClick={handleManualSearch}
+                  disabled={!manualInput.trim() || !!manualError}
+                  className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
+                >
+                  بحث
+                </button>
               </div>
+
+              {/* Plate preview */}
+              {manualPlatePreview && !manualError && (
+                <div className="flex justify-center">
+                  <PlateBadge value={manualPlatePreview} size="md" />
+                </div>
+              )}
+
+              {/* Error with dismiss button */}
+              {manualError && (
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-danger/10 px-3 py-2">
+                  <p className="text-xs text-danger">{manualError}</p>
+                  <button onClick={dismissManualError} className="shrink-0 text-danger hover:text-danger/70 transition">
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
               <p className="text-xs text-muted" dir="rtl">
-                اكتب الحروف والأرقام مع مسافة بينها أو بدون
+                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...)
               </p>
+
               {manualResult && (
                 <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
-              )}
-              {manualInput && !manualResult && (
-                <p className="text-xs text-muted text-center">جارٍ البحث...</p>
               )}
             </div>
           )}
