@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectAllPlateColumns, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
+  detectPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
@@ -222,19 +222,17 @@ export default function SortingPage() {
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
-      const referralMap = new Map<string, Record<string, string>>();
-      const allRefPlateCols = detectAllPlateColumns(referralTable.headers);
-      const refColsToIndex = allRefPlateCols.length > 0 ? allRefPlateCols : [effectiveReferralPlateCol!];
-      for (const refRow of referralTable.rows) {
-        for (const col of refColsToIndex) {
-          const n = normalizePlate(bankPlateToArabic(String(refRow[col] ?? "")));
-          if (!n || referralMap.has(n)) continue;
-          referralMap.set(n, refRow);
-          const nRev = reversePlateLetters(n);
-          if (nRev !== n) referralMap.set(nRev, refRow);
-        }
+      // بناء index من الإحالة: لوحة منقّحة → صف الإحالة
+      const refIndex = new Map<string, Record<string, string>>();
+      for (const row of referralTable.rows) {
+        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        if (!n || refIndex.has(n)) continue;
+        refIndex.set(n, row);
+        const rev = reversePlateLetters(n);
+        if (rev !== n) refIndex.set(rev, row);
       }
-      const allResults: MatchResult[] = [];
+      // مسح الداتا والبحث في index الإحالة
+      const matches: MatchResult[] = [];
       const rows = dataTable.rows;
       const CHUNK = 16000;
       for (let i = 0; i < rows.length; i += CHUNK) {
@@ -243,56 +241,53 @@ export default function SortingPage() {
           const dataRow = rows[j];
           const n = normalizePlate(bankPlateToArabic(String(dataRow[effectiveDataPlateCol] ?? "")));
           if (!n) continue;
-          const refRow = referralMap.get(n);
-          if (refRow) allResults.push({ referralRow: refRow, dataRow, status: "exact" });
+          const refRow = refIndex.get(n);
+          if (refRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
         }
         if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
       }
-      setResults(allResults); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
 
   // ── New sort ──
   async function runNewSort() {
-    if (!referralTable || !checkTable || !dataTable || !effectiveReferralPlateCol || !effectiveCheckPlateCol || !effectiveDataPlateCol) return;
+    if (!dataTable || !referralTable || !checkTable || !effectiveDataPlateCol || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
+      // بناء set من اللوحات المشيّكة
       const checkSet = new Set<string>();
-      for (const r of checkTable.rows) {
-        const n = normalizePlate(bankPlateToArabic(String(r[effectiveCheckPlateCol] ?? "")));
+      for (const row of checkTable.rows) {
+        const n = normalizePlate(bankPlateToArabic(String(row[effectiveCheckPlateCol] ?? "")));
         if (!n) continue;
         checkSet.add(n);
-        const nRev = reversePlateLetters(n);
-        if (nRev !== n) checkSet.add(nRev);
+        const rev = reversePlateLetters(n);
+        if (rev !== n) checkSet.add(rev);
       }
-      const allRefPlateCols2 = detectAllPlateColumns(referralTable.headers);
-      const refColsToUse = allRefPlateCols2.length > 0 ? allRefPlateCols2 : [effectiveReferralPlateCol!];
+      // فلتر الإحالة: اللوحات الجديدة فقط (مش موجودة في التشييك)
       const newRefRows = referralTable.rows.filter((row) => {
-        for (const col of refColsToUse) {
-          const n = normalizePlate(bankPlateToArabic(String(row[col] ?? "")));
-          if (n && checkSet.has(n)) return false;
-        }
-        return true;
+        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        return n && !checkSet.has(n);
       });
       setNewPlatesCount(newRefRows.length);
-      const dataMap = new Map<string, Record<string, string>>();
+      // بناء index من الداتا
+      const dataIndex = new Map<string, Record<string, string>>();
       for (const row of dataTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
         if (!n) continue;
-        dataMap.set(n, row);
-        const nRev = reversePlateLetters(n);
-        if (nRev !== n) dataMap.set(nRev, row);
+        dataIndex.set(n, row);
+        const rev = reversePlateLetters(n);
+        if (rev !== n) dataIndex.set(rev, row);
       }
+      // مطابقة الإحالة الجديدة مع الداتا
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
-        for (const col of refColsToUse) {
-          const n = normalizePlate(bankPlateToArabic(String(refRow[col] ?? "")));
-          if (!n) continue;
-          const dataRow = dataMap.get(n);
-          if (dataRow) { matches.push({ referralRow: refRow, dataRow, status: "exact" }); break; }
-        }
+        const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveReferralPlateCol] ?? "")));
+        if (!n) continue;
+        const dataRow = dataIndex.get(n);
+        if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
       }
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
     } catch (err) { console.error(err); }
@@ -319,8 +314,8 @@ export default function SortingPage() {
 
   // ── Row helpers ──
   function plateForRow(r: MatchResult): string {
-    const ref = bankPlateToArabic(String(r.referralRow[referralPlateCol ?? ""] ?? ""));
-    const data = bankPlateToArabic(String(r.dataRow?.[dataPlateCol ?? ""] ?? ""));
+    const ref = bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? ""));
+    const data = bankPlateToArabic(String(r.dataRow?.[effectiveDataPlateCol ?? ""] ?? ""));
     return ref || data;
   }
 
