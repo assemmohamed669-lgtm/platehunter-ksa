@@ -319,7 +319,15 @@ export default function SortingPage() {
 
   // ── Row helpers ──
   function plateForRow(r: MatchResult): string {
-    return bankPlateToArabic(String(r.referralRow[referralPlateCol ?? ""] ?? r.dataRow?.[dataPlateCol ?? ""] ?? ""));
+    const ref = bankPlateToArabic(String(r.referralRow[referralPlateCol ?? ""] ?? ""));
+    const raw = bankPlateToArabic(String(r.dataRow?.[dataPlateCol ?? ""] ?? ""));
+    if (!raw) return ref;
+    if (!ref) return raw;
+    // If data letters are the mirror of referral letters, the bank file is canonical — show referral
+    const normRef = normalizePlate(ref);
+    const normData = normalizePlate(raw);
+    if (normRef && normData && reversePlateLetters(normData) === normRef) return ref;
+    return raw;
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {

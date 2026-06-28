@@ -166,8 +166,8 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
 
 // ─── English → Arabic plate letter mapping ────────────────────────────────
 export const EN_TO_AR: Record<string, string> = {
-  A: "ا", B: "ب", J: "ح", D: "د", R: "ر", S: "س", X: "ص", T: "ط",
-  E: "ع", G: "ق", K: "ك", L: "ل", Z: "م", N: "ن", H: "ه", U: "و", V: "ي",
+  A: "ا", B: "ب", C: "ح", J: "ح", D: "د", R: "ر", S: "س", X: "ص", T: "ط",
+  E: "ع", G: "ق", K: "ك", L: "ل", M: "م", Z: "م", N: "ن", H: "ه", U: "و", V: "ي",
 };
 
 export const VALID_AR_LETTERS = new Set([
