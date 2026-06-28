@@ -312,9 +312,9 @@ export default function InstantCheckPage() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "";
         if (msg === "api_key") {
-          setCameraError("مفتاح الـ API غير مضبوط على Vercel — راجع إعدادات المشروع");
+          setCameraError("GOOGLE_API_KEY غير مضبوط على Vercel — اجلب مفتاحاً مجانياً من aistudio.google.com");
         } else if (msg === "model") {
-          setCameraError("اسم النموذج غير صحيح في إعدادات الخادم");
+          setCameraError("خطأ في إعدادات الخادم — تحقق من Vercel");
         } else if (msg.includes("413") || msg.includes("414")) {
           setCameraError("الصورة كبيرة جداً — جرّب مرة أخرى");
         } else {
