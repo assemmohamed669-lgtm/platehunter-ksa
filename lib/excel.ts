@@ -302,8 +302,10 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
 
     let headerRowIdx = -1;
 
-    // Pass 1: exact match
-    for (let ri = 0; ri < SCAN; ri++) {
+    // Pass 1: exact match — limited to first 50 rows so a late embedded section
+    // (e.g. a second table at row 339) doesn't override the real data start.
+    const HDR_SCAN = Math.min(raw2d.length, 50);
+    for (let ri = 0; ri < HDR_SCAN; ri++) {
       const cells = raw2d[ri] as unknown[];
       const hasExact = cells.some((c) =>
         EXACT_PLATE_COLS.includes(String(c ?? "").trim().toLowerCase())
