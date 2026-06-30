@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
+  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
@@ -144,7 +144,9 @@ export default function SortingPage() {
 
   // ── Derived ──
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers, dataTable.rows) : null;
-  const referralPlateCol = referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null;
+  const referralArabicPlateCol = referralTable ? detectArabicPlateColumn(referralTable.headers) : null;
+  const referralPlateCol = referralArabicPlateCol ?? (referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null);
+  const referralPlateIsArabic = referralArabicPlateCol !== null;
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const gpsCol = dataTable ? findGpsColumn(dataTable.headers) : null;
 
@@ -223,11 +225,16 @@ export default function SortingPage() {
     try {
       const refIndex = new Map<string, Record<string, string>>();
       for (const row of referralTable.rows) {
-        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        const raw = String(row[effectiveReferralPlateCol] ?? "");
+        const n = referralPlateIsArabic
+          ? normalizePlate(raw)
+          : normalizePlate(bankPlateToArabic(raw));
         if (!n || refIndex.has(n)) continue;
         refIndex.set(n, row);
-        const rev = reversePlateLetters(n);
-        if (rev !== n) refIndex.set(rev, row);
+        if (!referralPlateIsArabic && /[A-Za-z]/.test(raw)) {
+          const rev = reversePlateLetters(n);
+          if (rev !== n) refIndex.set(rev, row);
+        }
       }
       const matches: MatchResult[] = [];
       const rows = dataTable.rows;
@@ -263,7 +270,10 @@ export default function SortingPage() {
         if (rev !== n) checkSet.add(rev);
       }
       const newRefRows = referralTable.rows.filter((row) => {
-        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        const raw = String(row[effectiveReferralPlateCol] ?? "");
+        const n = referralPlateIsArabic
+          ? normalizePlate(raw)
+          : normalizePlate(bankPlateToArabic(raw));
         return n && !checkSet.has(n);
       });
       setNewPlatesCount(newRefRows.length);
@@ -277,9 +287,16 @@ export default function SortingPage() {
       }
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
-        const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveReferralPlateCol] ?? "")));
+        const raw = String(refRow[effectiveReferralPlateCol] ?? "");
+        const n = referralPlateIsArabic
+          ? normalizePlate(raw)
+          : normalizePlate(bankPlateToArabic(raw));
         if (!n) continue;
-        const dataRow = dataIndex.get(n);
+        const dataRow = dataIndex.get(n) ?? (
+          !referralPlateIsArabic && /[A-Za-z]/.test(raw)
+            ? dataIndex.get(reversePlateLetters(n))
+            : undefined
+        );
         if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
       }
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);

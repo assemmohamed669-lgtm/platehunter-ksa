@@ -715,6 +715,23 @@ function cellLooksLikePlate(raw: string): boolean {
   return true;
 }
 
+/**
+ * يبحث عن عمود يحتوي على اللوحات بالعربي مباشرة.
+ * يقبل أي اسم عمود يحتوي على "لوح" (لوحة / لوحه / لوحات) بالعربي،
+ * أو الاسم الإنجليزي "the plate number in arabic".
+ * لو وُجد هذا العمود، لا داعي لـ bankPlateToArabic أو reversePlateLetters.
+ */
+export function detectArabicPlateColumn(headers: string[]): string | null {
+  for (const h of headers) {
+    const lower = h.toLowerCase().trim();
+    // English name of Arabic column (e.g. "The plate number in Arabic")
+    if (lower.includes("plate") && lower.includes("arabic")) return h;
+    // Any Arabic header containing the plate root لوح (لوحة / لوحه / لوحات)
+    if (/لوح/.test(h)) return h;
+  }
+  return null;
+}
+
 export function detectPlateColumn(headers: string[], rows?: Record<string, string>[]): string | null {
   // الأولوية: اكتشاف بناءً على المحتوى الفعلي (يشتغل بغض النظر عن اسم العمود)
   if (rows && rows.length > 0) {
