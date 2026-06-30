@@ -178,34 +178,43 @@ export async function parseExcelFile(file: File, password?: string): Promise<Exc
 
 const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
 
-/**
- * يفحص شيت ويحدد هل فيه عمود لوحات بناءً على المحتوى الفعلي للخلايا
- * (مش اسم الهيدر). يُستخدم لاختيار الشيت الصحيح من بين عدة شيتات.
- */
-function _sheetHasPlateColByContent(data: Uint8Array, sheetName: string, password?: string): boolean {
+// يحسب نسبة اللوحات في أفضل عمود للورقة — يُرجع 0..1
+function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string): number {
   try {
     const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
-    if (!ws) return false;
+    if (!ws) return 0;
 
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
-    if (raw2d.length < 2) return false;
+    if (raw2d.length < 2) return 0;
 
-    // أول صف غير فارغ كـ headers تقريبية (مش لازم تكون دقيقة هنا — الهدف بس
-    // نبني صفوف Record عشان نمرّرها لـ detectPlateColumnByContent)
-    const headerRow = (raw2d[0] as unknown[]).map((h) => String(h ?? "").trim());
-    const sampleRows: Record<string, string>[] = [];
-    for (let i = 1; i < Math.min(raw2d.length, 30); i++) {
-      const r = raw2d[i] as unknown[];
-      const obj: Record<string, string> = {};
-      headerRow.forEach((h, col) => { if (h) obj[h] = String(r[col] ?? ""); });
-      sampleRows.push(obj);
+    const sample = raw2d.slice(1, Math.min(raw2d.length, 101));
+    const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[]).length));
+
+    let bestRatio = 0;
+    for (let col = 0; col < numCols; col++) {
+      let plateLike = 0, nonEmpty = 0;
+      for (const r of sample) {
+        const raw = String((r as unknown[])[col] ?? "").trim();
+        if (!raw) continue;
+        nonEmpty++;
+        const cleaned = raw.replace(/[\s\-_./]/g, "");
+        if (cleaned.length < 2 || cleaned.length > 10) continue;
+        const digitMatch = cleaned.match(/[0-9٠-٩]+/);
+        if (!digitMatch || digitMatch[0].length > 4) continue;
+        const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
+        if (nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits)) {
+          plateLike++;
+        }
+      }
+      if (nonEmpty === 0) continue;
+      const ratio = plateLike / nonEmpty;
+      if (ratio > bestRatio) bestRatio = ratio;
     }
-
-    return detectPlateColumnByContent(headerRow.filter(Boolean), sampleRows) !== null;
-  } catch { return false; }
+    return bestRatio;
+  } catch { return 0; }
 }
 
 // يبقى احتياطي قديم لو فشل اكتشاف المحتوى تماماً (ملفات غريبة الشكل)
@@ -234,13 +243,16 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     allSheetNames = wbMeta.SheetNames;
   } catch { /* password-protected */ }
 
-  // Multi-sheet detection: scan each sheet's CONTENT for a plate-shaped column
-  // first (priority — works regardless of header naming), then fall back to
-  // the old keyword-on-header-name check if content detection found nothing.
+  // Multi-sheet detection: score every sheet by plate-like content and pick
+  // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
   if (allSheetNames.length > 1) {
+    let bestScore = 0;
     for (const name of allSheetNames) {
-      if (_sheetHasPlateColByContent(data, name, password)) { sheetName = name; break; }
+      const score = _sheetPlateScore(data, name, password);
+      if (score > bestScore) { bestScore = score; sheetName = name; }
     }
+    if (bestScore < 0.3) sheetName = undefined;
+
     if (!sheetName) {
       for (const name of allSheetNames) {
         if (_sheetHasPlateCol(data, name, password)) { sheetName = name; break; }

@@ -23,10 +23,10 @@ function cellLooksLikePlate(raw: string): boolean {
   return true;
 }
 
-// يفحص صفوف خام (2-D array) ويحدد هل فيه عمود شكله لوحات، بناءً على المحتوى
-function rowsHavePlateColumnByContent(raw2d: any[][], headerRowIdx: number): boolean {
+// يحسب نسبة الخلايا التي تشبه اللوحات في أفضل عمود — يُرجع 0..1
+function scorePlateColumnByContent(raw2d: any[][], headerRowIdx: number): number {
   const headerRow = (raw2d[headerRowIdx] as any[]).map((h) => String(h ?? "").trim());
-  const sample = raw2d.slice(headerRowIdx + 1, headerRowIdx + 1 + 30);
+  const sample = raw2d.slice(headerRowIdx + 1, headerRowIdx + 1 + 100);
 
   let bestRatio = 0;
   for (let col = 0; col < headerRow.length; col++) {
@@ -42,7 +42,7 @@ function rowsHavePlateColumnByContent(raw2d: any[][], headerRowIdx: number): boo
     const ratio = plateLike / nonEmpty;
     if (ratio > bestRatio) bestRatio = ratio;
   }
-  return bestRatio >= 0.5;
+  return bestRatio;
 }
 
 onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }>) {
@@ -60,12 +60,13 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       /* password-protected — sheetName stays undefined; detect after full parse */
     }
 
-    // Pass 1.5 (only for multi-sheet files): scan each sheet's CONTENT first
-    // (priority — works regardless of header naming), then fall back to the
-    // old keyword-on-header-name check if content detection found nothing.
+    // Pass 1.5 (only for multi-sheet files): score every sheet by plate-like content,
+    // pick the one with the highest ratio. Falls back to keyword header check if
+    // no sheet scores above the minimum threshold.
     const PLATE_DET_KWS = ["لوحة", "اللوحة", "plate"];
     if (allSheetNames.length > 1) {
-      // المحاولة الأولى: فحص المحتوى
+      // المحاولة الأولى: score كل ورقة واختر الأعلى
+      let bestScore = 0;
       for (const name of allSheetNames) {
         try {
           const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
@@ -75,9 +76,11 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
           if (!wsScan) continue;
           const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false, defval: null });
           if (scanRows.length < 2) continue;
-          if (rowsHavePlateColumnByContent(scanRows, 0)) { sheetName = name; break; }
+          const score = scorePlateColumnByContent(scanRows, 0);
+          if (score > bestScore) { bestScore = score; sheetName = name; }
         } catch { continue; }
       }
+      if (bestScore < 0.3) sheetName = undefined; // لم تجتز أي ورقة الحد الأدنى
 
       // المحاولة الثانية (احتياطي): اسم الهيدر القديم
       if (!sheetName) {
