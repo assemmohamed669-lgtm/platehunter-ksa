@@ -54,6 +54,7 @@ export default function SortingPage() {
   const [tashyeekTable, setTashyeekTable] = useState<ExcelTable | null>(null);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
   const [tashyeekResults, setTashyeekResults] = useState<{ tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] | null>(null);
+  const [tashyeekColsOpen, setTashyeekColsOpen] = useState(false);
 
   // ── Sort results ──
   const [results, setResults] = useState<MatchResult[] | null>(null);
@@ -534,11 +535,18 @@ export default function SortingPage() {
         />
         {tashyeekTable && (
           <>
-            <div className="flex flex-wrap gap-1.5 px-1">
-              {tashyeekTable.headers.map((h) => (
-                <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
-              ))}
-            </div>
+            <button onClick={() => setTashyeekColsOpen((v) => !v)}
+              className="flex items-center justify-between px-1 text-xs text-muted hover:text-ink transition">
+              <span>الأعمدة ({tashyeekTable.headers.length})</span>
+              <ChevronDown size={14} className={`transition-transform duration-200 ${tashyeekColsOpen ? "rotate-180" : ""}`} />
+            </button>
+            {tashyeekColsOpen && (
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {tashyeekTable.headers.map((h) => (
+                  <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2">
               <button onClick={shareTashyeekFile}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-bold text-white transition hover:opacity-90">
