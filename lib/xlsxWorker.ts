@@ -166,14 +166,18 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
       if (hasExact) { headerRowIdx = ri; break; }
     }
 
-    // Pass 2: keyword scoring in short cells
+    // Pass 2: keyword scoring (all rows) + dense fallback (first 30 rows only).
+    // Limiting the dense fallback to the first 30 rows prevents a late dense
+    // section (e.g. a second table appended at the end of the sheet) from being
+    // mistakenly treated as the header, which would skip all earlier rows.
     if (headerRowIdx < 0) {
       let bestKwRow = -1, bestKwScore = 0, bestKwNonEmpty = -1;
       let bestDenseRow = 0, bestDenseCount = 0;
+      const DENSE_SCAN = Math.min(raw2d.length, 30);
       for (let ri = 0; ri < SCAN; ri++) {
         const cells = raw2d[ri] as any[];
         const nonEmpty = cells.filter((c: any) => String(c ?? "").trim()).length;
-        if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
+        if (ri < DENSE_SCAN && nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
         let kwScore = 0;
         for (const c of cells) {
           const v = String(c ?? "").trim();
