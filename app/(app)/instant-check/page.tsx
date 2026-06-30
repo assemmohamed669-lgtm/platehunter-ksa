@@ -340,22 +340,45 @@ export default function InstantCheckPage() {
     const hitId = String(Date.now());
     const hit: CheckHit = { id: hitId, plate: result.plate, row: result.row ?? {}, checkedAt: new Date().toISOString() };
     setManualHits((prev) => [hit, ...prev]);
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
+    void fetchGpsForHit(hitId);
+  }
+
+  // Fetch GPS for a hit — tries Capacitor plugin first (Android), falls back to web API
+  async function fetchGpsForHit(hitId: string) {
+    try {
+      let lat: number, lng: number;
+
+      // Native Android: use @capacitor/geolocation which handles permissions properly
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        if (Capacitor.isNativePlatform()) {
+          const { Geolocation } = await import("@capacitor/geolocation");
+          await Geolocation.requestPermissions();
+          const pos = await Geolocation.getCurrentPosition({ timeout: 12000, enableHighAccuracy: false });
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
           setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
-        },
-        () => {
-          // GPS denied or timed out — mark so UI shows "—" instead of "جاري..." forever
-          setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
-        },
-        { timeout: 12000, maximumAge: 60000, enableHighAccuracy: false }
+          return;
+        }
+      } catch { /* not native or plugin error — fall through to web API */ }
+
+      // Web / PWA fallback
+      if (!navigator.geolocation) throw new Error("no_geo");
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 12000, maximumAge: 60000, enableHighAccuracy: false })
       );
-    } else {
+      lat = pos.coords.latitude;
+      lng = pos.coords.longitude;
+      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
+    } catch {
       setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
     }
+  }
+
+  // Retry GPS for a specific hit (user taps 📍 button)
+  async function retryGpsForHit(hitId: string) {
+    setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: false } : h));
+    await fetchGpsForHit(hitId);
   }
 
   function handleManualSearch() {
@@ -1126,7 +1149,11 @@ export default function InstantCheckPage() {
                                   <MapPin size={10} /> خريطة
                                 </a>
                               ) : hit.gpsError ? (
-                                <span className="text-muted text-[10px]">—</span>
+                                <button onClick={() => retryGpsForHit(hit.id)}
+                                  className="flex items-center gap-0.5 text-muted text-[10px] hover:text-primary transition"
+                                  title="اضغط لإعادة المحاولة">
+                                  <MapPin size={10} /> إعادة
+                                </button>
                               ) : (
                                 <span className="text-muted text-[10px] animate-pulse">جاري...</span>
                               )}
