@@ -1112,7 +1112,8 @@ export default function SortingPage() {
         )}
 
         {pasteRan && pasteResults.length > 0 && (
-          <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
+          <>
+            <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
             <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={13} className="text-brand" />
@@ -1218,40 +1219,42 @@ export default function SortingPage() {
                 </table>
               </div>
 
-              {/* أزرار تصدير كبيرة */}
-              <div className="flex gap-3 p-3 pt-0">
-                <div className="relative flex-1">
-                  <button
-                    onClick={() => setShowExcelMenuPaste((v) => !v)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-white shadow hover:bg-brand/90 transition"
-                  >
-                    <ExternalLink size={16} /> فتح في Excel
-                  </button>
-                  {showExcelMenuPaste && (
-                    <>
-                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
-                      <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                          <ExternalLink size={13} /> فتح
-                        </button>
-                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                          <Download size={13} /> تنزيل
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <button
-                  onClick={handleSharePaste}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white shadow hover:bg-green-700 transition"
-                >
-                  <Share2 size={16} /> مشاركة واتساب
-                </button>
-              </div>
             </div>
-          </div>
+            </div>
+
+            {/* أزرار تصدير كبيرة — خارج الكارت */}
+            <div className="flex gap-3">
+              <div className="relative flex-1">
+                <button
+                  onClick={() => setShowExcelMenuPaste((v) => !v)}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-white shadow hover:bg-brand/90 transition"
+                >
+                  <ExternalLink size={16} /> فتح في Excel
+                </button>
+                {showExcelMenuPaste && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
+                    <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+                      <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                        <ExternalLink size={13} /> فتح
+                      </button>
+                      <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                        <Download size={13} /> تنزيل
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+              <button
+                onClick={handleSharePaste}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white shadow hover:bg-green-700 transition"
+              >
+                <Share2 size={16} /> مشاركة واتساب
+              </button>
+            </div>
+          </>
         )}
       </div>
     </div>
