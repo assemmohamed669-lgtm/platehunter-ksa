@@ -23,6 +23,24 @@ import {
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
+const SORT_RESULTS_KEY = "platehunter:sort-results";
+
+type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string> };
+
+function persistSortResults(
+  results: MatchResult[],
+  tashyeekResults: TashyeekResultRow[] | null,
+  sortMode: "new" | "full",
+  newPlatesCount: number,
+) {
+  try {
+    localStorage.setItem(SORT_RESULTS_KEY, JSON.stringify({ results, tashyeekResults, sortMode, newPlatesCount }));
+  } catch { /* storage full */ }
+}
+
+function wipeSortResults() {
+  try { localStorage.removeItem(SORT_RESULTS_KEY); } catch { /* ignore */ }
+}
 
 function findGpsColumn(headers: string[]): string | null {
   return headers.find((h) => /GPS|رابط|موقع|خريطة/i.test(h)) ?? null;
@@ -53,7 +71,7 @@ export default function SortingPage() {
   // ── Tashyeek file (manual entries from registration page) ──
   const [tashyeekTable, setTashyeekTable] = useState<ExcelTable | null>(null);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
-  const [tashyeekResults, setTashyeekResults] = useState<{ tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] | null>(null);
+  const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
   const [tashyeekColsOpen, setTashyeekColsOpen] = useState(false);
 
   // ── Sort results ──
@@ -104,6 +122,19 @@ export default function SortingPage() {
           setTashyeekTable({ headers: tashyeekRec.headers, rows: tashyeekRec.rows });
           setTashyeekFile(new File([tashyeekRec.fileBlob ?? new Blob()], tashyeekRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
         }
+        try {
+          const raw = localStorage.getItem(SORT_RESULTS_KEY);
+          if (raw) {
+            const s = JSON.parse(raw);
+            if (Array.isArray(s.results) && s.results.length > 0) {
+              setSortMode(s.sortMode ?? "full");
+              setNewPlatesCount(s.newPlatesCount ?? 0);
+              setResults(s.results);
+              setSorted(true);
+              if (Array.isArray(s.tashyeekResults)) setTashyeekResults(s.tashyeekResults);
+            }
+          }
+        } catch { /* corrupt storage */ }
       })
       .catch(() => {})
       .finally(() => setHydrated(true));
@@ -202,12 +233,12 @@ export default function SortingPage() {
     if (slot === "data") {
       setDataTable(table); setDataFile(file); setDataPlateColOverride(null);
       setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers))));
-      setDataColsOpen(false); setResults(null); setSorted(false);
+      setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
     } else {
       setReferralTable(table); setReferralFile(file); setReferralPlateColOverride(null);
       const p = detectPlateColumn(table.headers);
       setReferralExtraCols(new Set(table.headers.filter((h) => h !== p && matchesPreferred(h))));
-      setReferralColsOpen(false); setResults(null); setSorted(false);
+      setReferralColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
     }
   }, []);
 
@@ -218,7 +249,7 @@ export default function SortingPage() {
     } else {
       setReferralTable(null); setReferralFile(null); setReferralPlateColOverride(null); setReferralExtraCols(new Set());
     }
-    setResults(null); setSorted(false);
+    setResults(null); setSorted(false); wipeSortResults();
   }
 
   const persistAndSetTashyeek = useCallback(async (table: ExcelTable, file: File) => {
@@ -285,19 +316,20 @@ export default function SortingPage() {
         }
         if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
       }
+      let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
-        const tashyeekMatches: { tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] = [];
+        const tashyeekMatches: TashyeekResultRow[] = [];
         for (const row of tashyeekTable.rows) {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
           if (!n) continue;
           const refRow = refIndex.get(n);
           if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
         }
-        setTashyeekResults(tashyeekMatches);
-      } else {
-        setTashyeekResults(null);
+        finalTashyeek = tashyeekMatches;
       }
+      setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      persistSortResults(matches, finalTashyeek, "full", 0);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
@@ -333,6 +365,7 @@ export default function SortingPage() {
         const dataRow = dataIndex.get(n) ?? (/[A-Za-z]/.test(raw) ? dataIndex.get(reversePlateLetters(n)) : undefined);
         if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
       }
+      let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
         for (const row of referralTable.rows) {
@@ -345,24 +378,25 @@ export default function SortingPage() {
             if (rev !== n) tashyeekRefIndex.set(rev, row);
           }
         }
-        const tashyeekMatches: { tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] = [];
+        const tashyeekMatches: TashyeekResultRow[] = [];
         for (const row of tashyeekTable.rows) {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
           if (!n) continue;
           const refRow = tashyeekRefIndex.get(n);
           if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
         }
-        setTashyeekResults(tashyeekMatches);
-      } else {
-        setTashyeekResults(null);
+        finalTashyeek = tashyeekMatches;
       }
+      setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      persistSortResults(matches, finalTashyeek, "new", newRefRows.length);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
 
   function handleSort() {
     setResults(null); setSorted(false); setTashyeekResults(null);
+    wipeSortResults();
     if (sortMode === "new") runNewSort(); else runFullSort();
   }
 
@@ -566,11 +600,11 @@ export default function SortingPage() {
 
       {/* ③ SORT MODE TABS */}
       <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
-        <button onClick={() => { setSortMode("new"); setSorted(false); setResults(null); }}
+        <button onClick={() => { setSortMode("new"); setSorted(false); setResults(null); setTashyeekResults(null); wipeSortResults(); }}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "new" ? "bg-primary text-night font-bold" : "text-muted"}`}>
           <ScanLine size={15} /> فرز جديد
         </button>
-        <button onClick={() => { setSortMode("full"); setSorted(false); setResults(null); }}
+        <button onClick={() => { setSortMode("full"); setSorted(false); setResults(null); setTashyeekResults(null); wipeSortResults(); }}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "full" ? "bg-primary text-night font-bold" : "text-muted"}`}>
           <FileSpreadsheet size={15} /> فرز كلي
         </button>
@@ -636,6 +670,16 @@ export default function SortingPage() {
         <ListFilter size={18} />
         {sorting ? "جارٍ الفرز..." : "فرز"}
       </button>
+
+      {/* ⑤ SORT RESULTS — مسح */}
+      {sorted && results && (
+        <button
+          onClick={() => { setResults(null); setSorted(false); setTashyeekResults(null); wipeSortResults(); }}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/40 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10"
+        >
+          <Trash2 size={15} /> مسح نتايج الفرز
+        </button>
+      )}
 
       {/* ⑤ SORT RESULTS — مع تطابقات */}
       {sorted && results && matchedResults.length > 0 && (
