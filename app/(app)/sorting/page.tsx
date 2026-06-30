@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
+  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
@@ -197,7 +197,9 @@ export default function SortingPage() {
 
   // ── Derived ──
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers, dataTable.rows) : null;
-  const referralPlateCol = referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null;
+  const referralArabicPlateCol = referralTable ? detectArabicPlateColumn(referralTable.headers) : null;
+  const referralPlateCol = referralArabicPlateCol ?? (referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null);
+  const referralPlateIsArabic = referralArabicPlateCol !== null;
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const gpsCol = dataTable ? findGpsColumn(dataTable.headers) : null;
 
@@ -321,10 +323,12 @@ export default function SortingPage() {
       const refIndex = new Map<string, Record<string, string>>();
       for (const row of referralTable.rows) {
         const raw = String(row[effectiveReferralPlateCol] ?? "");
-        const n = normalizePlate(bankPlateToArabic(raw));
+        const n = referralPlateIsArabic
+          ? normalizePlate(raw)
+          : normalizePlate(bankPlateToArabic(raw));
         if (!n || refIndex.has(n)) continue;
         refIndex.set(n, row);
-        if (/[A-Za-z]/.test(raw)) {
+        if (!referralPlateIsArabic && /[A-Za-z]/.test(raw)) {
           const rev = reversePlateLetters(n);
           if (rev !== n) refIndex.set(rev, row);
         }
@@ -375,7 +379,10 @@ export default function SortingPage() {
       }
       const seenNew = new Set<string>();
       const newRefRows = referralTable.rows.filter((row) => {
-        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        const raw = String(row[effectiveReferralPlateCol] ?? "");
+        const n = referralPlateIsArabic
+          ? normalizePlate(raw)
+          : normalizePlate(bankPlateToArabic(raw));
         if (!n || checkSet.has(n) || seenNew.has(n)) return false;
         seenNew.add(n);
         return true;
@@ -391,9 +398,15 @@ export default function SortingPage() {
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
         const raw = String(refRow[effectiveReferralPlateCol] ?? "");
-        const n = normalizePlate(bankPlateToArabic(raw));
+        const n = referralPlateIsArabic
+          ? normalizePlate(raw)
+          : normalizePlate(bankPlateToArabic(raw));
         if (!n) continue;
-        const dataRows = dataIndex.get(n) ?? (/[A-Za-z]/.test(raw) ? dataIndex.get(reversePlateLetters(n)) : undefined);
+        const dataRows = dataIndex.get(n) ?? (
+          !referralPlateIsArabic && /[A-Za-z]/.test(raw)
+            ? dataIndex.get(reversePlateLetters(n))
+            : undefined
+        );
         if (dataRows) {
           for (const dataRow of dataRows) {
             matches.push({ referralRow: refRow, dataRow, status: "exact" });

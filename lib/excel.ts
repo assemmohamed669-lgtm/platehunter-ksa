@@ -252,16 +252,18 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
   if (allSheetNames.length > 1) {
     let bestScore = 0;
+    let bestName: string | undefined;
     for (const name of allSheetNames) {
       const score = _sheetPlateScore(data, name, password);
-      if (score > bestScore) { bestScore = score; sheetName = name; }
+      if (score > bestScore) { bestScore = score; bestName = name; }
     }
-    if (bestScore < 0.3) sheetName = undefined;
-
-    if (!sheetName) {
+    if (bestScore >= 0.1) {
+      sheetName = bestName;
+    } else {
       for (const name of allSheetNames) {
         if (_sheetHasPlateCol(data, name, password)) { sheetName = name; break; }
       }
+      if (!sheetName && bestName) sheetName = bestName;
     }
   }
   sheetName = sheetName ?? allSheetNames[0];

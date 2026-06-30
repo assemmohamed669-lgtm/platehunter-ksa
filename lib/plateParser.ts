@@ -715,6 +715,15 @@ function cellLooksLikePlate(raw: string): boolean {
   return true;
 }
 
+export function detectArabicPlateColumn(headers: string[]): string | null {
+  for (const h of headers) {
+    const lower = h.toLowerCase().trim();
+    if (lower.includes("plate") && lower.includes("arabic")) return h;
+    if (/لوح/.test(h)) return h;
+  }
+  return null;
+}
+
 export function detectPlateColumn(headers: string[], rows?: Record<string, string>[]): string | null {
   // الأولوية: اكتشاف بناءً على المحتوى الفعلي (يشتغل بغض النظر عن اسم العمود)
   if (rows && rows.length > 0) {

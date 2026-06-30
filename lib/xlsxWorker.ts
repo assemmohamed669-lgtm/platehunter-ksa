@@ -72,6 +72,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     if (!sheetName && allSheetNames.length > 1) {
       // المحاولة الأولى: score كل ورقة واختر الأعلى
       let bestScore = 0;
+      let bestName: string | undefined;
       for (const name of allSheetNames) {
         try {
           const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
@@ -82,10 +83,12 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
           const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false, defval: null });
           if (scanRows.length < 2) continue;
           const score = scorePlateColumnByContent(scanRows, 0);
-          if (score > bestScore) { bestScore = score; sheetName = name; }
+          if (score > bestScore) { bestScore = score; bestName = name; }
         } catch { continue; }
       }
-      if (bestScore < 0.3) sheetName = undefined; // لم تجتز أي ورقة الحد الأدنى
+      if (bestScore >= 0.1) {
+        sheetName = bestName;
+      }
 
       // المحاولة الثانية (احتياطي): اسم الهيدر القديم
       if (!sheetName) {
@@ -106,6 +109,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
             if (hasPlate) { sheetName = name; break; }
           } catch { continue; }
         }
+        if (!sheetName && bestName) sheetName = bestName;
       }
     }
     sheetName = sheetName ?? allSheetNames[0];
