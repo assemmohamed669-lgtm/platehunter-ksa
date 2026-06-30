@@ -120,11 +120,13 @@ function buildGpsLink(value: string): string | null {
 function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string> }) {
   if (!result.found) {
     return (
-      <div className="rounded-xl border border-danger/40 bg-danger/10 p-4 flex items-center gap-3">
-        <XCircle size={20} className="text-danger shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-bold text-ink">{result.plate}</p>
-          <p className="text-xs text-danger">غير موجود في ملف التشييك</p>
+      <div className="rounded-xl border-2 border-danger/40 bg-danger/10 p-4">
+        <div className="flex items-center justify-center gap-2 mb-3">
+          <XCircle size={16} className="text-danger shrink-0" />
+          <span className="text-xs font-bold text-danger">غير موجود في ملف التشييك</span>
+        </div>
+        <div className="flex justify-center">
+          <PlateBadge value={result.plate} size="md" />
         </div>
       </div>
     );
@@ -196,6 +198,7 @@ export default function InstantCheckPage() {
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraResult, setCameraResult] = useState<PlateResult | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraRawText, setCameraRawText] = useState<string | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // PTT
@@ -447,16 +450,19 @@ export default function InstantCheckPage() {
         const { createWorker } = await import('tesseract.js') as any;
         const worker = await createWorker(['ara', 'eng'], 1);
         let plate: string | null = null;
+        let rawText = "";
         try {
           const { data } = await worker.recognize(resized);
-          plate = extractPlateFromOcrText(data.text as string);
+          rawText = (data.text as string ?? "").replace(/\n/g, " ").trim();
+          plate = extractPlateFromOcrText(rawText);
         } finally {
           await worker.terminate();
         }
+        setCameraRawText(rawText || null);
         if (plate) {
           setCameraResult(searchInCheck(plate));
         } else {
-          setCameraError("لم يُتعرَّف على لوحة في الصورة — جرّب زاوية أوضح");
+          setCameraError("لم يُتعرَّف على نمط لوحة");
         }
       } catch {
         setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
@@ -472,6 +478,7 @@ export default function InstantCheckPage() {
     setCameraImage(null);
     setCameraResult(null);
     setCameraError(null);
+    setCameraRawText(null);
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
@@ -967,6 +974,12 @@ export default function InstantCheckPage() {
 
               {cameraError && (
                 <p className="text-center text-xs text-danger">{cameraError}</p>
+              )}
+              {!cameraLoading && cameraRawText && !cameraResult && (
+                <div className="rounded-xl border border-border bg-surface-2 p-3">
+                  <p className="text-[10px] text-muted mb-1 text-center">النص الذي قرأه OCR</p>
+                  <p className="text-xs text-ink text-center font-mono break-all leading-relaxed">{cameraRawText.slice(0, 120)}</p>
+                </div>
               )}
               {cameraResult && (
                 <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
