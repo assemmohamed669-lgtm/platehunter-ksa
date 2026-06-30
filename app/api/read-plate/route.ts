@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1",
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,19 +13,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ plate: null, error: "missing image" }, { status: 400 });
     }
 
-    const msg = await client.messages.create({
-      model: "claude-sonnet-4-6",
+    if (!process.env.GROQ_API_KEY) {
+      return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 500 });
+    }
+
+    const response = await client.chat.completions.create({
+      model: "llama-3.2-11b-vision-preview",
       max_tokens: 32,
+      temperature: 0,
       messages: [{
         role: "user",
         content: [
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-              data: image,
-            },
+            type: "image_url",
+            image_url: { url: `data:${mediaType};base64,${image}` },
           },
           {
             type: "text",
@@ -47,7 +51,7 @@ A  B  D  E  G  H  J  K  L  M  N  R  S  T  U  V  X  Z
       }],
     });
 
-    const text = (msg.content[0] as { type: string; text: string }).text?.trim() ?? "";
+    const text = response.choices[0]?.message?.content?.trim() ?? "";
     if (!text || text.toUpperCase() === "NONE") {
       return NextResponse.json({ plate: null });
     }
@@ -55,6 +59,6 @@ A  B  D  E  G  H  J  K  L  M  N  R  S  T  U  V  X  Z
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("read-plate error:", msg);
-    return NextResponse.json({ plate: null, error: "server_error", detail: msg }, { status: 500 });
+    return NextResponse.json({ plate: null, error: "server_error", detail: msg.slice(0, 200) }, { status: 500 });
   }
 }
