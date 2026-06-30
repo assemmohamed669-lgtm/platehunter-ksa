@@ -14,12 +14,26 @@ ABD1234
 Do NOT describe the plate. Do NOT write any other words. Just the 7 characters.
 If no plate is visible at all, output: NONE`;
 
-// Extract plate pattern from model response (safety net if model adds extra words)
+// Extract plate from model response and normalise letter order.
+// Saudi plates display letters RIGHT-to-LEFT (rightmost = first letter).
+// Vision models read left-to-right, so they return letters reversed — we flip them back.
+// e.g. model reads "TTJ8877" → reverse letters → "JTT8877"
 function extractPlate(text: string): string | null {
   const cleaned = text.replace(/\s+/g, "").toUpperCase();
-  // Match 3 letters + 4 digits or 4 digits + 3 letters
-  const m = cleaned.match(/[A-Z]{2,3}[0-9]{3,4}/) ?? cleaned.match(/[0-9]{3,4}[A-Z]{2,3}/);
-  return m ? m[0] : null;
+
+  // Prefer letters-then-digits (most common model output format)
+  let m = cleaned.match(/([A-Z]{2,3})([0-9]{3,4})/);
+  if (m) {
+    const letters = m[1].split("").reverse().join(""); // reverse: TTJ → JTT
+    return letters + m[2];
+  }
+  // Digits-then-letters fallback
+  m = cleaned.match(/([0-9]{3,4})([A-Z]{2,3})/);
+  if (m) {
+    const letters = m[2].split("").reverse().join(""); // reverse: TTJ → JTT
+    return letters + m[1];
+  }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
