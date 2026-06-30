@@ -179,7 +179,6 @@ export default function InstantCheckPage() {
   // Manual
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
-  const [manualPlatePreview, setManualPlatePreview] = useState("");
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
 
   // Camera
@@ -202,6 +201,21 @@ export default function InstantCheckPage() {
   const [copiedHitId, setCopiedHitId] = useState<string | null>(null);
   const [hitsZoom, setHitsZoom] = useState(3);
   const [hitsSelected, setHitsSelected] = useState<Set<string>>(new Set());
+
+  // Load hits from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ic-hits");
+      if (saved) setManualHits(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  // Save hits to localStorage on every change
+  useEffect(() => {
+    try {
+      localStorage.setItem("ic-hits", JSON.stringify(manualHits));
+    } catch {}
+  }, [manualHits]);
 
   // Load check file from IDB on mount
   useEffect(() => {
@@ -283,17 +297,14 @@ export default function InstantCheckPage() {
 
     if (invalid.length > 0) {
       setManualError(`حروف غير موجودة في اللوحات السعودية: ${invalid.join(" ")}`);
-      setManualPlatePreview("");
     } else {
       setManualError(null);
-      setManualPlatePreview(converted.replace(/\s+/g, ""));
     }
   }
 
   function dismissManualError() {
     setManualError(null);
     setManualInput("");
-    setManualPlatePreview("");
     setManualResult(null);
   }
 
@@ -609,7 +620,6 @@ export default function InstantCheckPage() {
     setCheckColsOpen(false);
     setManualInput("");
     setManualError(null);
-    setManualPlatePreview("");
     setManualResult(null);
     setCameraResult(null);
     setPttResults([]);
@@ -622,7 +632,6 @@ export default function InstantCheckPage() {
     setSelectedCheckCols(new Set());
     setManualInput("");
     setManualError(null);
-    setManualPlatePreview("");
     setManualResult(null);
     setCameraResult(null);
     setPttResults([]);
@@ -755,13 +764,6 @@ export default function InstantCheckPage() {
                   بحث
                 </button>
               </div>
-
-              {/* Plate preview */}
-              {manualPlatePreview && !manualError && (
-                <div className="flex justify-center">
-                  <PlateBadge value={manualPlatePreview} size="md" />
-                </div>
-              )}
 
               {/* Error with dismiss button */}
               {manualError && (
