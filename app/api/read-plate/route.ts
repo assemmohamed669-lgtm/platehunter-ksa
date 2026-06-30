@@ -14,11 +14,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 500 });
     }
 
+    // Support both old (AIza...) and new (AQ...) Google AI Studio key formats
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": GOOGLE_API_KEY,
+        },
         body: JSON.stringify({
           contents: [{
             parts: [
@@ -39,11 +43,11 @@ export async function POST(req: NextRequest) {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      const reason = body.toLowerCase().includes("api key") || res.status === 400
-        ? "missing_api_key"
-        : "server_error";
-      console.error("Gemini error:", res.status, body.slice(0, 200));
-      return NextResponse.json({ plate: null, error: reason, detail: res.status }, { status: 500 });
+      console.error("Gemini error:", res.status, body.slice(0, 400));
+      return NextResponse.json(
+        { plate: null, error: "gemini_error", detail: res.status, hint: body.slice(0, 300) },
+        { status: 500 }
+      );
     }
 
     const data = await res.json();

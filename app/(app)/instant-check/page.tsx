@@ -449,10 +449,26 @@ export default function InstantCheckPage() {
         const resized = await resizeImageForOCR(dataUrl);
         let rawText = "";
         let plate: string | null = null;
-        let usedNative = false;
 
-        // Try 1: native TextDetector (Chrome/Android ML Kit — much better accuracy)
-        if (typeof window !== "undefined" && "TextDetector" in window) {
+        // ── Try 1: Gemini API (best quality — server-side vision model) ──────
+        try {
+          const base64 = resized.split(",")[1];
+          const apiRes = await fetch("/api/read-plate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
+          });
+          const json = await apiRes.json().catch(() => null);
+          if (apiRes.ok && json?.plate) {
+            rawText = json.plate as string;
+            plate = json.plate as string;
+          }
+          // Log hint if Gemini errors (visible in browser console for debugging)
+          if (!apiRes.ok && json?.hint) console.warn("Gemini:", json.hint);
+        } catch { /* network error — fall through */ }
+
+        // ── Try 2: native TextDetector (Chrome/Android ML Kit) ───────────────
+        if (!plate && typeof window !== "undefined" && "TextDetector" in window) {
           try {
             const img = document.createElement("img");
             await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("img")); img.src = resized; });
@@ -461,19 +477,19 @@ export default function InstantCheckPage() {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const blocks: Array<{ rawValue: string }> = await detector.detect(img);
             if (blocks.length > 0) {
-              rawText = blocks.map((b) => b.rawValue).join(" ").trim();
+              const combined = blocks.map((b) => b.rawValue).join(" ").trim();
               for (const b of blocks) {
                 plate = extractPlateFromOcrText(b.rawValue);
                 if (plate) break;
               }
-              if (!plate) plate = extractPlateFromOcrText(rawText);
-              usedNative = true;
+              if (!plate) plate = extractPlateFromOcrText(combined);
+              rawText = combined;
             }
-          } catch { /* TextDetector not available or failed */ }
+          } catch { /* TextDetector not available */ }
         }
 
-        // Try 2: Tesseract.js fallback
-        if (!usedNative) {
+        // ── Try 3: Tesseract.js (last resort) ────────────────────────────────
+        if (!plate) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { createWorker } = await import("tesseract.js") as any;
           const worker = await createWorker(["ara", "eng"], 1);
