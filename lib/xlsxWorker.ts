@@ -203,8 +203,21 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
       return;
     }
 
+    // If the "header" row itself looks like plate data (headerless file), include
+    // it as the first data row so the first plate isn't silently dropped.
+    const nonEmptyHdr = headers.filter((h) => h);
+    const headerIsData =
+      nonEmptyHdr.length > 0 &&
+      nonEmptyHdr.filter((h) => cellLooksLikePlate(h)).length / nonEmptyHdr.length >= 0.5;
+
     // Build objects from the 2-D array using actual column positions
     const rows: Record<string, string>[] = [];
+    if (headerIsData) {
+      const firstRow: Record<string, string> = {};
+      const hdrCells = raw2d[headerRowIdx] as any[];
+      for (const { name, col } of headerCols) firstRow[name] = String(hdrCells[col] ?? "");
+      rows.push(firstRow);
+    }
     for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as any[];
       const obj: Record<string, string> = {};

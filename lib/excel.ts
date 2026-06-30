@@ -344,7 +344,28 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     const headers = headerCols.map((hc) => hc.name);
     if (headers.length === 0) throw new Error("empty");
 
+    // If the "header" row itself looks like plate data (headerless file), include
+    // it as the first data row so the first plate isn't silently dropped.
+    const nonEmptyHdr = headers.filter((h) => h);
+    const isPlateCell = (v: string) => {
+      const c = v.replace(/[\s\-_.ـ/]/g, "");
+      if (c.length < 2 || c.length > 10) return false;
+      const dm = c.match(/[0-9٠-٩]+/);
+      if (!dm || dm[0].length > 4) return false;
+      const nd = c.replace(/[0-9٠-٩]/g, "");
+      return nd.length > 0 && nd.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nd);
+    };
+    const headerIsData =
+      nonEmptyHdr.length > 0 &&
+      nonEmptyHdr.filter(isPlateCell).length / nonEmptyHdr.length >= 0.5;
+
     const rows: Record<string, string>[] = [];
+    if (headerIsData) {
+      const firstRow: Record<string, string> = {};
+      const hdrCells = raw2d[headerRowIdx] as unknown[];
+      for (const { name, col } of headerCols) firstRow[name] = String(hdrCells[col] ?? "");
+      rows.push(firstRow);
+    }
     for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as unknown[];
       const obj: Record<string, string> = {};
