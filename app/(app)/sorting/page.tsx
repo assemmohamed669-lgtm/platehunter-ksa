@@ -24,6 +24,7 @@ import {
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
 const SORT_RESULTS_KEY = "platehunter:sort-results";
+const PASTE_RESULTS_KEY = "platehunter:paste-results";
 
 const DUPE_COLORS = [
   { tw: "bg-yellow-100",  hex: "#FEF9C3" },
@@ -51,6 +52,19 @@ function persistSortResults(
 
 function wipeSortResults() {
   try { localStorage.removeItem(SORT_RESULTS_KEY); } catch { /* ignore */ }
+}
+
+function persistPasteResults(
+  results: { converted: string; row: Record<string, string>; dataIdx: number }[],
+  text: string,
+) {
+  try {
+    localStorage.setItem(PASTE_RESULTS_KEY, JSON.stringify({ results, text }));
+  } catch { /* storage full */ }
+}
+
+function wipePasteResults() {
+  try { localStorage.removeItem(PASTE_RESULTS_KEY); } catch { /* ignore */ }
 }
 
 function findGpsColumn(headers: string[]): string | null {
@@ -102,7 +116,7 @@ export default function SortingPage() {
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
-  const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string> }[]>([]);
+  const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string>; dataIdx: number }[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteZoom, setPasteZoom] = useState(1);
   const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
@@ -146,6 +160,17 @@ export default function SortingPage() {
             }
           }
         } catch { /* corrupt storage */ }
+        try {
+          const rawPaste = localStorage.getItem(PASTE_RESULTS_KEY);
+          if (rawPaste) {
+            const s = JSON.parse(rawPaste);
+            if (Array.isArray(s.results) && s.results.length > 0) {
+              setPasteResults(s.results);
+              setPasteText(s.text ?? "");
+              setPasteRan(true);
+            }
+          }
+        } catch { /* corrupt paste storage */ }
       })
       .catch(() => {})
       .finally(() => setHydrated(true));
@@ -244,6 +269,22 @@ export default function SortingPage() {
       })
       .sort((a, b) => a._dist - b._dist);
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
+
+  const pasteColorMap = useMemo(() => {
+    if (!pasteResults.length) return new Map<string, number>();
+    const counts = new Map<string, number>();
+    for (const p of pasteResults) {
+      const k = normalizePlate(bankPlateToArabic(p.converted));
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const map = new Map<string, number>();
+    let ci = 0;
+    for (const [plate, count] of counts) {
+      if (count > 1) { map.set(plate, ci % DUPE_COLORS.length); ci++; }
+    }
+    return map;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pasteResults]);
 
   const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
 
@@ -510,20 +551,30 @@ export default function SortingPage() {
   // ── Paste sort ──
   function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
-    const sourceMap = new Map<string, Record<string, string>>();
-    for (const row of dataTable.rows) {
+    const sourceMap = new Map<string, { row: Record<string, string>; dataIdx: number }[]>();
+    for (let i = 0; i < dataTable.rows.length; i++) {
+      const row = dataTable.rows[i];
       const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
-      if (n) sourceMap.set(n, row);
+      if (!n) continue;
+      const arr = sourceMap.get(n);
+      if (arr) arr.push({ row, dataIdx: i });
+      else sourceMap.set(n, [{ row, dataIdx: i }]);
     }
     const tokens = pasteText.split(/[\n,،]+/).map((t) => t.trim()).filter(Boolean);
-    const matches: { converted: string; row: Record<string, string> }[] = [];
+    const matches: { converted: string; row: Record<string, string>; dataIdx: number }[] = [];
     for (const token of tokens) {
       const converted = bankPlateToArabic(token);
-      const row = sourceMap.get(normalizePlate(converted));
-      if (row) matches.push({ converted, row });
+      const entries = sourceMap.get(normalizePlate(converted));
+      if (entries) {
+        for (const { row, dataIdx } of entries) {
+          matches.push({ converted, row, dataIdx });
+        }
+      }
     }
+    matches.sort((a, b) => a.dataIdx - b.dataIdx);
     setPasteResults(matches);
     setPasteRan(true);
+    persistPasteResults(matches, pasteText);
   }
 
   // ── WhatsApp ──
@@ -553,7 +604,11 @@ export default function SortingPage() {
   function toggleResult(i: number) { setSelectedResults((p) => { const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n; }); }
   function toggleAllResults() { setSelectedResults((p) => p.size === displayResults.length ? new Set() : new Set(displayResults.map((_, i) => i))); }
   function deleteResult(i: number) { const r = displayResults[i]; setResults((p) => p ? p.filter((x) => x !== r) : null); setSelectedResults(new Set()); }
-  function deletePasteResult(i: number) { setPasteResults((p) => p.filter((_, idx) => idx !== i)); }
+  function deletePasteResult(i: number) {
+    const next = pasteResults.filter((_, idx) => idx !== i);
+    setPasteResults(next);
+    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+  }
 
   if (!hydrated) return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
 
@@ -1023,7 +1078,7 @@ export default function SortingPage() {
           <div className="mb-1 flex items-center justify-between">
             <label className="text-xs text-muted">الصق اللوحات هنا</label>
             {pasteText && (
-              <button onClick={() => { setPasteText(""); setPasteResults([]); setPasteRan(false); }}
+              <button onClick={() => { setPasteText(""); setPasteResults([]); setPasteRan(false); wipePasteResults(); }}
                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:text-danger">
                 <Trash2 size={13} /> مسح الكل
               </button>
@@ -1033,7 +1088,7 @@ export default function SortingPage() {
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !pasteText.includes("\n")) {
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 runPasteSort();
               }
@@ -1087,29 +1142,12 @@ export default function SortingPage() {
                 >
                   <Share2 size={11} />
                 </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowExcelMenuPaste((v) => !v)}
-                    className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
-                  >
-                    <Download size={11} />
-                  </button>
-                  {showExcelMenuPaste && (
-                    <>
-                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
-                      <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                          <ExternalLink size={13} /> فتح
-                        </button>
-                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
-                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                          <Download size={13} /> تنزيل
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
+                <button
+                  onClick={handleOpenPaste}
+                  className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
+                >
+                  <Download size={11} />
+                </button>
               </div>
             </div>
 
@@ -1129,10 +1167,16 @@ export default function SortingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pasteResults.map((p, i) => (
+                    {pasteResults.map((p, i) => {
+                      const pasteKey = normalizePlate(bankPlateToArabic(p.converted));
+                      const pasteColorIdx = pasteColorMap.get(pasteKey);
+                      const pasteBg = pasteColorIdx !== undefined
+                        ? DUPE_COLORS[pasteColorIdx].tw
+                        : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40";
+                      return (
                       <tr
                         key={i}
-                        className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}
+                        className={`border-b border-border ${pasteBg}`}
                       >
                         <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
                         <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
@@ -1168,9 +1212,43 @@ export default function SortingPage() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
+              </div>
+
+              {/* أزرار تصدير كبيرة */}
+              <div className="flex gap-3 p-3 pt-0">
+                <div className="relative flex-1">
+                  <button
+                    onClick={() => setShowExcelMenuPaste((v) => !v)}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-white shadow hover:bg-brand/90 transition"
+                  >
+                    <ExternalLink size={16} /> فتح في Excel
+                  </button>
+                  {showExcelMenuPaste && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
+                      <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+                        <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                          <ExternalLink size={13} /> فتح
+                        </button>
+                        <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
+                          <Download size={13} /> تنزيل
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button
+                  onClick={handleSharePaste}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white shadow hover:bg-green-700 transition"
+                >
+                  <Share2 size={16} /> مشاركة واتساب
+                </button>
               </div>
             </div>
           </div>
