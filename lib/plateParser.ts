@@ -67,7 +67,7 @@ export function mapEgyptianSpeech(transcript: string): string {
     .trim()
     .split(/\s+/)
     .map((w) => {
-      const clean = w.replace(/[ؐ-ًؚ-ٟ]/g, "");
+      const clean = w.replace(/[ؐ-ًؚ-ٟ]/g, "");
       return EGYPTIAN_LETTERS[clean] ?? clean;
     })
     .join("");
@@ -229,7 +229,7 @@ const PHONETIC_MERGES: [string, string][] = ([
 
 // ─── Spoken numbers ─────────────────────────────────────────────────────────
 // Multi-word entries (10-19) must come first so they're processed before
-// their constituent single words (ثلاثة→3 must not eat "ثلاثة عشر" first).
+// their constituent single words (ثلاثة عشر→3 must not eat "ثلاثة عشر" first).
 // Sorted longest-first guarantees this automatically.
 const SPOKEN_NUMBERS: [string, string][] = ([
   // ── 0-9 ──────────────────────────────────────────────────────────────────
@@ -325,7 +325,7 @@ const ARABIC_INDIC: Record<string, string> = {
 
 function removeDiacritics(text: string): string {
   // Strip tashkeel: fatha, damma, kasra, sukun, shadda, tanwin variants, superscript alef
-  return text.replace(/[ً-ٰٟ]/g, "");
+  return text.replace(/[ً-ٰٟ]/g, "");
 }
 
 function replaceAll(text: string, pairs: [string, string][]): string {
@@ -656,7 +656,73 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
 // ─── Fuzzy matching helpers ────────────────────────────────────────────────
 
-export function detectPlateColumn(headers: string[]): string | null {
+/**
+ * يكتشف عمود اللوحة بناءً على المحتوى الفعلي للخلايا (لوحات سعودية فعلية)
+ * مش اسم الهيدر. يفحص عينة من الصفوف لكل عمود ويحسب نسبة الخلايا اللي
+ * شكلها لوحة سعودية صحيحة بعد التطبيع. العمود صاحب أعلى نسبة (وفوق حد أدنى)
+ * يفوز. الأولوية لهذه الدالة قبل أي اعتماد على اسم العمود.
+ */
+export function detectPlateColumnByContent(
+  headers: string[],
+  rows: Record<string, string>[],
+  sampleSize = 50,
+  minRatio = 0.5,
+): string | null {
+  if (headers.length === 0 || rows.length === 0) return null;
+
+  const sample = rows.slice(0, Math.min(sampleSize, rows.length));
+  let bestCol: string | null = null;
+  let bestRatio = 0;
+  let bestNonEmpty = 0;
+
+  for (const header of headers) {
+    let plateLike = 0;
+    let nonEmpty = 0;
+    for (const row of sample) {
+      const raw = String(row[header] ?? "").trim();
+      if (!raw) continue;
+      nonEmpty++;
+      if (cellLooksLikePlate(raw)) plateLike++;
+    }
+    if (nonEmpty === 0) continue;
+    const ratio = plateLike / nonEmpty;
+    if (ratio > bestRatio || (ratio === bestRatio && nonEmpty > bestNonEmpty)) {
+      bestRatio = ratio;
+      bestCol = header;
+      bestNonEmpty = nonEmpty;
+    }
+  }
+
+  return bestRatio >= minRatio ? bestCol : null;
+}
+
+/**
+ * فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟
+ * (1-3 أحرف عربي/إنجليزي + 1-4 أرقام، طول إجمالي معقول)
+ */
+function cellLooksLikePlate(raw: string): boolean {
+  const cleaned = raw.replace(/[\s\-_./]/g, "");
+  if (cleaned.length < 2 || cleaned.length > 10) return false;
+
+  const digitMatch = cleaned.match(/[0-9٠-٩]+/);
+  if (!digitMatch) return false;
+  if (digitMatch[0].length > 4) return false; // أكتر من 4 أرقام مش لوحة سعودية
+
+  const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
+  if (nonDigits.length === 0 || nonDigits.length > 3) return false;
+  if (!/^[\u0600-\u06FFa-zA-Z]+$/.test(nonDigits)) return false;
+
+  return true;
+}
+
+export function detectPlateColumn(headers: string[], rows?: Record<string, string>[]): string | null {
+  // الأولوية: اكتشاف بناءً على المحتوى الفعلي (يشتغل بغض النظر عن اسم العمود)
+  if (rows && rows.length > 0) {
+    const byContent = detectPlateColumnByContent(headers, rows);
+    if (byContent) return byContent;
+  }
+
+  // احتياطي: اسم العمود (للحالات اللي مفيهاش rows، أو المحتوى مش حاسم)
   const keywords = ["لوحة", "اللوحة", "plate"];
   const matches = headers.filter((h) =>
     keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))

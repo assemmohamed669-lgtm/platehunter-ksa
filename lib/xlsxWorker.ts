@@ -6,6 +6,45 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
 
+// ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
+// (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
+function cellLooksLikePlate(raw: string): boolean {
+  const cleaned = raw.replace(/[\s\-_./]/g, "");
+  if (cleaned.length < 2 || cleaned.length > 10) return false;
+
+  const digitMatch = cleaned.match(/[0-9٠-٩]+/);
+  if (!digitMatch) return false;
+  if (digitMatch[0].length > 4) return false;
+
+  const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
+  if (nonDigits.length === 0 || nonDigits.length > 3) return false;
+  if (!/^[\u0600-\u06FFa-zA-Z]+$/.test(nonDigits)) return false;
+
+  return true;
+}
+
+// يفحص صفوف خام (2-D array) ويحدد هل فيه عمود شكله لوحات، بناءً على المحتوى
+function rowsHavePlateColumnByContent(raw2d: any[][], headerRowIdx: number): boolean {
+  const headerRow = (raw2d[headerRowIdx] as any[]).map((h) => String(h ?? "").trim());
+  const sample = raw2d.slice(headerRowIdx + 1, headerRowIdx + 1 + 30);
+
+  let bestRatio = 0;
+  for (let col = 0; col < headerRow.length; col++) {
+    let plateLike = 0;
+    let nonEmpty = 0;
+    for (const r of sample) {
+      const raw = String((r as any[])[col] ?? "").trim();
+      if (!raw) continue;
+      nonEmpty++;
+      if (cellLooksLikePlate(raw)) plateLike++;
+    }
+    if (nonEmpty === 0) continue;
+    const ratio = plateLike / nonEmpty;
+    if (ratio > bestRatio) bestRatio = ratio;
+  }
+  return bestRatio >= 0.5;
+}
+
 onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }>) {
   const { buffer, password } = e.data;
   try {
@@ -21,10 +60,12 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       /* password-protected — sheetName stays undefined; detect after full parse */
     }
 
-    // Pass 1.5 (only for multi-sheet files): scan each sheet for a plate column header.
-    // Single-sheet files skip this block — zero overhead.
+    // Pass 1.5 (only for multi-sheet files): scan each sheet's CONTENT first
+    // (priority — works regardless of header naming), then fall back to the
+    // old keyword-on-header-name check if content detection found nothing.
     const PLATE_DET_KWS = ["لوحة", "اللوحة", "plate"];
     if (allSheetNames.length > 1) {
+      // المحاولة الأولى: فحص المحتوى
       for (const name of allSheetNames) {
         try {
           const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
@@ -32,15 +73,31 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
           const wbScan = XLSX.read(data, scanOpts);
           const wsScan = wbScan.Sheets[name];
           if (!wsScan) continue;
-          const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false });
-          const hasPlate = scanRows.slice(0, 20).some((row: any[]) =>
-            row.some((c: any) => {
-              const v = String(c ?? "").trim().toLowerCase();
-              return PLATE_DET_KWS.some((k) => v.includes(k));
-            })
-          );
-          if (hasPlate) { sheetName = name; break; }
+          const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false, defval: null });
+          if (scanRows.length < 2) continue;
+          if (rowsHavePlateColumnByContent(scanRows, 0)) { sheetName = name; break; }
         } catch { continue; }
+      }
+
+      // المحاولة الثانية (احتياطي): اسم الهيدر القديم
+      if (!sheetName) {
+        for (const name of allSheetNames) {
+          try {
+            const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+            if (password) (scanOpts as Record<string, unknown>).password = password;
+            const wbScan = XLSX.read(data, scanOpts);
+            const wsScan = wbScan.Sheets[name];
+            if (!wsScan) continue;
+            const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false });
+            const hasPlate = scanRows.slice(0, 20).some((row: any[]) =>
+              row.some((c: any) => {
+                const v = String(c ?? "").trim().toLowerCase();
+                return PLATE_DET_KWS.some((k) => v.includes(k));
+              })
+            );
+            if (hasPlate) { sheetName = name; break; }
+          } catch { continue; }
+        }
       }
     }
     sheetName = sheetName ?? allSheetNames[0];

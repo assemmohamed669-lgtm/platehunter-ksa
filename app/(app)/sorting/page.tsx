@@ -87,7 +87,7 @@ export default function SortingPage() {
         if (refRec) {
           setReferralTable({ headers: refRec.headers, rows: refRec.rows });
           setReferralFile(new File([refRec.fileBlob ?? new Blob()], refRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-          const p = detectPlateColumn(refRec.headers);
+          const p = detectPlateColumn(refRec.headers, refRec.rows);
           setReferralExtraCols(new Set(refRec.headers.filter((h) => h !== p && matchesPreferred(h))));
         }
         if (checkRec) {
@@ -108,7 +108,7 @@ export default function SortingPage() {
           setReferralFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
           setReferralPlateColOverride(null);
           setResults(null); setSorted(false);
-          const p = detectPlateColumn(rec.headers);
+          const p = detectPlateColumn(rec.headers, rec.rows);
           setReferralExtraCols(new Set(rec.headers.filter((h) => h !== p && matchesPreferred(h))));
         });
       } else if (slot === "data") {
@@ -118,7 +118,7 @@ export default function SortingPage() {
           setDataFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
           setDataPlateColOverride(null);
           setResults(null); setSorted(false);
-          setOutputCols(new Set(guessDefaultColumns(rec.headers, detectPlateColumn(rec.headers))));
+          setOutputCols(new Set(guessDefaultColumns(rec.headers, detectPlateColumn(rec.headers, rec.rows))));
         });
       }
     };
@@ -128,7 +128,7 @@ export default function SortingPage() {
 
   useEffect(() => {
     if (dataTable) {
-      const p = detectPlateColumn(dataTable.headers);
+      const p = detectPlateColumn(dataTable.headers, dataTable.rows);
       setOutputCols(new Set(guessDefaultColumns(dataTable.headers, p)));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,16 +136,16 @@ export default function SortingPage() {
 
   useEffect(() => {
     if (referralTable) {
-      const p = detectPlateColumn(referralTable.headers);
+      const p = detectPlateColumn(referralTable.headers, referralTable.rows);
       setReferralExtraCols(new Set(referralTable.headers.filter((h) => h !== p && matchesPreferred(h))));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referralTable]);
 
   // ── Derived ──
-  const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers) : null;
-  const referralPlateCol = referralTable ? detectPlateColumn(referralTable.headers) : null;
-  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+  const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers, dataTable.rows) : null;
+  const referralPlateCol = referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null;
+  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const gpsCol = dataTable ? findGpsColumn(dataTable.headers) : null;
 
   const effectiveDataPlateCol = dataPlateColOverride ?? dataPlateCol;
@@ -189,11 +189,11 @@ export default function SortingPage() {
     await saveUploadedFile(record);
     if (slot === "data") {
       setDataTable(table); setDataFile(file); setDataPlateColOverride(null);
-      setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers))));
+      setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers, table.rows))));
       setDataColsOpen(false); setResults(null); setSorted(false);
     } else {
       setReferralTable(table); setReferralFile(file); setReferralPlateColOverride(null);
-      const p = detectPlateColumn(table.headers);
+      const p = detectPlateColumn(table.headers, table.rows);
       setReferralExtraCols(new Set(table.headers.filter((h) => h !== p && matchesPreferred(h))));
       setReferralColsOpen(false); setResults(null); setSorted(false);
     }
