@@ -203,11 +203,9 @@ export default function InstantCheckPage() {
   const [cameraInputPlate, setCameraInputPlate] = useState("");
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Crop
-  const [pendingCropImage, setPendingCropImage] = useState<string | null>(null);
-  const [cropRect, setCropRect] = useState({ x1: 0.05, y1: 0.25, x2: 0.95, y2: 0.75 });
-  const dragHandleRef = useRef<string | null>(null); // ref not state — must be readable synchronously in touchmove
-  const cropContainerRef = useRef<HTMLDivElement>(null);
+  // Live camera viewfinder
+  const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // PTT
   const [pttListening, setPttListening] = useState(false);
@@ -237,6 +235,15 @@ export default function InstantCheckPage() {
       localStorage.setItem("ic-hits", JSON.stringify(manualHits));
     } catch {}
   }, [manualHits]);
+
+  // Attach live camera stream to video element whenever stream changes
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !liveStream) return;
+    video.srcObject = liveStream;
+    video.play().catch(() => {});
+    return () => { liveStream.getTracks().forEach((t) => t.stop()); };
+  }, [liveStream]);
 
   // Load check file from IDB on mount
   useEffect(() => {
@@ -448,19 +455,55 @@ export default function InstantCheckPage() {
     });
   }
 
-  // Open crop UI instead of running OCR immediately
+  // Open live camera viewfinder; fall back to file input if getUserMedia unavailable
+  async function openLiveCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      cameraInputRef.current?.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      setLiveStream(stream); // useEffect handles attaching to <video>
+    } catch {
+      cameraInputRef.current?.click();
+    }
+  }
+
+  function closeLiveCamera() {
+    liveStream?.getTracks().forEach((t) => t.stop());
+    setLiveStream(null);
+  }
+
+  // Capture the frame cropped to the plate zone (center 90% × 42%) and run OCR
+  async function captureFromLive() {
+    const video = videoRef.current;
+    if (!video || !liveStream) return;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const sx = Math.round(0.05 * vw);
+    const sy = Math.round(0.29 * vh);
+    const sw = Math.round(0.90 * vw);
+    const sh = Math.round(0.42 * vh);
+    const canvas = document.createElement("canvas");
+    canvas.width = sw; canvas.height = sh;
+    canvas.getContext("2d")!.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    closeLiveCamera();
+    await runOCR(dataUrl);
+  }
+
+  // File-input fallback: read file and run OCR directly (no crop step)
   function handleCameraCapture(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      setCropRect({ x1: 0.05, y1: 0.25, x2: 0.95, y2: 0.75 });
-      setPendingCropImage(reader.result as string);
-    };
+    reader.onload = () => runOCR(reader.result as string);
     reader.readAsDataURL(file);
   }
 
-  // Run OCR on a (possibly cropped) dataUrl
+  // Run OCR on a dataUrl
   async function runOCR(dataUrl: string) {
     setCameraImage(dataUrl);
     setCameraLoading(true);
@@ -532,64 +575,9 @@ export default function InstantCheckPage() {
     }
   }
 
-  // Crop the pending image according to cropRect then send to OCR
-  async function cropAndRunOCR() {
-    if (!pendingCropImage) return;
-    const img = new Image();
-    await new Promise<void>((res, rej) => {
-      img.onload = () => res();
-      img.onerror = () => rej(new Error("load"));
-      img.src = pendingCropImage;
-    });
-    const { x1, y1, x2, y2 } = cropRect;
-    const sx = Math.round(x1 * img.naturalWidth);
-    const sy = Math.round(y1 * img.naturalHeight);
-    const sw = Math.round((x2 - x1) * img.naturalWidth);
-    const sh = Math.round((y2 - y1) * img.naturalHeight);
-    const canvas = document.createElement("canvas");
-    canvas.width = sw; canvas.height = sh;
-    canvas.getContext("2d")!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-    const cropped = canvas.toDataURL("image/jpeg", 0.92);
-    setPendingCropImage(null);
-    await runOCR(cropped);
-  }
-
-  // Crop drag helpers — dragHandleRef is a ref (not state) so touchmove reads it synchronously
-  function updateCropHandle(rx: number, ry: number) {
-    const handle = dragHandleRef.current;
-    if (!handle) return;
-    const MIN = 0.15;
-    setCropRect((prev) => {
-      switch (handle) {
-        case "tl": return { ...prev, x1: Math.min(rx, prev.x2 - MIN), y1: Math.min(ry, prev.y2 - MIN) };
-        case "tr": return { ...prev, x2: Math.max(rx, prev.x1 + MIN), y1: Math.min(ry, prev.y2 - MIN) };
-        case "bl": return { ...prev, x1: Math.min(rx, prev.x2 - MIN), y2: Math.max(ry, prev.y1 + MIN) };
-        case "br": return { ...prev, x2: Math.max(rx, prev.x1 + MIN), y2: Math.max(ry, prev.y1 + MIN) };
-        default: return prev;
-      }
-    });
-  }
-  function onCropTouchMove(e: React.TouchEvent<HTMLDivElement>) {
-    if (!dragHandleRef.current || !cropContainerRef.current) return;
-    const rect = cropContainerRef.current.getBoundingClientRect();
-    const t = e.touches[0];
-    updateCropHandle(
-      Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width)),
-      Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height)),
-    );
-  }
-  function onCropMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (!dragHandleRef.current || !cropContainerRef.current) return;
-    const rect = cropContainerRef.current.getBoundingClientRect();
-    updateCropHandle(
-      Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
-      Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
-    );
-  }
-
   function resetCamera() {
+    closeLiveCamera();
     setCameraImage(null);
-    setPendingCropImage(null);
     setCameraResult(null);
     setCameraError(null);
     setCameraRawText(null);
@@ -908,19 +896,50 @@ export default function InstantCheckPage() {
           {/* ── Camera ── */}
           {mode === "camera" && (
             <div className="flex flex-col gap-3">
-              <input
-                ref={cameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={handleCameraCapture}
-              />
+              {/* Hidden file input — fallback when getUserMedia unavailable */}
+              <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraCapture} />
 
-              {/* ── No image yet: capture button ── */}
-              {!cameraImage && !pendingCropImage && (
+              {/* ── Live viewfinder ── */}
+              {liveStream && !cameraImage && (
+                <div className="relative overflow-hidden rounded-xl bg-black" style={{ aspectRatio: "4/3" }}>
+                  <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+
+                  {/* Dark mask outside the plate zone (29% top/bottom, 5% sides) */}
+                  <div className="absolute pointer-events-none bg-black/55" style={{ top: 0, left: 0, right: 0, height: "29%" }} />
+                  <div className="absolute pointer-events-none bg-black/55" style={{ bottom: 0, left: 0, right: 0, top: "71%" }} />
+                  <div className="absolute pointer-events-none bg-black/55" style={{ top: "29%", bottom: "29%", left: 0, width: "5%" }} />
+                  <div className="absolute pointer-events-none bg-black/55" style={{ top: "29%", bottom: "29%", right: 0, width: "5%" }} />
+
+                  {/* Plate zone border */}
+                  <div className="absolute pointer-events-none border-2 border-white" style={{ top: "29%", left: "5%", right: "5%", bottom: "29%" }} />
+
+                  {/* Corner accents */}
+                  {[["top-[29%] left-[5%]","border-t-2 border-l-2"],["top-[29%] right-[5%]","border-t-2 border-r-2"],["bottom-[29%] left-[5%]","border-b-2 border-l-2"],["bottom-[29%] right-[5%]","border-b-2 border-r-2"]].map(([pos,border],i) => (
+                    <div key={i} className={`absolute pointer-events-none w-5 h-5 border-brand ${pos} ${border}`} />
+                  ))}
+
+                  {/* Guide label */}
+                  <p className="absolute pointer-events-none text-white/80 text-[11px] font-bold w-full text-center" style={{ top: "22%" }}>
+                    وجّه اللوحة داخل الإطار
+                  </p>
+
+                  {/* Capture button */}
+                  <button onClick={captureFromLive}
+                    className="absolute bottom-4 left-1/2 -translate-x-1/2 flex h-16 w-16 items-center justify-center rounded-full border-4 border-white bg-white/25 active:scale-95 transition">
+                    <Camera size={26} className="text-white" />
+                  </button>
+
+                  {/* Close */}
+                  <button onClick={closeLiveCamera} className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5">
+                    <X size={14} className="text-white" />
+                  </button>
+                </div>
+              )}
+
+              {/* ── No stream, no image: open camera button ── */}
+              {!liveStream && !cameraImage && (
                 <button
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={openLiveCamera}
                   disabled={cameraLoading}
                   className="flex h-36 w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 text-muted transition active:scale-95"
                 >
@@ -929,69 +948,7 @@ export default function InstantCheckPage() {
                 </button>
               )}
 
-              {/* ── Crop UI: drag corners to frame the plate ── */}
-              {pendingCropImage && !cameraImage && (
-                <>
-                  <p className="text-center text-xs text-muted">اسحب الزوايا لتحديد منطقة اللوحة فقط</p>
-                  <div
-                    ref={cropContainerRef}
-                    className="relative rounded-xl overflow-hidden select-none"
-                    style={{ touchAction: "none" }}
-                    onTouchMove={onCropTouchMove}
-                    onTouchEnd={() => { dragHandleRef.current = null; }}
-                    onMouseMove={onCropMouseMove}
-                    onMouseUp={() => { dragHandleRef.current = null; }}
-                    onMouseLeave={() => { dragHandleRef.current = null; }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={pendingCropImage} alt="" className="w-full block" />
-
-                    {/* Dark overlay: top */}
-                    <div className="absolute pointer-events-none bg-black/55"
-                      style={{ top: 0, left: 0, right: 0, height: `${cropRect.y1 * 100}%` }} />
-                    {/* bottom */}
-                    <div className="absolute pointer-events-none bg-black/55"
-                      style={{ top: `${cropRect.y2 * 100}%`, left: 0, right: 0, bottom: 0 }} />
-                    {/* left */}
-                    <div className="absolute pointer-events-none bg-black/55"
-                      style={{ top: `${cropRect.y1 * 100}%`, left: 0, width: `${cropRect.x1 * 100}%`, bottom: `${(1 - cropRect.y2) * 100}%` }} />
-                    {/* right */}
-                    <div className="absolute pointer-events-none bg-black/55"
-                      style={{ top: `${cropRect.y1 * 100}%`, right: 0, width: `${(1 - cropRect.x2) * 100}%`, bottom: `${(1 - cropRect.y2) * 100}%` }} />
-
-                    {/* Crop border */}
-                    <div className="absolute pointer-events-none border-2 border-white"
-                      style={{ top: `${cropRect.y1 * 100}%`, left: `${cropRect.x1 * 100}%`, right: `${(1 - cropRect.x2) * 100}%`, bottom: `${(1 - cropRect.y2) * 100}%` }} />
-
-                    {/* Corner handles */}
-                    {([["tl", cropRect.x1, cropRect.y1], ["tr", cropRect.x2, cropRect.y1], ["bl", cropRect.x1, cropRect.y2], ["br", cropRect.x2, cropRect.y2]] as [string, number, number][]).map(([id, hx, hy]) => (
-                      <div key={id}
-                        className="absolute rounded-full bg-white shadow-lg border-2 border-black/20"
-                        style={{ left: `${hx * 100}%`, top: `${hy * 100}%`, width: 30, height: 30, transform: "translate(-50%,-50%)", touchAction: "none", cursor: "grab" }}
-                        onTouchStart={(e) => { e.stopPropagation(); dragHandleRef.current = id; }}
-                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); dragHandleRef.current = id; }}
-                      />
-                    ))}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => { setPendingCropImage(null); if (cameraInputRef.current) cameraInputRef.current.value = ""; }}
-                      className="flex-1 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted"
-                    >
-                      إلغاء
-                    </button>
-                    <button
-                      onClick={cropAndRunOCR}
-                      className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-white active:scale-95 transition"
-                    >
-                      قص وقراءة
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {/* ── Captured image (after crop + OCR) ── */}
+              {/* ── Captured image (after OCR) ── */}
               {cameraImage && (
                 <div className="relative overflow-hidden rounded-xl border border-border">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1003,10 +960,7 @@ export default function InstantCheckPage() {
                     </div>
                   )}
                   {!cameraLoading && (
-                    <button
-                      onClick={resetCamera}
-                      className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5"
-                    >
+                    <button onClick={resetCamera} className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5">
                       <X size={14} className="text-white" />
                     </button>
                   )}
@@ -1014,40 +968,23 @@ export default function InstantCheckPage() {
               )}
 
               {!cameraLoading && cameraImage && (
-                <button
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted"
-                >
+                <button onClick={openLiveCamera} className="rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted">
                   التقط صورة أخرى
                 </button>
               )}
 
-              {cameraError && (
-                <p className="text-center text-xs text-danger">{cameraError}</p>
-              )}
+              {cameraError && <p className="text-center text-xs text-danger">{cameraError}</p>}
 
-              {/* Editable plate input — shown after OCR runs */}
+              {/* Editable plate + search */}
               {!cameraLoading && cameraImage && (
                 <div className="flex gap-2 items-center">
-                  <input
-                    dir="rtl"
-                    value={cameraInputPlate}
-                    onChange={(e) => {
-                      const v = e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join("");
-                      setCameraInputPlate(v);
-                    }}
+                  <input dir="rtl" value={cameraInputPlate}
+                    onChange={(e) => { const v = e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""); setCameraInputPlate(v); }}
                     placeholder="اكتب أو صحّح رقم اللوحة..."
                     className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center focus:border-brand outline-none"
                   />
                   <button
-                    onClick={() => {
-                      const v = cameraInputPlate.trim();
-                      if (!v) return;
-                      setCameraError(null);
-                      const result = searchInCheck(v);
-                      setCameraResult(result);
-                      if (result?.found) saveHitWithGps(result);
-                    }}
+                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result?.found) saveHitWithGps(result); }}
                     className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                   >
                     بحث
@@ -1055,16 +992,13 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* OCR debug line — always visible so user can see which engine ran */}
               {!cameraLoading && cameraRawText && (
                 <p className="text-center text-[10px] text-muted" dir="ltr">
                   <span className="font-mono">{cameraRawText.slice(0, 120)}</span>
                 </p>
               )}
 
-              {cameraResult && (
-                <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
-              )}
+              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />}
             </div>
           )}
 
