@@ -10,7 +10,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import {
   type ExcelTable, buildExcelBlob, downloadExcelBlob,
-  openExcelBlob, shareExcelBlob, buildRowSummaryText,
+  openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
   detectPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
@@ -24,6 +24,17 @@ import {
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
 const SORT_RESULTS_KEY = "platehunter:sort-results";
+
+const DUPE_COLORS = [
+  { tw: "bg-yellow-100",  hex: "#FEF9C3" },
+  { tw: "bg-blue-100",    hex: "#DBEAFE" },
+  { tw: "bg-green-100",   hex: "#DCFCE7" },
+  { tw: "bg-purple-100",  hex: "#F3E8FF" },
+  { tw: "bg-orange-100",  hex: "#FFEDD5" },
+  { tw: "bg-pink-100",    hex: "#FCE7F3" },
+  { tw: "bg-teal-100",    hex: "#CCFBF1" },
+  { tw: "bg-red-100",     hex: "#FEE2E2" },
+] as const;
 
 type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string> };
 
@@ -204,6 +215,22 @@ export default function SortingPage() {
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
+  const plateColorMap = useMemo(() => {
+    if (!results || !effectiveReferralPlateCol) return new Map<string, number>();
+    const counts = new Map<string, number>();
+    for (const r of results) {
+      const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol] ?? "")));
+      if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const map = new Map<string, number>();
+    let ci = 0;
+    for (const [plate, count] of counts) {
+      if (count > 1) { map.set(plate, ci % DUPE_COLORS.length); ci++; }
+    }
+    return map;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results, effectiveReferralPlateCol]);
+
   const displayResults = useMemo(() => {
     if (!nearestActive || !userLoc || !gpsCol) return matchedResults;
     return [...matchedResults]
@@ -327,16 +354,9 @@ export default function SortingPage() {
         }
         finalTashyeek = tashyeekMatches;
       }
-      const seenFull = new Set<string>();
-      const deduped = matches.filter((r) => {
-        const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-        if (seenFull.has(k)) return false;
-        seenFull.add(k);
-        return true;
-      });
       setTashyeekResults(finalTashyeek);
-      setResults(deduped); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
-      persistSortResults(deduped, finalTashyeek, "full", 0);
+      setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      persistSortResults(matches, finalTashyeek, "full", 0);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
@@ -361,19 +381,24 @@ export default function SortingPage() {
         return true;
       });
       setNewPlatesCount(newRefRows.length);
-      const dataIndex = new Map<string, Record<string, string>>();
+      const dataIndex = new Map<string, Record<string, string>[]>();
       for (const row of dataTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
         if (!n) continue;
-        dataIndex.set(n, row);
+        const arr = dataIndex.get(n);
+        if (arr) arr.push(row); else dataIndex.set(n, [row]);
       }
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
         const raw = String(refRow[effectiveReferralPlateCol] ?? "");
         const n = normalizePlate(bankPlateToArabic(raw));
         if (!n) continue;
-        const dataRow = dataIndex.get(n) ?? (/[A-Za-z]/.test(raw) ? dataIndex.get(reversePlateLetters(n)) : undefined);
-        if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
+        const dataRows = dataIndex.get(n) ?? (/[A-Za-z]/.test(raw) ? dataIndex.get(reversePlateLetters(n)) : undefined);
+        if (dataRows) {
+          for (const dataRow of dataRows) {
+            matches.push({ referralRow: refRow, dataRow, status: "exact" });
+          }
+        }
       }
       let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
@@ -451,9 +476,19 @@ export default function SortingPage() {
   // ── Export ──
   const ts = () => new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
 
-  async function handleOpenSort() { setExportingAll(true); await openExcelBlob(buildExcelBlob(matchedResults.map(buildRowObject), "نتائج الفرز"), `فرز-${ts()}.xlsx`); setExportingAll(false); }
-  async function handleDownloadSort() { setExportingAll(true); downloadExcelBlob(buildExcelBlob(matchedResults.map(buildRowObject), "نتائج الفرز"), `فرز-${ts()}.xlsx`); setExportingAll(false); }
-  async function handleShareSort() { await shareExcelBlob(buildExcelBlob(matchedResults.map(buildRowObject), "نتائج الفرز"), `فرز-${ts()}.xlsx`, "نتائج الفرز"); }
+  async function buildSortExcelBlob(): Promise<Blob> {
+    const rowObjects = matchedResults.map(buildRowObject);
+    const rowColors = matchedResults.map((r) => {
+      const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+      const idx = plateColorMap.get(k);
+      return idx !== undefined ? DUPE_COLORS[idx].hex : null;
+    });
+    return buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors);
+  }
+
+  async function handleOpenSort() { setExportingAll(true); await openExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
+  async function handleDownloadSort() { setExportingAll(true); downloadExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
+  async function handleShareSort() { await shareExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`, "نتائج الفرز"); }
 
   async function handleOpenPaste() { await openExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
   async function handleDownloadPaste() { downloadExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
@@ -519,6 +554,7 @@ export default function SortingPage() {
       </div>
 
       {/* ① DATA FILE */}
+      <p className="text-sm font-bold text-ink">مربع الداتا</p>
       <FileUploadBox
         title="ملف الداتا"
         hint="بيانات التفريغ الميداني"
@@ -571,6 +607,7 @@ export default function SortingPage() {
 
       {/* ② TASHYEEK FILE */}
       <div className="flex flex-col gap-2">
+        <p className="text-sm font-bold text-ink">شيت التسجيل</p>
         <FileUploadBox
           title="ملف التشييك"
           hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"
@@ -766,8 +803,11 @@ export default function SortingPage() {
                   {displayResults.slice(0, visibleCount).map((r, i) => {
                     const plate = plateForRow(r);
                     const isSel = selectedResults.has(i);
+                    const plateKey = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+                    const colorIdx = plateColorMap.get(plateKey);
+                    const rowBg = isSel ? "bg-primary/15" : colorIdx !== undefined ? DUPE_COLORS[colorIdx].tw : "bg-brand/5 hover:bg-brand/15";
                     return (
-                      <tr key={i} className={`border-b border-border transition ${isSel ? "bg-primary/15" : "bg-brand/5 hover:bg-brand/15"}`}>
+                      <tr key={i} className={`border-b border-border transition ${rowBg}`}>
                         <td className="border-l border-border px-2 py-2 text-center">
                           <button onClick={() => toggleResult(i)} className="text-muted hover:text-primary transition">
                             {isSel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}

@@ -5,6 +5,7 @@
  */
 
 import * as XLSX from "xlsx";
+import type ExcelJS from "exceljs";
 import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
 
@@ -483,6 +484,69 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
     } catch { /* user cancelled or not supported */ }
   }
   downloadExcelBlob(blob, filename);
+}
+
+/**
+ * Build a styled, RTL Excel blob for sort results.
+ * Requires exceljs (supports cell fill colors + rightToLeft sheet view).
+ */
+export async function buildColoredSortExcel(
+  rows: Record<string, unknown>[],
+  sheetName: string,
+  rowHexColors: (string | null)[],
+): Promise<Blob> {
+  const { default: ExcelJS } = await import("exceljs");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName, { views: [{ rightToLeft: true }] });
+
+  if (rows.length === 0) {
+    const buf = await wb.xlsx.writeBuffer();
+    return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
+  const headers = Object.keys(rows[0]);
+
+  // Header row
+  const headerRow = ws.addRow(headers);
+  headerRow.font = { bold: true };
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+  });
+
+  // Data rows
+  rows.forEach((row, i) => {
+    const values = headers.map((h) => {
+      const v = row[h];
+      return v !== null && v !== undefined ? String(v) : "";
+    });
+    const excelRow = ws.addRow(values);
+    const hex = rowHexColors[i];
+    if (hex) {
+      const argb = "FF" + hex.replace("#", "");
+      excelRow.eachCell((cell) => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
+      });
+    }
+    // Hyperlinks for URL cells
+    headers.forEach((h, ci) => {
+      const v = row[h];
+      if (typeof v === "string" && /^https?:\/\//i.test(v)) {
+        const cell = excelRow.getCell(ci + 1);
+        cell.value = { text: v, hyperlink: v } as ExcelJS.CellHyperlinkValue;
+        cell.font = { color: { argb: "FF0563C1" }, underline: true };
+      }
+    });
+  });
+
+  // Column widths
+  headers.forEach((h, ci) => {
+    let maxLen = h.length;
+    rows.forEach((row) => { const v = String(row[h] ?? ""); if (v.length > maxLen) maxLen = v.length; });
+    ws.getColumn(ci + 1).width = Math.min(Math.max(maxLen + 2, 10), 55);
+  });
+
+  const buf = await wb.xlsx.writeBuffer();
+  return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 
 export function buildRowSummaryText(row: Record<string, unknown>): string {
