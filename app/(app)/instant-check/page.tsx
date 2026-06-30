@@ -202,6 +202,12 @@ export default function InstantCheckPage() {
   const [cameraInputPlate, setCameraInputPlate] = useState("");
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // Crop
+  const [pendingCropImage, setPendingCropImage] = useState<string | null>(null);
+  const [cropRect, setCropRect] = useState({ x1: 0.05, y1: 0.25, x2: 0.95, y2: 0.75 });
+  const [dragHandle, setDragHandle] = useState<string | null>(null);
+  const cropContainerRef = useRef<HTMLDivElement>(null);
+
   // PTT
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
@@ -436,88 +442,146 @@ export default function InstantCheckPage() {
     });
   }
 
+  // Open crop UI instead of running OCR immediately
   function handleCameraCapture(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setCameraError(null);
-    setCameraResult(null);
-    setCameraRawText(null);
-
     const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = reader.result as string;
-      setCameraImage(dataUrl);
-      setCameraLoading(true);
-      try {
-        const resized = await resizeImageForOCR(dataUrl);
-        let plate: string | null = null;
-        let debugLine = "";
-
-        // ── Try 1: Gemini API ──────────────────────────────────────────────────
-        try {
-          const base64 = resized.split(",")[1];
-          const apiRes = await fetch("/api/read-plate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
-          });
-          const json = await apiRes.json().catch(() => null);
-          if (apiRes.ok && json?.plate) {
-            plate = json.plate as string;
-            debugLine = `[Claude] ${plate}`;
-          } else {
-            const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`;
-            debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`;
-            console.warn("OCR error:", hint);
-          }
-        } catch (err) {
-          debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
-        }
-
-        // ── Try 2: native TextDetector (Chrome/Android ML Kit) ────────────────
-        if (!plate && typeof window !== "undefined" && "TextDetector" in window) {
-          try {
-            const img = document.createElement("img");
-            await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("img")); img.src = resized; });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const detector = new (window as any).TextDetector();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const blocks: Array<{ rawValue: string }> = await detector.detect(img);
-            if (blocks.length > 0) {
-              const combined = blocks.map((b) => b.rawValue).join(" ").trim();
-              for (const b of blocks) {
-                plate = extractPlateFromOcrText(b.rawValue);
-                if (plate) break;
-              }
-              if (!plate) plate = extractPlateFromOcrText(combined);
-              if (plate) debugLine = `[ML Kit] ${plate}`;
-            }
-          } catch { /* TextDetector not available */ }
-        }
-
-        setCameraRawText(debugLine || null);
-        // Convert English plate letters to Arabic for display and search (JTT8877 → حطط8877)
-        const displayPlate = plate ? (bankPlateToArabic(plate) || plate) : null;
-        setCameraInputPlate(displayPlate ?? "");
-        if (displayPlate) {
-          const result = searchInCheck(displayPlate);
-          setCameraResult(result);
-          if (result?.found) saveHitWithGps(result);
-        } else {
-          setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
-        }
-      } catch {
-        setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
-      } finally {
-        setCameraLoading(false);
-        if (cameraInputRef.current) cameraInputRef.current.value = "";
-      }
+    reader.onload = () => {
+      setCropRect({ x1: 0.05, y1: 0.25, x2: 0.95, y2: 0.75 });
+      setPendingCropImage(reader.result as string);
     };
     reader.readAsDataURL(file);
   }
 
+  // Run OCR on a (possibly cropped) dataUrl
+  async function runOCR(dataUrl: string) {
+    setCameraImage(dataUrl);
+    setCameraLoading(true);
+    setCameraError(null);
+    setCameraResult(null);
+    setCameraRawText(null);
+    try {
+      const resized = await resizeImageForOCR(dataUrl);
+      let plate: string | null = null;
+      let debugLine = "";
+
+      // ── Try 1: Groq API ────────────────────────────────────────────────────
+      try {
+        const base64 = resized.split(",")[1];
+        const apiRes = await fetch("/api/read-plate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
+        });
+        const json = await apiRes.json().catch(() => null);
+        if (apiRes.ok && json?.plate) {
+          plate = json.plate as string;
+          debugLine = `[Claude] ${plate}`;
+        } else {
+          const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`;
+          debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`;
+          console.warn("OCR error:", hint);
+        }
+      } catch (err) {
+        debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
+      }
+
+      // ── Try 2: native TextDetector (Chrome/Android ML Kit) ────────────────
+      if (!plate && typeof window !== "undefined" && "TextDetector" in window) {
+        try {
+          const imgEl = document.createElement("img");
+          await new Promise<void>((res, rej) => { imgEl.onload = () => res(); imgEl.onerror = () => rej(new Error("img")); imgEl.src = resized; });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const detector = new (window as any).TextDetector();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const blocks: Array<{ rawValue: string }> = await detector.detect(imgEl);
+          if (blocks.length > 0) {
+            const combined = blocks.map((b) => b.rawValue).join(" ").trim();
+            for (const b of blocks) {
+              plate = extractPlateFromOcrText(b.rawValue);
+              if (plate) break;
+            }
+            if (!plate) plate = extractPlateFromOcrText(combined);
+            if (plate) debugLine = `[ML Kit] ${plate}`;
+          }
+        } catch { /* TextDetector not available */ }
+      }
+
+      setCameraRawText(debugLine || null);
+      const displayPlate = plate ? (bankPlateToArabic(plate) || plate) : null;
+      setCameraInputPlate(displayPlate ?? "");
+      if (displayPlate) {
+        const result = searchInCheck(displayPlate);
+        setCameraResult(result);
+        if (result?.found) saveHitWithGps(result);
+      } else {
+        setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
+      }
+    } catch {
+      setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
+    } finally {
+      setCameraLoading(false);
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+    }
+  }
+
+  // Crop the pending image according to cropRect then send to OCR
+  async function cropAndRunOCR() {
+    if (!pendingCropImage) return;
+    const img = new Image();
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = () => rej(new Error("load"));
+      img.src = pendingCropImage;
+    });
+    const { x1, y1, x2, y2 } = cropRect;
+    const sx = Math.round(x1 * img.naturalWidth);
+    const sy = Math.round(y1 * img.naturalHeight);
+    const sw = Math.round((x2 - x1) * img.naturalWidth);
+    const sh = Math.round((y2 - y1) * img.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = sw; canvas.height = sh;
+    canvas.getContext("2d")!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    const cropped = canvas.toDataURL("image/jpeg", 0.92);
+    setPendingCropImage(null);
+    await runOCR(cropped);
+  }
+
+  // Crop drag helpers
+  function updateCropHandle(rx: number, ry: number) {
+    const MIN = 0.15;
+    setCropRect((prev) => {
+      switch (dragHandle) {
+        case "tl": return { ...prev, x1: Math.min(rx, prev.x2 - MIN), y1: Math.min(ry, prev.y2 - MIN) };
+        case "tr": return { ...prev, x2: Math.max(rx, prev.x1 + MIN), y1: Math.min(ry, prev.y2 - MIN) };
+        case "bl": return { ...prev, x1: Math.min(rx, prev.x2 - MIN), y2: Math.max(ry, prev.y1 + MIN) };
+        case "br": return { ...prev, x2: Math.max(rx, prev.x1 + MIN), y2: Math.max(ry, prev.y1 + MIN) };
+        default: return prev;
+      }
+    });
+  }
+  function onCropTouchMove(e: React.TouchEvent<HTMLDivElement>) {
+    if (!dragHandle || !cropContainerRef.current) return;
+    const rect = cropContainerRef.current.getBoundingClientRect();
+    const t = e.touches[0];
+    updateCropHandle(
+      Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width)),
+      Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height)),
+    );
+  }
+  function onCropMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!dragHandle || !cropContainerRef.current) return;
+    const rect = cropContainerRef.current.getBoundingClientRect();
+    updateCropHandle(
+      Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+      Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+    );
+  }
+
   function resetCamera() {
     setCameraImage(null);
+    setPendingCropImage(null);
     setCameraResult(null);
     setCameraError(null);
     setCameraRawText(null);
@@ -845,7 +909,8 @@ export default function InstantCheckPage() {
                 onChange={handleCameraCapture}
               />
 
-              {!cameraImage ? (
+              {/* ── No image yet: capture button ── */}
+              {!cameraImage && !pendingCropImage && (
                 <button
                   onClick={() => cameraInputRef.current?.click()}
                   disabled={cameraLoading}
@@ -854,7 +919,72 @@ export default function InstantCheckPage() {
                   <Camera size={28} />
                   <span className="text-sm">التقط صورة اللوحة</span>
                 </button>
-              ) : (
+              )}
+
+              {/* ── Crop UI: drag corners to frame the plate ── */}
+              {pendingCropImage && !cameraImage && (
+                <>
+                  <p className="text-center text-xs text-muted">اسحب الزوايا لتحديد منطقة اللوحة فقط</p>
+                  <div
+                    ref={cropContainerRef}
+                    className="relative rounded-xl overflow-hidden select-none"
+                    style={{ touchAction: "none" }}
+                    onTouchMove={onCropTouchMove}
+                    onTouchEnd={() => setDragHandle(null)}
+                    onMouseMove={onCropMouseMove}
+                    onMouseUp={() => setDragHandle(null)}
+                    onMouseLeave={() => setDragHandle(null)}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={pendingCropImage} alt="" className="w-full block" />
+
+                    {/* Dark overlay: top */}
+                    <div className="absolute pointer-events-none bg-black/55"
+                      style={{ top: 0, left: 0, right: 0, height: `${cropRect.y1 * 100}%` }} />
+                    {/* bottom */}
+                    <div className="absolute pointer-events-none bg-black/55"
+                      style={{ top: `${cropRect.y2 * 100}%`, left: 0, right: 0, bottom: 0 }} />
+                    {/* left */}
+                    <div className="absolute pointer-events-none bg-black/55"
+                      style={{ top: `${cropRect.y1 * 100}%`, left: 0, width: `${cropRect.x1 * 100}%`, bottom: `${(1 - cropRect.y2) * 100}%` }} />
+                    {/* right */}
+                    <div className="absolute pointer-events-none bg-black/55"
+                      style={{ top: `${cropRect.y1 * 100}%`, right: 0, width: `${(1 - cropRect.x2) * 100}%`, bottom: `${(1 - cropRect.y2) * 100}%` }} />
+
+                    {/* Crop border */}
+                    <div className="absolute pointer-events-none border-2 border-white"
+                      style={{ top: `${cropRect.y1 * 100}%`, left: `${cropRect.x1 * 100}%`, right: `${(1 - cropRect.x2) * 100}%`, bottom: `${(1 - cropRect.y2) * 100}%` }} />
+
+                    {/* Corner handles */}
+                    {([["tl", cropRect.x1, cropRect.y1], ["tr", cropRect.x2, cropRect.y1], ["bl", cropRect.x1, cropRect.y2], ["br", cropRect.x2, cropRect.y2]] as [string, number, number][]).map(([id, hx, hy]) => (
+                      <div key={id}
+                        className="absolute rounded-full bg-white shadow-lg border-2 border-black/20"
+                        style={{ left: `${hx * 100}%`, top: `${hy * 100}%`, width: 30, height: 30, transform: "translate(-50%,-50%)", touchAction: "none", cursor: "grab" }}
+                        onTouchStart={(e) => { e.stopPropagation(); setDragHandle(id); }}
+                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setDragHandle(id); }}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setPendingCropImage(null); if (cameraInputRef.current) cameraInputRef.current.value = ""; }}
+                      className="flex-1 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      onClick={cropAndRunOCR}
+                      className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-white active:scale-95 transition"
+                    >
+                      قص وقراءة
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* ── Captured image (after crop + OCR) ── */}
+              {cameraImage && (
                 <div className="relative overflow-hidden rounded-xl border border-border">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={cameraImage} alt="لوحة" className="w-full object-cover max-h-48" />
