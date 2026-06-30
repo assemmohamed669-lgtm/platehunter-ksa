@@ -31,12 +31,18 @@ export default function FileUploadBox({
   const [needsPassword, setNeedsPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allSheets, setAllSheets] = useState<string[]>([]);
+  const [activeSheet, setActiveSheet] = useState<string | null>(null);
+  const [lastFile, setLastFile] = useState<File | null>(null);
 
-  async function handleFile(file: File) {
+  async function handleFile(file: File, forcedSheet?: string) {
     setError(null);
     setLoading(true);
     try {
-      const table = await parseExcelFile(file);
+      const table = await parseExcelFile(file, undefined, forcedSheet);
+      setLastFile(file);
+      setAllSheets(table.allSheetNames ?? []);
+      setActiveSheet(table.sheetName ?? null);
       onParsed(table, file);
       setPendingFile(null);
       setNeedsPassword(false);
@@ -60,6 +66,9 @@ export default function FileUploadBox({
     setLoading(true);
     try {
       const table = await parseExcelFile(pendingFile, password);
+      setLastFile(pendingFile);
+      setAllSheets(table.allSheetNames ?? []);
+      setActiveSheet(table.sheetName ?? null);
       onParsed(table, pendingFile);
       setPendingFile(null);
       setNeedsPassword(false);
@@ -85,13 +94,13 @@ export default function FileUploadBox({
 
   if (parsedFile && parsedRowCount !== null) {
     return (
-      <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
+      <div className="rounded-xl border border-primary/40 bg-primary/5 p-3 flex flex-col gap-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <FileSpreadsheet size={18} className="shrink-0 text-primary" />
             <div className="min-w-0">
               <p className="rtl-text truncate text-sm font-medium text-ink">{parsedFile.name}</p>
-              <p className="text-xs text-muted">{parsedRowCount} صف</p>
+              <p className="text-xs text-muted">{parsedRowCount} صف{activeSheet ? ` · ${activeSheet}` : ""}</p>
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
@@ -141,6 +150,36 @@ export default function FileUploadBox({
             )}
           </div>
         </div>
+        {/* Sheet selector — shown only when file has multiple sheets */}
+        {allSheets.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 pt-1 border-t border-primary/20">
+            <span className="text-[11px] text-muted self-center">الورقة:</span>
+            {allSheets.map((name) => (
+              <button
+                key={name}
+                disabled={loading}
+                onClick={async () => {
+                  if (name === activeSheet || !lastFile) return;
+                  setLoading(true);
+                  try {
+                    const table = await parseExcelFile(lastFile, undefined, name);
+                    setActiveSheet(name);
+                    onParsed(table, lastFile);
+                  } catch { /* ignore */ } finally {
+                    setLoading(false);
+                  }
+                }}
+                className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                  name === activeSheet
+                    ? "bg-primary border-primary text-night font-bold"
+                    : "border-border text-muted hover:text-primary"
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

@@ -45,8 +45,8 @@ function scorePlateColumnByContent(raw2d: any[][], headerRowIdx: number): number
   return bestRatio;
 }
 
-onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }>) {
-  const { buffer, password } = e.data;
+onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; forcedSheet?: string }>) {
+  const { buffer, password, forcedSheet } = e.data;
   try {
     const data = new Uint8Array(buffer);
 
@@ -60,11 +60,16 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       /* password-protected — sheetName stays undefined; detect after full parse */
     }
 
+    // If caller forced a specific sheet, skip auto-detection entirely
+    if (forcedSheet && allSheetNames.includes(forcedSheet)) {
+      sheetName = forcedSheet;
+    }
+
     // Pass 1.5 (only for multi-sheet files): score every sheet by plate-like content,
     // pick the one with the highest ratio. Falls back to keyword header check if
     // no sheet scores above the minimum threshold.
     const PLATE_DET_KWS = ["لوحة", "اللوحة", "plate"];
-    if (allSheetNames.length > 1) {
+    if (!sheetName && allSheetNames.length > 1) {
       // المحاولة الأولى: score كل ورقة واختر الأعلى
       let bestScore = 0;
       for (const name of allSheetNames) {
@@ -202,7 +207,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       rows.push(obj);
     }
 
-    postMessage({ success: true, headers, rows });
+    postMessage({ success: true, headers, rows, sheetName: finalSheet, allSheetNames });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     const isPassword = /password|crypt|encrypt/i.test(msg);

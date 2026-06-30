@@ -113,9 +113,11 @@ export function readBankExcel(file: File): Promise<string[]> {
 export interface ExcelTable {
   headers: string[];
   rows: Record<string, string>[];
+  sheetName?: string;
+  allSheetNames?: string[];
 }
 
-export async function parseExcelFile(file: File, password?: string): Promise<ExcelTable> {
+export async function parseExcelFile(file: File, password?: string, forcedSheet?: string): Promise<ExcelTable> {
   const buffer = await file.arrayBuffer();
 
   // Try Web Worker first — parsing runs off the main thread so the UI stays responsive
@@ -142,13 +144,15 @@ export async function parseExcelFile(file: File, password?: string): Promise<Exc
             success: boolean;
             headers?: string[];
             rows?: Record<string, string>[];
+            sheetName?: string;
+            allSheetNames?: string[];
             error?: string;
           };
           if (d.success && d.headers && d.rows) {
             if (d.rows.length === 0) {
               reject(new Error("الملف فارغ أو لا يحتوي على بيانات."));
             } else {
-              resolve({ headers: d.headers, rows: d.rows });
+              resolve({ headers: d.headers, rows: d.rows, sheetName: d.sheetName, allSheetNames: d.allSheetNames });
             }
           } else {
             reject(new Error(d.error ?? "تعذّرت قراءة الملف."));
@@ -162,7 +166,7 @@ export async function parseExcelFile(file: File, password?: string): Promise<Exc
         };
 
         // No transfer — keep buffer available for the sync fallback
-        worker.postMessage({ buffer, password });
+        worker.postMessage({ buffer, password, forcedSheet });
       });
       return result;
     } catch (err: unknown) {
