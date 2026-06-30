@@ -69,7 +69,7 @@ export default function SortingPage() {
   const [pasteText, setPasteText] = useState("");
   const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string> }[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
-  const [pasteZoom, setPasteZoom] = useState(1); // 0 = 70%, 1 = 80%, … ZOOM_LEVELS index
+  const [pasteZoom, setPasteZoom] = useState(1);
   const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
 
   // ── Bootstrap ──
@@ -98,7 +98,6 @@ export default function SortingPage() {
       .finally(() => setHydrated(true));
   }, []);
 
-  // Re-load a slot from IDB when IncomingExcelHandler saves a new file while this page is already open
   useEffect(() => {
     const handler = (e: Event) => {
       const { slot } = (e as CustomEvent<{ slot: string }>).detail;
@@ -222,7 +221,6 @@ export default function SortingPage() {
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
-      // بناء index من الإحالة: لوحة منقّحة → صف الإحالة
       const refIndex = new Map<string, Record<string, string>>();
       for (const row of referralTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
@@ -231,7 +229,6 @@ export default function SortingPage() {
         const rev = reversePlateLetters(n);
         if (rev !== n) refIndex.set(rev, row);
       }
-      // مسح الداتا والبحث في index الإحالة
       const matches: MatchResult[] = [];
       const rows = dataTable.rows;
       const CHUNK = 16000;
@@ -257,7 +254,6 @@ export default function SortingPage() {
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
-      // بناء set من اللوحات المشيّكة
       const checkSet = new Set<string>();
       for (const row of checkTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveCheckPlateCol] ?? "")));
@@ -266,13 +262,11 @@ export default function SortingPage() {
         const rev = reversePlateLetters(n);
         if (rev !== n) checkSet.add(rev);
       }
-      // فلتر الإحالة: اللوحات الجديدة فقط (مش موجودة في التشييك)
       const newRefRows = referralTable.rows.filter((row) => {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
         return n && !checkSet.has(n);
       });
       setNewPlatesCount(newRefRows.length);
-      // بناء index من الداتا
       const dataIndex = new Map<string, Record<string, string>>();
       for (const row of dataTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
@@ -281,7 +275,6 @@ export default function SortingPage() {
         const rev = reversePlateLetters(n);
         if (rev !== n) dataIndex.set(rev, row);
       }
-      // مطابقة الإحالة الجديدة مع الداتا
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
         const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveReferralPlateCol] ?? "")));
@@ -365,7 +358,6 @@ export default function SortingPage() {
     }
     setPasteResults(matches);
     setPasteRan(true);
-
   }
 
   // ── WhatsApp ──
@@ -401,7 +393,6 @@ export default function SortingPage() {
 
   return (
     <div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl">
-
 
       {/* Header */}
       <div>
@@ -533,7 +524,7 @@ export default function SortingPage() {
         {sorting ? "جارٍ الفرز..." : "فرز"}
       </button>
 
-      {/* ⑤ SORT RESULTS */}
+      {/* ⑤ SORT RESULTS — مع تطابقات */}
       {sorted && results && matchedResults.length > 0 && (
         <div className="flex flex-col gap-3 rounded-2xl border-2 border-brand bg-brand/5 p-3">
           <div className="grid grid-cols-2 gap-2 text-center">
@@ -541,10 +532,19 @@ export default function SortingPage() {
               <p className="text-xl font-black text-brand-glow">{matchedResults.length}</p>
               <p className="text-xs text-muted">سيارات مطلوبة</p>
             </div>
-            <div className="rounded-xl border border-border bg-surface p-3">
-              <p className="text-xl font-black text-ink">{sortMode === "new" ? newPlatesCount : (referralTable?.rows.length ?? 0)}</p>
-              <p className="text-xs text-muted">{sortMode === "new" ? "لوحة جديدة في الإحالة" : "إجمالي الإحالة"}</p>
-            </div>
+            {/* ── عداد اللوحات الجديدة — أوضح في الفرز الجديد ── */}
+            {sortMode === "new" ? (
+              <div className="rounded-xl border-2 border-primary/40 bg-primary/10 p-3">
+                <p className="text-xl font-black text-primary">{newPlatesCount}</p>
+                <p className="text-xs font-bold text-primary/80">لوحة جديدة في الإحالة</p>
+                <p className="text-[10px] text-muted mt-0.5">غير موجودة في التشييك</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-surface p-3">
+                <p className="text-xl font-black text-ink">{referralTable?.rows.length ?? 0}</p>
+                <p className="text-xs text-muted">إجمالي الإحالة</p>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between">
@@ -691,9 +691,28 @@ export default function SortingPage() {
         </div>
       )}
 
+      {/* ⑤ SORT RESULTS — بدون تطابقات */}
       {sorted && results && matchedResults.length === 0 && (
-        <div className="rounded-2xl border border-alert/30 bg-surface p-4 space-y-3">
-          <p className="text-sm font-bold text-alert text-center">لا توجد تطابقات</p>
+        <div className="rounded-2xl border border-danger/40 bg-surface p-4 space-y-3">
+
+          {/* ── عداد اللوحات الجديدة + رسالة الخطأ الواضحة ── */}
+          {sortMode === "new" && (
+            <div className="rounded-xl border-2 border-danger/50 bg-danger/10 p-4 text-center space-y-2">
+              <p className="text-2xl font-black text-danger">{newPlatesCount}</p>
+              <p className="text-sm font-bold text-danger">
+                {newPlatesCount > 0
+                  ? `لوحة جديدة في الإحالة — ولا يوجد تطابق مع الداتا`
+                  : `جميع لوحات الإحالة موجودة في التشييك — ولا يوجد تطابق مع الداتا`}
+              </p>
+              {newPlatesCount > 0 && (
+                <p className="text-xs text-muted">
+                  {newPlatesCount} لوحة غير موجودة في التشييك، لكن لا توجد أي منها في ملف الداتا
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* تشخيص الأعمدة */}
           <div className="text-xs text-muted space-y-1.5 font-mono bg-surface-2 rounded-lg p-3">
             <p className="text-ink font-sans font-semibold text-[11px] mb-2">تشخيص — ما الذي تم اكتشافه؟</p>
             <p>📂 عمود لوحة الداتا: <span className="text-ink">{effectiveDataPlateCol ?? "—"}</span></p>
@@ -765,7 +784,6 @@ export default function SortingPage() {
 
         {pasteRan && pasteResults.length > 0 && (
           <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
-            {/* Header row */}
             <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={13} className="text-brand" />
@@ -821,7 +839,6 @@ export default function SortingPage() {
               </div>
             </div>
 
-            {/* Table — scrolls both axes, all rows shown */}
             <div className="overflow-auto" style={{ maxHeight: "60vh", direction: "rtl" }}>
               <div style={{ fontSize: `${ZOOM_LEVELS[pasteZoom] * 12}px`, minWidth: "max-content", width: "100%" }}>
                 <table className="border-collapse w-full">
