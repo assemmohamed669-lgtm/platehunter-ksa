@@ -464,7 +464,7 @@ export default function InstantCheckPage() {
             plate = json.plate as string;
             debugLine = `[Claude] ${plate}`;
           } else {
-            const hint = json?.hint ?? json?.detail ?? `HTTP ${apiRes.status}`;
+            const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`;
             debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`;
             console.warn("OCR error:", hint);
           }
