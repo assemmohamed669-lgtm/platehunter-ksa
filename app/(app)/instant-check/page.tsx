@@ -55,6 +55,16 @@ function playMatchAlert() {
   } catch { /* audio unavailable */ }
 }
 
+function extractPlateFromOcrText(rawText: string): string | null {
+  const text = rawText.replace(/\s+/g, '');
+  if (!text) return null;
+  const ar1 = text.match(/[؀-ۿ]{2,3}[0-9٠-٩]{3,4}/)?.[0];
+  const ar2 = text.match(/[0-9٠-٩]{3,4}[؀-ۿ]{2,3}/)?.[0];
+  const en1 = text.match(/[A-Za-z]{2,3}[0-9]{3,4}/)?.[0];
+  const en2 = text.match(/[0-9]{3,4}[A-Za-z]{2,3}/)?.[0];
+  return ar1 ?? ar2 ?? en1 ?? en2 ?? null;
+}
+
 // ── Speech recognition types ─────────────────────────────────────────────────
 interface SpeechRecognitionEvent {
   results: SpeechRecognitionResultList;
@@ -433,36 +443,23 @@ export default function InstantCheckPage() {
       setCameraLoading(true);
       try {
         const resized = await resizeImageForOCR(dataUrl);
-        const base64 = resized.split(",")[1];
-        const res = await fetch("/api/read-plate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
-        });
-        const json = await res.json().catch(() => ({ plate: null, error: `http_${res.status}` }));
-        if (!res.ok) {
-          const reason = json?.error ?? "";
-          const detail = json?.detail ? String(json.detail) : "";
-          if (reason === "missing_api_key") throw new Error("api_key");
-          if (reason === "invalid_model") throw new Error("model");
-          throw new Error(`http_${res.status}:${detail}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { createWorker } = await import('tesseract.js') as any;
+        const worker = await createWorker(['ara', 'eng'], 1);
+        let plate: string | null = null;
+        try {
+          const { data } = await worker.recognize(resized);
+          plate = extractPlateFromOcrText(data.text as string);
+        } finally {
+          await worker.terminate();
         }
-        if (json.plate) {
-          setCameraResult(searchInCheck(json.plate));
+        if (plate) {
+          setCameraResult(searchInCheck(plate));
         } else {
           setCameraError("لم يُتعرَّف على لوحة في الصورة — جرّب زاوية أوضح");
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        if (msg === "api_key") {
-          setCameraError("GOOGLE_API_KEY غير مضبوط على Vercel");
-        } else if (msg === "model") {
-          setCameraError("خطأ في إعدادات الخادم");
-        } else if (msg.includes("413") || msg.includes("414")) {
-          setCameraError("الصورة كبيرة جداً — جرّب مرة أخرى");
-        } else {
-          setCameraError(`خطأ: ${msg || "server_error"}`);
-        }
+      } catch {
+        setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
       } finally {
         setCameraLoading(false);
         if (cameraInputRef.current) cameraInputRef.current.value = "";
