@@ -199,6 +199,7 @@ export default function InstantCheckPage() {
   const [cameraResult, setCameraResult] = useState<PlateResult | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraRawText, setCameraRawText] = useState<string | null>(null);
+  const [cameraInputPlate, setCameraInputPlate] = useState("");
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // PTT
@@ -446,23 +447,51 @@ export default function InstantCheckPage() {
       setCameraLoading(true);
       try {
         const resized = await resizeImageForOCR(dataUrl);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { createWorker } = await import('tesseract.js') as any;
-        const worker = await createWorker(['ara', 'eng'], 1);
-        let plate: string | null = null;
         let rawText = "";
-        try {
-          const { data } = await worker.recognize(resized);
-          rawText = (data.text as string ?? "").replace(/\n/g, " ").trim();
-          plate = extractPlateFromOcrText(rawText);
-        } finally {
-          await worker.terminate();
+        let plate: string | null = null;
+        let usedNative = false;
+
+        // Try 1: native TextDetector (Chrome/Android ML Kit — much better accuracy)
+        if (typeof window !== "undefined" && "TextDetector" in window) {
+          try {
+            const img = document.createElement("img");
+            await new Promise<void>((res, rej) => { img.onload = res; img.onerror = rej; img.src = resized; });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const detector = new (window as any).TextDetector();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const blocks: Array<{ rawValue: string }> = await detector.detect(img);
+            if (blocks.length > 0) {
+              rawText = blocks.map((b) => b.rawValue).join(" ").trim();
+              for (const b of blocks) {
+                plate = extractPlateFromOcrText(b.rawValue);
+                if (plate) break;
+              }
+              if (!plate) plate = extractPlateFromOcrText(rawText);
+              usedNative = true;
+            }
+          } catch { /* TextDetector not available or failed */ }
         }
+
+        // Try 2: Tesseract.js fallback
+        if (!usedNative) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { createWorker } = await import("tesseract.js") as any;
+          const worker = await createWorker(["ara", "eng"], 1);
+          try {
+            const { data } = await worker.recognize(resized);
+            rawText = (data.text as string ?? "").replace(/\n/g, " ").trim();
+            plate = extractPlateFromOcrText(rawText);
+          } finally {
+            await worker.terminate();
+          }
+        }
+
         setCameraRawText(rawText || null);
+        setCameraInputPlate(plate ?? "");
         if (plate) {
           setCameraResult(searchInCheck(plate));
         } else {
-          setCameraError("لم يُتعرَّف على نمط لوحة");
+          setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
         }
       } catch {
         setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
@@ -479,6 +508,7 @@ export default function InstantCheckPage() {
     setCameraResult(null);
     setCameraError(null);
     setCameraRawText(null);
+    setCameraInputPlate("");
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
@@ -975,12 +1005,39 @@ export default function InstantCheckPage() {
               {cameraError && (
                 <p className="text-center text-xs text-danger">{cameraError}</p>
               )}
-              {!cameraLoading && cameraRawText && !cameraResult && (
-                <div className="rounded-xl border border-border bg-surface-2 p-3">
-                  <p className="text-[10px] text-muted mb-1 text-center">النص الذي قرأه OCR</p>
-                  <p className="text-xs text-ink text-center font-mono break-all leading-relaxed">{cameraRawText.slice(0, 120)}</p>
+
+              {/* Editable plate input — shown after OCR runs */}
+              {!cameraLoading && cameraImage && (
+                <div className="flex gap-2 items-center">
+                  <input
+                    dir="rtl"
+                    value={cameraInputPlate}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join("");
+                      setCameraInputPlate(v);
+                    }}
+                    placeholder="اكتب أو صحّح رقم اللوحة..."
+                    className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center focus:border-brand outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      const v = cameraInputPlate.trim();
+                      if (!v) return;
+                      setCameraError(null);
+                      setCameraResult(searchInCheck(v));
+                    }}
+                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
+                  >
+                    بحث
+                  </button>
                 </div>
               )}
+
+              {/* Raw OCR text (debug) */}
+              {!cameraLoading && cameraRawText && !cameraResult && (
+                <p className="text-center text-[10px] text-muted">قرأ OCR: <span className="font-mono">{cameraRawText.slice(0, 80)}</span></p>
+              )}
+
               {cameraResult && (
                 <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
               )}
