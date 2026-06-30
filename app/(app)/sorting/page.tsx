@@ -327,9 +327,16 @@ export default function SortingPage() {
         }
         finalTashyeek = tashyeekMatches;
       }
+      const seenFull = new Set<string>();
+      const deduped = matches.filter((r) => {
+        const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+        if (seenFull.has(k)) return false;
+        seenFull.add(k);
+        return true;
+      });
       setTashyeekResults(finalTashyeek);
-      setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
-      persistSortResults(matches, finalTashyeek, "full", 0);
+      setResults(deduped); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      persistSortResults(deduped, finalTashyeek, "full", 0);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
@@ -346,9 +353,12 @@ export default function SortingPage() {
         if (!n) continue;
         checkSet.add(n);
       }
+      const seenNew = new Set<string>();
       const newRefRows = referralTable.rows.filter((row) => {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
-        return n && !checkSet.has(n);
+        if (!n || checkSet.has(n) || seenNew.has(n)) return false;
+        seenNew.add(n);
+        return true;
       });
       setNewPlatesCount(newRefRows.length);
       const dataIndex = new Map<string, Record<string, string>>();
