@@ -1,36 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
 
-const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
-  baseURL: "https://api.groq.com/openai/v1",
-});
-
-export async function POST(req: NextRequest) {
-  try {
-    const { image, mediaType } = await req.json();
-    if (!image || !mediaType) {
-      return NextResponse.json({ plate: null, error: "missing image" }, { status: 400 });
-    }
-
-    if (!process.env.GROQ_API_KEY) {
-      return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 500 });
-    }
-
-    const response = await client.chat.completions.create({
-      model: "llama-3.2-11b-vision-preview",
-      max_tokens: 32,
-      temperature: 0,
-      messages: [{
-        role: "user",
-        content: [
-          {
-            type: "image_url",
-            image_url: { url: `data:${mediaType};base64,${image}` },
-          },
-          {
-            type: "text",
-            text: `أنت متخصص في قراءة لوحات السيارات السعودية.
+const PROMPT = `أنت متخصص في قراءة لوحات السيارات السعودية.
 
 اللوحة السعودية لها صفّان:
 - الصف العلوي: 3 حروف عربية + 4 أرقام
@@ -45,13 +15,51 @@ A  B  D  E  G  H  J  K  L  M  N  R  S  T  U  V  X  Z
 أمثلة للإجابة الصحيحة: JTT8877 أو NKD5678 أو ABD1234 أو HGR3421
 
 اجتهد دائماً حتى لو الصورة غير واضحة تماماً.
-لا تكتب NONE إلا إذا لم توجد لوحة سيارة على الإطلاق في الصورة.`,
-          },
-        ],
-      }],
+لا تكتب NONE إلا إذا لم توجد لوحة سيارة على الإطلاق في الصورة.`;
+
+export async function POST(req: NextRequest) {
+  try {
+    const { image, mediaType } = await req.json();
+    if (!image || !mediaType) {
+      return NextResponse.json({ plate: null, error: "missing image" }, { status: 400 });
+    }
+
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 500 });
+    }
+
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.2-11b-vision-preview",
+        max_tokens: 32,
+        temperature: 0,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: `data:${mediaType};base64,${image}` } },
+            { type: "text", text: PROMPT },
+          ],
+        }],
+      }),
     });
 
-    const text = response.choices[0]?.message?.content?.trim() ?? "";
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("Groq error:", res.status, body.slice(0, 300));
+      return NextResponse.json(
+        { plate: null, error: "groq_error", detail: res.status, hint: body.slice(0, 200) },
+        { status: 500 }
+      );
+    }
+
+    const data = await res.json();
+    const text: string = data?.choices?.[0]?.message?.content?.trim() ?? "";
     if (!text || text.toUpperCase() === "NONE") {
       return NextResponse.json({ plate: null });
     }
@@ -59,6 +67,6 @@ A  B  D  E  G  H  J  K  L  M  N  R  S  T  U  V  X  Z
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("read-plate error:", msg);
-    return NextResponse.json({ plate: null, error: "server_error", detail: msg.slice(0, 200) }, { status: 500 });
+    return NextResponse.json({ plate: null, error: "server_error", detail: msg }, { status: 500 });
   }
 }
