@@ -262,11 +262,14 @@ export default function SortingPage() {
     try {
       const refIndex = new Map<string, Record<string, string>>();
       for (const row of referralTable.rows) {
-        const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+        const raw = String(row[effectiveReferralPlateCol] ?? "");
+        const n = normalizePlate(bankPlateToArabic(raw));
         if (!n || refIndex.has(n)) continue;
         refIndex.set(n, row);
-        const rev = reversePlateLetters(n);
-        if (rev !== n) refIndex.set(rev, row);
+        if (/[A-Za-z]/.test(raw)) {
+          const rev = reversePlateLetters(n);
+          if (rev !== n) refIndex.set(rev, row);
+        }
       }
       const matches: MatchResult[] = [];
       const rows = dataTable.rows;
@@ -310,8 +313,6 @@ export default function SortingPage() {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveCheckPlateCol] ?? "")));
         if (!n) continue;
         checkSet.add(n);
-        const rev = reversePlateLetters(n);
-        if (rev !== n) checkSet.add(rev);
       }
       const newRefRows = referralTable.rows.filter((row) => {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
@@ -323,24 +324,26 @@ export default function SortingPage() {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
         if (!n) continue;
         dataIndex.set(n, row);
-        const rev = reversePlateLetters(n);
-        if (rev !== n) dataIndex.set(rev, row);
       }
       const matches: MatchResult[] = [];
       for (const refRow of newRefRows) {
-        const n = normalizePlate(bankPlateToArabic(String(refRow[effectiveReferralPlateCol] ?? "")));
+        const raw = String(refRow[effectiveReferralPlateCol] ?? "");
+        const n = normalizePlate(bankPlateToArabic(raw));
         if (!n) continue;
-        const dataRow = dataIndex.get(n);
+        const dataRow = dataIndex.get(n) ?? (/[A-Za-z]/.test(raw) ? dataIndex.get(reversePlateLetters(n)) : undefined);
         if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
       }
       if (tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
         for (const row of referralTable.rows) {
-          const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+          const raw = String(row[effectiveReferralPlateCol] ?? "");
+          const n = normalizePlate(bankPlateToArabic(raw));
           if (!n || tashyeekRefIndex.has(n)) continue;
           tashyeekRefIndex.set(n, row);
-          const rev = reversePlateLetters(n);
-          if (rev !== n) tashyeekRefIndex.set(rev, row);
+          if (/[A-Za-z]/.test(raw)) {
+            const rev = reversePlateLetters(n);
+            if (rev !== n) tashyeekRefIndex.set(rev, row);
+          }
         }
         const tashyeekMatches: { tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] = [];
         for (const row of tashyeekTable.rows) {
