@@ -25,6 +25,7 @@ interface CheckHit {
   lat?: number;
   lng?: number;
   mapsLink?: string;
+  gpsError?: boolean;
   checkedAt: string;
 }
 
@@ -205,7 +206,7 @@ export default function InstantCheckPage() {
   // Crop
   const [pendingCropImage, setPendingCropImage] = useState<string | null>(null);
   const [cropRect, setCropRect] = useState({ x1: 0.05, y1: 0.25, x2: 0.95, y2: 0.75 });
-  const [dragHandle, setDragHandle] = useState<string | null>(null);
+  const dragHandleRef = useRef<string | null>(null); // ref not state — must be readable synchronously in touchmove
   const cropContainerRef = useRef<HTMLDivElement>(null);
 
   // PTT
@@ -339,9 +340,14 @@ export default function InstantCheckPage() {
           const lng = pos.coords.longitude;
           setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
         },
-        () => {},
-        { timeout: 6000, maximumAge: 30000 }
+        () => {
+          // GPS denied or timed out — mark so UI shows "—" instead of "جاري..." forever
+          setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
+        },
+        { timeout: 12000, maximumAge: 60000, enableHighAccuracy: false }
       );
+    } else {
+      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
     }
   }
 
@@ -548,11 +554,13 @@ export default function InstantCheckPage() {
     await runOCR(cropped);
   }
 
-  // Crop drag helpers
+  // Crop drag helpers — dragHandleRef is a ref (not state) so touchmove reads it synchronously
   function updateCropHandle(rx: number, ry: number) {
+    const handle = dragHandleRef.current;
+    if (!handle) return;
     const MIN = 0.15;
     setCropRect((prev) => {
-      switch (dragHandle) {
+      switch (handle) {
         case "tl": return { ...prev, x1: Math.min(rx, prev.x2 - MIN), y1: Math.min(ry, prev.y2 - MIN) };
         case "tr": return { ...prev, x2: Math.max(rx, prev.x1 + MIN), y1: Math.min(ry, prev.y2 - MIN) };
         case "bl": return { ...prev, x1: Math.min(rx, prev.x2 - MIN), y2: Math.max(ry, prev.y1 + MIN) };
@@ -562,7 +570,7 @@ export default function InstantCheckPage() {
     });
   }
   function onCropTouchMove(e: React.TouchEvent<HTMLDivElement>) {
-    if (!dragHandle || !cropContainerRef.current) return;
+    if (!dragHandleRef.current || !cropContainerRef.current) return;
     const rect = cropContainerRef.current.getBoundingClientRect();
     const t = e.touches[0];
     updateCropHandle(
@@ -571,7 +579,7 @@ export default function InstantCheckPage() {
     );
   }
   function onCropMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (!dragHandle || !cropContainerRef.current) return;
+    if (!dragHandleRef.current || !cropContainerRef.current) return;
     const rect = cropContainerRef.current.getBoundingClientRect();
     updateCropHandle(
       Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
@@ -930,10 +938,10 @@ export default function InstantCheckPage() {
                     className="relative rounded-xl overflow-hidden select-none"
                     style={{ touchAction: "none" }}
                     onTouchMove={onCropTouchMove}
-                    onTouchEnd={() => setDragHandle(null)}
+                    onTouchEnd={() => { dragHandleRef.current = null; }}
                     onMouseMove={onCropMouseMove}
-                    onMouseUp={() => setDragHandle(null)}
-                    onMouseLeave={() => setDragHandle(null)}
+                    onMouseUp={() => { dragHandleRef.current = null; }}
+                    onMouseLeave={() => { dragHandleRef.current = null; }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={pendingCropImage} alt="" className="w-full block" />
@@ -960,8 +968,8 @@ export default function InstantCheckPage() {
                       <div key={id}
                         className="absolute rounded-full bg-white shadow-lg border-2 border-black/20"
                         style={{ left: `${hx * 100}%`, top: `${hy * 100}%`, width: 30, height: 30, transform: "translate(-50%,-50%)", touchAction: "none", cursor: "grab" }}
-                        onTouchStart={(e) => { e.stopPropagation(); setDragHandle(id); }}
-                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setDragHandle(id); }}
+                        onTouchStart={(e) => { e.stopPropagation(); dragHandleRef.current = id; }}
+                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); dragHandleRef.current = id; }}
                       />
                     ))}
                   </div>
@@ -1183,8 +1191,10 @@ export default function InstantCheckPage() {
                                   className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
                                   <MapPin size={10} /> خريطة
                                 </a>
+                              ) : hit.gpsError ? (
+                                <span className="text-muted text-[10px]">—</span>
                               ) : (
-                                <span className="text-muted text-[10px]">جاري...</span>
+                                <span className="text-muted text-[10px] animate-pulse">جاري...</span>
                               )}
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
