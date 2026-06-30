@@ -322,27 +322,29 @@ export default function InstantCheckPage() {
     setManualResult(null);
   }
 
+  function saveHitWithGps(result: PlateResult) {
+    const hitId = String(Date.now());
+    const hit: CheckHit = { id: hitId, plate: result.plate, row: result.row ?? {}, checkedAt: new Date().toISOString() };
+    setManualHits((prev) => [hit, ...prev]);
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
+        },
+        () => {},
+        { timeout: 6000, maximumAge: 30000 }
+      );
+    }
+  }
+
   function handleManualSearch() {
     const raw = manualInput.trim();
     if (!raw || manualError) return;
     const result = searchInCheck(raw);
     setManualResult(result);
-    if (result?.found) {
-      const hitId = String(Date.now());
-      const hit: CheckHit = { id: hitId, plate: result.plate, row: result.row ?? {}, checkedAt: new Date().toISOString() };
-      setManualHits((prev) => [hit, ...prev]);
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const lat = pos.coords.latitude;
-            const lng = pos.coords.longitude;
-            setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
-          },
-          () => {},
-          { timeout: 6000, maximumAge: 30000 }
-        );
-      }
-    }
+    if (result?.found) saveHitWithGps(result);
   }
 
   // ── Hit helpers ────────────────────────────────────────────────────────────
@@ -498,7 +500,9 @@ export default function InstantCheckPage() {
         const displayPlate = plate ? (bankPlateToArabic(plate) || plate) : null;
         setCameraInputPlate(displayPlate ?? "");
         if (displayPlate) {
-          setCameraResult(searchInCheck(displayPlate));
+          const result = searchInCheck(displayPlate);
+          setCameraResult(result);
+          if (result?.found) saveHitWithGps(result);
         } else {
           setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
         }
@@ -826,137 +830,6 @@ export default function InstantCheckPage() {
                 <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
               )}
 
-              {/* ── Hits history table ── */}
-              {manualHits.length > 0 && (() => {
-                const scale = HIT_ZOOM_LEVELS[hitsZoom];
-                const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
-                const allSel = hitsSelected.size === manualHits.length;
-                const someSel = hitsSelected.size > 0;
-                return (
-                  <div className="flex flex-col gap-2 pt-2 border-t border-border mt-2">
-                    {/* Stats */}
-                    <div className="rounded-xl border border-border bg-surface p-2 text-center">
-                      <p className="text-lg font-black text-brand">{manualHits.length}</p>
-                      <p className="text-[11px] text-muted">إجمالي</p>
-                    </div>
-
-                    {/* Zoom + select all */}
-                    <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => setHitsZoom((z) => Math.max(z - 1, 0))} disabled={hitsZoom === 0}
-                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
-                          <ZoomOut size={14} />
-                        </button>
-                        <span className="text-xs text-muted w-10 text-center">{Math.round(scale * 100)}%</span>
-                        <button onClick={() => setHitsZoom((z) => Math.min(z + 1, HIT_ZOOM_LEVELS.length - 1))} disabled={hitsZoom === HIT_ZOOM_LEVELS.length - 1}
-                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
-                          <ZoomIn size={14} />
-                        </button>
-                      </div>
-                      <button onClick={toggleHitsAll}
-                        className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-                        {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-                        {allSel ? "إلغاء الكل" : "تحديد الكل"}
-                      </button>
-                    </div>
-
-                    {/* Table */}
-                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "50vh" }}>
-                      <div style={{ fontSize: `${scale * 12}px`, minWidth: "max-content" }}>
-                        <table className="border-collapse w-full" style={{ direction: "rtl" }}>
-                          <thead className="sticky top-0 z-10">
-                            <tr className="bg-surface-2 text-muted">
-                              <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
-                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                              {dynCols.map((h) => (
-                                <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
-                              ))}
-                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
-                              <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {manualHits.map((hit, i) => (
-                              <tr key={hit.id}
-                                className={`border-b border-border transition ${hitsSelected.has(hit.id) ? "bg-primary/15" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
-                                <td className="border-l border-border px-2 py-2 text-center">
-                                  <button onClick={() => toggleHitSelect(hit.id)} className="text-muted hover:text-primary transition">
-                                    {hitsSelected.has(hit.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
-                                  </button>
-                                </td>
-                                <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
-                                  {hit.plate}
-                                </td>
-                                {dynCols.map((h) => (
-                                  <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                                    {hit.row[h] || "—"}
-                                  </td>
-                                ))}
-                                <td className="border-l border-border px-3 py-2">
-                                  {hit.mapsLink ? (
-                                    <a href={hit.mapsLink} target="_blank" rel="noopener noreferrer"
-                                      className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
-                                      <MapPin size={10} /> خريطة
-                                    </a>
-                                  ) : (
-                                    <span className="text-muted text-[10px]">جاري...</span>
-                                  )}
-                                </td>
-                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
-                                  {formatDate(hit.checkedAt)}
-                                </td>
-                                <td className="px-2 py-2">
-                                  <div className="flex items-center gap-2">
-                                    <button onClick={() => copyHit(hit)} title="نسخ" className="text-muted hover:text-primary transition">
-                                      {copiedHitId === hit.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                    </button>
-                                    <button onClick={() => shareHitWhatsApp(hit)} title="واتساب" className="text-muted hover:text-primary transition">
-                                      <Share2 size={13} />
-                                    </button>
-                                    <button onClick={() => deleteHit(hit.id)} title="حذف" className="text-muted hover:text-danger transition">
-                                      <Trash2 size={13} />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* Bulk action bar */}
-                    {someSel && (
-                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-lg">
-                        <span className="text-xs font-bold text-ink">{hitsSelected.size} محددة</span>
-                        <div className="flex gap-2">
-                          <button onClick={shareSelectedHits}
-                            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition">
-                            <Share2 size={13} /> واتساب
-                          </button>
-                          <button onClick={() => { const ids = Array.from(hitsSelected); setManualHits((prev) => prev.filter((h) => !ids.includes(h.id))); setHitsSelected(new Set()); }}
-                            className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition">
-                            <Trash2 size={13} /> مسح
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Export / Share Excel */}
-                    <div className="flex gap-2">
-                      <button onClick={exportHitsExcel}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
-                        <Download size={14} /> فتح في Excel
-                      </button>
-                      <button onClick={shareHitsExcel}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
-                        <Share2 size={14} /> مشاركة Excel
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
           )}
 
@@ -1033,7 +906,9 @@ export default function InstantCheckPage() {
                       const v = cameraInputPlate.trim();
                       if (!v) return;
                       setCameraError(null);
-                      setCameraResult(searchInCheck(v));
+                      const result = searchInCheck(v);
+                      setCameraResult(result);
+                      if (result?.found) saveHitWithGps(result);
                     }}
                     className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                   >
@@ -1104,6 +979,138 @@ export default function InstantCheckPage() {
               )}
             </div>
           )}
+
+          {/* ── Hits history table — visible in all modes ── */}
+          {manualHits.length > 0 && (() => {
+            const scale = HIT_ZOOM_LEVELS[hitsZoom];
+            const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+            const allSel = hitsSelected.size === manualHits.length;
+            const someSel = hitsSelected.size > 0;
+            return (
+              <div className="flex flex-col gap-2 pt-2 border-t border-border mt-2">
+                {/* Stats */}
+                <div className="rounded-xl border border-border bg-surface p-2 text-center">
+                  <p className="text-lg font-black text-brand">{manualHits.length}</p>
+                  <p className="text-[11px] text-muted">إجمالي</p>
+                </div>
+
+                {/* Zoom + select all */}
+                <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setHitsZoom((z) => Math.max(z - 1, 0))} disabled={hitsZoom === 0}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                      <ZoomOut size={14} />
+                    </button>
+                    <span className="text-xs text-muted w-10 text-center">{Math.round(scale * 100)}%</span>
+                    <button onClick={() => setHitsZoom((z) => Math.min(z + 1, HIT_ZOOM_LEVELS.length - 1))} disabled={hitsZoom === HIT_ZOOM_LEVELS.length - 1}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                      <ZoomIn size={14} />
+                    </button>
+                  </div>
+                  <button onClick={toggleHitsAll}
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                    {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                    {allSel ? "إلغاء الكل" : "تحديد الكل"}
+                  </button>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "50vh" }}>
+                  <div style={{ fontSize: `${scale * 12}px`, minWidth: "max-content" }}>
+                    <table className="border-collapse w-full" style={{ direction: "rtl" }}>
+                      <thead className="sticky top-0 z-10">
+                        <tr className="bg-surface-2 text-muted">
+                          <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                          {dynCols.map((h) => (
+                            <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                          ))}
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
+                          <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {manualHits.map((hit, i) => (
+                          <tr key={hit.id}
+                            className={`border-b border-border transition ${hitsSelected.has(hit.id) ? "bg-primary/15" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                            <td className="border-l border-border px-2 py-2 text-center">
+                              <button onClick={() => toggleHitSelect(hit.id)} className="text-muted hover:text-primary transition">
+                                {hitsSelected.has(hit.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                              </button>
+                            </td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
+                              {hit.plate}
+                            </td>
+                            {dynCols.map((h) => (
+                              <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                                {hit.row[h] || "—"}
+                              </td>
+                            ))}
+                            <td className="border-l border-border px-3 py-2">
+                              {hit.mapsLink ? (
+                                <a href={hit.mapsLink} target="_blank" rel="noopener noreferrer"
+                                  className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                                  <MapPin size={10} /> خريطة
+                                </a>
+                              ) : (
+                                <span className="text-muted text-[10px]">جاري...</span>
+                              )}
+                            </td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
+                              {formatDate(hit.checkedAt)}
+                            </td>
+                            <td className="px-2 py-2">
+                              <div className="flex items-center gap-2">
+                                <button onClick={() => copyHit(hit)} title="نسخ" className="text-muted hover:text-primary transition">
+                                  {copiedHitId === hit.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                </button>
+                                <button onClick={() => shareHitWhatsApp(hit)} title="واتساب" className="text-muted hover:text-primary transition">
+                                  <Share2 size={13} />
+                                </button>
+                                <button onClick={() => deleteHit(hit.id)} title="حذف" className="text-muted hover:text-danger transition">
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Bulk action bar */}
+                {someSel && (
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-lg">
+                    <span className="text-xs font-bold text-ink">{hitsSelected.size} محددة</span>
+                    <div className="flex gap-2">
+                      <button onClick={shareSelectedHits}
+                        className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition">
+                        <Share2 size={13} /> واتساب
+                      </button>
+                      <button onClick={() => { const ids = Array.from(hitsSelected); setManualHits((prev) => prev.filter((h) => !ids.includes(h.id))); setHitsSelected(new Set()); }}
+                        className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition">
+                        <Trash2 size={13} /> مسح
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Export / Share Excel */}
+                <div className="flex gap-2">
+                  <button onClick={exportHitsExcel}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
+                    <Download size={14} /> فتح في Excel
+                  </button>
+                  <button onClick={shareHitsExcel}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                    <Share2 size={14} /> مشاركة Excel
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>
