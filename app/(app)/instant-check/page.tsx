@@ -439,6 +439,7 @@ export default function InstantCheckPage() {
     if (!file) return;
     setCameraError(null);
     setCameraResult(null);
+    setCameraRawText(null);
 
     const reader = new FileReader();
     reader.onload = async () => {
@@ -447,10 +448,10 @@ export default function InstantCheckPage() {
       setCameraLoading(true);
       try {
         const resized = await resizeImageForOCR(dataUrl);
-        let rawText = "";
         let plate: string | null = null;
+        let debugLine = "";
 
-        // ── Try 1: Gemini API (best quality — server-side vision model) ──────
+        // ── Try 1: Gemini API ──────────────────────────────────────────────────
         try {
           const base64 = resized.split(",")[1];
           const apiRes = await fetch("/api/read-plate", {
@@ -460,14 +461,18 @@ export default function InstantCheckPage() {
           });
           const json = await apiRes.json().catch(() => null);
           if (apiRes.ok && json?.plate) {
-            rawText = json.plate as string;
             plate = json.plate as string;
+            debugLine = `[Gemini] ${plate}`;
+          } else {
+            const hint = json?.hint ?? json?.detail ?? `HTTP ${apiRes.status}`;
+            debugLine = `خطأ Gemini: ${String(hint).slice(0, 120)}`;
+            console.warn("Gemini error:", hint);
           }
-          // Log hint if Gemini errors (visible in browser console for debugging)
-          if (!apiRes.ok && json?.hint) console.warn("Gemini:", json.hint);
-        } catch { /* network error — fall through */ }
+        } catch (err) {
+          debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
+        }
 
-        // ── Try 2: native TextDetector (Chrome/Android ML Kit) ───────────────
+        // ── Try 2: native TextDetector (Chrome/Android ML Kit) ────────────────
         if (!plate && typeof window !== "undefined" && "TextDetector" in window) {
           try {
             const img = document.createElement("img");
@@ -483,26 +488,12 @@ export default function InstantCheckPage() {
                 if (plate) break;
               }
               if (!plate) plate = extractPlateFromOcrText(combined);
-              rawText = combined;
+              if (plate) debugLine = `[ML Kit] ${plate}`;
             }
           } catch { /* TextDetector not available */ }
         }
 
-        // ── Try 3: Tesseract.js (last resort) ────────────────────────────────
-        if (!plate) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { createWorker } = await import("tesseract.js") as any;
-          const worker = await createWorker(["ara", "eng"], 1);
-          try {
-            const { data } = await worker.recognize(resized);
-            rawText = (data.text as string ?? "").replace(/\n/g, " ").trim();
-            plate = extractPlateFromOcrText(rawText);
-          } finally {
-            await worker.terminate();
-          }
-        }
-
-        setCameraRawText(rawText || null);
+        setCameraRawText(debugLine || null);
         setCameraInputPlate(plate ?? "");
         if (plate) {
           setCameraResult(searchInCheck(plate));
@@ -1049,9 +1040,11 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* Raw OCR text (debug) */}
-              {!cameraLoading && cameraRawText && !cameraResult && (
-                <p className="text-center text-[10px] text-muted">قرأ OCR: <span className="font-mono">{cameraRawText.slice(0, 80)}</span></p>
+              {/* OCR debug line — always visible so user can see which engine ran */}
+              {!cameraLoading && cameraRawText && (
+                <p className="text-center text-[10px] text-muted" dir="ltr">
+                  <span className="font-mono">{cameraRawText.slice(0, 120)}</span>
+                </p>
               )}
 
               {cameraResult && (
