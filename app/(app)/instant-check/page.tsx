@@ -455,7 +455,7 @@ export default function InstantCheckPage() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "";
         if (msg === "api_key") {
-          setCameraError("GOOGLE_API_KEY غير مضبوط على Vercel");
+          setCameraError("ANTHROPIC_API_KEY غير مضبوط على Vercel");
         } else if (msg === "model") {
           setCameraError("خطأ في إعدادات الخادم");
         } else if (msg.includes("413") || msg.includes("414")) {
