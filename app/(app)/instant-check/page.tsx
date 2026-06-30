@@ -455,7 +455,7 @@ export default function InstantCheckPage() {
         if (typeof window !== "undefined" && "TextDetector" in window) {
           try {
             const img = document.createElement("img");
-            await new Promise<void>((res, rej) => { img.onload = res; img.onerror = rej; img.src = resized; });
+            await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("img")); img.src = resized; });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const detector = new (window as any).TextDetector();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
