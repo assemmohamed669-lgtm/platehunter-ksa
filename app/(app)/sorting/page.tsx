@@ -521,7 +521,39 @@ export default function SortingPage() {
         </div>
       )}
 
-      {/* ② SORT MODE TABS */}
+      {/* ② TASHYEEK FILE */}
+      <div className="flex flex-col gap-2">
+        <FileUploadBox
+          title="ملف التشييك"
+          hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"
+          parsedFile={tashyeekFile}
+          parsedRowCount={tashyeekTable?.rows.length ?? null}
+          onParsed={(table, file) => persistAndSetTashyeek(table, file)}
+          onClear={clearTashyeekSlot}
+          showReplaceButtons
+        />
+        {tashyeekTable && (
+          <>
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {tashyeekTable.headers.map((h) => (
+                <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={shareTashyeekFile}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-bold text-white transition hover:opacity-90">
+                <Share2 size={15} /> واتساب
+              </button>
+              <button onClick={downloadTashyeekFile}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
+                <Download size={15} /> تحميل
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ③ SORT MODE TABS */}
       <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
         <button onClick={() => { setSortMode("new"); setSorted(false); setResults(null); }}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "new" ? "bg-primary text-night font-bold" : "text-muted"}`}>
@@ -586,38 +618,6 @@ export default function SortingPage() {
           )}
         </div>
       )}
-
-      {/* ④ TASHYEEK FILE */}
-      <div className="flex flex-col gap-2">
-        <FileUploadBox
-          title="ملف التشييك"
-          hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"
-          parsedFile={tashyeekFile}
-          parsedRowCount={tashyeekTable?.rows.length ?? null}
-          onParsed={(table, file) => persistAndSetTashyeek(table, file)}
-          onClear={clearTashyeekSlot}
-          showReplaceButtons
-        />
-        {tashyeekTable && (
-          <>
-            <div className="flex flex-wrap gap-1.5 px-1">
-              {tashyeekTable.headers.map((h) => (
-                <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button onClick={shareTashyeekFile}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-bold text-white transition hover:opacity-90">
-                <Share2 size={15} /> واتساب
-              </button>
-              <button onClick={downloadTashyeekFile}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
-                <Download size={15} /> تحميل
-              </button>
-            </div>
-          </>
-        )}
-      </div>
 
       {/* ⑤ SORT BUTTON */}
       <button onClick={handleSort} disabled={sorting || !canSort}
