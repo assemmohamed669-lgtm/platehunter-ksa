@@ -494,9 +494,11 @@ export default function InstantCheckPage() {
         }
 
         setCameraRawText(debugLine || null);
-        setCameraInputPlate(plate ?? "");
-        if (plate) {
-          setCameraResult(searchInCheck(plate));
+        // Convert English plate letters to Arabic for display and search (JTT8877 → حطط8877)
+        const displayPlate = plate ? (bankPlateToArabic(plate) || plate) : null;
+        setCameraInputPlate(displayPlate ?? "");
+        if (displayPlate) {
+          setCameraResult(searchInCheck(displayPlate));
         } else {
           setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
         }
