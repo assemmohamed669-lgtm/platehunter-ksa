@@ -462,11 +462,11 @@ export default function InstantCheckPage() {
           const json = await apiRes.json().catch(() => null);
           if (apiRes.ok && json?.plate) {
             plate = json.plate as string;
-            debugLine = `[Gemini] ${plate}`;
+            debugLine = `[Claude] ${plate}`;
           } else {
             const hint = json?.hint ?? json?.detail ?? `HTTP ${apiRes.status}`;
-            debugLine = `خطأ Gemini: ${String(hint).slice(0, 120)}`;
-            console.warn("Gemini error:", hint);
+            debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`;
+            console.warn("OCR error:", hint);
           }
         } catch (err) {
           debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
