@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
@@ -202,6 +202,7 @@ export default function InstantCheckPage() {
   const [cameraRawText, setCameraRawText] = useState<string | null>(null);
   const [cameraInputPlate, setCameraInputPlate] = useState("");
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Live camera viewfinder
   const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
@@ -919,8 +920,9 @@ export default function InstantCheckPage() {
           {/* ── Camera ── */}
           {mode === "camera" && (
             <div className="flex flex-col gap-3">
-              {/* Hidden file input — fallback when getUserMedia unavailable */}
+              {/* Hidden inputs */}
               <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraCapture} />
+              <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={handleCameraCapture} />
 
               {/* ── Live viewfinder ── */}
               {liveStream && !cameraImage && (
@@ -959,16 +961,26 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* ── No stream, no image: open camera button ── */}
+              {/* ── No stream, no image: two entry points ── */}
               {!liveStream && !cameraImage && (
-                <button
-                  onClick={openLiveCamera}
-                  disabled={cameraLoading}
-                  className="flex h-36 w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 text-muted transition active:scale-95"
-                >
-                  <Camera size={28} />
-                  <span className="text-sm">التقط صورة اللوحة</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={openLiveCamera}
+                    disabled={cameraLoading}
+                    className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 py-8 text-muted transition active:scale-95"
+                  >
+                    <Camera size={26} />
+                    <span className="text-xs font-medium">كاميرا</span>
+                  </button>
+                  <button
+                    onClick={() => galleryInputRef.current?.click()}
+                    disabled={cameraLoading}
+                    className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 py-8 text-muted transition active:scale-95"
+                  >
+                    <Images size={26} />
+                    <span className="text-xs font-medium">المعرض</span>
+                  </button>
+                </div>
               )}
 
               {/* ── Captured image (after OCR) ── */}
@@ -991,9 +1003,16 @@ export default function InstantCheckPage() {
               )}
 
               {!cameraLoading && cameraImage && (
-                <button onClick={openLiveCamera} className="rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted">
-                  التقط صورة أخرى
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={openLiveCamera}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted">
+                    <Camera size={14} /> كاميرا
+                  </button>
+                  <button onClick={() => galleryInputRef.current?.click()}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted">
+                    <Images size={14} /> المعرض
+                  </button>
+                </div>
               )}
 
               {cameraError && <p className="text-center text-xs text-danger">{cameraError}</p>}
