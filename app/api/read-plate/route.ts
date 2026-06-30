@@ -1,21 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const PROMPT = `أنت متخصص في قراءة لوحات السيارات السعودية.
+const PROMPT = `Look at the license plate in this image.
 
-اللوحة السعودية لها صفّان:
-- الصف العلوي: 3 حروف عربية + 4 أرقام
-- الصف السفلي: نفس اللوحة بالإنجليزية — 3 حروف لاتينية + 4 أرقام
+Output ONLY the 7 characters from the BOTTOM English row: 3 letters then 4 digits, no spaces, nothing else.
 
-الحروف اللاتينية الممكنة فقط على اللوحة السعودية هي:
-A  B  D  E  G  H  J  K  L  M  N  R  S  T  U  V  X  Z
-(لا توجد حروف مثل C, F, I, O, P, Q, W, Y على اللوحات السعودية)
+Valid letters on Saudi plates: A B D E G H J K L M N R S T U V X Z
 
-المطلوب:
-اقرأ الصف السفلي (الإنجليزي) فقط، وأخرج الحروف الثلاثة والأرقام الأربعة بدون مسافات.
-أمثلة للإجابة الصحيحة: JTT8877 أو NKD5678 أو ABD1234 أو HGR3421
+Examples of correct output:
+JTT8877
+NKD5678
+ABD1234
 
-اجتهد دائماً حتى لو الصورة غير واضحة تماماً.
-لا تكتب NONE إلا إذا لم توجد لوحة سيارة على الإطلاق في الصورة.`;
+Do NOT describe the plate. Do NOT write any other words. Just the 7 characters.
+If no plate is visible at all, output: NONE`;
+
+// Extract plate pattern from model response (safety net if model adds extra words)
+function extractPlate(text: string): string | null {
+  const cleaned = text.replace(/\s+/g, "").toUpperCase();
+  // Match 3 letters + 4 digits or 4 digits + 3 letters
+  const m = cleaned.match(/[A-Z]{2,3}[0-9]{3,4}/) ?? cleaned.match(/[0-9]{3,4}[A-Z]{2,3}/);
+  return m ? m[0] : null;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        max_tokens: 32,
+        max_tokens: 20,
         temperature: 0,
         messages: [{
           role: "user",
@@ -59,11 +64,14 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await res.json();
-    const text: string = data?.choices?.[0]?.message?.content?.trim() ?? "";
-    if (!text || text.toUpperCase() === "NONE") {
+    const raw: string = data?.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!raw || raw.toUpperCase().includes("NONE")) {
       return NextResponse.json({ plate: null });
     }
-    return NextResponse.json({ plate: text });
+
+    // If model returned just the plate — use it directly; otherwise extract from response
+    const plate = extractPlate(raw) ?? null;
+    return NextResponse.json({ plate, raw });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("read-plate error:", msg);
