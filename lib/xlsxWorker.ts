@@ -9,7 +9,7 @@ import * as XLSX from "xlsx";
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
 function cellLooksLikePlate(raw: string): boolean {
-  const cleaned = raw.replace(/[\s\-_./]/g, "");
+  const cleaned = raw.replace(/[\s\-_.ـ/]/g, ""); // strip tatweel too
   if (cleaned.length < 2 || cleaned.length > 10) return false;
 
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);

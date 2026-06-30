@@ -205,7 +205,7 @@ function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string
         const raw = String((r as unknown[])[col] ?? "").trim();
         if (!raw) continue;
         nonEmpty++;
-        const cleaned = raw.replace(/[\s\-_./]/g, "");
+        const cleaned = raw.replace(/[\s\-_.ـ/]/g, ""); // strip tatweel too
         if (cleaned.length < 2 || cleaned.length > 10) continue;
         const digitMatch = cleaned.match(/[0-9٠-٩]+/);
         if (!digitMatch || digitMatch[0].length > 4) continue;
