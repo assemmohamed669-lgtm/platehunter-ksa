@@ -845,6 +845,46 @@ export default function RegistrationPage() {
     await handleShareExcelFor(recordings);
   }
 
+  async function exportToTashyeek() {
+    const manualRecs = recordings.filter((r) => r.isManual);
+    if (manualRecs.length === 0) {
+      alert("لا توجد إدخالات يدوية للتصدير.");
+      return;
+    }
+
+    const newRows = manualRecs.map((r) => ({
+      "رقم اللوحة": r.plate,
+      "نوع المركبة": r.vehicleType ?? "",
+      "GPS": r.mapsLink ?? (r.lat && r.lng ? toMapsLink(r.lat, r.lng) : ""),
+      "الحي": r.district ?? "",
+      "الشارع": r.street ?? "",
+      "تاريخ التسجيل": formatDate(r.recordedAt),
+      "اسم المسجّل": r.recorderName ?? "",
+      "ملاحظات": r.notes ?? "",
+    }));
+
+    const existing = await getUploadedFile("local", "tashyeek");
+    const existingKeys = new Set(
+      (existing?.rows ?? []).map((r) => `${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`)
+    );
+    const freshRows = newRows.filter((r) => !existingKeys.has(`${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`));
+    const allRows = [...(existing?.rows ?? []), ...freshRows];
+
+    const blob = buildExcelBlob(allRows, "ملف التشييك");
+    await saveUploadedFile({
+      key: "local:tashyeek",
+      agentId: "local",
+      slot: "tashyeek",
+      fileName: "ملف-التشييك.xlsx",
+      headers: ["رقم اللوحة", "نوع المركبة", "GPS", "الحي", "الشارع", "تاريخ التسجيل", "اسم المسجّل", "ملاحظات"],
+      rows: allRows,
+      uploadedAt: new Date().toISOString(),
+      fileBlob: blob,
+    });
+
+    alert(`✅ تم التصدير — ${freshRows.length} إدخال جديد، الإجمالي: ${allRows.length}`);
+  }
+
   function dupClass(plate: string): string {
     if (duplicates.has(plate.replace(/\s/g, "").toLowerCase())) {
       return "border-alert bg-alert/10";
@@ -1222,6 +1262,12 @@ export default function RegistrationPage() {
                 <Download size={16} /> فتح في Excel
               </button>
             </div>
+            <button
+              onClick={exportToTashyeek}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20"
+            >
+              <Download size={16} /> تصدير للتشييك
+            </button>
           </div>
         ) : null;
       })()}

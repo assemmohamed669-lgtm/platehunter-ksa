@@ -50,6 +50,11 @@ export default function SortingPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
 
+  // ── Tashyeek file (manual entries from registration page) ──
+  const [tashyeekTable, setTashyeekTable] = useState<ExcelTable | null>(null);
+  const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
+  const [tashyeekResults, setTashyeekResults] = useState<{ tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] | null>(null);
+
   // ── Sort results ──
   const [results, setResults] = useState<MatchResult[] | null>(null);
   const [sorted, setSorted] = useState(false);
@@ -78,8 +83,9 @@ export default function SortingPage() {
       getUploadedFile("local", "data"),
       getUploadedFile("local", "referral"),
       getUploadedFile("local", "check"),
+      getUploadedFile("local", "tashyeek"),
     ])
-      .then(([dataRec, refRec, checkRec]) => {
+      .then(([dataRec, refRec, checkRec, tashyeekRec]) => {
         if (dataRec) {
           setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
           setDataFile(new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -92,6 +98,10 @@ export default function SortingPage() {
         }
         if (checkRec) {
           setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
+        }
+        if (tashyeekRec) {
+          setTashyeekTable({ headers: tashyeekRec.headers, rows: tashyeekRec.rows });
+          setTashyeekFile(new File([tashyeekRec.fileBlob ?? new Blob()], tashyeekRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
         }
       })
       .catch(() => {})
@@ -151,6 +161,7 @@ export default function SortingPage() {
   const effectiveDataPlateCol = dataPlateColOverride ?? dataPlateCol;
   const effectiveReferralPlateCol = referralPlateColOverride ?? referralPlateCol;
   const effectiveCheckPlateCol = checkPlateColOverride ?? checkPlateCol;
+  const tashyeekPlateCol = tashyeekTable ? detectPlateColumn(tashyeekTable.headers) : null;
 
   const displayCols = useMemo(() => {
     const mandatory = dataTable?.headers.filter((h) => h !== effectiveDataPlateCol && isMandatory(h)) ?? [];
@@ -209,6 +220,33 @@ export default function SortingPage() {
     setResults(null); setSorted(false);
   }
 
+  const persistAndSetTashyeek = useCallback(async (table: ExcelTable, file: File) => {
+    const blob = buildExcelBlob(table.rows, "ملف التشييك");
+    await saveUploadedFile({
+      key: "local:tashyeek", agentId: "local", slot: "tashyeek",
+      fileName: file.name, headers: table.headers, rows: table.rows,
+      uploadedAt: new Date().toISOString(), fileBlob: blob,
+    });
+    setTashyeekTable(table); setTashyeekFile(file); setTashyeekResults(null);
+  }, []);
+
+  async function clearTashyeekSlot() {
+    await deleteUploadedFile("local", "tashyeek");
+    setTashyeekTable(null); setTashyeekFile(null); setTashyeekResults(null);
+  }
+
+  async function shareTashyeekFile() {
+    if (!tashyeekTable) return;
+    const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
+    await shareExcelBlob(blob, "ملف-التشييك.xlsx", "ملف التشييك");
+  }
+
+  async function downloadTashyeekFile() {
+    if (!tashyeekTable) return;
+    const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
+    await openExcelBlob(blob, "ملف-التشييك.xlsx");
+  }
+
   function toggleSet(set: Set<string>, key: string, setter: (s: Set<string>) => void) {
     const next = new Set(set);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -242,6 +280,18 @@ export default function SortingPage() {
           if (refRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
         }
         if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
+      }
+      if (tashyeekTable && tashyeekPlateCol) {
+        const tashyeekMatches: { tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] = [];
+        for (const row of tashyeekTable.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
+          if (!n) continue;
+          const refRow = refIndex.get(n);
+          if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
+        }
+        setTashyeekResults(tashyeekMatches);
+      } else {
+        setTashyeekResults(null);
       }
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
     } catch (err) { console.error(err); }
@@ -282,13 +332,33 @@ export default function SortingPage() {
         const dataRow = dataIndex.get(n);
         if (dataRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
       }
+      if (tashyeekTable && tashyeekPlateCol) {
+        const tashyeekRefIndex = new Map<string, Record<string, string>>();
+        for (const row of referralTable.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(row[effectiveReferralPlateCol] ?? "")));
+          if (!n || tashyeekRefIndex.has(n)) continue;
+          tashyeekRefIndex.set(n, row);
+          const rev = reversePlateLetters(n);
+          if (rev !== n) tashyeekRefIndex.set(rev, row);
+        }
+        const tashyeekMatches: { tashyeekRow: Record<string, string>; referralRow: Record<string, string> }[] = [];
+        for (const row of tashyeekTable.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
+          if (!n) continue;
+          const refRow = tashyeekRefIndex.get(n);
+          if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
+        }
+        setTashyeekResults(tashyeekMatches);
+      } else {
+        setTashyeekResults(null);
+      }
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
 
   function handleSort() {
-    setResults(null); setSorted(false);
+    setResults(null); setSorted(false); setTashyeekResults(null);
     if (sortMode === "new") runNewSort(); else runFullSort();
   }
 
@@ -517,7 +587,39 @@ export default function SortingPage() {
         </div>
       )}
 
-      {/* ④ SORT BUTTON */}
+      {/* ④ TASHYEEK FILE */}
+      <div className="flex flex-col gap-2">
+        <FileUploadBox
+          title="ملف التشييك"
+          hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"
+          parsedFile={tashyeekFile}
+          parsedRowCount={tashyeekTable?.rows.length ?? null}
+          onParsed={(table, file) => persistAndSetTashyeek(table, file)}
+          onClear={clearTashyeekSlot}
+          showReplaceButtons
+        />
+        {tashyeekTable && (
+          <>
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {tashyeekTable.headers.map((h) => (
+                <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={shareTashyeekFile}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-bold text-white transition hover:opacity-90">
+                <Share2 size={15} /> واتساب
+              </button>
+              <button onClick={downloadTashyeekFile}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
+                <Download size={15} /> تحميل
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ⑤ SORT BUTTON */}
       <button onClick={handleSort} disabled={sorting || !canSort}
         className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-50">
         <ListFilter size={18} />
@@ -734,6 +836,59 @@ export default function SortingPage() {
           </div>
           <p className="text-[11px] text-muted text-center">صوّر هذه المعلومات وأرسلها لتشخيص المشكلة</p>
         </div>
+      )}
+
+      {/* ⑥ TASHYEEK RESULTS */}
+      {sorted && tashyeekResults !== null && (
+        tashyeekResults.length > 0 ? (
+          <div className="flex flex-col gap-3 rounded-2xl border-2 border-primary/60 bg-primary/5 p-3">
+            <div>
+              <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من ملف التشييك</h2>
+              <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من ملف التشييك موجودة في قائمة الإحالة</p>
+            </div>
+            <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh" }}>
+              <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-surface-2 text-muted">
+                    <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                    {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => (
+                      <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tashyeekResults.map((r, i) => {
+                    const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
+                    return (
+                      <tr key={i} className="border-b border-border bg-primary/5 hover:bg-primary/10 transition">
+                        <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
+                        {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => {
+                          const val = r.tashyeekRow[h] || r.referralRow[h] || "";
+                          return (
+                            <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                              {/^https?:\/\//i.test(val) ? (
+                                <a href={val} target="_blank" rel="noopener noreferrer" className="text-primary">📍 خريطة</a>
+                              ) : (() => {
+                                const m = val.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+                                return m
+                                  ? <a href={toMapsLink(parseFloat(m[1]), parseFloat(m[2]))} target="_blank" rel="noopener noreferrer" className="text-primary">📍 خريطة</a>
+                                  : <>{val || "—"}</>;
+                              })()}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-primary/30 bg-surface p-3 text-center">
+            <p className="text-xs text-muted">لا يوجد تطابق بين ملف التشييك وقائمة الإحالة</p>
+          </div>
+        )
       )}
 
       {/* ══════════════════════════════════════════════ */}
