@@ -665,6 +665,7 @@ export default function SortingPage() {
       )}
 
       {/* ③ REFERRAL FILE */}
+      <p className="text-sm font-bold text-ink">ملف الإحالة</p>
       <FileUploadBox
         title="ملف الإحالة"
         hint={sortMode === "new" ? "إحالة اليوم الجديدة" : "قائمة البنك بالسيارات المطلوبة"}
