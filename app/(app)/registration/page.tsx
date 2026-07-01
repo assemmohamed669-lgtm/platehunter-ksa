@@ -803,7 +803,7 @@ export default function RegistrationPage() {
           "نوع السيارة": r.vehicleType ?? "",
           "الشارع": r.street ?? "",
           "الحي": r.district ?? "",
-          "تاريخ التسجيل": r.recordedAt,
+          "تاريخ التسجيل": formatDate(r.recordedAt),
           "GPS": r.mapsLink ?? "",
           "ملاحظات": r.notes ?? "",
         };
