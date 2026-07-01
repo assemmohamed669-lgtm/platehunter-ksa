@@ -520,6 +520,9 @@ export default function RegistrationPage() {
             console.warn("Voice recorder stop failed:", err);
           }
         }
+        // Show the review panel regardless of whether speech-to-text found a plate —
+        // the raw audio is still useful to listen back to.
+        if (audioResult) setLastRecording(audioResult);
 
         const transcript = finalTranscriptRef.current.trim();
         setLiveTranscript("");
@@ -643,6 +646,10 @@ export default function RegistrationPage() {
       }
     }
     await new Promise((r) => setTimeout(r, 400));
+
+    // Show the review panel regardless of whether speech-to-text found a plate —
+    // the raw audio is still useful to listen back to.
+    if (audioResult) setLastRecording(audioResult);
 
     const transcript = finalTranscriptRef.current.trim();
     setLiveTranscript("");
