@@ -19,6 +19,8 @@ import {
   AlertTriangle,
   Share2,
   ChevronDown,
+  Play,
+  Pause,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -60,6 +62,39 @@ function uid(): string {
   return crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+const LS_RECORDER_NAME = "ph:registration:recorderName";
+const LS_DISTRICT = "ph:registration:district";
+const LS_EXCEL_NAME = "ph:registration:excelName";
+
+function defaultExcelName(): string {
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `اكسيل-${dd}-${mm}-${yyyy}`;
+}
+
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+function audioExtensionFor(mimeType: string): string {
+  if (mimeType.includes("aac") || mimeType.includes("m4a") || mimeType.includes("mp4")) return "m4a";
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("ogg")) return "ogg";
+  return "audio";
+}
+
+function formatSeconds(s: number): string {
+  if (!isFinite(s) || s < 0) s = 0;
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
 function emailToName(email: string): string {
@@ -191,6 +226,8 @@ function MatchModal({ matches, onClose }: { matches: MatchedPlate[]; onClose: ()
 export default function RegistrationPage() {
   const [agentId, setAgentId] = useState<string | null>(null);
   const [recorderName, setRecorderName] = useState<string>("");
+  const [manualDistrict, setManualDistrict] = useState<string>("");
+  const [excelName, setExcelName] = useState<string>("");
   const [gps, setGps] = useState<GpsCoords | null>(null);
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
   const [isOnline, setIsOnline] = useState(true);
@@ -200,6 +237,15 @@ export default function RegistrationPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
+
+  // Last recorded audio clip (review panel under the record button)
+  const [lastRecording, setLastRecording] = useState<{ base64: string; mimeType: string } | null>(null);
+  const [lastSessionIds, setLastSessionIds] = useState<string[]>([]);
+  const [reviewIsPlaying, setReviewIsPlaying] = useState(false);
+  const [reviewSpeed, setReviewSpeed] = useState<number>(1);
+  const [reviewCurrentTime, setReviewCurrentTime] = useState(0);
+  const [reviewDuration, setReviewDuration] = useState(0);
+  const reviewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Recordings list
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
@@ -270,7 +316,15 @@ export default function RegistrationPage() {
       if (data.user) {
         const uid = data.user.id;
         setAgentId(uid);
-        setRecorderName(emailToName(data.user.email ?? ""));
+        try {
+          const savedName = localStorage.getItem(LS_RECORDER_NAME);
+          setRecorderName(savedName || emailToName(data.user.email ?? ""));
+          setManualDistrict(localStorage.getItem(LS_DISTRICT) || "");
+          setExcelName(localStorage.getItem(LS_EXCEL_NAME) || defaultExcelName());
+        } catch {
+          setRecorderName(emailToName(data.user.email ?? ""));
+          setExcelName(defaultExcelName());
+        }
         loadRecordings(uid);
         registerOnlineSync(uid);
 
@@ -316,6 +370,24 @@ export default function RegistrationPage() {
       window.removeEventListener("offline", onOffline);
     };
   }, []);
+
+  function handleRecorderNameChange(v: string) {
+    setRecorderName(v);
+    try { localStorage.setItem(LS_RECORDER_NAME, v); } catch { /* storage full */ }
+  }
+  function clearRecorderName() { handleRecorderNameChange(""); }
+
+  function handleDistrictChange(v: string) {
+    setManualDistrict(v);
+    try { localStorage.setItem(LS_DISTRICT, v); } catch { /* storage full */ }
+  }
+  function clearDistrict() { handleDistrictChange(""); }
+
+  function handleExcelNameChange(v: string) {
+    setExcelName(v);
+    try { localStorage.setItem(LS_EXCEL_NAME, v); } catch { /* storage full */ }
+  }
+  function clearExcelName() { handleExcelNameChange(""); }
 
   const loadRecordings = useCallback(async (aid: string) => {
     const recs = await getAllRecordings(aid);
@@ -386,6 +458,7 @@ export default function RegistrationPage() {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
         const { SpeechRecognition } = await import("@capacitor-community/speech-recognition") as any;
+        const { VoiceRecorder } = await import("capacitor-voice-recorder");
 
         setIsRecording(true);
         isRecordingRef.current = true;
@@ -395,7 +468,20 @@ export default function RegistrationPage() {
 
         await SpeechRecognition.requestPermissions();
 
-        // Auto-restart loop — keeps listening until user taps stop
+        // Record the real audio clip in parallel with live speech-to-text,
+        // so the user can listen back / share / save it afterwards.
+        let voiceRecorderStarted = false;
+        try {
+          await VoiceRecorder.requestAudioRecordingPermission();
+          await VoiceRecorder.startRecording();
+          voiceRecorderStarted = true;
+        } catch (err) {
+          console.warn("Voice recorder unavailable:", err);
+        }
+
+        // Auto-restart loop — keeps listening until user taps stop.
+        // Native speech recognizers throw on every brief silence/no-match/timeout
+        // between utterances — that must NOT end the session, only an explicit stop should.
         while (isRecordingRef.current) {
           try {
             const result = await SpeechRecognition.start({
@@ -410,11 +496,31 @@ export default function RegistrationPage() {
               setLiveTranscript(finalTranscriptRef.current);
               setDebugRaw(finalTranscriptRef.current);
             }
-          } catch { break; }
+          } catch (err: any) {
+            if (!isRecordingRef.current) break;
+            setDebugStatus(`🔄 RESTARTING… (${err?.message ?? err ?? "صمت/لا يوجد كلام"})`);
+            await new Promise((r) => setTimeout(r, 300));
+          }
         }
 
         isRecordingRef.current = false;
         setIsRecording(false);
+
+        let audioResult: { base64: string; mimeType: string } | undefined;
+        if (voiceRecorderStarted) {
+          try {
+            const rec = await VoiceRecorder.stopRecording();
+            if (rec.value?.recordDataBase64) {
+              audioResult = {
+                base64: rec.value.recordDataBase64,
+                mimeType: rec.value.mimeType || "audio/aac",
+              };
+            }
+          } catch (err) {
+            console.warn("Voice recorder stop failed:", err);
+          }
+        }
+
         const transcript = finalTranscriptRef.current.trim();
         setLiveTranscript("");
         liveTranscriptRef.current = "";
@@ -426,7 +532,7 @@ export default function RegistrationPage() {
           return;
         }
         setIsTranscribing(true);
-        await saveTranscript(transcript);
+        await saveTranscript(transcript, audioResult);
         setIsTranscribing(false);
         return;
       }
@@ -482,6 +588,20 @@ export default function RegistrationPage() {
     gpsAtRecordRef.current = gpsService.getLastCoords();
     chunksRef.current = [];
     isRecordingRef.current = true;
+
+    // Record the real audio clip in parallel (best-effort — mic access may be denied).
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+    } catch (err) {
+      console.warn("Mic recording unavailable:", err);
+    }
+
     recognition.start();
     setIsRecording(true);
   }
@@ -503,7 +623,25 @@ export default function RegistrationPage() {
 
     // Web fallback
     recognitionRef.current?.stop();
-    mediaRecorderRef.current?.stop();
+
+    let audioResult: { base64: string; mimeType: string } | undefined;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      const stopped = new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve();
+      });
+      recorder.stop();
+      await stopped;
+      recorder.stream.getTracks().forEach((t) => t.stop());
+      if (chunksRef.current.length > 0) {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        if (blob.size > 100) {
+          const arrayBuffer = await blob.arrayBuffer();
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+          audioResult = { base64, mimeType: "audio/webm" };
+        }
+      }
+    }
     await new Promise((r) => setTimeout(r, 400));
 
     const transcript = finalTranscriptRef.current.trim();
@@ -517,12 +655,14 @@ export default function RegistrationPage() {
       return;
     }
     setIsTranscribing(true);
-    await saveTranscript(transcript);
+    await saveTranscript(transcript, audioResult);
     setIsTranscribing(false);
   }
 
-  async function saveTranscript(transcript: string) {
+  async function saveTranscript(transcript: string, audio?: { base64: string; mimeType: string }) {
     if (!agentId) return;
+
+    if (audio) setLastRecording(audio);
 
     setDebugFinal(transcript);
     setDebugNormalized("");
@@ -551,14 +691,7 @@ export default function RegistrationPage() {
     setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
-    let base64 = "";
-    if (chunksRef.current.length > 0) {
-      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-      if (blob.size > 100) {
-        const arrayBuffer = await blob.arrayBuffer();
-        base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-      }
-    }
+    const base64 = audio?.base64 ?? "";
 
     const coords = gpsAtRecordRef.current;
     const savedIds: string[] = [];
@@ -578,6 +711,7 @@ export default function RegistrationPage() {
         audioBlobBase64: base64 || undefined,
         mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
         recorderName,
+        district: manualDistrict.trim() || undefined,
         synced: false,
       };
       await saveRecording(entry);
@@ -588,7 +722,7 @@ export default function RegistrationPage() {
       reverseGeocode(coords.lat, coords.lng)
         .then(async (addr) => {
           for (const localId of savedIds) {
-            await updateGeodata(localId, addr.street, addr.district);
+            await updateGeodata(localId, addr.street, manualDistrict.trim() || addr.district);
           }
           if (agentId) {
             const updated = await getAllRecordings(agentId);
@@ -603,6 +737,7 @@ export default function RegistrationPage() {
         .catch(() => {});
     }
 
+    setLastSessionIds(savedIds);
     await loadRecordings(agentId);
     if (isOnline) syncPending(agentId);
   }
@@ -657,6 +792,7 @@ export default function RegistrationPage() {
       recordedAt: new Date().toISOString(),
       mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
       recorderName,
+      district: manualDistrict.trim() || undefined,
       isManual: true,
       synced: false,
     };
@@ -665,7 +801,7 @@ export default function RegistrationPage() {
 
     if (coords) {
       reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
-        await updateGeodata(localId, addr.street, addr.district);
+        await updateGeodata(localId, addr.street, manualDistrict.trim() || addr.district);
         if (agentId) {
           const updated = await getAllRecordings(agentId);
           const updatedEntry = updated.find((r) => r.localId === localId);
@@ -696,7 +832,7 @@ export default function RegistrationPage() {
         lat: coords.lat,
         lng: coords.lng,
         street: addr.street,
-        district: addr.district,
+        district: manualDistrict.trim() || addr.district,
         recordedAt: new Date().toISOString(),
         mapsLink: toMapsLink(coords.lat, coords.lng),
         recorderName,
@@ -769,24 +905,20 @@ export default function RegistrationPage() {
     return recs
       .filter((r) => !r.plate.startsWith("📍"))
       .map((r) => {
-        const norm = normalizePlate(r.plate);
-        const status = checkPlates.has(norm) ? "مطلوبة" : duplicates.has(norm) ? "مكررة" : "";
         return {
           "رقم اللوحة": r.plate,
-          "الحالة": status,
-          "GPS": r.mapsLink ?? "",
-          "تاريخ التسجيل": r.recordedAt,
-          "الحي": r.district ?? "",
-          "الشارع": r.street ?? "",
           "نوع السيارة": r.vehicleType ?? "",
+          "الشارع": r.street ?? "",
+          "الحي": r.district ?? "",
+          "تاريخ التسجيل": r.recordedAt,
+          "GPS": r.mapsLink ?? "",
           "ملاحظات": r.notes ?? "",
-          "اسم المسجّل": r.recorderName ?? "",
         };
       });
   }
 
   async function handleExport(recs = recordings) {
-    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) return;
     const blob = buildExcelBlob(rows, "اللوحات");
@@ -794,7 +926,7 @@ export default function RegistrationPage() {
   }
 
   async function handleShareExcelFor(recs = recordings) {
-    const filename = `platehunter-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) return;
     const blob = buildExcelBlob(rows, "اللوحات");
@@ -843,6 +975,73 @@ export default function RegistrationPage() {
 
   async function handleShareExcel() {
     await handleShareExcelFor(recordings);
+  }
+
+  // ── Last recording review panel ──────────────────────────────────────
+  function toggleReviewPlay() {
+    const audio = reviewAudioRef.current;
+    if (!audio) return;
+    if (reviewIsPlaying) {
+      audio.pause();
+      setReviewIsPlaying(false);
+    } else {
+      audio.playbackRate = reviewSpeed;
+      audio.play();
+      setReviewIsPlaying(true);
+    }
+  }
+
+  function setReviewSeek(t: number) {
+    if (reviewAudioRef.current) reviewAudioRef.current.currentTime = t;
+    setReviewCurrentTime(t);
+  }
+
+  function setReviewPlaybackSpeed(speed: number) {
+    setReviewSpeed(speed);
+    if (reviewAudioRef.current) reviewAudioRef.current.playbackRate = speed;
+  }
+
+  async function handleShareLastRecording() {
+    if (!lastRecording) return;
+    const ext = audioExtensionFor(lastRecording.mimeType);
+    const blob = base64ToBlob(lastRecording.base64, lastRecording.mimeType);
+    await shareBlob(blob, `تسجيل-${defaultExcelName()}.${ext}`, "مقطع صوتي");
+  }
+
+  async function handleSaveLastRecording() {
+    if (!lastRecording) return;
+    const ext = audioExtensionFor(lastRecording.mimeType);
+    const filename = `تسجيل-${defaultExcelName()}-${Date.now()}.${ext}`;
+
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { Filesystem, Directory } = await import("@capacitor/filesystem");
+        await Filesystem.writeFile({ path: filename, data: lastRecording.base64, directory: Directory.Documents });
+        alert(`✅ اتحفظ في مجلد المستندات باسم ${filename}`);
+        return;
+      }
+    } catch (err) {
+      console.warn("Native save failed, falling back to browser download:", err);
+    }
+
+    // Web fallback: trigger browser download
+    const blob = base64ToBlob(lastRecording.base64, lastRecording.mimeType);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleStartTranscriptionExcel() {
+    if (lastSessionIds.length === 0) return;
+    const sessionRecs = recordings.filter((r) => lastSessionIds.includes(r.localId));
+    const rows = buildRows(sessionRecs);
+    if (rows.length === 0) return;
+    const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
+    const blob = buildExcelBlob(rows, "اللوحات");
+    await openExcelBlob(blob, filename);
   }
 
   async function exportToTashyeek() {
@@ -1000,6 +1199,75 @@ export default function RegistrationPage() {
         {!gps && <span className="text-xs text-alert">جارٍ الاستقبال...</span>}
       </div>
 
+      {/* Session fields: recorder name / district / excel export name */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-bold text-muted" dir="rtl">اسم المسجّل</label>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={recorderName}
+              onChange={(e) => handleRecorderNameChange(e.target.value)}
+              placeholder="اسمك"
+              className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-primary"
+              dir="rtl"
+            />
+            <button
+              type="button"
+              onClick={clearRecorderName}
+              aria-label="مسح اسم المسجّل"
+              className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-danger hover:text-danger"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-bold text-muted" dir="rtl">الحي</label>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={manualDistrict}
+              onChange={(e) => handleDistrictChange(e.target.value)}
+              placeholder="اسم الحي (اختياري)"
+              className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-primary"
+              dir="rtl"
+            />
+            <button
+              type="button"
+              onClick={clearDistrict}
+              aria-label="مسح الحي"
+              className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-danger hover:text-danger"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-bold text-muted" dir="rtl">اسم ملف الإكسيل</label>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={excelName}
+              onChange={(e) => handleExcelNameChange(e.target.value)}
+              placeholder={defaultExcelName()}
+              className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-primary"
+              dir="rtl"
+            />
+            <button
+              type="button"
+              onClick={clearExcelName}
+              aria-label="مسح اسم ملف الإكسيل"
+              className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-danger hover:text-danger"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
         <button
@@ -1059,6 +1327,82 @@ export default function RegistrationPage() {
           )}
         </button>
       </div>
+
+      {/* ── مراجعة آخر تسجيل صوتي ── */}
+      {lastRecording && (
+        <div className="rounded-2xl border border-border bg-surface px-4 py-4">
+          <p className="mb-3 text-sm font-bold text-ink" dir="rtl">آخر تسجيل</p>
+
+          <audio
+            ref={reviewAudioRef}
+            src={`data:${lastRecording.mimeType};base64,${lastRecording.base64}`}
+            onTimeUpdate={(e) => setReviewCurrentTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => setReviewDuration(e.currentTarget.duration)}
+            onEnded={() => setReviewIsPlaying(false)}
+            className="hidden"
+          />
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleReviewPlay}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand text-night"
+            >
+              {reviewIsPlaying ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={reviewDuration || 0}
+              step={0.1}
+              value={reviewCurrentTime}
+              onChange={(e) => setReviewSeek(Number(e.target.value))}
+              className="h-1.5 flex-1 accent-brand"
+            />
+            <span className="shrink-0 text-xs text-muted" dir="ltr">
+              {formatSeconds(reviewCurrentTime)} / {formatSeconds(reviewDuration)}
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2" dir="rtl">
+            <span className="text-xs text-muted">السرعة:</span>
+            {SPEEDS.map((s) => (
+              <button
+                key={s}
+                onClick={() => setReviewPlaybackSpeed(s)}
+                className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                  reviewSpeed === s
+                    ? "border-primary bg-primary text-night font-bold"
+                    : "border-border text-muted"
+                }`}
+              >
+                {s}×
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <button
+              onClick={handleShareLastRecording}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-bold text-night transition hover:bg-primary/90"
+            >
+              <Share2 size={14} /> واتساب
+            </button>
+            <button
+              onClick={handleSaveLastRecording}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary"
+            >
+              <Download size={14} /> حفظ
+            </button>
+            <button
+              onClick={handleStartTranscriptionExcel}
+              disabled={lastSessionIds.length === 0}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-brand py-2.5 text-xs font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
+            >
+              <Download size={14} /> ابدأ التفريغ
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── جدول التسجيلات الصوتية ── */}
       {(() => {

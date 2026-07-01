@@ -22,6 +22,7 @@
     "@capacitor/geolocation": "^8.2.0",
     "@capacitor/share": "^8.0.1",
     "@supabase/supabase-js": "^2.45.4",
+    "capacitor-voice-recorder": "^7.0.6",
     "exceljs": "^4.4.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.383.0",
