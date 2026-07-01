@@ -245,6 +245,62 @@ describe("extractMultiplePlates — corpus", () => {
   });
 });
 
+describe("extractMultiplePlates — vehicle & location routing", () => {
+  it("vehicle word after the plate → vehicleType", () => {
+    const r = extractMultiplePlates("حمل 8121 ونيت");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+    expect(r[0].notes).toBe("");
+  });
+
+  it("شاحنة / دباب after the plate → vehicleType", () => {
+    expect(extractMultiplePlates("دنب 6806 شاحنة")[0].vehicleType).toBe("شاحنة");
+    expect(extractMultiplePlates("دنب 6806 دباب")[0].vehicleType).toBe("دباب");
+  });
+
+  // Location/directional words are ALL valid plate letters (يمين=ي م ي ن,
+  // يسار=ي س ا ر) so without a guard they could be salvaged into the plate.
+  it("directional word 'يمين' → notes, never plate letters", () => {
+    const r = extractMultiplePlates("حمل 8121 يمين");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("يمين");
+  });
+
+  it("directional word 'يسار' → notes", () => {
+    const r = extractMultiplePlates("حمل 8121 يسار");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("يسار");
+  });
+
+  it("location words جراج / برحة / شارع → notes", () => {
+    expect(extractMultiplePlates("حمل 8121 جراج")[0].notes).toBe("جراج");
+    expect(extractMultiplePlates("حمل 8121 برحة")[0].notes).toContain("برح");
+    expect(extractMultiplePlates("حمل 8121 شارع الملك")[0].notes).toContain("شارع");
+  });
+
+  it("a location word with NO clean letters before digits must NOT become the plate", () => {
+    // يمين is all-valid-letters; guard must stop it seeding a letterless-digit plate
+    const r = extractMultiplePlates("يمين 1234");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("1234"); // digits only, letters not salvaged from يمين
+    expect(r[0].notes).toBe("يمين");
+  });
+
+  it("vehicle + location together route to the correct fields", () => {
+    const r = extractMultiplePlates("حمل 8121 ونيت جراج يمين");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+    expect(r[0].notes).toBe("جراج يمين");
+  });
+
+  it("location words route to the correct plate in multi-plate input", () => {
+    const r = extractMultiplePlates("دنب 6806 يمين حنص 4482 جراج");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
+    expect(r[0].notes).toBe("يمين");
+    expect(r[1].notes).toBe("جراج");
+  });
+});
+
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {
   it("converts mapped English letters to Arabic and strips spaces", () => {

@@ -21,21 +21,21 @@
 export const EGYPTIAN_LETTERS: Record<string, string> = {
   // حروف اللوحات — النطق المصري القصير
   "الف": "ا", "ألف": "ا", "الالف": "ا", "الألف": "ا",
-  "به":  "ب",
-  "حه":  "ح",
+  "به":  "ب", "بة":  "ب",
+  "حه":  "ح", "حة":  "ح",
   "دال": "د",
-  "ره":  "ر",
+  "ره":  "ر", "رة":  "ر",
   "سين": "س",
-  "طه":  "ط",
+  "طه":  "ط", "طة":  "ط",
   "عين": "ع",
   "قاف": "ق",
   "كاف": "ك",
   "لام": "ل",
   "ميم": "م",
   "نون": "ن",
-  "هه":  "ه",
+  "هه":  "ه", "هة":  "ه",
   "واو": "و",
-  "يه":  "ي",
+  "يه":  "ي", "ية":  "ي",
   // حروف اللوحات — النطق الخليجي/الفصيح
   "اليف": "ا",
   "باء":  "ب",
@@ -136,6 +136,10 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     // Vehicle keyword (check before letter salvage so نقليات etc. isn't eaten).
     const vt = VEHICLE_TYPES.find((v) => raw.includes(v));
     if (vt) { atoms.push({ t: "V", v: vt }); continue; }
+    // Location / directional keyword → ALWAYS a note, never plate letters.
+    // Critical because many of these are all-valid-letter words (يمين=ي م ي ن,
+    // يسار=ي س ا ر) that would otherwise be salvaged into an adjacent plate.
+    if (NOTE_KEYWORDS.has(clean)) { atoms.push({ t: "N", v: raw, letters: [] }); continue; }
     // Glued letters+digits spoken as one token (e.g. حمل8121, ابل2150, رقس3944).
     const glued = clean.match(/^([؀-ۿ]+)(\d+)$/);
     if (glued) {
@@ -269,6 +273,26 @@ const VEHICLE_TYPES = [
   "ونيت", "فان", "دباب", "شاحنة", "باص",
   "صالون", "بيكاب", "تاكسي", "كروزر", "باترول", "نقليات", "مفحوطة",
 ];
+
+// ─── Location / directional note keywords ────────────────────────────────────
+// Spoken location/direction words that must ALWAYS land in `notes` and never be
+// mistaken for plate letters. Several of these are made entirely of valid plate
+// letters (يمين = ي م ي ن، يسار = ي س ا ر) so they'd otherwise get salvaged into
+// an adjacent plate. Compared against the tatweel-stripped token (`clean`), so
+// the ه→هـ pipeline form (مركونهـ) still matches مركونه here.
+const NOTE_KEYWORDS = new Set([
+  // اتجاهات
+  "يمين", "اليمين", "يسار", "اليسار", "شمال", "الشمال",
+  "امام", "أمام", "قدام", "خلف", "ورا", "وراء", "جنب", "بجانب",
+  "فوق", "تحت", "داخل", "جوه", "برا", "خارج",
+  // أماكن / مواقف
+  "جراج", "الجراج", "كراج", "الكراج", "موقف", "الموقف", "باركن", "باركنج",
+  "برحة", "بارحة", "البرحة", "البارحة", "حارة", "الحارة", "طريق", "الطريق",
+  "شارع", "الشارع", "دوار", "الدوار", "كوبري", "الكوبري",
+  "عمارة", "العمارة", "فيلا", "الفيلا", "محل", "المحل", "مدخل", "مخرج",
+  // حالة
+  "مركونة", "مركونه", "مصدومة", "مصدومه", "معطلة", "معطله",
+]);
 
 // ─── Letter names → character ──────────────────────────────────────────────
 const LETTER_NAMES: [string, string][] = ([
