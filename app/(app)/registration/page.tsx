@@ -19,8 +19,6 @@ import {
   AlertTriangle,
   Share2,
   ChevronDown,
-  Play,
-  Pause,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -74,27 +72,6 @@ function defaultExcelName(): string {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `اكسيل-${dd}-${mm}-${yyyy}`;
-}
-
-function base64ToBlob(base64: string, mimeType: string): Blob {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
-}
-
-function audioExtensionFor(mimeType: string): string {
-  if (mimeType.includes("aac") || mimeType.includes("m4a") || mimeType.includes("mp4")) return "m4a";
-  if (mimeType.includes("webm")) return "webm";
-  if (mimeType.includes("ogg")) return "ogg";
-  return "audio";
-}
-
-function formatSeconds(s: number): string {
-  if (!isFinite(s) || s < 0) s = 0;
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
 function emailToName(email: string): string {
@@ -238,14 +215,9 @@ export default function RegistrationPage() {
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
 
-  // Last recorded audio clip (review panel under the record button)
-  const [lastRecording, setLastRecording] = useState<{ base64: string; mimeType: string } | null>(null);
+  // Transcript captured from the last recording session, held until the user
+  // presses "ابدأ التفريغ" to extract plates from it.
   const [pendingTranscript, setPendingTranscript] = useState<string>("");
-  const [reviewIsPlaying, setReviewIsPlaying] = useState(false);
-  const [reviewSpeed, setReviewSpeed] = useState<number>(1);
-  const [reviewCurrentTime, setReviewCurrentTime] = useState(0);
-  const [reviewDuration, setReviewDuration] = useState(0);
-  const reviewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Recordings list
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
@@ -296,9 +268,6 @@ export default function RegistrationPage() {
   const [debugVehicle, setDebugVehicle] = useState("");
   const [debugNotes, setDebugNotes] = useState("");
 
-  // MediaRecorder
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const gpsAtRecordRef = useRef<GpsCoords | null>(null);
 
   // Speech recognition
@@ -309,7 +278,6 @@ export default function RegistrationPage() {
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
-  const [debugVoiceRecorder, setDebugVoiceRecorder] = useState("");
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -451,7 +419,6 @@ export default function RegistrationPage() {
     setRecordingError(null);
     setLiveTranscript("");
     setDebugStatus("");
-    setDebugVoiceRecorder("");
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
 
@@ -460,36 +427,13 @@ export default function RegistrationPage() {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
         const { SpeechRecognition } = await import("@capacitor-community/speech-recognition") as any;
-        const { VoiceRecorder } = await import("capacitor-voice-recorder");
 
         setIsRecording(true);
         isRecordingRef.current = true;
         gpsAtRecordRef.current = gpsService.getLastCoords();
-        chunksRef.current = [];
         setDebugStatus("✅ STARTED (Native)");
 
         await SpeechRecognition.requestPermissions();
-
-        // Many Android devices only let ONE component own the microphone at a time.
-        // Plate extraction depends on SpeechRecognition, so let its loop claim the
-        // mic first — start the parallel raw-audio recorder a beat later instead of
-        // racing it against the very first SpeechRecognition.start() call.
-        let voiceRecorderStarted = false;
-        const voiceRecorderReady = (async () => {
-          try {
-            await new Promise((r) => setTimeout(r, 600));
-            const canRecord = await VoiceRecorder.canDeviceVoiceRecord();
-            setDebugVoiceRecorder(`canDeviceVoiceRecord: ${JSON.stringify(canRecord)}`);
-            const perm = await VoiceRecorder.requestAudioRecordingPermission();
-            setDebugVoiceRecorder((prev) => `${prev} | permission: ${JSON.stringify(perm)}`);
-            await VoiceRecorder.startRecording();
-            voiceRecorderStarted = true;
-            setDebugVoiceRecorder((prev) => `${prev} | ✅ startRecording OK (delayed)`);
-          } catch (err: any) {
-            console.warn("Voice recorder unavailable:", err);
-            setDebugVoiceRecorder((prev) => `${prev} | ❌ ${err?.message ?? JSON.stringify(err)}`);
-          }
-        })();
 
         // Auto-restart loop — keeps listening until user taps stop.
         // Native speech recognizers throw on every brief silence/no-match/timeout
@@ -518,35 +462,7 @@ export default function RegistrationPage() {
         isRecordingRef.current = false;
         setIsRecording(false);
 
-        // Make sure the delayed VoiceRecorder start attempt has settled before
-        // we try to stop it.
-        await voiceRecorderReady;
-
-        let audioResult: { base64: string; mimeType: string } | undefined;
-        if (voiceRecorderStarted) {
-          try {
-            const rec = await VoiceRecorder.stopRecording();
-            if (rec.value?.recordDataBase64) {
-              audioResult = {
-                base64: rec.value.recordDataBase64,
-                mimeType: rec.value.mimeType || "audio/aac",
-              };
-              setDebugVoiceRecorder((prev) => `${prev} | ✅ stopRecording: ${audioResult!.base64.length} bytes b64, ${audioResult!.mimeType}`);
-            } else {
-              setDebugVoiceRecorder((prev) => `${prev} | ⚠️ stopRecording returned no recordDataBase64: ${JSON.stringify(rec.value)}`);
-            }
-          } catch (err: any) {
-            console.warn("Voice recorder stop failed:", err);
-            setDebugVoiceRecorder((prev) => `${prev} | ❌ stop failed: ${err?.message ?? JSON.stringify(err)}`);
-          }
-        } else {
-          setDebugVoiceRecorder((prev) => `${prev} | (voiceRecorderStarted=false, لم يتم استدعاء stopRecording)`);
-        }
-        // Show the review panel regardless of whether speech-to-text found a plate —
-        // the raw audio is still useful to listen back to. Nothing gets extracted/saved
-        // until the user presses "ابدأ التفريغ" themselves.
-        if (audioResult) setLastRecording(audioResult);
-
+        // Nothing gets extracted/saved until the user presses "ابدأ التفريغ" themselves.
         const transcript = finalTranscriptRef.current.trim();
         setLiveTranscript("");
         liveTranscriptRef.current = "";
@@ -605,23 +521,7 @@ export default function RegistrationPage() {
 
     recognitionRef.current = recognition;
     gpsAtRecordRef.current = gpsService.getLastCoords();
-    chunksRef.current = [];
     isRecordingRef.current = true;
-
-    // Record the real audio clip in parallel (best-effort — mic access may be denied).
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setDebugVoiceRecorder("✅ MediaRecorder started");
-    } catch (err: any) {
-      console.warn("Mic recording unavailable:", err);
-      setDebugVoiceRecorder(`❌ getUserMedia failed: ${err?.message ?? JSON.stringify(err)}`);
-    }
 
     recognition.start();
     setIsRecording(true);
@@ -644,37 +544,9 @@ export default function RegistrationPage() {
 
     // Web fallback
     recognitionRef.current?.stop();
-
-    let audioResult: { base64: string; mimeType: string } | undefined;
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      const stopped = new Promise<void>((resolve) => {
-        recorder.onstop = () => resolve();
-      });
-      recorder.stop();
-      await stopped;
-      recorder.stream.getTracks().forEach((t) => t.stop());
-      if (chunksRef.current.length > 0) {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        if (blob.size > 100) {
-          const arrayBuffer = await blob.arrayBuffer();
-          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-          audioResult = { base64, mimeType: "audio/webm" };
-          setDebugVoiceRecorder((prev) => `${prev} | ✅ captured ${base64.length} bytes b64`);
-        } else {
-          setDebugVoiceRecorder((prev) => `${prev} | ⚠️ blob too small (${blob.size} bytes)`);
-        }
-      } else {
-        setDebugVoiceRecorder((prev) => `${prev} | ⚠️ no chunks recorded`);
-      }
-    }
     await new Promise((r) => setTimeout(r, 400));
 
-    // Show the review panel regardless of whether speech-to-text found a plate —
-    // the raw audio is still useful to listen back to. Nothing gets extracted/saved
-    // until the user presses "ابدأ التفريغ" themselves.
-    if (audioResult) setLastRecording(audioResult);
-
+    // Nothing gets extracted/saved until the user presses "ابدأ التفريغ" themselves.
     const transcript = finalTranscriptRef.current.trim();
     setLiveTranscript("");
     liveTranscriptRef.current = "";
@@ -683,13 +555,8 @@ export default function RegistrationPage() {
     setDebugFinal(transcript || "(فارغ)");
   }
 
-  async function saveTranscript(
-    transcript: string,
-    audio?: { base64: string; mimeType: string }
-  ): Promise<RecordingEntry[]> {
+  async function saveTranscript(transcript: string): Promise<RecordingEntry[]> {
     if (!agentId) return [];
-
-    if (audio) setLastRecording(audio);
 
     setDebugFinal(transcript);
     setDebugNormalized("");
@@ -718,8 +585,6 @@ export default function RegistrationPage() {
     setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
-    const base64 = audio?.base64 ?? "";
-
     const coords = gpsAtRecordRef.current;
     const savedIds: string[] = [];
     const savedEntries: RecordingEntry[] = [];
@@ -736,7 +601,6 @@ export default function RegistrationPage() {
         lat: coords?.lat,
         lng: coords?.lng,
         recordedAt: new Date().toISOString(),
-        audioBlobBase64: base64 || undefined,
         mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
         recorderName,
         district: manualDistrict.trim() || undefined,
@@ -1006,70 +870,11 @@ export default function RegistrationPage() {
     await handleShareExcelFor(recordings);
   }
 
-  // ── Last recording review panel ──────────────────────────────────────
-  function toggleReviewPlay() {
-    const audio = reviewAudioRef.current;
-    if (!audio) return;
-    if (reviewIsPlaying) {
-      audio.pause();
-      setReviewIsPlaying(false);
-    } else {
-      audio.playbackRate = reviewSpeed;
-      audio.play();
-      setReviewIsPlaying(true);
-    }
-  }
-
-  function setReviewSeek(t: number) {
-    if (reviewAudioRef.current) reviewAudioRef.current.currentTime = t;
-    setReviewCurrentTime(t);
-  }
-
-  function setReviewPlaybackSpeed(speed: number) {
-    setReviewSpeed(speed);
-    if (reviewAudioRef.current) reviewAudioRef.current.playbackRate = speed;
-  }
-
-  async function handleShareLastRecording() {
-    if (!lastRecording) return;
-    const ext = audioExtensionFor(lastRecording.mimeType);
-    const blob = base64ToBlob(lastRecording.base64, lastRecording.mimeType);
-    await shareBlob(blob, `تسجيل-${defaultExcelName()}.${ext}`, "مقطع صوتي");
-  }
-
-  async function handleSaveLastRecording() {
-    if (!lastRecording) return;
-    const ext = audioExtensionFor(lastRecording.mimeType);
-    const filename = `تسجيل-${defaultExcelName()}-${Date.now()}.${ext}`;
-
-    try {
-      const { Capacitor } = await import("@capacitor/core");
-      if (Capacitor.isNativePlatform()) {
-        // Open the native share/save sheet so the user picks the app/folder
-        // themselves (Files, Drive, ...) instead of silently writing to a
-        // fixed folder they can't choose.
-        const blob = base64ToBlob(lastRecording.base64, lastRecording.mimeType);
-        await shareBlob(blob, filename, "حفظ المقطع الصوتي");
-        return;
-      }
-    } catch (err) {
-      console.warn("Native save failed, falling back to browser download:", err);
-    }
-
-    // Web fallback: trigger browser download
-    const blob = base64ToBlob(lastRecording.base64, lastRecording.mimeType);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  }
-
   async function handleStartTranscriptionExcel() {
     const transcript = pendingTranscript.trim();
     if (!transcript) return;
     setIsTranscribing(true);
-    const savedEntries = await saveTranscript(transcript, lastRecording ?? undefined);
+    const savedEntries = await saveTranscript(transcript);
     setIsTranscribing(false);
     setPendingTranscript(""); // prevent an accidental second press from re-saving the same plates
     if (savedEntries.length === 0) return;
@@ -1364,79 +1169,18 @@ export default function RegistrationPage() {
         </button>
       </div>
 
-      {/* ── مراجعة آخر تسجيل صوتي ── */}
-      {lastRecording && (
+      {/* ── جاهز للتفريغ ── */}
+      {pendingTranscript.trim() && (
         <div className="rounded-2xl border border-border bg-surface px-4 py-4">
-          <p className="mb-3 text-sm font-bold text-ink" dir="rtl">آخر تسجيل</p>
-
-          <audio
-            ref={reviewAudioRef}
-            src={`data:${lastRecording.mimeType};base64,${lastRecording.base64}`}
-            onTimeUpdate={(e) => setReviewCurrentTime(e.currentTarget.currentTime)}
-            onLoadedMetadata={(e) => setReviewDuration(e.currentTarget.duration)}
-            onEnded={() => setReviewIsPlaying(false)}
-            className="hidden"
-          />
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleReviewPlay}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand text-night"
-            >
-              {reviewIsPlaying ? <Pause size={18} /> : <Play size={18} />}
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={reviewDuration || 0}
-              step={0.1}
-              value={reviewCurrentTime}
-              onChange={(e) => setReviewSeek(Number(e.target.value))}
-              className="h-1.5 flex-1 accent-brand"
-            />
-            <span className="shrink-0 text-xs text-muted" dir="ltr">
-              {formatSeconds(reviewCurrentTime)} / {formatSeconds(reviewDuration)}
-            </span>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2" dir="rtl">
-            <span className="text-xs text-muted">السرعة:</span>
-            {SPEEDS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setReviewPlaybackSpeed(s)}
-                className={`rounded-full border px-2.5 py-1 text-xs transition ${
-                  reviewSpeed === s
-                    ? "border-primary bg-primary text-night font-bold"
-                    : "border-border text-muted"
-                }`}
-              >
-                {s}×
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <button
-              onClick={handleShareLastRecording}
-              className="flex items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-bold text-night transition hover:bg-primary/90"
-            >
-              <Share2 size={14} /> واتساب
-            </button>
-            <button
-              onClick={handleSaveLastRecording}
-              className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary"
-            >
-              <Download size={14} /> حفظ
-            </button>
-            <button
-              onClick={handleStartTranscriptionExcel}
-              disabled={!pendingTranscript.trim() || isTranscribing}
-              className="flex items-center justify-center gap-1.5 rounded-xl bg-brand py-2.5 text-xs font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
-            >
-              <Download size={14} /> ابدأ التفريغ
-            </button>
-          </div>
+          <p className="mb-2 text-sm font-bold text-ink" dir="rtl">جاهز للتفريغ</p>
+          <p className="mb-3 text-sm text-muted" dir="rtl">{pendingTranscript}</p>
+          <button
+            onClick={handleStartTranscriptionExcel}
+            disabled={isTranscribing}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
+          >
+            <Download size={16} /> ابدأ التفريغ
+          </button>
         </div>
       )}
 
@@ -1505,15 +1249,6 @@ export default function RegistrationPage() {
                 debugStatus.startsWith("❌") ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"
               }`}>
                 {debugStatus || "(لم يبدأ بعد)"}
-              </pre>
-            </div>
-            <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">0.5 — Voice Recorder (تسجيل الصوت الحقيقي)</p>
-              <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
-                debugVoiceRecorder.includes("❌") ? "bg-danger/10 text-danger" :
-                debugVoiceRecorder.includes("✅") ? "bg-primary/10 text-primary" : "bg-surface-2 text-muted"
-              }`}>
-                {debugVoiceRecorder || "(لم يبدأ بعد)"}
               </pre>
             </div>
             <div>
