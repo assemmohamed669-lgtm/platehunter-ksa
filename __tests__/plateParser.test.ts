@@ -1,5 +1,40 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates } from "@/lib/plateParser";
+
+// ─── extractMultiplePlates ────────────────────────────────────────────────────
+describe("extractMultiplePlates", () => {
+  it("extracts a single spaced plate + vehicle type", () => {
+    // Regression: the diacritic-strip range once ate base Arabic letters, so
+    // "حمل" collapsed to "" and the whole plate was dropped.
+    const r = extractMultiplePlates("حمل 8121 ونيت");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+  });
+
+  it("extracts a plate spoken as one glued letters-word + digits", () => {
+    const r = extractMultiplePlates("حمل8121 ونيت");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+  });
+
+  it("extracts several plates spoken back-to-back", () => {
+    const r = extractMultiplePlates("ابل2150 حمس3652 دبع6152 ربس6061 الط6125 ونيت");
+    expect(r.map((x) => x.plate)).toEqual([
+      "ابل2150", "حمس3652", "دبع6152", "ربس6061", "الط6125",
+    ]);
+    // vehicle keyword at the very end attaches to the last plate
+    expect(r[r.length - 1].vehicleType).toBe("ونيت");
+  });
+
+  it("routes non-plate location words into notes, not the plate", () => {
+    const r = extractMultiplePlates("حمل 8121 باركن يمين");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toContain("باركن");
+  });
+});
 
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {

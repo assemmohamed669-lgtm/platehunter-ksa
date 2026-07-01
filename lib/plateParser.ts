@@ -92,7 +92,11 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   // ── Step 1: tokenise + classify ──────────────────────────────────────────
   const flat: Tok[] = [];
   for (const raw of transcript.trim().split(/\s+/).filter(Boolean)) {
-    const clean = raw.replace(/[ؐ-ًؚ-ٟ]/g, "").replace(/ـ/g, ""); // strip diacritics + tatweel
+    // Strip Arabic diacritics (tashkeel) + tatweel ONLY. The ranges are written
+    // with explicit \u escapes because the literal boundary characters are
+    // invisible/fragile and a previous version accidentally spanned the base
+    // Arabic letters (U+061A–U+065F), erasing plate letters like ح م ل entirely.
+    const clean = raw.replace(/[ؐ-ًؚ-ٰٟۖ-ۭ]/g, "").replace(/ـ/g, "");
     const mapped = EGYPTIAN_LETTERS[clean] ?? clean;
 
     // Single valid Saudi plate letter after Egyptian mapping
@@ -106,6 +110,14 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     // SR returned digit string "1234" directly → split into individual digits
     if (/^\d{1,4}$/.test(clean)) {
       for (const d of clean) flat.push({ value: d, kind: "digit" }); continue;
+    }
+    // Glued plate spoken as one token: 1-3 letters stuck to 1-4 digits
+    // (e.g. "حمل8121", "ابل2150") — split into letters then digits.
+    const glued = clean.match(/^([؀-ۿ]{1,3})(\d{1,4})$/);
+    if (glued && [...glued[1]].every((c) => VALID_AR_LETTERS.has(c))) {
+      for (const c of glued[1]) flat.push({ value: c, kind: "letter" });
+      for (const d of glued[2]) flat.push({ value: d, kind: "digit" });
+      continue;
     }
     // 1-3 Arabic chars that are all valid plate letters (e.g. "دحر" said as one word)
     if (/^[؀-ۿ]{1,3}$/.test(clean) && [...clean].every(c => VALID_AR_LETTERS.has(c))) {
@@ -157,7 +169,9 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     } else { // post
       if      (t.kind === "vehicle" && !vtBuf) { vtBuf = t.value; }
       else if (t.kind === "letter")            { commit(); letterBuf.push(t.value); state = "letters"; }
-      else                                     { commit(); noteBuf.push(t.value); state = "pre"; }
+      // Trailing location words (باركن / يمين / بارحة …) belong to THIS plate —
+      // buffer them and stay in post so commit() attaches them to it.
+      else                                     { noteBuf.push(t.value); }
     }
   }
   if (state === "digits" || state === "post") commit();
