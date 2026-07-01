@@ -470,21 +470,26 @@ export default function RegistrationPage() {
 
         await SpeechRecognition.requestPermissions();
 
-        // Record the real audio clip in parallel with live speech-to-text,
-        // so the user can listen back / share / save it afterwards.
+        // Many Android devices only let ONE component own the microphone at a time.
+        // Plate extraction depends on SpeechRecognition, so let its loop claim the
+        // mic first — start the parallel raw-audio recorder a beat later instead of
+        // racing it against the very first SpeechRecognition.start() call.
         let voiceRecorderStarted = false;
-        try {
-          const canRecord = await VoiceRecorder.canDeviceVoiceRecord();
-          setDebugVoiceRecorder(`canDeviceVoiceRecord: ${JSON.stringify(canRecord)}`);
-          const perm = await VoiceRecorder.requestAudioRecordingPermission();
-          setDebugVoiceRecorder((prev) => `${prev} | permission: ${JSON.stringify(perm)}`);
-          await VoiceRecorder.startRecording();
-          voiceRecorderStarted = true;
-          setDebugVoiceRecorder((prev) => `${prev} | ✅ startRecording OK`);
-        } catch (err: any) {
-          console.warn("Voice recorder unavailable:", err);
-          setDebugVoiceRecorder((prev) => `${prev} | ❌ ${err?.message ?? JSON.stringify(err)}`);
-        }
+        const voiceRecorderReady = (async () => {
+          try {
+            await new Promise((r) => setTimeout(r, 600));
+            const canRecord = await VoiceRecorder.canDeviceVoiceRecord();
+            setDebugVoiceRecorder(`canDeviceVoiceRecord: ${JSON.stringify(canRecord)}`);
+            const perm = await VoiceRecorder.requestAudioRecordingPermission();
+            setDebugVoiceRecorder((prev) => `${prev} | permission: ${JSON.stringify(perm)}`);
+            await VoiceRecorder.startRecording();
+            voiceRecorderStarted = true;
+            setDebugVoiceRecorder((prev) => `${prev} | ✅ startRecording OK (delayed)`);
+          } catch (err: any) {
+            console.warn("Voice recorder unavailable:", err);
+            setDebugVoiceRecorder((prev) => `${prev} | ❌ ${err?.message ?? JSON.stringify(err)}`);
+          }
+        })();
 
         // Auto-restart loop — keeps listening until user taps stop.
         // Native speech recognizers throw on every brief silence/no-match/timeout
@@ -512,6 +517,10 @@ export default function RegistrationPage() {
 
         isRecordingRef.current = false;
         setIsRecording(false);
+
+        // Make sure the delayed VoiceRecorder start attempt has settled before
+        // we try to stop it.
+        await voiceRecorderReady;
 
         let audioResult: { base64: string; mimeType: string } | undefined;
         if (voiceRecorderStarted) {
@@ -1036,9 +1045,11 @@ export default function RegistrationPage() {
     try {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
-        const { Filesystem, Directory } = await import("@capacitor/filesystem");
-        await Filesystem.writeFile({ path: filename, data: lastRecording.base64, directory: Directory.Documents });
-        alert(`✅ اتحفظ في مجلد المستندات باسم ${filename}`);
+        // Open the native share/save sheet so the user picks the app/folder
+        // themselves (Files, Drive, ...) instead of silently writing to a
+        // fixed folder they can't choose.
+        const blob = base64ToBlob(lastRecording.base64, lastRecording.mimeType);
+        await shareBlob(blob, filename, "حفظ المقطع الصوتي");
         return;
       }
     } catch (err) {
