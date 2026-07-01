@@ -81,6 +81,65 @@ export interface MultiPlateResult {
 }
 
 /**
+ * Rough "how plate-like is this transcript" score. Used to pick the BEST
+ * hypothesis when the speech recognizer returns several alternatives
+ * (maxResults / maxAlternatives): different hypotheses of the same utterance
+ * are scored and the highest one is kept.
+ *
+ * Rewards clean plate content — mapped single letters (دال→د) and digit groups —
+ * and penalizes junk (non-plate) characters, so a hypothesis that spells letters
+ * cleanly ("راء قاف سين") beats one that mashes them into an invented word
+ * ("راقوف"). Pure heuristic, no side effects.
+ */
+export function plateContentScore(text: string): number {
+  if (!text) return 0;
+  let t = removeDiacritics(text.trim());
+  t = t.replace(/[أإآ]/g, "ا").replace(/ى/g, "ي");
+  t = replaceAll(t, LETTER_NAMES);
+  t = replaceAll(t, PHONETIC_MERGES);
+  t = replaceAll(t, SPOKEN_NUMBERS);
+  t = normalizeNumerals(t);
+
+  const allValid = (s: string) => [...s].every((c) => VALID_AR_LETTERS.has(c));
+
+  let score = 0;
+  for (const tok of t.split(/\s+/).filter(Boolean)) {
+    const clean = tok.replace(/ـ/g, "");
+    // Pure digit group.
+    if (/^\d+$/.test(clean)) { score += Math.min(clean.length, 4); continue; }
+    // Glued letters+digits (e.g. حمل8121) — solid plate content.
+    const glued = clean.match(/^([؀-ۿ]{1,3})(\d{1,4})$/);
+    if (glued && allValid(glued[1])) { score += glued[1].length + Math.min(glued[2].length, 4); continue; }
+    // Mapped letter/number name (دال→د, خمسة→5).
+    const eg = EGYPTIAN_LETTERS[clean];
+    if (eg) { score += /^\d$/.test(eg) ? 1 : 3; continue; }
+    // Clean single plate letter — the ideal dictation unit.
+    if (clean.length === 1 && VALID_AR_LETTERS.has(clean)) { score += 3; continue; }
+    // Short (2-3) all-valid-letter token — plausible glued plate letters.
+    if (clean.length <= 3 && /^[؀-ۿ]+$/.test(clean) && allValid(clean)) { score += clean.length; continue; }
+    // Anything longer, or with non-plate characters → junk/note. Penalize:
+    // plate letters are dictated as short units, not long words.
+    score -= 1;
+  }
+  return score;
+}
+
+/**
+ * Given several recognizer hypotheses for the SAME utterance, return the one
+ * that looks most like plate dictation. Falls back to the first non-empty.
+ */
+export function pickBestHypothesis(candidates: string[]): string {
+  let best = "";
+  let bestScore = -Infinity;
+  for (const c of candidates) {
+    if (!c) continue;
+    const s = plateContentScore(c);
+    if (s > bestScore) { bestScore = s; best = c; }
+  }
+  return best;
+}
+
+/**
  * يستخرج عدة لوحات من تسجيل صوتي واحد.
  * الترتيب المتوقع: [ملاحظات] [حروف اللوحة] [أرقام اللوحة] [نوع السيارة] [تكرار]
  * كل لوحة = 1-3 حروف سعودية + 4 أرقام.

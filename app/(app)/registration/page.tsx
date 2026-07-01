@@ -36,7 +36,7 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, EN_TO_AR } from "@/lib/plateParser";
+import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -45,6 +45,9 @@ import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob,
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
+
+// A plate extracted from a transcript, shown as an editable review row before saving.
+type EditablePlate = { plate: string; vehicleType: string; notes: string };
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -218,6 +221,9 @@ export default function RegistrationPage() {
   // Transcript captured from the last recording session, held until the user
   // presses "ابدأ التفريغ" to extract plates from it.
   const [pendingTranscript, setPendingTranscript] = useState<string>("");
+  // Extracted-but-not-yet-saved plates, shown as editable rows so the user can
+  // fix any letter the recognizer got wrong before committing + exporting.
+  const [editablePlates, setEditablePlates] = useState<EditablePlate[]>([]);
 
   // Recordings list
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
@@ -442,11 +448,11 @@ export default function RegistrationPage() {
           try {
             const result = await SpeechRecognition.start({
               language: "ar-SA",
-              maxResults: 1,
+              maxResults: 5,          // get several hypotheses, keep the most plate-like
               partialResults: false,
               popup: false,
             });
-            const text: string = result?.matches?.[0] ?? "";
+            const text: string = pickBestHypothesis(result?.matches ?? []);
             if (text) {
               finalTranscriptRef.current = (finalTranscriptRef.current + " " + text).trim() + " ";
               setLiveTranscript(finalTranscriptRef.current);
@@ -487,7 +493,7 @@ export default function RegistrationPage() {
     recognition.lang = "ar-SA";
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 5;   // get several hypotheses, keep the most plate-like
 
     recognition.onstart = () => { setDebugStatus("✅ STARTED"); };
 
@@ -496,7 +502,12 @@ export default function RegistrationPage() {
       let final = finalTranscriptRef.current;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (result.isFinal) { final += result[0].transcript + " "; }
+        if (result.isFinal) {
+          // Pick the plate-likeliest alternative, not just the first.
+          const alts: string[] = [];
+          for (let a = 0; a < result.length; a++) alts.push(result[a].transcript);
+          final += pickBestHypothesis(alts) + " ";
+        }
         else { interim += result[0].transcript; }
       }
       finalTranscriptRef.current = final;
@@ -555,19 +566,17 @@ export default function RegistrationPage() {
     setDebugFinal(transcript || "(فارغ)");
   }
 
-  async function saveTranscript(transcript: string): Promise<RecordingEntry[]> {
-    if (!agentId) return [];
-
+  // Extract plates from the transcript for REVIEW (no saving yet). Returns a
+  // plain editable shape so the user can fix any letter the recognizer got wrong
+  // before it's committed. Uses the debug panel to show the extraction result.
+  function extractPlatesForReview(transcript: string): EditablePlate[] {
     setDebugFinal(transcript);
     setDebugNormalized("");
     setDebugPlate("جارٍ الاستخراج...");
     setDebugVehicle("");
     setDebugNotes("");
 
-    // استخرج كل اللوحات من التسجيل (مهما كان عددها)
     let plates = extractMultiplePlates(transcript);
-
-    // Fallback: لو ما أنتجت لوحة → جرب parsePlateFromTranscript
     if (plates.length === 0) {
       const parsed = parsePlateFromTranscript(transcript);
       if (parsed.plate) {
@@ -585,19 +594,32 @@ export default function RegistrationPage() {
     setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
+    return plates.map((p) => ({
+      plate: p.plate,
+      vehicleType: p.vehicleType ?? "",
+      notes: p.notes ?? "",
+    }));
+  }
+
+  // Save an already-reviewed/edited list of plates to IndexedDB + return them.
+  async function savePlateList(plates: EditablePlate[]): Promise<RecordingEntry[]> {
+    if (!agentId) return [];
+
     const coords = gpsAtRecordRef.current;
     const savedIds: string[] = [];
     const savedEntries: RecordingEntry[] = [];
 
     for (const { plate, vehicleType, notes } of plates) {
+      const cleanPlate = plate.trim();
+      if (!cleanPlate) continue;
       const localId = uid();
       savedIds.push(localId);
       const entry: RecordingEntry = {
         localId,
         agentId,
-        plate,
-        vehicleType,
-        notes: notes || undefined,
+        plate: cleanPlate,
+        vehicleType: vehicleType?.trim() || undefined,
+        notes: notes?.trim() || undefined,
         lat: coords?.lat,
         lng: coords?.lng,
         recordedAt: new Date().toISOString(),
@@ -870,13 +892,35 @@ export default function RegistrationPage() {
     await handleShareExcelFor(recordings);
   }
 
-  async function handleStartTranscriptionExcel() {
+  // Step 1: "ابدأ التفريغ" → extract plates into an EDITABLE review list (no save yet).
+  function handleStartTranscriptionExcel() {
     const transcript = pendingTranscript.trim();
     if (!transcript) return;
+    const extracted = extractPlatesForReview(transcript);
+    if (extracted.length === 0) {
+      alert("لم يتم استخراج أي لوحة من التسجيل. جرّب تسجيل تاني أو أضف يدوياً.");
+      return;
+    }
+    setEditablePlates(extracted);
+    setPendingTranscript(""); // close the "جاهز للتفريغ" panel; the review panel opens
+  }
+
+  function updateEditablePlate(i: number, field: keyof EditablePlate, value: string) {
+    setEditablePlates((prev) => prev.map((p, idx) => (idx === i ? { ...p, [field]: value } : p)));
+  }
+
+  function removeEditablePlate(i: number) {
+    setEditablePlates((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  // Step 2: "احفظ وصدّر" → save the (possibly corrected) list + open Excel.
+  async function handleSaveEditedPlates() {
+    const toSave = editablePlates.filter((p) => p.plate.trim());
+    if (toSave.length === 0) { setEditablePlates([]); return; }
     setIsTranscribing(true);
-    const savedEntries = await saveTranscript(transcript);
+    const savedEntries = await savePlateList(toSave);
     setIsTranscribing(false);
-    setPendingTranscript(""); // prevent an accidental second press from re-saving the same plates
+    setEditablePlates([]);
     if (savedEntries.length === 0) return;
 
     const rows = buildRows(savedEntries);
@@ -1169,8 +1213,8 @@ export default function RegistrationPage() {
         </button>
       </div>
 
-      {/* ── جاهز للتفريغ ── */}
-      {pendingTranscript.trim() && (
+      {/* ── جاهز للتفريغ (خطوة 1: النص الخام + زر ابدأ التفريغ) ── */}
+      {pendingTranscript.trim() && editablePlates.length === 0 && (
         <div className="rounded-2xl border border-border bg-surface px-4 py-4">
           <p className="mb-2 text-sm font-bold text-ink" dir="rtl">جاهز للتفريغ</p>
           <p className="mb-3 text-sm text-muted" dir="rtl">{pendingTranscript}</p>
@@ -1181,6 +1225,80 @@ export default function RegistrationPage() {
           >
             <Download size={16} /> ابدأ التفريغ
           </button>
+        </div>
+      )}
+
+      {/* ── مراجعة وتعديل قبل الحفظ (خطوة 2) ── */}
+      {editablePlates.length > 0 && (
+        <div className="rounded-2xl border border-brand/40 bg-surface px-4 py-4">
+          <p className="mb-1 text-sm font-bold text-ink" dir="rtl">راجع وعدّل قبل الحفظ</p>
+          <p className="mb-3 text-xs text-muted" dir="rtl">
+            صحّح أي حرف غلط قبل ما تحفظ. القيمة اللي هنا هي اللي هتتحفظ وتتصدّر.
+          </p>
+
+          <div className="flex flex-col gap-3">
+            {editablePlates.map((p, i) => (
+              <div key={i} className="rounded-xl border border-border bg-surface-2 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-muted">لوحة {i + 1}</span>
+                  <button
+                    onClick={() => removeEditablePlate(i)}
+                    aria-label="حذف اللوحة"
+                    className="rounded-lg p-1 text-muted transition hover:text-danger"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 text-xs text-muted">اللوحة</span>
+                    <input
+                      value={p.plate}
+                      onChange={(e) => updateEditablePlate(i, "plate", e.target.value)}
+                      dir="rtl"
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-base font-bold text-ink focus:border-primary focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 text-xs text-muted">النوع</span>
+                    <input
+                      value={p.vehicleType}
+                      onChange={(e) => updateEditablePlate(i, "vehicleType", e.target.value)}
+                      placeholder="اختياري"
+                      dir="rtl"
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 text-xs text-muted">ملاحظات</span>
+                    <input
+                      value={p.notes}
+                      onChange={(e) => updateEditablePlate(i, "notes", e.target.value)}
+                      placeholder="اختياري"
+                      dir="rtl"
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={handleSaveEditedPlates}
+              disabled={isTranscribing}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
+            >
+              <Download size={16} /> احفظ وصدّر الإكسيل
+            </button>
+            <button
+              onClick={() => setEditablePlates([])}
+              className="rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm font-bold text-ink transition hover:border-danger hover:text-danger"
+            >
+              إلغاء
+            </button>
+          </div>
         </div>
       )}
 

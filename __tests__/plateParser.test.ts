@@ -1,5 +1,30 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis } from "@/lib/plateParser";
+
+// ─── plateContentScore / pickBestHypothesis ────────────────────────────────
+describe("plateContentScore & pickBestHypothesis", () => {
+  it("clean letter-name spelling scores higher than a mashed invented word", () => {
+    expect(plateContentScore("راء قاف سين 3944")).toBeGreaterThan(
+      plateContentScore("راقوف سين 3944")
+    );
+  });
+
+  it("plate-like text scores higher than pure junk", () => {
+    expect(plateContentScore("دال لام لام 9679")).toBeGreaterThan(
+      plateContentScore("السلام عليكم ازيك")
+    );
+  });
+
+  it("picks the cleanest hypothesis among alternatives", () => {
+    const best = pickBestHypothesis(["راقوف سين 3944", "راء قاف سين 3944", "راقو 3944"]);
+    expect(best).toBe("راء قاف سين 3944");
+  });
+
+  it("falls back to the first non-empty candidate", () => {
+    expect(pickBestHypothesis(["", "حمل 8121"])).toBe("حمل 8121");
+    expect(pickBestHypothesis([])).toBe("");
+  });
+});
 
 // ─── extractMultiplePlates ────────────────────────────────────────────────────
 describe("extractMultiplePlates", () => {
