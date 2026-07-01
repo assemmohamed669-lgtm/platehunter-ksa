@@ -309,6 +309,7 @@ export default function RegistrationPage() {
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
+  const [debugVoiceRecorder, setDebugVoiceRecorder] = useState("");
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -450,6 +451,7 @@ export default function RegistrationPage() {
     setRecordingError(null);
     setLiveTranscript("");
     setDebugStatus("");
+    setDebugVoiceRecorder("");
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
 
@@ -472,11 +474,16 @@ export default function RegistrationPage() {
         // so the user can listen back / share / save it afterwards.
         let voiceRecorderStarted = false;
         try {
-          await VoiceRecorder.requestAudioRecordingPermission();
+          const canRecord = await VoiceRecorder.canDeviceVoiceRecord();
+          setDebugVoiceRecorder(`canDeviceVoiceRecord: ${JSON.stringify(canRecord)}`);
+          const perm = await VoiceRecorder.requestAudioRecordingPermission();
+          setDebugVoiceRecorder((prev) => `${prev} | permission: ${JSON.stringify(perm)}`);
           await VoiceRecorder.startRecording();
           voiceRecorderStarted = true;
-        } catch (err) {
+          setDebugVoiceRecorder((prev) => `${prev} | ✅ startRecording OK`);
+        } catch (err: any) {
           console.warn("Voice recorder unavailable:", err);
+          setDebugVoiceRecorder((prev) => `${prev} | ❌ ${err?.message ?? JSON.stringify(err)}`);
         }
 
         // Auto-restart loop — keeps listening until user taps stop.
@@ -515,10 +522,16 @@ export default function RegistrationPage() {
                 base64: rec.value.recordDataBase64,
                 mimeType: rec.value.mimeType || "audio/aac",
               };
+              setDebugVoiceRecorder((prev) => `${prev} | ✅ stopRecording: ${audioResult!.base64.length} bytes b64, ${audioResult!.mimeType}`);
+            } else {
+              setDebugVoiceRecorder((prev) => `${prev} | ⚠️ stopRecording returned no recordDataBase64: ${JSON.stringify(rec.value)}`);
             }
-          } catch (err) {
+          } catch (err: any) {
             console.warn("Voice recorder stop failed:", err);
+            setDebugVoiceRecorder((prev) => `${prev} | ❌ stop failed: ${err?.message ?? JSON.stringify(err)}`);
           }
+        } else {
+          setDebugVoiceRecorder((prev) => `${prev} | (voiceRecorderStarted=false, لم يتم استدعاء stopRecording)`);
         }
         // Show the review panel regardless of whether speech-to-text found a plate —
         // the raw audio is still useful to listen back to. Nothing gets extracted/saved
@@ -595,8 +608,10 @@ export default function RegistrationPage() {
       };
       recorder.start();
       mediaRecorderRef.current = recorder;
-    } catch (err) {
+      setDebugVoiceRecorder("✅ MediaRecorder started");
+    } catch (err: any) {
       console.warn("Mic recording unavailable:", err);
+      setDebugVoiceRecorder(`❌ getUserMedia failed: ${err?.message ?? JSON.stringify(err)}`);
     }
 
     recognition.start();
@@ -636,7 +651,12 @@ export default function RegistrationPage() {
           const arrayBuffer = await blob.arrayBuffer();
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
           audioResult = { base64, mimeType: "audio/webm" };
+          setDebugVoiceRecorder((prev) => `${prev} | ✅ captured ${base64.length} bytes b64`);
+        } else {
+          setDebugVoiceRecorder((prev) => `${prev} | ⚠️ blob too small (${blob.size} bytes)`);
         }
+      } else {
+        setDebugVoiceRecorder((prev) => `${prev} | ⚠️ no chunks recorded`);
       }
     }
     await new Promise((r) => setTimeout(r, 400));
@@ -1474,6 +1494,15 @@ export default function RegistrationPage() {
                 debugStatus.startsWith("❌") ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"
               }`}>
                 {debugStatus || "(لم يبدأ بعد)"}
+              </pre>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted">0.5 — Voice Recorder (تسجيل الصوت الحقيقي)</p>
+              <pre className={`whitespace-pre-wrap break-all rounded-lg px-3 py-2 text-xs font-mono ${
+                debugVoiceRecorder.includes("❌") ? "bg-danger/10 text-danger" :
+                debugVoiceRecorder.includes("✅") ? "bg-primary/10 text-primary" : "bg-surface-2 text-muted"
+              }`}>
+                {debugVoiceRecorder || "(لم يبدأ بعد)"}
               </pre>
             </div>
             <div>
