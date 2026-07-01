@@ -240,7 +240,7 @@ export default function RegistrationPage() {
 
   // Last recorded audio clip (review panel under the record button)
   const [lastRecording, setLastRecording] = useState<{ base64: string; mimeType: string } | null>(null);
-  const [lastSessionIds, setLastSessionIds] = useState<string[]>([]);
+  const [pendingTranscript, setPendingTranscript] = useState<string>("");
   const [reviewIsPlaying, setReviewIsPlaying] = useState(false);
   const [reviewSpeed, setReviewSpeed] = useState<number>(1);
   const [reviewCurrentTime, setReviewCurrentTime] = useState(0);
@@ -521,22 +521,16 @@ export default function RegistrationPage() {
           }
         }
         // Show the review panel regardless of whether speech-to-text found a plate —
-        // the raw audio is still useful to listen back to.
+        // the raw audio is still useful to listen back to. Nothing gets extracted/saved
+        // until the user presses "ابدأ التفريغ" themselves.
         if (audioResult) setLastRecording(audioResult);
 
         const transcript = finalTranscriptRef.current.trim();
         setLiveTranscript("");
         liveTranscriptRef.current = "";
         finalTranscriptRef.current = "";
-
-        if (!transcript) {
-          setDebugFinal("(فارغ — لم يُحفظ)");
-          setDebugPlate("(transcript فارغ — لم يُحفظ)");
-          return;
-        }
-        setIsTranscribing(true);
-        await saveTranscript(transcript, audioResult);
-        setIsTranscribing(false);
+        setPendingTranscript(transcript);
+        setDebugFinal(transcript || "(فارغ)");
         return;
       }
     } catch (err) {
@@ -648,26 +642,23 @@ export default function RegistrationPage() {
     await new Promise((r) => setTimeout(r, 400));
 
     // Show the review panel regardless of whether speech-to-text found a plate —
-    // the raw audio is still useful to listen back to.
+    // the raw audio is still useful to listen back to. Nothing gets extracted/saved
+    // until the user presses "ابدأ التفريغ" themselves.
     if (audioResult) setLastRecording(audioResult);
 
     const transcript = finalTranscriptRef.current.trim();
     setLiveTranscript("");
     liveTranscriptRef.current = "";
     finalTranscriptRef.current = "";
-
-    if (!transcript) {
-      setDebugFinal("(فارغ — لم يُحفظ)");
-      setDebugPlate("(transcript فارغ — لم يُحفظ)");
-      return;
-    }
-    setIsTranscribing(true);
-    await saveTranscript(transcript, audioResult);
-    setIsTranscribing(false);
+    setPendingTranscript(transcript);
+    setDebugFinal(transcript || "(فارغ)");
   }
 
-  async function saveTranscript(transcript: string, audio?: { base64: string; mimeType: string }) {
-    if (!agentId) return;
+  async function saveTranscript(
+    transcript: string,
+    audio?: { base64: string; mimeType: string }
+  ): Promise<RecordingEntry[]> {
+    if (!agentId) return [];
 
     if (audio) setLastRecording(audio);
 
@@ -691,7 +682,7 @@ export default function RegistrationPage() {
     if (plates.length === 0) {
       setDebugPlate("(لم يُستخرج)");
       setDebugNotes("(لا توجد لوحات)");
-      return;
+      return [];
     }
 
     setDebugPlate(plates.map((p) => p.plate).join(" | "));
@@ -702,6 +693,7 @@ export default function RegistrationPage() {
 
     const coords = gpsAtRecordRef.current;
     const savedIds: string[] = [];
+    const savedEntries: RecordingEntry[] = [];
 
     for (const { plate, vehicleType, notes } of plates) {
       const localId = uid();
@@ -722,6 +714,7 @@ export default function RegistrationPage() {
         synced: false,
       };
       await saveRecording(entry);
+      savedEntries.push(entry);
       if (!coords) checkPlateMatch(plate, entry);
     }
 
@@ -744,9 +737,9 @@ export default function RegistrationPage() {
         .catch(() => {});
     }
 
-    setLastSessionIds(savedIds);
     await loadRecordings(agentId);
     if (isOnline) syncPending(agentId);
+    return savedEntries;
   }
 
   // ── Manual plate entry ──────────────────────────────────────────────
@@ -1042,10 +1035,15 @@ export default function RegistrationPage() {
   }
 
   async function handleStartTranscriptionExcel() {
-    if (lastSessionIds.length === 0) return;
-    const sessionRecs = recordings.filter((r) => lastSessionIds.includes(r.localId));
-    const rows = buildRows(sessionRecs);
-    if (rows.length === 0) return;
+    const transcript = pendingTranscript.trim();
+    if (!transcript) return;
+    setIsTranscribing(true);
+    const savedEntries = await saveTranscript(transcript, lastRecording ?? undefined);
+    setIsTranscribing(false);
+    setPendingTranscript(""); // prevent an accidental second press from re-saving the same plates
+    if (savedEntries.length === 0) return;
+
+    const rows = buildRows(savedEntries);
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const blob = buildExcelBlob(rows, "اللوحات");
     await openExcelBlob(blob, filename);
@@ -1402,7 +1400,7 @@ export default function RegistrationPage() {
             </button>
             <button
               onClick={handleStartTranscriptionExcel}
-              disabled={lastSessionIds.length === 0}
+              disabled={!pendingTranscript.trim() || isTranscribing}
               className="flex items-center justify-center gap-1.5 rounded-xl bg-brand py-2.5 text-xs font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
             >
               <Download size={14} /> ابدأ التفريغ
