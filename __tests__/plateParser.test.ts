@@ -36,6 +36,215 @@ describe("extractMultiplePlates", () => {
   });
 });
 
+describe("extractMultiplePlates — corpus", () => {
+  // ── Single clean plate ────────────────────────────────────────────────────
+  it("single spaced plate", () => {
+    const r = extractMultiplePlates("دنب 6806");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("دنب6806");
+    expect(r[0].notes).toBe("");
+    expect(r[0].vehicleType).toBeUndefined();
+    expect(r[0].normalized).toBe("دنب6806");
+  });
+
+  it("single glued letters+digits plate", () => {
+    const r = extractMultiplePlates("حمل8121");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("");
+  });
+
+  // ── Letter-name normalization (فصحى) ──────────────────────────────────────
+  it("fus-ha letter names: دال لام لام → دلل", () => {
+    const r = extractMultiplePlates("دال لام لام 9679");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("دلل9679");
+  });
+
+  it("mixed letter-name + bare letter: صاد ح → صح (two-letter plate)", () => {
+    const r = extractMultiplePlates("صاد ح 6469");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("صح6469");
+    expect(r[0].normalized).toBe("صح6469");
+  });
+
+  it("letter names: را قاف سين → رقس", () => {
+    const r = extractMultiplePlates("را قاف سين 3944");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("رقس3944");
+  });
+
+  // ── Egyptian short letter names ───────────────────────────────────────────
+  it("egyptian short names: حا را با → حرب", () => {
+    const r = extractMultiplePlates("حا را با 8531");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حرب8531");
+  });
+
+  it("egyptian short names: طا را سين → طرس", () => {
+    const r = extractMultiplePlates("طا را سين 4521");
+    expect(r[0].plate).toBe("طرس4521");
+  });
+
+  // ── Spoken numbers (number-words → digits) ────────────────────────────────
+  it("spoken single-digit words: خمسة تسعة تلاتة اربعة → 5934", () => {
+    const r = extractMultiplePlates("حمن خمسة تسعة تلاتة اربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمن5934");
+  });
+
+  it("egyptian number words: تمانية خمسة تلاتة واحد → 8531", () => {
+    const r = extractMultiplePlates("درق تمانية خمسة تلاتة واحد");
+    expect(r[0].plate).toBe("درق8531");
+  });
+
+  it("spoken hundreds: مئة → 0100 (zero-padded)", () => {
+    const r = extractMultiplePlates("حمن مئة");
+    expect(r[0].plate).toBe("حمن0100");
+  });
+
+  // ── Multi-plate back-to-back ──────────────────────────────────────────────
+  it("two glued plates back-to-back", () => {
+    const r = extractMultiplePlates("رقس3944 دلل9679");
+    expect(r.map((x) => x.plate)).toEqual(["رقس3944", "دلل9679"]);
+    expect(r.every((x) => x.notes === "")).toBe(true);
+  });
+
+  it("two spaced plates back-to-back", () => {
+    const r = extractMultiplePlates("دنب 6806 حنص 4482");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
+  });
+
+  // ── Notes between / after plates ──────────────────────────────────────────
+  it("trailing note attaches to preceding plate (ه→هـ applied inside notes)", () => {
+    const r = extractMultiplePlates("حكل 80 مركونه");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حكل0080");
+    expect(r[0].notes).toBe("مركونهـ");
+  });
+
+  it("taa-marbuta note kept verbatim: مركونة stays مركونة", () => {
+    const r = extractMultiplePlates("اصك 4577 مركونة");
+    expect(r[0].plate).toBe("اصك4577");
+    expect(r[0].notes).toBe("مركونة");
+  });
+
+  it("note between two plates attaches to the PRECEDING plate", () => {
+    const r = extractMultiplePlates("اصك 4577 مركونه حنص 4482");
+    expect(r.map((x) => x.plate)).toEqual(["اصك4577", "حنص4482"]);
+    expect(r[0].notes).toBe("مركونهـ");
+    expect(r[1].notes).toBe("");
+  });
+
+  it("notes split across two plates (trailing then trailing)", () => {
+    const r = extractMultiplePlates("دنب 6806 مركونه حنص 4482 يمين");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
+    expect(r[0].notes).toBe("مركونهـ");
+    expect(r[1].notes).toBe("يمين");
+  });
+
+  it("multi-word trailing note preserves order", () => {
+    const r = extractMultiplePlates("حنص 4482 باركن يمين مركونه");
+    expect(r[0].plate).toBe("حنص4482");
+    expect(r[0].notes).toBe("باركن يمين مركونهـ");
+  });
+
+  it("leading note attaches to the FOLLOWING plate", () => {
+    const r = extractMultiplePlates("باركن يمين حمل 8121");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("باركن يمين");
+  });
+
+  // ── Vehicle types ─────────────────────────────────────────────────────────
+  it("vehicle word before plate → vehicleType", () => {
+    const r = extractMultiplePlates("دباب حمن 8531");
+    expect(r[0].plate).toBe("حمن8531");
+    expect(r[0].vehicleType).toBe("دباب");
+    expect(r[0].notes).toBe("");
+  });
+
+  it("نقليات before plate → vehicleType (not eaten as letters)", () => {
+    const r = extractMultiplePlates("نقليات ابك 5632");
+    expect(r[0].plate).toBe("ابك5632");
+    expect(r[0].vehicleType).toBe("نقليات");
+  });
+
+  it("second vehicle word on same plate spills into notes", () => {
+    const r = extractMultiplePlates("دباب حمن 8531 ونيت");
+    expect(r[0].plate).toBe("حمن8531");
+    expect(r[0].vehicleType).toBe("دباب");
+    expect(r[0].notes).toBe("ونيت");
+  });
+
+  it("vehicle word between two plates attaches to the PRECEDING plate", () => {
+    const r = extractMultiplePlates("حمل 8121 صالون دنب 6806");
+    expect(r.map((x) => x.plate)).toEqual(["حمل8121", "دنب6806"]);
+    expect(r[0].vehicleType).toBe("صالون");
+    expect(r[1].vehicleType).toBeUndefined();
+  });
+
+  it("vehicle keyword glued to digits is treated as a vehicle, dropping the digits → no plate", () => {
+    const r = extractMultiplePlates("شاحنة8121");
+    expect(r).toEqual([]);
+  });
+
+  // ── 1-2 letter plates with zero-pad ───────────────────────────────────────
+  it("single-letter plate zero-pads digits: ا 80 → ا0080", () => {
+    const r = extractMultiplePlates("ا 80");
+    expect(r[0].plate).toBe("ا0080");
+  });
+
+  it("two-letter plate zero-pads a single digit: بح 8 → بح0008", () => {
+    const r = extractMultiplePlates("بح 8");
+    expect(r[0].plate).toBe("بح0008");
+  });
+
+  it("three-digit group zero-pads to four: حكل 800 → حكل0800", () => {
+    const r = extractMultiplePlates("حكل 800");
+    expect(r[0].plate).toBe("حكل0800");
+  });
+
+  it("repeated letter plate: دال دال → دد", () => {
+    const r = extractMultiplePlates("دال دال 9679");
+    expect(r[0].plate).toBe("دد9679");
+  });
+
+  // ── Garbled long-word best-effort ─────────────────────────────────────────
+  it("garbled all-letters word adjacent to digits yields first 3 valid letters", () => {
+    const r = extractMultiplePlates("راقوف 3944");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("راق3944");
+  });
+
+  it("phonetic-merge word normalizes then seeds the plate: احلام → احل", () => {
+    const r = extractMultiplePlates("احلام 1234");
+    expect(r[0].plate).toBe("احل1234");
+  });
+
+  // ── Full failure-data transcript (the 7 real plates) ──────────────────────
+  it("recovers all 7 plates from the real garbled recording", () => {
+    const r = extractMultiplePlates(
+      "رقس 3944 دلل 9679 بطس 4284 و بصح 6469 و اصك 4577 مركونه حنص 4482 دنب 6806"
+    );
+    expect(r.map((x) => x.plate)).toEqual([
+      "رقس3944", "دلل9679", "بطس4284", "بصح6469", "اصك4577", "حنص4482", "دنب6806",
+    ]);
+    expect(r[2].notes).toBe("و");
+    expect(r[3].notes).toBe("و");
+    expect(r[4].notes).toBe("مركونهـ");
+  });
+
+  // ── Empty / no-digit input ────────────────────────────────────────────────
+  it("returns [] when there is no digit group at all", () => {
+    expect(extractMultiplePlates("حمن فقط")).toEqual([]);
+  });
+
+  it("returns [] for empty input", () => {
+    expect(extractMultiplePlates("")).toEqual([]);
+  });
+});
+
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {
   it("converts mapped English letters to Arabic and strips spaces", () => {

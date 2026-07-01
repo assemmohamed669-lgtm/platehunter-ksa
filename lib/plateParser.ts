@@ -86,96 +86,172 @@ export interface MultiPlateResult {
  * كل لوحة = 1-3 حروف سعودية + 4 أرقام.
  */
 export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
-  type Kind = "letter" | "digit" | "vehicle" | "other";
-  interface Tok { value: string; kind: Kind }
+  // ── Step 1: run the SAME normalization the single-plate parser uses, so
+  // spoken letter-names (لام→ل), phonetic merges, and number-words (خمسة→5)
+  // become plate letters/digits BEFORE segmentation. Vehicle words are kept
+  // in place (not stripped) so each can be attached to its nearest plate.
+  // replaceAll() surrounds every match with spaces, so word boundaries survive
+  // and segmentation still sees one token per spoken unit.
+  let text = removeDiacritics(transcript.trim());
+  text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
+  text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
+  text = text.replace(/(?:ألف|الف)(?=\s+و)/g, " 1000 "); // ألف و… = 1000, not letter ا
+  text = text.replace(/ى/g, "ي");            // alef maqsura → ي
+  text = replaceAll(text, LETTER_NAMES);     // دال→د, صاد→ص, لام→ل …
+  text = replaceAll(text, PHONETIC_MERGES);  // احلام→ا ح ل …
+  text = replaceAll(text, SPOKEN_NUMBERS);   // خمسة→5, تلاتين→30, ألفين→2000 …
+  text = normalizeNumerals(text);            // ٥→5
 
-  // ── Step 1: tokenise + classify ──────────────────────────────────────────
-  const flat: Tok[] = [];
-  for (const raw of transcript.trim().split(/\s+/).filter(Boolean)) {
-    // Strip Arabic diacritics (tashkeel) + tatweel ONLY. The ranges are written
-    // with explicit \u escapes because the literal boundary characters are
-    // invisible/fragile and a previous version accidentally spanned the base
-    // Arabic letters (U+061A–U+065F), erasing plate letters like ح م ل entirely.
-    const clean = raw.replace(/[ؐ-ًؚ-ٰٟۖ-ۭ]/g, "").replace(/ـ/g, "");
+  const rawTokens = text.split(/\s+/).filter(Boolean);
+  if (rawTokens.length === 0) return [];
+
+  // ── Step 2: classify tokens, then flatten into ordered ATOMS.
+  //   atom.t: "L" single plate letter | "D" single digit | "V" vehicle | "N" note.
+  //   "N" atoms carry a best-effort `letters[]` so a garbled all-letters word
+  //   adjacent to a digit group can still yield a correctable plate.
+  type Atom =
+    | { t: "L"; v: string }
+    | { t: "D"; v: string }
+    | { t: "V"; v: string }
+    | { t: "N"; v: string; letters: string[] };
+
+  const atoms: Atom[] = [];
+  for (const raw of rawTokens) {
+    // Strip tashkeel + tatweel; keep base plate letters. (Reuse the same helper
+    // the single-plate parser trusts rather than an inline fragile range.)
+    const clean = removeDiacritics(raw).replace(/ـ/g, "");
     const mapped = EGYPTIAN_LETTERS[clean] ?? clean;
 
-    // Single valid Saudi plate letter after Egyptian mapping
-    if (mapped.length === 1 && VALID_AR_LETTERS.has(mapped)) {
-      flat.push({ value: mapped, kind: "letter" }); continue;
-    }
-    // Single mapped digit ("واحد"→"1")
-    if (/^\d$/.test(mapped)) {
-      flat.push({ value: mapped, kind: "digit" }); continue;
-    }
-    // SR returned digit string "1234" directly → split into individual digits
-    if (/^\d{1,4}$/.test(clean)) {
-      for (const d of clean) flat.push({ value: d, kind: "digit" }); continue;
-    }
-    // Glued plate spoken as one token: 1-3 letters stuck to 1-4 digits
-    // (e.g. "حمل8121", "ابل2150") — split into letters then digits.
-    const glued = clean.match(/^([؀-ۿ]{1,3})(\d{1,4})$/);
-    if (glued && [...glued[1]].every((c) => VALID_AR_LETTERS.has(c))) {
-      for (const c of glued[1]) flat.push({ value: c, kind: "letter" });
-      for (const d of glued[2]) flat.push({ value: d, kind: "digit" });
+    // Pure digit run → individual digit atoms (kept per-digit so 5 9 3 2 → 5932).
+    if (/^\d+$/.test(clean)) {
+      for (const d of clean) atoms.push({ t: "D", v: d });
       continue;
     }
-    // 1-3 Arabic chars that are all valid plate letters (e.g. "دحر" said as one word)
-    if (/^[؀-ۿ]{1,3}$/.test(clean) && [...clean].every(c => VALID_AR_LETTERS.has(c))) {
-      for (const c of clean) flat.push({ value: c, kind: "letter" }); continue;
+    // Single mapped digit from Egyptian speech ("واحد"→"1").
+    if (/^\d$/.test(mapped)) { atoms.push({ t: "D", v: mapped }); continue; }
+    // Single valid Saudi plate letter after Egyptian mapping.
+    if (mapped.length === 1 && VALID_AR_LETTERS.has(mapped)) {
+      atoms.push({ t: "L", v: mapped }); continue;
     }
-    // Vehicle type keyword
+    // Vehicle keyword (check before letter salvage so نقليات etc. isn't eaten).
     const vt = VEHICLE_TYPES.find((v) => raw.includes(v));
-    if (vt) { flat.push({ value: vt, kind: "vehicle" }); continue; }
-    // Everything else: note word
-    flat.push({ value: raw, kind: "other" });
+    if (vt) { atoms.push({ t: "V", v: vt }); continue; }
+    // Glued letters+digits spoken as one token (e.g. حمل8121, ابل2150, رقس3944).
+    const glued = clean.match(/^([؀-ۿ]+)(\d+)$/);
+    if (glued) {
+      const gl = extractLettersFromToken(glued[1]).slice(0, 3);
+      if (gl.length > 0) {
+        for (const l of gl) atoms.push({ t: "L", v: l });
+        for (const d of glued[2]) atoms.push({ t: "D", v: d });
+        continue;
+      }
+    }
+    // Pure-Arabic token (tatweel already stripped): clean plate letters or a note.
+    if (/^[؀-ۿ]+$/.test(clean)) {
+      const letters = extractLettersFromToken(clean);
+      // Clean plate-letter token: 1..3 valid letters and NOTHING else.
+      if (letters.length >= 1 && letters.length <= 3 && isAllPlateLetters(clean)) {
+        for (const l of letters) atoms.push({ t: "L", v: l });
+        continue;
+      }
+      // Longer / partly-invalid word → note, but keep best-effort letters so a
+      // garbled all-letters word adjacent to digits can still seed a plate.
+      atoms.push({ t: "N", v: raw, letters });
+      continue;
+    }
+    // Anything else (Latin noise, mixed punctuation) → note with no usable letters.
+    atoms.push({ t: "N", v: raw, letters: [] });
   }
 
-  // ── Step 2: state machine ────────────────────────────────────────────────
-  const results: MultiPlateResult[] = [];
-  let noteBuf: string[] = [];
-  let letterBuf: string[] = [];
-  let digitBuf: string[] = [];
-  let vtBuf = "";
-
-  function commit() {
-    if (letterBuf.length === 0 || digitBuf.length === 0) {
-      noteBuf.push(...letterBuf); letterBuf = []; digitBuf = []; vtBuf = ""; return;
+  // ── Step 3: anchor on digit groups (maximal runs of D atoms). One plate each.
+  const groups: Array<{ start: number; end: number }> = [];
+  for (let i = 0; i < atoms.length; i++) {
+    if (atoms[i].t === "D") {
+      let j = i;
+      while (j + 1 < atoms.length && atoms[j + 1].t === "D") j++;
+      groups.push({ start: i, end: j });
+      i = j;
     }
-    const plate = letterBuf.join("") + digitBuf.join("").slice(0, 4).padStart(4, "0");
-    results.push({
+  }
+  if (groups.length === 0) return [];
+
+  interface Plate {
+    gi: number;
+    letters: string[];
+    digits: string;
+    vehicleType?: string;
+    notes: string[];
+  }
+
+  // ── Step 4: for each group, scan BACKWARD (bounded by the previous group)
+  //   collecting up to 3 adjacent plate letters. Adjacent clean "L" atoms win.
+  //   If none are adjacent, fall back to the best-effort letters of a directly
+  //   preceding garbled "N" word so the plate is still produced (correctable).
+  const consumed = new Set<number>();
+  const plates: Plate[] = groups.map((g, gi) => {
+    for (let k = g.start; k <= g.end; k++) consumed.add(k);
+    const digits = atoms
+      .slice(g.start, g.end + 1)
+      .map((a) => a.v)
+      .join("")
+      .slice(0, 4);
+
+    const letters: string[] = [];
+    const prevBoundary = gi > 0 ? groups[gi - 1].end : -1;
+    let i = g.start - 1;
+    while (i > prevBoundary && letters.length < 3) {
+      const a = atoms[i];
+      if (a.t === "L") { letters.unshift(a.v); consumed.add(i); i--; }
+      else break;
+    }
+    if (letters.length === 0 && i > prevBoundary) {
+      const a = atoms[i];
+      if (a.t === "N" && a.letters.length > 0) {
+        for (const l of a.letters.slice(0, 3)) letters.push(l);
+        consumed.add(i);
+      }
+    }
+    return { gi, letters, digits, notes: [] };
+  });
+
+  // ── Step 5: assign leftover atoms to the nearest plate.
+  //   Vehicle → nearest PRECEDING plate's vehicleType (else the following plate).
+  //   Note    → preceding plate if any (trailing note), else following (leading).
+  for (let i = 0; i < atoms.length; i++) {
+    if (consumed.has(i)) continue;
+    const a = atoms[i];
+    if (a.t === "D") continue;
+
+    let before = -1, after = -1;
+    for (let p = 0; p < plates.length; p++) {
+      const g = groups[plates[p].gi];
+      if (g.end < i) before = p;
+      else if (g.start > i && after === -1) after = p;
+    }
+
+    if (a.t === "V") {
+      const p = before !== -1 ? before : after;
+      if (p !== -1) {
+        if (!plates[p].vehicleType) plates[p].vehicleType = a.v;
+        else plates[p].notes.push(a.v);
+      }
+      continue;
+    }
+    // Note word (an "N" word, or a stray unconsumed "L" letter). Trailing notes
+    // attach to the preceding plate; leading notes to the following one.
+    const target = before !== -1 ? before : after;
+    if (target !== -1) plates[target].notes.push(a.v);
+  }
+
+  return plates.map((p) => {
+    const plate = p.letters.join("") + p.digits.padStart(4, "0");
+    return {
       plate,
-      vehicleType: vtBuf || undefined,
-      notes: noteBuf.join(" "),
+      vehicleType: p.vehicleType || undefined,
+      notes: p.notes.join(" "),
       normalized: normalizePlate(plate),
-    });
-    noteBuf = []; letterBuf = []; digitBuf = []; vtBuf = "";
-  }
-
-  type State = "pre" | "letters" | "digits" | "post";
-  let state: State = "pre";
-
-  for (let i = 0; i < flat.length; i++) {
-    const t = flat[i];
-    if (state === "pre") {
-      if (t.kind === "letter") { letterBuf.push(t.value); state = "letters"; }
-      else                     { noteBuf.push(t.value); }
-    } else if (state === "letters") {
-      if      (t.kind === "letter" && letterBuf.length < 3) { letterBuf.push(t.value); }
-      else if (t.kind === "digit")                          { digitBuf.push(t.value); state = "digits"; }
-      else { noteBuf.push(...letterBuf); letterBuf = []; state = "pre"; i--; }
-    } else if (state === "digits") {
-      if (t.kind === "digit" && digitBuf.length < 4) { digitBuf.push(t.value); }
-      else { state = "post"; i--; }
-    } else { // post
-      if      (t.kind === "vehicle" && !vtBuf) { vtBuf = t.value; }
-      else if (t.kind === "letter")            { commit(); letterBuf.push(t.value); state = "letters"; }
-      // Trailing location words (باركن / يمين / بارحة …) belong to THIS plate —
-      // buffer them and stay in post so commit() attaches them to it.
-      else                                     { noteBuf.push(t.value); }
-    }
-  }
-  if (state === "digits" || state === "post") commit();
-  return results;
+    };
+  });
 }
 
 // ─── English → Arabic plate letter mapping ────────────────────────────────
