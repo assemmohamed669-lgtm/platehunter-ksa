@@ -419,6 +419,27 @@ describe("extractMultiplePlates — vehicle & location routing", () => {
   });
 });
 
+// ─── extractMultiplePlates — uncertain flag ────────────────────────────────
+describe("extractMultiplePlates — uncertain flag", () => {
+  it("is not set when letters come from clean, separately-dictated letters", () => {
+    const r = extractMultiplePlates("را قاف سين 3944");
+    expect(r[0].plate).toBe("رقس3944");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
+  it("is set when letters are salvaged from a garbled word next to the digits", () => {
+    const r = extractMultiplePlates("راقوف 3944");
+    expect(r[0].plate).toBe("راق3944");
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("is set when no letters at all precede the digit group", () => {
+    const r = extractMultiplePlates("3944");
+    expect(r[0].plate).toBe("3944");
+    expect(r[0].uncertain).toBe(true);
+  });
+});
+
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {
   it("converts mapped English letters to Arabic and strips spaces", () => {
@@ -964,6 +985,30 @@ describe("parsePlateFromTranscript — real-world voice scenarios", () => {
     expect(r.plate).toBe("حمن3921");
     expect(r.vehicleType).toBe("دباب");
     expect(r.notes).toContain("مركون");
+  });
+});
+
+// ─── parsePlateFromTranscript — uncertain flag ─────────────────────────────
+describe("parsePlateFromTranscript — uncertain flag", () => {
+  it("is not set when the primary token scan finds clean letters", () => {
+    const r = parsePlateFromTranscript("دنب 6806");
+    expect(r.plate).toBe("دنب6806");
+    expect(r.uncertain).toBeFalsy();
+  });
+
+  it("is set when digits are found but no letters precede or follow them", () => {
+    const r = parsePlateFromTranscript("6806");
+    expect(r.plate).toBe("6806");
+    expect(r.uncertain).toBe(true);
+  });
+
+  it("is set when the primary token scan fails and the regex fallback is used", () => {
+    // "68064482" is an 8-digit run — too long for the primary token scan's <=4
+    // digit-token check, so it falls through to the regex fallback, which only
+    // picks up the first 4 digits.
+    const r = parsePlateFromTranscript("دنب 68064482");
+    expect(r.plate).toBe("دنب6806");
+    expect(r.uncertain).toBe(true);
   });
 });
 

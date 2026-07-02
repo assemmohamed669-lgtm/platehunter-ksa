@@ -78,6 +78,10 @@ export interface MultiPlateResult {
   vehicleType?: string;
   notes: string;
   normalized: string;
+  // True when the letters weren't cleanly dictated next to the digits — either
+  // salvaged from a garbled word, or not found at all. Callers can use this to
+  // flag the plate for a quick human glance instead of trusting it blindly.
+  uncertain?: boolean;
 }
 
 /**
@@ -250,6 +254,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     digits: string;
     vehicleType?: string;
     notes: string[];
+    uncertain: boolean;
   }
 
   // ── Step 4: for each group, scan BACKWARD (bounded by the previous group)
@@ -273,6 +278,10 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
       if (a.t === "L") { letters.unshift(a.v); consumed.add(i); i--; }
       else break;
     }
+    // The clean adjacent-letters scan above is the confident path. Anything
+    // that has to fall back to salvaging a garbled word — or finds nothing —
+    // is flagged uncertain so the UI can prompt a quick human glance.
+    const uncertain = letters.length === 0;
     if (letters.length === 0 && i > prevBoundary) {
       const a = atoms[i];
       if (a.t === "N" && a.letters.length > 0) {
@@ -280,7 +289,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
         consumed.add(i);
       }
     }
-    return { gi, letters, digits, notes: [] };
+    return { gi, letters, digits, notes: [], uncertain };
   });
 
   // ── Step 5: assign leftover atoms to the nearest plate.
@@ -319,6 +328,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
       vehicleType: p.vehicleType || undefined,
       notes: p.notes.join(" "),
       normalized: normalizePlate(plate),
+      uncertain: p.uncertain || undefined,
     };
   });
 }
@@ -747,6 +757,9 @@ export interface ParseResult {
   vehicleType?: string;
   notes: string;
   normalized: string;
+  // True when the plate didn't come from the primary clean token scan — either
+  // a regex/char-extraction fallback was needed, or no letters were found at all.
+  uncertain?: boolean;
 }
 
 // ─── Main parser ───────────────────────────────────────────────────────────
@@ -817,6 +830,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
   let plate = "";
   let notes = "";
+  let uncertain = false;
 
   if (digitTokenIndices.length > 0) {
     const firstDigitIdx = digitTokenIndices[0];
@@ -859,6 +873,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
     plate = letterBuf.join("") + digits;
     notes = tokens.filter((_, i) => !usedIdx.has(i)).join(" ");
+    uncertain = letterBuf.length === 0;
   }
 
   // ── 10. Regex fallback: letters-digits or digits-letters as a block ───────
@@ -874,6 +889,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
       if (d.length >= 1 && d.length <= 4) {
         plate = `${l}${d}`;
         notes = normalized.replace(mA[0], " ").replace(/\s+/g, " ").trim();
+        uncertain = true;
       }
     }
 
@@ -885,6 +901,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
         if (d.length >= 1 && d.length <= 4) {
           plate = `${l}${d}`;
           notes = normalized.replace(mB[0], " ").replace(/\s+/g, " ").trim();
+          uncertain = true;
         }
       }
     }
@@ -909,6 +926,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
         plate = d;
         notes = normalized.replace(d, " ").replace(/\s+/g, " ").trim();
       }
+      uncertain = true;
     }
   }
 
@@ -917,7 +935,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
     plate = plate.replace(/(\d+)$/, (m) => m.padStart(4, "0"));
   }
 
-  return { plate, vehicleType, notes, normalized };
+  return { plate, vehicleType, notes, normalized, uncertain: uncertain || undefined };
 }
 
 // ─── Fuzzy matching helpers ────────────────────────────────────────────────

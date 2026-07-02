@@ -53,7 +53,7 @@ const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 // `originalPlate` is the raw pre-correction value the recognizer/parser produced —
 // kept on the saved RecordingEntry so a later edit in the table can be diffed
 // against it to learn a letter confusion.
-type ExtractedPlate = { plate: string; originalPlate: string; vehicleType: string; notes: string };
+type ExtractedPlate = { plate: string; originalPlate: string; vehicleType: string; notes: string; uncertain: boolean };
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -598,7 +598,7 @@ export default function RegistrationPage() {
     if (plates.length === 0) {
       const parsed = parsePlateFromTranscript(transcript);
       if (parsed.plate) {
-        plates = [{ plate: parsed.plate, vehicleType: parsed.vehicleType, notes: parsed.notes, normalized: parsed.normalized }];
+        plates = [{ plate: parsed.plate, vehicleType: parsed.vehicleType, notes: parsed.notes, normalized: parsed.normalized, uncertain: parsed.uncertain }];
       }
     }
 
@@ -612,12 +612,18 @@ export default function RegistrationPage() {
     setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
-    return plates.map((p) => ({
-      plate: applyLetterConfusions(p.plate, letterConfusionsRef.current),
-      originalPlate: p.plate,
-      vehicleType: p.vehicleType ?? "",
-      notes: p.notes ?? "",
-    }));
+    return plates.map((p) => {
+      const corrected = applyLetterConfusions(p.plate, letterConfusionsRef.current);
+      return {
+        plate: corrected,
+        originalPlate: p.plate,
+        vehicleType: p.vehicleType ?? "",
+        notes: p.notes ?? "",
+        // Flag for a quick glance if the parser itself was unsure, OR if we just
+        // auto-corrected it — the confusion learner is a heuristic, not a certainty.
+        uncertain: !!p.uncertain || corrected !== p.plate,
+      };
+    });
   }
 
   // Save extracted plates to IndexedDB immediately + return them. No review gate —
@@ -631,7 +637,7 @@ export default function RegistrationPage() {
     const savedIds: string[] = [];
     const savedEntries: RecordingEntry[] = [];
 
-    for (const { plate, originalPlate, vehicleType, notes } of plates) {
+    for (const { plate, originalPlate, vehicleType, notes, uncertain } of plates) {
       const cleanPlate = plate.trim();
       if (!cleanPlate) continue;
       const localId = uid();
@@ -641,6 +647,7 @@ export default function RegistrationPage() {
         agentId,
         plate: cleanPlate,
         originalPlate: originalPlate !== cleanPlate ? originalPlate : undefined,
+        uncertain: uncertain || undefined,
         vehicleType: vehicleType?.trim() || undefined,
         notes: notes?.trim() || undefined,
         lat: coords?.lat,

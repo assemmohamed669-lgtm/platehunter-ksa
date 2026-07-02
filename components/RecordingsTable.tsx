@@ -14,6 +14,7 @@ import {
   CheckSquare,
   Square,
   Pencil,
+  AlertTriangle,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
@@ -251,6 +252,11 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                             {entry.plate}
                           </span>
                           {onUpdatePlate && !isPin && <Pencil size={10} className="text-muted shrink-0" />}
+                          {entry.uncertain && (
+                            <span title="الاستخراج مش متأكد منه — يستاهل نظرة" className="flex items-center rounded-full bg-alert/20 px-1 py-0.5 leading-none">
+                              <AlertTriangle size={10} className="text-alert" />
+                            </span>
+                          )}
                           {isMatched && (
                             <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
                               مطلوبة

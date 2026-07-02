@@ -15,6 +15,8 @@ export interface RecordingEntry {
   plate: string;             // joined, no spaces e.g. أبح1234
   originalPlate?: string;    // raw value the recognizer produced, before any correction —
                              // kept so a later edit can teach the letter-confusion learner
+  uncertain?: boolean;       // extraction wasn't confident (garbled/fallback/auto-corrected) —
+                             // worth a quick glance; cleared once the user edits/confirms it
   vehicleType?: string;      // ونيت / فان / دباب / مصدومة
   lat?: number;
   lng?: number;
@@ -163,6 +165,7 @@ export async function updatePlate(localId: string, plate: string): Promise<void>
       const entry = req.result as RecordingEntry;
       if (entry) {
         entry.plate = plate;
+        entry.uncertain = false; // a human looked at and confirmed this plate
         store.put(entry);
       }
     };
