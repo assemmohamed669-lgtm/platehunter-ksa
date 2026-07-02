@@ -125,6 +125,88 @@ function concatBase64Audio(parts: string[]): string {
   return btoa(binary);
 }
 
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// Assembles one playable audio clip from successfully-transcribed chunks —
+// only when every chunk shares the same MIME type. Byte-concatenating raw
+// ADTS AAC (the native recorder's format, and this file's own compression
+// output) produces valid playable audio (self-framed, verified); other
+// container formats (web's mp4/webm) are NOT safely concatenable this way,
+// so a single audio clip is kept as-is and multi-chunk sessions in those
+// formats skip audio-saving rather than risk producing a corrupt file.
+function assembleSessionAudio(chunks: GroqChunkResult[]): { base64: string; mimeType: string } | null {
+  if (chunks.length === 1) return { base64: chunks[0].audioBase64, mimeType: chunks[0].mimeType };
+  if (chunks.length > 1 && chunks.every((c) => c.mimeType === chunks[0].mimeType)) {
+    try {
+      return { base64: concatBase64Audio(chunks.map((c) => c.audioBase64)), mimeType: chunks[0].mimeType };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+const FFMPEG_CORE_BASE_URL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+
+// Compresses a picked audio file to a small AAC (adequate for speech, not
+// music) and, if it's still over the limit after compression (a genuinely
+// long recording rather than just an inefficient format), segments it into
+// GROQ_CHUNK_MS-ish pieces — same reasoning as live-recording chunking.
+// Loads ffmpeg.wasm lazily (only when a file actually needs it — the core
+// is a ~31MB one-time download, too heavy to load on every page visit).
+async function compressAndChunkAudioFile(
+  file: File,
+  maxBytes: number,
+  onStatus: (s: string) => void
+): Promise<{ base64: string; mimeType: string }[]> {
+  const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+  const { fetchFile, toBlobURL } = await import("@ffmpeg/util");
+
+  onStatus("⏳ جارٍ تحميل أداة الضغط (أول مرة بس)…");
+  const ffmpeg = new FFmpeg();
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${FFMPEG_CORE_BASE_URL}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${FFMPEG_CORE_BASE_URL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
+
+  onStatus("⏳ جارٍ ضغط الملف…");
+  const inputExt = file.name.match(/\.[a-zA-Z0-9]+$/)?.[0] || ".dat";
+  await ffmpeg.writeFile(`input${inputExt}`, await fetchFile(file));
+  // Mono + 64kbps is well above what's needed to understand dictated speech,
+  // and shrinks even an uncompressed WAV drastically.
+  await ffmpeg.exec(["-i", `input${inputExt}`, "-vn", "-ac", "1", "-b:a", "64k", "-f", "adts", "compressed.aac"]);
+  const compressed = await ffmpeg.readFile("compressed.aac");
+  const compressedBytes = compressed instanceof Uint8Array ? compressed : new TextEncoder().encode(String(compressed));
+
+  if (compressedBytes.byteLength <= maxBytes) {
+    return [{ base64: uint8ToBase64(compressedBytes), mimeType: "audio/aac" }];
+  }
+
+  onStatus("⏳ الملف لسه طويل بعد الضغط، جارٍ تقسيمه…");
+  await ffmpeg.exec([
+    "-i", "compressed.aac",
+    "-f", "segment", "-segment_time", String(GROQ_CHUNK_MS / 1000), "-c", "copy",
+    "seg%03d.aac",
+  ]);
+  const entries = await ffmpeg.listDir("/");
+  const segmentNames = entries
+    .map((e: { name: string }) => e.name)
+    .filter((name: string) => /^seg\d+\.aac$/.test(name))
+    .sort();
+
+  const chunks: { base64: string; mimeType: string }[] = [];
+  for (const name of segmentNames) {
+    const data = await ffmpeg.readFile(name);
+    const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
+    chunks.push({ base64: uint8ToBase64(bytes), mimeType: "audio/aac" });
+  }
+  return chunks;
+}
+
 // A plate freshly extracted from a transcript, ready to save immediately.
 // `originalPlate` is the raw pre-correction value the recognizer/parser produced —
 // kept on the saved RecordingEntry so a later edit in the table can be diffed
@@ -782,26 +864,8 @@ export default function RegistrationPage() {
         const failedCount = settled.length - ok.length;
         const transcript = ok.map((c) => c.text).join(" ").trim();
 
-        // Save the session's audio for later playback/deletion/sharing — only
-        // when every successful chunk shares the same MIME type. Byte-concatenating
-        // raw ADTS AAC (the native recorder's format) produces valid playable
-        // audio (self-framed, verified); other container formats (web's mp4/webm)
-        // are NOT safely concatenable this way, so a single audio clip is kept
-        // as-is and multi-chunk sessions in those formats skip audio-saving
-        // rather than risk producing a corrupt file.
-        pendingAudioRef.current = null;
-        if (ok.length === 1) {
-          pendingAudioRef.current = { base64: ok[0].audioBase64, mimeType: ok[0].mimeType };
-        } else if (ok.length > 1 && ok.every((c) => c.mimeType === ok[0].mimeType)) {
-          try {
-            pendingAudioRef.current = {
-              base64: concatBase64Audio(ok.map((c) => c.audioBase64)),
-              mimeType: ok[0].mimeType,
-            };
-          } catch {
-            pendingAudioRef.current = null; // fall through to "no audio saved" rather than a broken file
-          }
-        }
+        // Save the session's audio for later playback/deletion/sharing.
+        pendingAudioRef.current = assembleSessionAudio(ok);
 
         if (transcript) {
           setPendingTranscript(transcript);
@@ -1230,40 +1294,52 @@ export default function RegistrationPage() {
 
   // Transcribes a previously-recorded audio file picked from the device —
   // cloud-only (a local file has nothing for the on-device recognizer to
-  // listen to live), so this requires a Groq key. Not chunked like live
-  // recording: a hard size cap is enforced instead, since slicing an
-  // arbitrary existing audio file client-side would need real audio
-  // decoding, not just a byte cut.
+  // listen to live), so this requires a Groq key. A file under the limit
+  // uploads directly; an oversized one is compressed (and, if still too
+  // long after that, segmented) client-side via ffmpeg.wasm before upload —
+  // see compressAndChunkAudioFile.
   const MAX_UPLOAD_AUDIO_BYTES = 3 * 1024 * 1024; // ~4MB once base64-encoded — safely under Vercel's 4.5MB cap
   async function handleUploadAudioFile(file: File) {
     if (!groqApiKey.trim()) {
       setRecordingError("محتاج تحط مفتاح Groq الأول عشان ترفع مقطع صوتي جاهز.");
       return;
     }
-    if (file.size > MAX_UPLOAD_AUDIO_BYTES) {
-      setRecordingError(
-        `الملف كبير أوي (${(file.size / 1024 / 1024).toFixed(1)} ميجا) — الحد الأقصى ~3 ميجا. جرّب مقطع أقصر.`
-      );
-      return;
-    }
 
     setRecordingError(null);
-    setDebugStatus("⏳ جارٍ رفع الملف لـ Groq…");
     setIsTranscribing(true);
     try {
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-      const mimeType = file.type || "audio/mp4";
+      let rawChunks: { base64: string; mimeType: string }[];
+      if (file.size > MAX_UPLOAD_AUDIO_BYTES) {
+        setDebugStatus(`⚠️ الملف كبير (${(file.size / 1024 / 1024).toFixed(1)} ميجا) — جارٍ ضغطه…`);
+        rawChunks = await compressAndChunkAudioFile(file, MAX_UPLOAD_AUDIO_BYTES, setDebugStatus);
+      } else {
+        const buffer = await file.arrayBuffer();
+        rawChunks = [{ base64: uint8ToBase64(new Uint8Array(buffer)), mimeType: file.type || "audio/mp4" }];
+      }
 
-      const result = await uploadGroqChunk({ value: { recordDataBase64: base64, mimeType } }, groqApiKey.trim());
-      pendingAudioRef.current = { base64: result.audioBase64, mimeType: result.mimeType };
-      setPendingTranscript(result.text);
-      setDebugFinal(result.text);
-      setDebugRaw(result.text);
-      setDebugStatus("✅ تم تفريغ الملف المرفوع");
+      setDebugStatus(`⏳ جارٍ رفع ${rawChunks.length > 1 ? `${rawChunks.length} جزء` : "الملف"} لـ Groq…`);
+      const settled = await Promise.allSettled(
+        rawChunks.map((c) =>
+          uploadGroqChunk({ value: { recordDataBase64: c.base64, mimeType: c.mimeType } }, groqApiKey.trim())
+        )
+      );
+      const ok = settled.filter((s): s is PromiseFulfilledResult<GroqChunkResult> => s.status === "fulfilled").map((s) => s.value);
+      const failedCount = settled.length - ok.length;
+      const transcript = ok.map((c) => c.text).join(" ").trim();
+      pendingAudioRef.current = assembleSessionAudio(ok);
+
+      if (transcript) {
+        setPendingTranscript(transcript);
+        setDebugFinal(transcript);
+        setDebugRaw(transcript);
+        setDebugStatus(failedCount > 0 ? `⚠️ تم التفريغ (${failedCount} جزء فشل)` : "✅ تم تفريغ الملف المرفوع");
+        if (failedCount > 0) {
+          setRecordingError(`${failedCount} جزء من الملف فشل تفريغه — أي لوحات فيه اتفقدت.`);
+        }
+      } else {
+        setRecordingError("فشل تفريغ الملف بالكامل — راجع لوحة التشخيص تحت.");
+        setDebugStatus("❌ ERROR: كل الأجزاء فشلت");
+      }
     } catch (err: any) {
       setRecordingError(`فشل تفريغ الملف: ${err?.message ?? err}`);
       setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
