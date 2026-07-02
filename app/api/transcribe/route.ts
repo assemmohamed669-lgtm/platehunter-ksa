@@ -41,7 +41,7 @@ async function remuxAacToM4a(input: Buffer): Promise<Buffer> {
 export async function POST(req: NextRequest) {
   try {
     const { audio, mimeType, apiKey } = await req.json();
-    if (!audio || !apiKey) {
+    if (typeof audio !== "string" || !audio || typeof apiKey !== "string" || !apiKey) {
       return NextResponse.json({ text: null, error: "missing_audio_or_key" }, { status: 400 });
     }
 

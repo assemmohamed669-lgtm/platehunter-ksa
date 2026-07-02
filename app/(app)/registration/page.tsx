@@ -140,7 +140,7 @@ function uint8ToBase64(bytes: Uint8Array): string {
 // formats skip audio-saving rather than risk producing a corrupt file.
 function assembleSessionAudio(chunks: GroqChunkResult[]): { base64: string; mimeType: string } | null {
   if (chunks.length === 1) return { base64: chunks[0].audioBase64, mimeType: chunks[0].mimeType };
-  if (chunks.length > 1 && chunks.every((c) => c.mimeType === chunks[0].mimeType)) {
+  if (chunks.length > 1 && chunks[0].mimeType === "audio/aac" && chunks.every((c) => c.mimeType === chunks[0].mimeType)) {
     try {
       return { base64: concatBase64Audio(chunks.map((c) => c.audioBase64)), mimeType: chunks[0].mimeType };
     } catch {
@@ -168,43 +168,50 @@ async function compressAndChunkAudioFile(
 
   onStatus("⏳ جارٍ تحميل أداة الضغط (أول مرة بس)…");
   const ffmpeg = new FFmpeg();
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${FFMPEG_CORE_BASE_URL}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${FFMPEG_CORE_BASE_URL}/ffmpeg-core.wasm`, "application/wasm"),
-  });
+  try {
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${FFMPEG_CORE_BASE_URL}/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`${FFMPEG_CORE_BASE_URL}/ffmpeg-core.wasm`, "application/wasm"),
+    });
 
-  onStatus("⏳ جارٍ ضغط الملف…");
-  const inputExt = file.name.match(/\.[a-zA-Z0-9]+$/)?.[0] || ".dat";
-  await ffmpeg.writeFile(`input${inputExt}`, await fetchFile(file));
-  // Mono + 64kbps is well above what's needed to understand dictated speech,
-  // and shrinks even an uncompressed WAV drastically.
-  await ffmpeg.exec(["-i", `input${inputExt}`, "-vn", "-ac", "1", "-b:a", "64k", "-f", "adts", "compressed.aac"]);
-  const compressed = await ffmpeg.readFile("compressed.aac");
-  const compressedBytes = compressed instanceof Uint8Array ? compressed : new TextEncoder().encode(String(compressed));
+    onStatus("⏳ جارٍ ضغط الملف…");
+    const inputExt = file.name.match(/\.[a-zA-Z0-9]+$/)?.[0] || ".dat";
+    await ffmpeg.writeFile(`input${inputExt}`, await fetchFile(file));
+    // Mono + 64kbps is well above what's needed to understand dictated speech,
+    // and shrinks even an uncompressed WAV drastically.
+    await ffmpeg.exec(["-i", `input${inputExt}`, "-vn", "-ac", "1", "-b:a", "64k", "-f", "adts", "compressed.aac"]);
+    const compressed = await ffmpeg.readFile("compressed.aac");
+    const compressedBytes = compressed instanceof Uint8Array ? compressed : new TextEncoder().encode(String(compressed));
 
-  if (compressedBytes.byteLength <= maxBytes) {
-    return [{ base64: uint8ToBase64(compressedBytes), mimeType: "audio/aac" }];
+    if (compressedBytes.byteLength <= maxBytes) {
+      return [{ base64: uint8ToBase64(compressedBytes), mimeType: "audio/aac" }];
+    }
+
+    onStatus("⏳ الملف لسه طويل بعد الضغط، جارٍ تقسيمه…");
+    await ffmpeg.exec([
+      "-i", "compressed.aac",
+      "-f", "segment", "-segment_time", String(GROQ_CHUNK_MS / 1000), "-c", "copy",
+      "seg%03d.aac",
+    ]);
+    const entries = await ffmpeg.listDir("/");
+    const segmentNames = entries
+      .map((e: { name: string }) => e.name)
+      .filter((name: string) => /^seg\d+\.aac$/.test(name))
+      .sort((a: string, b: string) => parseInt(a.match(/\d+/)![0], 10) - parseInt(b.match(/\d+/)![0], 10));
+
+    const chunks: { base64: string; mimeType: string }[] = [];
+    for (const name of segmentNames) {
+      const data = await ffmpeg.readFile(name);
+      const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
+      chunks.push({ base64: uint8ToBase64(bytes), mimeType: "audio/aac" });
+    }
+    return chunks;
+  } finally {
+    // Each call spins up a fresh worker + WASM instance — without an explicit
+    // terminate, uploading several oversized files in one session would pile
+    // up terminated-in-name-only workers that never actually release memory.
+    ffmpeg.terminate();
   }
-
-  onStatus("⏳ الملف لسه طويل بعد الضغط، جارٍ تقسيمه…");
-  await ffmpeg.exec([
-    "-i", "compressed.aac",
-    "-f", "segment", "-segment_time", String(GROQ_CHUNK_MS / 1000), "-c", "copy",
-    "seg%03d.aac",
-  ]);
-  const entries = await ffmpeg.listDir("/");
-  const segmentNames = entries
-    .map((e: { name: string }) => e.name)
-    .filter((name: string) => /^seg\d+\.aac$/.test(name))
-    .sort();
-
-  const chunks: { base64: string; mimeType: string }[] = [];
-  for (const name of segmentNames) {
-    const data = await ffmpeg.readFile(name);
-    const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
-    chunks.push({ base64: uint8ToBase64(bytes), mimeType: "audio/aac" });
-  }
-  return chunks;
 }
 
 // A plate freshly extracted from a transcript, ready to save immediately.
@@ -448,6 +455,11 @@ export default function RegistrationPage() {
 
   const gpsAtRecordRef = useRef<GpsCoords | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement>(null);
+  // Guards the window between a record-button tap and isRecordingRef flipping
+  // true — startRecording awaits a permission prompt + native calls before
+  // that happens, so a rapid double-tap would otherwise start two concurrent
+  // recording sessions (two chunk timers, one leaked and uncancelable).
+  const startingRecordingRef = useRef(false);
 
   // Learned letter-confusion corrections (heard → actual), calibrated per device/mic
   // from the user's own edits in the review step. Loaded once on mount, persisted
@@ -654,6 +666,28 @@ export default function RegistrationPage() {
 
   // ── Web Speech API recording ─────────────────────────────────────────
   async function startRecording() {
+    if (isRecordingRef.current || startingRecordingRef.current) return;
+    startingRecordingRef.current = true;
+    try {
+      await startRecordingInner();
+    } finally {
+      startingRecordingRef.current = false;
+    }
+  }
+
+  async function startRecordingInner() {
+    // A previous session's transcript/audio is still sitting unsaved (the
+    // "جاهز للتفريغ" card) — starting a new one would silently overwrite
+    // pendingAudioRef/pendingTranscript with no trace of the old recording.
+    // Save it first, exactly as if the agent had tapped "احفظ" themselves.
+    if (pendingTranscript.trim()) {
+      const { ok } = await extractAndSaveTranscript();
+      if (!ok) {
+        setRecordingError("فيه تسجيل سابق لسه محفوظش — تعامل معاه الأول (الكرت اللي فوق) قبل ما تسجل تاني.");
+        return;
+      }
+    }
+
     setRecordingError(null);
     setLiveTranscript("");
     setDebugStatus("");
@@ -1268,28 +1302,44 @@ export default function RegistrationPage() {
     await handleShareExcelFor(recordings);
   }
 
-  // "احفظ وصدّر الإكسيل" → extract + save immediately, no review gate. Mistakes
-  // are fixed later by tapping the plate directly in the table below.
-  async function handleTranscribeAndSave() {
+  // Extract + save the pending transcript's plates (no export side effect) —
+  // shared by the "احفظ" button and the auto-flush guards in
+  // startRecordingInner/handleUploadAudioFile. Those guards must NOT trigger
+  // an Excel export: on native that opens/switches to a spreadsheet app,
+  // which would fight the very "start a new recording" action they run in
+  // front of. Returns ok:false only when there was a pending transcript that
+  // couldn't be saved (nothing extracted) — callers use this to avoid
+  // silently discarding the unresolved one.
+  async function extractAndSaveTranscript(): Promise<{ ok: boolean; savedEntries: RecordingEntry[] }> {
     const transcript = pendingTranscript.trim();
-    if (!transcript) return;
+    if (!transcript) return { ok: true, savedEntries: [] };
 
     const extracted = extractPlates(transcript);
     if (extracted.length === 0) {
       alert("لم يتم استخراج أي لوحة من التسجيل. جرّب تسجيل تاني أو أضف يدوياً.");
-      return;
+      return { ok: false, savedEntries: [] };
     }
 
     setPendingTranscript("");
     setIsTranscribing(true);
     const savedEntries = await savePlateList(extracted);
     setIsTranscribing(false);
-    if (savedEntries.length === 0) return;
+    return { ok: true, savedEntries };
+  }
+
+  // "احفظ وصدّر الإكسيل" button → save then export/open the Excel file.
+  // No review gate — mistakes are fixed later by tapping the plate directly
+  // in the table below.
+  async function handleTranscribeAndSave(): Promise<boolean> {
+    const { ok, savedEntries } = await extractAndSaveTranscript();
+    if (!ok) return false;
+    if (savedEntries.length === 0) return true;
 
     const rows = buildRows(savedEntries);
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const blob = buildExcelBlob(rows, "اللوحات");
     await openExcelBlob(blob, filename);
+    return true;
   }
 
   // Transcribes a previously-recorded audio file picked from the device —
@@ -1298,11 +1348,24 @@ export default function RegistrationPage() {
   // uploads directly; an oversized one is compressed (and, if still too
   // long after that, segmented) client-side via ffmpeg.wasm before upload —
   // see compressAndChunkAudioFile.
-  const MAX_UPLOAD_AUDIO_BYTES = 3 * 1024 * 1024; // ~4MB once base64-encoded — safely under Vercel's 4.5MB cap
+  // Base64 inflates raw bytes by 4/3, so 3MB raw would already land right at
+  // ~4.0MB encoded — too close to Vercel's hard 4.5MB body cap once the JSON
+  // wrapper is added. 2.5MB raw (~3.5MB encoded) leaves a real ~1MB margin.
+  const MAX_UPLOAD_AUDIO_BYTES = 2.5 * 1024 * 1024;
   async function handleUploadAudioFile(file: File) {
     if (!groqApiKey.trim()) {
       setRecordingError("محتاج تحط مفتاح Groq الأول عشان ترفع مقطع صوتي جاهز.");
       return;
+    }
+
+    // Same reasoning as startRecordingInner — don't let an upload silently
+    // clobber a still-unsaved earlier session's transcript/audio.
+    if (pendingTranscript.trim()) {
+      const { ok } = await extractAndSaveTranscript();
+      if (!ok) {
+        setRecordingError("فيه تسجيل سابق لسه محفوظش — تعامل معاه الأول (الكرت اللي فوق) قبل ما ترفع ملف جديد.");
+        return;
+      }
     }
 
     setRecordingError(null);
