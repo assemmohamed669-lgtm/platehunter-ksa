@@ -51,6 +51,32 @@ const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض",
 
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 
+// Vercel rejects any serverless function request over 4.5MB — at this
+// recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio. 90s
+// per chunk leaves a wide safety margin while keeping the number of Groq
+// requests per session reasonable.
+const GROQ_CHUNK_MS = 90_000;
+
+// Uploads one finished recording chunk and returns its transcribed text.
+// Throws on any failure — callers decide how to handle a lost chunk.
+async function uploadGroqChunk(
+  chunk: { value: { recordDataBase64: string; mimeType: string } },
+  apiKey: string
+): Promise<string> {
+  const res = await fetch("/api/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audio: chunk.value.recordDataBase64,
+      mimeType: chunk.value.mimeType,
+      apiKey,
+    }),
+  });
+  const data = await res.json();
+  if (!data.text) throw new Error(data.hint || data.detail || data.error || "unknown");
+  return String(data.text).trim();
+}
+
 // A plate freshly extracted from a transcript, ready to save immediately.
 // `originalPlate` is the raw pre-correction value the recognizer/parser produced —
 // kept on the saved RecordingEntry so a later edit in the table can be diffed
@@ -295,6 +321,12 @@ export default function RegistrationPage() {
   // to localStorage whenever a save teaches it something new.
   const letterConfusionsRef = useRef<LetterConfusionMap>(new Map());
 
+  // Groq cloud transcription: chunk timer + in-flight/finished chunk uploads
+  // (ordered — must be stitched back together in this order, not arrival order).
+  const groqChunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const groqChunksRef = useRef<Promise<string>[]>([]);
+  const groqChunkBusyRef = useRef(false); // guards against overlapping chunk switches
+
   // Speech recognition
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const finalTranscriptRef = useRef<string>("");
@@ -371,6 +403,7 @@ export default function RegistrationPage() {
       gpsService.stopTracking();
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      if (groqChunkTimerRef.current) clearInterval(groqChunkTimerRef.current);
     };
   }, []);
 
@@ -467,7 +500,8 @@ export default function RegistrationPage() {
 
     // ── Cloud transcription (Groq Whisper) — used when the agent configured
     // their own key. Captures raw audio instead of running the on-device
-    // recognizer; the audio is sent to Groq once the user stops.
+    // recognizer; the audio is sent to Groq in chunks (see GROQ_CHUNK_MS)
+    // rather than as one upload for the whole session.
     if (groqApiKey.trim()) {
       try {
         const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
@@ -481,6 +515,38 @@ export default function RegistrationPage() {
         isRecordingRef.current = true;
         setIsRecording(true);
         setDebugStatus("✅ STARTED (Groq Cloud)");
+        groqChunksRef.current = [];
+        groqChunkBusyRef.current = false;
+
+        // A single upload covering a long session risks exceeding Vercel's
+        // hard 4.5MB request-body limit (~5 minutes of audio at this
+        // bitrate) — the request would be rejected before our code even
+        // runs. Instead, seamlessly swap to a fresh recording segment every
+        // GROQ_CHUNK_MS and transcribe the finished one in the background;
+        // chunks are stitched back together in order when the user stops.
+        groqChunkTimerRef.current = setInterval(async () => {
+          if (!isRecordingRef.current || groqChunkBusyRef.current) return;
+          groqChunkBusyRef.current = true;
+          const { VoiceRecorder: VR } = await import("@independo/capacitor-voice-recorder");
+
+          // Stop and resume are attempted independently — if stopping this
+          // segment fails (e.g. EMPTY_RECORDING), we still must try to
+          // resume recording so the session doesn't silently go dead for
+          // the rest of the interval.
+          let chunk: Awaited<ReturnType<typeof VR.stopRecording>> | null = null;
+          try {
+            chunk = await VR.stopRecording();
+          } catch (err: any) {
+            setRecordingError(`تعذّر إنهاء جزء من التسجيل: ${err?.message ?? err}`);
+          }
+          try {
+            if (isRecordingRef.current) await VR.startRecording();
+          } catch (err: any) {
+            setRecordingError(`تعذّر استئناف التسجيل: ${err?.message ?? err}`);
+          }
+          if (chunk) groqChunksRef.current.push(uploadGroqChunk(chunk, groqApiKey.trim()));
+          groqChunkBusyRef.current = false;
+        }, GROQ_CHUNK_MS);
       } catch (err: any) {
         setRecordingError(`تعذّر بدء التسجيل السحابي: ${err?.message ?? err}`);
       }
@@ -609,37 +675,55 @@ export default function RegistrationPage() {
 
     // ── Cloud transcription (Groq Whisper) ──────────────────────────────
     if (groqApiKey.trim()) {
-      setDebugStatus("⏳ جارٍ رفع الصوت لـ Groq…");
+      if (groqChunkTimerRef.current) {
+        clearInterval(groqChunkTimerRef.current);
+        groqChunkTimerRef.current = null;
+      }
+      // If the user tapped stop right as a scheduled chunk-switch was mid-flight,
+      // wait it out rather than racing it for the recorder — both call
+      // VoiceRecorder.stopRecording(), and only one can win.
+      while (groqChunkBusyRef.current) await new Promise((r) => setTimeout(r, 50));
+      setDebugStatus("⏳ جارٍ رفع آخر جزء…");
       setIsTranscribing(true);
       try {
         const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
-        const result = await VoiceRecorder.stopRecording();
-        const res = await fetch("/api/transcribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            audio: result.value.recordDataBase64,
-            mimeType: result.value.mimeType,
-            apiKey: groqApiKey.trim(),
-          }),
-        });
-        const data = await res.json();
-        if (data.text) {
-          const transcript = String(data.text).trim();
+        try {
+          const lastChunk = await VoiceRecorder.stopRecording();
+          groqChunksRef.current.push(uploadGroqChunk(lastChunk, groqApiKey.trim()));
+        } catch (err: any) {
+          // EMPTY_RECORDING when the user stops right after a chunk-switch —
+          // fine, just means there's nothing new to add.
+          setDebugStatus(`⚠️ آخر جزء فشل: ${err?.message ?? err}`);
+        }
+
+        setDebugStatus("⏳ جارٍ تجميع كل الأجزاء…");
+        const settled = await Promise.allSettled(groqChunksRef.current);
+        const texts = settled.filter((s) => s.status === "fulfilled").map((s) => s.value);
+        const failedCount = settled.length - texts.length;
+        const transcript = texts.join(" ").trim();
+
+        if (transcript) {
           setPendingTranscript(transcript);
-          setDebugFinal(transcript || "(فارغ)");
+          setDebugFinal(transcript);
           setDebugRaw(transcript);
-          setDebugStatus("✅ تم التفريغ السحابي");
+          setDebugStatus(
+            failedCount > 0
+              ? `⚠️ تم التفريغ (${failedCount} جزء فشل ولوحاته اتفقدت)`
+              : "✅ تم التفريغ السحابي"
+          );
+          if (failedCount > 0) {
+            setRecordingError(`${failedCount} جزء من التسجيل فشل تفريغه — أي لوحات فيه اتفقدت. النص الباقي جاهز تحت.`);
+          }
         } else {
-          const reason = data.hint || data.detail || data.error || "خطأ غير معروف";
-          setRecordingError(`فشل التفريغ السحابي: ${reason}`);
-          setDebugStatus(`❌ ERROR: ${data.error ?? "unknown"} — ${reason}`);
+          setRecordingError("فشل التفريغ السحابي بالكامل — راجع لوحة التشخيص تحت.");
+          setDebugStatus("❌ ERROR: كل الأجزاء فشلت");
         }
       } catch (err: any) {
         setRecordingError(`تعذّر التفريغ السحابي: ${err?.message ?? err}`);
         setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
       } finally {
         setIsTranscribing(false);
+        groqChunksRef.current = [];
       }
       return;
     }
