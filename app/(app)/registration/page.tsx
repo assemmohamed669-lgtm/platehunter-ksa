@@ -504,9 +504,14 @@ export default function RegistrationPage() {
         const result = event.results[i];
         if (result.isFinal) {
           // Pick the plate-likeliest alternative, not just the first.
+          // Recognizer confidence breaks near-ties between equally plate-shaped alternatives.
           const alts: string[] = [];
-          for (let a = 0; a < result.length; a++) alts.push(result[a].transcript);
-          final += pickBestHypothesis(alts) + " ";
+          const confs: number[] = [];
+          for (let a = 0; a < result.length; a++) {
+            alts.push(result[a].transcript);
+            confs.push(result[a].confidence);
+          }
+          final += pickBestHypothesis(alts, confs) + " ";
         }
         else { interim += result[0].transcript; }
       }

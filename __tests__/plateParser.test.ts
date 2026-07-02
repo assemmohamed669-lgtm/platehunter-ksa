@@ -24,6 +24,24 @@ describe("plateContentScore & pickBestHypothesis", () => {
     expect(pickBestHypothesis(["", "حمل 8121"])).toBe("حمل 8121");
     expect(pickBestHypothesis([])).toBe("");
   });
+
+  it("uses recognizer confidence as a tiebreaker when content scores are equal", () => {
+    // Both hypotheses have identical plate-content shape (3 single letters + 4 digits),
+    // so plateContentScore alone can't distinguish them — confidence should decide.
+    const best = pickBestHypothesis(
+      ["ر ق س 3944", "د ل ن 3944"],
+      [0.4, 0.9]
+    );
+    expect(best).toBe("د ل ن 3944");
+  });
+
+  it("still prefers a clearly better content score over a higher-confidence but junkier candidate", () => {
+    const best = pickBestHypothesis(
+      ["السلام عليكم", "دال لام لام 9679"],
+      [0.95, 0.5]
+    );
+    expect(best).toBe("دال لام لام 9679");
+  });
 });
 
 // ─── extractMultiplePlates ────────────────────────────────────────────────────

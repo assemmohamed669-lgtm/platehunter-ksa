@@ -127,13 +127,19 @@ export function plateContentScore(text: string): number {
 /**
  * Given several recognizer hypotheses for the SAME utterance, return the one
  * that looks most like plate dictation. Falls back to the first non-empty.
+ *
+ * `confidences[i]` (0-1), when provided by the recognizer (e.g. the Web Speech
+ * API's SpeechRecognitionAlternative.confidence — the native Capacitor plugin
+ * doesn't expose this), is added as a small tiebreaker: it can only flip a
+ * near-tie in plateContentScore, never override a clearly better-shaped one.
  */
-export function pickBestHypothesis(candidates: string[]): string {
+export function pickBestHypothesis(candidates: string[], confidences?: number[]): string {
   let best = "";
   let bestScore = -Infinity;
-  for (const c of candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
     if (!c) continue;
-    const s = plateContentScore(c);
+    const s = plateContentScore(c) + (confidences?.[i] ?? 0);
     if (s > bestScore) { bestScore = s; best = c; }
   }
   return best;
