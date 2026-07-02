@@ -631,8 +631,9 @@ export default function RegistrationPage() {
           setDebugRaw(transcript);
           setDebugStatus("✅ تم التفريغ السحابي");
         } else {
-          setRecordingError(`فشل التفريغ السحابي: ${data.error ?? "خطأ غير معروف"}`);
-          setDebugStatus(`❌ ERROR: ${data.error ?? "unknown"}`);
+          const reason = data.hint || data.detail || data.error || "خطأ غير معروف";
+          setRecordingError(`فشل التفريغ السحابي: ${reason}`);
+          setDebugStatus(`❌ ERROR: ${data.error ?? "unknown"} — ${reason}`);
         }
       } catch (err: any) {
         setRecordingError(`تعذّر التفريغ السحابي: ${err?.message ?? err}`);
