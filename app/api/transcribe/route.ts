@@ -12,7 +12,13 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(audio, "base64");
-    const ext = (mimeType?.split("/")[1] ?? "m4a").split(";")[0];
+    let ext = (mimeType?.split("/")[1] ?? "m4a").split(";")[0];
+    // The native Android recorder plugin only outputs raw AAC/ADTS
+    // (mimeType "audio/aac") — that codec isn't in Groq's allowed extension
+    // list (flac/mp3/mp4/mpeg/mpga/m4a/ogg/opus/wav/webm), even though the
+    // audio itself is valid AAC. Relabel it to m4a, the closest supported
+    // container for the same codec, so Groq's extension check accepts it.
+    if (ext === "aac") ext = "m4a";
     const blob = new Blob([buffer], { type: mimeType || "audio/m4a" });
 
     const form = new FormData();
