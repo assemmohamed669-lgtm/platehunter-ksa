@@ -639,6 +639,93 @@ export function normalizePlate(plate: string): string {
   return letters + s.slice(dStart, dEnd + 1).padStart(4, "0");
 }
 
+// ─── Letter-confusion self-learning ─────────────────────────────────────────
+// A device/mic's speech recognizer tends to mishear the same letter the same
+// way ("ص" heard as "س"). When the user corrects a plate in the review step,
+// that's a ground-truth (heard → actual) signal worth remembering so the next
+// dictation of the same letter is pre-corrected before the user ever sees it.
+
+// Splits a plate into its letter units (respecting "هـ" as one unit) and its
+// digit suffix — mirrors normalizePlate's letters/digits split.
+function splitPlateUnits(plate: string): { letters: string[]; digits: string } {
+  let i = 0;
+  while (i < plate.length && !(plate.charCodeAt(i) >= 48 && plate.charCodeAt(i) <= 57)) i++;
+  return { letters: extractLettersFromToken(plate.slice(0, i)), digits: plate.slice(i) };
+}
+
+export interface LetterCorrectionDiff { heard: string; corrected: string }
+
+/**
+ * Letter-level diff between what the recognizer produced and what the user
+ * finally confirmed. Only trusted when the digit part and letter count match
+ * exactly — otherwise this might be a different plate entirely, not a
+ * mishearing of the same one, so no correction is inferred.
+ */
+export function diffLetterCorrections(extractedPlate: string, correctedPlate: string): LetterCorrectionDiff[] {
+  const a = splitPlateUnits(extractedPlate);
+  const b = splitPlateUnits(correctedPlate);
+  if (a.digits !== b.digits || a.letters.length !== b.letters.length) return [];
+
+  const diffs: LetterCorrectionDiff[] = [];
+  for (let i = 0; i < a.letters.length; i++) {
+    if (a.letters[i] !== b.letters[i]) diffs.push({ heard: a.letters[i], corrected: b.letters[i] });
+  }
+  return diffs;
+}
+
+// heard letter → (corrected letter → times seen)
+export type LetterConfusionMap = Map<string, Map<string, number>>;
+
+export function recordLetterCorrections(map: LetterConfusionMap, extractedPlate: string, correctedPlate: string): void {
+  for (const { heard, corrected } of diffLetterCorrections(extractedPlate, correctedPlate)) {
+    if (!map.has(heard)) map.set(heard, new Map());
+    const inner = map.get(heard)!;
+    inner.set(corrected, (inner.get(corrected) ?? 0) + 1);
+  }
+}
+
+/**
+ * Pre-corrects a freshly-extracted plate's letters using learned confusions.
+ * A letter is only auto-corrected once its most common correction has been
+ * seen `minCount`+ times AND makes up at least `minDominance` of all
+ * corrections recorded for that letter — a single one-off correction, or a
+ * letter that gets "corrected" inconsistently, is left alone.
+ */
+export function applyLetterConfusions(
+  plate: string,
+  map: LetterConfusionMap,
+  minCount = 3,
+  minDominance = 0.7,
+): string {
+  const { letters, digits } = splitPlateUnits(plate);
+  const corrected = letters.map((l) => {
+    const inner = map.get(l);
+    if (!inner) return l;
+    let best: string | null = null, bestCount = 0, total = 0;
+    for (const [c, count] of inner) {
+      total += count;
+      if (count > bestCount) { bestCount = count; best = c; }
+    }
+    return best && bestCount >= minCount && bestCount / total >= minDominance ? best : l;
+  });
+  return corrected.join("") + digits;
+}
+
+export function serializeLetterConfusions(map: LetterConfusionMap): Record<string, Record<string, number>> {
+  const obj: Record<string, Record<string, number>> = {};
+  for (const [heard, inner] of map) obj[heard] = Object.fromEntries(inner);
+  return obj;
+}
+
+export function deserializeLetterConfusions(
+  obj: Record<string, Record<string, number>> | null | undefined,
+): LetterConfusionMap {
+  const map: LetterConfusionMap = new Map();
+  if (!obj) return map;
+  for (const [heard, inner] of Object.entries(obj)) map.set(heard, new Map(Object.entries(inner)));
+  return map;
+}
+
 export function findDuplicates(plates: string[]): Set<string> {
   const counts = new Map<string, number>();
   for (const p of plates) {

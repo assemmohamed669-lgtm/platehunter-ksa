@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, type LetterConfusionMap } from "@/lib/plateParser";
 
 // ─── plateContentScore / pickBestHypothesis ────────────────────────────────
 describe("plateContentScore & pickBestHypothesis", () => {
@@ -41,6 +41,81 @@ describe("plateContentScore & pickBestHypothesis", () => {
       [0.95, 0.5]
     );
     expect(best).toBe("دال لام لام 9679");
+  });
+});
+
+// ─── Letter-confusion self-learning ────────────────────────────────────────
+describe("diffLetterCorrections", () => {
+  it("finds letter diffs when digits and letter count match", () => {
+    expect(diffLetterCorrections("صح6469", "سح6469")).toEqual([{ heard: "ص", corrected: "س" }]);
+  });
+
+  it("ignores diffs when digits differ (can't be confident it's the same plate)", () => {
+    expect(diffLetterCorrections("صح6469", "سح1111")).toEqual([]);
+  });
+
+  it("ignores diffs when letter count differs", () => {
+    expect(diffLetterCorrections("صح6469", "سبح6469")).toEqual([]);
+  });
+
+  it("returns nothing for identical plates", () => {
+    expect(diffLetterCorrections("صح6469", "صح6469")).toEqual([]);
+  });
+
+  it("treats هـ as a single unit", () => {
+    expect(diffLetterCorrections("هـح6469", "بح6469")).toEqual([{ heard: "هـ", corrected: "ب" }]);
+  });
+});
+
+describe("recordLetterCorrections & applyLetterConfusions", () => {
+  it("does not correct below the minimum count", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح6469", "سح6469");
+    recordLetterCorrections(map, "صك1122", "سك1122");
+    expect(applyLetterConfusions("صط5555", map)).toBe("صط5555");
+  });
+
+  it("corrects once the pattern is seen enough times and is dominant", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح6469", "سح6469");
+    recordLetterCorrections(map, "صك1122", "سك1122");
+    recordLetterCorrections(map, "صط7777", "سط7777");
+    expect(applyLetterConfusions("صل5555", map)).toBe("سل5555");
+  });
+
+  it("does not correct when the corrections for a letter are ambiguous (no dominant pattern)", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح1111", "سح1111");
+    recordLetterCorrections(map, "صك2222", "سك2222");
+    recordLetterCorrections(map, "صط3333", "طط3333");
+    recordLetterCorrections(map, "صل4444", "طل4444");
+    expect(applyLetterConfusions("صم5555", map)).toBe("صم5555");
+  });
+
+  it("leaves digits untouched", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح1111", "سح1111");
+    recordLetterCorrections(map, "صك2222", "سك2222");
+    recordLetterCorrections(map, "صط3333", "سط3333");
+    expect(applyLetterConfusions("صم9999", map)).toBe("سم9999");
+  });
+});
+
+describe("serializeLetterConfusions & deserializeLetterConfusions", () => {
+  it("round-trips a confusion map through plain-object form", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح6469", "سح6469");
+    recordLetterCorrections(map, "صك1122", "سك1122");
+
+    const plain = serializeLetterConfusions(map);
+    const restored = deserializeLetterConfusions(plain);
+
+    expect(restored.get("ص")?.get("س")).toBe(2);
+  });
+
+  it("deserializing null/undefined returns an empty map", () => {
+    expect(deserializeLetterConfusions(undefined).size).toBe(0);
+    expect(deserializeLetterConfusions(null).size).toBe(0);
   });
 });
 

@@ -36,7 +36,7 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, EN_TO_AR } from "@/lib/plateParser";
+import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, type LetterConfusionMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -46,8 +46,12 @@ const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 
+const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
+
 // A plate extracted from a transcript, shown as an editable review row before saving.
-type EditablePlate = { plate: string; vehicleType: string; notes: string };
+// `original` is the raw pre-correction value the recognizer/parser produced — kept
+// so a later user edit can be diffed against it to learn a letter confusion.
+type EditablePlate = { plate: string; vehicleType: string; notes: string; original: string };
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -276,6 +280,11 @@ export default function RegistrationPage() {
 
   const gpsAtRecordRef = useRef<GpsCoords | null>(null);
 
+  // Learned letter-confusion corrections (heard → actual), calibrated per device/mic
+  // from the user's own edits in the review step. Loaded once on mount, persisted
+  // to localStorage whenever a save teaches it something new.
+  const letterConfusionsRef = useRef<LetterConfusionMap>(new Map());
+
   // Speech recognition
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const finalTranscriptRef = useRef<string>("");
@@ -287,6 +296,11 @@ export default function RegistrationPage() {
 
   // ── Bootstrap ──────────────────────────────────────────────────────
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_LETTER_CONFUSIONS);
+      if (raw) letterConfusionsRef.current = deserializeLetterConfusions(JSON.parse(raw));
+    } catch { /* corrupt/missing — start fresh */ }
+
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
         const uid = data.user.id;
@@ -599,10 +613,14 @@ export default function RegistrationPage() {
     setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
+    // Pre-correct each plate's letters using patterns learned from this device's
+    // past mishearings. `original` keeps the raw (pre-correction) value so a
+    // further user edit at save time can still be diffed to learn/reinforce it.
     return plates.map((p) => ({
-      plate: p.plate,
+      plate: applyLetterConfusions(p.plate, letterConfusionsRef.current),
       vehicleType: p.vehicleType ?? "",
       notes: p.notes ?? "",
+      original: p.plate,
     }));
   }
 
@@ -918,10 +936,29 @@ export default function RegistrationPage() {
     setEditablePlates((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  // Learn from any letter the user corrected between extraction and save, so the
+  // same mishearing is pre-corrected next time. Persists only when something changed.
+  function learnFromEdits(plates: EditablePlate[]) {
+    let learned = false;
+    for (const p of plates) {
+      const finalPlate = p.plate.trim();
+      if (finalPlate && finalPlate !== p.original) {
+        recordLetterCorrections(letterConfusionsRef.current, p.original, finalPlate);
+        learned = true;
+      }
+    }
+    if (learned) {
+      try {
+        localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current)));
+      } catch { /* storage full */ }
+    }
+  }
+
   // Step 2: "احفظ وصدّر" → save the (possibly corrected) list + open Excel.
   async function handleSaveEditedPlates() {
     const toSave = editablePlates.filter((p) => p.plate.trim());
     if (toSave.length === 0) { setEditablePlates([]); return; }
+    learnFromEdits(toSave);
     setIsTranscribing(true);
     const savedEntries = await savePlateList(toSave);
     setIsTranscribing(false);
