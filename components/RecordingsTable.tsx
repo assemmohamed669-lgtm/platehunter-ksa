@@ -13,6 +13,7 @@ import {
   Clock,
   CheckSquare,
   Square,
+  Pencil,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
@@ -39,15 +40,18 @@ interface Props {
   recordings: RecordingEntry[];
   onDelete: (id: string) => void;
   onDeleteMany?: (ids: string[]) => void;
+  onUpdatePlate?: (id: string, plate: string) => void;
   checkPlates?: Set<string>;
 }
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany, checkPlates }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, checkPlates }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   const duplicates = useMemo(
     () => findDuplicates(recordings.map((r) => r.plate)),
@@ -94,6 +98,21 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, ch
       .join("\n\n──────────\n\n");
     const full = `*السجلات الميدانية (${rows.length})*\n\n${text}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(full)}`, "_blank");
+  }
+
+  function startEdit(entry: RecordingEntry) {
+    if (!onUpdatePlate || entry.plate.startsWith("📍")) return;
+    setEditingId(entry.localId);
+    setEditValue(entry.plate);
+  }
+
+  function commitEdit() {
+    if (editingId) {
+      const trimmed = editValue.trim();
+      if (trimmed) onUpdatePlate?.(editingId, trimmed);
+    }
+    setEditingId(null);
+    setEditValue("");
   }
 
   function deleteSelected() {
@@ -206,25 +225,44 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, ch
 
                     {/* Plate */}
                     <td className="border-l border-border px-3 py-2">
-                      <div className="flex items-center gap-1.5 whitespace-nowrap">
-                        {entry.synced
-                          ? <CheckCircle2 size={10} className="text-primary shrink-0" />
-                          : <Clock size={10} className="text-muted shrink-0" />
-                        }
-                        <span className={`font-bold ${isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
-                          {entry.plate}
-                        </span>
-                        {isMatched && (
-                          <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
-                            مطلوبة
+                      {editingId === entry.localId ? (
+                        <input
+                          autoFocus
+                          dir="rtl"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={commitEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            if (e.key === "Escape") { setEditingId(null); setEditValue(""); }
+                          }}
+                          className="w-24 rounded-lg border border-primary bg-surface px-2 py-1 text-sm font-bold text-ink focus:outline-none"
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 whitespace-nowrap ${onUpdatePlate && !isPin ? "cursor-pointer" : ""}`}
+                          onClick={() => startEdit(entry)}
+                        >
+                          {entry.synced
+                            ? <CheckCircle2 size={10} className="text-primary shrink-0" />
+                            : <Clock size={10} className="text-muted shrink-0" />
+                          }
+                          <span className={`font-bold ${isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
+                            {entry.plate}
                           </span>
-                        )}
-                        {isDup && !isMatched && (
-                          <span className="rounded-full bg-alert/20 px-1 py-0.5 text-[9px] font-bold text-alert leading-none">
-                            مكررة
-                          </span>
-                        )}
-                      </div>
+                          {onUpdatePlate && !isPin && <Pencil size={10} className="text-muted shrink-0" />}
+                          {isMatched && (
+                            <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
+                              مطلوبة
+                            </span>
+                          )}
+                          {isDup && !isMatched && (
+                            <span className="rounded-full bg-alert/20 px-1 py-0.5 text-[9px] font-bold text-alert leading-none">
+                              مكررة
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     {/* Vehicle type */}

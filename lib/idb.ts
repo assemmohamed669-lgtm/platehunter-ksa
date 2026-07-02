@@ -13,6 +13,8 @@ export interface RecordingEntry {
   localId: string;           // uuid generated locally
   agentId: string;           // Supabase auth user id
   plate: string;             // joined, no spaces e.g. أبح1234
+  originalPlate?: string;    // raw value the recognizer produced, before any correction —
+                             // kept so a later edit can teach the letter-confusion learner
   vehicleType?: string;      // ونيت / فان / دباب / مصدومة
   lat?: number;
   lng?: number;
@@ -143,6 +145,24 @@ export async function updateNotes(localId: string, notes: string): Promise<void>
       const entry = req.result as RecordingEntry;
       if (entry) {
         entry.notes = notes;
+        store.put(entry);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function updatePlate(localId: string, plate: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const req = store.get(localId);
+    req.onsuccess = () => {
+      const entry = req.result as RecordingEntry;
+      if (entry) {
+        entry.plate = plate;
         store.put(entry);
       }
     };

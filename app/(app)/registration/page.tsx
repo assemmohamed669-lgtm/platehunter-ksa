@@ -31,6 +31,7 @@ import {
   deleteRecording,
   updateGeodata,
   updateNotes,
+  updatePlate,
   saveUploadedFile,
   getUploadedFile,
   deleteUploadedFile,
@@ -48,10 +49,11 @@ const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض",
 
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 
-// A plate extracted from a transcript, shown as an editable review row before saving.
-// `original` is the raw pre-correction value the recognizer/parser produced — kept
-// so a later user edit can be diffed against it to learn a letter confusion.
-type EditablePlate = { plate: string; vehicleType: string; notes: string; original: string };
+// A plate freshly extracted from a transcript, ready to save immediately.
+// `originalPlate` is the raw pre-correction value the recognizer/parser produced —
+// kept on the saved RecordingEntry so a later edit in the table can be diffed
+// against it to learn a letter confusion.
+type ExtractedPlate = { plate: string; originalPlate: string; vehicleType: string; notes: string };
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -223,11 +225,8 @@ export default function RegistrationPage() {
   const [liveTranscript, setLiveTranscript] = useState<string>("");
 
   // Transcript captured from the last recording session, held until the user
-  // presses "ابدأ التفريغ" to extract plates from it.
+  // presses "احفظ وصدّر الإكسيل" to extract + save plates from it.
   const [pendingTranscript, setPendingTranscript] = useState<string>("");
-  // Extracted-but-not-yet-saved plates, shown as editable rows so the user can
-  // fix any letter the recognizer got wrong before committing + exporting.
-  const [editablePlates, setEditablePlates] = useState<EditablePlate[]>([]);
 
   // Recordings list
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
@@ -585,10 +584,10 @@ export default function RegistrationPage() {
     setDebugFinal(transcript || "(فارغ)");
   }
 
-  // Extract plates from the transcript for REVIEW (no saving yet). Returns a
-  // plain editable shape so the user can fix any letter the recognizer got wrong
-  // before it's committed. Uses the debug panel to show the extraction result.
-  function extractPlatesForReview(transcript: string): EditablePlate[] {
+  // Extract plates from the transcript and pre-correct their letters using
+  // patterns learned from this device's past mishearings. Updates the debug
+  // panel with the extraction result.
+  function extractPlates(transcript: string): ExtractedPlate[] {
     setDebugFinal(transcript);
     setDebugNormalized("");
     setDebugPlate("جارٍ الاستخراج...");
@@ -613,26 +612,26 @@ export default function RegistrationPage() {
     setDebugVehicle(plates.map((p) => p.vehicleType || "—").join(" | "));
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
-    // Pre-correct each plate's letters using patterns learned from this device's
-    // past mishearings. `original` keeps the raw (pre-correction) value so a
-    // further user edit at save time can still be diffed to learn/reinforce it.
     return plates.map((p) => ({
       plate: applyLetterConfusions(p.plate, letterConfusionsRef.current),
+      originalPlate: p.plate,
       vehicleType: p.vehicleType ?? "",
       notes: p.notes ?? "",
-      original: p.plate,
     }));
   }
 
-  // Save an already-reviewed/edited list of plates to IndexedDB + return them.
-  async function savePlateList(plates: EditablePlate[]): Promise<RecordingEntry[]> {
+  // Save extracted plates to IndexedDB immediately + return them. No review gate —
+  // field agents dictate plate after plate while moving through a street, so a
+  // blocking per-letter review isn't practical. `originalPlate` is kept on the
+  // saved entry so a later table edit can still teach the letter-confusion learner.
+  async function savePlateList(plates: ExtractedPlate[]): Promise<RecordingEntry[]> {
     if (!agentId) return [];
 
     const coords = gpsAtRecordRef.current;
     const savedIds: string[] = [];
     const savedEntries: RecordingEntry[] = [];
 
-    for (const { plate, vehicleType, notes } of plates) {
+    for (const { plate, originalPlate, vehicleType, notes } of plates) {
       const cleanPlate = plate.trim();
       if (!cleanPlate) continue;
       const localId = uid();
@@ -641,6 +640,7 @@ export default function RegistrationPage() {
         localId,
         agentId,
         plate: cleanPlate,
+        originalPlate: originalPlate !== cleanPlate ? originalPlate : undefined,
         vehicleType: vehicleType?.trim() || undefined,
         notes: notes?.trim() || undefined,
         lat: coords?.lat,
@@ -915,60 +915,57 @@ export default function RegistrationPage() {
     await handleShareExcelFor(recordings);
   }
 
-  // Step 1: "ابدأ التفريغ" → extract plates into an EDITABLE review list (no save yet).
-  function handleStartTranscriptionExcel() {
+  // "احفظ وصدّر الإكسيل" → extract + save immediately, no review gate. Mistakes
+  // are fixed later by tapping the plate directly in the table below.
+  async function handleTranscribeAndSave() {
     const transcript = pendingTranscript.trim();
     if (!transcript) return;
-    const extracted = extractPlatesForReview(transcript);
+
+    const extracted = extractPlates(transcript);
     if (extracted.length === 0) {
       alert("لم يتم استخراج أي لوحة من التسجيل. جرّب تسجيل تاني أو أضف يدوياً.");
       return;
     }
-    setEditablePlates(extracted);
-    setPendingTranscript(""); // close the "جاهز للتفريغ" panel; the review panel opens
-  }
 
-  function updateEditablePlate(i: number, field: keyof EditablePlate, value: string) {
-    setEditablePlates((prev) => prev.map((p, idx) => (idx === i ? { ...p, [field]: value } : p)));
-  }
-
-  function removeEditablePlate(i: number) {
-    setEditablePlates((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  // Learn from any letter the user corrected between extraction and save, so the
-  // same mishearing is pre-corrected next time. Persists only when something changed.
-  function learnFromEdits(plates: EditablePlate[]) {
-    let learned = false;
-    for (const p of plates) {
-      const finalPlate = p.plate.trim();
-      if (finalPlate && finalPlate !== p.original) {
-        recordLetterCorrections(letterConfusionsRef.current, p.original, finalPlate);
-        learned = true;
-      }
-    }
-    if (learned) {
-      try {
-        localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current)));
-      } catch { /* storage full */ }
-    }
-  }
-
-  // Step 2: "احفظ وصدّر" → save the (possibly corrected) list + open Excel.
-  async function handleSaveEditedPlates() {
-    const toSave = editablePlates.filter((p) => p.plate.trim());
-    if (toSave.length === 0) { setEditablePlates([]); return; }
-    learnFromEdits(toSave);
+    setPendingTranscript("");
     setIsTranscribing(true);
-    const savedEntries = await savePlateList(toSave);
+    const savedEntries = await savePlateList(extracted);
     setIsTranscribing(false);
-    setEditablePlates([]);
     if (savedEntries.length === 0) return;
 
     const rows = buildRows(savedEntries);
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const blob = buildExcelBlob(rows, "اللوحات");
     await openExcelBlob(blob, filename);
+  }
+
+  // Editing a plate directly in the table (post-save correction). Teaches the
+  // letter-confusion learner from the (heard → actual) diff, persists the
+  // learned map, updates storage, and re-checks the corrected plate against
+  // the check file in case the fix reveals a match.
+  async function handlePlateEdit(localId: string, newPlate: string) {
+    const entry = recordings.find((r) => r.localId === localId);
+    if (!entry) return;
+    const trimmed = newPlate.trim();
+    if (!trimmed || trimmed === entry.plate) return;
+
+    // Only voice-dictated entries carry a meaningful "heard" value — a manual
+    // entry's plate was typed, so editing it later is a typo fix, not a
+    // mishearing signal, and must not pollute the confusion learner.
+    if (!entry.isManual) {
+      recordLetterCorrections(letterConfusionsRef.current, entry.originalPlate ?? entry.plate, trimmed);
+      try {
+        localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current)));
+      } catch { /* storage full */ }
+    }
+
+    await updatePlate(localId, trimmed);
+    if (!agentId) return;
+    const updated = await getAllRecordings(agentId);
+    setRecordings(updated);
+    setDuplicates(findDuplicates(updated.map((r) => r.plate)));
+    const updatedEntry = updated.find((r) => r.localId === localId);
+    if (updatedEntry) checkPlateMatch(trimmed, updatedEntry);
   }
 
   async function exportToTashyeek() {
@@ -1255,92 +1252,21 @@ export default function RegistrationPage() {
         </button>
       </div>
 
-      {/* ── جاهز للتفريغ (خطوة 1: النص الخام + زر ابدأ التفريغ) ── */}
-      {pendingTranscript.trim() && editablePlates.length === 0 && (
+      {/* ── جاهز للتفريغ: النص الخام + زر يحفظ اللوحات فورًا (بدون مراجعة إجبارية) ── */}
+      {pendingTranscript.trim() && (
         <div className="rounded-2xl border border-border bg-surface px-4 py-4">
           <p className="mb-2 text-sm font-bold text-ink" dir="rtl">جاهز للتفريغ</p>
           <p className="mb-3 text-sm text-muted" dir="rtl">{pendingTranscript}</p>
           <button
-            onClick={handleStartTranscriptionExcel}
+            onClick={handleTranscribeAndSave}
             disabled={isTranscribing}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
           >
-            <Download size={16} /> ابدأ التفريغ
+            <Download size={16} /> احفظ وصدّر الإكسيل
           </button>
-        </div>
-      )}
-
-      {/* ── مراجعة وتعديل قبل الحفظ (خطوة 2) ── */}
-      {editablePlates.length > 0 && (
-        <div className="rounded-2xl border border-brand/40 bg-surface px-4 py-4">
-          <p className="mb-1 text-sm font-bold text-ink" dir="rtl">راجع وعدّل قبل الحفظ</p>
-          <p className="mb-3 text-xs text-muted" dir="rtl">
-            صحّح أي حرف غلط قبل ما تحفظ. القيمة اللي هنا هي اللي هتتحفظ وتتصدّر.
+          <p className="mt-2 text-[11px] text-muted" dir="rtl">
+            هتتحفظ فورًا بأفضل تخمين — لو حرف غلط، اضغط عليه في الجدول تحت وصحّحه في أي وقت.
           </p>
-
-          <div className="flex flex-col gap-3">
-            {editablePlates.map((p, i) => (
-              <div key={i} className="rounded-xl border border-border bg-surface-2 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-bold text-muted">لوحة {i + 1}</span>
-                  <button
-                    onClick={() => removeEditablePlate(i)}
-                    aria-label="حذف اللوحة"
-                    className="rounded-lg p-1 text-muted transition hover:text-danger"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-16 shrink-0 text-xs text-muted">اللوحة</span>
-                    <input
-                      value={p.plate}
-                      onChange={(e) => updateEditablePlate(i, "plate", e.target.value)}
-                      dir="rtl"
-                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-base font-bold text-ink focus:border-primary focus:outline-none"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-16 shrink-0 text-xs text-muted">النوع</span>
-                    <input
-                      value={p.vehicleType}
-                      onChange={(e) => updateEditablePlate(i, "vehicleType", e.target.value)}
-                      placeholder="اختياري"
-                      dir="rtl"
-                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-16 shrink-0 text-xs text-muted">ملاحظات</span>
-                    <input
-                      value={p.notes}
-                      onChange={(e) => updateEditablePlate(i, "notes", e.target.value)}
-                      placeholder="اختياري"
-                      dir="rtl"
-                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={handleSaveEditedPlates}
-              disabled={isTranscribing}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
-            >
-              <Download size={16} /> احفظ وصدّر الإكسيل
-            </button>
-            <button
-              onClick={() => setEditablePlates([])}
-              className="rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm font-bold text-ink transition hover:border-danger hover:text-danger"
-            >
-              إلغاء
-            </button>
-          </div>
         </div>
       )}
 
@@ -1362,6 +1288,7 @@ export default function RegistrationPage() {
                 recordings={voiceRecs}
                 onDelete={handleDelete}
                 onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+                onUpdatePlate={handlePlateEdit}
                 checkPlates={checkPlates}
               />
             )}
@@ -1465,6 +1392,7 @@ export default function RegistrationPage() {
               recordings={matchedRecs}
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+              onUpdatePlate={handlePlateEdit}
               checkPlates={checkPlates}
             />
             <div className="flex gap-2">
@@ -1534,6 +1462,7 @@ export default function RegistrationPage() {
               recordings={manualRecs}
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
+              onUpdatePlate={handlePlateEdit}
               checkPlates={checkPlates}
             />
             <div className="flex gap-2">
