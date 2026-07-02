@@ -419,6 +419,27 @@ describe("extractMultiplePlates — vehicle & location routing", () => {
   });
 });
 
+// ─── extractMultiplePlates — long digit runs split into 4-digit chunks ─────
+describe("extractMultiplePlates — digit-run chunking", () => {
+  it("splits an 8-digit run with no letters between into two 4-digit plates", () => {
+    // Two plate numbers dictated back-to-back with no letter naming in between —
+    // must NOT collapse into one plate that silently drops the second half.
+    const r = extractMultiplePlates("دنب 6806 4482");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "4482"]);
+    expect(r[1].uncertain).toBe(true);
+  });
+
+  it("splits an uneven digit run, keeping the leftover as its own (padded) plate", () => {
+    const r = extractMultiplePlates("دنب 68064482 1");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "4482", "0001"]);
+  });
+
+  it("does not affect a normal single 4-digit plate", () => {
+    const r = extractMultiplePlates("دنب 6806");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+  });
+});
+
 // ─── extractMultiplePlates — uncertain flag ────────────────────────────────
 describe("extractMultiplePlates — uncertain flag", () => {
   it("is not set when letters come from clean, separately-dictated letters", () => {

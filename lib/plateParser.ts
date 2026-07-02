@@ -236,13 +236,17 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     atoms.push({ t: "N", v: raw, letters: [] });
   }
 
-  // ── Step 3: anchor on digit groups (maximal runs of D atoms). One plate each.
+  // ── Step 3: anchor on digit groups (runs of D atoms), split into 4-digit
+  //   chunks. Several plate numbers dictated back-to-back with no letter
+  //   naming between them are still ONE run of consecutive D atoms — without
+  //   splitting, only the first 4 digits would survive and the rest would be
+  //   silently discarded. Each chunk becomes its own plate.
   const groups: Array<{ start: number; end: number }> = [];
   for (let i = 0; i < atoms.length; i++) {
     if (atoms[i].t === "D") {
       let j = i;
       while (j + 1 < atoms.length && atoms[j + 1].t === "D") j++;
-      groups.push({ start: i, end: j });
+      for (let k = i; k <= j; k += 4) groups.push({ start: k, end: Math.min(k + 3, j) });
       i = j;
     }
   }
