@@ -1,9 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { writeFile, readFile, unlink } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import ffmpegPath from "ffmpeg-static";
+
+export const runtime = "nodejs";
+
+const execFileAsync = promisify(execFile);
 
 // Voice-to-text for plate registration via Groq's hosted Whisper. Uses the
 // AGENT'S OWN API key (sent from the client, not a shared server key) — each
 // field agent has their own free Groq account, so usage never pools onto one
 // account's rate limit no matter how many agents use the app.
+
+// The native Android recorder plugin hardcodes MediaRecorder.OutputFormat.AAC_ADTS
+// with no way to configure it — always a raw AAC/ADTS elementary stream, not a
+// proper container. Groq's Whisper endpoint sniffs actual file content (not just
+// the extension) and rejects raw AAC outright, even though the codec itself is
+// fine. Remux (not re-encode — instant, lossless) into a real .m4a container
+// before uploading so Groq's format check passes.
+async function remuxAacToM4a(input: Buffer): Promise<Buffer> {
+  if (!ffmpegPath) throw new Error("ffmpeg binary unavailable");
+
+  const id = Math.random().toString(36).slice(2);
+  const inPath = path.join(os.tmpdir(), `rec-${id}.aac`);
+  const outPath = path.join(os.tmpdir(), `rec-${id}.m4a`);
+
+  try {
+    await writeFile(inPath, input);
+    await execFileAsync(ffmpegPath, ["-y", "-i", inPath, "-c:a", "copy", outPath]);
+    return await readFile(outPath);
+  } finally {
+    await unlink(inPath).catch(() => {});
+    await unlink(outPath).catch(() => {});
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { audio, mimeType, apiKey } = await req.json();
@@ -11,15 +45,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: null, error: "missing_audio_or_key" }, { status: 400 });
     }
 
-    const buffer = Buffer.from(audio, "base64");
+    let buffer: Buffer = Buffer.from(audio, "base64");
     let ext = (mimeType?.split("/")[1] ?? "m4a").split(";")[0];
-    // The native Android recorder plugin only outputs raw AAC/ADTS
-    // (mimeType "audio/aac") — that codec isn't in Groq's allowed extension
-    // list (flac/mp3/mp4/mpeg/mpga/m4a/ogg/opus/wav/webm), even though the
-    // audio itself is valid AAC. Relabel it to m4a, the closest supported
-    // container for the same codec, so Groq's extension check accepts it.
-    if (ext === "aac") ext = "m4a";
-    const blob = new Blob([buffer], { type: mimeType || "audio/m4a" });
+
+    if (ext === "aac") {
+      try {
+        buffer = await remuxAacToM4a(buffer);
+        ext = "m4a";
+      } catch (err) {
+        console.error("AAC remux failed:", err instanceof Error ? err.message : err);
+        return NextResponse.json(
+          { text: null, error: "remux_failed", detail: err instanceof Error ? err.message : String(err) },
+          { status: 500 }
+        );
+      }
+    }
+
+    const blob = new Blob([new Uint8Array(buffer)], { type: ext === "m4a" ? "audio/mp4" : mimeType || "audio/mp4" });
 
     const form = new FormData();
     form.append("file", blob, `audio.${ext}`);
