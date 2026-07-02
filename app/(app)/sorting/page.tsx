@@ -429,14 +429,18 @@ export default function SortingPage() {
         return true;
       });
       setNewPlatesCount(newRefRows.length);
-      const dataIndex = new Map<string, Record<string, string>[]>();
-      for (const row of dataTable.rows) {
+      // Track each data row's original position so results can be ordered the
+      // same way as the data file (not the referral file) — cars at the same
+      // location sit adjacent in the data file, so this keeps them grouped.
+      const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
+      for (let i = 0; i < dataTable.rows.length; i++) {
+        const row = dataTable.rows[i];
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
         if (!n) continue;
         const arr = dataIndex.get(n);
-        if (arr) arr.push(row); else dataIndex.set(n, [row]);
+        if (arr) arr.push({ row, dataIdx: i }); else dataIndex.set(n, [{ row, dataIdx: i }]);
       }
-      const matches: MatchResult[] = [];
+      const matches: (MatchResult & { dataIdx: number })[] = [];
       for (const refRow of newRefRows) {
         const raw = String(refRow[effectiveReferralPlateCol] ?? "");
         const n = referralPlateIsArabic
@@ -449,11 +453,12 @@ export default function SortingPage() {
             : undefined
         );
         if (dataRows) {
-          for (const dataRow of dataRows) {
-            matches.push({ referralRow: refRow, dataRow, status: "exact" });
+          for (const { row: dataRow, dataIdx } of dataRows) {
+            matches.push({ referralRow: refRow, dataRow, status: "exact", dataIdx });
           }
         }
       }
+      matches.sort((a, b) => a.dataIdx - b.dataIdx);
       let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
