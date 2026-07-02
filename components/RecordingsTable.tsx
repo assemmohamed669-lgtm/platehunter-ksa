@@ -15,6 +15,8 @@ import {
   Square,
   Pencil,
   AlertTriangle,
+  Play,
+  Pause,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
@@ -42,12 +44,15 @@ interface Props {
   onDelete: (id: string) => void;
   onDeleteMany?: (ids: string[]) => void;
   onUpdatePlate?: (id: string, plate: string) => void;
+  onPlayAudio?: (entry: RecordingEntry) => void;
+  onShareAudio?: (entry: RecordingEntry) => void;
+  playingId?: string | null;
   checkPlates?: Set<string>;
 }
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, checkPlates }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onPlayAudio, onShareAudio, playingId, checkPlates }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -314,6 +319,21 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                     {/* Actions */}
                     <td className="px-2 py-2">
                       <div className="flex items-center gap-2">
+                        {onPlayAudio && entry.audioBlobBase64 && (
+                          <button onClick={() => onPlayAudio(entry)} title="تشغيل المقطع الصوتي"
+                            className="text-muted hover:text-primary transition">
+                            {playingId === entry.localId
+                              ? <Pause size={13} className="text-primary" />
+                              : <Play size={13} />
+                            }
+                          </button>
+                        )}
+                        {onShareAudio && entry.audioBlobBase64 && (
+                          <button onClick={() => onShareAudio(entry)} title="مشاركة المقطع الصوتي"
+                            className="text-muted hover:text-primary transition">
+                            <Share2 size={13} />
+                          </button>
+                        )}
                         <button onClick={() => copyRow(entry)} title="نسخ"
                           className="text-muted hover:text-primary transition">
                           {copiedId === entry.localId

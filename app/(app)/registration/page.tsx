@@ -21,6 +21,9 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
+  CheckCircle2,
+  XCircle,
+  Upload,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -57,24 +60,69 @@ const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 // requests per session reasonable.
 const GROQ_CHUNK_MS = 90_000;
 
-// Uploads one finished recording chunk and returns its transcribed text.
-// Throws on any failure — callers decide how to handle a lost chunk.
+interface GroqChunkResult {
+  text: string;
+  audioBase64: string;
+  mimeType: string;
+}
+
+// Uploads one finished recording chunk and returns its transcribed text
+// alongside the raw audio (kept so the session's audio can be saved for
+// playback later). Retries once on a genuine network failure (fetch()
+// throwing — offline, DNS blip, timeout) since that's transient; an actual
+// error response from Groq (bad key, bad format) is not retried since
+// repeating the identical request would just fail identically again.
 async function uploadGroqChunk(
   chunk: { value: { recordDataBase64: string; mimeType: string } },
-  apiKey: string
-): Promise<string> {
-  const res = await fetch("/api/transcribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      audio: chunk.value.recordDataBase64,
-      mimeType: chunk.value.mimeType,
-      apiKey,
-    }),
-  });
+  apiKey: string,
+  retriesLeft = 1
+): Promise<GroqChunkResult> {
+  let res: Response;
+  try {
+    res = await fetch("/api/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audio: chunk.value.recordDataBase64,
+        mimeType: chunk.value.mimeType,
+        apiKey,
+      }),
+    });
+  } catch (networkErr) {
+    if (retriesLeft > 0) {
+      await new Promise((r) => setTimeout(r, 1500));
+      return uploadGroqChunk(chunk, apiKey, retriesLeft - 1);
+    }
+    throw networkErr;
+  }
   const data = await res.json();
   if (!data.text) throw new Error(data.hint || data.detail || data.error || "unknown");
-  return String(data.text).trim();
+  return {
+    text: String(data.text).trim(),
+    audioBase64: chunk.value.recordDataBase64,
+    mimeType: chunk.value.mimeType,
+  };
+}
+
+// Byte-concatenates base64-encoded audio parts. Only valid for self-framed
+// formats where decoders read frame-by-frame regardless of file boundaries
+// (verified for raw ADTS AAC, the native recorder's output) — callers must
+// not use this for container formats like mp4/webm where it would produce
+// a corrupt file.
+function concatBase64Audio(parts: string[]): string {
+  const buffers = parts.map((b64) => {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  });
+  const total = buffers.reduce((sum, b) => sum + b.length, 0);
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const b of buffers) { combined.set(b, offset); offset += b.length; }
+  let binary = "";
+  for (let i = 0; i < combined.length; i++) binary += String.fromCharCode(combined[i]);
+  return btoa(binary);
 }
 
 // A plate freshly extracted from a transcript, ready to save immediately.
@@ -251,6 +299,8 @@ export default function RegistrationPage() {
   // each agent's own key, so usage never pools onto a shared account.
   const [groqApiKey, setGroqApiKey] = useState<string>("");
   const [showGroqKey, setShowGroqKey] = useState(false);
+  const [groqTestStatus, setGroqTestStatus] = useState<"idle" | "testing" | "ok" | "failed">("idle");
+  const [groqTestError, setGroqTestError] = useState<string | null>(null);
   const [gps, setGps] = useState<GpsCoords | null>(null);
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
   const [isOnline, setIsOnline] = useState(true);
@@ -315,6 +365,7 @@ export default function RegistrationPage() {
   const [debugNotes, setDebugNotes] = useState("");
 
   const gpsAtRecordRef = useRef<GpsCoords | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
 
   // Learned letter-confusion corrections (heard → actual), calibrated per device/mic
   // from the user's own edits in the review step. Loaded once on mount, persisted
@@ -324,8 +375,11 @@ export default function RegistrationPage() {
   // Groq cloud transcription: chunk timer + in-flight/finished chunk uploads
   // (ordered — must be stitched back together in this order, not arrival order).
   const groqChunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const groqChunksRef = useRef<Promise<string>[]>([]);
+  const groqChunksRef = useRef<Promise<GroqChunkResult>[]>([]);
   const groqChunkBusyRef = useRef(false); // guards against overlapping chunk switches
+  // Session audio ready to attach to whatever plates get saved from
+  // `pendingTranscript` — set on stop, consumed (and cleared) on save.
+  const pendingAudioRef = useRef<{ base64: string; mimeType: string } | null>(null);
 
   // Speech recognition
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
@@ -427,12 +481,38 @@ export default function RegistrationPage() {
 
   function handleGroqKeyChange(v: string) {
     setGroqApiKey(v);
+    setGroqTestStatus("idle"); // stale result from a since-edited key would be misleading
+    setGroqTestError(null);
     try {
       if (v.trim()) localStorage.setItem(LS_GROQ_API_KEY, v.trim());
       else localStorage.removeItem(LS_GROQ_API_KEY);
     } catch { /* storage full */ }
   }
   function clearGroqKey() { handleGroqKeyChange(""); }
+
+  async function testGroqKey() {
+    const key = groqApiKey.trim();
+    if (!key) return;
+    setGroqTestStatus("testing");
+    setGroqTestError(null);
+    try {
+      const res = await fetch("/api/groq-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: key }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setGroqTestStatus("ok");
+      } else {
+        setGroqTestStatus("failed");
+        setGroqTestError(data.hint || data.detail || data.error || "خطأ غير معروف");
+      }
+    } catch (err: any) {
+      setGroqTestStatus("failed");
+      setGroqTestError(err?.message ?? String(err));
+    }
+  }
 
   const loadRecordings = useCallback(async (aid: string) => {
     const recs = await getAllRecordings(aid);
@@ -698,9 +778,30 @@ export default function RegistrationPage() {
 
         setDebugStatus("⏳ جارٍ تجميع كل الأجزاء…");
         const settled = await Promise.allSettled(groqChunksRef.current);
-        const texts = settled.filter((s) => s.status === "fulfilled").map((s) => s.value);
-        const failedCount = settled.length - texts.length;
-        const transcript = texts.join(" ").trim();
+        const ok = settled.filter((s): s is PromiseFulfilledResult<GroqChunkResult> => s.status === "fulfilled").map((s) => s.value);
+        const failedCount = settled.length - ok.length;
+        const transcript = ok.map((c) => c.text).join(" ").trim();
+
+        // Save the session's audio for later playback/deletion/sharing — only
+        // when every successful chunk shares the same MIME type. Byte-concatenating
+        // raw ADTS AAC (the native recorder's format) produces valid playable
+        // audio (self-framed, verified); other container formats (web's mp4/webm)
+        // are NOT safely concatenable this way, so a single audio clip is kept
+        // as-is and multi-chunk sessions in those formats skip audio-saving
+        // rather than risk producing a corrupt file.
+        pendingAudioRef.current = null;
+        if (ok.length === 1) {
+          pendingAudioRef.current = { base64: ok[0].audioBase64, mimeType: ok[0].mimeType };
+        } else if (ok.length > 1 && ok.every((c) => c.mimeType === ok[0].mimeType)) {
+          try {
+            pendingAudioRef.current = {
+              base64: concatBase64Audio(ok.map((c) => c.audioBase64)),
+              mimeType: ok[0].mimeType,
+            };
+          } catch {
+            pendingAudioRef.current = null; // fall through to "no audio saved" rather than a broken file
+          }
+        }
 
         if (transcript) {
           setPendingTranscript(transcript);
@@ -801,6 +902,7 @@ export default function RegistrationPage() {
     if (!agentId) return [];
 
     const coords = gpsAtRecordRef.current;
+    const audio = pendingAudioRef.current;
     const savedIds: string[] = [];
     const savedEntries: RecordingEntry[] = [];
 
@@ -823,12 +925,15 @@ export default function RegistrationPage() {
         mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
         recorderName,
         district: manualDistrict.trim() || undefined,
+        audioBlobBase64: audio?.base64,
+        audioMimeType: audio?.mimeType,
         synced: false,
       };
       await saveRecording(entry);
       savedEntries.push(entry);
       if (!coords) checkPlateMatch(plate, entry);
     }
+    pendingAudioRef.current = null; // consumed — don't leak into an unrelated later save
 
     if (coords) {
       reverseGeocode(coords.lat, coords.lng)
@@ -972,7 +1077,7 @@ export default function RegistrationPage() {
     const binary = atob(entry.audioBlobBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: "audio/webm" });
+    const blob = new Blob([bytes], { type: entry.audioMimeType || "audio/mp4" });
     const url = URL.createObjectURL(blob);
 
     if (audioRef.current) {
@@ -993,6 +1098,16 @@ export default function RegistrationPage() {
     if (playingId === id && audioRef.current) {
       audioRef.current.playbackRate = speed;
     }
+  }
+
+  async function shareAudio(entry: RecordingEntry) {
+    if (!entry.audioBlobBase64) return;
+    const binary = atob(entry.audioBlobBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const ext = (entry.audioMimeType?.split("/")[1] ?? "m4a").split(";")[0];
+    const blob = new Blob([bytes], { type: entry.audioMimeType || "audio/mp4" });
+    await shareBlob(blob, `${entry.plate}.${ext}`, `تسجيل صوتي — ${entry.plate}`);
   }
 
   async function handleDelete(localId: string) {
@@ -1111,6 +1226,50 @@ export default function RegistrationPage() {
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const blob = buildExcelBlob(rows, "اللوحات");
     await openExcelBlob(blob, filename);
+  }
+
+  // Transcribes a previously-recorded audio file picked from the device —
+  // cloud-only (a local file has nothing for the on-device recognizer to
+  // listen to live), so this requires a Groq key. Not chunked like live
+  // recording: a hard size cap is enforced instead, since slicing an
+  // arbitrary existing audio file client-side would need real audio
+  // decoding, not just a byte cut.
+  const MAX_UPLOAD_AUDIO_BYTES = 3 * 1024 * 1024; // ~4MB once base64-encoded — safely under Vercel's 4.5MB cap
+  async function handleUploadAudioFile(file: File) {
+    if (!groqApiKey.trim()) {
+      setRecordingError("محتاج تحط مفتاح Groq الأول عشان ترفع مقطع صوتي جاهز.");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_AUDIO_BYTES) {
+      setRecordingError(
+        `الملف كبير أوي (${(file.size / 1024 / 1024).toFixed(1)} ميجا) — الحد الأقصى ~3 ميجا. جرّب مقطع أقصر.`
+      );
+      return;
+    }
+
+    setRecordingError(null);
+    setDebugStatus("⏳ جارٍ رفع الملف لـ Groq…");
+    setIsTranscribing(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      const mimeType = file.type || "audio/mp4";
+
+      const result = await uploadGroqChunk({ value: { recordDataBase64: base64, mimeType } }, groqApiKey.trim());
+      pendingAudioRef.current = { base64: result.audioBase64, mimeType: result.mimeType };
+      setPendingTranscript(result.text);
+      setDebugFinal(result.text);
+      setDebugRaw(result.text);
+      setDebugStatus("✅ تم تفريغ الملف المرفوع");
+    } catch (err: any) {
+      setRecordingError(`فشل تفريغ الملف: ${err?.message ?? err}`);
+      setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
+    } finally {
+      setIsTranscribing(false);
+    }
   }
 
   // Editing a plate directly in the table (post-save correction). Teaches the
@@ -1400,6 +1559,37 @@ export default function RegistrationPage() {
             <X size={14} />
           </button>
         </div>
+
+        {groqApiKey.trim() && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={testGroqKey}
+              disabled={groqTestStatus === "testing"}
+              className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50"
+            >
+              {groqTestStatus === "testing"
+                ? <RefreshCw size={12} className="animate-spin" />
+                : <RefreshCw size={12} />
+              }
+              اختبار المفتاح
+            </button>
+            {groqTestStatus === "ok" && (
+              <span className="flex items-center gap-1 text-xs font-bold text-brand">
+                <CheckCircle2 size={13} /> المفتاح شغال
+              </span>
+            )}
+            {groqTestStatus === "failed" && (
+              <span className="flex items-center gap-1 text-xs font-bold text-danger" title={groqTestError ?? undefined}>
+                <XCircle size={13} /> المفتاح مش شغال
+              </span>
+            )}
+          </div>
+        )}
+        {groqTestStatus === "failed" && groqTestError && (
+          <p className="text-[11px] text-danger" dir="rtl">{groqTestError}</p>
+        )}
+
         <p className="text-[11px] text-muted" dir="rtl">
           فاضي = التسجيل بيستخدم محرك الجهاز المجاني (الوضع الحالي). لو حطيت مفتاحك الخاص من{" "}
           <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">
@@ -1455,18 +1645,44 @@ export default function RegistrationPage() {
           </div>
         )}
 
-        <button
-          onClick={handlePin}
-          className="flex items-center gap-2 rounded-full border border-border bg-surface-2 px-5 py-2.5 text-sm font-medium text-ink transition hover:border-primary hover:text-primary"
-        >
-          <MapPin size={16} />
-          دبوس يدوي
-          {pinCount > 0 && (
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-night">
-              {pinCount}
-            </span>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            onClick={handlePin}
+            className="flex items-center gap-2 rounded-full border border-border bg-surface-2 px-5 py-2.5 text-sm font-medium text-ink transition hover:border-primary hover:text-primary"
+          >
+            <MapPin size={16} />
+            دبوس يدوي
+            {pinCount > 0 && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-night">
+                {pinCount}
+              </span>
+            )}
+          </button>
+
+          {groqApiKey.trim() && (
+            <>
+              <input
+                ref={audioFileInputRef}
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = ""; // allow re-selecting the same file later
+                  if (file) handleUploadAudioFile(file);
+                }}
+              />
+              <button
+                onClick={() => audioFileInputRef.current?.click()}
+                disabled={isRecording || isTranscribing}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface-2 px-5 py-2.5 text-sm font-medium text-ink transition hover:border-primary hover:text-primary disabled:opacity-40"
+              >
+                <Upload size={16} />
+                رفع مقطع صوتي
+              </button>
+            </>
           )}
-        </button>
+        </div>
       </div>
 
       {/* ── جاهز للتفريغ: النص الخام + زر يحفظ اللوحات فورًا (بدون مراجعة إجبارية) ── */}
@@ -1506,6 +1722,9 @@ export default function RegistrationPage() {
                 onDelete={handleDelete}
                 onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
                 onUpdatePlate={handlePlateEdit}
+                onPlayAudio={togglePlay}
+                onShareAudio={shareAudio}
+                playingId={playingId}
                 checkPlates={checkPlates}
               />
             )}
@@ -1610,6 +1829,9 @@ export default function RegistrationPage() {
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
               onUpdatePlate={handlePlateEdit}
+              onPlayAudio={togglePlay}
+              onShareAudio={shareAudio}
+              playingId={playingId}
               checkPlates={checkPlates}
             />
             <div className="flex gap-2">

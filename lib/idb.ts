@@ -23,7 +23,10 @@ export interface RecordingEntry {
   street?: string;
   district?: string;
   recordedAt: string;        // ISO timestamp
-  audioBlobBase64?: string;  // base64 encoded audio
+  audioBlobBase64?: string;  // base64 encoded audio — the session's recording, shared across
+                             // every plate saved from that session (same as GPS coords)
+  audioMimeType?: string;    // MIME type of audioBlobBase64 — playback must use this, not a
+                             // hardcoded guess (native records AAC, web records webm/mp4/etc.)
   mapsLink?: string;
   notes?: string;            // ملاحظات يدوية
   recorderName?: string;     // اسم المسجّل
