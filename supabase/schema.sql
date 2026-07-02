@@ -80,6 +80,15 @@ begin
     raise exception 'ACCOUNT_DISABLED';
   end if;
 
+  -- Admins are exempt from the device lock — they can sign in from any
+  -- device/location. Still rotates the session token like everyone else.
+  if v_profile.role = 'admin' then
+    update public.profiles
+      set session_token = v_new_token
+      where id = auth.uid();
+    return v_new_token;
+  end if;
+
   -- First login on this account: bind the device.
   if v_profile.device_fingerprint is null then
     update public.profiles
