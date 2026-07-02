@@ -19,6 +19,8 @@ import {
   AlertTriangle,
   Share2,
   ChevronDown,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -74,6 +76,10 @@ function uid(): string {
 const LS_RECORDER_NAME = "ph:registration:recorderName";
 const LS_DISTRICT = "ph:registration:district";
 const LS_EXCEL_NAME = "ph:registration:excelName";
+// Each agent's own Groq key — stored on-device only, never sent anywhere but
+// our own /api/transcribe route (which forwards it straight to Groq). Usage
+// is billed against the agent's own free-tier account, not a shared one.
+const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
 
 function defaultExcelName(): string {
   const d = new Date();
@@ -214,6 +220,11 @@ export default function RegistrationPage() {
   const [recorderName, setRecorderName] = useState<string>("");
   const [manualDistrict, setManualDistrict] = useState<string>("");
   const [excelName, setExcelName] = useState<string>("");
+  // When set, recording switches from the local (free, less accurate) device
+  // speech recognizer to actual audio capture sent to Groq's cloud Whisper —
+  // each agent's own key, so usage never pools onto a shared account.
+  const [groqApiKey, setGroqApiKey] = useState<string>("");
+  const [showGroqKey, setShowGroqKey] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
   const [isOnline, setIsOnline] = useState(true);
@@ -300,6 +311,10 @@ export default function RegistrationPage() {
       if (raw) letterConfusionsRef.current = deserializeLetterConfusions(JSON.parse(raw));
     } catch { /* corrupt/missing — start fresh */ }
 
+    try {
+      setGroqApiKey(localStorage.getItem(LS_GROQ_API_KEY) || "");
+    } catch { /* storage unavailable */ }
+
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
         const uid = data.user.id;
@@ -377,6 +392,15 @@ export default function RegistrationPage() {
   }
   function clearExcelName() { handleExcelNameChange(""); }
 
+  function handleGroqKeyChange(v: string) {
+    setGroqApiKey(v);
+    try {
+      if (v.trim()) localStorage.setItem(LS_GROQ_API_KEY, v.trim());
+      else localStorage.removeItem(LS_GROQ_API_KEY);
+    } catch { /* storage full */ }
+  }
+  function clearGroqKey() { handleGroqKeyChange(""); }
+
   const loadRecordings = useCallback(async (aid: string) => {
     const recs = await getAllRecordings(aid);
     setRecordings(recs);
@@ -440,6 +464,28 @@ export default function RegistrationPage() {
     setDebugStatus("");
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
+
+    // ── Cloud transcription (Groq Whisper) — used when the agent configured
+    // their own key. Captures raw audio instead of running the on-device
+    // recognizer; the audio is sent to Groq once the user stops.
+    if (groqApiKey.trim()) {
+      try {
+        const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
+        const perm = await VoiceRecorder.requestAudioRecordingPermission();
+        if (!perm.value) {
+          setRecordingError("محتاج صلاحية الميكروفون عشان التسجيل السحابي يشتغل.");
+          return;
+        }
+        await VoiceRecorder.startRecording();
+        gpsAtRecordRef.current = gpsService.getLastCoords();
+        isRecordingRef.current = true;
+        setIsRecording(true);
+        setDebugStatus("✅ STARTED (Groq Cloud)");
+      } catch (err: any) {
+        setRecordingError(`تعذّر بدء التسجيل السحابي: ${err?.message ?? err}`);
+      }
+      return;
+    }
 
     // ── Native Android: Capacitor Speech Recognition ──────────────────
     try {
@@ -560,6 +606,42 @@ export default function RegistrationPage() {
     if (!isRecording) return;
     isRecordingRef.current = false;
     setIsRecording(false);
+
+    // ── Cloud transcription (Groq Whisper) ──────────────────────────────
+    if (groqApiKey.trim()) {
+      setDebugStatus("⏳ جارٍ رفع الصوت لـ Groq…");
+      setIsTranscribing(true);
+      try {
+        const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
+        const result = await VoiceRecorder.stopRecording();
+        const res = await fetch("/api/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            audio: result.value.recordDataBase64,
+            mimeType: result.value.mimeType,
+            apiKey: groqApiKey.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (data.text) {
+          const transcript = String(data.text).trim();
+          setPendingTranscript(transcript);
+          setDebugFinal(transcript || "(فارغ)");
+          setDebugRaw(transcript);
+          setDebugStatus("✅ تم التفريغ السحابي");
+        } else {
+          setRecordingError(`فشل التفريغ السحابي: ${data.error ?? "خطأ غير معروف"}`);
+          setDebugStatus(`❌ ERROR: ${data.error ?? "unknown"}`);
+        }
+      } catch (err: any) {
+        setRecordingError(`تعذّر التفريغ السحابي: ${err?.message ?? err}`);
+        setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
+      } finally {
+        setIsTranscribing(false);
+      }
+      return;
+    }
 
     // Native: stop Capacitor SR — startRecording's loop handles the rest
     try {
@@ -1197,6 +1279,49 @@ export default function RegistrationPage() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Optional: agent's own Groq key for cloud transcription (higher accuracy than the free on-device recognizer) */}
+      <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-3 py-3">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-bold text-muted" dir="rtl">مفتاح Groq للتفريغ السحابي (اختياري)</label>
+          {groqApiKey.trim() && (
+            <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand">مفعّل</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input
+            type={showGroqKey ? "text" : "password"}
+            value={groqApiKey}
+            onChange={(e) => handleGroqKeyChange(e.target.value)}
+            placeholder="gsk_..."
+            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-primary"
+            dir="ltr"
+          />
+          <button
+            type="button"
+            onClick={() => setShowGroqKey((v) => !v)}
+            aria-label={showGroqKey ? "إخفاء المفتاح" : "إظهار المفتاح"}
+            className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-primary hover:text-primary"
+          >
+            {showGroqKey ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+          <button
+            type="button"
+            onClick={clearGroqKey}
+            aria-label="مسح مفتاح Groq"
+            className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-danger hover:text-danger"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <p className="text-[11px] text-muted" dir="rtl">
+          فاضي = التسجيل بيستخدم محرك الجهاز المجاني (الوضع الحالي). لو حطيت مفتاحك الخاص من{" "}
+          <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+            console.groq.com
+          </a>
+          ، التسجيل هيبقى أدق عن طريق تفريغ سحابي — الاستخدام على حسابك إنت بس.
+        </p>
       </div>
 
       {/* Main record button */}
