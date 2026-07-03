@@ -235,36 +235,36 @@ describe("extractMultiplePlates — corpus", () => {
 
   // ── Notes between / after plates ──────────────────────────────────────────
   it("trailing note attaches to preceding plate (ه→هـ applied inside notes)", () => {
-    const r = extractMultiplePlates("حكل 80 مركونه");
+    const r = extractMultiplePlates("حكل 80 جوه");
     expect(r).toHaveLength(1);
     expect(r[0].plate).toBe("حكل0080");
-    expect(r[0].notes).toBe("مركونهـ");
+    expect(r[0].notes).toBe("جوهـ");
   });
 
-  it("taa-marbuta note kept verbatim: مركونة stays مركونة", () => {
-    const r = extractMultiplePlates("اصك 4577 مركونة");
+  it("taa-marbuta note kept verbatim: برحة stays برحة", () => {
+    const r = extractMultiplePlates("اصك 4577 برحة");
     expect(r[0].plate).toBe("اصك4577");
-    expect(r[0].notes).toBe("مركونة");
+    expect(r[0].notes).toBe("برحة");
   });
 
   it("note between two plates attaches to the PRECEDING plate", () => {
-    const r = extractMultiplePlates("اصك 4577 مركونه حنص 4482");
+    const r = extractMultiplePlates("اصك 4577 يمين حنص 4482");
     expect(r.map((x) => x.plate)).toEqual(["اصك4577", "حنص4482"]);
-    expect(r[0].notes).toBe("مركونهـ");
+    expect(r[0].notes).toBe("يمين");
     expect(r[1].notes).toBe("");
   });
 
   it("notes split across two plates (trailing then trailing)", () => {
-    const r = extractMultiplePlates("دنب 6806 مركونه حنص 4482 يمين");
+    const r = extractMultiplePlates("دنب 6806 جراج حنص 4482 يمين");
     expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
-    expect(r[0].notes).toBe("مركونهـ");
+    expect(r[0].notes).toBe("جراج");
     expect(r[1].notes).toBe("يمين");
   });
 
   it("multi-word trailing note preserves order", () => {
-    const r = extractMultiplePlates("حنص 4482 باركن يمين مركونه");
+    const r = extractMultiplePlates("حنص 4482 باركن يمين جوه");
     expect(r[0].plate).toBe("حنص4482");
-    expect(r[0].notes).toBe("باركن يمين مركونهـ");
+    expect(r[0].notes).toBe("باركن يمين جوهـ");
   });
 
   it("leading note attaches to the FOLLOWING plate", () => {
@@ -351,12 +351,13 @@ describe("extractMultiplePlates — corpus", () => {
   });
 
   it("does not reach past a real note word to steal its letters", () => {
-    // "مركونة" is an explicit NOTE_KEYWORDS entry (always letters:[]), so the
-    // supplemental scan must never fire for it even though it sits right
-    // before a garbled salvage word.
-    const r = extractMultiplePlates("مركونة راقوف 3944");
+    // "يمين" is an explicit NOTE_KEYWORDS entry (always letters:[]) despite
+    // being spelled entirely with valid plate letters, so the supplemental
+    // scan must never fire for it even though it sits right before a
+    // garbled salvage word.
+    const r = extractMultiplePlates("يمين راقوف 3944");
     expect(r[0].plate).toBe("راق3944");
-    expect(r[0].notes).toBe("مركونة");
+    expect(r[0].notes).toBe("يمين");
   });
 
   it("phonetic-merge word normalizes then seeds the plate: احلام → احل", () => {
@@ -530,7 +531,8 @@ describe("extractMultiplePlates — corpus", () => {
     ]);
     expect(r[2].notes).toBe("و");
     expect(r[3].notes).toBe("و");
-    expect(r[4].notes).toBe("مركونهـ");
+    expect(r[4].vehicleType).toBe("مركونه"); // status word, not a note (see below)
+    expect(r[4].notes).toBe("");
   });
 
   // ── Empty / no-digit input ────────────────────────────────────────────────
@@ -554,6 +556,29 @@ describe("extractMultiplePlates — vehicle & location routing", () => {
   it("شاحنة / دباب after the plate → vehicleType", () => {
     expect(extractMultiplePlates("دنب 6806 شاحنة")[0].vehicleType).toBe("شاحنة");
     expect(extractMultiplePlates("دنب 6806 دباب")[0].vehicleType).toBe("دباب");
+  });
+
+  // Status words (car condition, not a vehicle type in the strict sense) —
+  // field agents dictate them the same way as ونيت/فان right after the
+  // plate, and want them landing in the same vehicleType field, not notes.
+  it("status words مصدومة / مركونة / معطلة → vehicleType, not notes", () => {
+    const r1 = extractMultiplePlates("ب ح ر 6522 مصدومة");
+    expect(r1[0].vehicleType).toBe("مصدومة");
+    expect(r1[0].notes).toBe("");
+
+    const r2 = extractMultiplePlates("ب ح ر 6522 مركونة");
+    expect(r2[0].vehicleType).toBe("مركونة");
+    expect(r2[0].notes).toBe("");
+
+    const r3 = extractMultiplePlates("ب ح ر 6522 معطلة");
+    expect(r3[0].vehicleType).toBe("معطلة");
+    expect(r3[0].notes).toBe("");
+  });
+
+  it("a second type/status word for the same plate falls back to notes", () => {
+    const r = extractMultiplePlates("ب ح ر 6522 ونيت مصدومة");
+    expect(r[0].vehicleType).toBe("ونيت");
+    expect(r[0].notes).toBe("مصدومة");
   });
 
   // Location/directional words are ALL valid plate letters (يمين=ي م ي ن,
@@ -838,11 +863,10 @@ describe("parsePlateFromTranscript", () => {
     expect(r.notes).toContain("يمين");
   });
 
-  it("captures مركونه as notes (not vehicleType)", () => {
+  it("captures مركونه as vehicleType, not notes", () => {
     const r = parsePlateFromTranscript("درق 4121 مركونه");
     expect(r.plate).toBe("درق4121");
-    expect(r.vehicleType).toBeUndefined();
-    expect(r.notes).toBeTruthy();
+    expect(r.vehicleType).toBe("مركونه");
   });
 
   it("captures جراج يمين as notes after the plate", () => {
@@ -859,9 +883,10 @@ describe("parsePlateFromTranscript", () => {
     expect(r.notes).toContain("يمين");
   });
 
-  it("captures جراج يمين before plate and مركونه after", () => {
+  it("captures جراج يمين before plate and مركونه after as vehicleType", () => {
     const r = parsePlateFromTranscript("جراج يمين حمن 8531 مركونه");
     expect(r.plate).toBe("حمن8531");
+    expect(r.vehicleType).toBe("مركونه");
     expect(r.notes).toContain("جراج");
     expect(r.notes).toContain("يمين");
   });
@@ -1149,18 +1174,16 @@ describe("parsePlateFromTranscript — real-world voice scenarios", () => {
     expect(r.notes).toContain("يمين");
   });
 
-  it("مصدومة → notes (not vehicleType)", () => {
+  it("مصدومة → vehicleType, not notes", () => {
     const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين مصدومة");
     expect(r.plate).toBe("روع7171");
-    expect(r.vehicleType).toBeUndefined();
-    expect(r.notes).toContain("مصدومة");
+    expect(r.vehicleType).toBe("مصدومة");
   });
 
-  it("مركونة → notes", () => {
+  it("مركونة → vehicleType", () => {
     const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين مركونة");
     expect(r.plate).toBe("روع7171");
-    expect(r.vehicleType).toBeUndefined();
-    expect(r.notes).toContain("مركون");
+    expect(r.vehicleType).toBe("مركونة");
   });
 
   it("جراج يسار → notes", () => {

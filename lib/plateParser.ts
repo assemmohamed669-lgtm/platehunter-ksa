@@ -469,17 +469,20 @@ export const VALID_AR_LETTERS = new Set([
 ]);
 
 // ─── Vehicle types ─────────────────────────────────────────────────────────
+// Includes car-status words (مصدومة/مركونة/معطلة) alongside actual vehicle
+// types — field agents dictate them the same way (right after the plate)
+// and want them landing in the same "نوع السيارة" field, not notes.
 const VEHICLE_TYPES = [
   "ونيت", "فان", "دباب", "شاحنة", "باص",
   "صالون", "بيكاب", "تاكسي", "كروزر", "باترول", "نقليات", "مفحوطة",
+  "مصدومة", "مصدومه", "مركونة", "مركونه", "معطلة", "معطله",
 ];
 
 // ─── Location / directional note keywords ────────────────────────────────────
 // Spoken location/direction words that must ALWAYS land in `notes` and never be
 // mistaken for plate letters. Several of these are made entirely of valid plate
 // letters (يمين = ي م ي ن، يسار = ي س ا ر) so they'd otherwise get salvaged into
-// an adjacent plate. Compared against the tatweel-stripped token (`clean`), so
-// the ه→هـ pipeline form (مركونهـ) still matches مركونه here.
+// an adjacent plate. Compared against the tatweel-stripped token (`clean`).
 const NOTE_KEYWORDS = new Set([
   // اتجاهات
   "يمين", "اليمين", "يسار", "اليسار", "شمال", "الشمال",
@@ -490,8 +493,6 @@ const NOTE_KEYWORDS = new Set([
   "برحة", "بارحة", "البرحة", "البارحة", "حارة", "الحارة", "طريق", "الطريق",
   "شارع", "الشارع", "دوار", "الدوار", "كوبري", "الكوبري",
   "عمارة", "العمارة", "فيلا", "الفيلا", "محل", "المحل", "مدخل", "مخرج",
-  // حالة
-  "مركونة", "مركونه", "مصدومة", "مصدومه", "معطلة", "معطله",
 ]);
 
 // ─── Letter names → character ──────────────────────────────────────────────
