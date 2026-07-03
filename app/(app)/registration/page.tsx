@@ -914,8 +914,10 @@ export default function RegistrationPage() {
             setRecordingError(`${failedCount} جزء من التسجيل فشل تفريغه — أي لوحات فيه اتفقدت. النص الباقي جاهز تحت.`);
           }
         } else {
-          setRecordingError("فشل التفريغ السحابي بالكامل — راجع لوحة التشخيص تحت.");
-          setDebugStatus("❌ ERROR: كل الأجزاء فشلت");
+          const firstFailure = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+          const reason = firstFailure ? String(firstFailure.reason?.message ?? firstFailure.reason) : "سبب غير معروف";
+          setRecordingError(`فشل التفريغ السحابي بالكامل — ${reason}`);
+          setDebugStatus(`❌ ERROR: كل الأجزاء فشلت — ${reason}`);
         }
       } catch (err: any) {
         setRecordingError(`تعذّر التفريغ السحابي: ${err?.message ?? err}`);
@@ -1400,8 +1402,10 @@ export default function RegistrationPage() {
           setRecordingError(`${failedCount} جزء من الملف فشل تفريغه — أي لوحات فيه اتفقدت.`);
         }
       } else {
-        setRecordingError("فشل تفريغ الملف بالكامل — راجع لوحة التشخيص تحت.");
-        setDebugStatus("❌ ERROR: كل الأجزاء فشلت");
+        const firstFailure = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+        const reason = firstFailure ? String(firstFailure.reason?.message ?? firstFailure.reason) : "سبب غير معروف";
+        setRecordingError(`فشل تفريغ الملف بالكامل — ${reason}`);
+        setDebugStatus(`❌ ERROR: كل الأجزاء فشلت — ${reason}`);
       }
     } catch (err: any) {
       setRecordingError(`فشل تفريغ الملف: ${err?.message ?? err}`);
