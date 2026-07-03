@@ -1278,7 +1278,11 @@ export default function RegistrationPage() {
     const rows = buildRows(recs);
     if (rows.length === 0) return;
     const blob = buildExcelBlob(rows, "اللوحات");
-    await openExcelBlob(blob, filename);
+    try {
+      await openExcelBlob(blob, filename);
+    } catch (err: any) {
+      setRecordingError(err?.message ?? "تعذّر فتح ملف Excel");
+    }
   }
 
   async function handleShareExcelFor(recs = recordings) {
@@ -1290,10 +1294,15 @@ export default function RegistrationPage() {
   }
 
   async function shareBlob(blob: Blob, filename: string, title: string) {
-    // On native Android: write to cache then share via native intent
-    try {
-      const { Capacitor } = await import("@capacitor/core");
-      if (Capacitor.isNativePlatform()) {
+    const { Capacitor } = await import("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      // On native Android: write to cache then share via native intent. A
+      // real failure here (FileProvider misconfigured, no share target,
+      // plugin not registered in this APK build) must NOT be swallowed and
+      // silently fall through to <a download>, which doesn't work inside a
+      // Capacitor WebView either — that's exactly why the buttons using this
+      // previously appeared to "do nothing" with no way to tell why.
+      try {
         const { Filesystem, Directory } = await import("@capacitor/filesystem");
         const { Share } = await import("@capacitor/share");
         const arrayBuffer = await blob.arrayBuffer();
@@ -1303,10 +1312,12 @@ export default function RegistrationPage() {
         const base64 = btoa(binary);
         const { uri } = await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Cache });
         await Share.share({ title, url: uri, dialogTitle: "مشاركة الملف" });
-        return;
+      } catch (e: any) {
+        if (e?.name !== "AbortError" && !/cancel/i.test(e?.message ?? "")) {
+          setRecordingError(`تعذّرت المشاركة: ${e?.message ?? e}`);
+        }
       }
-    } catch (e: any) {
-      if (e?.name === "AbortError") return;
+      return;
     }
 
     // Web fallback: navigator.share with file
@@ -1369,7 +1380,14 @@ export default function RegistrationPage() {
     const rows = buildRows(savedEntries);
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const blob = buildExcelBlob(rows, "اللوحات");
-    await openExcelBlob(blob, filename);
+    try {
+      await openExcelBlob(blob, filename);
+    } catch (err: any) {
+      // The plates are already saved (extractAndSaveTranscript above
+      // completed) — only the Excel-open step failed, so say so plainly
+      // rather than leave it looking like the whole save silently did nothing.
+      setRecordingError(`اللوحات اتحفظت، بس ${err?.message ?? "تعذّر فتح ملف Excel"}`);
+    }
     return true;
   }
 

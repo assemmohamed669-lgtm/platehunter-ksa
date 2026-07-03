@@ -449,12 +449,20 @@ export default function InstantCheckPage() {
 
   async function exportHitsExcel() {
     const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
-    await openExcelBlob(blob, `لوحات-مطلوبة-${Date.now()}.xlsx`);
+    try {
+      await openExcelBlob(blob, `لوحات-مطلوبة-${Date.now()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
   }
 
   async function shareHitsExcel() {
     const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
-    await shareExcelBlob(blob, "لوحات-مطلوبة.xlsx", "لوحات مطلوبة");
+    try {
+      await shareExcelBlob(blob, "لوحات-مطلوبة.xlsx", "لوحات مطلوبة");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────

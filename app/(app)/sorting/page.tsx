@@ -340,13 +340,21 @@ export default function SortingPage() {
   async function shareTashyeekFile() {
     if (!tashyeekTable) return;
     const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
-    await shareExcelBlob(blob, "ملف-التشييك.xlsx", "ملف التشييك");
+    try {
+      await shareExcelBlob(blob, "ملف-التشييك.xlsx", "ملف التشييك");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت مشاركة الملف");
+    }
   }
 
   async function downloadTashyeekFile() {
     if (!tashyeekTable) return;
     const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
-    await openExcelBlob(blob, "ملف-التشييك.xlsx");
+    try {
+      await openExcelBlob(blob, "ملف-التشييك.xlsx");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
   }
 
   function toggleSet(set: Set<string>, key: string, setter: (s: Set<string>) => void) {
@@ -545,13 +553,40 @@ export default function SortingPage() {
     return buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors);
   }
 
-  async function handleOpenSort() { setExportingAll(true); await openExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
+  async function handleOpenSort() {
+    setExportingAll(true);
+    try {
+      await openExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    } finally {
+      setExportingAll(false);
+    }
+  }
   async function handleDownloadSort() { setExportingAll(true); downloadExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
-  async function handleShareSort() { await shareExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`, "نتائج الفرز"); }
+  async function handleShareSort() {
+    try {
+      await shareExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`, "نتائج الفرز");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
 
-  async function handleOpenPaste() { await openExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
+  async function handleOpenPaste() {
+    try {
+      await openExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
+  }
   async function handleDownloadPaste() { downloadExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
-  async function handleSharePaste() { await shareExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`, "نتائج اللصق"); }
+  async function handleSharePaste() {
+    try {
+      await shareExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`, "نتائج اللصق");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
 
   // ── Paste sort ──
   function runPasteSort() {

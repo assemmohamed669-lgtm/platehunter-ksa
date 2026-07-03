@@ -444,11 +444,24 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+// A native call failing for a REAL reason (FileProvider misconfigured, no
+// app installed to open .xlsx, plugin not registered in this APK build) must
+// never be confused with "this isn't a native platform" — both used to funnel
+// into the same catch-and-ignore, silently falling through to a download
+// mechanism (<a download>) that doesn't work inside a Capacitor WebView
+// either, so the user saw the button do literally nothing with no way for
+// anyone to know why. Callers must catch this and show the real message.
+export class NativeExportError extends Error {
+  constructor(action: string, cause: unknown) {
+    super(`${action}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "NativeExportError";
+  }
+}
+
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
-  // On native Android (Capacitor): write to filesystem then open with FileOpener
-  try {
-    const { Capacitor } = await import("@capacitor/core");
-    if (Capacitor.isNativePlatform()) {
+  const { Capacitor } = await import("@capacitor/core");
+  if (Capacitor.isNativePlatform()) {
+    try {
       const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { FileOpener } = await import("@capacitor-community/file-opener");
 
@@ -469,8 +482,10 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
         contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
       return "opened";
+    } catch (err) {
+      throw new NativeExportError("تعذّر فتح ملف Excel", err);
     }
-  } catch { /* not native or plugin unavailable */ }
+  }
 
   // Web fallback: download normally
   downloadExcelBlob(blob, filename);
@@ -478,10 +493,9 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
 }
 
 export async function shareExcelBlob(blob: Blob, filename: string, title: string): Promise<void> {
-  // On native Android (Capacitor): write to cache then share via native share sheet
-  try {
-    const { Capacitor } = await import("@capacitor/core");
-    if (Capacitor.isNativePlatform()) {
+  const { Capacitor } = await import("@capacitor/core");
+  if (Capacitor.isNativePlatform()) {
+    try {
       const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { Share } = await import("@capacitor/share");
 
@@ -499,8 +513,11 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
 
       await Share.share({ title, url: uri, dialogTitle: title });
       return;
+    } catch (err: any) {
+      if (err?.name === "AbortError" || /cancel/i.test(err?.message ?? "")) return; // user dismissed the share sheet
+      throw new NativeExportError("تعذّرت مشاركة ملف Excel", err);
     }
-  } catch { /* not native or plugin unavailable */ }
+  }
 
   // Web fallback: Web Share API with file, then download
   const file = new File([blob], filename, { type: blob.type });
