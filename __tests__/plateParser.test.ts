@@ -340,6 +340,40 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("احل1234");
   });
 
+  // ── Digit-joining conjunction و ────────────────────────────────────────────
+  // Spoken Arabic joins digits with "و" ("6 و 1 و 2 و 1" = 6121). The
+  // recognizer emits it as a standalone token identical to the plate letter
+  // waw — it must be treated as "and" when it sits between digits that still
+  // fit ONE plate number, and as a letter otherwise.
+  it("merges و-joined single digits into one plate number", () => {
+    const r = extractMultiplePlates("ا ب ح 6 و 1 و 2 و 1");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ابح6121");
+  });
+
+  it("keeps و as the next plate's letter between two complete 4-digit groups", () => {
+    const r = extractMultiplePlates("ا ب ح 1234 و 5678");
+    expect(r).toHaveLength(2);
+    expect(r[0].plate).toBe("ابح1234");
+    expect(r[1].plate).toBe("و5678");
+  });
+
+  // ── Real field transcript (Groq Whisper, single plate حبل6121) ────────────
+  // Whisper merged the spelled letters "حا با لام" into the words
+  // "حابة علامة" and joined every digit with و.
+  it("real Whisper transcript: حابة علامة 6 و 1 و 2 و 1 → حبل6121", () => {
+    const r = extractMultiplePlates("حابة علامة 6 و 1 و 2 و 1");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حبل6121");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
+  it("same transcript spelled with ه instead of ة still → حبل6121", () => {
+    const r = extractMultiplePlates("حابه علامه 6 و 1 و 2 و 1");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حبل6121");
+  });
+
   // ── Full failure-data transcript (the 7 real plates) ──────────────────────
   it("recovers all 7 plates from the real garbled recording", () => {
     const r = extractMultiplePlates(

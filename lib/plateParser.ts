@@ -236,6 +236,23 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     atoms.push({ t: "N", v: raw, letters: [] });
   }
 
+  // ── Step 2.5: spoken Arabic joins digits with the conjunction "و"
+  //   ("6 و 1 و 2 و 1" = 6121). The recognizer emits it as a standalone token
+  //   identical to the plate letter waw. When a و sits between two digit atoms
+  //   AND the digits it would join still fit one plate number (≤4), it's the
+  //   conjunction — drop it so the digits form a single run. Two complete
+  //   4-digit groups joined by و ("1234 و 5678") are left alone: there the و
+  //   may genuinely be the next plate's letter.
+  for (let i = 1; i < atoms.length - 1; i++) {
+    const a = atoms[i];
+    if (a.t !== "L" || a.v !== "و") continue;
+    if (atoms[i - 1].t !== "D" || atoms[i + 1].t !== "D") continue;
+    let joined = 0;
+    for (let k = i - 1; k >= 0 && atoms[k].t === "D"; k--) joined++;
+    for (let k = i + 1; k < atoms.length && atoms[k].t === "D"; k++) joined++;
+    if (joined <= 4) { atoms.splice(i, 1); i--; }
+  }
+
   // ── Step 3: anchor on digit groups (runs of D atoms), split into 4-digit
   //   chunks. Several plate numbers dictated back-to-back with no letter
   //   naming between them are still ONE run of consecutive D atoms — without
@@ -408,7 +425,12 @@ const LETTER_NAMES: [string, string][] = ([
 
 // ─── Phonetic merges ────────────────────────────────────────────────────────
 const PHONETIC_MERGES: [string, string][] = ([
-  ["حابه",  "ح ب"],
+  // "حا با" spoken letters merged by the recognizer. The pipeline's ه→هـ
+  // rewrite runs BEFORE these merges, so the raw "حابه" form arrives here as
+  // "حابهـ" — all three spellings (ة / ه-as-typed / pipeline هـ) must match.
+  ["حابه",  "ح ب"], ["حابة", "ح ب"], ["حابهـ", "ح ب"],
+  // "لام" (or "و لام") absorbed by Whisper into the real word "علامة".
+  ["علامة", "ل"], ["علامه", "ل"], ["علامهـ", "ل"],
   ["احلام", "ا ح ل"],
   ["احلم",  "ا ح ل"],
   ["بالو",  "ب ل"],
