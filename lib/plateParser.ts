@@ -309,6 +309,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     notes: string[];
     uncertain: boolean;
     rawLetterSource?: string;
+    absorbed?: boolean;
   }
 
   // ── Step 4: for each group, scan BACKWARD (bounded by the previous group)
@@ -412,7 +413,39 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     if (target !== -1) plates[target].notes.push(a.v);
   }
 
-  return plates.map((p) => {
+  // ── Step 6: a real Saudi plate always has letters. A group that still has
+  //   NONE after every scan above (clean, salvaged, or supplemented) isn't a
+  //   plate — field agents confirmed they never dictate a standalone number,
+  //   as either a separate plate or a note, so a letters-less group is
+  //   always leftover from a longer digit run (the recognizer commonly adds
+  //   a spurious extra digit). Fold its digits into the nearest LETTERED
+  //   plate's notes instead of saving it as its own confusing phantom
+  //   record — preferring the preceding plate, matching how trailing notes
+  //   are attached elsewhere. If no lettered plate exists at all (nothing to
+  //   fold into), it's left as its own uncertain entry rather than dropped.
+  for (let idx = 0; idx < plates.length; idx++) {
+    const orphan = plates[idx];
+    if (orphan.letters.length > 0) continue;
+    let target: Plate | undefined;
+    for (let k = idx - 1; k >= 0; k--) {
+      if (plates[k].letters.length > 0) { target = plates[k]; break; }
+    }
+    if (!target) {
+      for (let k = idx + 1; k < plates.length; k++) {
+        if (plates[k].letters.length > 0) { target = plates[k]; break; }
+      }
+    }
+    if (!target) continue;
+    target.notes.push(orphan.digits.padStart(4, "0"));
+    target.notes.push(...orphan.notes);
+    if (orphan.vehicleType) {
+      if (!target.vehicleType) target.vehicleType = orphan.vehicleType;
+      else target.notes.push(orphan.vehicleType);
+    }
+    orphan.absorbed = true;
+  }
+
+  return plates.filter((p) => !p.absorbed).map((p) => {
     const plate = p.letters.join("") + p.digits.padStart(4, "0");
     return {
       plate,

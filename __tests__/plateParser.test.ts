@@ -601,22 +601,33 @@ describe("extractMultiplePlates — vehicle & location routing", () => {
 
 // ─── extractMultiplePlates — long digit runs split into 4-digit chunks ─────
 describe("extractMultiplePlates — digit-run chunking", () => {
-  it("splits an 8-digit run with no letters between into two 4-digit plates", () => {
-    // Two plate numbers dictated back-to-back with no letter naming in between —
-    // must NOT collapse into one plate that silently drops the second half.
+  // A real Saudi plate always has letters. Field agents confirmed they never
+  // dictate a standalone number (as a separate plate OR as a note) — any
+  // digits without letters are always leftover from a longer run (usually a
+  // spurious extra digit the recognizer added), never a genuine second
+  // plate. So a letters-less chunk is folded into the nearest lettered
+  // plate's notes instead of becoming its own confusing phantom record.
+  it("folds an 8-digit run's letters-less second half into the first plate's notes", () => {
     const r = extractMultiplePlates("دنب 6806 4482");
-    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "4482"]);
-    expect(r[1].uncertain).toBe(true);
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+    expect(r[0].notes).toBe("4482");
   });
 
-  it("splits an uneven digit run, keeping the leftover as its own (padded) plate", () => {
+  it("folds every letters-less leftover chunk from an uneven digit run into notes", () => {
     const r = extractMultiplePlates("دنب 68064482 1");
-    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "4482", "0001"]);
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+    expect(r[0].notes).toBe("4482 0001");
   });
 
   it("does not affect a normal single 4-digit plate", () => {
     const r = extractMultiplePlates("دنب 6806");
     expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+  });
+
+  it("keeps a letters-less chunk as its own uncertain entry when no lettered plate exists at all", () => {
+    const r = extractMultiplePlates("6806 4482");
+    expect(r.map((x) => x.plate)).toEqual(["6806", "4482"]);
+    expect(r.every((p) => p.uncertain)).toBe(true);
   });
 });
 
