@@ -1427,8 +1427,13 @@ export default function RegistrationPage() {
 
     // Only voice-dictated entries carry a meaningful "heard" value — a manual
     // entry's plate was typed, so editing it later is a typo fix, not a
-    // mishearing signal, and must not pollute the confusion learner.
-    if (!entry.isManual) {
+    // mishearing signal, and must not pollute the confusion learner. Same for
+    // anything flagged uncertain: that flag means the extraction already had
+    // to guess (a garbled-word salvage, a merged-digit guess, or more than 3
+    // candidate letters found) — the "heard" letters aren't a clean mishearing
+    // of one specific letter, so diffing them against the fix would teach the
+    // learner a coincidental, possibly wrong, per-letter substitution.
+    if (!entry.isManual && !entry.uncertain) {
       recordLetterCorrections(letterConfusionsRef.current, entry.originalPlate ?? entry.plate, trimmed);
       try {
         localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current)));
