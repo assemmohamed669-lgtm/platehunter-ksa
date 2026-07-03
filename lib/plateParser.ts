@@ -166,6 +166,13 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
   text = text.replace(/(?:ألف|الف)(?=\s+و)/g, " 1000 "); // ألف و… = 1000, not letter ا
   text = text.replace(/ى/g, "ي");            // alef maqsura → ي
+  // Protect the explicit letter-name واو ("the letter waw" — always a letter,
+  // never the conjunction) from LETTER_NAMES' text-level collapse to bare و
+  // below. Once collapsed it's indistinguishable from a literally-spoken
+  // conjunction و, and Step 2.5 needs to tell them apart. A Latin placeholder
+  // survives every later Arabic-only regex/lookup untouched and is resolved
+  // to a marked atom in Step 2, which Step 2.5 then exempts from removal.
+  text = text.replace(/(?<![؀-ۿ])(?:واو|وا)(?![؀-ۿ])/g, " __WAWNAME__ ");
   text = replaceAll(text, LETTER_NAMES);     // دال→د, صاد→ص, لام→ل …
   text = replaceAll(text, PHONETIC_MERGES);  // احلام→ا ح ل …
   text = replaceAll(text, SPOKEN_NUMBERS);   // خمسة→5, تلاتين→30, ألفين→2000 …
@@ -179,13 +186,16 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   //   "N" atoms carry a best-effort `letters[]` so a garbled all-letters word
   //   adjacent to a digit group can still yield a correctable plate.
   type Atom =
-    | { t: "L"; v: string }
-    | { t: "D"; v: string }
+    | { t: "L"; v: string; fromName?: boolean }
+    | { t: "D"; v: string; joinedByWaw?: boolean }
     | { t: "V"; v: string }
     | { t: "N"; v: string; letters: string[] };
 
   const atoms: Atom[] = [];
   for (const raw of rawTokens) {
+    // The protected letter-name placeholder — always a deliberate letter و,
+    // flagged so Step 2.5 never mistakes it for the conjunction.
+    if (raw === "__WAWNAME__") { atoms.push({ t: "L", v: "و", fromName: true }); continue; }
     // Strip tashkeel + tatweel; keep base plate letters. (Reuse the same helper
     // the single-plate parser trusts rather than an inline fragile range.)
     const clean = removeDiacritics(raw).replace(/ـ/g, "");
@@ -242,15 +252,24 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   //   AND the digits it would join still fit one plate number (≤4), it's the
   //   conjunction — drop it so the digits form a single run. Two complete
   //   4-digit groups joined by و ("1234 و 5678") are left alone: there the و
-  //   may genuinely be the next plate's letter.
+  //   may genuinely be the next plate's letter. A و traced back to the explicit
+  //   letter-name "واو" (fromName) is never ambiguous — always kept as a letter.
+  //   Every merge is inherently a guess, so the digits it joins are flagged
+  //   (joinedByWaw) and the resulting plate is marked uncertain in Step 4 —
+  //   a genuine 2nd short plate whose only letter is واو can look identical.
   for (let i = 1; i < atoms.length - 1; i++) {
     const a = atoms[i];
-    if (a.t !== "L" || a.v !== "و") continue;
-    if (atoms[i - 1].t !== "D" || atoms[i + 1].t !== "D") continue;
+    if (a.t !== "L" || a.v !== "و" || a.fromName) continue;
+    const prev = atoms[i - 1], next = atoms[i + 1];
+    if (prev.t !== "D" || next.t !== "D") continue;
     let joined = 0;
     for (let k = i - 1; k >= 0 && atoms[k].t === "D"; k--) joined++;
     for (let k = i + 1; k < atoms.length && atoms[k].t === "D"; k++) joined++;
-    if (joined <= 4) { atoms.splice(i, 1); i--; }
+    if (joined <= 4) {
+      prev.joinedByWaw = true;
+      next.joinedByWaw = true;
+      atoms.splice(i, 1); i--;
+    }
   }
 
   // ── Step 3: anchor on digit groups (runs of D atoms), split into 4-digit
@@ -301,8 +320,13 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     }
     // The clean adjacent-letters scan above is the confident path. Anything
     // that has to fall back to salvaging a garbled word — or finds nothing —
-    // is flagged uncertain so the UI can prompt a quick human glance.
-    const uncertain = letters.length === 0;
+    // is flagged uncertain so the UI can prompt a quick human glance. A digit
+    // group stitched together by Step 2.5's و-conjunction guess is also
+    // flagged: a genuine short plate whose only letter is واو can look
+    // identical, so it's worth a glance even when the letters scan is clean.
+    const digitAtoms = atoms.slice(g.start, g.end + 1);
+    const wawJoined = digitAtoms.some((a) => a.t === "D" && a.joinedByWaw);
+    const uncertain = letters.length === 0 || wawJoined;
     if (letters.length === 0 && i > prevBoundary) {
       const a = atoms[i];
       if (a.t === "N" && a.letters.length > 0) {
@@ -425,12 +449,17 @@ const LETTER_NAMES: [string, string][] = ([
 
 // ─── Phonetic merges ────────────────────────────────────────────────────────
 const PHONETIC_MERGES: [string, string][] = ([
-  // "حا با" spoken letters merged by the recognizer. The pipeline's ه→هـ
-  // rewrite runs BEFORE these merges, so the raw "حابه" form arrives here as
-  // "حابهـ" — all three spellings (ة / ه-as-typed / pipeline هـ) must match.
-  ["حابه",  "ح ب"], ["حابة", "ح ب"], ["حابهـ", "ح ب"],
-  // "لام" (or "و لام") absorbed by Whisper into the real word "علامة".
-  ["علامة", "ل"], ["علامه", "ل"], ["علامهـ", "ل"],
+  // Whisper merges the 3 spelled letters "حا با لام" into these two real
+  // Arabic words when dictated back-to-back ("حابة علامة" → ح ب ل).
+  // Deliberately scoped to the WHOLE two-word phrase, never either word
+  // alone: bare "علامة" ("sign/mark") and "حابة" ("wants", fem.) are common,
+  // legitimate field-note vocabulary ("جنب علامة الطريق", "المالكة حابة
+  // تسدد") — merging either unconditionally was found (adversarial review)
+  // to corrupt real notes and adjacent plates. The pipeline's ه→هـ rewrite
+  // runs BEFORE this table, so raw "حابه"/"علامه" arrive here as "حابهـ"/
+  // "علامهـ" — all 4 spelling combinations must match.
+  ["حابة علامة", "ح ب ل"], ["حابهـ علامهـ", "ح ب ل"],
+  ["حابة علامهـ", "ح ب ل"], ["حابهـ علامة", "ح ب ل"],
   ["احلام", "ا ح ل"],
   ["احلم",  "ا ح ل"],
   ["بالو",  "ب ل"],

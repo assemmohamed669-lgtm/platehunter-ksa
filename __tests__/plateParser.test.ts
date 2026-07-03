@@ -345,10 +345,26 @@ describe("extractMultiplePlates — corpus", () => {
   // recognizer emits it as a standalone token identical to the plate letter
   // waw — it must be treated as "and" when it sits between digits that still
   // fit ONE plate number, and as a letter otherwise.
-  it("merges و-joined single digits into one plate number", () => {
+  it("merges و-joined single digits into one plate number, flagged uncertain", () => {
     const r = extractMultiplePlates("ا ب ح 6 و 1 و 2 و 1");
     expect(r).toHaveLength(1);
     expect(r[0].plate).toBe("ابح6121");
+    // A merge is always a guess — a genuine short second plate whose only
+    // letter is واو can look identical — so it's flagged for a quick glance
+    // even though the letters themselves were dictated cleanly.
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("does not flag uncertain when no و-merge happened", () => {
+    const r = extractMultiplePlates("ا ب ح 1234");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
+  it("the explicit letter name واو is never treated as the conjunction", () => {
+    const r = extractMultiplePlates("ك م ل 12 واو 34");
+    expect(r).toHaveLength(2);
+    expect(r[0].plate).toBe("كمل0012");
+    expect(r[1].plate).toBe("و0034");
   });
 
   it("keeps و as the next plate's letter between two complete 4-digit groups", () => {
@@ -365,7 +381,9 @@ describe("extractMultiplePlates — corpus", () => {
     const r = extractMultiplePlates("حابة علامة 6 و 1 و 2 و 1");
     expect(r).toHaveLength(1);
     expect(r[0].plate).toBe("حبل6121");
-    expect(r[0].uncertain).toBeFalsy();
+    // Letters are confidently resolved (compound phonetic merge), but every
+    // digit was still joined by a guessed و — worth a glance either way.
+    expect(r[0].uncertain).toBe(true);
   });
 
   it("same transcript spelled with ه instead of ة still → حبل6121", () => {
