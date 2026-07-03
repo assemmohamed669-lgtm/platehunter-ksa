@@ -42,7 +42,7 @@ import {
   deleteUploadedFile,
   type RecordingEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, type LetterConfusionMap, EN_TO_AR } from "@/lib/plateParser";
+import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -53,6 +53,7 @@ const SPEEDS = [0.5, 1, 1.5, 2] as const;
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
+const LS_WORD_BLENDS = "ph:registration:wordBlends";
 
 // Vercel rejects any serverless function request over 4.5MB — at this
 // recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio. 90s
@@ -218,7 +219,7 @@ async function compressAndChunkAudioFile(
 // `originalPlate` is the raw pre-correction value the recognizer/parser produced —
 // kept on the saved RecordingEntry so a later edit in the table can be diffed
 // against it to learn a letter confusion.
-type ExtractedPlate = { plate: string; originalPlate: string; vehicleType: string; notes: string; uncertain: boolean };
+type ExtractedPlate = { plate: string; originalPlate: string; vehicleType: string; notes: string; uncertain: boolean; rawLetterSource?: string };
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -465,6 +466,10 @@ export default function RegistrationPage() {
   // from the user's own edits in the review step. Loaded once on mount, persisted
   // to localStorage whenever a save teaches it something new.
   const letterConfusionsRef = useRef<LetterConfusionMap>(new Map());
+  // Learned whole-fragment corrections (raw garbled word/overflow run → actual
+  // letters) — the complement of letterConfusionsRef for guesses where the
+  // whole letter group was wrong, not one letter drifting. See handlePlateEdit.
+  const wordBlendRef = useRef<WordBlendMap>(new Map());
 
   // Groq cloud transcription: chunk timer + in-flight/finished chunk uploads
   // (ordered — must be stitched back together in this order, not arrival order).
@@ -489,6 +494,11 @@ export default function RegistrationPage() {
     try {
       const raw = localStorage.getItem(LS_LETTER_CONFUSIONS);
       if (raw) letterConfusionsRef.current = deserializeLetterConfusions(JSON.parse(raw));
+    } catch { /* corrupt/missing — start fresh */ }
+
+    try {
+      const raw = localStorage.getItem(LS_WORD_BLENDS);
+      if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
     } catch { /* corrupt/missing — start fresh */ }
 
     try {
@@ -981,15 +991,25 @@ export default function RegistrationPage() {
     setDebugNotes(plates.map((p) => p.notes || "—").join(" | "));
 
     return plates.map((p) => {
-      const corrected = applyLetterConfusions(p.plate, letterConfusionsRef.current);
+      // A confidently-learned whole-fragment correction (only ever applicable
+      // when the extraction had to guess — rawLetterSource is unset on a
+      // clean extraction) is tried FIRST, then per-letter confusion on top —
+      // the two learners never fight over the same input.
+      let working = p.plate;
+      if (p.rawLetterSource) {
+        const learnedLetters = applyWordBlend(p.rawLetterSource, wordBlendRef.current);
+        if (learnedLetters) working = learnedLetters + p.plate.replace(/^\D+/, "");
+      }
+      const corrected = applyLetterConfusions(working, letterConfusionsRef.current);
       return {
         plate: corrected,
         originalPlate: p.plate,
         vehicleType: p.vehicleType ?? "",
         notes: p.notes ?? "",
         // Flag for a quick glance if the parser itself was unsure, OR if we just
-        // auto-corrected it — the confusion learner is a heuristic, not a certainty.
+        // auto-corrected it — either learner is a heuristic, not a certainty.
         uncertain: !!p.uncertain || corrected !== p.plate,
+        rawLetterSource: p.rawLetterSource,
       };
     });
   }
@@ -1006,7 +1026,7 @@ export default function RegistrationPage() {
     const savedIds: string[] = [];
     const savedEntries: RecordingEntry[] = [];
 
-    for (const { plate, originalPlate, vehicleType, notes, uncertain } of plates) {
+    for (const { plate, originalPlate, vehicleType, notes, uncertain, rawLetterSource } of plates) {
       const cleanPlate = plate.trim();
       if (!cleanPlate) continue;
       const localId = uid();
@@ -1017,6 +1037,7 @@ export default function RegistrationPage() {
         plate: cleanPlate,
         originalPlate: originalPlate !== cleanPlate ? originalPlate : undefined,
         uncertain: uncertain || undefined,
+        rawLetterSource,
         vehicleType: vehicleType?.trim() || undefined,
         notes: notes?.trim() || undefined,
         lat: coords?.lat,
@@ -1415,8 +1436,8 @@ export default function RegistrationPage() {
     }
   }
 
-  // Editing a plate directly in the table (post-save correction). Teaches the
-  // letter-confusion learner from the (heard → actual) diff, persists the
+  // Editing a plate directly in the table (post-save correction). Teaches
+  // whichever learner fits the kind of mistake this was, persists the
   // learned map, updates storage, and re-checks the corrected plate against
   // the check file in case the fix reveals a match.
   async function handlePlateEdit(localId: string, newPlate: string) {
@@ -1427,13 +1448,34 @@ export default function RegistrationPage() {
 
     // Only voice-dictated entries carry a meaningful "heard" value — a manual
     // entry's plate was typed, so editing it later is a typo fix, not a
-    // mishearing signal, and must not pollute the confusion learner. Same for
-    // anything flagged uncertain: that flag means the extraction already had
-    // to guess (a garbled-word salvage, a merged-digit guess, or more than 3
-    // candidate letters found) — the "heard" letters aren't a clean mishearing
-    // of one specific letter, so diffing them against the fix would teach the
-    // learner a coincidental, possibly wrong, per-letter substitution.
-    if (!entry.isManual && !entry.uncertain) {
+    // mishearing signal, and must not teach either learner.
+    //
+    // Branch on rawLetterSource FIRST, not on entry.uncertain: updatePlate()
+    // below unconditionally clears uncertain on every edit, but never touches
+    // rawLetterSource. Gating on uncertain would mean a SECOND edit of an
+    // already-corrected entry falls through to the letter-confusion branch
+    // using a now-stale originalPlate — silently dropping the correction (if
+    // digits differ) or, worse, diffing a whole wrong 3-letter guess against
+    // the new fix position-by-position and fabricating bogus single-letter
+    // rules. rawLetterSource reflects which learner model actually fits this
+    // entry's mistake shape and doesn't change across edits, so it's checked
+    // independent of the entry's current uncertain value.
+    if (!entry.isManual && entry.rawLetterSource) {
+      // An uncertain extraction (garbled-word salvage or letter-overflow
+      // guess): the WHOLE letter group was likely wrong, not one letter
+      // drifting — diffing position-by-position would teach individually
+      // wrong single-letter rules, so learn the whole raw fragment instead.
+      const correctedLetters = trimmed.replace(/\d+$/, "");
+      if (correctedLetters) {
+        recordWordBlend(wordBlendRef.current, entry.rawLetterSource, correctedLetters);
+        try {
+          localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current)));
+        } catch { /* storage full */ }
+      }
+    } else if (!entry.isManual && !entry.uncertain) {
+      // A confident extraction that still needed a fix: one letter drifted
+      // (a heard letter substituted for the actual one) — the per-letter
+      // confusion learner fits this.
       recordLetterCorrections(letterConfusionsRef.current, entry.originalPlate ?? entry.plate, trimmed);
       try {
         localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current)));

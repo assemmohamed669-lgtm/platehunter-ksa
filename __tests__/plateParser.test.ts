@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, type LetterConfusionMap } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 
 // ─── plateContentScore / pickBestHypothesis ────────────────────────────────
 describe("plateContentScore & pickBestHypothesis", () => {
@@ -385,6 +385,70 @@ describe("extractMultiplePlates — corpus", () => {
     const r = extractMultiplePlates("ا ن ر 6652");
     expect(r[0].plate).toBe("انر6652");
     expect(r[0].uncertain).toBeFalsy();
+  });
+
+  // ── rawLetterSource — the raw fragment behind an uncertain guess ──────────
+  // Exposed so a later human correction can teach a whole-fragment blend
+  // (see WordBlendMap tests below) instead of a misleading letter-by-letter
+  // diff. Only ever set when the guess actually came from a fragment.
+  it("exposes the FULL overflow run (not just the kept 3) as rawLetterSource", () => {
+    const r = extractMultiplePlates("ا ن ر ا و 6652");
+    expect(r[0].rawLetterSource).toBe("انراو");
+  });
+
+  it("exposes the raw garbled word as rawLetterSource for the salvage path", () => {
+    const r = extractMultiplePlates("راقوف 3944");
+    expect(r[0].rawLetterSource).toBe("راقوف");
+  });
+
+  it("leaves rawLetterSource unset for a confident, non-guessed plate", () => {
+    const r = extractMultiplePlates("ا ب ح 1234");
+    expect(r[0].rawLetterSource).toBeUndefined();
+  });
+
+  // ── WordBlendMap — whole-fragment self-learning ───────────────────────────
+  // Complements LetterConfusionMap: a mishearing that replaces an entire
+  // dictated letter group (not one letter drifting) must be learned as one
+  // unit, or diffing it position-by-position teaches individually-wrong
+  // single-letter rules. Same minCount/minDominance safety threshold as the
+  // letter-confusion learner — a one-off correction must not immediately
+  // start auto-applying.
+  it("does not auto-apply a blend seen fewer than minCount times", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    expect(applyWordBlend("انراو", map)).toBeNull();
+  });
+
+  it("auto-applies a blend once it dominates at minCount+", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    expect(applyWordBlend("انراو", map)).toBe("انر");
+  });
+
+  it("does not apply an inconsistent (non-dominant) blend", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "باكاف", "حبك");
+    recordWordBlend(map, "باكاف", "حبك");
+    recordWordBlend(map, "باكاف", "بكا"); // a different correction, breaks dominance
+    expect(applyWordBlend("باكاف", map)).toBeNull();
+  });
+
+  it("returns null for an unseen fragment or missing source", () => {
+    const map: WordBlendMap = new Map();
+    expect(applyWordBlend("غير معروف", map)).toBeNull();
+    expect(applyWordBlend(undefined, map)).toBeNull();
+  });
+
+  it("round-trips WordBlendMap through serialize/deserialize", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    const restored = deserializeWordBlend(serializeWordBlend(map));
+    expect(applyWordBlend("انراو", restored)).toBe("انر");
   });
 
   it("keeps و as the next plate's letter between two complete 4-digit groups", () => {

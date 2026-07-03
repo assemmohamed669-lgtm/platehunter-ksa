@@ -82,6 +82,15 @@ export interface MultiPlateResult {
   // salvaged from a garbled word, or not found at all. Callers can use this to
   // flag the plate for a quick human glance instead of trusting it blindly.
   uncertain?: boolean;
+  // The text behind an uncertain letters guess — either the garbled word
+  // salvaged for letters, or the full run of clean letters found when there
+  // were more than the 3 a plate can have. This is AFTER Step 1's text-level
+  // normalization (diacritics stripped, ه→هـ, alef variants unified) — not a
+  // literal substring of the transcript — but that's fine for its one job:
+  // a stable, deterministic key. Only set when the guess came from one of
+  // those paths; lets a later human correction teach a WordBlendMap entry
+  // for the whole fragment instead of a misleading per-letter diff.
+  rawLetterSource?: string;
 }
 
 /**
@@ -295,6 +304,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     vehicleType?: string;
     notes: string[];
     uncertain: boolean;
+    rawLetterSource?: string;
   }
 
   // ── Step 4: for each group, scan BACKWARD (bounded by the previous group)
@@ -333,14 +343,26 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     const wawJoined = digitAtoms.some((a) => a.t === "D" && a.joinedByWaw);
     const letterOverflow = letters.length === 3 && i > prevBoundary && atoms[i]?.t === "L";
     const uncertain = letters.length === 0 || wawJoined || letterOverflow;
+    // rawLetterSource is the raw text a later human correction can teach a
+    // whole-fragment WordBlendMap entry against — the full overflow run (not
+    // just the 3 kept) or the garbled word salvaged for letters. Only ever
+    // set on the guess paths, never on a confident clean extraction.
+    let rawLetterSource: string | undefined;
+    if (letterOverflow) {
+      const fullRun = [...letters];
+      let j = i;
+      while (j > prevBoundary && atoms[j].t === "L") { fullRun.unshift(atoms[j].v); j--; }
+      rawLetterSource = fullRun.join("");
+    }
     if (letters.length === 0 && i > prevBoundary) {
       const a = atoms[i];
       if (a.t === "N" && a.letters.length > 0) {
         for (const l of a.letters.slice(0, 3)) letters.push(l);
         consumed.add(i);
+        rawLetterSource = a.v;
       }
     }
-    return { gi, letters, digits, notes: [], uncertain };
+    return { gi, letters, digits, notes: [], uncertain, rawLetterSource };
   });
 
   // ── Step 5: assign leftover atoms to the nearest plate.
@@ -380,6 +402,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
       notes: p.notes.join(" "),
       normalized: normalizePlate(plate),
       uncertain: p.uncertain || undefined,
+      rawLetterSource: p.rawLetterSource,
     };
   });
 }
@@ -794,6 +817,62 @@ export function deserializeLetterConfusions(
   const map: LetterConfusionMap = new Map();
   if (!obj) return map;
   for (const [heard, inner] of Object.entries(obj)) map.set(heard, new Map(Object.entries(inner)));
+  return map;
+}
+
+// ─── Whole-fragment ("word blend") self-learning ────────────────────────────
+// LetterConfusionMap above only fits ONE letter drifting (ص heard as س) —
+// diffing it position-by-position against a plate whose ENTIRE letter group
+// was replaced by a different one (Whisper hearing "انر" as "راو") would
+// teach 3 unrelated, individually-wrong single-letter rules. This learns
+// "this exact raw fragment -> these exact corrected letters" as one unit
+// instead, keyed on MultiPlateResult.rawLetterSource — which is only ever
+// set on a letter-salvage or letter-overflow guess, never a confident
+// extraction, so it never collides with the letter-confusion learner's inputs.
+export type WordBlendMap = Map<string, Map<string, number>>;
+
+export function recordWordBlend(map: WordBlendMap, rawSource: string, correctedLetters: string): void {
+  if (!rawSource || !correctedLetters) return;
+  if (!map.has(rawSource)) map.set(rawSource, new Map());
+  const inner = map.get(rawSource)!;
+  inner.set(correctedLetters, (inner.get(correctedLetters) ?? 0) + 1);
+}
+
+/**
+ * Looks up a confidently-learned correction for a raw fragment. Same
+ * minCount/minDominance safety threshold as applyLetterConfusions — a single
+ * one-off correction, or one that gets "corrected" inconsistently, must not
+ * start auto-applying.
+ */
+export function applyWordBlend(
+  rawSource: string | undefined,
+  map: WordBlendMap,
+  minCount = 3,
+  minDominance = 0.7,
+): string | null {
+  if (!rawSource) return null;
+  const inner = map.get(rawSource);
+  if (!inner) return null;
+  let best: string | null = null, bestCount = 0, total = 0;
+  for (const [letters, count] of inner) {
+    total += count;
+    if (count > bestCount) { bestCount = count; best = letters; }
+  }
+  return best && bestCount >= minCount && bestCount / total >= minDominance ? best : null;
+}
+
+export function serializeWordBlend(map: WordBlendMap): Record<string, Record<string, number>> {
+  const obj: Record<string, Record<string, number>> = {};
+  for (const [raw, inner] of map) obj[raw] = Object.fromEntries(inner);
+  return obj;
+}
+
+export function deserializeWordBlend(
+  obj: Record<string, Record<string, number>> | null | undefined,
+): WordBlendMap {
+  const map: WordBlendMap = new Map();
+  if (!obj) return map;
+  for (const [raw, inner] of Object.entries(obj)) map.set(raw, new Map(Object.entries(inner)));
   return map;
 }
 
