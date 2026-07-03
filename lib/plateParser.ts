@@ -324,9 +324,15 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     // group stitched together by Step 2.5's و-conjunction guess is also
     // flagged: a genuine short plate whose only letter is واو can look
     // identical, so it's worth a glance even when the letters scan is clean.
+    // So is a plate whose cap-of-3 scan stopped only because it hit the cap,
+    // not because it ran out of clean letters (atoms[i] here is STILL "L") —
+    // a real Saudi plate has at most 3 letters, so 4+ dictated back-to-back
+    // means something (an extra misheard word/letter) got glued on; which 3
+    // of them are the real plate is a guess picking the nearest ones.
     const digitAtoms = atoms.slice(g.start, g.end + 1);
     const wawJoined = digitAtoms.some((a) => a.t === "D" && a.joinedByWaw);
-    const uncertain = letters.length === 0 || wawJoined;
+    const letterOverflow = letters.length === 3 && i > prevBoundary && atoms[i]?.t === "L";
+    const uncertain = letters.length === 0 || wawJoined || letterOverflow;
     if (letters.length === 0 && i > prevBoundary) {
       const a = atoms[i];
       if (a.t === "N" && a.letters.length > 0) {

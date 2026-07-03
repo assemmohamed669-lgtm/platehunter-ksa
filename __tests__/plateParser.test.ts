@@ -367,6 +367,26 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[1].plate).toBe("و0034");
   });
 
+  // ── Letter-count overflow ───────────────────────────────────────────────
+  // Real field recording: "الألف نون راو" dictated for a 3-letter plate ا ن ر
+  // was misheard by Whisper as 5 clean letters (ا ن ر ا و — an extra "را" got
+  // glued on). A plate has at most 3 letters, so the closest 3 to the digits
+  // are kept as the guess (unchanged), but with 2+ more clean letters sitting
+  // right before them, picking the last 3 over the first 3 is exactly that —
+  // a guess — and must be flagged for a glance rather than trusted silently.
+  it("flags uncertain when more than 3 clean letters precede the digits", () => {
+    const r = extractMultiplePlates("ا ن ر ا و 6652");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("راو6652"); // nearest 3 kept, same as before this fix
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("does not flag uncertain when exactly 3 clean letters precede the digits", () => {
+    const r = extractMultiplePlates("ا ن ر 6652");
+    expect(r[0].plate).toBe("انر6652");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
   it("keeps و as the next plate's letter between two complete 4-digit groups", () => {
     const r = extractMultiplePlates("ا ب ح 1234 و 5678");
     expect(r).toHaveLength(2);
