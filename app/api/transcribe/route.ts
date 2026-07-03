@@ -84,11 +84,21 @@ export async function POST(req: NextRequest) {
 
     const blob = new Blob([new Uint8Array(buffer)], { type: ext === "m4a" ? "audio/mp4" : mimeType || "audio/mp4" });
 
+    // Whisper's `prompt` biases both vocabulary and formatting toward
+    // whatever text it's given — without it, the model treats spelled-out
+    // plate letters as ordinary speech and blends them into real words it
+    // knows (observed: "حاء باء لام" → "حابة علامة", "واو" → "راو"). Priming
+    // it with the actual letter names and digit words steers it toward
+    // recognizing this as letter-by-letter dictation instead.
+    const PLATE_DICTATION_PROMPT =
+      "تسجيل لوحة سيارة سعودية: يُملي المسجّل حروف اللوحة حرفاً حرفاً بأسمائها الفصيحة مثل ألف باء حاء دال راء سين صاد طاء عين قاف كاف لام ميم نون هاء واو ياء، ثم يُملي الأرقام رقماً رقماً مثل صفر واحد اثنان ثلاثة أربعة خمسة ستة سبعة ثمانية تسعة.";
+
     const form = new FormData();
     form.append("file", blob, `audio.${ext}`);
     form.append("model", "whisper-large-v3-turbo");
     form.append("language", "ar");
     form.append("response_format", "json");
+    form.append("prompt", PLATE_DICTATION_PROMPT);
 
     const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
