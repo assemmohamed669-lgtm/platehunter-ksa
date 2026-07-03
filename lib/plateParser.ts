@@ -173,7 +173,11 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   let text = removeDiacritics(transcript.trim());
   text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
   text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
-  text = text.replace(/(?:ألف|الف)(?=\s+و)/g, " 1000 "); // ألف و… = 1000, not letter ا
+  // ألف و<number> = 1000 (e.g. "ألف وخمسمية" = 1500) — but the lookahead only
+  // checked for a following "و" character, which the letter NAME "واو" (or
+  // its short form "وا") also starts with, so "دال ألف واو" (spelling د-ا-و)
+  // wrongly ate the ا into a phantom 1000 and left the plate missing a letter.
+  text = text.replace(/(?:ألف|الف)(?=\s+و)(?!\s+(?:واو|وا)(?:\s|$))/g, " 1000 ");
   text = text.replace(/ى/g, "ي");            // alef maqsura → ي
   // Protect the explicit letter-name واو ("the letter waw" — always a letter,
   // never the conjunction) from LETTER_NAMES' text-level collapse to bare و
@@ -928,7 +932,9 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
   // 3c. Resolve ألف/الف ambiguity: when followed by و (number compound context)
   // treat as 1000, not the letter ا. Must run BEFORE LETTER_NAMES consumes "ألف".
-  text = text.replace(/(?:ألف|الف)(?=\s+و)/g, " 1000 ");
+  // Excludes the letter NAME واو/وا specifically — "دال ألف واو" (spelling
+  // د-ا-و) must not have its ا eaten just because واو also starts with و.
+  text = text.replace(/(?:ألف|الف)(?=\s+و)(?!\s+(?:واو|وا)(?:\s|$))/g, " 1000 ");
 
   // 3b. Normalize ى (alef maqsura) → ي — both are valid plate letters, treated as equivalent
   text = text.replace(/ى/g, "ي");

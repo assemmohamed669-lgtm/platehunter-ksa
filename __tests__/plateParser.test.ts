@@ -367,6 +367,26 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[1].plate).toBe("و0034");
   });
 
+  // ── ألف→1000 vs. the letter name واو ──────────────────────────────────────
+  // Real field recording: plate داو (د-ا-و) dictated by formal letter names
+  // "دال ألف واو" came out missing the ا entirely — the ألف→1000 rewrite
+  // (meant for compound numbers like "ألف وخمسمية"=1500) only checked for a
+  // following "و" character, which "واو" also starts with, so it fired here
+  // too and ate the letter ا.
+  it("دال ألف واو dictation keeps all 3 letters — ألف is not swallowed into 1000", () => {
+    const r = extractMultiplePlates("دال ألف واو 6151");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("داو6151");
+  });
+
+  it("still converts a genuine ألف و<number> compound (unaffected by the واو exclusion)", () => {
+    // Not realistic plate dictation, but exercises the same rewrite this fix
+    // touches — ألف must still become 1000 when followed by a real number
+    // compound, not just when followed by the letter name واو specifically.
+    const r = extractMultiplePlates("ن ق ألف وخمسمية");
+    expect(r[0].plate).toBe("نق1000");
+  });
+
   // ── Letter-count overflow ───────────────────────────────────────────────
   // Real field recording: "الألف نون راو" dictated for a 3-letter plate ا ن ر
   // was misheard by Whisper as 5 clean letters (ا ن ر ا و — an extra "را" got
