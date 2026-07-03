@@ -2,9 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile, readFile, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import ffmpegPath from "ffmpeg-static";
+
+// ffmpeg-static computes its binary path from __dirname, which webpack
+// rewrites when it inlines the package into the route bundle — the module
+// then points at <bundle-dir>/ffmpeg, which doesn't exist (the ENOENT seen
+// on Vercel). serverComponentsExternalPackages in next.config.mjs prevents
+// that inlining, but resolve defensively anyway: verify the module's path
+// actually exists, else fall back to the real node_modules location that
+// outputFileTracingIncludes ships with the function.
+function resolveFfmpegPath(): string | null {
+  const binName = os.platform() === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const candidates = [
+    ffmpegPath,
+    path.join(process.cwd(), "node_modules", "ffmpeg-static", binName),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+  return null;
+}
 
 export const runtime = "nodejs";
 
@@ -22,7 +42,8 @@ const execFileAsync = promisify(execFile);
 // fine. Remux (not re-encode — instant, lossless) into a real .m4a container
 // before uploading so Groq's format check passes.
 async function remuxAacToM4a(input: Buffer): Promise<Buffer> {
-  if (!ffmpegPath) throw new Error("ffmpeg binary unavailable");
+  const ffmpeg = resolveFfmpegPath();
+  if (!ffmpeg) throw new Error("ffmpeg binary unavailable");
 
   const id = Math.random().toString(36).slice(2);
   const inPath = path.join(os.tmpdir(), `rec-${id}.aac`);
@@ -30,7 +51,7 @@ async function remuxAacToM4a(input: Buffer): Promise<Buffer> {
 
   try {
     await writeFile(inPath, input);
-    await execFileAsync(ffmpegPath, ["-y", "-i", inPath, "-c:a", "copy", outPath]);
+    await execFileAsync(ffmpeg, ["-y", "-i", inPath, "-c:a", "copy", outPath]);
     return await readFile(outPath);
   } finally {
     await unlink(inPath).catch(() => {});
