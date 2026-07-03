@@ -30,6 +30,24 @@ export const runtime = "nodejs";
 
 const execFileAsync = promisify(execFile);
 
+// A phone/browser can report a MIME subtype Groq doesn't recognize even
+// though the underlying audio is a format it accepts fine once correctly
+// labeled (e.g. some Android recorders/older browsers report "audio/x-wav"
+// or "audio/mp4a-latm" instead of the bare "wav"/"m4a" Groq expects).
+// Groq's accepted set (from its own rejection message): flac mp3 mp4 mpeg
+// mpga m4a ogg opus wav webm.
+const MIME_SUBTYPE_ALIASES: Record<string, string> = {
+  "x-wav": "wav",
+  "wave": "wav",
+  "vnd.wave": "wav",
+  "x-m4a": "m4a",
+  "mp4a-latm": "m4a",
+  "x-mp4": "mp4",
+  "x-mp3": "mp3",
+  "mpeg3": "mp3",
+  "x-mpeg-3": "mp3",
+};
+
 // Voice-to-text for plate registration via Groq's hosted Whisper. Uses the
 // AGENT'S OWN API key (sent from the client, not a shared server key) — each
 // field agent has their own free Groq account, so usage never pools onto one
@@ -68,6 +86,7 @@ export async function POST(req: NextRequest) {
 
     let buffer: Buffer = Buffer.from(audio, "base64");
     let ext = (mimeType?.split("/")[1] ?? "m4a").split(";")[0];
+    ext = MIME_SUBTYPE_ALIASES[ext] ?? ext;
 
     if (ext === "aac") {
       try {
@@ -82,7 +101,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const blob = new Blob([new Uint8Array(buffer)], { type: ext === "m4a" ? "audio/mp4" : mimeType || "audio/mp4" });
+    // Send Content-Type derived from the (possibly normalized/aliased) ext,
+    // not the original raw mimeType — the whole point of the alias table
+    // above is to correct a mislabeled type before it reaches Groq again.
+    const EXT_TO_CONTENT_TYPE: Record<string, string> = {
+      m4a: "audio/mp4", mp4: "audio/mp4", mp3: "audio/mpeg", mpga: "audio/mpeg",
+      wav: "audio/wav", flac: "audio/flac", ogg: "audio/ogg", opus: "audio/opus",
+      webm: "audio/webm",
+    };
+    const blob = new Blob([new Uint8Array(buffer)], { type: EXT_TO_CONTENT_TYPE[ext] ?? mimeType ?? "audio/mp4" });
 
     // Whisper's `prompt` biases both vocabulary and formatting toward
     // whatever text it's given — without it, the model treats spelled-out
@@ -109,8 +136,24 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error("Groq transcription error:", res.status, body.slice(0, 300));
+      // Distinguish "the file's format/container isn't one Groq accepts"
+      // from every other failure (bad key, rate limit, server error) — the
+      // caller uses this to decide whether re-encoding the file client-side
+      // and retrying is actually likely to help, instead of retrying blindly.
+      let isUnsupportedFormat = false;
+      try {
+        const parsed = JSON.parse(body);
+        isUnsupportedFormat =
+          parsed?.error?.type === "invalid_request_error" &&
+          /file must be one of the following types/i.test(parsed?.error?.message ?? "");
+      } catch { /* not JSON — treat as a generic error below */ }
       return NextResponse.json(
-        { text: null, error: "groq_error", detail: res.status, hint: body.slice(0, 200) },
+        {
+          text: null,
+          error: isUnsupportedFormat ? "unsupported_format" : "groq_error",
+          detail: res.status,
+          hint: body.slice(0, 200),
+        },
         { status: 500 }
       );
     }

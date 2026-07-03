@@ -97,7 +97,15 @@ async function uploadGroqChunk(
     throw networkErr;
   }
   const data = await res.json();
-  if (!data.text) throw new Error(data.hint || data.detail || data.error || "unknown");
+  if (!data.text) {
+    // Tag the error with Groq's error code (e.g. "unsupported_format") so
+    // callers — specifically handleUploadAudioFile's re-encode fallback —
+    // can react to THAT specific failure without string-matching Groq's
+    // human-readable message text.
+    const err = new Error(data.hint || data.detail || data.error || "unknown") as Error & { code?: string };
+    err.code = data.error;
+    throw err;
+  }
   return {
     text: String(data.text).trim(),
     audioBase64: chunk.value.recordDataBase64,
@@ -1394,21 +1402,41 @@ export default function RegistrationPage() {
     setRecordingError(null);
     setIsTranscribing(true);
     try {
-      let rawChunks: { base64: string; mimeType: string }[];
+      const uploadAll = (chunks: { base64: string; mimeType: string }[]) => {
+        setDebugStatus(`⏳ جارٍ رفع ${chunks.length > 1 ? `${chunks.length} جزء` : "الملف"} لـ Groq…`);
+        return Promise.allSettled(
+          chunks.map((c) =>
+            uploadGroqChunk({ value: { recordDataBase64: c.base64, mimeType: c.mimeType } }, groqApiKey.trim())
+          )
+        );
+      };
+
+      let settled: PromiseSettledResult<GroqChunkResult>[];
       if (file.size > MAX_UPLOAD_AUDIO_BYTES) {
         setDebugStatus(`⚠️ الملف كبير (${(file.size / 1024 / 1024).toFixed(1)} ميجا) — جارٍ ضغطه…`);
-        rawChunks = await compressAndChunkAudioFile(file, MAX_UPLOAD_AUDIO_BYTES, setDebugStatus);
+        const rawChunks = await compressAndChunkAudioFile(file, MAX_UPLOAD_AUDIO_BYTES, setDebugStatus);
+        settled = await uploadAll(rawChunks);
       } else {
+        // Try the file exactly as picked first — fast path, no ffmpeg.wasm
+        // download, and correct for the common case of an already-compatible
+        // recording. Some phones/browsers report a format Groq's API doesn't
+        // recognize (a non-standard MIME label, or a codec Groq genuinely
+        // doesn't support at all, e.g. AMR voice-memo files) — re-encoding
+        // to AAC via ffmpeg.wasm fixes both, so fall back to that ONLY on
+        // that specific failure, not on every failure (a bad key or network
+        // drop retrying via re-encoding would just waste a 31MB download).
         const buffer = await file.arrayBuffer();
-        rawChunks = [{ base64: uint8ToBase64(new Uint8Array(buffer)), mimeType: file.type || "audio/mp4" }];
+        const directChunk = { base64: uint8ToBase64(new Uint8Array(buffer)), mimeType: file.type || "audio/mp4" };
+        settled = await uploadAll([directChunk]);
+
+        const failure = settled[0].status === "rejected" ? (settled[0] as PromiseRejectedResult).reason : null;
+        if (failure?.code === "unsupported_format") {
+          setDebugStatus("⚠️ صيغة الملف مش مدعومة مباشرة — جارٍ تحويلها لصيغة مدعومة…");
+          const rawChunks = await compressAndChunkAudioFile(file, MAX_UPLOAD_AUDIO_BYTES, setDebugStatus);
+          settled = await uploadAll(rawChunks);
+        }
       }
 
-      setDebugStatus(`⏳ جارٍ رفع ${rawChunks.length > 1 ? `${rawChunks.length} جزء` : "الملف"} لـ Groq…`);
-      const settled = await Promise.allSettled(
-        rawChunks.map((c) =>
-          uploadGroqChunk({ value: { recordDataBase64: c.base64, mimeType: c.mimeType } }, groqApiKey.trim())
-        )
-      );
       const ok = settled.filter((s): s is PromiseFulfilledResult<GroqChunkResult> => s.status === "fulfilled").map((s) => s.value);
       const failedCount = settled.length - ok.length;
       const transcript = ok.map((c) => c.text).join(" ").trim();
