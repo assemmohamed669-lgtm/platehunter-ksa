@@ -335,6 +335,30 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("راق3944");
   });
 
+  // ── Clean letters stranded behind a garbled word ──────────────────────────
+  // Real field recording: plate درط (د-ر-ط) dictated as "دال راء طاء" — Whisper
+  // misheard طاء as تق (ت isn't a valid plate letter, so "تق" isn't a clean
+  // token). Before this fix, the salvage path used ONLY تق's one valid letter
+  // (ق) and never looked past it, so the cleanly-dictated د and ر were lost —
+  // worse, they got silently misattributed as a NOTE on a totally unrelated
+  // neighboring plate (Step 5 assigns unconsumed atoms to the nearest plate).
+  it("pulls clean letters from before a garbled salvage word instead of losing them", () => {
+    const r = extractMultiplePlates("دال راء تق 3478");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("درق3478"); // د ر recovered; ق is still what was misheard
+    expect(r[0].uncertain).toBe(true);
+    expect(r[0].rawLetterSource).toBe("درتق"); // full contributing span, for WordBlendMap
+  });
+
+  it("does not reach past a real note word to steal its letters", () => {
+    // "مركونة" is an explicit NOTE_KEYWORDS entry (always letters:[]), so the
+    // supplemental scan must never fire for it even though it sits right
+    // before a garbled salvage word.
+    const r = extractMultiplePlates("مركونة راقوف 3944");
+    expect(r[0].plate).toBe("راق3944");
+    expect(r[0].notes).toBe("مركونة");
+  });
+
   it("phonetic-merge word normalizes then seeds the plate: احلام → احل", () => {
     const r = extractMultiplePlates("احلام 1234");
     expect(r[0].plate).toBe("احل1234");

@@ -363,7 +363,21 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
       if (a.t === "N" && a.letters.length > 0) {
         for (const l of a.letters.slice(0, 3)) letters.push(l);
         consumed.add(i);
-        rawLetterSource = a.v;
+        const rawSpan = [a.v];
+        i--;
+        // A garbled word right next to the digits can strand CLEAN letters
+        // just before it — e.g. "دال راء تق 3478" (طاء misheard as تق, which
+        // has only one valid letter) would otherwise lose the cleanly-heard
+        // د and ر, which then get silently misattributed as a note on some
+        // unrelated neighboring plate (Step 5 below). Keep pulling clean L
+        // atoms from before the garbled word, in speech order, up to the
+        // same 3-letter cap, instead of stopping at the garbled word alone.
+        while (i > prevBoundary && letters.length < 3) {
+          const b = atoms[i];
+          if (b.t === "L") { letters.unshift(b.v); rawSpan.unshift(b.v); consumed.add(i); i--; }
+          else break;
+        }
+        rawLetterSource = rawSpan.join("");
       }
     }
     return { gi, letters, digits, notes: [], uncertain, rawLetterSource };
