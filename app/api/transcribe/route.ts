@@ -120,9 +120,13 @@ export async function POST(req: NextRequest) {
     const PLATE_DICTATION_PROMPT =
       "تسجيل لوحة سيارة سعودية: يُملي المسجّل حروف اللوحة حرفاً حرفاً بأسمائها الفصيحة مثل ألف باء حاء دال راء سين صاد طاء عين قاف كاف لام ميم نون هاء واو ياء، ثم يُملي الأرقام رقماً رقماً مثل صفر واحد اثنان ثلاثة أربعة خمسة ستة سبعة ثمانية تسعة.";
 
+    // whisper-large-v3 (not the "-turbo" variant) — turbo trades accuracy for
+    // speed, and this app's whole failure mode today has been mishearing
+    // (letter names blended into real words, wrong digits) rather than
+    // latency, so the slower full model is the better trade for this use case.
     const form = new FormData();
     form.append("file", blob, `audio.${ext}`);
-    form.append("model", "whisper-large-v3-turbo");
+    form.append("model", "whisper-large-v3");
     form.append("language", "ar");
     form.append("response_format", "json");
     form.append("prompt", PLATE_DICTATION_PROMPT);
