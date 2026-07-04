@@ -252,6 +252,14 @@ const LS_EXCEL_NAME = "ph:registration:excelName";
 // our own /api/transcribe route (which forwards it straight to Groq). Usage
 // is billed against the agent's own free-tier account, not a shared one.
 const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
+const LS_GROQ_PIN_HASH = "ph:registration:groqPinHash";
+
+// SHA-256 hash of a PIN, hex-encoded — the raw PIN is never persisted.
+async function hashPin(pin: string): Promise<string> {
+  const bytes = new TextEncoder().encode(pin);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 function defaultExcelName(): string {
   const d = new Date();
@@ -399,6 +407,21 @@ export default function RegistrationPage() {
   const [showGroqKey, setShowGroqKey] = useState(false);
   const [groqTestStatus, setGroqTestStatus] = useState<"idle" | "testing" | "ok" | "failed">("idle");
   const [groqTestError, setGroqTestError] = useState<string | null>(null);
+  // PIN-gates revealing/clearing the Groq key — someone who grabs the phone
+  // while the key happens to be shown (or reachable via the clear button)
+  // shouldn't be able to see or wipe it without this. Stored as a hash only,
+  // never the raw PIN. Recovery has no email on file to reset via (agent
+  // accounts use a synthetic @platehunter.local address, not a real inbox —
+  // see lib/auth.ts) — so "forgot PIN" re-verifies the agent's own account
+  // password instead, then lets them set a new PIN for the same key.
+  const [agentEmail, setAgentEmail] = useState<string>("");
+  const [groqPinHash, setGroqPinHash] = useState<string | null>(null);
+  const [pinPrompt, setPinPrompt] = useState<{ mode: "setup" | "verify" | "forgot"; onSuccess: () => void } | null>(null);
+  const [pinInput, setPinInput] = useState("");
+  const [pinConfirmInput, setPinConfirmInput] = useState("");
+  const [forgotPasswordInput, setForgotPasswordInput] = useState("");
+  const [pinFlowError, setPinFlowError] = useState<string | null>(null);
+  const [pinFlowBusy, setPinFlowBusy] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
   const [isOnline, setIsOnline] = useState(true);
@@ -510,13 +533,22 @@ export default function RegistrationPage() {
     } catch { /* corrupt/missing — start fresh */ }
 
     try {
-      setGroqApiKey(localStorage.getItem(LS_GROQ_API_KEY) || "");
+      const savedKey = localStorage.getItem(LS_GROQ_API_KEY) || "";
+      setGroqApiKey(savedKey);
+      const savedPinHash = localStorage.getItem(LS_GROQ_PIN_HASH) || null;
+      setGroqPinHash(savedPinHash);
+      // Safety net: a key saved before setup finished (app closed mid-setup)
+      // would otherwise sit unprotected forever with no trigger to fix it.
+      if (savedKey.trim() && !savedPinHash) {
+        setPinPrompt({ mode: "setup", onSuccess: () => {} });
+      }
     } catch { /* storage unavailable */ }
 
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
         const uid = data.user.id;
         setAgentId(uid);
+        setAgentEmail(data.user.email ?? "");
         try {
           const savedName = localStorage.getItem(LS_RECORDER_NAME);
           setRecorderName(savedName || emailToName(data.user.email ?? ""));
@@ -600,7 +632,92 @@ export default function RegistrationPage() {
       else localStorage.removeItem(LS_GROQ_API_KEY);
     } catch { /* storage full */ }
   }
-  function clearGroqKey() { handleGroqKeyChange(""); }
+
+  // Fires once editing finishes (not per keystroke — a PIN prompt popping up
+  // mid-paste would be jarring). A key entered with no PIN yet is either a
+  // brand-new key, or was saved before setup finished last time (see the
+  // bootstrap safety net above) — either way, it needs a PIN before it's
+  // usable, so this always wins over just silently leaving it unprotected.
+  function handleGroqKeyBlur() {
+    if (groqApiKey.trim() && !groqPinHash) {
+      setPinInput(""); setPinConfirmInput(""); setPinFlowError(null);
+      setPinPrompt({ mode: "setup", onSuccess: () => {} });
+    }
+  }
+
+  function clearGroqKey() {
+    handleGroqKeyChange("");
+    // The PIN protected THIS key — once it's gone, a freshly-entered key
+    // starts over with its own new PIN rather than inheriting the old one.
+    setGroqPinHash(null);
+    try { localStorage.removeItem(LS_GROQ_PIN_HASH); } catch { /* storage full */ }
+  }
+
+  // Reveal/clear both touch the saved key, so both require the PIN — but
+  // hiding an already-shown key back never needs it (it's only making
+  // information LESS visible).
+  function handleShowGroqKeyClick() {
+    if (showGroqKey) { setShowGroqKey(false); return; }
+    if (!groqPinHash) { setShowGroqKey(true); return; } // no PIN configured — nothing to gate against
+    setPinInput(""); setPinFlowError(null);
+    setPinPrompt({ mode: "verify", onSuccess: () => setShowGroqKey(true) });
+  }
+
+  function handleClearGroqKeyClick() {
+    if (!groqApiKey.trim()) return;
+    if (!groqPinHash) { clearGroqKey(); return; }
+    setPinInput(""); setPinFlowError(null);
+    setPinPrompt({ mode: "verify", onSuccess: () => clearGroqKey() });
+  }
+
+  async function submitPinSetup() {
+    const pin = pinInput.trim();
+    if (!/^\d{4,6}$/.test(pin)) { setPinFlowError("الرقم السري لازم يكون 4-6 أرقام."); return; }
+    if (pin !== pinConfirmInput.trim()) { setPinFlowError("الرقمين مش متطابقين."); return; }
+    const hash = await hashPin(pin);
+    setGroqPinHash(hash);
+    try { localStorage.setItem(LS_GROQ_PIN_HASH, hash); } catch { /* storage full */ }
+    const onSuccess = pinPrompt?.onSuccess;
+    setPinPrompt(null);
+    setPinInput(""); setPinConfirmInput(""); setPinFlowError(null);
+    onSuccess?.();
+  }
+
+  async function submitPinVerify() {
+    const pin = pinInput.trim();
+    if (!pin) return;
+    const hash = await hashPin(pin);
+    if (hash !== groqPinHash) { setPinFlowError("الرقم السري غلط."); return; }
+    const onSuccess = pinPrompt?.onSuccess;
+    setPinPrompt(null);
+    setPinInput(""); setPinFlowError(null);
+    onSuccess?.();
+  }
+
+  // Re-verifies the agent's OWN account password (the same one used to log
+  // in) via Supabase — there's no real email to send a reset link to (see
+  // the note by groqPinHash's declaration above). On success, chains into
+  // "setup" so they immediately pick a new PIN, then the original
+  // reveal/clear action they wanted still goes through once that's saved.
+  async function submitForgotPassword() {
+    if (!agentEmail) { setPinFlowError("تعذّر التحقق من الحساب — سجّل خروج ودخول تاني وجرّب."); return; }
+    if (!forgotPasswordInput) return;
+    setPinFlowBusy(true);
+    setPinFlowError(null);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: agentEmail, password: forgotPasswordInput });
+      if (error) { setPinFlowError("كلمة سر الحساب غلط."); return; }
+      setPinInput(""); setPinConfirmInput(""); setForgotPasswordInput("");
+      setPinPrompt((prev) => prev && { ...prev, mode: "setup" });
+    } finally {
+      setPinFlowBusy(false);
+    }
+  }
+
+  function cancelPinPrompt() {
+    setPinPrompt(null);
+    setPinInput(""); setPinConfirmInput(""); setForgotPasswordInput(""); setPinFlowError(null);
+  }
 
   async function testGroqKey() {
     const key = groqApiKey.trim();
@@ -1787,13 +1904,14 @@ export default function RegistrationPage() {
             type={showGroqKey ? "text" : "password"}
             value={groqApiKey}
             onChange={(e) => handleGroqKeyChange(e.target.value)}
+            onBlur={handleGroqKeyBlur}
             placeholder="gsk_..."
             className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-primary"
             dir="ltr"
           />
           <button
             type="button"
-            onClick={() => setShowGroqKey((v) => !v)}
+            onClick={handleShowGroqKeyClick}
             aria-label={showGroqKey ? "إخفاء المفتاح" : "إظهار المفتاح"}
             className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-primary hover:text-primary"
           >
@@ -1801,13 +1919,16 @@ export default function RegistrationPage() {
           </button>
           <button
             type="button"
-            onClick={clearGroqKey}
+            onClick={handleClearGroqKeyClick}
             aria-label="مسح مفتاح Groq"
             className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-danger hover:text-danger"
           >
             <X size={14} />
           </button>
         </div>
+        {groqPinHash && (
+          <p className="text-[11px] text-muted" dir="rtl">🔒 محمي برقم سري — هيتطلب منك لما تحب تشوف المفتاح أو تمسحه.</p>
+        )}
 
         {groqApiKey.trim() && (
           <div className="flex items-center gap-2">
@@ -2193,6 +2314,121 @@ export default function RegistrationPage() {
             <br />
             اضغط على الزر واتكلم لتسجيل لوحة.
           </p>
+        </div>
+      )}
+
+      {/* PIN gate for the Groq key — reveal/clear both need it; a key saved
+          with no PIN yet (mid-setup app close) forces setup again on load. */}
+      {pinPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" dir="rtl">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
+            {pinPrompt.mode === "setup" && (
+              <>
+                <p className="mb-1 text-sm font-bold text-ink">
+                  {groqPinHash ? "رقم سري جديد لمفتاح Groq" : "أنشئ رقم سري لحماية مفتاح Groq"}
+                </p>
+                <p className="mb-3 text-xs text-muted">
+                  هتحتاج الرقم ده كل مرة تحب تشوف المفتاح أو تمسحه — عشان محدش يقدر يشوفه أو يحذفه غيرك لو حد ثاني ماسك الموبايل.
+                </p>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
+                  placeholder="رقم سري (4-6 أرقام)"
+                  autoFocus
+                  className="mb-2 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
+                  dir="ltr"
+                />
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={pinConfirmInput}
+                  onChange={(e) => setPinConfirmInput(e.target.value.replace(/\D/g, ""))}
+                  placeholder="أعد كتابة الرقم"
+                  className="mb-3 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
+                  dir="ltr"
+                  onKeyDown={(e) => { if (e.key === "Enter") submitPinSetup(); }}
+                />
+                {pinFlowError && <p className="mb-2 text-xs text-danger">{pinFlowError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={submitPinSetup} className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition hover:bg-brand/90">
+                    حفظ الرقم السري
+                  </button>
+                  <button onClick={cancelPinPrompt} className="rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:text-ink">
+                    لاحقاً
+                  </button>
+                </div>
+              </>
+            )}
+
+            {pinPrompt.mode === "verify" && (
+              <>
+                <p className="mb-3 text-sm font-bold text-ink">أدخل الرقم السري</p>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
+                  placeholder="الرقم السري"
+                  autoFocus
+                  className="mb-2 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
+                  dir="ltr"
+                  onKeyDown={(e) => { if (e.key === "Enter") submitPinVerify(); }}
+                />
+                {pinFlowError && <p className="mb-2 text-xs text-danger">{pinFlowError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={submitPinVerify} className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition hover:bg-brand/90">
+                    تأكيد
+                  </button>
+                  <button onClick={cancelPinPrompt} className="rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:text-ink">
+                    إلغاء
+                  </button>
+                </div>
+                <button
+                  onClick={() => { setPinFlowError(null); setPinInput(""); setPinPrompt((prev) => prev && { ...prev, mode: "forgot" }); }}
+                  className="mt-3 w-full text-center text-xs text-primary underline"
+                >
+                  نسيت الرقم السري؟
+                </button>
+              </>
+            )}
+
+            {pinPrompt.mode === "forgot" && (
+              <>
+                <p className="mb-1 text-sm font-bold text-ink">تأكيد الهوية</p>
+                <p className="mb-3 text-xs text-muted">
+                  أدخل كلمة سر حسابك (نفس اللي بتسجّل بيها دخول) عشان تقدر تعمل رقم سري جديد.
+                </p>
+                <input
+                  type="password"
+                  value={forgotPasswordInput}
+                  onChange={(e) => setForgotPasswordInput(e.target.value)}
+                  placeholder="كلمة سر الحساب"
+                  autoFocus
+                  className="mb-2 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:border-primary"
+                  dir="ltr"
+                  onKeyDown={(e) => { if (e.key === "Enter") submitForgotPassword(); }}
+                />
+                {pinFlowError && <p className="mb-2 text-xs text-danger">{pinFlowError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitForgotPassword}
+                    disabled={pinFlowBusy}
+                    className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-50"
+                  >
+                    {pinFlowBusy ? "جارٍ التحقق..." : "تأكيد"}
+                  </button>
+                  <button onClick={cancelPinPrompt} className="rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:text-ink">
+                    إلغاء
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
