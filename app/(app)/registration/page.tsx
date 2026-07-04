@@ -422,6 +422,7 @@ export default function RegistrationPage() {
   const [forgotPasswordInput, setForgotPasswordInput] = useState("");
   const [pinFlowError, setPinFlowError] = useState<string | null>(null);
   const [pinFlowBusy, setPinFlowBusy] = useState(false);
+  const [showPinInput, setShowPinInput] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
   const [isOnline, setIsOnline] = useState(true);
@@ -640,7 +641,7 @@ export default function RegistrationPage() {
   // usable, so this always wins over just silently leaving it unprotected.
   function handleGroqKeyBlur() {
     if (groqApiKey.trim() && !groqPinHash) {
-      setPinInput(""); setPinConfirmInput(""); setPinFlowError(null);
+      setPinInput(""); setPinConfirmInput(""); setPinFlowError(null); setShowPinInput(false);
       setPinPrompt({ mode: "setup", onSuccess: () => {} });
     }
   }
@@ -659,14 +660,14 @@ export default function RegistrationPage() {
   function handleShowGroqKeyClick() {
     if (showGroqKey) { setShowGroqKey(false); return; }
     if (!groqPinHash) { setShowGroqKey(true); return; } // no PIN configured — nothing to gate against
-    setPinInput(""); setPinFlowError(null);
+    setPinInput(""); setPinFlowError(null); setShowPinInput(false);
     setPinPrompt({ mode: "verify", onSuccess: () => setShowGroqKey(true) });
   }
 
   function handleClearGroqKeyClick() {
     if (!groqApiKey.trim()) return;
     if (!groqPinHash) { clearGroqKey(); return; }
-    setPinInput(""); setPinFlowError(null);
+    setPinInput(""); setPinFlowError(null); setShowPinInput(false);
     setPinPrompt({ mode: "verify", onSuccess: () => clearGroqKey() });
   }
 
@@ -679,7 +680,7 @@ export default function RegistrationPage() {
     try { localStorage.setItem(LS_GROQ_PIN_HASH, hash); } catch { /* storage full */ }
     const onSuccess = pinPrompt?.onSuccess;
     setPinPrompt(null);
-    setPinInput(""); setPinConfirmInput(""); setPinFlowError(null);
+    setPinInput(""); setPinConfirmInput(""); setPinFlowError(null); setShowPinInput(false);
     onSuccess?.();
   }
 
@@ -690,7 +691,7 @@ export default function RegistrationPage() {
     if (hash !== groqPinHash) { setPinFlowError("الرقم السري غلط."); return; }
     const onSuccess = pinPrompt?.onSuccess;
     setPinPrompt(null);
-    setPinInput(""); setPinFlowError(null);
+    setPinInput(""); setPinFlowError(null); setShowPinInput(false);
     onSuccess?.();
   }
 
@@ -707,7 +708,7 @@ export default function RegistrationPage() {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email: agentEmail, password: forgotPasswordInput });
       if (error) { setPinFlowError("كلمة سر الحساب غلط."); return; }
-      setPinInput(""); setPinConfirmInput(""); setForgotPasswordInput("");
+      setPinInput(""); setPinConfirmInput(""); setForgotPasswordInput(""); setShowPinInput(false);
       setPinPrompt((prev) => prev && { ...prev, mode: "setup" });
     } finally {
       setPinFlowBusy(false);
@@ -716,7 +717,7 @@ export default function RegistrationPage() {
 
   function cancelPinPrompt() {
     setPinPrompt(null);
-    setPinInput(""); setPinConfirmInput(""); setForgotPasswordInput(""); setPinFlowError(null);
+    setPinInput(""); setPinConfirmInput(""); setForgotPasswordInput(""); setPinFlowError(null); setShowPinInput(false);
   }
 
   async function testGroqKey() {
@@ -2330,19 +2331,29 @@ export default function RegistrationPage() {
                 <p className="mb-3 text-xs text-muted">
                   هتحتاج الرقم ده كل مرة تحب تشوف المفتاح أو تمسحه — عشان محدش يقدر يشوفه أو يحذفه غيرك لو حد ثاني ماسك الموبايل.
                 </p>
+                <div className="mb-2 flex items-center gap-1.5">
+                  <input
+                    type={showPinInput ? "text" : "password"}
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={pinInput}
+                    onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
+                    placeholder="رقم سري (4-6 أرقام)"
+                    autoFocus
+                    className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
+                    dir="ltr"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPinInput((v) => !v)}
+                    aria-label={showPinInput ? "إخفاء الرقم" : "إظهار الرقم"}
+                    className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-primary hover:text-primary"
+                  >
+                    {showPinInput ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
                 <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={pinInput}
-                  onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
-                  placeholder="رقم سري (4-6 أرقام)"
-                  autoFocus
-                  className="mb-2 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
-                  dir="ltr"
-                />
-                <input
-                  type="password"
+                  type={showPinInput ? "text" : "password"}
                   inputMode="numeric"
                   maxLength={6}
                   value={pinConfirmInput}
@@ -2367,18 +2378,28 @@ export default function RegistrationPage() {
             {pinPrompt.mode === "verify" && (
               <>
                 <p className="mb-3 text-sm font-bold text-ink">أدخل الرقم السري</p>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={pinInput}
-                  onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
-                  placeholder="الرقم السري"
-                  autoFocus
-                  className="mb-2 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
-                  dir="ltr"
-                  onKeyDown={(e) => { if (e.key === "Enter") submitPinVerify(); }}
-                />
+                <div className="mb-2 flex items-center gap-1.5">
+                  <input
+                    type={showPinInput ? "text" : "password"}
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={pinInput}
+                    onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
+                    placeholder="الرقم السري"
+                    autoFocus
+                    className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-lg tracking-widest text-ink focus:outline-none focus:border-primary"
+                    dir="ltr"
+                    onKeyDown={(e) => { if (e.key === "Enter") submitPinVerify(); }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPinInput((v) => !v)}
+                    aria-label={showPinInput ? "إخفاء الرقم" : "إظهار الرقم"}
+                    className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-primary hover:text-primary"
+                  >
+                    {showPinInput ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
                 {pinFlowError && <p className="mb-2 text-xs text-danger">{pinFlowError}</p>}
                 <div className="flex gap-2">
                   <button onClick={submitPinVerify} className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition hover:bg-brand/90">
@@ -2389,7 +2410,7 @@ export default function RegistrationPage() {
                   </button>
                 </div>
                 <button
-                  onClick={() => { setPinFlowError(null); setPinInput(""); setPinPrompt((prev) => prev && { ...prev, mode: "forgot" }); }}
+                  onClick={() => { setPinFlowError(null); setPinInput(""); setShowPinInput(false); setPinPrompt((prev) => prev && { ...prev, mode: "forgot" }); }}
                   className="mt-3 w-full text-center text-xs text-primary underline"
                 >
                   نسيت الرقم السري؟
@@ -2403,16 +2424,26 @@ export default function RegistrationPage() {
                 <p className="mb-3 text-xs text-muted">
                   أدخل كلمة سر حسابك (نفس اللي بتسجّل بيها دخول) عشان تقدر تعمل رقم سري جديد.
                 </p>
-                <input
-                  type="password"
-                  value={forgotPasswordInput}
-                  onChange={(e) => setForgotPasswordInput(e.target.value)}
-                  placeholder="كلمة سر الحساب"
-                  autoFocus
-                  className="mb-2 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:border-primary"
-                  dir="ltr"
-                  onKeyDown={(e) => { if (e.key === "Enter") submitForgotPassword(); }}
-                />
+                <div className="mb-2 flex items-center gap-1.5">
+                  <input
+                    type={showPinInput ? "text" : "password"}
+                    value={forgotPasswordInput}
+                    onChange={(e) => setForgotPasswordInput(e.target.value)}
+                    placeholder="كلمة سر الحساب"
+                    autoFocus
+                    className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:border-primary"
+                    dir="ltr"
+                    onKeyDown={(e) => { if (e.key === "Enter") submitForgotPassword(); }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPinInput((v) => !v)}
+                    aria-label={showPinInput ? "إخفاء كلمة السر" : "إظهار كلمة السر"}
+                    className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-primary hover:text-primary"
+                  >
+                    {showPinInput ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
                 {pinFlowError && <p className="mb-2 text-xs text-danger">{pinFlowError}</p>}
                 <div className="flex gap-2">
                   <button
