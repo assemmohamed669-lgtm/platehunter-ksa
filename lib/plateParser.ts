@@ -541,6 +541,10 @@ const PHONETIC_MERGES: [string, string][] = ([
   // "علامهـ" — all 4 spelling combinations must match.
   ["حابة علامة", "ح ب ل"], ["حابهـ علامهـ", "ح ب ل"],
   ["حابة علامهـ", "ح ب ل"], ["حابهـ علامة", "ح ب ل"],
+  // "راء ياء" (letters ر ي) glued into one word with no space between them —
+  // neither LETTER_NAMES entry can match mid-word, and it's not a real
+  // Arabic word otherwise, so low collision risk.
+  ["راياء", "ر ي"],
   ["احلام", "ا ح ل"],
   ["احلم",  "ا ح ل"],
   ["بالو",  "ب ل"],

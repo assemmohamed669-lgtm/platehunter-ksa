@@ -365,6 +365,20 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("احل1234");
   });
 
+  // Real field recording: plate ريق (ر-ي-ق) dictated by letter names "راء
+  // ياء قاف" — Whisper glued the first two names into one garbled word
+  // "رأياء" (normalizes to "راياء") with no space between them, so neither
+  // LETTER_NAMES entry (راء→ر, ياء→ي) could match at a word boundary. The
+  // clean scan then found only "ق" (1 letter, below the 3-cap) and stopped
+  // dead at the garbled word without trying to pull anything from it, since
+  // the letters.length===0 salvage path never fires when 1-2 letters were
+  // already found.
+  it("resolves the two-letter-names-glued-together garble راياء → ري", () => {
+    const r = extractMultiplePlates("رأياء قاف 5344");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ريق5344");
+  });
+
   // ── Digit-joining conjunction و ────────────────────────────────────────────
   // Spoken Arabic joins digits with "و" ("6 و 1 و 2 و 1" = 6121). The
   // recognizer emits it as a standalone token identical to the plate letter
