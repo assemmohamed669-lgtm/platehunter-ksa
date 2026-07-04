@@ -1391,6 +1391,19 @@ export default function RegistrationPage() {
     return true;
   }
 
+  // "تجاهل" — explicitly discard a pending transcript that has nothing
+  // extractable in it (Whisper completely misheard the recording). Without
+  // this, a garbled transcript is a dead end: "احفظ" re-runs the same failed
+  // extraction and re-shows the same alert every time, and the
+  // start-a-new-recording guard in startRecordingInner requires this pending
+  // transcript to be resolved first — so the agent would be stuck unable to
+  // record again until they had some way to clear it.
+  function discardPendingTranscript() {
+    setPendingTranscript("");
+    pendingAudioRef.current = null;
+    setRecordingError(null);
+  }
+
   // Transcribes a previously-recorded audio file picked from the device —
   // cloud-only (a local file has nothing for the on-device recognizer to
   // listen to live), so this requires a Groq key. A file under the limit
@@ -1926,15 +1939,25 @@ export default function RegistrationPage() {
         <div className="rounded-2xl border border-border bg-surface px-4 py-4">
           <p className="mb-2 text-sm font-bold text-ink" dir="rtl">جاهز للتفريغ</p>
           <p className="mb-3 text-sm text-muted" dir="rtl">{pendingTranscript}</p>
-          <button
-            onClick={handleTranscribeAndSave}
-            disabled={isTranscribing}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
-          >
-            <Download size={16} /> احفظ وصدّر الإكسيل
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleTranscribeAndSave}
+              disabled={isTranscribing}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
+            >
+              <Download size={16} /> احفظ وصدّر الإكسيل
+            </button>
+            <button
+              onClick={discardPendingTranscript}
+              disabled={isTranscribing}
+              title="تجاهل هذا التسجيل — لو مفيش فيه لوحة أصلاً"
+              className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm font-bold text-muted transition hover:border-danger hover:text-danger disabled:opacity-40"
+            >
+              <X size={16} /> تجاهل
+            </button>
+          </div>
           <p className="mt-2 text-[11px] text-muted" dir="rtl">
-            هتتحفظ فورًا بأفضل تخمين — لو حرف غلط، اضغط عليه في الجدول تحت وصحّحه في أي وقت.
+            هتتحفظ فورًا بأفضل تخمين — لو حرف غلط، اضغط عليه في الجدول تحت وصحّحه في أي وقت. لو التسجيل مفهوش لوحة أصلاً، دوس "تجاهل".
           </p>
         </div>
       )}
