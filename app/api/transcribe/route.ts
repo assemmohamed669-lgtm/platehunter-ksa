@@ -128,7 +128,10 @@ export async function POST(req: NextRequest) {
     form.append("file", blob, `audio.${ext}`);
     form.append("model", "whisper-large-v3");
     form.append("language", "ar");
-    form.append("response_format", "json");
+    // verbose_json exposes each segment's no_speech_prob — Whisper's own
+    // estimate of "there's no real speech here" — needed to catch
+    // hallucinated text (see below) instead of just the plain transcript.
+    form.append("response_format", "verbose_json");
     form.append("prompt", PLATE_DICTATION_PROMPT);
 
     const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
@@ -163,7 +166,29 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await res.json();
-    return NextResponse.json({ text: data.text ?? "" });
+
+    // On silence/noise/very short clips, Whisper doesn't reliably return
+    // empty text — it can hallucinate plausible-sounding text from its
+    // training data instead (observed in the wild: "ترجمة نانسي قنقر", a
+    // subtitle-translator credit — a well-documented Whisper failure mode on
+    // low-content audio). Each segment carries Whisper's own estimate of
+    // "there's no real speech here" (no_speech_prob, 0-1); drop any segment
+    // above a conservative threshold rather than pass its likely-fabricated
+    // text through as if it were a real (mis-)transcription. Threshold kept
+    // high (0.7) specifically to avoid discarding real-but-quiet speech —
+    // false positives here (keeping a hallucination) are far less costly
+    // than false negatives (silently dropping a genuine plate).
+    const NO_SPEECH_THRESHOLD = 0.7;
+    const segments: Array<{ text: string; no_speech_prob?: number }> = data.segments ?? [];
+    const text = segments.length > 0
+      ? segments
+          .filter((s) => (s.no_speech_prob ?? 0) <= NO_SPEECH_THRESHOLD)
+          .map((s) => s.text)
+          .join(" ")
+          .trim()
+      : (data.text ?? "");
+
+    return NextResponse.json({ text });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("transcribe error:", msg);
