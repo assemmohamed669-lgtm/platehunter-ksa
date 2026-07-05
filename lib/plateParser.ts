@@ -171,6 +171,13 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   // replaceAll() surrounds every match with spaces, so word boundaries survive
   // and segmentation still sees one token per spoken unit.
   let text = removeDiacritics(transcript.trim());
+  // Punctuation → space FIRST. Whisper separates dictated plates with the
+  // Arabic comma "،" (U+060C) glued to the preceding word ("اثنين،"). That
+  // char lives INSIDE the [؀-ۿ] block replaceAll's word-boundary lookaround
+  // guards on, so it silently blocked the attached number/letter from
+  // converting. Clearing it (and other punctuation) to a space up front makes
+  // every token a clean word again — and keeps stray punctuation out of notes.
+  text = text.replace(/[،؛؟۔.,;!?]/g, " ");
   text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
   text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
   // ألف و<number> = 1000 (e.g. "ألف وخمسمية" = 1500) — but the lookahead only
@@ -969,6 +976,12 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
   // 1. Remove diacritics
   text = removeDiacritics(text);
+
+  // 1b. Punctuation → space. The Arabic comma "،" (U+060C) sits inside the
+  // [؀-ۿ] block replaceAll's boundary lookaround guards on, so a number/letter
+  // with a comma glued to it ("اثنين،") wouldn't convert. Clear punctuation
+  // up front so every token is a clean word.
+  text = text.replace(/[،؛؟۔.,;!?]/g, " ");
 
   // 2. Detect and strip vehicle type
   let vehicleType: string | undefined;

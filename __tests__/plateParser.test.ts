@@ -410,6 +410,26 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("ححع7641");
   });
 
+  // ── Arabic comma glued to a number/letter ─────────────────────────────────
+  // Whisper punctuates between dictated plates with the Arabic comma "،"
+  // (U+060C), attached to the preceding word ("اثنين،"). U+060C sits INSIDE
+  // the [؀-ۿ] Arabic block that replaceAll's word-boundary lookaround guards
+  // on, so it wrongly blocked the number/letter conversion — the attached
+  // digit was lost to notes and the plate came out short (حمل0218 for the
+  // dictated 2182: the trailing "اثنين،" never became 2).
+  it("converts a number even when an Arabic comma is glued to it", () => {
+    const r = extractMultiplePlates("قاف اثنين، واحد ثمانية اثنين");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ق2182");
+  });
+
+  it("real uploaded-file transcript: commas between plates don't drop digits", () => {
+    const r = extractMultiplePlates(
+      "حاء ميم لام اثنين واحد ثمانية اثنين، ألف باء دال اثنين واحد خمسة اثنين، حاء لام كاف ستة واحد ثمانية اثنين."
+    );
+    expect(r.map((p) => p.plate)).toEqual(["حمل2182", "ابد2152", "حلك6182"]);
+  });
+
   // ── Digit-joining conjunction و ────────────────────────────────────────────
   // Spoken Arabic joins digits with "و" ("6 و 1 و 2 و 1" = 6121). The
   // recognizer emits it as a standalone token identical to the plate letter
