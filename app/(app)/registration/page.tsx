@@ -1164,7 +1164,10 @@ export default function RegistrationPage() {
         originalPlate: originalPlate !== cleanPlate ? originalPlate : undefined,
         uncertain: uncertain || undefined,
         rawLetterSource,
-        vehicleType: vehicleType?.trim() || undefined,
+        // Field convention: a car with no type dictated in front of it
+        // (ونيت/فان/دباب/…) is a regular private car — default it to "ملاكي"
+        // so the vehicle-type column is never blank for a real plate.
+        vehicleType: vehicleType?.trim() || "ملاكي",
         notes: notes?.trim() || undefined,
         lat: coords?.lat,
         lng: coords?.lng,
@@ -1251,6 +1254,7 @@ export default function RegistrationPage() {
       localId,
       agentId,
       plate: finalPlate,
+      vehicleType: "ملاكي", // same default as voice: a typed plate with no type is a private car
       lat: coords?.lat,
       lng: coords?.lng,
       recordedAt: new Date().toISOString(),
@@ -1354,7 +1358,11 @@ export default function RegistrationPage() {
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const ext = (entry.audioMimeType?.split("/")[1] ?? "m4a").split(";")[0];
     const blob = new Blob([bytes], { type: entry.audioMimeType || "audio/mp4" });
-    await shareBlob(blob, `${entry.plate}.${ext}`, `تسجيل صوتي — ${entry.plate}`);
+    try {
+      await shareBlob(blob, `${entry.plate}.${ext}`, `تسجيل صوتي — ${entry.plate}`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت مشاركة المقطع الصوتي");
+    }
   }
 
   async function handleDelete(localId: string) {
@@ -1394,21 +1402,28 @@ export default function RegistrationPage() {
   async function handleExport(recs = recordings) {
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const rows = buildRows(recs);
-    if (rows.length === 0) return;
+    if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
     const blob = buildExcelBlob(rows, "اللوحات");
     try {
       await openExcelBlob(blob, filename);
     } catch (err: any) {
-      setRecordingError(err?.message ?? "تعذّر فتح ملف Excel");
+      // These buttons sit at the BOTTOM of the page; the mic-area error banner
+      // (setRecordingError) renders near the top and scrolls off-screen, so a
+      // failure here looked like "nothing happened". alert() is always visible.
+      alert(err?.message ?? "تعذّر فتح ملف Excel");
     }
   }
 
   async function handleShareExcelFor(recs = recordings) {
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const rows = buildRows(recs);
-    if (rows.length === 0) return;
+    if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
     const blob = buildExcelBlob(rows, "اللوحات");
-    await shareBlob(blob, filename, "سجلات اللوحات");
+    try {
+      await shareBlob(blob, filename, "سجلات اللوحات");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت مشاركة ملف Excel");
+    }
   }
 
   async function shareBlob(blob: Blob, filename: string, title: string) {
@@ -1431,9 +1446,10 @@ export default function RegistrationPage() {
         const { uri } = await Filesystem.writeFile({ path: toSafeCacheFilename(filename), data: base64, directory: Directory.Cache });
         await Share.share({ title, url: uri, dialogTitle: "مشاركة الملف" });
       } catch (e: any) {
-        if (e?.name !== "AbortError" && !/cancel/i.test(e?.message ?? "")) {
-          setRecordingError(`تعذّرت المشاركة: ${e?.message ?? e}`);
-        }
+        if (e?.name === "AbortError" || /cancel/i.test(e?.message ?? "")) return; // user dismissed the sheet
+        // Rethrow so the caller can surface it where the button is (alert),
+        // instead of swallowing it into the top banner the user can't see.
+        throw new Error(`تعذّرت المشاركة: ${e?.message ?? e}`);
       }
       return;
     }
