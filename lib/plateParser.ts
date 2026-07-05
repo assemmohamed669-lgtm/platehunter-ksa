@@ -187,11 +187,14 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   text = text.replace(ZERO_WORD_RE, " 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
   text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
   text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
-  // ألف و<number> = 1000 (e.g. "ألف وخمسمية" = 1500) — but the lookahead only
-  // checked for a following "و" character, which the letter NAME "واو" (or
-  // its short form "وا") also starts with, so "دال ألف واو" (spelling د-ا-و)
-  // wrongly ate the ا into a phantom 1000 and left the plate missing a letter.
-  text = text.replace(/(?:ألف|الف)(?=\s+و)(?!\s+(?:واو|وا)(?:\s|$))/g, " 1000 ");
+  // NB: no ألف→1000 rewrite here (unlike parsePlateFromTranscript). In
+  // letter-by-letter dictation "ألف" is almost always the LETTER ا, and this
+  // segmenter concatenates rather than sums, so the rewrite only ever ATE the
+  // very-common ا into a phantom 1000 (fired whenever the next word merely
+  // started with و — e.g. the misheard "وواب"/"واو"). A genuine compound like
+  // "ألف وخمسمية" produces no digit group here, so extractMultiplePlates
+  // returns [] and extractPlates falls back to parsePlateFromTranscript, which
+  // sums it correctly (حمن1500). So ألف always → ا via LETTER_NAMES below.
   text = text.replace(/ى/g, "ي");            // alef maqsura → ي
   // Protect the explicit letter-name واو ("the letter waw" — always a letter,
   // never the conjunction) from LETTER_NAMES' text-level collapse to bare و
