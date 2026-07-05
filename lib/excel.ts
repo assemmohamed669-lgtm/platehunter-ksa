@@ -458,6 +458,26 @@ export class NativeExportError extends Error {
   }
 }
 
+// Android's cache dir + FileProvider + FileOpener/Share chain is unreliable
+// with non-ASCII filenames (the default export name is Arabic, e.g.
+// "اكسيل-05-07-2026.xlsx", and audio shares use the Arabic plate as the
+// name) — the content:// URI can come back unusable and the open/share
+// silently no-ops or errors. The temp file in Cache is throwaway, so give it
+// an ASCII-safe name for the write while callers keep the human-readable
+// Arabic name for the web-download path (browsers handle Arabic names fine).
+export function toSafeCacheFilename(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  const rawExt = dot > 0 ? filename.slice(dot + 1) : "";
+  const rawBase = dot > 0 ? filename.slice(0, dot) : filename;
+  const ext = rawExt.replace(/[^a-zA-Z0-9]/g, "") || "dat";
+  const base =
+    rawBase
+      .replace(/[^a-zA-Z0-9._-]+/g, "-") // Arabic / spaces / punctuation → dash
+      .replace(/-{2,}/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "") || "file";
+  return `${base}.${ext}`;
+}
+
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
@@ -472,7 +492,7 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
       const base64 = btoa(binary);
 
       const { uri } = await Filesystem.writeFile({
-        path: filename,
+        path: toSafeCacheFilename(filename),
         data: base64,
         directory: Directory.Cache,
       });
@@ -506,7 +526,7 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
       const base64 = btoa(binary);
 
       const { uri } = await Filesystem.writeFile({
-        path: filename,
+        path: toSafeCacheFilename(filename),
         data: base64,
         directory: Directory.Cache,
       });

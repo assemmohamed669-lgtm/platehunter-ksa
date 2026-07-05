@@ -46,7 +46,7 @@ import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normal
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob, type ExcelTable } from "@/lib/excel";
+import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -1428,7 +1428,7 @@ export default function RegistrationPage() {
         let binary = "";
         for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
         const base64 = btoa(binary);
-        const { uri } = await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Cache });
+        const { uri } = await Filesystem.writeFile({ path: toSafeCacheFilename(filename), data: base64, directory: Directory.Cache });
         await Share.share({ title, url: uri, dialogTitle: "مشاركة الملف" });
       } catch (e: any) {
         if (e?.name !== "AbortError" && !/cancel/i.test(e?.message ?? "")) {
