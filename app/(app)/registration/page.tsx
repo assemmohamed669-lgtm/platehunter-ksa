@@ -1400,29 +1400,34 @@ export default function RegistrationPage() {
   }
 
   async function handleExport(recs = recordings) {
+    // TEMP diagnostic tracing — these alerts confirm whether the tap even
+    // fires and exactly where the native open path fails on the device.
+    // Remove once the button is confirmed working.
+    alert("🔍 فتح: بدأ الزر");
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
     const blob = buildExcelBlob(rows, "اللوحات");
     try {
-      await openExcelBlob(blob, filename);
+      const result = await openExcelBlob(blob, filename);
+      alert(`🔍 فتح: النتيجة = ${result}`);
     } catch (err: any) {
-      // These buttons sit at the BOTTOM of the page; the mic-area error banner
-      // (setRecordingError) renders near the top and scrolls off-screen, so a
-      // failure here looked like "nothing happened". alert() is always visible.
-      alert(err?.message ?? "تعذّر فتح ملف Excel");
+      alert(`🔍 فتح: خطأ = ${err?.message ?? err}`);
     }
   }
 
   async function handleShareExcelFor(recs = recordings) {
+    // TEMP diagnostic tracing — see handleExport. Remove once confirmed.
+    alert("🔍 مشاركة: بدأ الزر");
     const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
     const rows = buildRows(recs);
     if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
     const blob = buildExcelBlob(rows, "اللوحات");
     try {
       await shareBlob(blob, filename, "سجلات اللوحات");
+      alert("🔍 مشاركة: تمّت بدون خطأ");
     } catch (err: any) {
-      alert(err?.message ?? "تعذّرت مشاركة ملف Excel");
+      alert(`🔍 مشاركة: خطأ = ${err?.message ?? err}`);
     }
   }
 
