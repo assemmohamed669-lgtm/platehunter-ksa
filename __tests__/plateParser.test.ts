@@ -403,13 +403,23 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("ادط5550");
   });
 
-  // "زير" — Whisper's clipped form of زيرو/صفر (no final و). Real field
-  // recording produced it 3× ("خمسة زير خمسة أربعة"), each breaking a plate
-  // into two + a ير phantom. Same family as صفر/زيرو.
-  it("recognizes the clipped زير as 0", () => {
-    const r = extractMultiplePlates("حاء لام باء خمسة زير خمسة أربعة");
-    expect(r).toHaveLength(1);
-    expect(r[0].plate).toBe("حلب5054");
+  // Whisper spells the arabized "zero" a different way almost every take
+  // (زير / زيرو / زيرة / زيره …). Rather than chase each variant, the whole
+  // "زير*" family is normalized to 0 — this must cover ALL of them.
+  it("recognizes every Whisper spelling of zero (زير family)", () => {
+    for (const z of ["زير", "زيرو", "زيرة", "زيره", "زيرا"]) {
+      const r = extractMultiplePlates(`حاء لام باء خمسة ${z} خمسة أربعة`);
+      expect(r, z).toHaveLength(1);
+      expect(r[0].plate, z).toBe("حلب5054");
+    }
+  });
+
+  it("does not turn the real word وزير (minister) into a zero", () => {
+    const r = extractMultiplePlates("قاف وزير خمسة أربعة تلاتة اتنين");
+    // وزير is salvaged as letters, NOT converted to a spurious 0
+    expect(r[0].plate).not.toContain("0");
+    expect(r[0].plate).toMatch(/\d{4}$/); // digits still 5432
+    expect(r[0].plate.endsWith("5432")).toBe(true);
   });
 
   // "ربعة" (colloquial أربعة) wasn't a recognized form for 4.

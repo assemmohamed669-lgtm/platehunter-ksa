@@ -16,6 +16,12 @@
  *  12. Notes = tokens not consumed by the plate
  */
 
+// The arabized English "zero" — the recognizer clips/spells it a different
+// way almost every take (زير, زيرو, زيرة, زيره, زيرا, زيرى). Match the whole
+// family as one standalone word instead of chasing each variant. The
+// lookbehind/lookahead keep it whole-word, so "وزير" (minister) is untouched.
+const ZERO_WORD_RE = /(?<![؀-ۿ])زير[وةهاى]?(?![؀-ۿ])/g;
+
 // ─── Egyptian dialect → Saudi plate letter/digit mapping ─────────────────
 // المأمور يقول كل حرف كلمة لوحدها: "دال حه ره واحد اتنين تلاتة أربعة"
 export const EGYPTIAN_LETTERS: Record<string, string> = {
@@ -178,6 +184,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   // converting. Clearing it (and other punctuation) to a space up front makes
   // every token a clean word again — and keeps stray punctuation out of notes.
   text = text.replace(/[،؛؟۔.,;!?]/g, " ");
+  text = text.replace(ZERO_WORD_RE, " 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
   text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
   text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
   // ألف و<number> = 1000 (e.g. "ألف وخمسمية" = 1500) — but the lookahead only
@@ -573,7 +580,7 @@ const PHONETIC_MERGES: [string, string][] = ([
 // Sorted longest-first guarantees this automatically.
 const SPOKEN_NUMBERS: [string, string][] = ([
   // ── 0-9 ──────────────────────────────────────────────────────────────────
-  ["صفر",    "0"], ["زيرو",   "0"], ["زير",   "0"], // زيرو/زير = English "zero" (زير = Whisper's clipped form, no final و)
+  ["صفر",    "0"], // the زير/زيرو/زيرة family is handled earlier by ZERO_WORD_RE
   ["واحد",   "1"], ["وحده",   "1"],
   ["اثنين",  "2"], ["اتنين",  "2"], ["اثنان",  "2"], ["تنين",   "2"],
   ["ثلاثة",  "3"], ["تلاتة",  "3"], ["تلاته",  "3"], ["ثلاث",   "3"],
@@ -982,6 +989,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // with a comma glued to it ("اثنين،") wouldn't convert. Clear punctuation
   // up front so every token is a clean word.
   text = text.replace(/[،؛؟۔.,;!?]/g, " ");
+  text = text.replace(ZERO_WORD_RE, " 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
 
   // 2. Detect and strip vehicle type
   let vehicleType: string | undefined;
