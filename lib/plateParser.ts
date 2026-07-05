@@ -573,7 +573,7 @@ const PHONETIC_MERGES: [string, string][] = ([
 // Sorted longest-first guarantees this automatically.
 const SPOKEN_NUMBERS: [string, string][] = ([
   // ── 0-9 ──────────────────────────────────────────────────────────────────
-  ["صفر",    "0"], ["زيرو",   "0"], // زيرو = English "zero", very common in dictation
+  ["صفر",    "0"], ["زيرو",   "0"], ["زير",   "0"], // زيرو/زير = English "zero" (زير = Whisper's clipped form, no final و)
   ["واحد",   "1"], ["وحده",   "1"],
   ["اثنين",  "2"], ["اتنين",  "2"], ["اثنان",  "2"], ["تنين",   "2"],
   ["ثلاثة",  "3"], ["تلاتة",  "3"], ["تلاته",  "3"], ["ثلاث",   "3"],

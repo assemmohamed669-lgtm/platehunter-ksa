@@ -403,6 +403,15 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("ادط5550");
   });
 
+  // "زير" — Whisper's clipped form of زيرو/صفر (no final و). Real field
+  // recording produced it 3× ("خمسة زير خمسة أربعة"), each breaking a plate
+  // into two + a ير phantom. Same family as صفر/زيرو.
+  it("recognizes the clipped زير as 0", () => {
+    const r = extractMultiplePlates("حاء لام باء خمسة زير خمسة أربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حلب5054");
+  });
+
   // "ربعة" (colloquial أربعة) wasn't a recognized form for 4.
   it("recognizes ربعة as the digit 4", () => {
     const r = extractMultiplePlates("حاء حاء عين سبعة ستة ربعة واحد");
