@@ -1400,34 +1400,36 @@ export default function RegistrationPage() {
   }
 
   async function handleExport(recs = recordings) {
-    // TEMP diagnostic tracing — these alerts confirm whether the tap even
-    // fires and exactly where the native open path fails on the device.
-    // Remove once the button is confirmed working.
-    alert("🔍 فتح: بدأ الزر");
-    const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
-    const rows = buildRows(recs);
-    if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
-    const blob = buildExcelBlob(rows, "اللوحات");
+    // TEMP step-by-step diagnostic — the LAST message shown before it stops
+    // pinpoints exactly which step dies. EVERYTHING is inside try/catch now,
+    // so any throw (even in buildRows/buildExcelBlob, which were previously
+    // OUTSIDE the try) surfaces instead of silently killing the handler.
     try {
+      const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
+      const rows = buildRows(recs);
+      if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
+      alert("🔍 فتح ①: بجهّز ملف Excel");
+      const blob = buildExcelBlob(rows, "اللوحات");
+      alert("🔍 فتح ②: الملف جاهز — بفتحه");
       const result = await openExcelBlob(blob, filename);
-      alert(`🔍 فتح: النتيجة = ${result}`);
+      alert(`🔍 فتح ③: النتيجة = ${result}`);
     } catch (err: any) {
-      alert(`🔍 فتح: خطأ = ${err?.message ?? err}`);
+      alert(`🔍 فتح ✗: خطأ = ${err?.message ?? err}`);
     }
   }
 
   async function handleShareExcelFor(recs = recordings) {
-    // TEMP diagnostic tracing — see handleExport. Remove once confirmed.
-    alert("🔍 مشاركة: بدأ الزر");
-    const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
-    const rows = buildRows(recs);
-    if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
-    const blob = buildExcelBlob(rows, "اللوحات");
     try {
+      const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
+      const rows = buildRows(recs);
+      if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
+      alert("🔍 مشاركة ①: بجهّز ملف Excel");
+      const blob = buildExcelBlob(rows, "اللوحات");
+      alert("🔍 مشاركة ②: الملف جاهز — بشاركه");
       await shareBlob(blob, filename, "سجلات اللوحات");
-      alert("🔍 مشاركة: تمّت بدون خطأ");
+      alert("🔍 مشاركة ③: تمّت بدون خطأ");
     } catch (err: any) {
-      alert(`🔍 مشاركة: خطأ = ${err?.message ?? err}`);
+      alert(`🔍 مشاركة ✗: خطأ = ${err?.message ?? err}`);
     }
   }
 
