@@ -46,7 +46,7 @@ import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normal
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
+import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -1400,39 +1400,27 @@ export default function RegistrationPage() {
   }
 
   async function handleExport(recs = recordings) {
-    // TEMP diagnostic — the error alert names the exact step that failed.
-    let step = "بداية";
+    const rows = buildRows(recs);
+    if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
+    // buildSpreadsheetBlob falls back to CSV if xlsx build fails on-device.
+    const { blob, ext } = buildSpreadsheetBlob(rows, "اللوحات");
+    const filename = `${excelName.trim() || defaultExcelName()}.${ext}`;
     try {
-      step = "تجهيز الاسم";
-      const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
-      step = "تجهيز الصفوف";
-      const rows = buildRows(recs);
-      if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
-      step = "بناء ملف Excel";
-      const blob = buildExcelBlob(rows, "اللوحات");
-      step = "فتح الملف (native)";
-      const result = await openExcelBlob(blob, filename);
-      alert(`🔍 فتح: نجح ✓ (${result})`);
+      await openExcelBlob(blob, filename);
     } catch (err: any) {
-      alert(`🔍 فتح: فشل عند [${step}] = ${err?.message ?? err}`);
+      alert(err?.message ?? "تعذّر فتح الملف");
     }
   }
 
   async function handleShareExcelFor(recs = recordings) {
-    let step = "بداية";
+    const rows = buildRows(recs);
+    if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
+    const { blob, ext } = buildSpreadsheetBlob(rows, "اللوحات");
+    const filename = `${excelName.trim() || defaultExcelName()}.${ext}`;
     try {
-      step = "تجهيز الاسم";
-      const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
-      step = "تجهيز الصفوف";
-      const rows = buildRows(recs);
-      if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
-      step = "بناء ملف Excel";
-      const blob = buildExcelBlob(rows, "اللوحات");
-      step = "مشاركة الملف (native)";
       await shareBlob(blob, filename, "سجلات اللوحات");
-      alert("🔍 مشاركة: نجح ✓");
     } catch (err: any) {
-      alert(`🔍 مشاركة: فشل عند [${step}] = ${err?.message ?? err}`);
+      alert(err?.message ?? "تعذّرت المشاركة");
     }
   }
 
@@ -1522,8 +1510,8 @@ export default function RegistrationPage() {
     if (savedEntries.length === 0) return true;
 
     const rows = buildRows(savedEntries);
-    const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
-    const blob = buildExcelBlob(rows, "اللوحات");
+    const { blob, ext } = buildSpreadsheetBlob(rows, "اللوحات");
+    const filename = `${excelName.trim() || defaultExcelName()}.${ext}`;
     try {
       await openExcelBlob(blob, filename);
     } catch (err: any) {

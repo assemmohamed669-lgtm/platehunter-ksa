@@ -433,6 +433,40 @@ export function buildExcelBlob(
   });
 }
 
+// Pure-JS CSV builder — no SheetJS write path at all, so it can't hit the
+// "null.indexOf" crash that XLSX.write throws inside some Android WebViews.
+// UTF-8 BOM (﻿) makes Excel read the Arabic text correctly, and Excel
+// opens .csv natively into columns. Used as a guaranteed fallback when the
+// xlsx build fails on-device.
+export function buildCsvBlob(rows: Record<string, unknown>[]): Blob {
+  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const esc = (v: unknown) => {
+    const s = v == null ? "" : String(v);
+    // Quote if it contains a comma, quote, or newline; double interior quotes.
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [
+    headers.map(esc).join(","),
+    ...rows.map((r) => headers.map((h) => esc(r[h])).join(",")),
+  ];
+  return new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+}
+
+// Builds the spreadsheet as a real .xlsx, but if XLSX.write throws (a known
+// SheetJS failure inside some Android WebViews — "null.indexOf"), falls back
+// to a plain CSV that opens in Excel just the same. Returns the extension so
+// the caller can name the file correctly.
+export function buildSpreadsheetBlob(
+  rows: Record<string, unknown>[],
+  sheetName: string,
+): { blob: Blob; ext: "xlsx" | "csv" } {
+  try {
+    return { blob: buildExcelBlob(rows, sheetName), ext: "xlsx" };
+  } catch {
+    return { blob: buildCsvBlob(rows), ext: "csv" };
+  }
+}
+
 export function downloadExcelBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

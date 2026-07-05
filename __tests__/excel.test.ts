@@ -1,5 +1,49 @@
 import { describe, it, expect } from "vitest";
-import { toSafeCacheFilename } from "@/lib/excel";
+import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob } from "@/lib/excel";
+
+describe("buildCsvBlob", () => {
+  // Blob.text() strips a leading BOM on decode, so read raw bytes to assert
+  // the BOM is really written, and use text() for the (BOM-free) content.
+  async function bytes(blob: Blob) { return new Uint8Array(await blob.arrayBuffer()); }
+  async function text(blob: Blob) { return await blob.text(); }
+
+  it("starts with the UTF-8 BOM bytes so Excel reads Arabic correctly", async () => {
+    const b = await bytes(buildCsvBlob([{ a: "حبل6121" }]));
+    expect([b[0], b[1], b[2]]).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  it("writes a header row + data rows", async () => {
+    const csv = await text(buildCsvBlob([
+      { "رقم اللوحة": "حبل6121", "نوع السيارة": "ملاكي" },
+    ]));
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("رقم اللوحة,نوع السيارة");
+    expect(lines[1]).toBe("حبل6121,ملاكي");
+  });
+
+  it("quotes values containing commas, quotes, or newlines", async () => {
+    const csv = await text(buildCsvBlob([{ a: 'x,y', b: 'he said "hi"', c: "l1\nl2" }]));
+    const dataLine = csv.split("\r\n")[1];
+    expect(dataLine).toBe('"x,y","he said ""hi""","l1\nl2"');
+  });
+
+  it("renders null/undefined as empty cells", async () => {
+    const csv = await text(buildCsvBlob([{ a: null, b: undefined, c: "ok" } as any]));
+    expect(csv.split("\r\n")[1]).toBe(",,ok");
+  });
+
+  it("handles an empty row list", async () => {
+    expect(await text(buildCsvBlob([]))).toBe("");
+  });
+});
+
+describe("buildSpreadsheetBlob", () => {
+  it("returns an xlsx blob for normal data", () => {
+    const { blob, ext } = buildSpreadsheetBlob([{ "رقم اللوحة": "حبل6121" }], "اللوحات");
+    expect(ext).toBe("xlsx");
+    expect(blob.size).toBeGreaterThan(0);
+  });
+});
 
 describe("toSafeCacheFilename", () => {
   it("strips Arabic from the default export name but keeps the ASCII date + extension", () => {
