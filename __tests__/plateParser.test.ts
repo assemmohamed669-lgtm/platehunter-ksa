@@ -379,6 +379,37 @@ describe("extractMultiplePlates — corpus", () => {
     expect(r[0].plate).toBe("ريق5344");
   });
 
+  // Real field recording: "ياء سين" (letters ي س) glued by Whisper into the
+  // word "ياسين" — same class as راياء above.
+  it("resolves the glued letter names ياسين → ي س", () => {
+    const r = extractMultiplePlates("دال ياسين سبعة زيرو تسعة تمانية");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ديس7098");
+  });
+
+  // ── Spoken-number gaps found in real recordings ───────────────────────────
+  // "زيرو" (English "zero", arabized) is extremely common in dictation but
+  // wasn't a recognized form for 0 — it fell through and got salvaged as the
+  // letters ي/ر/و, spawning phantom plates and dropping the intended 0.
+  it("recognizes زيرو as the digit 0", () => {
+    const r = extractMultiplePlates("حاء لام باء خمسة زيرو خمسة اربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حلب5054");
+  });
+
+  it("recognizes زيرو as 0 at the end of a plate too", () => {
+    const r = extractMultiplePlates("ألف دال طاء خمسة خمسة خمسة زيرو");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ادط5550");
+  });
+
+  // "ربعة" (colloquial أربعة) wasn't a recognized form for 4.
+  it("recognizes ربعة as the digit 4", () => {
+    const r = extractMultiplePlates("حاء حاء عين سبعة ستة ربعة واحد");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ححع7641");
+  });
+
   // ── Digit-joining conjunction و ────────────────────────────────────────────
   // Spoken Arabic joins digits with "و" ("6 و 1 و 2 و 1" = 6121). The
   // recognizer emits it as a standalone token identical to the plate letter

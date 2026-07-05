@@ -545,6 +545,10 @@ const PHONETIC_MERGES: [string, string][] = ([
   // neither LETTER_NAMES entry can match mid-word, and it's not a real
   // Arabic word otherwise, so low collision risk.
   ["راياء", "ر ي"],
+  // "ياء سين" (letters ي س) glued into "ياسين" — same class as راياء. It's
+  // also a real name, but in letter-by-letter plate dictation it's always
+  // the two letters, and it never appears in this app's note vocabulary.
+  ["ياسين", "ي س"],
   ["احلام", "ا ح ل"],
   ["احلم",  "ا ح ل"],
   ["بالو",  "ب ل"],
@@ -562,12 +566,12 @@ const PHONETIC_MERGES: [string, string][] = ([
 // Sorted longest-first guarantees this automatically.
 const SPOKEN_NUMBERS: [string, string][] = ([
   // ── 0-9 ──────────────────────────────────────────────────────────────────
-  ["صفر",    "0"],
+  ["صفر",    "0"], ["زيرو",   "0"], // زيرو = English "zero", very common in dictation
   ["واحد",   "1"], ["وحده",   "1"],
   ["اثنين",  "2"], ["اتنين",  "2"], ["اثنان",  "2"], ["تنين",   "2"],
   ["ثلاثة",  "3"], ["تلاتة",  "3"], ["تلاته",  "3"], ["ثلاث",   "3"],
   ["تلات",   "3"], ["تلته",   "3"],
-  ["أربعة",  "4"], ["اربعة",  "4"], ["أربع",   "4"], ["اربع",   "4"],
+  ["أربعة",  "4"], ["اربعة",  "4"], ["أربع",   "4"], ["اربع",   "4"], ["ربعة", "4"], // ربعة = colloquial أربعة
   ["خمسة",   "5"], ["خمسه",   "5"], ["خمس",    "5"],
   ["ستة",    "6"], ["سته",    "6"], ["ست",     "6"],
   ["سبعة",   "7"], ["سبعه",   "7"], ["سبع",    "7"],
