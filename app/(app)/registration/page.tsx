@@ -1400,36 +1400,39 @@ export default function RegistrationPage() {
   }
 
   async function handleExport(recs = recordings) {
-    // TEMP step-by-step diagnostic — the LAST message shown before it stops
-    // pinpoints exactly which step dies. EVERYTHING is inside try/catch now,
-    // so any throw (even in buildRows/buildExcelBlob, which were previously
-    // OUTSIDE the try) surfaces instead of silently killing the handler.
+    // TEMP diagnostic — the error alert names the exact step that failed.
+    let step = "بداية";
     try {
+      step = "تجهيز الاسم";
       const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
+      step = "تجهيز الصفوف";
       const rows = buildRows(recs);
       if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
-      alert("🔍 فتح ①: بجهّز ملف Excel");
+      step = "بناء ملف Excel";
       const blob = buildExcelBlob(rows, "اللوحات");
-      alert("🔍 فتح ②: الملف جاهز — بفتحه");
+      step = "فتح الملف (native)";
       const result = await openExcelBlob(blob, filename);
-      alert(`🔍 فتح ③: النتيجة = ${result}`);
+      alert(`🔍 فتح: نجح ✓ (${result})`);
     } catch (err: any) {
-      alert(`🔍 فتح ✗: خطأ = ${err?.message ?? err}`);
+      alert(`🔍 فتح: فشل عند [${step}] = ${err?.message ?? err}`);
     }
   }
 
   async function handleShareExcelFor(recs = recordings) {
+    let step = "بداية";
     try {
+      step = "تجهيز الاسم";
       const filename = `${excelName.trim() || defaultExcelName()}.xlsx`;
+      step = "تجهيز الصفوف";
       const rows = buildRows(recs);
       if (rows.length === 0) { alert("مفيش لوحات تتشارك."); return; }
-      alert("🔍 مشاركة ①: بجهّز ملف Excel");
+      step = "بناء ملف Excel";
       const blob = buildExcelBlob(rows, "اللوحات");
-      alert("🔍 مشاركة ②: الملف جاهز — بشاركه");
+      step = "مشاركة الملف (native)";
       await shareBlob(blob, filename, "سجلات اللوحات");
-      alert("🔍 مشاركة ③: تمّت بدون خطأ");
+      alert("🔍 مشاركة: نجح ✓");
     } catch (err: any) {
-      alert(`🔍 مشاركة ✗: خطأ = ${err?.message ?? err}`);
+      alert(`🔍 مشاركة: فشل عند [${step}] = ${err?.message ?? err}`);
     }
   }
 
