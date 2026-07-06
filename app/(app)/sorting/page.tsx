@@ -715,7 +715,7 @@ export default function SortingPage() {
 
       {/* ② TASHYEEK FILE */}
       <div className="flex flex-col gap-2">
-        <p className="text-sm font-bold text-ink">شيت التسجيل</p>
+        <p className="text-sm font-bold text-ink">شيت التشييك الميداني</p>
         <FileUploadBox
           title="ملف التشييك"
           hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"

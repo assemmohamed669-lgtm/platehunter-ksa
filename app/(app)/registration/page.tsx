@@ -46,7 +46,7 @@ import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normal
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
-import { exportRecordingsToExcel, parseExcelFile, buildExcelBlob, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
+import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -1700,26 +1700,33 @@ export default function RegistrationPage() {
       "ملاحظات": r.notes ?? "",
     }));
 
-    const existing = await getUploadedFile("local", "tashyeek");
-    const existingKeys = new Set(
-      (existing?.rows ?? []).map((r) => `${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`)
-    );
-    const freshRows = newRows.filter((r) => !existingKeys.has(`${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`));
-    const allRows = [...(existing?.rows ?? []), ...freshRows];
+    try {
+      const existing = await getUploadedFile("local", "tashyeek");
+      const existingKeys = new Set(
+        (existing?.rows ?? []).map((r) => `${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`)
+      );
+      const freshRows = newRows.filter((r) => !existingKeys.has(`${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`));
+      const allRows = [...(existing?.rows ?? []), ...freshRows];
 
-    const blob = buildExcelBlob(allRows, "ملف التشييك");
-    await saveUploadedFile({
-      key: "local:tashyeek",
-      agentId: "local",
-      slot: "tashyeek",
-      fileName: "ملف-التشييك.xlsx",
-      headers: ["رقم اللوحة", "نوع المركبة", "GPS", "الحي", "الشارع", "تاريخ التسجيل", "اسم المسجّل", "ملاحظات"],
-      rows: allRows,
-      uploadedAt: new Date().toISOString(),
-      fileBlob: blob,
-    });
+      // buildSpreadsheetBlob falls back to CSV if xlsx-building crashes on the
+      // device (the same WebView bug that broke the open/share buttons) — this
+      // was why the button "did nothing": buildExcelBlob threw before the save.
+      const { blob, ext } = buildSpreadsheetBlob(allRows, "ملف التشييك");
+      await saveUploadedFile({
+        key: "local:tashyeek",
+        agentId: "local",
+        slot: "tashyeek",
+        fileName: `ملف-التشييك.${ext}`,
+        headers: ["رقم اللوحة", "نوع المركبة", "GPS", "الحي", "الشارع", "تاريخ التسجيل", "اسم المسجّل", "ملاحظات"],
+        rows: allRows,
+        uploadedAt: new Date().toISOString(),
+        fileBlob: blob,
+      });
 
-    alert(`✅ تم التصدير — ${freshRows.length} إدخال جديد، الإجمالي: ${allRows.length}`);
+      alert(`✅ تم التصدير لشيت التشييك الميداني — ${freshRows.length} إدخال جديد، الإجمالي: ${allRows.length}.\nافتح صفحة الفرز عشان تلاقيه في خانة شيت التشييك الميداني.`);
+    } catch (err: any) {
+      alert(`تعذّر التصدير للتشييك: ${err?.message ?? err}`);
+    }
   }
 
   function dupClass(plate: string): string {
@@ -2231,11 +2238,15 @@ export default function RegistrationPage() {
             />
             <div className="flex gap-2">
               <button onClick={async () => {
-                const blob = buildExcelBlob(
-                  matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
-                  "المطلوبة"
-                );
-                await shareBlob(blob, `مطلوبة-${new Date().toISOString().slice(0,10)}.xlsx`, "اللوحات المطلوبة");
+                try {
+                  const { blob, ext } = buildSpreadsheetBlob(
+                    matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
+                    "المطلوبة"
+                  );
+                  await shareBlob(blob, `مطلوبة-${new Date().toISOString().slice(0,10)}.${ext}`, "اللوحات المطلوبة");
+                } catch (err: any) {
+                  alert(err?.message ?? "تعذّرت المشاركة");
+                }
               }}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
                 <Share2 size={16} /> مشاركة المطلوبة
