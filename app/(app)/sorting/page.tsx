@@ -9,7 +9,7 @@ import {
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import {
-  type ExcelTable, buildExcelBlob, downloadExcelBlob,
+  type ExcelTable, buildSpreadsheetBlob, buildCsvBlob, downloadExcelBlob,
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
@@ -323,7 +323,8 @@ export default function SortingPage() {
   }
 
   const persistAndSetTashyeek = useCallback(async (table: ExcelTable, file: File) => {
-    const blob = buildExcelBlob(table.rows, "ملف التشييك");
+    // crash-safe (xlsx → CSV fallback); the stored blob is only for re-download
+    const { blob } = buildSpreadsheetBlob(table.rows, "ملف التشييك");
     await saveUploadedFile({
       key: "local:tashyeek", agentId: "local", slot: "tashyeek",
       fileName: file.name, headers: table.headers, rows: table.rows,
@@ -339,9 +340,12 @@ export default function SortingPage() {
 
   async function shareTashyeekFile() {
     if (!tashyeekTable) return;
-    const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
     try {
-      await shareExcelBlob(blob, "ملف-التشييك.xlsx", "ملف التشييك");
+      // buildSpreadsheetBlob (xlsx → CSV fallback) so the build can't crash
+      // on the device WebView — that crash, when buildExcelBlob was outside
+      // the try, was why these buttons did nothing.
+      const { blob, ext } = buildSpreadsheetBlob(tashyeekTable.rows, "ملف التشييك");
+      await shareExcelBlob(blob, `ملف-التشييك.${ext}`, "ملف التشييك");
     } catch (err: any) {
       alert(err?.message ?? "تعذّرت مشاركة الملف");
     }
@@ -349,9 +353,9 @@ export default function SortingPage() {
 
   async function downloadTashyeekFile() {
     if (!tashyeekTable) return;
-    const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
     try {
-      await openExcelBlob(blob, "ملف-التشييك.xlsx");
+      const { blob, ext } = buildSpreadsheetBlob(tashyeekTable.rows, "ملف التشييك");
+      await openExcelBlob(blob, `ملف-التشييك.${ext}`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     }
@@ -543,30 +547,43 @@ export default function SortingPage() {
   // ── Export ──
   const ts = () => new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
 
-  async function buildSortExcelBlob(): Promise<Blob> {
+  // Colored xlsx, but falls back to a plain CSV if the xlsx build crashes on
+  // the device WebView (loses the row colors, but the data always comes out).
+  async function buildSortExcelBlob(): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
     const rowObjects = matchedResults.map(buildRowObject);
-    const rowColors = matchedResults.map((r) => {
-      const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-      const idx = plateColorMap.get(k);
-      return idx !== undefined ? DUPE_COLORS[idx].hex : null;
-    });
-    return buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors);
+    try {
+      const rowColors = matchedResults.map((r) => {
+        const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+        const idx = plateColorMap.get(k);
+        return idx !== undefined ? DUPE_COLORS[idx].hex : null;
+      });
+      return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
+    } catch {
+      return { blob: buildCsvBlob(rowObjects), ext: "csv" };
+    }
   }
 
   async function handleOpenSort() {
     setExportingAll(true);
     try {
-      await openExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`);
+      const { blob, ext } = await buildSortExcelBlob();
+      await openExcelBlob(blob, `فرز-${ts()}.${ext}`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     } finally {
       setExportingAll(false);
     }
   }
-  async function handleDownloadSort() { setExportingAll(true); downloadExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
+  async function handleDownloadSort() {
+    setExportingAll(true);
+    const { blob, ext } = await buildSortExcelBlob();
+    downloadExcelBlob(blob, `فرز-${ts()}.${ext}`);
+    setExportingAll(false);
+  }
   async function handleShareSort() {
     try {
-      await shareExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`, "نتائج الفرز");
+      const { blob, ext } = await buildSortExcelBlob();
+      await shareExcelBlob(blob, `فرز-${ts()}.${ext}`, "نتائج الفرز");
     } catch (err: any) {
       alert(err?.message ?? "تعذّرت المشاركة");
     }
@@ -574,15 +591,20 @@ export default function SortingPage() {
 
   async function handleOpenPaste() {
     try {
-      await openExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`);
+      const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
+      await openExcelBlob(blob, `لصق-${ts()}.${ext}`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     }
   }
-  async function handleDownloadPaste() { downloadExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
+  async function handleDownloadPaste() {
+    const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
+    downloadExcelBlob(blob, `لصق-${ts()}.${ext}`);
+  }
   async function handleSharePaste() {
     try {
-      await shareExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`, "نتائج اللصق");
+      const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
+      await shareExcelBlob(blob, `لصق-${ts()}.${ext}`, "نتائج اللصق");
     } catch (err: any) {
       alert(err?.message ?? "تعذّرت المشاركة");
     }
