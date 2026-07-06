@@ -7,6 +7,45 @@
 :root {
   --font-tajawal: "Tajawal", "Tahoma", sans-serif;
   --font-plex-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Light mode palette — identical to the old hardcoded Tailwind hex, so the
+     default (light) look is unchanged. Tailwind tokens map to these vars. */
+  --c-night: #F3F5F7;
+  --c-night-oled: #FFFFFF;
+  --c-surface: #FFFFFF;
+  --c-surface-2: #EBEEf2;
+  --c-border: #CDD2D8;
+  --c-primary: #1A6CC4;
+  --c-primary-dark: #DBE9F8;
+  --c-glow: #0969DA;
+  --c-brand: #1A7F37;
+  --c-brand-dark: #DAFBE1;
+  --c-brand-glow: #2DA44E;
+  --c-ink: #1A1F24;
+  --c-muted: #57606A;
+  --c-alert: #9A6700;
+  --c-danger: #CF222E;
+}
+
+/* وضع التوفير — battery-saving dark mode (true-black bg for OLED screens).
+   Overrides every color token at once; accents are brightened so they read
+   on black, and the light "tint" chip backgrounds become dark tints. */
+html.oled {
+  --c-night: #000000;
+  --c-night-oled: #000000;
+  --c-surface: #0D0D0D;
+  --c-surface-2: #1A1D21;
+  --c-border: #2A2E33;
+  --c-primary: #58A6FF;
+  --c-primary-dark: #12233A;
+  --c-glow: #58A6FF;
+  --c-brand: #3FB950;
+  --c-brand-dark: #12261A;
+  --c-brand-glow: #3FB950;
+  --c-ink: #E6EDF3;
+  --c-muted: #9AA4AE;
+  --c-alert: #D29922;
+  --c-danger: #F85149;
 }
 
 html,
@@ -16,19 +55,20 @@ body {
 }
 
 body {
-  @apply bg-night text-ink font-sans antialiased;
+  /* var directly (not @apply bg-night) so the oled swap is reliable */
+  background-color: var(--c-night);
+  @apply text-ink font-sans antialiased;
   transition: background-color 0.2s ease;
   overflow-x: hidden;
 }
 
-/* Pure-white variant (was OLED saver, now brightest-white preference) */
-html.oled body {
-  @apply bg-night-oled;
-}
-
+/* In dark mode, cards follow the dark surface/border tokens (this rule used
+   to force them white for the old brightest-white variant). body already goes
+   black via the bg-night token, so no body override is needed. */
 html.oled .surface-card {
-  background-color: #FFFFFF;
-  border-color: #D0D5DB;
+  background-color: var(--c-surface);
+  border-color: var(--c-border);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 /* Subtle card elevation for light mode — replaces dark-mode depth illusion */
