@@ -38,14 +38,19 @@ function extractPlate(text: string): string | null {
 
 export async function POST(req: NextRequest) {
   try {
-    const { image, mediaType } = await req.json();
+    const { image, mediaType, apiKey: clientKey } = await req.json();
     if (!image || !mediaType) {
       return NextResponse.json({ plate: null, error: "missing image" }, { status: 400 });
     }
 
-    const apiKey = process.env.GROQ_API_KEY;
+    // Prefer the agent's OWN key (sent from the client, same key as voice) so
+    // camera usage is billed to each agent's account instead of pooling onto
+    // one shared account. Falls back to the server key only if the agent
+    // hasn't set one. If neither exists the client silently falls back to the
+    // free on-device TextDetector, so return a plain (non-fatal) signal.
+    const apiKey = (typeof clientKey === "string" && clientKey.trim()) || process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 500 });
+      return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 200 });
     }
 
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {

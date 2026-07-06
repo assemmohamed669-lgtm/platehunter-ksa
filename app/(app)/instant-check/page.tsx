@@ -550,10 +550,15 @@ export default function InstantCheckPage() {
       // ── Try 1: Groq API ────────────────────────────────────────────────────
       try {
         const base64 = resized.split(",")[1];
+        // Agent's own Groq key (same one entered on the registration page,
+        // shared via localStorage) so camera usage bills to their account,
+        // not a shared one. Empty → server falls back / on-device TextDetector.
+        let groqKey = "";
+        try { groqKey = localStorage.getItem("ph:registration:groqApiKey") || ""; } catch { /* storage off */ }
         const apiRes = await fetch("/api/read-plate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
+          body: JSON.stringify({ image: base64, mediaType: "image/jpeg", apiKey: groqKey.trim() }),
         });
         const json = await apiRes.json().catch(() => null);
         if (apiRes.ok && json?.plate) {
