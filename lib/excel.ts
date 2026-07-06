@@ -512,6 +512,16 @@ export function toSafeCacheFilename(filename: string): string {
   return `${base}.${ext}`;
 }
 
+// The MIME type must match the ACTUAL file, not always xlsx — the export now
+// falls back to .csv on devices where xlsx-building fails, and telling the
+// opener a .csv is an xlsx makes the spreadsheet app report it as corrupt.
+function contentTypeForFilename(filename: string): string {
+  const ext = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
+  if (ext === "csv") return "text/csv";
+  if (ext === "xls") return "application/vnd.ms-excel";
+  return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+}
+
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
@@ -525,15 +535,16 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
       const base64 = btoa(binary);
 
+      const safeName = toSafeCacheFilename(filename);
       const { uri } = await Filesystem.writeFile({
-        path: toSafeCacheFilename(filename),
+        path: safeName,
         data: base64,
         directory: Directory.Cache,
       });
 
       await FileOpener.open({
         filePath: uri,
-        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        contentType: contentTypeForFilename(safeName),
       });
       return "opened";
     } catch (err) {
