@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Lock, KeyRound } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, clearFieldCheck } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
+import { hasLockPassword, verifyLockPassword, changeLockPassword } from "@/lib/fieldCheckLock";
+import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -118,7 +120,33 @@ function buildGpsLink(value: string): string | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
-function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string> }) {
+function ResultCard({ result, plateCol, selectedCols, onExport, onShare }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void> }) {
+  const [exportState, setExportState] = useState<"idle" | "saving" | "done">("idle");
+  const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
+
+  async function handleExport() {
+    if (!onExport || exportState !== "idle") return;
+    setExportState("saving");
+    try {
+      await onExport(result);
+      setExportState("done");
+    } catch {
+      setExportState("idle");
+    }
+  }
+
+  async function handleShare() {
+    if (!onShare || shareState !== "idle") return;
+    setShareState("sharing");
+    try {
+      await onShare(result);
+    } catch {
+      /* ignore — share fell back or was cancelled */
+    } finally {
+      setShareState("idle");
+    }
+  }
+
   if (!result.found) {
     return (
       <div className="rounded-xl border-2 border-danger/40 bg-danger/10 p-4">
@@ -178,6 +206,41 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
           })}
         </div>
       )}
+      {/* Actions: export to the protected sheet + share (with photo) to WhatsApp */}
+      {(onExport || onShare) && (
+        <div className="mt-3 flex gap-2">
+          {onExport && (
+            <button
+              onClick={handleExport}
+              disabled={exportState !== "idle"}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-bold transition active:scale-95 disabled:active:scale-100 ${
+                exportState === "done" ? "bg-brand/20 text-brand" : "bg-brand text-night"
+              }`}
+            >
+              {exportState === "saving" ? (
+                <><Loader2 size={15} className="animate-spin" /> جارٍ...</>
+              ) : exportState === "done" ? (
+                <><Check size={15} /> أُضيفت</>
+              ) : (
+                <><ClipboardCheck size={15} /> تصدير للتشييك</>
+              )}
+            </button>
+          )}
+          {onShare && (
+            <button
+              onClick={handleShare}
+              disabled={shareState !== "idle"}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition active:scale-95 disabled:opacity-60"
+            >
+              {shareState === "sharing" ? (
+                <><Loader2 size={15} className="animate-spin" /> جارٍ...</>
+              ) : (
+                <><Share2 size={15} /> نشر واتساب</>
+              )}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -201,6 +264,8 @@ export default function InstantCheckPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraRawText, setCameraRawText] = useState<string | null>(null);
   const [cameraInputPlate, setCameraInputPlate] = useState("");
+  // GPS captured at the moment the photo was taken — reused by export + share
+  const [cameraGps, setCameraGps] = useState<{ lat: number; lng: number } | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -221,6 +286,26 @@ export default function InstantCheckPage() {
   const [copiedHitId, setCopiedHitId] = useState<string | null>(null);
   const [hitsZoom, setHitsZoom] = useState(3);
   const [hitsSelected, setHitsSelected] = useState<Set<string>>(new Set());
+
+  // Protected field-check sheet (شيت التشييك الميداني) — persisted in IDB,
+  // survives restarts/updates, deletion gated behind a local password.
+  const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
+  const [fieldZoom, setFieldZoom] = useState(3);
+  // A destructive action waiting for the password gate to confirm it.
+  const [pwGate, setPwGate] = useState<null | { action: () => void | Promise<void> }>(null);
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  // Change/set-password dialog
+  const [pwChangeOpen, setPwChangeOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwChangeError, setPwChangeError] = useState<string | null>(null);
+  const [pwChangeDone, setPwChangeDone] = useState(false);
+
+  // Load field-check sheet from IDB on mount
+  useEffect(() => {
+    getAllFieldCheckEntries().then(setFieldEntries).catch(() => {});
+  }, []);
 
   // Load hits from localStorage on mount
   useEffect(() => {
@@ -344,34 +429,36 @@ export default function InstantCheckPage() {
     void fetchGpsForHit(hitId);
   }
 
-  // Fetch GPS for a hit — tries Capacitor plugin first (Android), falls back to web API
-  async function fetchGpsForHit(hitId: string) {
+  // Read the current position once — Capacitor plugin on Android (proper
+  // permission flow), web Geolocation API otherwise. Returns null on failure.
+  async function getCurrentGps(): Promise<{ lat: number; lng: number } | null> {
     try {
-      let lat: number, lng: number;
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { Geolocation } = await import("@capacitor/geolocation");
+        await Geolocation.requestPermissions();
+        const pos = await Geolocation.getCurrentPosition({ timeout: 12000, enableHighAccuracy: false });
+        return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      }
+    } catch { /* not native or plugin error — fall through to web API */ }
 
-      // Native Android: use @capacitor/geolocation which handles permissions properly
-      try {
-        const { Capacitor } = await import("@capacitor/core");
-        if (Capacitor.isNativePlatform()) {
-          const { Geolocation } = await import("@capacitor/geolocation");
-          await Geolocation.requestPermissions();
-          const pos = await Geolocation.getCurrentPosition({ timeout: 12000, enableHighAccuracy: false });
-          lat = pos.coords.latitude;
-          lng = pos.coords.longitude;
-          setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
-          return;
-        }
-      } catch { /* not native or plugin error — fall through to web API */ }
-
-      // Web / PWA fallback
-      if (!navigator.geolocation) throw new Error("no_geo");
+    try {
+      if (!navigator.geolocation) return null;
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 12000, maximumAge: 60000, enableHighAccuracy: false })
       );
-      lat = pos.coords.latitude;
-      lng = pos.coords.longitude;
-      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
+      return { lat: pos.coords.latitude, lng: pos.coords.longitude };
     } catch {
+      return null;
+    }
+  }
+
+  // Fetch GPS for a hit and stamp it (or mark gpsError on failure)
+  async function fetchGpsForHit(hitId: string) {
+    const gps = await getCurrentGps();
+    if (gps) {
+      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : h));
+    } else {
       setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
     }
   }
@@ -465,6 +552,140 @@ export default function InstantCheckPage() {
     }
   }
 
+  // ── Field-check sheet (protected) ───────────────────────────────────────────
+  const methodLabel: Record<CheckMode, string> = {
+    camera: "متشيكة بالكاميرا",
+    ptt: "متشيكة بالصوت",
+    manual: "متشيكة يدوي",
+  };
+
+  // Collect the extra (selected) detail columns for a matched row.
+  function resultDetails(result: PlateResult): [string, string][] {
+    if (!result.row) return [];
+    return Object.entries(result.row).filter(([k, v]) =>
+      k !== checkPlateCol && String(v).trim() && (selectedCheckCols.size === 0 || selectedCheckCols.has(k))
+    );
+  }
+
+  // Push a confirmed car onto the protected field-check sheet, stamping GPS.
+  // `prefetchedGps` (from the camera capture moment) avoids a second lookup.
+  async function exportToFieldCheck(result: PlateResult, mode: CheckMode, prefetchedGps?: { lat: number; lng: number } | null) {
+    if (!result.found) return;
+    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const base: FieldCheckEntry = {
+      id,
+      plate: result.plate,
+      row: result.row ?? {},
+      method: methodLabel[mode],
+      checkedAt: new Date().toISOString(),
+    };
+    // Optimistic add + persist
+    setFieldEntries((prev) => [base, ...prev]);
+    await saveFieldCheckEntry(base);
+    // Stamp GPS (best-effort) and persist the update — the image itself is
+    // intentionally NOT stored on the sheet.
+    const gps = prefetchedGps ?? (await getCurrentGps());
+    if (gps) {
+      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
+      setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
+      await saveFieldCheckEntry(withGps);
+    }
+  }
+
+  // Share the camera finding (details + GPS + the photo) to WhatsApp.
+  async function shareCameraResult(result: PlateResult) {
+    if (!result.found || !cameraImage) return;
+    const gps = cameraGps ?? (await getCurrentGps());
+    const text = buildPlateShareText({
+      plate: result.plate,
+      status: "متشيكة بالكاميرا",
+      details: resultDetails(result),
+      mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
+      dateText: formatDate(new Date().toISOString()),
+    });
+    await shareImageWithText(cameraImage, text, `لوحة-${result.plate}.jpg`, "لوحة مطلوبة");
+  }
+
+  // ── Password gate ───────────────────────────────────────────────────────────
+  // Run a destructive action only after the field-check password is confirmed.
+  // If no password is set yet, prompt to set one first (protecting the sheet).
+  function requestProtected(action: () => void | Promise<void>) {
+    setPwError(null);
+    setPwInput("");
+    if (!hasLockPassword()) {
+      // No password yet → force setup before anything can be deleted.
+      setPwChangeError(null);
+      setPwCurrent("");
+      setPwNew("");
+      setPwChangeDone(false);
+      setPwChangeOpen(true);
+      return;
+    }
+    setPwGate({ action });
+  }
+
+  async function confirmPwGate() {
+    if (!pwGate) return;
+    if (!verifyLockPassword(pwInput)) {
+      setPwError("الرقم السري غير صحيح");
+      return;
+    }
+    const { action } = pwGate;
+    setPwGate(null);
+    setPwInput("");
+    setPwError(null);
+    await action();
+  }
+
+  function submitPwChange() {
+    setPwChangeError(null);
+    if (!pwNew.trim()) { setPwChangeError("اكتب رقماً سرياً جديداً"); return; }
+    const ok = changeLockPassword(pwCurrent, pwNew);
+    if (!ok) { setPwChangeError("الرقم السري الحالي غير صحيح"); return; }
+    setPwChangeDone(true);
+    setTimeout(() => { setPwChangeOpen(false); setPwCurrent(""); setPwNew(""); setPwChangeDone(false); }, 900);
+  }
+
+  async function reallyDeleteFieldEntry(id: string) {
+    await deleteFieldCheckEntry(id);
+    setFieldEntries((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  async function reallyClearField() {
+    await clearFieldCheck();
+    setFieldEntries([]);
+  }
+
+  function buildFieldRows() {
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    return fieldEntries.map((e) => {
+      const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
+      for (const h of dynCols) obj[h] = e.row[h] ?? "";
+      obj["الحالة"] = e.method;
+      obj["GPS"] = e.mapsLink ?? "";
+      obj["التاريخ"] = formatDate(e.checkedAt);
+      return obj;
+    });
+  }
+
+  async function exportFieldExcel() {
+    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+    try {
+      await openExcelBlob(blob, `التشييك-الميداني-${Date.now()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
+  }
+
+  async function shareFieldExcel() {
+    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+    try {
+      await shareExcelBlob(blob, "التشييك-الميداني.xlsx", "التشييك الميداني");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
+
   // ── Camera ────────────────────────────────────────────────────────────────
   function resizeImageForOCR(dataUrl: string): Promise<string> {
     return new Promise((resolve) => {
@@ -542,6 +763,7 @@ export default function InstantCheckPage() {
     setCameraError(null);
     setCameraResult(null);
     setCameraRawText(null);
+    setCameraGps(null);
     try {
       const resized = await resizeImageForOCR(dataUrl);
       let plate: string | null = null;
@@ -600,7 +822,10 @@ export default function InstantCheckPage() {
       if (displayPlate) {
         const result = searchInCheck(displayPlate);
         setCameraResult(result);
-        if (result?.found) saveHitWithGps(result);
+        if (result?.found) {
+          saveHitWithGps(result);
+          void getCurrentGps().then(setCameraGps); // GPS of where the photo was taken
+        }
       } else {
         setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
       }
@@ -619,6 +844,7 @@ export default function InstantCheckPage() {
     setCameraError(null);
     setCameraRawText(null);
     setCameraInputPlate("");
+    setCameraGps(null);
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
@@ -924,7 +1150,7 @@ export default function InstantCheckPage() {
               </p>
 
               {manualResult && (
-                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
+                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "manual")} />
               )}
 
             </div>
@@ -1039,7 +1265,7 @@ export default function InstantCheckPage() {
                     className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center focus:border-brand outline-none"
                   />
                   <button
-                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result?.found) saveHitWithGps(result); }}
+                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result?.found) { saveHitWithGps(result); void getCurrentGps().then(setCameraGps); } }}
                     className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                   >
                     بحث
@@ -1053,7 +1279,7 @@ export default function InstantCheckPage() {
                 </p>
               )}
 
-              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />}
+              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} />}
             </div>
           )}
 
@@ -1100,7 +1326,7 @@ export default function InstantCheckPage() {
                     </button>
                   </div>
                   {pttResults.map((r, i) => (
-                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
+                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(res) => exportToFieldCheck(res, "ptt")} />
                   ))}
                 </div>
               )}
@@ -1245,6 +1471,182 @@ export default function InstantCheckPage() {
             );
           })()}
         </>
+      )}
+
+      {/* ── شيت التشييك الميداني (protected, always visible) ── */}
+      {fieldEntries.length > 0 && (() => {
+        const scale = HIT_ZOOM_LEVELS[fieldZoom];
+        const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        return (
+          <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Lock size={14} className="text-brand shrink-0" />
+                <h2 className="text-sm font-bold text-ink truncate">شيت التشييك الميداني</h2>
+                <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
+              </div>
+              <button
+                onClick={() => { setPwChangeError(null); setPwCurrent(""); setPwNew(""); setPwChangeDone(false); setPwChangeOpen(true); }}
+                className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted shrink-0"
+              >
+                <KeyRound size={12} /> {hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري"}
+              </button>
+            </div>
+            <p className="text-[11px] text-muted" dir="rtl">
+              محفوظ ولا يُحذف عند الخروج أو تحديث البرنامج — الحذف أو التعديل يتطلب الرقم السري
+            </p>
+
+            {/* Zoom */}
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 w-fit">
+              <button onClick={() => setFieldZoom((z) => Math.max(z - 1, 0))} disabled={fieldZoom === 0}
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                <ZoomOut size={14} />
+              </button>
+              <span className="text-xs text-muted w-10 text-center">{Math.round(scale * 100)}%</span>
+              <button onClick={() => setFieldZoom((z) => Math.min(z + 1, HIT_ZOOM_LEVELS.length - 1))} disabled={fieldZoom === HIT_ZOOM_LEVELS.length - 1}
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                <ZoomIn size={14} />
+              </button>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "50vh" }}>
+              <div style={{ fontSize: `${scale * 12}px`, minWidth: "max-content" }}>
+                <table className="border-collapse w-full" style={{ direction: "rtl" }}>
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-surface-2 text-muted">
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      {dynCols.map((h) => (
+                        <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                      ))}
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
+                      <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">حذف</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fieldEntries.map((e, i) => (
+                      <tr key={e.id} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">{e.plate}</td>
+                        {dynCols.map((h) => (
+                          <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>
+                        ))}
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                          <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-bold text-brand">{e.method}</span>
+                        </td>
+                        <td className="border-l border-border px-3 py-2">
+                          {e.mapsLink ? (
+                            <a href={e.mapsLink} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                              <MapPin size={10} /> خريطة
+                            </a>
+                          ) : (
+                            <span className="text-muted text-[10px] animate-pulse">جاري...</span>
+                          )}
+                        </td>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
+                        <td className="px-2 py-2 text-center">
+                          <button onClick={() => requestProtected(() => reallyDeleteFieldEntry(e.id))}
+                            title="حذف (يتطلب الرقم السري)" className="text-muted hover:text-danger transition">
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Export / Share Excel */}
+            <div className="flex gap-2">
+              <button onClick={exportFieldExcel}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
+                <Download size={14} /> فتح في Excel
+              </button>
+              <button onClick={shareFieldExcel}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                <Share2 size={14} /> مشاركة Excel
+              </button>
+            </div>
+            <button onClick={() => requestProtected(reallyClearField)}
+              className="flex items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-2.5 text-sm font-bold text-danger transition">
+              <Lock size={14} /> مسح الشيت بالكامل (يتطلب الرقم السري)
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* ── Password gate modal (verify before delete/clear) ── */}
+      {pwGate && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
+            <h3 className="mb-1 flex items-center gap-1.5 font-bold text-ink"><Lock size={15} className="text-danger" /> تأكيد بالرقم السري</h3>
+            <p className="mb-3 text-xs text-muted">أدخل الرقم السري لتنفيذ الحذف/التعديل على شيت التشييك الميداني.</p>
+            <input
+              type="password"
+              inputMode="numeric"
+              value={pwInput}
+              onChange={(e) => { setPwInput(e.target.value); setPwError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && confirmPwGate()}
+              placeholder="الرقم السري"
+              autoFocus
+              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {pwError && <p className="mb-3 text-xs text-danger">{pwError}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setPwGate(null); setPwInput(""); setPwError(null); }}
+                className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted">إلغاء</button>
+              <button onClick={confirmPwGate}
+                className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-bold text-white">تأكيد</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Set / change password modal ── */}
+      {pwChangeOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
+            <h3 className="mb-1 flex items-center gap-1.5 font-bold text-ink">
+              <KeyRound size={15} className="text-brand" /> {hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري لحماية الشيت"}
+            </h3>
+            <p className="mb-3 text-xs text-muted">
+              {hasLockPassword()
+                ? "أدخل الرقم السري الحالي ثم الجديد."
+                : "عيّن رقماً سرياً لحماية شيت التشييك من الحذف أو التعديل."}
+            </p>
+            {hasLockPassword() && (
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pwCurrent}
+                onChange={(e) => { setPwCurrent(e.target.value); setPwChangeError(null); }}
+                placeholder="الرقم السري الحالي"
+                className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            )}
+            <input
+              type="password"
+              inputMode="numeric"
+              value={pwNew}
+              onChange={(e) => { setPwNew(e.target.value); setPwChangeError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && submitPwChange()}
+              placeholder="الرقم السري الجديد"
+              autoFocus={!hasLockPassword()}
+              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {pwChangeError && <p className="mb-3 text-xs text-danger">{pwChangeError}</p>}
+            {pwChangeDone && <p className="mb-3 text-xs text-brand">تم الحفظ ✓</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setPwChangeOpen(false); setPwCurrent(""); setPwNew(""); setPwChangeError(null); }}
+                className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted">إلغاء</button>
+              <button onClick={submitPwChange}
+                className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night">حفظ</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

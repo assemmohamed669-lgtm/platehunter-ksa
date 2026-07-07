@@ -5,9 +5,10 @@
  */
 
 const DB_NAME = "platehunter";
-const DB_VERSION = 2; // bumped: v2 adds the uploaded_files store below
+const DB_VERSION = 3; // v2 adds uploaded_files, v3 adds field_check (protected field-check sheet)
 const STORE = "recordings";
 const FILES_STORE = "uploaded_files";
+const FIELD_CHECK_STORE = "field_check";
 
 export interface RecordingEntry {
   localId: string;           // uuid generated locally
@@ -54,6 +55,24 @@ export interface UploadedFileRecord {
   fileBlob?: Blob;                   // original bytes, so "download" still works after a refresh
 }
 
+/**
+ * One car that a delegate confirmed in the field and pushed onto the
+ * protected field-check sheet ("شيت التشييك الميداني"). Persisted in IDB so
+ * it survives app restarts/updates; only clearable via the password gate
+ * (see lib/fieldCheckLock.ts). The `method` label records how it was checked
+ * (e.g. "متشيكة بالكاميرا").
+ */
+export interface FieldCheckEntry {
+  id: string;                        // unique, generated locally
+  plate: string;                     // the confirmed plate
+  row: Record<string, string>;       // matched reference row (extra columns)
+  method: string;                    // how it was checked, e.g. "متشيكة بالكاميرا"
+  lat?: number;
+  lng?: number;
+  mapsLink?: string;
+  checkedAt: string;                 // ISO timestamp
+}
+
 let _db: IDBDatabase | null = null;
 
 function openDB(): Promise<IDBDatabase> {
@@ -72,6 +91,9 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(FILES_STORE)) {
         const filesStore = db.createObjectStore(FILES_STORE, { keyPath: "key" });
         filesStore.createIndex("agentId", "agentId", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(FIELD_CHECK_STORE)) {
+        db.createObjectStore(FIELD_CHECK_STORE, { keyPath: "id" });
       }
     };
 
@@ -236,6 +258,61 @@ export async function deleteUploadedFile(agentId: string, slot: "data" | "referr
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readwrite");
     tx.objectStore(FILES_STORE).delete(`${agentId}:${slot}`);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// =====================================================================
+// Field-check sheet (شيت التشييك الميداني) — the protected, persistent
+// record of cars confirmed in the field. Never auto-cleared; deletion is
+// gated behind the password in lib/fieldCheckLock.ts at the UI layer.
+// =====================================================================
+
+/** Add or overwrite one field-check entry (put by id). */
+export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    tx.objectStore(FIELD_CHECK_STORE).put(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** All field-check entries, newest first. */
+export async function getAllFieldCheckEntries(): Promise<FieldCheckEntry[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
+    const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
+    req.onsuccess = () =>
+      resolve(
+        (req.result as FieldCheckEntry[]).sort(
+          (a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()
+        )
+      );
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** Delete one field-check entry by id. */
+export async function deleteFieldCheckEntry(id: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    tx.objectStore(FIELD_CHECK_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** Wipe the entire field-check sheet. */
+export async function clearFieldCheck(): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    tx.objectStore(FIELD_CHECK_STORE).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
