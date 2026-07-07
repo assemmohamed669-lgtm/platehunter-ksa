@@ -82,3 +82,16 @@ export function changeLockPassword(currentPw: string, newPw: string): boolean {
   setLockPassword(newPw);
   return true;
 }
+
+/**
+ * Force-set a new password WITHOUT knowing the current one. This bypasses the
+ * lock and MUST only be called after an out-of-band authorization (e.g. the
+ * admin/secondary password verified against the server) — it exists so a
+ * delegate who forgets the password isn't locked out forever. Refuses a blank
+ * new password. Returns true on success.
+ */
+export function resetLockPassword(newPw: string): boolean {
+  if (!newPw.trim()) return false;
+  setLockPassword(newPw);
+  return true;
+}

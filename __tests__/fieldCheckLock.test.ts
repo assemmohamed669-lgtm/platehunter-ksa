@@ -5,6 +5,7 @@ import {
   verifyLockPassword,
   clearLockPassword,
   changeLockPassword,
+  resetLockPassword,
 } from "@/lib/fieldCheckLock";
 
 describe("fieldCheckLock", () => {
@@ -80,6 +81,21 @@ describe("fieldCheckLock", () => {
     it("rejects a blank new password", () => {
       setLockPassword("1234");
       expect(changeLockPassword("1234", "  ")).toBe(false);
+      expect(verifyLockPassword("1234")).toBe(true);
+    });
+  });
+
+  describe("resetLockPassword", () => {
+    it("overrides the password without knowing the current one", () => {
+      setLockPassword("1234");
+      expect(resetLockPassword("9999")).toBe(true);
+      expect(verifyLockPassword("9999")).toBe(true);
+      expect(verifyLockPassword("1234")).toBe(false);
+    });
+
+    it("rejects a blank new password", () => {
+      setLockPassword("1234");
+      expect(resetLockPassword("   ")).toBe(false);
       expect(verifyLockPassword("1234")).toBe(true);
     });
   });

@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Lock, KeyRound } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Lock, KeyRound, Search, History } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, clearFieldCheck } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
-import { hasLockPassword, verifyLockPassword, changeLockPassword } from "@/lib/fieldCheckLock";
+import { hasLockPassword, verifyLockPassword, changeLockPassword, resetLockPassword } from "@/lib/fieldCheckLock";
+import { findDuplicateEntry, filterFieldEntries } from "@/lib/fieldCheck";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
+import { supabase } from "@/lib/supabaseClient";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -120,7 +122,7 @@ function buildGpsLink(value: string): string | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
-function ResultCard({ result, plateCol, selectedCols, onExport, onShare }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void> }) {
+function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCheck }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void>; priorCheck?: FieldCheckEntry }) {
   const [exportState, setExportState] = useState<"idle" | "saving" | "done">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
 
@@ -181,6 +183,13 @@ function ResultCard({ result, plateCol, selectedCols, onExport, onShare }: { res
           {isFuzzy ? `مشتبه به ${result.similarity}%` : "موجود!"}
         </span>
       </div>
+      {/* Already-checked notice */}
+      {priorCheck && (
+        <div className="mb-3 flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-1.5 text-[11px] font-bold text-amber-500">
+          <History size={13} className="shrink-0" />
+          <span>اتشيّكت قبل كده — {formatDate(priorCheck.checkedAt)}</span>
+        </div>
+      )}
       {/* Plate badge */}
       <div className="flex justify-center mb-3">
         <PlateBadge value={result.plate} size="md" />
@@ -291,6 +300,7 @@ export default function InstantCheckPage() {
   // survives restarts/updates, deletion gated behind a local password.
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [fieldZoom, setFieldZoom] = useState(3);
+  const [fieldSearch, setFieldSearch] = useState("");
   // A destructive action waiting for the password gate to confirm it.
   const [pwGate, setPwGate] = useState<null | { action: () => void | Promise<void> }>(null);
   const [pwInput, setPwInput] = useState("");
@@ -301,8 +311,12 @@ export default function InstantCheckPage() {
   const [pwNew, setPwNew] = useState("");
   const [pwChangeError, setPwChangeError] = useState<string | null>(null);
   const [pwChangeDone, setPwChangeDone] = useState(false);
+  // Recovery: reset the lock via the admin/secondary password when forgotten
+  const [pwForgot, setPwForgot] = useState(false);
+  const [pwAdmin, setPwAdmin] = useState("");
+  const [pwVerifying, setPwVerifying] = useState(false);
 
-  // Load field-check sheet from IDB on mount
+  // Load the field-check sheet from IDB on mount (local-only, durable per device)
   useEffect(() => {
     getAllFieldCheckEntries().then(setFieldEntries).catch(() => {});
   }, []);
@@ -569,8 +583,26 @@ export default function InstantCheckPage() {
 
   // Push a confirmed car onto the protected field-check sheet, stamping GPS.
   // `prefetchedGps` (from the camera capture moment) avoids a second lookup.
+  // A plate already on the sheet is NOT duplicated — its row is refreshed.
   async function exportToFieldCheck(result: PlateResult, mode: CheckMode, prefetchedGps?: { lat: number; lng: number } | null) {
     if (!result.found) return;
+    const gpsPromise = prefetchedGps ? Promise.resolve(prefetchedGps) : getCurrentGps();
+
+    // Already on the sheet → refresh timestamp/GPS instead of adding a duplicate.
+    const existing = findDuplicateEntry(fieldEntries, result.plate);
+    if (existing) {
+      const gps = await gpsPromise;
+      const updated: FieldCheckEntry = {
+        ...existing,
+        method: methodLabel[mode],
+        checkedAt: new Date().toISOString(),
+        ...(gps ? { lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : {}),
+      };
+      setFieldEntries((prev) => prev.map((e) => (e.id === existing.id ? updated : e)));
+      await saveFieldCheckEntry(updated);
+      return;
+    }
+
     const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const base: FieldCheckEntry = {
       id,
@@ -579,12 +611,12 @@ export default function InstantCheckPage() {
       method: methodLabel[mode],
       checkedAt: new Date().toISOString(),
     };
-    // Optimistic add + persist
+    // Optimistic add + persist locally
     setFieldEntries((prev) => [base, ...prev]);
     await saveFieldCheckEntry(base);
     // Stamp GPS (best-effort) and persist the update — the image itself is
     // intentionally NOT stored on the sheet.
-    const gps = prefetchedGps ?? (await getCurrentGps());
+    const gps = await gpsPromise;
     if (gps) {
       const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
       setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
@@ -614,11 +646,7 @@ export default function InstantCheckPage() {
     setPwInput("");
     if (!hasLockPassword()) {
       // No password yet → force setup before anything can be deleted.
-      setPwChangeError(null);
-      setPwCurrent("");
-      setPwNew("");
-      setPwChangeDone(false);
-      setPwChangeOpen(true);
+      openPwChange();
       return;
     }
     setPwGate({ action });
@@ -637,13 +665,43 @@ export default function InstantCheckPage() {
     await action();
   }
 
-  function submitPwChange() {
+  function openPwChange() {
+    setPwCurrent(""); setPwNew(""); setPwAdmin("");
+    setPwChangeError(null); setPwChangeDone(false); setPwForgot(false);
+    setPwChangeOpen(true);
+  }
+
+  function closePwChange() {
+    setPwChangeOpen(false);
+    setPwCurrent(""); setPwNew(""); setPwAdmin("");
+    setPwChangeError(null); setPwChangeDone(false); setPwForgot(false);
+  }
+
+  async function submitPwChange() {
     setPwChangeError(null);
     if (!pwNew.trim()) { setPwChangeError("اكتب رقماً سرياً جديداً"); return; }
-    const ok = changeLockPassword(pwCurrent, pwNew);
-    if (!ok) { setPwChangeError("الرقم السري الحالي غير صحيح"); return; }
+
+    if (pwForgot) {
+      // Recovery path — authorize the reset with the admin/secondary password.
+      if (!pwAdmin.trim()) { setPwChangeError("أدخل كلمة مرور الأدمن"); return; }
+      setPwVerifying(true);
+      try {
+        const { data: isValid, error } = await supabase.rpc("verify_secondary_password", { p_password: pwAdmin });
+        if (error || !isValid) { setPwChangeError("كلمة مرور الأدمن غير صحيحة"); return; }
+        resetLockPassword(pwNew);
+      } catch {
+        setPwChangeError("تعذّر التحقق — تأكد من الاتصال بالإنترنت");
+        return;
+      } finally {
+        setPwVerifying(false);
+      }
+    } else {
+      const ok = changeLockPassword(pwCurrent, pwNew);
+      if (!ok) { setPwChangeError("الرقم السري الحالي غير صحيح"); return; }
+    }
+
     setPwChangeDone(true);
-    setTimeout(() => { setPwChangeOpen(false); setPwCurrent(""); setPwNew(""); setPwChangeDone(false); }, 900);
+    setTimeout(closePwChange, 900);
   }
 
   async function reallyDeleteFieldEntry(id: string) {
@@ -1150,7 +1208,7 @@ export default function InstantCheckPage() {
               </p>
 
               {manualResult && (
-                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "manual")} />
+                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "manual")} priorCheck={manualResult.found ? findDuplicateEntry(fieldEntries, manualResult.plate) : undefined} />
               )}
 
             </div>
@@ -1279,7 +1337,7 @@ export default function InstantCheckPage() {
                 </p>
               )}
 
-              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} />}
+              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
             </div>
           )}
 
@@ -1326,7 +1384,7 @@ export default function InstantCheckPage() {
                     </button>
                   </div>
                   {pttResults.map((r, i) => (
-                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(res) => exportToFieldCheck(res, "ptt")} />
+                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(res) => exportToFieldCheck(res, "ptt")} priorCheck={r.found ? findDuplicateEntry(fieldEntries, r.plate) : undefined} />
                   ))}
                 </div>
               )}
@@ -1477,6 +1535,7 @@ export default function InstantCheckPage() {
       {fieldEntries.length > 0 && (() => {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
         const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        const visible = filterFieldEntries(fieldEntries, fieldSearch);
         return (
           <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
             <div className="flex items-center justify-between gap-2">
@@ -1486,7 +1545,7 @@ export default function InstantCheckPage() {
                 <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
               </div>
               <button
-                onClick={() => { setPwChangeError(null); setPwCurrent(""); setPwNew(""); setPwChangeDone(false); setPwChangeOpen(true); }}
+                onClick={openPwChange}
                 className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted shrink-0"
               >
                 <KeyRound size={12} /> {hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري"}
@@ -1495,6 +1554,26 @@ export default function InstantCheckPage() {
             <p className="text-[11px] text-muted" dir="rtl">
               محفوظ ولا يُحذف عند الخروج أو تحديث البرنامج — الحذف أو التعديل يتطلب الرقم السري
             </p>
+
+            {/* Search */}
+            <div className="relative">
+              <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                dir="rtl"
+                value={fieldSearch}
+                onChange={(e) => setFieldSearch(e.target.value)}
+                placeholder="بحث برقم اللوحة أو الحي..."
+                className="w-full rounded-xl border border-border bg-surface-2 py-2 pr-9 pl-8 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+              />
+              {fieldSearch && (
+                <button onClick={() => setFieldSearch("")} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            {fieldSearch.trim() && (
+              <p className="text-[11px] text-muted">{visible.length} من {fieldEntries.length}</p>
+            )}
 
             {/* Zoom */}
             <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 w-fit">
@@ -1526,7 +1605,7 @@ export default function InstantCheckPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {fieldEntries.map((e, i) => (
+                    {visible.map((e, i) => (
                       <tr key={e.id} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
                         <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">{e.plate}</td>
                         {dynCols.map((h) => (
@@ -1605,19 +1684,32 @@ export default function InstantCheckPage() {
         </div>
       )}
 
-      {/* ── Set / change password modal ── */}
+      {/* ── Set / change / recover password modal ── */}
       {pwChangeOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
             <h3 className="mb-1 flex items-center gap-1.5 font-bold text-ink">
-              <KeyRound size={15} className="text-brand" /> {hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري لحماية الشيت"}
+              <KeyRound size={15} className="text-brand" />
+              {pwForgot ? "استرجاع الرقم السري" : hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري لحماية الشيت"}
             </h3>
             <p className="mb-3 text-xs text-muted">
-              {hasLockPassword()
+              {pwForgot
+                ? "أدخل كلمة مرور الأدمن لإعادة تعيين رقم سري جديد."
+                : hasLockPassword()
                 ? "أدخل الرقم السري الحالي ثم الجديد."
                 : "عيّن رقماً سرياً لحماية شيت التشييك من الحذف أو التعديل."}
             </p>
-            {hasLockPassword() && (
+
+            {pwForgot ? (
+              <input
+                type="password"
+                value={pwAdmin}
+                onChange={(e) => { setPwAdmin(e.target.value); setPwChangeError(null); }}
+                placeholder="كلمة مرور الأدمن"
+                autoFocus
+                className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            ) : hasLockPassword() ? (
               <input
                 type="password"
                 inputMode="numeric"
@@ -1626,7 +1718,8 @@ export default function InstantCheckPage() {
                 placeholder="الرقم السري الحالي"
                 className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
               />
-            )}
+            ) : null}
+
             <input
               type="password"
               inputMode="numeric"
@@ -1634,16 +1727,28 @@ export default function InstantCheckPage() {
               onChange={(e) => { setPwNew(e.target.value); setPwChangeError(null); }}
               onKeyDown={(e) => e.key === "Enter" && submitPwChange()}
               placeholder="الرقم السري الجديد"
-              autoFocus={!hasLockPassword()}
+              autoFocus={!hasLockPassword() && !pwForgot}
               className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
             />
-            {pwChangeError && <p className="mb-3 text-xs text-danger">{pwChangeError}</p>}
-            {pwChangeDone && <p className="mb-3 text-xs text-brand">تم الحفظ ✓</p>}
+
+            {pwChangeError && <p className="mb-2 text-xs text-danger">{pwChangeError}</p>}
+            {pwChangeDone && <p className="mb-2 text-xs text-brand">تم الحفظ ✓</p>}
+
+            {/* Forgot-password entry point (only when a password exists) */}
+            {hasLockPassword() && !pwForgot && (
+              <button onClick={() => { setPwForgot(true); setPwChangeError(null); }}
+                className="mb-3 text-[11px] text-primary underline">
+                نسيت الرقم السري؟
+              </button>
+            )}
+
             <div className="flex gap-2">
-              <button onClick={() => { setPwChangeOpen(false); setPwCurrent(""); setPwNew(""); setPwChangeError(null); }}
+              <button onClick={closePwChange}
                 className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted">إلغاء</button>
-              <button onClick={submitPwChange}
-                className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night">حفظ</button>
+              <button onClick={submitPwChange} disabled={pwVerifying}
+                className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night disabled:opacity-60">
+                {pwVerifying ? "جارٍ التحقق..." : "حفظ"}
+              </button>
             </div>
           </div>
         </div>
