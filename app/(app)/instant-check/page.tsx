@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Lock, KeyRound, Search, History } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Lock, KeyRound, Search, History, Pencil } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, clearFieldCheck } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink } from "@/lib/gps";
 import { hasLockPassword, verifyLockPassword, changeLockPassword, resetLockPassword } from "@/lib/fieldCheckLock";
@@ -16,6 +16,11 @@ import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
+
+// Shared with the registration page so a correction on EITHER screen teaches
+// the other — same device, same voice, same mishearings.
+const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
+const LS_WORD_BLENDS = "ph:registration:wordBlends";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -48,7 +53,8 @@ interface PlateResult {
 // details, the manually-typed location name, and its captured GPS.
 interface PttRow {
   id: string;
-  plate: string;
+  plate: string;                 // displayed plate (after any learned correction / manual edit)
+  originalPlate: string;         // what the parser produced before correction — diffed on edit to teach
   found: boolean;
   matchType?: "exact" | "fuzzy";
   similarity?: number;
@@ -58,6 +64,7 @@ interface PttRow {
   lng?: number;
   mapsLink?: string;
   gpsError?: boolean;
+  checkedAt: string;
 }
 
 function playMatchAlert() {
@@ -311,6 +318,26 @@ export default function InstantCheckPage() {
   // Mirror of pttLocationName so the listening loop reads the latest value
   // (the loop's addPttResult closure would otherwise capture a stale one).
   const pttLocationNameRef = useRef("");
+
+  // Self-learning maps (shared with the registration page). A voice-check edit
+  // teaches the same models the recording page uses, and vice versa.
+  const letterConfusionsRef = useRef<LetterConfusionMap>(new Map());
+  const wordBlendRef = useRef<WordBlendMap>(new Map());
+  // Inline plate editing in the voice results table
+  const [editingPttId, setEditingPttId] = useState<string | null>(null);
+  const [editPttValue, setEditPttValue] = useState("");
+
+  // Load the learned-correction maps once on mount.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_LETTER_CONFUSIONS);
+      if (raw) letterConfusionsRef.current = deserializeLetterConfusions(JSON.parse(raw));
+    } catch { /* corrupt/missing — start fresh */ }
+    try {
+      const raw = localStorage.getItem(LS_WORD_BLENDS);
+      if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
+    } catch { /* corrupt/missing — start fresh */ }
+  }, []);
 
   // Check hits history (session-only)
   const [manualHits, setManualHits] = useState<CheckHit[]>([]);
@@ -953,30 +980,101 @@ export default function InstantCheckPage() {
     // لوحة سعودية صحيحة: 1-3 حروف + أرقام — لو أكثر من 3 حروف يعني كلمات ما اتحولتش
     const isPlausiblePlate = hasDigits && letterPart.length >= 1 && letterPart.length <= 3;
 
-    const plate = isPlausiblePlate
+    const rawPlate = isPlausiblePlate
       ? egyptianMapped
       : (parsePlateFromTranscript(utterance).plate || "");
 
-    if (!plate) return;
-    const result = searchInCheck(plate);
+    if (!rawPlate) return;
+
+    // Apply what past edits taught: whole-fragment blend first, then per-letter
+    // confusion — so a mishearing corrected once auto-corrects next time.
+    const norm = normalizePlate(bankPlateToArabic(rawPlate));
+    const letters = norm.replace(/[0-9]/g, "");
+    const digits = norm.replace(/[^0-9]/g, "");
+    const blended = applyWordBlend(letters, wordBlendRef.current) || letters;
+    const corrected = applyLetterConfusions(blended + digits, letterConfusionsRef.current);
+
+    const result = searchInCheck(corrected);
     if (!result) return; // no check file loaded
 
     // Every spoken plate becomes a compact row (found or not), tagged with the
-    // current location name, then its GPS is captured in the background.
+    // current location name; `originalPlate` keeps the pre-correction value so
+    // a later edit can teach the learners. GPS is captured in the background.
     const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const row: PttRow = {
       id,
       plate: result.plate,
+      originalPlate: norm,
       found: result.found,
       matchType: result.matchType,
       similarity: result.similarity,
       row: result.row,
       locationName: pttLocationNameRef.current.trim(),
+      checkedAt: new Date().toISOString(),
     };
     setPttResults((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
     if (result.found) setPttAlert(row);
     void fetchGpsForPttRow(id);
+  }
+
+  // Save a manual edit of a voice row: teach the learners (same logic as the
+  // registration page), then re-check the corrected plate against the file.
+  function applyPttEdit(rowId: string) {
+    const row = pttResults.find((r) => r.id === rowId);
+    const trimmed = editPttValue.trim();
+    setEditingPttId(null);
+    if (!row || !trimmed || trimmed === row.plate) return;
+
+    const origLetters = normalizePlate(bankPlateToArabic(row.originalPlate)).replace(/[0-9]/g, "");
+    const corrLetters = normalizePlate(bankPlateToArabic(trimmed)).replace(/[0-9]/g, "");
+
+    if (origLetters && corrLetters && origLetters.length !== corrLetters.length) {
+      // Whole letter group was wrong (length changed) → learn the fragment.
+      recordWordBlend(wordBlendRef.current, origLetters, corrLetters);
+      try { localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current))); } catch { /* full */ }
+    } else if (origLetters && corrLetters) {
+      // One/few letters drifted → per-letter confusion learner.
+      recordLetterCorrections(letterConfusionsRef.current, row.originalPlate, trimmed);
+      try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
+    }
+
+    const res = searchInCheck(trimmed);
+    setPttResults((prev) => prev.map((r) => r.id === rowId
+      ? { ...r, plate: res?.plate ?? trimmed, found: res?.found ?? false, matchType: res?.matchType, similarity: res?.similarity, row: res?.row }
+      : r));
+  }
+
+  // ── Voice-list Excel export ─────────────────────────────────────────────
+  function buildPttRows() {
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    return pttResults.map((r) => {
+      const obj: Record<string, unknown> = {
+        "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
+        "رقم اللوحة": r.plate,
+      };
+      for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
+      obj["اسم الموقع"] = r.locationName;
+      obj["GPS"] = r.mapsLink ?? "";
+      obj["التاريخ"] = formatDate(r.checkedAt);
+      return obj;
+    });
+  }
+
+  async function exportPttExcel() {
+    try {
+      await openExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), `تشييك-صوتي-${Date.now()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
+  }
+
+  async function sharePttExcel() {
+    try {
+      await shareExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), "تشييك-صوتي.xlsx", "تشييك صوتي");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
   }
 
   async function startPtt() {
@@ -1522,7 +1620,29 @@ export default function InstantCheckPage() {
                                   <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
                                 )}
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
+                                {editingPttId === r.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <input
+                                      dir="rtl"
+                                      value={editPttValue}
+                                      onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                      onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
+                                      autoFocus
+                                      className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none"
+                                    />
+                                    <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={14} /></button>
+                                    <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={14} /></button>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {r.plate}
+                                    <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="text-muted hover:text-primary transition" title="تعديل اللوحة">
+                                      <Pencil size={12} />
+                                    </button>
+                                  </span>
+                                )}
+                              </td>
                               {dynCols.map((h) => (
                                 <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
                               ))}
@@ -1544,6 +1664,18 @@ export default function InstantCheckPage() {
                           ))}
                         </tbody>
                       </table>
+                    </div>
+
+                    {/* تصدير كل لوحات الصوت */}
+                    <div className="flex gap-2">
+                      <button onClick={exportPttExcel}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
+                        <Download size={14} /> فتح في Excel
+                      </button>
+                      <button onClick={sharePttExcel}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                        <Share2 size={14} /> مشاركة Excel
+                      </button>
                     </div>
                   </div>
                 );
