@@ -117,8 +117,13 @@ export async function POST(req: NextRequest) {
     // knows (observed: "حاء باء لام" → "حابة علامة", "واو" → "راو"). Priming
     // it with the actual letter names and digit words steers it toward
     // recognizing this as letter-by-letter dictation instead.
+    //
+    // The field agents are mostly Egyptian, so the prompt primes BOTH the
+    // Egyptian short pronunciations (به، حه، ره، طه، اتنين، تلاتة...) and the
+    // classical/Gulf ones — otherwise Whisper (trained mostly on MSA) mishears
+    // the Egyptian dictation itself, before the letter-map ever sees it.
     const PLATE_DICTATION_PROMPT =
-      "تسجيل لوحة سيارة سعودية: يُملي المسجّل حروف اللوحة حرفاً حرفاً بأسمائها الفصيحة مثل ألف باء حاء دال راء سين صاد طاء عين قاف كاف لام ميم نون هاء واو ياء، ثم يُملي الأرقام رقماً رقماً مثل صفر واحد اثنان ثلاثة أربعة خمسة ستة سبعة ثمانية تسعة.";
+      "تسجيل لوحة سيارة سعودية بصوت مأمور مصري: يُملي حروف اللوحة حرفاً حرفاً، أحياناً بالنطق المصري مثل ألف به حه دال ره سين صاد طه عين قاف كاف لام ميم نون هه واو يه، وأحياناً بالفصحى مثل باء حاء راء طاء هاء ياء. ثم يُملي الأرقام رقماً رقماً بالنطق المصري مثل صفر واحد اتنين تلاتة اربعة خمسة ستة سبعة تمانية تسعة، أو بالفصحى مثل اثنان ثلاثة أربعة ثمانية.";
 
     // whisper-large-v3 (not the "-turbo" variant) — turbo trades accuracy for
     // speed, and this app's whole failure mode today has been mishearing
@@ -133,6 +138,10 @@ export async function POST(req: NextRequest) {
     // hallucinated text (see below) instead of just the plain transcript.
     form.append("response_format", "verbose_json");
     form.append("prompt", PLATE_DICTATION_PROMPT);
+    // Greedy/deterministic decoding — plate dictation is short, high-stakes
+    // content where a confident single guess beats sampling, and temperature 0
+    // reduces the hallucinated-text failure mode on quiet/short clips.
+    form.append("temperature", "0");
 
     const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
