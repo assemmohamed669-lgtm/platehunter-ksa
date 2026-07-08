@@ -304,6 +304,8 @@ export default function InstantCheckPage() {
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   const [pttError, setPttError] = useState<string | null>(null);
   const [pttLocationName, setPttLocationName] = useState("");
+  // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
+  const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
   // Mirror of pttLocationName so the listening loop reads the latest value
@@ -972,6 +974,8 @@ export default function InstantCheckPage() {
       locationName: pttLocationNameRef.current.trim(),
     };
     setPttResults((prev) => [row, ...prev]);
+    // A matched (wanted) plate — exact OR suspected — pops the big alert.
+    if (result.found) setPttAlert(row);
     void fetchGpsForPttRow(id);
   }
 
@@ -1455,6 +1459,30 @@ export default function InstantCheckPage() {
                 <p className="text-center text-xs text-danger">{pttError}</p>
               )}
 
+              {/* ── تنبيه كبير: يظهر فقط لما اللوحة تطلع مطلوبة (تطابق تام أو مشتبه) ── */}
+              {pttAlert && (
+                <div className="w-full relative">
+                  <div className="mb-1 flex items-center justify-center gap-1.5 text-danger">
+                    <AlertTriangle size={16} className="animate-pulse" />
+                    <span className="text-sm font-black">🚨 لوحة مطلوبة!</span>
+                  </div>
+                  <button
+                    onClick={() => setPttAlert(null)}
+                    className="absolute left-2 top-7 z-10 rounded-full bg-black/50 p-1.5"
+                    title="إخفاء"
+                  >
+                    <X size={14} className="text-white" />
+                  </button>
+                  <ResultCard
+                    result={{ plate: pttAlert.plate, normalized: "", found: pttAlert.found, matchType: pttAlert.matchType, similarity: pttAlert.similarity, row: pttAlert.row }}
+                    plateCol={checkPlateCol}
+                    selectedCols={selectedCheckCols}
+                    onExport={(r) => exportToFieldCheck(r, "ptt")}
+                    priorCheck={findDuplicateEntry(fieldEntries, pttAlert.plate)}
+                  />
+                </div>
+              )}
+
               {/* نافذة النتائج — كل لوحة تتقال كصف مضغوط بتفاصيلها وموقعها */}
               {pttResults.length > 0 && (() => {
                 const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
@@ -1463,7 +1491,7 @@ export default function InstantCheckPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{pttResults.length} لوحة</span>
                       <button
-                        onClick={() => setPttResults([])}
+                        onClick={() => { setPttResults([]); setPttAlert(null); }}
                         className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
                       >
                         <Trash2 size={12} /> مسح
@@ -1487,11 +1515,11 @@ export default function InstantCheckPage() {
                             <tr key={r.id} className={`border-b border-border ${r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
                               <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
                                 {!r.found ? (
-                                  <XCircle size={14} className="text-danger inline" />
+                                  <span className="inline-flex items-center gap-0.5 text-muted"><XCircle size={13} /> غير مطلوبة</span>
                                 ) : r.matchType === "fuzzy" ? (
-                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} />{r.similarity}%</span>
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} /> مطلوبة؟ {r.similarity}%</span>
                                 ) : (
-                                  <CheckCircle2 size={14} className="text-brand inline" />
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
                                 )}
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
