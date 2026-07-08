@@ -77,6 +77,38 @@ async function remuxAacToM4a(input: Buffer): Promise<Buffer> {
   }
 }
 
+// Light, speech-safe cleanup before transcription. Field recordings carry
+// wind/engine rumble and uneven levels (agent near/far from the mic).
+//   • highpass=f=80  → cut low-frequency rumble/wind without touching speech
+//   • dynaudnorm     → even out loudness so a quietly-spoken plate isn't lost
+// Deliberately NO low-pass / aggressive denoise: the HIGH-frequency energy of
+// fricative letters (س ص ش) is exactly what distinguishes them, and denoise
+// smears it. Re-encoding to a real m4a container also doubles as the raw-AAC→
+// m4a fix Groq's format sniffer needs.
+async function cleanAudio(input: Buffer, inputExt: string): Promise<Buffer> {
+  const ffmpeg = resolveFfmpegPath();
+  if (!ffmpeg) throw new Error("ffmpeg binary unavailable");
+
+  const id = Math.random().toString(36).slice(2);
+  const inPath = path.join(os.tmpdir(), `clean-${id}.${inputExt || "dat"}`);
+  const outPath = path.join(os.tmpdir(), `clean-${id}.m4a`);
+
+  try {
+    await writeFile(inPath, input);
+    await execFileAsync(ffmpeg, [
+      "-y", "-i", inPath,
+      "-af", "highpass=f=80,dynaudnorm",
+      "-ac", "1",
+      "-c:a", "aac", "-b:a", "96k",
+      outPath,
+    ]);
+    return await readFile(outPath);
+  } finally {
+    await unlink(inPath).catch(() => {});
+    await unlink(outPath).catch(() => {});
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { audio, mimeType, apiKey } = await req.json();
@@ -88,16 +120,25 @@ export async function POST(req: NextRequest) {
     let ext = (mimeType?.split("/")[1] ?? "m4a").split(";")[0];
     ext = MIME_SUBTYPE_ALIASES[ext] ?? ext;
 
-    if (ext === "aac") {
-      try {
-        buffer = await remuxAacToM4a(buffer);
-        ext = "m4a";
-      } catch (err) {
-        console.error("AAC remux failed:", err instanceof Error ? err.message : err);
-        return NextResponse.json(
-          { text: null, error: "remux_failed", detail: err instanceof Error ? err.message : String(err) },
-          { status: 500 }
-        );
+    // Clean + normalize the audio (also produces a Groq-friendly m4a container).
+    try {
+      buffer = await cleanAudio(buffer, ext);
+      ext = "m4a";
+    } catch (err) {
+      console.warn("audio clean failed, falling back:", err instanceof Error ? err.message : err);
+      // Cleaning failed — raw AAC MUST still be remuxed or Groq rejects it.
+      // Any other format is sent as-is (unchanged from the prior behavior).
+      if (ext === "aac") {
+        try {
+          buffer = await remuxAacToM4a(buffer);
+          ext = "m4a";
+        } catch (err2) {
+          console.error("AAC remux failed:", err2 instanceof Error ? err2.message : err2);
+          return NextResponse.json(
+            { text: null, error: "remux_failed", detail: err2 instanceof Error ? err2.message : String(err2) },
+            { status: 500 }
+          );
+        }
       }
     }
 

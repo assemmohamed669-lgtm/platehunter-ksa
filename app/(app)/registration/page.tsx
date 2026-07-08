@@ -56,10 +56,14 @@ const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
 
 // Vercel rejects any serverless function request over 4.5MB — at this
-// recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio. 90s
-// per chunk leaves a wide safety margin while keeping the number of Groq
-// requests per session reasonable.
-const GROQ_CHUNK_MS = 90_000;
+// recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio, so 180s
+// per chunk (~2.2MB) still leaves a healthy margin. The longer chunk is a
+// deliberate trade: each live chunk-switch stops/restarts the recorder, and
+// the sub-second gap in between can clip a plate spoken right on the boundary.
+// Fewer switches ⇒ fewer boundaries ⇒ fewer chances to lose a plate. (Chunk
+// TEXTS are joined before parsing, so a lossless cut is healed automatically —
+// only the live switch-gap actually drops audio, which this reduces.)
+const GROQ_CHUNK_MS = 180_000;
 
 interface GroqChunkResult {
   text: string;
