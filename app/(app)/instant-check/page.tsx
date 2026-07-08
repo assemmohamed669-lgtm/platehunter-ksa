@@ -940,6 +940,12 @@ export default function InstantCheckPage() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
         await SpeechRecognition.requestPermissions();
+        // Continuous listening = a loop of one-shot recognitions. Android's
+        // SpeechRecognizer needs a beat to reset between sessions; starting
+        // again too fast throws ERROR_RECOGNIZER_BUSY. That transient error
+        // must NOT end the whole session (the old code broke on any error, so
+        // it stopped after the first plate) — back off briefly and keep going.
+        let consecutiveErrors = 0;
         while (isListeningRef.current) {
           try {
             const result = await SpeechRecognition.start({
@@ -948,13 +954,24 @@ export default function InstantCheckPage() {
               partialResults: false,
               popup: false,
             });
+            consecutiveErrors = 0;
             const text: string = result?.matches?.[0] ?? "";
             if (text) {
               setPttLiveText(text);
               addPttResult(text);
             }
+            // Let the recognizer fully reset before the next plate.
+            await new Promise((r) => setTimeout(r, 250));
           } catch {
-            break;
+            // User pressed stop mid-session → exit cleanly.
+            if (!isListeningRef.current) break;
+            // Transient error between plates (busy / no-speech) → retry, don't quit.
+            consecutiveErrors++;
+            if (consecutiveErrors >= 6) {
+              setPttError("توقف الاستماع — اضغط «ابدأ» من جديد");
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 350));
           }
         }
         setPttListening(false);
@@ -998,7 +1015,13 @@ export default function InstantCheckPage() {
 
     recognition.onend = () => {
       if (isListeningRef.current) {
-        try { recognition.start(); } catch {}
+        // Restart on a short delay — calling start() synchronously inside onend
+        // can throw "already started" mid-teardown, which would silently end
+        // the session after one plate. The delay lets it fully reset.
+        setTimeout(() => {
+          if (!isListeningRef.current) return;
+          try { recognition.start(); } catch { setTimeout(() => { if (isListeningRef.current) { try { recognition.start(); } catch {} } }, 400); }
+        }, 250);
       } else {
         setPttListening(false);
       }
