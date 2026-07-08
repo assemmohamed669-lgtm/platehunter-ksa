@@ -44,6 +44,22 @@ interface PlateResult {
   row?: Record<string, string>;
 }
 
+// One spoken plate in the voice (PTT) results window — compact row with its
+// details, the manually-typed location name, and its captured GPS.
+interface PttRow {
+  id: string;
+  plate: string;
+  found: boolean;
+  matchType?: "exact" | "fuzzy";
+  similarity?: number;
+  row?: Record<string, string>;
+  locationName: string;
+  lat?: number;
+  lng?: number;
+  mapsLink?: string;
+  gpsError?: boolean;
+}
+
 function playMatchAlert() {
   try {
     const ctx = new AudioContext();
@@ -285,10 +301,14 @@ export default function InstantCheckPage() {
   // PTT
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
-  const [pttResults, setPttResults] = useState<PlateResult[]>([]);
+  const [pttResults, setPttResults] = useState<PttRow[]>([]);
   const [pttError, setPttError] = useState<string | null>(null);
+  const [pttLocationName, setPttLocationName] = useState("");
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
+  // Mirror of pttLocationName so the listening loop reads the latest value
+  // (the loop's addPttResult closure would otherwise capture a stale one).
+  const pttLocationNameRef = useRef("");
 
   // Check hits history (session-only)
   const [manualHits, setManualHits] = useState<CheckHit[]>([]);
@@ -481,6 +501,21 @@ export default function InstantCheckPage() {
   async function retryGpsForHit(hitId: string) {
     setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: false } : h));
     await fetchGpsForHit(hitId);
+  }
+
+  // GPS for a voice (PTT) row — stamps its coords, or marks gpsError on failure.
+  async function fetchGpsForPttRow(id: string) {
+    const gps = await getCurrentGps();
+    if (gps) {
+      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : r));
+    } else {
+      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r));
+    }
+  }
+
+  async function retryGpsForPttRow(id: string) {
+    setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: false } : r));
+    await fetchGpsForPttRow(id);
   }
 
   function handleManualSearch() {
@@ -922,9 +957,22 @@ export default function InstantCheckPage() {
 
     if (!plate) return;
     const result = searchInCheck(plate);
-    if (result) {
-      setPttResults((prev) => [result, ...prev]);
-    }
+    if (!result) return; // no check file loaded
+
+    // Every spoken plate becomes a compact row (found or not), tagged with the
+    // current location name, then its GPS is captured in the background.
+    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const row: PttRow = {
+      id,
+      plate: result.plate,
+      found: result.found,
+      matchType: result.matchType,
+      similarity: result.similarity,
+      row: result.row,
+      locationName: pttLocationNameRef.current.trim(),
+    };
+    setPttResults((prev) => [row, ...prev]);
+    void fetchGpsForPttRow(id);
   }
 
   async function startPtt() {
@@ -1367,16 +1415,31 @@ export default function InstantCheckPage() {
           {/* ── PTT ── */}
           {mode === "ptt" && (
             <div className="flex flex-col items-center gap-4">
+              {/* اسم الموقع — يتسجّل على كل لوحة تتقال بعد كتابته */}
+              <div className="w-full">
+                <label className="mb-1 block text-[11px] text-muted">اسم الموقع اللي بتشيّك فيه</label>
+                <div className="relative">
+                  <MapPin size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input
+                    dir="rtl"
+                    value={pttLocationName}
+                    onChange={(e) => { setPttLocationName(e.target.value); pttLocationNameRef.current = e.target.value; }}
+                    placeholder="مثال: حي النرجس - شارع 15"
+                    className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+                  />
+                </div>
+              </div>
+
               {/* Big mic button */}
               <button
                 onClick={pttListening ? stopPtt : startPtt}
-                className={`flex h-28 w-28 flex-col items-center justify-center gap-1.5 rounded-full border-4 transition active:scale-95 ${
+                className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 transition active:scale-95 ${
                   pttListening
                     ? "border-brand bg-brand/20 text-brand animate-pulse"
                     : "border-border bg-surface-2 text-muted"
                 }`}
               >
-                <Mic size={32} />
+                <Mic size={28} />
                 <span className="text-xs font-bold">
                   {pttListening ? "إيقاف" : "ابدأ"}
                 </span>
@@ -1392,25 +1455,71 @@ export default function InstantCheckPage() {
                 <p className="text-center text-xs text-danger">{pttError}</p>
               )}
 
-              {pttResults.length > 0 && (
-                <div className="w-full flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted">
-                      {pttResults.length} نتيجة
-                    </span>
-                    <button
-                      onClick={() => setPttResults([])}
-                      className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
-                    >
-                      <Trash2 size={12} />
-                      مسح
-                    </button>
+              {/* نافذة النتائج — كل لوحة تتقال كصف مضغوط بتفاصيلها وموقعها */}
+              {pttResults.length > 0 && (() => {
+                const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+                return (
+                  <div className="w-full flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted">{pttResults.length} لوحة</span>
+                      <button
+                        onClick={() => setPttResults([])}
+                        className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
+                      >
+                        <Trash2 size={12} /> مسح
+                      </button>
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-surface-2 text-muted">
+                            <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">الحالة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            {dynCols.map((h) => (
+                              <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                            ))}
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
+                            <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pttResults.map((r) => (
+                            <tr key={r.id} className={`border-b border-border ${r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
+                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                                {!r.found ? (
+                                  <XCircle size={14} className="text-danger inline" />
+                                ) : r.matchType === "fuzzy" ? (
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} />{r.similarity}%</span>
+                                ) : (
+                                  <CheckCircle2 size={14} className="text-brand inline" />
+                                )}
+                              </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
+                              {dynCols.map((h) => (
+                                <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
+                              ))}
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.locationName || "—"}</td>
+                              <td className="border-border px-3 py-2">
+                                {r.mapsLink ? (
+                                  <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                                    <MapPin size={10} /> خريطة
+                                  </a>
+                                ) : r.gpsError ? (
+                                  <button onClick={() => retryGpsForPttRow(r.id)} className="flex items-center gap-0.5 text-muted text-[10px]" title="إعادة المحاولة">
+                                    <MapPin size={10} /> إعادة
+                                  </button>
+                                ) : (
+                                  <span className="text-muted text-[10px] animate-pulse">جاري...</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                  {pttResults.map((r, i) => (
-                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(res) => exportToFieldCheck(res, "ptt")} priorCheck={r.found ? findDuplicateEntry(fieldEntries, r.plate) : undefined} />
-                  ))}
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
 
