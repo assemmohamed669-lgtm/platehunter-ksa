@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogOut, ShieldCheck } from "lucide-react";
+import { LogOut, ShieldCheck, Menu } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import SessionGuard from "@/components/SessionGuard";
 import BottomNav from "@/components/BottomNav";
@@ -9,7 +9,9 @@ import ThemeToggle from "@/components/ThemeToggle";
 import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import IncomingExcelHandler from "@/components/IncomingExcelHandler";
+import AppMenu from "@/components/AppMenu";
 import { logoutAgent } from "@/lib/auth";
+import { initAppearance } from "@/lib/appSettings";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function AppShellLayout({
@@ -20,7 +22,11 @@ export default function AppShellLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const isHome = pathname === "/dashboard";
+
+  // Apply the saved appearance (font size / colours) app-wide on every load.
+  useEffect(() => { initAppearance(); }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -59,15 +65,28 @@ export default function AppShellLayout({
                 <span>الأدمن</span>
               </button>
             )}
-            <ThemeToggle />
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs text-muted transition hover:text-danger"
-              title="تسجيل الخروج"
-            >
-              <LogOut size={14} />
-              <span>خروج</span>
-            </button>
+            {isHome ? (
+              <button
+                onClick={() => setMenuOpen(true)}
+                className="flex items-center justify-center rounded-full border border-border bg-surface-2 p-2 text-ink transition hover:text-primary"
+                title="القائمة"
+                aria-label="القائمة"
+              >
+                <Menu size={18} />
+              </button>
+            ) : (
+              <>
+                <ThemeToggle />
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs text-muted transition hover:text-danger"
+                  title="تسجيل الخروج"
+                >
+                  <LogOut size={14} />
+                  <span>خروج</span>
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -75,6 +94,7 @@ export default function AppShellLayout({
 
         <BottomNav />
         <IncomingExcelHandler />
+        <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} />
       </div>
     </SessionGuard>
   );
