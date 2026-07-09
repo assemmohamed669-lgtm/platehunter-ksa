@@ -20,11 +20,14 @@ export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null };
 const KEY = "ph:appearance";
 const LIGHT_INK = "#F3F5F7"; // text on a dark background
 const DARK_INK = "#1A1F24";  // text on a light background
+// Capped at 1.3 (130%): big enough to help, small enough that dense screens
+// don't overflow/clip content.
+export const MAX_FONT_SCALE = 1.3;
 
 /** Keep the font scale within a safe, readable range. */
 export function clampFontScale(n: number): number {
-  if (!Number.isFinite(n)) return n === Infinity ? 1.6 : 1;
-  return Math.min(1.6, Math.max(1, Math.round(n * 100) / 100));
+  if (!Number.isFinite(n)) return n === Infinity ? MAX_FONT_SCALE : 1;
+  return Math.min(MAX_FONT_SCALE, Math.max(1, Math.round(n * 100) / 100));
 }
 
 /** True when a hex colour is dark enough to need light text on top of it. */

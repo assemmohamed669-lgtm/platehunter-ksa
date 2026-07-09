@@ -40,6 +40,7 @@ export default function AppMenu({
   const startYRef = useRef(0);
   const widthRef = useRef(320);
   const axisRef = useRef<"?" | "x" | "y">("?");
+  const dragBlockedRef = useRef(false); // true when the drag started on a control (slider/button/link)
 
   useEffect(() => { setAppr(loadAppearance()); }, []);
 
@@ -85,9 +86,14 @@ export default function AppMenu({
     startXRef.current = e.touches[0].clientX;
     startYRef.current = e.touches[0].clientY;
     axisRef.current = "?";
+    // A drag that begins on an interactive control (the font slider, a colour
+    // input, a button, a link) must NOT slide the whole drawer — let the
+    // control handle its own gesture.
+    dragBlockedRef.current = !!(e.target as HTMLElement).closest("input, button, a, select, textarea, label");
   }
   function onDrawerMove(e: React.TouchEvent) {
     if (!open && !dragging) return;
+    if (dragBlockedRef.current) return;
     const dx = e.touches[0].clientX - startXRef.current; // rightward = positive = closing
     const dy = e.touches[0].clientY - startYRef.current;
     if (axisRef.current === "?") {
@@ -166,7 +172,7 @@ export default function AppMenu({
                 <span className="text-[11px] text-muted">{Math.round(appr.fontScale * 100)}%</span>
               </div>
               <input
-                type="range" min={100} max={160} step={5}
+                type="range" min={100} max={130} step={5}
                 value={Math.round(appr.fontScale * 100)}
                 onChange={(e) => update({ fontScale: Number(e.target.value) / 100 })}
                 className="w-full accent-primary"
