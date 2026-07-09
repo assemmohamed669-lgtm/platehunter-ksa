@@ -19,6 +19,7 @@ import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortin
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
+  getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -128,9 +129,8 @@ export default function SortingPage() {
       getUploadedFile("local", "data"),
       getUploadedFile("local", "referral"),
       getUploadedFile("local", "check"),
-      getUploadedFile("local", "tashyeek"),
     ])
-      .then(([dataRec, refRec, checkRec, tashyeekRec]) => {
+      .then(async ([dataRec, refRec, checkRec]) => {
         if (dataRec) {
           setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
           setDataFile(new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -144,10 +144,20 @@ export default function SortingPage() {
         if (checkRec) {
           setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
         }
-        if (tashyeekRec) {
-          setTashyeekTable({ headers: tashyeekRec.headers, rows: tashyeekRec.rows });
-          setTashyeekFile(new File([tashyeekRec.fileBlob ?? new Blob()], tashyeekRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-        }
+        // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
+        // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
+        try {
+          const fieldEntries = await getAllFieldCheckEntries();
+          if (fieldEntries.length > 0) {
+            const keys = new Set<string>(["رقم اللوحة"]);
+            for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
+            keys.add("GPS");
+            const headers = [...keys];
+            const rows = fieldEntries.map((e) => ({ "رقم اللوحة": e.plate, ...e.row, "GPS": e.mapsLink ?? "" } as Record<string, string>));
+            setTashyeekTable({ headers, rows });
+            setTashyeekFile(null);
+          }
+        } catch { /* no field sheet yet */ }
         try {
           const raw = localStorage.getItem(SORT_RESULTS_KEY);
           if (raw) {
@@ -742,44 +752,11 @@ export default function SortingPage() {
       )}
       </>)}
 
-      {/* ② TASHYEEK FILE */}
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-bold text-ink">شيت التشييك الميداني</p>
-        <FileUploadBox
-          title="ملف التشييك"
-          hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"
-          parsedFile={tashyeekFile}
-          parsedRowCount={tashyeekTable?.rows.length ?? null}
-          onParsed={(table, file) => persistAndSetTashyeek(table, file)}
-          onClear={clearTashyeekSlot}
-          showReplaceButtons
-        />
-        {tashyeekTable && (
-          <>
-            <button onClick={() => setTashyeekColsOpen((v) => !v)}
-              className="flex items-center justify-between px-1 text-xs text-muted hover:text-ink transition">
-              <span>الأعمدة ({tashyeekTable.headers.length})</span>
-              <ChevronDown size={14} className={`transition-transform duration-200 ${tashyeekColsOpen ? "rotate-180" : ""}`} />
-            </button>
-            {tashyeekColsOpen && (
-              <div className="flex flex-wrap gap-1.5 px-1">
-                {tashyeekTable.headers.map((h) => (
-                  <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button onClick={shareTashyeekFile}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-bold text-white transition hover:opacity-90">
-                <Share2 size={15} /> واتساب
-              </button>
-              <button onClick={downloadTashyeekFile}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
-                <Download size={15} /> تحميل
-              </button>
-            </div>
-          </>
-        )}
+      {/* ② شيت التسجيلات — تلقائي (يغذّي الفرز من سجلات التطبيق، بدون رفع ملف) */}
+      <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
+        <p className="text-xs text-muted" dir="rtl">
+          الفرز بيطابق كمان <span className="font-bold text-ink">شيت التسجيلات</span> (اللي بيتجمّع تلقائياً من التشييك يدوي/كاميرا/صوت){tashyeekTable ? ` — ${tashyeekTable.rows.length} لوحة` : " — لسه فاضي"}.
+        </p>
       </div>
 
       {/* ③ SORT MODE TABS */}
@@ -1082,8 +1059,8 @@ export default function SortingPage() {
         tashyeekResults.length > 0 ? (
           <div className="flex flex-col gap-3 rounded-2xl border-2 border-primary/60 bg-primary/5 p-3">
             <div>
-              <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من ملف التشييك</h2>
-              <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من ملف التشييك موجودة في قائمة الإحالة</p>
+              <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من التشييك الميداني</h2>
+              <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
             </div>
             <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh" }}>
               <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
