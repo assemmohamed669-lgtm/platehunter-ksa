@@ -1,17 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Lock, KeyRound, Search, History, Pencil } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, clearFieldCheck } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
-import { hasLockPassword, verifyLockPassword, changeLockPassword, resetLockPassword } from "@/lib/fieldCheckLock";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
-import { supabase } from "@/lib/supabaseClient";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -355,25 +353,11 @@ export default function InstantCheckPage() {
   const [hitsZoom, setHitsZoom] = useState(3);
   const [hitsSelected, setHitsSelected] = useState<Set<string>>(new Set());
 
-  // Protected field-check sheet (شيت التشييك الميداني) — persisted in IDB,
-  // survives restarts/updates, deletion gated behind a local password.
+  // Recordings sheet (شيت التسجيلات) — persisted in IDB, fixed log the agent
+  // can only download or share (no delete / no edit).
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [fieldZoom, setFieldZoom] = useState(3);
   const [fieldSearch, setFieldSearch] = useState("");
-  // A destructive action waiting for the password gate to confirm it.
-  const [pwGate, setPwGate] = useState<null | { action: () => void | Promise<void> }>(null);
-  const [pwInput, setPwInput] = useState("");
-  const [pwError, setPwError] = useState<string | null>(null);
-  // Change/set-password dialog
-  const [pwChangeOpen, setPwChangeOpen] = useState(false);
-  const [pwCurrent, setPwCurrent] = useState("");
-  const [pwNew, setPwNew] = useState("");
-  const [pwChangeError, setPwChangeError] = useState<string | null>(null);
-  const [pwChangeDone, setPwChangeDone] = useState(false);
-  // Recovery: reset the lock via the admin/secondary password when forgotten
-  const [pwForgot, setPwForgot] = useState(false);
-  const [pwAdmin, setPwAdmin] = useState("");
-  const [pwVerifying, setPwVerifying] = useState(false);
 
   // Load the field-check sheet from IDB on mount (local-only, durable per device)
   useEffect(() => {
@@ -734,82 +718,6 @@ export default function InstantCheckPage() {
       dateText: formatDate(new Date().toISOString()),
     });
     await shareImageWithText(cameraImage, text, `لوحة-${result.plate}.jpg`, "لوحة مطلوبة");
-  }
-
-  // ── Password gate ───────────────────────────────────────────────────────────
-  // Run a destructive action only after the field-check password is confirmed.
-  // If no password is set yet, prompt to set one first (protecting the sheet).
-  function requestProtected(action: () => void | Promise<void>) {
-    setPwError(null);
-    setPwInput("");
-    if (!hasLockPassword()) {
-      // No password yet → force setup before anything can be deleted.
-      openPwChange();
-      return;
-    }
-    setPwGate({ action });
-  }
-
-  async function confirmPwGate() {
-    if (!pwGate) return;
-    if (!verifyLockPassword(pwInput)) {
-      setPwError("الرقم السري غير صحيح");
-      return;
-    }
-    const { action } = pwGate;
-    setPwGate(null);
-    setPwInput("");
-    setPwError(null);
-    await action();
-  }
-
-  function openPwChange() {
-    setPwCurrent(""); setPwNew(""); setPwAdmin("");
-    setPwChangeError(null); setPwChangeDone(false); setPwForgot(false);
-    setPwChangeOpen(true);
-  }
-
-  function closePwChange() {
-    setPwChangeOpen(false);
-    setPwCurrent(""); setPwNew(""); setPwAdmin("");
-    setPwChangeError(null); setPwChangeDone(false); setPwForgot(false);
-  }
-
-  async function submitPwChange() {
-    setPwChangeError(null);
-    if (!pwNew.trim()) { setPwChangeError("اكتب رقماً سرياً جديداً"); return; }
-
-    if (pwForgot) {
-      // Recovery path — authorize the reset with the admin/secondary password.
-      if (!pwAdmin.trim()) { setPwChangeError("أدخل كلمة مرور الأدمن"); return; }
-      setPwVerifying(true);
-      try {
-        const { data: isValid, error } = await supabase.rpc("verify_secondary_password", { p_password: pwAdmin });
-        if (error || !isValid) { setPwChangeError("كلمة مرور الأدمن غير صحيحة"); return; }
-        resetLockPassword(pwNew);
-      } catch {
-        setPwChangeError("تعذّر التحقق — تأكد من الاتصال بالإنترنت");
-        return;
-      } finally {
-        setPwVerifying(false);
-      }
-    } else {
-      const ok = changeLockPassword(pwCurrent, pwNew);
-      if (!ok) { setPwChangeError("الرقم السري الحالي غير صحيح"); return; }
-    }
-
-    setPwChangeDone(true);
-    setTimeout(closePwChange, 900);
-  }
-
-  async function reallyDeleteFieldEntry(id: string) {
-    await deleteFieldCheckEntry(id);
-    setFieldEntries((prev) => prev.filter((e) => e.id !== id));
-  }
-
-  async function reallyClearField() {
-    await clearFieldCheck();
-    setFieldEntries([]);
   }
 
   function buildFieldRows() {
@@ -1778,10 +1686,10 @@ export default function InstantCheckPage() {
                       </table>
                     </div>
 
-                    {/* تصدير كل لوحات الصوت لشيت التشييك الميداني */}
+                    {/* تصدير كل لوحات الصوت لشيت التسجيلات */}
                     <button onClick={exportAllPttToField}
                       className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
-                      <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التشييك الميداني
+                      <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
                     </button>
 
                     {/* فتح / مشاركة Excel */}
@@ -1948,21 +1856,13 @@ export default function InstantCheckPage() {
         const visible = filterFieldEntries(fieldEntries, fieldSearch);
         return (
           <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <Lock size={14} className="text-brand shrink-0" />
-                <h2 className="text-sm font-bold text-ink truncate">شيت التشييك الميداني</h2>
-                <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
-              </div>
-              <button
-                onClick={openPwChange}
-                className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted shrink-0"
-              >
-                <KeyRound size={12} /> {hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري"}
-              </button>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <ClipboardCheck size={15} className="text-brand shrink-0" />
+              <h2 className="text-sm font-bold text-ink truncate">شيت التسجيلات (صوتي+يدوي)</h2>
+              <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
             </div>
             <p className="text-[11px] text-muted" dir="rtl">
-              محفوظ ولا يُحذف عند الخروج أو تحديث البرنامج — الحذف أو التعديل يتطلب الرقم السري
+              سجل ثابت محفوظ على الجهاز — للتحميل أو المشاركة فقط (لا يُحذف ولا يُعدّل)
             </p>
 
             {/* Search */}
@@ -2010,8 +1910,7 @@ export default function InstantCheckPage() {
                       ))}
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
-                      <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">حذف</th>
+                      <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2034,13 +1933,7 @@ export default function InstantCheckPage() {
                             <span className="text-muted text-[10px] animate-pulse">جاري...</span>
                           )}
                         </td>
-                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
-                        <td className="px-2 py-2 text-center">
-                          <button onClick={() => requestProtected(() => reallyDeleteFieldEntry(e.id))}
-                            title="حذف (يتطلب الرقم السري)" className="text-muted hover:text-danger transition">
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
+                        <td className="border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2056,113 +1949,13 @@ export default function InstantCheckPage() {
               </button>
               <button onClick={shareFieldExcel}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
-                <Share2 size={14} /> مشاركة Excel
+                <Share2 size={14} /> مشاركة واتساب
               </button>
             </div>
-            <button onClick={() => requestProtected(reallyClearField)}
-              className="flex items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-2.5 text-sm font-bold text-danger transition">
-              <Lock size={14} /> مسح الشيت بالكامل (يتطلب الرقم السري)
-            </button>
           </div>
         );
       })()}
 
-      {/* ── Password gate modal (verify before delete/clear) ── */}
-      {pwGate && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
-            <h3 className="mb-1 flex items-center gap-1.5 font-bold text-ink"><Lock size={15} className="text-danger" /> تأكيد بالرقم السري</h3>
-            <p className="mb-3 text-xs text-muted">أدخل الرقم السري لتنفيذ الحذف/التعديل على شيت التشييك الميداني.</p>
-            <input
-              type="password"
-              inputMode="numeric"
-              value={pwInput}
-              onChange={(e) => { setPwInput(e.target.value); setPwError(null); }}
-              onKeyDown={(e) => e.key === "Enter" && confirmPwGate()}
-              placeholder="الرقم السري"
-              autoFocus
-              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-            {pwError && <p className="mb-3 text-xs text-danger">{pwError}</p>}
-            <div className="flex gap-2">
-              <button onClick={() => { setPwGate(null); setPwInput(""); setPwError(null); }}
-                className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted">إلغاء</button>
-              <button onClick={confirmPwGate}
-                className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-bold text-white">تأكيد</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Set / change / recover password modal ── */}
-      {pwChangeOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
-            <h3 className="mb-1 flex items-center gap-1.5 font-bold text-ink">
-              <KeyRound size={15} className="text-brand" />
-              {pwForgot ? "استرجاع الرقم السري" : hasLockPassword() ? "تغيير الرقم السري" : "تعيين رقم سري لحماية الشيت"}
-            </h3>
-            <p className="mb-3 text-xs text-muted">
-              {pwForgot
-                ? "أدخل كلمة مرور الأدمن لإعادة تعيين رقم سري جديد."
-                : hasLockPassword()
-                ? "أدخل الرقم السري الحالي ثم الجديد."
-                : "عيّن رقماً سرياً لحماية شيت التشييك من الحذف أو التعديل."}
-            </p>
-
-            {pwForgot ? (
-              <input
-                type="password"
-                value={pwAdmin}
-                onChange={(e) => { setPwAdmin(e.target.value); setPwChangeError(null); }}
-                placeholder="كلمة مرور الأدمن"
-                autoFocus
-                className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            ) : hasLockPassword() ? (
-              <input
-                type="password"
-                inputMode="numeric"
-                value={pwCurrent}
-                onChange={(e) => { setPwCurrent(e.target.value); setPwChangeError(null); }}
-                placeholder="الرقم السري الحالي"
-                className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            ) : null}
-
-            <input
-              type="password"
-              inputMode="numeric"
-              value={pwNew}
-              onChange={(e) => { setPwNew(e.target.value); setPwChangeError(null); }}
-              onKeyDown={(e) => e.key === "Enter" && submitPwChange()}
-              placeholder="الرقم السري الجديد"
-              autoFocus={!hasLockPassword() && !pwForgot}
-              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink text-center focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-
-            {pwChangeError && <p className="mb-2 text-xs text-danger">{pwChangeError}</p>}
-            {pwChangeDone && <p className="mb-2 text-xs text-brand">تم الحفظ ✓</p>}
-
-            {/* Forgot-password entry point (only when a password exists) */}
-            {hasLockPassword() && !pwForgot && (
-              <button onClick={() => { setPwForgot(true); setPwChangeError(null); }}
-                className="mb-3 text-[11px] text-primary underline">
-                نسيت الرقم السري؟
-              </button>
-            )}
-
-            <div className="flex gap-2">
-              <button onClick={closePwChange}
-                className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted">إلغاء</button>
-              <button onClick={submitPwChange} disabled={pwVerifying}
-                className="flex-1 rounded-xl bg-brand py-2.5 text-sm font-bold text-night disabled:opacity-60">
-                {pwVerifying ? "جارٍ التحقق..." : "حفظ"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
