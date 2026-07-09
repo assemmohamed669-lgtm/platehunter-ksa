@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogOut, ShieldCheck, Menu } from "lucide-react";
+import { ShieldCheck, Menu } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import SessionGuard from "@/components/SessionGuard";
 import BottomNav from "@/components/BottomNav";
-import ThemeToggle from "@/components/ThemeToggle";
 import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import IncomingExcelHandler from "@/components/IncomingExcelHandler";
@@ -65,28 +64,14 @@ export default function AppShellLayout({
                 <span>الأدمن</span>
               </button>
             )}
-            {isHome ? (
-              <button
-                onClick={() => setMenuOpen(true)}
-                className="flex items-center justify-center rounded-full border border-border bg-surface-2 p-2 text-ink transition hover:text-primary"
-                title="القائمة"
-                aria-label="القائمة"
-              >
-                <Menu size={18} />
-              </button>
-            ) : (
-              <>
-                <ThemeToggle />
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs text-muted transition hover:text-danger"
-                  title="تسجيل الخروج"
-                >
-                  <LogOut size={14} />
-                  <span>خروج</span>
-                </button>
-              </>
-            )}
+            <button
+              onClick={() => setMenuOpen(true)}
+              className="flex items-center justify-center rounded-full border border-border bg-surface-2 p-2 text-ink transition hover:text-primary"
+              title="القائمة"
+              aria-label="القائمة"
+            >
+              <Menu size={18} />
+            </button>
           </div>
         </header>
 

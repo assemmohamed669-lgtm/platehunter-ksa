@@ -33,6 +33,7 @@ export default function AppMenu({
   const [dragging, setDragging] = useState(false);
   const [appr, setAppr] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -231,10 +232,22 @@ export default function AppMenu({
 
           {/* ── الحساب ── */}
           <section className="border-t border-border pt-3">
-            <button onClick={() => { onOpenChange(false); onLogout(); }}
-              className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold text-danger hover:bg-danger/10 transition">
-              <LogOut size={16} /> تسجيل الخروج
-            </button>
+            {confirmLogout ? (
+              <div className="rounded-xl border border-danger/40 bg-danger/10 p-3 flex flex-col gap-2">
+                <p className="text-xs font-bold text-ink">متأكد إنك عايز تسجّل خروج؟</p>
+                <div className="flex gap-2">
+                  <button onClick={() => { setConfirmLogout(false); onOpenChange(false); onLogout(); }}
+                    className="flex-1 rounded-lg bg-danger py-2 text-xs font-bold text-white">تأكيد الخروج</button>
+                  <button onClick={() => setConfirmLogout(false)}
+                    className="flex-1 rounded-lg border border-border py-2 text-xs text-muted">إلغاء</button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmLogout(true)}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold text-danger hover:bg-danger/10 transition">
+                <LogOut size={16} /> تسجيل الخروج
+              </button>
+            )}
           </section>
         </div>
 
