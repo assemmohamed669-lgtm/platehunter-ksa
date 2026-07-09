@@ -14,6 +14,12 @@ import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
+// Distinct row tints for duplicated plates in the recordings sheet — each
+// repeated plate group gets its own colour so it stands out at a glance.
+const FIELD_DUPE_COLORS = [
+  "bg-amber-500/20", "bg-purple-500/20", "bg-pink-500/20", "bg-cyan-500/20",
+  "bg-orange-500/20", "bg-lime-500/20", "bg-rose-500/20", "bg-indigo-500/20",
+];
 
 // Shared with the registration page so a correction on EITHER screen teaches
 // the other — same device, same voice, same mishearings.
@@ -358,6 +364,18 @@ export default function InstantCheckPage() {
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [fieldZoom, setFieldZoom] = useState(3);
   const [fieldSearch, setFieldSearch] = useState("");
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [editFieldValue, setEditFieldValue] = useState("");
+
+  // Colour index per DUPLICATED plate (plates appearing more than once).
+  const fieldColorMap = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of fieldEntries) { const k = plateKey(e.plate); if (k) counts.set(k, (counts.get(k) ?? 0) + 1); }
+    const map = new Map<string, number>();
+    let ci = 0;
+    for (const [k, c] of counts) { if (c > 1) { map.set(k, ci % FIELD_DUPE_COLORS.length); ci++; } }
+    return map;
+  }, [fieldEntries]);
 
   // Load the field-check sheet from IDB on mount (local-only, durable per device)
   useEffect(() => {
@@ -663,27 +681,12 @@ export default function InstantCheckPage() {
     );
   }
 
-  // Push a confirmed car onto the protected field-check sheet, stamping GPS.
-  // `prefetchedGps` (from the camera capture moment) avoids a second lookup.
-  // A plate already on the sheet is NOT duplicated — its row is refreshed.
+  // Push a confirmed car onto the field-check sheet, stamping GPS. Duplicates
+  // are ALLOWED on purpose — the same plate checked again (another day/area) is
+  // a new row; the sheet colour-codes repeated plates so they're easy to spot.
   async function exportToFieldCheck(result: PlateResult, mode: CheckMode, prefetchedGps?: { lat: number; lng: number } | null) {
     if (!result.found) return;
     const gpsPromise = prefetchedGps ? Promise.resolve(prefetchedGps) : getCurrentGps();
-
-    // Already on the sheet → refresh timestamp/GPS instead of adding a duplicate.
-    const existing = findDuplicateEntry(fieldEntries, result.plate);
-    if (existing) {
-      const gps = await gpsPromise;
-      const updated: FieldCheckEntry = {
-        ...existing,
-        method: methodLabel[mode],
-        checkedAt: new Date().toISOString(),
-        ...(gps ? { lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : {}),
-      };
-      setFieldEntries((prev) => prev.map((e) => (e.id === existing.id ? updated : e)));
-      await saveFieldCheckEntry(updated);
-      return;
-    }
 
     const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const base: FieldCheckEntry = {
@@ -718,6 +721,30 @@ export default function InstantCheckPage() {
       dateText: formatDate(new Date().toISOString()),
     });
     await shareImageWithText(cameraImage, text, `لوحة-${result.plate}.jpg`, "لوحة مطلوبة");
+  }
+
+  // Correct a wrong (mis-transcribed) plate in the sheet — and teach the
+  // learners so the same mistake auto-corrects next time. The sheet stays
+  // un-deletable; only the plate value can be fixed.
+  async function applyFieldEdit(id: string) {
+    const entry = fieldEntries.find((e) => e.id === id);
+    const trimmed = editFieldValue.trim();
+    setEditingFieldId(null);
+    if (!entry || !trimmed || trimmed === entry.plate) return;
+
+    const origLetters = normalizePlate(bankPlateToArabic(entry.plate)).replace(/[0-9]/g, "");
+    const corrLetters = normalizePlate(bankPlateToArabic(trimmed)).replace(/[0-9]/g, "");
+    if (origLetters && corrLetters && origLetters.length !== corrLetters.length) {
+      recordWordBlend(wordBlendRef.current, origLetters, corrLetters);
+      try { localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current))); } catch { /* full */ }
+    } else if (origLetters && corrLetters) {
+      recordLetterCorrections(letterConfusionsRef.current, entry.plate, trimmed);
+      try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
+    }
+
+    const updated: FieldCheckEntry = { ...entry, plate: trimmed };
+    setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
+    await saveFieldCheckEntry(updated);
   }
 
   function buildFieldRows() {
@@ -1025,25 +1052,18 @@ export default function InstantCheckPage() {
     setPttAlert((a) => (a?.id === id ? null : a));
   }
 
-  // Append ALL voice rows to the protected field-check sheet, below whatever is
-  // already there. Dedups by plate (an existing plate is refreshed, not doubled).
+  // Append ALL voice rows to the field-check sheet, below whatever is already
+  // there. Duplicates are kept (a repeated plate = a new row).
   async function exportAllPttToField() {
     if (pttResults.length === 0) return;
-    const existing = new Map(fieldEntries.map((e) => [plateKey(e.plate), e]));
-    const toSave: FieldCheckEntry[] = [];
-    const done = new Set<string>();
     const stamp = Date.now();
-    pttResults.forEach((r, i) => {
-      const key = plateKey(r.plate);
-      if (!key || done.has(key)) return; // skip blanks + within-batch duplicates (newest wins)
-      done.add(key);
+    const toSave: FieldCheckEntry[] = pttResults.map((r, i) => {
       const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
       if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
       if (r.locationName) mergedRow["اسم الموقع"] = r.locationName;
       mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
-      const prev = existing.get(key);
-      toSave.push({
-        id: prev?.id ?? `${stamp}-${i}`,
+      return {
+        id: `${stamp}-${i}`,
         plate: r.plate,
         row: mergedRow,
         method: "متشيكة بالصوت",
@@ -1051,7 +1071,7 @@ export default function InstantCheckPage() {
         lng: r.lng,
         mapsLink: r.mapsLink,
         checkedAt: new Date().toISOString(),
-      });
+      };
     });
     for (const e of toSave) await saveFieldCheckEntry(e);
     setFieldEntries(await getAllFieldCheckEntries());
@@ -1914,9 +1934,34 @@ export default function InstantCheckPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((e, i) => (
-                      <tr key={e.id} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
-                        <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">{e.plate}</td>
+                    {visible.map((e, i) => {
+                      const cIdx = fieldColorMap.get(plateKey(e.plate));
+                      const rowBg = cIdx !== undefined ? FIELD_DUPE_COLORS[cIdx] : (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
+                      return (
+                      <tr key={e.id} className={`border-b border-border ${rowBg}`}>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
+                          {editingFieldId === e.id ? (
+                            <span className="inline-flex items-center gap-1">
+                              <input
+                                dir="rtl"
+                                value={editFieldValue}
+                                onChange={(ev) => setEditFieldValue(ev.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                onKeyDown={(ev) => { if (ev.key === "Enter") applyFieldEdit(e.id); if (ev.key === "Escape") setEditingFieldId(null); }}
+                                autoFocus
+                                className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none"
+                              />
+                              <button onClick={() => applyFieldEdit(e.id)} className="text-brand" title="حفظ"><Check size={14} /></button>
+                              <button onClick={() => setEditingFieldId(null)} className="text-muted" title="إلغاء"><X size={14} /></button>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              {e.plate}
+                              <button onClick={() => { setEditingFieldId(e.id); setEditFieldValue(e.plate); }} className="text-muted hover:text-primary transition" title="تعديل اللوحة">
+                                <Pencil size={12} />
+                              </button>
+                            </span>
+                          )}
+                        </td>
                         {dynCols.map((h) => (
                           <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>
                         ))}
@@ -1935,7 +1980,7 @@ export default function InstantCheckPage() {
                         </td>
                         <td className="border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
                       </tr>
-                    ))}
+                    );})}
                   </tbody>
                 </table>
               </div>
