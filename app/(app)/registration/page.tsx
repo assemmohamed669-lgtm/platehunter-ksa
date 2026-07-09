@@ -1996,11 +1996,11 @@ export default function RegistrationPage() {
         )}
 
         <p className="text-[11px] text-muted" dir="rtl">
-          فاضي = التسجيل بيستخدم محرك الجهاز المجاني (الوضع الحالي). لو حطيت مفتاحك الخاص من{" "}
+          برجاء زيارة موقع{" "}
           <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">
             console.groq.com
           </a>
-          ، التسجيل هيبقى أدق عن طريق تفريغ سحابي — الاستخدام على حسابك إنت بس.
+          {" "}لعمل مفتاح خاص بك لزيادة دقة التسجيل الصوتي.
         </p>
         </>)}
       </div>
