@@ -409,6 +409,7 @@ export default function RegistrationPage() {
   // each agent's own key, so usage never pools onto a shared account.
   const [groqApiKey, setGroqApiKey] = useState<string>("");
   const [showGroqKey, setShowGroqKey] = useState(false);
+  const [groqSectionOpen, setGroqSectionOpen] = useState(false); // collapse/expand the whole Groq-key box
   const [groqTestStatus, setGroqTestStatus] = useState<"idle" | "testing" | "ok" | "failed">("idle");
   const [groqTestError, setGroqTestError] = useState<string | null>(null);
   // PIN-gates revealing/clearing the Groq key — someone who grabs the phone
@@ -1919,12 +1920,20 @@ export default function RegistrationPage() {
 
       {/* Optional: agent's own Groq key for cloud transcription (higher accuracy than the free on-device recognizer) */}
       <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-3 py-3">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-bold text-muted" dir="rtl">مفتاح Groq للتفريغ السحابي (اختياري)</label>
+        <button
+          type="button"
+          onClick={() => setGroqSectionOpen((v) => !v)}
+          className="flex w-full items-center justify-between"
+        >
+          <span className="flex items-center gap-1.5">
+            <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${groqSectionOpen ? "rotate-180" : ""}`} />
+            <span className="text-xs font-bold text-muted" dir="rtl">مفتاح Groq للتفريغ السحابي (اختياري)</span>
+          </span>
           {groqApiKey.trim() && (
             <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand">مفعّل</span>
           )}
-        </div>
+        </button>
+        {groqSectionOpen && (<>
         <div className="flex items-center gap-1.5">
           <input
             type={showGroqKey ? "text" : "password"}
@@ -1993,6 +2002,7 @@ export default function RegistrationPage() {
           </a>
           ، التسجيل هيبقى أدق عن طريق تفريغ سحابي — الاستخدام على حسابك إنت بس.
         </p>
+        </>)}
       </div>
 
       {/* Main record button */}
