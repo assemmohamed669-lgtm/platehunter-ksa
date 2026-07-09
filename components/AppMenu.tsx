@@ -10,7 +10,6 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance } from "@/lib/appSettings";
 
 const APP_VERSION = "0.3.0";
-const DEFAULT_INK = "#1A1F24";
 const DEFAULT_BG = "#F3F5F7";
 
 function clamp01(n: number) { return Math.min(1, Math.max(0, n)); }
@@ -175,20 +174,13 @@ export default function AppMenu({
               <p className="text-[10px] text-muted">حرّك لتكبير أو تصغير كل النصوص في التطبيق.</p>
             </div>
 
-            {/* الألوان */}
-            <div className="flex gap-2">
-              <label className="flex flex-1 items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
-                <span className="flex items-center gap-1.5"><Palette size={13} /> لون الخط</span>
-                <input type="color" value={appr.textColor ?? DEFAULT_INK} onChange={(e) => update({ textColor: e.target.value })}
-                  className="h-6 w-8 rounded border border-border bg-transparent" />
-              </label>
-              <label className="flex flex-1 items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
-                <span className="flex items-center gap-1.5"><Palette size={13} /> الخلفية</span>
-                <input type="color" value={appr.bgColor ?? DEFAULT_BG} onChange={(e) => update({ bgColor: e.target.value })}
-                  className="h-6 w-8 rounded border border-border bg-transparent" />
-              </label>
-            </div>
-            <p className="text-[10px] text-muted">ألوان الحالة (مطلوبة/غير مطلوبة) ثابتة ومش بتتغير.</p>
+            {/* لون الخلفية (لون الخط يتظبط تلقائياً عشان يفضل واضح) */}
+            <label className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
+              <span className="flex items-center gap-1.5"><Palette size={13} /> لون الخلفية</span>
+              <input type="color" value={appr.bgColor ?? DEFAULT_BG} onChange={(e) => update({ bgColor: e.target.value })}
+                className="h-6 w-8 rounded border border-border bg-transparent" />
+            </label>
+            <p className="text-[10px] text-muted">لون الخط بيتظبط تلقائياً حسب الخلفية (أبيض على الغامق، غامق على الفاتح). ألوان الحالة (مطلوبة/غير مطلوبة) ثابتة.</p>
 
             <button onClick={resetAppearance}
               className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2 text-xs font-bold text-muted hover:text-ink transition">

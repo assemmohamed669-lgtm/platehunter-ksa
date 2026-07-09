@@ -1,27 +1,43 @@
 /**
- * appSettings — user-adjustable appearance (font size + custom text/background
- * colours), persisted on-device and applied app-wide via CSS variables.
+ * appSettings — user-adjustable appearance (font size + custom background
+ * colour), persisted on-device and applied app-wide via CSS variables.
  *
- * Deliberately touches ONLY the general text colour (--c-ink) and the page
- * background (--c-night). Status/semantic colours (brand/danger/alert) are left
- * alone so "مطلوبة/غير مطلوبة" keep their green/red meaning. Font scaling sets
- * the root font-size, and Tailwind's rem-based text sizes follow it.
+ * The general text colour (--c-ink) is chosen AUTOMATICALLY from the background
+ * so the text is always readable — light text on a dark background, dark text on
+ * a light one. No manual text-colour picker, so a dark-on-dark clash can't
+ * happen. Status/semantic colours (brand/danger/alert) are never touched, so
+ * "مطلوبة/غير مطلوبة" keep their green/red meaning. Font scaling sets the root
+ * font-size and Tailwind's rem-based text sizes follow it.
  */
 
 export interface Appearance {
   fontScale: number;        // 1.0 – 1.6
-  textColor: string | null; // null = theme default
-  bgColor: string | null;   // null = theme default
+  bgColor: string | null;   // null = theme default (light / وضع التوفير)
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, textColor: null, bgColor: null };
+export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null };
 
 const KEY = "ph:appearance";
+const LIGHT_INK = "#F3F5F7"; // text on a dark background
+const DARK_INK = "#1A1F24";  // text on a light background
 
 /** Keep the font scale within a safe, readable range. */
 export function clampFontScale(n: number): number {
   if (!Number.isFinite(n)) return n === Infinity ? 1.6 : 1;
   return Math.min(1.6, Math.max(1, Math.round(n * 100) / 100));
+}
+
+/** True when a hex colour is dark enough to need light text on top of it. */
+export function isDarkColor(hex: string): boolean {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return false;
+  let h = m[1];
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  // Perceived luminance (0–255); < 140 reads as "dark".
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 140;
 }
 
 export function loadAppearance(): Appearance {
@@ -31,7 +47,6 @@ export function loadAppearance(): Appearance {
     const p = JSON.parse(raw) as Partial<Appearance>;
     return {
       fontScale: clampFontScale(Number(p.fontScale) || 1),
-      textColor: p.textColor ?? null,
       bgColor: p.bgColor ?? null,
     };
   } catch {
@@ -53,15 +68,16 @@ export function applyAppearance(a: Appearance): void {
   const root = document.documentElement;
   root.style.fontSize = `${Math.round(clampFontScale(a.fontScale) * 100)}%`;
 
-  if (a.textColor) root.style.setProperty("--c-ink", a.textColor);
-  else root.style.removeProperty("--c-ink");
-
   if (a.bgColor) {
     root.style.setProperty("--c-night", a.bgColor);
     root.style.setProperty("--c-night-oled", a.bgColor);
+    // Auto-pick a readable text colour for that background.
+    root.style.setProperty("--c-ink", isDarkColor(a.bgColor) ? LIGHT_INK : DARK_INK);
   } else {
+    // Back to the theme's own colours (light mode / وضع التوفير black).
     root.style.removeProperty("--c-night");
     root.style.removeProperty("--c-night-oled");
+    root.style.removeProperty("--c-ink");
   }
 }
 
