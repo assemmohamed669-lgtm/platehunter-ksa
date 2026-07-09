@@ -5,9 +5,9 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, clearFieldCheck } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { toMapsLink } from "@/lib/gps";
+import { toMapsLink, gpsService } from "@/lib/gps";
 import { hasLockPassword, verifyLockPassword, changeLockPassword, resetLockPassword } from "@/lib/fieldCheckLock";
 import { findDuplicateEntry, filterFieldEntries } from "@/lib/fieldCheck";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
@@ -59,6 +59,7 @@ interface PttRow {
   matchType?: "exact" | "fuzzy";
   similarity?: number;
   row?: Record<string, string>;
+  vehicleType?: string;          // نوع السيارة spoken after the plate (ونيت/فان/…)
   locationName: string;
   lat?: number;
   lng?: number;
@@ -326,6 +327,8 @@ export default function InstantCheckPage() {
   // Inline plate editing in the voice results table
   const [editingPttId, setEditingPttId] = useState<string | null>(null);
   const [editPttValue, setEditPttValue] = useState("");
+  // Rows already pushed to the field-check sheet (shows a "تم" tick)
+  const [pttExportedIds, setPttExportedIds] = useState<Set<string>>(new Set());
 
   // Load the learned-correction maps once on mount.
   useEffect(() => {
@@ -337,6 +340,13 @@ export default function InstantCheckPage() {
       const raw = localStorage.getItem(LS_WORD_BLENDS);
       if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
     } catch { /* corrupt/missing — start fresh */ }
+  }, []);
+
+  // Keep a live GPS watch running the whole time the page is open, so stamping
+  // a plate reads an already-fresh coordinate instantly (see getCurrentGps).
+  useEffect(() => {
+    gpsService.startTracking();
+    return () => gpsService.stopTracking();
   }, []);
 
   // Check hits history (session-only)
@@ -384,6 +394,25 @@ export default function InstantCheckPage() {
       localStorage.setItem("ic-hits", JSON.stringify(manualHits));
     } catch {}
   }, [manualHits]);
+
+  // Voice (PTT) results + location name persist too, so leaving the page and
+  // coming back doesn't wipe what was already checked.
+  useEffect(() => {
+    try {
+      const savedRows = localStorage.getItem("ic-ptt-results");
+      if (savedRows) setPttResults(JSON.parse(savedRows));
+      const savedLoc = localStorage.getItem("ic-ptt-location");
+      if (savedLoc) { setPttLocationName(savedLoc); pttLocationNameRef.current = savedLoc; }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("ic-ptt-results", JSON.stringify(pttResults)); } catch {}
+  }, [pttResults]);
+
+  useEffect(() => {
+    try { localStorage.setItem("ic-ptt-location", pttLocationName); } catch {}
+  }, [pttLocationName]);
 
   // Attach live camera stream to video element whenever stream changes
   useEffect(() => {
@@ -492,9 +521,14 @@ export default function InstantCheckPage() {
     void fetchGpsForHit(hitId);
   }
 
-  // Read the current position once — Capacitor plugin on Android (proper
-  // permission flow), web Geolocation API otherwise. Returns null on failure.
+  // Read the current position. Prefers the warm coordinate from the always-on
+  // watch (gpsService) so stamping a plate is INSTANT — the old per-plate
+  // getCurrentPosition() call took seconds each. Falls back to a fresh lookup
+  // only when the watch hasn't produced a fix yet.
   async function getCurrentGps(): Promise<{ lat: number; lng: number } | null> {
+    const warm = gpsService.getLastCoords();
+    if (warm) return { lat: warm.lat, lng: warm.lng };
+
     try {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
@@ -972,8 +1006,12 @@ export default function InstantCheckPage() {
   // ── PTT ───────────────────────────────────────────────────────────────────
   // addResult: parse one utterance and append to results list
   function addPttResult(utterance: string) {
+    // Pull the vehicle type (ونيت/فان/مصدومة/…) out FIRST so it lands in its
+    // own column and isn't misread as plate letters.
+    const { vehicleType, rest } = extractVehicleType(utterance);
+
     // أول محاولة: ترجمة حرف حرف بالنطق المصري ("دال حه ره واحد اتنين...")
-    const egyptianMapped = mapEgyptianSpeech(utterance);
+    const egyptianMapped = mapEgyptianSpeech(rest);
     const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
     const letterPart     = egyptianNorm.replace(/[0-9]/g, "");
     const hasDigits      = /[0-9]/.test(egyptianNorm);
@@ -982,7 +1020,7 @@ export default function InstantCheckPage() {
 
     const rawPlate = isPlausiblePlate
       ? egyptianMapped
-      : (parsePlateFromTranscript(utterance).plate || "");
+      : (parsePlateFromTranscript(rest).plate || "");
 
     if (!rawPlate) return;
 
@@ -1009,6 +1047,7 @@ export default function InstantCheckPage() {
       matchType: result.matchType,
       similarity: result.similarity,
       row: result.row,
+      vehicleType,
       locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
     };
@@ -1052,6 +1091,7 @@ export default function InstantCheckPage() {
       const obj: Record<string, unknown> = {
         "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
         "رقم اللوحة": r.plate,
+        "النوع": r.vehicleType ?? "",
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
       obj["اسم الموقع"] = r.locationName;
@@ -1059,6 +1099,15 @@ export default function InstantCheckPage() {
       obj["التاريخ"] = formatDate(r.checkedAt);
       return obj;
     });
+  }
+
+  // Push one voice row onto the protected field-check sheet (only matched ones).
+  async function exportPttRowToField(r: PttRow) {
+    const mergedRow = { ...(r.row ?? {}) };
+    if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
+    const result: PlateResult = { plate: r.plate, normalized: "", found: r.found, matchType: r.matchType, similarity: r.similarity, row: mergedRow };
+    const gps = (r.lat != null && r.lng != null) ? { lat: r.lat, lng: r.lng } : undefined;
+    await exportToFieldCheck(result, "ptt", gps);
   }
 
   async function exportPttExcel() {
@@ -1601,11 +1650,13 @@ export default function InstantCheckPage() {
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                             {dynCols.map((h) => (
                               <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                             ))}
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
-                            <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">تصدير</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1643,11 +1694,12 @@ export default function InstantCheckPage() {
                                   </span>
                                 )}
                               </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.vehicleType || "—"}</td>
                               {dynCols.map((h) => (
                                 <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
                               ))}
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.locationName || "—"}</td>
-                              <td className="border-border px-3 py-2">
+                              <td className="border-l border-border px-3 py-2">
                                 {r.mapsLink ? (
                                   <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
                                     <MapPin size={10} /> خريطة
@@ -1658,6 +1710,23 @@ export default function InstantCheckPage() {
                                   </button>
                                 ) : (
                                   <span className="text-muted text-[10px] animate-pulse">جاري...</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-center">
+                                {r.found ? (
+                                  pttExportedIds.has(r.id) ? (
+                                    <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
+                                  ) : (
+                                    <button
+                                      onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
+                                      className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
+                                      title="تصدير للتشييك"
+                                    >
+                                      <ClipboardCheck size={12} /> تشييك
+                                    </button>
+                                  )
+                                ) : (
+                                  <span className="text-muted">—</span>
                                 )}
                               </td>
                             </tr>

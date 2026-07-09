@@ -495,6 +495,20 @@ const VEHICLE_TYPES = [
   "مصدومة", "مصدومه", "مركونة", "مركونه", "معطلة", "معطله",
 ];
 
+/**
+ * Pull a vehicle-type keyword (ونيت / مصدومة / فان / دباب / مركونة …) out of a
+ * spoken phrase and return it separately from the rest, so the caller can put
+ * the type in its own column instead of mistaking it for plate letters.
+ */
+export function extractVehicleType(text: string): { vehicleType?: string; rest: string } {
+  for (const vt of VEHICLE_TYPES) {
+    if (text.includes(vt)) {
+      return { vehicleType: vt, rest: text.replace(vt, " ").replace(/\s+/g, " ").trim() };
+    }
+  }
+  return { rest: text };
+}
+
 // ─── Location / directional note keywords ────────────────────────────────────
 // Spoken location/direction words that must ALWAYS land in `notes` and never be
 // mistaken for plate letters. Several of these are made entirely of valid plate
