@@ -9,7 +9,7 @@ import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTra
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { hasLockPassword, verifyLockPassword, changeLockPassword, resetLockPassword } from "@/lib/fieldCheckLock";
-import { findDuplicateEntry, filterFieldEntries } from "@/lib/fieldCheck";
+import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import { supabase } from "@/lib/supabaseClient";
 import PlateBadge from "@/components/PlateBadge";
@@ -1110,6 +1110,46 @@ export default function InstantCheckPage() {
     await exportToFieldCheck(result, "ptt", gps);
   }
 
+  // Remove a single voice row.
+  function deletePttRow(id: string) {
+    setPttResults((prev) => prev.filter((r) => r.id !== id));
+    setPttExportedIds((s) => { const n = new Set(s); n.delete(id); return n; });
+    setPttAlert((a) => (a?.id === id ? null : a));
+  }
+
+  // Append ALL voice rows to the protected field-check sheet, below whatever is
+  // already there. Dedups by plate (an existing plate is refreshed, not doubled).
+  async function exportAllPttToField() {
+    if (pttResults.length === 0) return;
+    const existing = new Map(fieldEntries.map((e) => [plateKey(e.plate), e]));
+    const toSave: FieldCheckEntry[] = [];
+    const done = new Set<string>();
+    const stamp = Date.now();
+    pttResults.forEach((r, i) => {
+      const key = plateKey(r.plate);
+      if (!key || done.has(key)) return; // skip blanks + within-batch duplicates (newest wins)
+      done.add(key);
+      const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
+      if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
+      if (r.locationName) mergedRow["اسم الموقع"] = r.locationName;
+      mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
+      const prev = existing.get(key);
+      toSave.push({
+        id: prev?.id ?? `${stamp}-${i}`,
+        plate: r.plate,
+        row: mergedRow,
+        method: "متشيكة بالصوت",
+        lat: r.lat,
+        lng: r.lng,
+        mapsLink: r.mapsLink,
+        checkedAt: new Date().toISOString(),
+      });
+    });
+    for (const e of toSave) await saveFieldCheckEntry(e);
+    setFieldEntries(await getAllFieldCheckEntries());
+    setPttExportedIds(new Set(pttResults.map((r) => r.id)));
+  }
+
   async function exportPttExcel() {
     try {
       await openExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), `تشييك-صوتي-${Date.now()}.xlsx`);
@@ -1656,7 +1696,7 @@ export default function InstantCheckPage() {
                             ))}
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">تصدير</th>
+                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1712,22 +1752,25 @@ export default function InstantCheckPage() {
                                   <span className="text-muted text-[10px] animate-pulse">جاري...</span>
                                 )}
                               </td>
-                              <td className="px-2 py-2 text-center">
-                                {r.found ? (
-                                  pttExportedIds.has(r.id) ? (
-                                    <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
-                                  ) : (
-                                    <button
-                                      onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
-                                      className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
-                                      title="تصدير للتشييك"
-                                    >
-                                      <ClipboardCheck size={12} /> تشييك
-                                    </button>
-                                  )
-                                ) : (
-                                  <span className="text-muted">—</span>
-                                )}
+                              <td className="px-2 py-2 text-center whitespace-nowrap">
+                                <div className="flex items-center justify-center gap-2">
+                                  {r.found && (
+                                    pttExportedIds.has(r.id) ? (
+                                      <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
+                                    ) : (
+                                      <button
+                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
+                                        className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
+                                        title="تصدير للتشييك"
+                                      >
+                                        <ClipboardCheck size={12} /> تشييك
+                                      </button>
+                                    )
+                                  )}
+                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -1735,7 +1778,13 @@ export default function InstantCheckPage() {
                       </table>
                     </div>
 
-                    {/* تصدير كل لوحات الصوت */}
+                    {/* تصدير كل لوحات الصوت لشيت التشييك الميداني */}
+                    <button onClick={exportAllPttToField}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
+                      <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التشييك الميداني
+                    </button>
+
+                    {/* فتح / مشاركة Excel */}
                     <div className="flex gap-2">
                       <button onClick={exportPttExcel}
                         className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
