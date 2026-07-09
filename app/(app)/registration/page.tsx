@@ -1918,91 +1918,12 @@ export default function RegistrationPage() {
         </div>
       </div>
 
-      {/* Optional: agent's own Groq key for cloud transcription (higher accuracy than the free on-device recognizer) */}
-      <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface px-3 py-3">
-        <button
-          type="button"
-          onClick={() => setGroqSectionOpen((v) => !v)}
-          className="flex w-full items-center justify-between"
-        >
-          <span className="flex items-center gap-1.5">
-            <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${groqSectionOpen ? "rotate-180" : ""}`} />
-            <span className="text-xs font-bold text-muted" dir="rtl">مفتاح Groq للتفريغ السحابي (اختياري)</span>
-          </span>
-          {groqApiKey.trim() && (
-            <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand">مفعّل</span>
-          )}
-        </button>
-        {groqSectionOpen && (<>
-        <div className="flex items-center gap-1.5">
-          <input
-            type={showGroqKey ? "text" : "password"}
-            value={groqApiKey}
-            onChange={(e) => handleGroqKeyChange(e.target.value)}
-            onBlur={handleGroqKeyBlur}
-            placeholder="gsk_..."
-            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-primary"
-            dir="ltr"
-          />
-          <button
-            type="button"
-            onClick={handleShowGroqKeyClick}
-            aria-label={showGroqKey ? "إخفاء المفتاح" : "إظهار المفتاح"}
-            className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-primary hover:text-primary"
-          >
-            {showGroqKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-          <button
-            type="button"
-            onClick={handleClearGroqKeyClick}
-            aria-label="مسح مفتاح Groq"
-            className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted transition hover:border-danger hover:text-danger"
-          >
-            <X size={14} />
-          </button>
-        </div>
-        {groqPinHash && (
-          <p className="text-[11px] text-muted" dir="rtl">🔒 محمي برقم سري — هيتطلب منك لما تحب تشوف المفتاح أو تمسحه.</p>
-        )}
-
-        {groqApiKey.trim() && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={testGroqKey}
-              disabled={groqTestStatus === "testing"}
-              className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50"
-            >
-              {groqTestStatus === "testing"
-                ? <RefreshCw size={12} className="animate-spin" />
-                : <RefreshCw size={12} />
-              }
-              اختبار المفتاح
-            </button>
-            {groqTestStatus === "ok" && (
-              <span className="flex items-center gap-1 text-xs font-bold text-brand">
-                <CheckCircle2 size={13} /> المفتاح شغال
-              </span>
-            )}
-            {groqTestStatus === "failed" && (
-              <span className="flex items-center gap-1 text-xs font-bold text-danger" title={groqTestError ?? undefined}>
-                <XCircle size={13} /> المفتاح مش شغال
-              </span>
-            )}
-          </div>
-        )}
-        {groqTestStatus === "failed" && groqTestError && (
-          <p className="text-[11px] text-danger" dir="rtl">{groqTestError}</p>
-        )}
-
-        <p className="text-[11px] text-muted" dir="rtl">
-          برجاء زيارة موقع{" "}
-          <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">
-            console.groq.com
-          </a>
-          {" "}لعمل مفتاح خاص بك لزيادة دقة التسجيل الصوتي.
-        </p>
-        </>)}
+      {/* Groq key moved to its own page — reachable from the ☰ menu */}
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2.5">
+        <span className="text-[11px] text-muted" dir="rtl">
+          مفتاح Groq للتفريغ السحابي بقى في القائمة (☰) ← <span className="font-bold text-ink">مفتاح Groq</span>
+          {groqApiKey.trim() ? " — مفعّل ✅" : ""}
+        </span>
       </div>
 
       {/* Main record button */}

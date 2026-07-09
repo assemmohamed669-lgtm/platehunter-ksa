@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   X, Settings, ClipboardList, FileSpreadsheet, HelpCircle, LogOut, Info,
-  Type as TypeIcon, Palette, RotateCcw, ChevronDown,
+  Type as TypeIcon, Palette, RotateCcw, ChevronDown, KeyRound,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance } from "@/lib/appSettings";
@@ -211,6 +211,10 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <ClipboardList size={16} className="text-primary" /> ملف التشييك المرجعي
             </Link>
+            <Link href="/groq" onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+              <KeyRound size={16} className="text-alert" /> مفتاح Groq (التفريغ السحابي)
+            </Link>
           </section>
 
           {/* ── شرح ومساعدة ── */}
@@ -225,7 +229,7 @@ export default function AppMenu({
                 • <b>التسجيل الصوتي:</b> قول اللوحة حرف حرف وبعدها وقفة صغيرة، والنوع (ونيت/فان...) بعد الرقم.<br />
                 • <b>التشييك بالكاميرا:</b> وجّه اللوحة داخل الإطار والتقط.<br />
                 • <b>التشييك بالصوت:</b> قول لوحة ← استنى النتيجة ← قول اللي بعدها.<br />
-                • <b>مفتاح Groq:</b> من صفحة التسجيل، يزوّد دقة التفريغ.
+                • <b>مفتاح Groq:</b> من القائمة ← مفتاح Groq، يزوّد دقة التفريغ.
               </div>
             )}
           </section>
