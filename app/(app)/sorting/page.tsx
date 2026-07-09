@@ -79,6 +79,7 @@ export default function SortingPage() {
   const [dataTable, setDataTable] = useState<ExcelTable | null>(null);
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [dataColsOpen, setDataColsOpen] = useState(false);
+  const [dataBoxOpen, setDataBoxOpen] = useState(true); // collapse/expand the whole "مربع الداتا"
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
 
@@ -684,7 +685,12 @@ export default function SortingPage() {
       </div>
 
       {/* ① DATA FILE */}
-      <p className="text-sm font-bold text-ink">مربع الداتا</p>
+      <button onClick={() => setDataBoxOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-sm font-bold text-ink">
+        <span>مربع الداتا</span>
+        <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${dataBoxOpen ? "rotate-180" : ""}`} />
+      </button>
+      {dataBoxOpen && (<>
       <FileUploadBox
         title="ملف الداتا"
         hint="بيانات التفريغ الميداني"
@@ -734,6 +740,7 @@ export default function SortingPage() {
           )}
         </div>
       )}
+      </>)}
 
       {/* ② TASHYEEK FILE */}
       <div className="flex flex-col gap-2">
@@ -919,7 +926,6 @@ export default function SortingPage() {
                   <tr className="bg-surface-2 text-muted">
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
                     {displayCols.map((col) => (
                       <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                     ))}
@@ -945,9 +951,6 @@ export default function SortingPage() {
                           </button>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        <td className="border-l border-border px-3 py-2 whitespace-nowrap">
-                          <span className="flex items-center gap-1 font-bold text-brand-glow text-xs"><CheckCircle2 size={12} /> مطلوبة</span>
-                        </td>
                         {displayCols.map((col) => {
                           const val = r.dataRow?.[col] ?? "";
                           return (

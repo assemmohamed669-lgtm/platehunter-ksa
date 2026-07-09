@@ -13,6 +13,8 @@ interface Props {
   onClear: () => void;
   /** When true: shows تغيير + مسح buttons instead of download + trash */
   showReplaceButtons?: boolean;
+  /** When true: file is fixed — no تغيير/مسح, only a download button */
+  fixed?: boolean;
 }
 
 export default function FileUploadBox({
@@ -23,6 +25,7 @@ export default function FileUploadBox({
   parsedRowCount,
   onClear,
   showReplaceButtons = false,
+  fixed = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
@@ -104,7 +107,15 @@ export default function FileUploadBox({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
-            {showReplaceButtons ? (
+            {fixed ? (
+              <button
+                onClick={handleDownloadOriginal}
+                title="تنزيل"
+                className="rounded-full border border-border p-1.5 text-muted hover:text-primary transition"
+              >
+                <Download size={14} />
+              </button>
+            ) : showReplaceButtons ? (
               <>
                 <label
                   className={`cursor-pointer rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition ${loading ? "pointer-events-none opacity-50" : ""}`}
