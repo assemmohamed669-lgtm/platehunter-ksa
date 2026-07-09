@@ -42,7 +42,7 @@ interface CheckHit {
   checkedAt: string;
 }
 
-type CheckMode = "manual" | "camera" | "ptt";
+type CheckMode = "manual" | "camera" | "ptt" | "sheet";
 
 interface PlateResult {
   plate: string;
@@ -671,6 +671,7 @@ export default function InstantCheckPage() {
     camera: "متشيكة بالكاميرا",
     ptt: "متشيكة بالصوت",
     manual: "متشيكة يدوي",
+    sheet: "متشيكة يدوي", // unused (the sheet tab never exports)
   };
 
   // Collect the extra (selected) detail columns for a matched row.
@@ -1336,18 +1337,19 @@ export default function InstantCheckPage() {
       {checkTable && (
         <>
           {/* Tabs */}
-          <div className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-surface-2 p-1">
+          <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-2 p-1">
             {(
               [
                 { key: "manual", Icon: Type, label: "يدوي" },
                 { key: "camera", Icon: Camera, label: "كاميرا" },
                 { key: "ptt", Icon: Mic, label: "صوت" },
+                { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
               ] as const
             ).map(({ key, Icon, label }) => (
               <button
                 key={key}
                 onClick={() => setMode(key)}
-                className={`flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-sm font-bold transition ${
+                className={`flex items-center justify-center gap-1 rounded-lg py-2.5 text-xs font-bold transition ${
                   mode === key ? "bg-primary text-night" : "text-muted"
                 }`}
               >
@@ -1729,8 +1731,8 @@ export default function InstantCheckPage() {
             </div>
           )}
 
-          {/* ── Hits history table — visible in all modes ── */}
-          {manualHits.length > 0 && (() => {
+          {/* ── Hits history table — hidden on the السجلات tab ── */}
+          {mode !== "sheet" && manualHits.length > 0 && (() => {
             const scale = HIT_ZOOM_LEVELS[hitsZoom];
             const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
             const allSel = hitsSelected.size === manualHits.length;
@@ -1869,8 +1871,13 @@ export default function InstantCheckPage() {
         </>
       )}
 
-      {/* ── شيت التشييك الميداني (protected, always visible) ── */}
-      {fieldEntries.length > 0 && (() => {
+      {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
+      {mode === "sheet" && fieldEntries.length === 0 && (
+        <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
+          لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
+        </div>
+      )}
+      {mode === "sheet" && fieldEntries.length > 0 && (() => {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
         const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
         const visible = filterFieldEntries(fieldEntries, fieldSearch);
