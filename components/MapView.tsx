@@ -1,5 +1,6 @@
 "use client";
 
+import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
 import type { RecordingEntry } from "@/lib/idb";
 
@@ -41,6 +42,16 @@ export default function MapView({ recordings, center = [24.7136, 46.6753] }: Pro
         attribution: "© OpenStreetMap contributors",
         maxZoom: 19,
       }).addTo(map);
+
+      // The container often hasn't settled to its final size on first paint
+      // (dynamic import + flex layout), which leaves tiles half-rendered.
+      // Recompute the size once the layout settles, and on any resize.
+      const fix = () => map.invalidateSize();
+      setTimeout(fix, 0);
+      setTimeout(fix, 250);
+      window.addEventListener("resize", fix);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (map as any)._phFix = fix;
 
       const withGps = recordings.filter((r) => r.lat && r.lng);
       if (!withGps.length) return;
@@ -87,7 +98,9 @@ export default function MapView({ recordings, center = [24.7136, 46.6753] }: Pro
 
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mapRef.current as any)?.remove();
+      const m = mapRef.current as any;
+      if (m?._phFix) window.removeEventListener("resize", m._phFix);
+      m?.remove();
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
