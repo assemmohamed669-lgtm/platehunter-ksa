@@ -11,7 +11,6 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance } from "@/lib/appSettings";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
-import { buildExcelBlob, openExcelBlob, exportRecordingsToExcel } from "@/lib/excel";
 import { supabase } from "@/lib/supabaseClient";
 
 const APP_VERSION = "0.3.0";
@@ -42,7 +41,6 @@ export default function AppMenu({
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
-  const [busy, setBusy] = useState<null | "backup">(null);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -169,31 +167,6 @@ export default function AppMenu({
     window.location.replace(u.toString());
   }
 
-  // Back up everything (recordings Excel + شيت التسجيلات Excel).
-  async function backupAll() {
-    if (busy) return;
-    setBusy("backup");
-    try {
-      const fieldEntries = await getAllFieldCheckEntries().catch(() => []);
-      if (fieldEntries.length > 0) {
-        const rows = fieldEntries.map((e) => ({
-          "رقم اللوحة": e.plate, ...e.row, "الحالة": e.method, "GPS": e.mapsLink ?? "", "التاريخ": e.checkedAt,
-        }));
-        await openExcelBlob(buildExcelBlob(rows, "شيت التسجيلات"), `نسخة-احتياطية-التسجيلات-${stats.field}.xlsx`);
-      }
-      const { data } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
-      if (data?.user) {
-        const recs = await getAllRecordings(data.user.id).catch(() => []);
-        if (recs.length > 0) exportRecordingsToExcel(recs, "نسخة-احتياطية-التسجيل-الصوتي");
-      }
-      if (fieldEntries.length === 0) alert("مفيش بيانات للنسخ الاحتياطي.");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّرت النسخة الاحتياطية");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   const translate = `translateX(${frac * 100}%)`;
   const visible = frac < 1;
 
@@ -292,10 +265,10 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <KeyRound size={16} className="text-alert" /> مفتاح Groq (التفريغ السحابي)
             </Link>
-            <button onClick={backupAll} disabled={busy === "backup"}
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
-              <Download size={16} className="text-brand" /> {busy === "backup" ? "جارٍ عمل النسخة..." : "نسخة احتياطية (Excel)"}
-            </button>
+            <Link href="/backup" onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+              <Download size={16} className="text-brand" /> نسخة احتياطية
+            </Link>
             <button onClick={refreshApp}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <RefreshCw size={16} className="text-primary" /> تحديث التطبيق (آخر نسخة)
