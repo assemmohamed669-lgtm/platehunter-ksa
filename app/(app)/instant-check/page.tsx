@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
@@ -293,6 +293,10 @@ export default function InstantCheckPage() {
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
+  // Rich manual-entry fields (mirrors the registration manual entry)
+  const [manualVehicleType, setManualVehicleType] = useState("");
+  const [manualLocationName, setManualLocationName] = useState("");
+  const [manualNotes, setManualNotes] = useState("");
 
   // Camera
   const [cameraImage, setCameraImage] = useState<string | null>(null);
@@ -583,12 +587,47 @@ export default function InstantCheckPage() {
     await fetchGpsForPttRow(id);
   }
 
-  function handleManualSearch() {
+  // Manual entry = check against the wanted list AND record it in شيت التسجيلات
+  // (with type / location / notes / GPS), just like the registration manual entry.
+  async function handleManualSearch() {
     const raw = manualInput.trim();
     if (!raw || manualError) return;
-    const result = searchInCheck(raw);
+    const result = searchInCheck(raw); // beeps + returns match (or {found:false})
     setManualResult(result);
-    if (result?.found) saveHitWithGps(result);
+
+    const row: Record<string, string> = {};
+    if (manualVehicleType.trim()) row["النوع"] = manualVehicleType.trim();
+    if (manualNotes.trim()) row["ملاحظات"] = manualNotes.trim();
+    if (result?.found && result.row) {
+      for (const [k, v] of Object.entries(result.row)) {
+        if (k !== checkPlateCol && String(v).trim()) row[k] = v;
+      }
+    }
+    const id = `man-${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const base: FieldCheckEntry = {
+      id,
+      plate: result?.plate ?? raw,
+      row,
+      method: "متشيكة يدوي",
+      checkedAt: new Date().toISOString(),
+    };
+    setFieldEntries((prev) => [base, ...prev]);
+    await saveFieldCheckEntry(base);
+    const gps = await getCurrentGps();
+    if (gps) {
+      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
+      setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
+      await saveFieldCheckEntry(withGps);
+    }
+
+    // Ready for the next plate; keep type + location for the run.
+    setManualInput("");
+    setManualNotes("");
+  }
+
+  async function deleteFieldEntry(id: string) {
+    await deleteFieldCheckEntry(id);
+    setFieldEntries((prev) => prev.filter((e) => e.id !== id));
   }
 
   // ── Hit helpers ────────────────────────────────────────────────────────────
@@ -1362,6 +1401,14 @@ export default function InstantCheckPage() {
           {/* ── Manual ── */}
           {mode === "manual" && (
             <div className="flex flex-col gap-3">
+              {/* اسم الموقع (يتسجّل على كل لوحة تدخلها) */}
+              <div className="relative">
+                <MapPin size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+                <input dir="rtl" value={manualLocationName} onChange={(e) => setManualLocationName(e.target.value)}
+                  placeholder="اسم الموقع اللي بتشيّك فيه (اختياري)"
+                  className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+              </div>
+
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -1381,8 +1428,18 @@ export default function InstantCheckPage() {
                   disabled={!manualInput.trim() || !!manualError}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
                 >
-                  بحث
+                  حفظ وتشييك
                 </button>
+              </div>
+
+              {/* نوع السيارة + ملاحظات */}
+              <div className="flex gap-2">
+                <input dir="rtl" value={manualVehicleType} onChange={(e) => setManualVehicleType(e.target.value)}
+                  placeholder="نوع السيارة (ونيت/فان...)"
+                  className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+                <input dir="rtl" value={manualNotes} onChange={(e) => setManualNotes(e.target.value)}
+                  placeholder="ملاحظات"
+                  className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
               </div>
 
               {/* Error with dismiss button */}
@@ -1396,12 +1453,75 @@ export default function InstantCheckPage() {
               )}
 
               <p className="text-xs text-muted" dir="rtl">
-                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...)
+                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...) — كل لوحة تتحفظ في «السجلات» وتتشيّك ضد المطلوبين.
               </p>
 
               {manualResult && (
-                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "manual")} priorCheck={manualResult.found ? findDuplicateEntry(fieldEntries, manualResult.plate) : undefined} />
+                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} priorCheck={manualResult.found ? findDuplicateEntry(fieldEntries, manualResult.plate) : undefined} />
               )}
+
+              {/* جدول الإدخال اليدوي (من شيت التسجيلات) */}
+              {(() => {
+                const manualEntries = fieldEntries.filter((e) => e.method === "متشيكة يدوي");
+                if (manualEntries.length === 0) return null;
+                return (
+                  <div className="flex flex-col gap-2 pt-2 border-t border-border">
+                    <span className="text-xs text-muted">{manualEntries.length} إدخال يدوي</span>
+                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
+                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-surface-2 text-muted">
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">حذف</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {manualEntries.map((e, i) => (
+                            <tr key={e.id} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
+                                {editingFieldId === e.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <input dir="rtl" value={editFieldValue}
+                                      onChange={(ev) => setEditFieldValue(ev.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                      onKeyDown={(ev) => { if (ev.key === "Enter") applyFieldEdit(e.id); if (ev.key === "Escape") setEditingFieldId(null); }}
+                                      autoFocus className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none" />
+                                    <button onClick={() => applyFieldEdit(e.id)} className="text-brand"><Check size={14} /></button>
+                                    <button onClick={() => setEditingFieldId(null)} className="text-muted"><X size={14} /></button>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {e.plate}
+                                    <button onClick={() => { setEditingFieldId(e.id); setEditFieldValue(e.plate); }} className="text-muted hover:text-primary transition" title="تعديل"><Pencil size={12} /></button>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row["النوع"] || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["اسم الموقع"] || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row["ملاحظات"] || "—"}</td>
+                              <td className="border-l border-border px-3 py-2">
+                                {e.mapsLink ? (
+                                  <a href={e.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
+                                ) : <span className="text-muted text-[10px] animate-pulse">جاري...</span>}
+                              </td>
+                              <td className="px-2 py-2 text-center">
+                                <button onClick={() => deleteFieldEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={exportFieldExcel} className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition"><Download size={14} /> فتح في Excel</button>
+                      <button onClick={shareFieldExcel} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition"><Share2 size={14} /> مشاركة Excel</button>
+                    </div>
+                  </div>
+                );
+              })()}
 
             </div>
           )}
