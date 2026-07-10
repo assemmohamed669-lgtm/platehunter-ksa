@@ -43,7 +43,7 @@ export default function HomePage() {
         />
       </div>
 
-      <h1 className={`brand ${brandFont.className}`} aria-label={WORD}>
+      <h1 dir="ltr" className={`brand ${brandFont.className}`} aria-label={WORD}>
         {WORD.split("").map((ch, i) => (
           <span key={i} style={{ animationDelay: `${0.6 + i * 0.06}s` }}>{ch}</span>
         ))}
@@ -79,6 +79,7 @@ export default function HomePage() {
         .brand {
           margin: 0;
           display: flex;
+          direction: ltr;
           gap: 0.02em;
           font-size: clamp(26px, 8vw, 40px);
           font-weight: 900;
