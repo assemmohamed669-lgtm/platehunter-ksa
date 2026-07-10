@@ -1,16 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
-  X, Settings, ClipboardList, FileSpreadsheet, HelpCircle, LogOut, Info,
+  X, Settings, HelpCircle, LogOut, Info,
   Type as TypeIcon, Palette, RotateCcw, ChevronDown, KeyRound,
+  RefreshCw, Download, MessageCircle, BarChart3,
 } from "lucide-react";
+import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
 import { type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance } from "@/lib/appSettings";
+import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+import { buildExcelBlob, openExcelBlob, exportRecordingsToExcel } from "@/lib/excel";
+import { supabase } from "@/lib/supabaseClient";
 
 const APP_VERSION = "0.3.0";
 const DEFAULT_BG = "#F3F5F7";
+// TODO: ضع رقم واتساب الأدمن هنا (بصيغة دولية بدون + أو 00، مثلاً 9665XXXXXXXX)
+const ADMIN_WHATSAPP = "";
 
 function clamp01(n: number) { return Math.min(1, Math.max(0, n)); }
 
@@ -34,6 +41,8 @@ export default function AppMenu({
   const [appr, setAppr] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
+  const [busy, setBusy] = useState<null | "backup">(null);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -119,6 +128,72 @@ export default function AppMenu({
     applyAppearance(DEFAULT_APPEARANCE);
   }
 
+  // Quick counts, refreshed whenever the drawer opens.
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      const fieldEntries = await getAllFieldCheckEntries().catch(() => []);
+      let wanted = 0;
+      try {
+        const check = await getUploadedFile("local", "check");
+        if (check) {
+          const col = detectPlateColumn(check.headers);
+          const set = new Set(check.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col ?? ""] ?? "")))).filter(Boolean));
+          wanted = fieldEntries.filter((e) => set.has(normalizePlate(bankPlateToArabic(e.plate)))).length;
+        }
+      } catch { /* no check file */ }
+      let rec = 0;
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (data.user) rec = (await getAllRecordings(data.user.id)).length;
+      } catch { /* offline */ }
+      setStats({ field: fieldEntries.length, wanted, rec });
+    })().catch(() => {});
+  }, [open]);
+
+  // Clear caches + fetch the latest bundle from the server.
+  async function refreshApp() {
+    try {
+      if (typeof caches !== "undefined") {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch { /* caches unavailable */ }
+    try {
+      const regs = await navigator.serviceWorker?.getRegistrations?.();
+      if (regs) await Promise.all(regs.map((r) => r.unregister()));
+    } catch { /* no SW */ }
+    // Cache-busting reload so the WebView pulls the freshest bundle.
+    const u = new URL(window.location.href);
+    u.searchParams.set("_r", String(Date.now()));
+    window.location.replace(u.toString());
+  }
+
+  // Back up everything (recordings Excel + شيت التسجيلات Excel).
+  async function backupAll() {
+    if (busy) return;
+    setBusy("backup");
+    try {
+      const fieldEntries = await getAllFieldCheckEntries().catch(() => []);
+      if (fieldEntries.length > 0) {
+        const rows = fieldEntries.map((e) => ({
+          "رقم اللوحة": e.plate, ...e.row, "الحالة": e.method, "GPS": e.mapsLink ?? "", "التاريخ": e.checkedAt,
+        }));
+        await openExcelBlob(buildExcelBlob(rows, "شيت التسجيلات"), `نسخة-احتياطية-التسجيلات-${stats.field}.xlsx`);
+      }
+      const { data } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+      if (data?.user) {
+        const recs = await getAllRecordings(data.user.id).catch(() => []);
+        if (recs.length > 0) exportRecordingsToExcel(recs, "نسخة-احتياطية-التسجيل-الصوتي");
+      }
+      if (fieldEntries.length === 0) alert("مفيش بيانات للنسخ الاحتياطي.");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت النسخة الاحتياطية");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const translate = `translateX(${frac * 100}%)`;
   const visible = frac < 1;
 
@@ -201,20 +276,36 @@ export default function AppMenu({
             </div>
           </section>
 
-          {/* ── روابط ── */}
+          {/* ── إحصائيات سريعة ── */}
+          <section className="border-t border-border pt-3">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-muted"><BarChart3 size={14} /> إحصائيات</div>
+            <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface-2 p-2 text-center">
+              <div><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></div>
+              <div><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></div>
+              <div><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></div>
+            </div>
+          </section>
+
+          {/* ── أدوات ── */}
           <section className="flex flex-col gap-2 border-t border-border pt-3">
-            <Link href="/instant-check" onClick={() => onOpenChange(false)}
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
-              <FileSpreadsheet size={16} className="text-brand" /> شيت التسجيلات
-            </Link>
-            <Link href="/instant-check" onClick={() => onOpenChange(false)}
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
-              <ClipboardList size={16} className="text-primary" /> ملف التشييك المرجعي
-            </Link>
             <Link href="/groq" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <KeyRound size={16} className="text-alert" /> مفتاح Groq (التفريغ السحابي)
             </Link>
+            <button onClick={backupAll} disabled={busy === "backup"}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
+              <Download size={16} className="text-brand" /> {busy === "backup" ? "جارٍ عمل النسخة..." : "نسخة احتياطية (Excel)"}
+            </button>
+            <button onClick={refreshApp}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+              <RefreshCw size={16} className="text-primary" /> تحديث التطبيق (آخر نسخة)
+            </button>
+            {ADMIN_WHATSAPP && (
+              <a href={`https://wa.me/${ADMIN_WHATSAPP}`} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+                <MessageCircle size={16} className="text-brand" /> تواصل مع الأدمن (واتساب)
+              </a>
+            )}
           </section>
 
           {/* ── شرح ومساعدة ── */}
