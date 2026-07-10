@@ -2,42 +2,35 @@
 
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
-import type { RecordingEntry } from "@/lib/idb";
+
+export interface MapPoint {
+  lat: number;
+  lng: number;
+  plate: string;
+  subtitle?: string;
+  when?: string;
+  mapsLink?: string;
+  color?: string;
+}
 
 interface Props {
-  recordings: RecordingEntry[];
+  points: MapPoint[];
   center?: [number, number];
 }
 
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-}
-
-export default function MapView({ recordings, center = [24.7136, 46.6753] }: Props) {
+export default function MapView({ points, center = [24.7136, 46.6753] }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<unknown>(null);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    // Dynamically import Leaflet (client-only)
     import("leaflet").then((L) => {
-      // Fix default icon paths broken by webpack
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-        shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-      });
-
       if (!containerRef.current) return;
 
       const map = L.map(containerRef.current, { zoomControl: true }).setView(center, 12);
       mapRef.current = map;
 
-      // OpenStreetMap tiles — free, no API key
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "© OpenStreetMap contributors",
         maxZoom: 19,
@@ -45,7 +38,6 @@ export default function MapView({ recordings, center = [24.7136, 46.6753] }: Pro
 
       // The container often hasn't settled to its final size on first paint
       // (dynamic import + flex layout), which leaves tiles half-rendered.
-      // Recompute the size once the layout settles, and on any resize.
       const fix = () => map.invalidateSize();
       setTimeout(fix, 0);
       setTimeout(fix, 250);
@@ -53,47 +45,40 @@ export default function MapView({ recordings, center = [24.7136, 46.6753] }: Pro
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (map as any)._phFix = fix;
 
-      const withGps = recordings.filter((r) => r.lat && r.lng);
-      if (!withGps.length) return;
+      if (!points.length) return;
 
-      // Color by type
-      function markerColor(r: RecordingEntry): string {
-        if (r.plate.startsWith("📍")) return "#3B82F6"; // blue = manual pin
-        return "#1FAE6E"; // green = voice recording
-      }
-
-      withGps.forEach((r) => {
-        const color = markerColor(r);
+      points.forEach((p) => {
+        const color = p.color ?? "#1FAE6E";
         const icon = L.divIcon({
           html: `<div style="
-            width:12px;height:12px;border-radius:50%;
+            width:14px;height:14px;border-radius:50%;
             background:${color};
             border:2.5px solid #fff;
             box-shadow:0 0 6px ${color}88;
           "></div>`,
           className: "",
-          iconSize: [12, 12],
-          iconAnchor: [6, 6],
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
         });
 
         const popup = `
           <div dir="rtl" style="font-family:Tahoma,sans-serif;min-width:160px">
-            <b style="color:#1FAE6E;font-size:15px">${r.plate}</b><br/>
-            ${r.vehicleType ? `<span style="color:#666">${r.vehicleType}</span><br/>` : ""}
-            ${r.street ? `📍 ${r.street}` : ""} ${r.district ? `• ${r.district}` : ""}<br/>
-            <span style="color:#999;font-size:11px">${formatDate(r.recordedAt)}</span><br/>
-            ${r.mapsLink ? `<a href="${r.mapsLink}" target="_blank" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
+            <b style="color:${color};font-size:15px">${p.plate}</b><br/>
+            ${p.subtitle ? `<span style="color:#666">${p.subtitle}</span><br/>` : ""}
+            ${p.when ? `<span style="color:#999;font-size:11px">${p.when}</span><br/>` : ""}
+            ${p.mapsLink ? `<a href="${p.mapsLink}" target="_blank" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
           </div>
         `;
 
-        L.marker([r.lat!, r.lng!], { icon })
-          .addTo(map)
-          .bindPopup(popup, { maxWidth: 220 });
+        L.marker([p.lat, p.lng], { icon }).addTo(map).bindPopup(popup, { maxWidth: 220 });
       });
 
-      // Fit map to all markers
-      const bounds = L.latLngBounds(withGps.map((r) => [r.lat!, r.lng!]));
-      if (withGps.length > 1) map.fitBounds(bounds, { padding: [40, 40] });
+      if (points.length > 1) {
+        const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
+        map.fitBounds(bounds, { padding: [40, 40] });
+      } else {
+        map.setView([points[0].lat, points[0].lng], 14);
+      }
     });
 
     return () => {
