@@ -1456,8 +1456,8 @@ export default function InstantCheckPage() {
                 يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...) — كل لوحة تتحفظ في «السجلات» وتتشيّك ضد المطلوبين.
               </p>
 
-              {manualResult && (
-                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} priorCheck={manualResult.found ? findDuplicateEntry(fieldEntries, manualResult.plate) : undefined} />
+              {manualResult?.found && (
+                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} priorCheck={findDuplicateEntry(fieldEntries, manualResult.plate)} />
               )}
 
               {/* جدول الإدخال اليدوي (من شيت التسجيلات) */}
