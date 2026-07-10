@@ -293,10 +293,13 @@ export default function InstantCheckPage() {
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
-  // Rich manual-entry fields (mirrors the registration manual entry)
-  const [manualVehicleType, setManualVehicleType] = useState("");
   const [manualLocationName, setManualLocationName] = useState("");
-  const [manualNotes, setManualNotes] = useState("");
+  // Manual working-list (draft) — plates typed here stay local until the
+  // delegate presses «تصدير للسجلات», mirroring the voice (PTT) flow.
+  const [manualDraft, setManualDraft] = useState<FieldCheckEntry[]>([]);
+  const [draftEdit, setDraftEdit] = useState<{ id: string; field: string } | null>(null);
+  const [draftEditValue, setDraftEditValue] = useState("");
+  const [manualExporting, setManualExporting] = useState(false);
 
   // Camera
   const [cameraImage, setCameraImage] = useState<string | null>(null);
@@ -415,6 +418,18 @@ export default function InstantCheckPage() {
   useEffect(() => {
     try { localStorage.setItem("ic-ptt-results", JSON.stringify(pttResults)); } catch {}
   }, [pttResults]);
+
+  // Manual draft persists across reloads too — an unexported working list.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ic-manual-draft");
+      if (saved) setManualDraft(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("ic-manual-draft", JSON.stringify(manualDraft)); } catch {}
+  }, [manualDraft]);
 
   useEffect(() => {
     try { localStorage.setItem("ic-ptt-location", pttLocationName); } catch {}
@@ -596,8 +611,7 @@ export default function InstantCheckPage() {
     setManualResult(result);
 
     const row: Record<string, string> = {};
-    if (manualVehicleType.trim()) row["النوع"] = manualVehicleType.trim();
-    if (manualNotes.trim()) row["ملاحظات"] = manualNotes.trim();
+    if (manualLocationName.trim()) row["اسم الموقع"] = manualLocationName.trim();
     if (result?.found && result.row) {
       for (const [k, v] of Object.entries(result.row)) {
         if (k !== checkPlateCol && String(v).trim()) row[k] = v;
@@ -611,18 +625,66 @@ export default function InstantCheckPage() {
       method: "متشيكة يدوي",
       checkedAt: new Date().toISOString(),
     };
-    setFieldEntries((prev) => [base, ...prev]);
-    await saveFieldCheckEntry(base);
+    // Add to the local working list only — NOT the field sheet yet.
+    setManualDraft((prev) => [base, ...prev]);
     const gps = await getCurrentGps();
     if (gps) {
       const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
-      setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
-      await saveFieldCheckEntry(withGps);
+      setManualDraft((prev) => prev.map((e) => (e.id === id ? withGps : e)));
     }
 
-    // Ready for the next plate; keep type + location for the run.
-    setManualInput("");
-    setManualNotes("");
+    setManualInput(""); // ready for the next plate; keep the location for the run
+  }
+
+  // ── Manual draft (working list) helpers ──────────────────────────────────
+  function startDraftEdit(id: string, field: string, current: string) {
+    setDraftEdit({ id, field });
+    setDraftEditValue(current);
+  }
+
+  function applyDraftEdit() {
+    if (!draftEdit) return;
+    const { id, field } = draftEdit;
+    const value = draftEditValue.trim();
+    setManualDraft((prev) =>
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        if (field === "plate") return { ...e, plate: value || e.plate };
+        const row = { ...e.row };
+        if (value) row[field] = value; else delete row[field];
+        return { ...e, row };
+      })
+    );
+    setDraftEdit(null);
+    setDraftEditValue("");
+  }
+
+  function deleteDraftEntry(id: string) {
+    setManualDraft((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  function shareDraftRow(e: FieldCheckEntry) {
+    const lines = [`🚗 اللوحة: ${e.plate}`];
+    for (const [k, v] of Object.entries(e.row)) {
+      if (String(v).trim()) lines.push(`${k}: ${v}`);
+    }
+    if (e.mapsLink) lines.push(`📍 الموقع: ${e.mapsLink}`);
+    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
+  }
+
+  // Commit the whole working list to شيت التسجيلات (field_check), then clear it.
+  async function exportManualDraft() {
+    if (manualDraft.length === 0) return;
+    setManualExporting(true);
+    try {
+      const toSave = [...manualDraft].reverse(); // keep chronological order in the sheet
+      for (const e of toSave) await saveFieldCheckEntry(e);
+      setFieldEntries((prev) => [...manualDraft, ...prev]);
+      setManualDraft([]);
+      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+    } finally {
+      setManualExporting(false);
+    }
   }
 
   async function deleteFieldEntry(id: string) {
@@ -1428,18 +1490,8 @@ export default function InstantCheckPage() {
                   disabled={!manualInput.trim() || !!manualError}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
                 >
-                  حفظ وتشييك
+                  تشييك
                 </button>
-              </div>
-
-              {/* نوع السيارة + ملاحظات */}
-              <div className="flex gap-2">
-                <input dir="rtl" value={manualVehicleType} onChange={(e) => setManualVehicleType(e.target.value)}
-                  placeholder="نوع السيارة (ونيت/فان...)"
-                  className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
-                <input dir="rtl" value={manualNotes} onChange={(e) => setManualNotes(e.target.value)}
-                  placeholder="ملاحظات"
-                  className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
               </div>
 
               {/* Error with dismiss button */}
@@ -1453,20 +1505,43 @@ export default function InstantCheckPage() {
               )}
 
               <p className="text-xs text-muted" dir="rtl">
-                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...) — كل لوحة تتحفظ في «السجلات» وتتشيّك ضد المطلوبين.
+                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...) — كل لوحة تتشيّك ضد المطلوبين وتتضاف للقائمة تحت. تقدر تعدّل النوع والموقع والملاحظات من علامة القلم، وتصدّرهم للسجلات لما تخلّص.
               </p>
 
               {manualResult?.found && (
                 <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} priorCheck={findDuplicateEntry(fieldEntries, manualResult.plate)} />
               )}
 
-              {/* جدول الإدخال اليدوي (من شيت التسجيلات) */}
-              {(() => {
-                const manualEntries = fieldEntries.filter((e) => e.method === "متشيكة يدوي");
-                if (manualEntries.length === 0) return null;
+              {/* قائمة الشغل اليدوية (محلية — تتصدّر للسجلات بالزر تحت) */}
+              {manualDraft.length > 0 && (() => {
+                const draftCell = (e: FieldCheckEntry, field: string) => {
+                  const cur = field === "plate" ? e.plate : (e.row[field] || "");
+                  if (draftEdit?.id === e.id && draftEdit.field === field) {
+                    return (
+                      <span className="inline-flex items-center gap-1">
+                        <input dir="rtl" value={draftEditValue}
+                          onChange={(ev) => setDraftEditValue(
+                            field === "plate"
+                              ? ev.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join("")
+                              : ev.target.value
+                          )}
+                          onKeyDown={(ev) => { if (ev.key === "Enter") applyDraftEdit(); if (ev.key === "Escape") setDraftEdit(null); }}
+                          autoFocus className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-ink outline-none" />
+                        <button onClick={applyDraftEdit} className="text-brand"><Check size={14} /></button>
+                        <button onClick={() => setDraftEdit(null)} className="text-muted"><X size={14} /></button>
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="inline-flex items-center gap-1.5">
+                      {field === "plate" ? e.plate : (cur || "—")}
+                      <button onClick={() => startDraftEdit(e.id, field, cur)} className="text-muted hover:text-primary transition" title="تعديل"><Pencil size={12} /></button>
+                    </span>
+                  );
+                };
                 return (
                   <div className="flex flex-col gap-2 pt-2 border-t border-border">
-                    <span className="text-xs text-muted">{manualEntries.length} إدخال يدوي</span>
+                    <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
                     <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
                         <thead className="sticky top-0 z-10">
@@ -1476,49 +1551,39 @@ export default function InstantCheckPage() {
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">حذف</th>
+                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {manualEntries.map((e, i) => (
+                          {manualDraft.map((e, i) => (
                             <tr key={e.id} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
-                                {editingFieldId === e.id ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    <input dir="rtl" value={editFieldValue}
-                                      onChange={(ev) => setEditFieldValue(ev.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
-                                      onKeyDown={(ev) => { if (ev.key === "Enter") applyFieldEdit(e.id); if (ev.key === "Escape") setEditingFieldId(null); }}
-                                      autoFocus className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none" />
-                                    <button onClick={() => applyFieldEdit(e.id)} className="text-brand"><Check size={14} /></button>
-                                    <button onClick={() => setEditingFieldId(null)} className="text-muted"><X size={14} /></button>
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1.5">
-                                    {e.plate}
-                                    <button onClick={() => { setEditingFieldId(e.id); setEditFieldValue(e.plate); }} className="text-muted hover:text-primary transition" title="تعديل"><Pencil size={12} /></button>
-                                  </span>
-                                )}
-                              </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row["النوع"] || "—"}</td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["اسم الموقع"] || "—"}</td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row["ملاحظات"] || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">{draftCell(e, "plate")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "النوع")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{draftCell(e, "اسم الموقع")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
                               <td className="border-l border-border px-3 py-2">
                                 {e.mapsLink ? (
                                   <a href={e.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
                                 ) : <span className="text-muted text-[10px] animate-pulse">جاري...</span>}
                               </td>
-                              <td className="px-2 py-2 text-center">
-                                <button onClick={() => deleteFieldEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                              <td className="px-2 py-2">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
+                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                                </div>
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={exportFieldExcel} className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition"><Download size={14} /> فتح في Excel</button>
-                      <button onClick={shareFieldExcel} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition"><Share2 size={14} /> مشاركة Excel</button>
-                    </div>
+                    <button
+                      onClick={exportManualDraft}
+                      disabled={manualExporting}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
+                    >
+                      <Download size={16} /> {manualExporting ? "جاري التصدير..." : `تصدير ${manualDraft.length} لوحة للسجلات`}
+                    </button>
                   </div>
                 );
               })()}
