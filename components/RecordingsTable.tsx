@@ -44,6 +44,7 @@ interface Props {
   onDelete: (id: string) => void;
   onDeleteMany?: (ids: string[]) => void;
   onUpdatePlate?: (id: string, plate: string) => void;
+  onUpdateField?: (id: string, field: "vehicleType" | "notes", value: string) => void;
   onPlayAudio?: (entry: RecordingEntry) => void;
   onShareAudio?: (entry: RecordingEntry) => void;
   playingId?: string | null;
@@ -52,12 +53,14 @@ interface Props {
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onPlayAudio, onShareAudio, playingId, checkPlates }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [editingField, setEditingField] = useState<{ id: string; field: "vehicleType" | "notes" } | null>(null);
+  const [editFieldValue, setEditFieldValue] = useState("");
 
   const duplicates = useMemo(
     () => findDuplicates(recordings.map((r) => r.plate)),
@@ -119,6 +122,20 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
     }
     setEditingId(null);
     setEditValue("");
+  }
+
+  function startFieldEdit(entry: RecordingEntry, field: "vehicleType" | "notes") {
+    if (!onUpdateField) return;
+    setEditingField({ id: entry.localId, field });
+    setEditFieldValue((field === "vehicleType" ? entry.vehicleType : entry.notes) || "");
+  }
+
+  function commitFieldEdit() {
+    if (editingField) {
+      onUpdateField?.(editingField.id, editingField.field, editFieldValue.trim());
+    }
+    setEditingField(null);
+    setEditFieldValue("");
   }
 
   function deleteSelected() {
@@ -278,7 +295,26 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
 
                     {/* Vehicle type */}
                     <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                      {entry.vehicleType || "—"}
+                      {editingField?.id === entry.localId && editingField.field === "vehicleType" ? (
+                        <input
+                          autoFocus dir="rtl" value={editFieldValue}
+                          onChange={(e) => setEditFieldValue(e.target.value)}
+                          onBlur={commitFieldEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitFieldEdit();
+                            if (e.key === "Escape") { setEditingField(null); setEditFieldValue(""); }
+                          }}
+                          className="w-28 rounded-lg border border-primary bg-surface px-2 py-1 text-sm text-ink focus:outline-none"
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 ${onUpdateField ? "cursor-pointer" : ""}`}
+                          onClick={() => startFieldEdit(entry, "vehicleType")}
+                        >
+                          <span>{entry.vehicleType || "—"}</span>
+                          {onUpdateField && <Pencil size={10} className="text-muted shrink-0" />}
+                        </div>
+                      )}
                     </td>
 
                     {/* Street */}
@@ -298,7 +334,26 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
 
                     {/* Notes */}
                     <td className="border-l border-border px-3 py-2 text-ink">
-                      {entry.notes || "—"}
+                      {editingField?.id === entry.localId && editingField.field === "notes" ? (
+                        <input
+                          autoFocus dir="rtl" value={editFieldValue}
+                          onChange={(e) => setEditFieldValue(e.target.value)}
+                          onBlur={commitFieldEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitFieldEdit();
+                            if (e.key === "Escape") { setEditingField(null); setEditFieldValue(""); }
+                          }}
+                          className="w-36 rounded-lg border border-primary bg-surface px-2 py-1 text-sm text-ink focus:outline-none"
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 ${onUpdateField ? "cursor-pointer" : ""}`}
+                          onClick={() => startFieldEdit(entry, "notes")}
+                        >
+                          <span>{entry.notes || "—"}</span>
+                          {onUpdateField && <Pencil size={10} className="text-muted shrink-0" />}
+                        </div>
+                      )}
                     </td>
 
                     {/* Recorder */}

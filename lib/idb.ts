@@ -202,6 +202,28 @@ export async function updatePlate(localId: string, plate: string): Promise<void>
   });
 }
 
+export async function updateRecordingField(
+  localId: string,
+  field: "vehicleType" | "notes",
+  value: string
+): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const req = store.get(localId);
+    req.onsuccess = () => {
+      const entry = req.result as RecordingEntry;
+      if (entry) {
+        entry[field] = value;
+        store.put(entry);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function updateGeodata(
   localId: string,
   street: string,

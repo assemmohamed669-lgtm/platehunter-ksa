@@ -37,6 +37,7 @@ import {
   updateGeodata,
   updateNotes,
   updatePlate,
+  updateRecordingField,
   saveUploadedFile,
   getUploadedFile,
   deleteUploadedFile,
@@ -1689,17 +1690,25 @@ export default function RegistrationPage() {
     if (updatedEntry) checkPlateMatch(trimmed, updatedEntry);
   }
 
-  // Push all recorded plates (voice + manual) onto شيت التسجيلات (field_check) —
-  // the same sheet the التشييك «السجلات» tab shows and the sort reads from.
-  async function exportToTashyeek() {
-    if (recordings.length === 0) {
+  async function handleFieldEdit(localId: string, field: "vehicleType" | "notes", value: string) {
+    await updateRecordingField(localId, field, value);
+    if (!agentId) return;
+    const updated = await getAllRecordings(agentId);
+    setRecordings(updated);
+  }
+
+  // Push the given recordings onto شيت التسجيلات (field_check) — the same sheet
+  // the التشييك «السجلات» tab shows and the sort reads from. Scoped to the
+  // section's own recordings (manual button → manual, voice button → voice).
+  async function exportToTashyeek(recs: RecordingEntry[]) {
+    if (recs.length === 0) {
       alert("مفيش تسجيلات للتصدير.");
       return;
     }
     try {
       const stamp = Date.now();
       let n = 0;
-      for (const r of recordings) {
+      for (const r of recs) {
         const row: Record<string, string> = {};
         if (r.vehicleType) row["النوع"] = r.vehicleType;
         if (r.district) row["الحي"] = r.district;
@@ -2048,6 +2057,7 @@ export default function RegistrationPage() {
                 onDelete={handleDelete}
                 onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
                 onUpdatePlate={handlePlateEdit}
+              onUpdateField={handleFieldEdit}
                 onPlayAudio={togglePlay}
                 onShareAudio={shareAudio}
                 playingId={playingId}
@@ -2079,7 +2089,7 @@ export default function RegistrationPage() {
               </button>
             </div>
             <button
-              onClick={exportToTashyeek}
+              onClick={() => exportToTashyeek(voiceOnly)}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20"
             >
               <Download size={16} /> تصدير للتشييك
@@ -2163,6 +2173,7 @@ export default function RegistrationPage() {
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
               onUpdatePlate={handlePlateEdit}
+              onUpdateField={handleFieldEdit}
               onPlayAudio={togglePlay}
               onShareAudio={shareAudio}
               playingId={playingId}
@@ -2240,6 +2251,7 @@ export default function RegistrationPage() {
               onDelete={handleDelete}
               onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
               onUpdatePlate={handlePlateEdit}
+              onUpdateField={handleFieldEdit}
               checkPlates={checkPlates}
             />
             <div className="flex gap-2">
@@ -2253,7 +2265,7 @@ export default function RegistrationPage() {
               </button>
             </div>
             <button
-              onClick={exportToTashyeek}
+              onClick={() => exportToTashyeek(manualRecs)}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20"
             >
               <Download size={16} /> تصدير للتشييك
