@@ -11,7 +11,7 @@ const brandFont = Orbitron({ subsets: ["latin"], weight: ["700", "900"] });
 const WORD = "PlateHunter";
 
 // شاشة البداية: فيديو السطحة، وتحته اسم PlateHunter بموشن حرف-حرف.
-// تفضل ظاهرة ~3.5 ثانية عشان الفيديو (٤ث) يبان كامل تقريباً قبل الدخول.
+// تفضل ظاهرة ثانيتين قبل ما تدخل الرئيسية.
 export default function HomePage() {
   const router = useRouter();
 
@@ -25,7 +25,7 @@ export default function HomePage() {
       .getSession()
       .then(({ data }) => { dest = data.session ? "/dashboard" : "/login"; })
       .catch(() => {});
-    const delay = new Promise<void>((r) => setTimeout(r, 3500));
+    const delay = new Promise<void>((r) => setTimeout(r, 2000));
     Promise.all([session, delay]).then(() => router.replace(dest));
   }, [router]);
 
