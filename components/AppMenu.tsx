@@ -15,8 +15,8 @@ import { supabase } from "@/lib/supabaseClient";
 
 const APP_VERSION = "0.3.0";
 const DEFAULT_BG = "#F3F5F7";
-// TODO: ضع رقم واتساب الأدمن هنا (بصيغة دولية بدون + أو 00، مثلاً 9665XXXXXXXX)
-const ADMIN_WHATSAPP = "";
+// رقم واتساب الأدمن بصيغة دولية بدون + أو 00
+const ADMIN_WHATSAPP = "971542482545";
 
 function clamp01(n: number) { return Math.min(1, Math.max(0, n)); }
 

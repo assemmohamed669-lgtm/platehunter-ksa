@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   XCircle,
   Upload,
+  Check,
 } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
@@ -45,7 +46,7 @@ import {
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { parsePlateFromTranscript, extractMultiplePlates, extractNotePhrases, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -1106,9 +1107,16 @@ export default function RegistrationPage() {
     setDebugVehicle("");
     setDebugNotes("");
 
-    let plates = extractMultiplePlates(transcript);
+    // Pull the delegate's fixed note phrases (الشارع بيلف يمين / جراج يسار رقم ٥ …)
+    // out FIRST — snapped to their canonical form even if mis-heard — so their
+    // words (especially a garage number) never get mistaken for plate letters
+    // or plate digits. The plate extractor then runs on the leftover text.
+    const { notes: notePhrases, rest } = extractNotePhrases(transcript);
+    const phraseNote = notePhrases.join(" ، ");
+
+    let plates = extractMultiplePlates(rest);
     if (plates.length === 0) {
-      const parsed = parsePlateFromTranscript(transcript);
+      const parsed = parsePlateFromTranscript(rest);
       if (parsed.plate) {
         plates = [{ plate: parsed.plate, vehicleType: parsed.vehicleType, notes: parsed.notes, normalized: parsed.normalized, uncertain: parsed.uncertain }];
       }
@@ -1116,8 +1124,15 @@ export default function RegistrationPage() {
 
     if (plates.length === 0) {
       setDebugPlate("(لم يُستخرج)");
-      setDebugNotes("(لا توجد لوحات)");
+      setDebugNotes(phraseNote || "(لا توجد لوحات)");
       return [];
+    }
+
+    // Attach the recognised note phrase(s) to the last plate — a spoken note
+    // almost always follows the plate it describes.
+    if (phraseNote) {
+      const last = plates.length - 1;
+      plates[last] = { ...plates[last], notes: [plates[last].notes, phraseNote].filter(Boolean).join(" ، ") };
     }
 
     setDebugPlate(plates.map((p) => p.plate).join(" | "));
@@ -1509,26 +1524,13 @@ export default function RegistrationPage() {
     return { ok: true, savedEntries };
   }
 
-  // "احفظ وصدّر الإكسيل" button → save then export/open the Excel file.
+  // "حفظ التسجيل" button → transcribe + save only. NO auto-open of Excel —
+  // the delegate opens or shares from the buttons below if they want to.
   // No review gate — mistakes are fixed later by tapping the plate directly
   // in the table below.
   async function handleTranscribeAndSave(): Promise<boolean> {
-    const { ok, savedEntries } = await extractAndSaveTranscript();
-    if (!ok) return false;
-    if (savedEntries.length === 0) return true;
-
-    const rows = buildRows(savedEntries);
-    const { blob, ext } = buildSpreadsheetBlob(rows, "اللوحات");
-    const filename = `${excelName.trim() || defaultExcelName()}.${ext}`;
-    try {
-      await openExcelBlob(blob, filename);
-    } catch (err: any) {
-      // The plates are already saved (extractAndSaveTranscript above
-      // completed) — only the Excel-open step failed, so say so plainly
-      // rather than leave it looking like the whole save silently did nothing.
-      setRecordingError(`اللوحات اتحفظت، بس ${err?.message ?? "تعذّر فتح ملف Excel"}`);
-    }
-    return true;
+    const { ok } = await extractAndSaveTranscript();
+    return ok;
   }
 
   // "تجاهل" — explicitly discard a pending transcript that has nothing
@@ -2021,7 +2023,7 @@ export default function RegistrationPage() {
               disabled={isTranscribing}
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-40"
             >
-              <Download size={16} /> احفظ وصدّر الإكسيل
+              <Check size={16} /> فرّغ واحفظ اللوحات
             </button>
             <button
               onClick={discardPendingTranscript}

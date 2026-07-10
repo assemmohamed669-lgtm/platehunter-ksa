@@ -526,6 +526,139 @@ const NOTE_KEYWORDS = new Set([
   "عمارة", "العمارة", "فيلا", "الفيلا", "محل", "المحل", "مدخل", "مخرج",
 ]);
 
+// ─── Fixed note phrases (dictionary + fuzzy guess) ──────────────────────────
+// عبارات الملاحظات الثابتة اللي المندوب بيقولها في الميدان. البرنامج يتعرّف
+// عليها ويحطها في خانة الملاحظات، ولو التفريغ مسمعش كويس يخمّن أقرب عبارة.
+// بنمسكها *قبل* استخراج اللوحة علشان رقم الجراج ("جراج يمين رقم ٥") ميتلغبطش
+// مع أرقام اللوحة.
+
+function normForNotes(text: string): string {
+  // Numerals FIRST: removeDiacritics' range (ً-ٰ) overlaps the
+  // Arabic-Indic digit block (٠-٩), so it would eat ٥ before we
+  // ever convert it. Convert to Western digits up front.
+  let t = normalizeNumerals(text);
+  t = removeDiacritics(t);
+  t = t.replace(/[أإآ]/g, "ا").replace(/ى/g, "ي");
+  t = t.replace(/[،؛؟۔.,;!?]/g, " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+
+// تطابق مرن: مسافة تعديل ≤ 1 عن أي بديل.
+function anchorEq(tok: string, ...alts: string[]): boolean {
+  return alts.some((a) => levenshtein(tok, a) <= 1);
+}
+
+// أقرب اتجاه للتوكن (يمين/شمال/يسار) مع تسامح للتفريغ الغلط.
+function matchDirection(tok: string): "يمين" | "شمال" | "يسار" | null {
+  const dirs: [("يمين" | "شمال" | "يسار"), string[]][] = [
+    ["يمين", ["يمين", "يمن", "اليمين"]],
+    ["يسار", ["يسار", "يسر", "اليسار"]],
+    ["شمال", ["شمال", "شمل", "الشمال"]],
+  ];
+  for (const [canon, alts] of dirs) {
+    if (alts.some((a) => levenshtein(tok, a) <= 1)) return canon;
+  }
+  return null;
+}
+
+// رقم منطوق أو رقمي → أرقام (خمسة → 5، ٥ → 5).
+function spokenToDigits(tok: string): string {
+  if (!tok) return "";
+  if (/^\d+$/.test(tok)) return tok;
+  const m = replaceAll(tok, SPOKEN_NUMBERS).match(/\d+/);
+  return m ? m[0] : "";
+}
+
+/**
+ * يستخرج عبارات الملاحظات الثابتة من نص التفريغ ويرجّعها منفصلة عن باقي النص
+ * (اللي فيه اللوحة). كل عبارة تترجع في صيغتها المعتمدة حتى لو التفريغ سمعها غلط.
+ */
+export function extractNotePhrases(text: string): { notes: string[]; rest: string } {
+  const normalized = normForNotes(text);
+  if (!normalized) return { notes: [], rest: "" };
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const used = new Set<number>();
+  const notes: string[] = [];
+  const LR = new Set(["يمين", "يسار"]);
+
+  // أقرب اتجاه ضمن نافذة توكنات بعد الفهرس i.
+  const findDir = (from: number, span: number, allowed?: Set<string>) => {
+    for (let j = from; j <= from + span && j < tokens.length; j++) {
+      if (used.has(j)) continue;
+      const d = matchDirection(tokens[j]);
+      if (d && (!allowed || allowed.has(d))) return { dir: d, at: j };
+    }
+    return null;
+  };
+  const consume = (a: number, b: number) => { for (let k = a; k <= b; k++) used.add(k); };
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (used.has(i)) continue;
+    const tok = tokens[i];
+
+    // الشارع بيلف يمين / شمال / يسار
+    if (anchorEq(tok, "الشارع")) {
+      const hit = findDir(i + 1, 2);
+      if (hit) { consume(i, hit.at); notes.push(`الشارع بيلف ${hit.dir}`); continue; }
+    }
+
+    // جراج / كراج يمين | يسار [رقم N]
+    if (anchorEq(tok, "جراج", "كراج", "الجراج", "الكراج")) {
+      const hit = findDir(i + 1, 1, LR);
+      if (hit) {
+        consume(i, hit.at);
+        let note = `جراج ${hit.dir}`;
+        const j = hit.at + 1;
+        if (j < tokens.length && !used.has(j) && anchorEq(tokens[j], "رقم")) {
+          const num = spokenToDigits(tokens[j + 1] ?? "");
+          if (num) { note += ` رقم ${num}`; consume(j, j + 1); }
+        }
+        notes.push(note);
+        continue;
+      }
+    }
+
+    // برحة يمين | شمال  —  أو  برحة أول الشارع
+    if (anchorEq(tok, "برحة", "برحه", "البرحة", "البرحه", "بارحة")) {
+      let awal = -1, shr = -1;
+      for (let j = i + 1; j <= i + 3 && j < tokens.length; j++) {
+        if (anchorEq(tokens[j], "اول")) awal = j;
+        else if (awal !== -1 && anchorEq(tokens[j], "الشارع")) shr = j;
+      }
+      if (awal !== -1 && shr !== -1) { consume(i, shr); notes.push("برحة أول الشارع"); continue; }
+      const hit = findDir(i + 1, 1);
+      if (hit) { consume(i, hit.at); notes.push(`برحة ${hit.dir}`); continue; }
+    }
+
+    // آخر الشارع يمين | يسار
+    if (anchorEq(tok, "اخر", "اخره")) {
+      let shr = -1;
+      for (let j = i + 1; j <= i + 2 && j < tokens.length; j++) {
+        if (anchorEq(tokens[j], "الشارع")) { shr = j; break; }
+      }
+      if (shr !== -1) {
+        const hit = findDir(shr + 1, 1, LR);
+        if (hit) { consume(i, hit.at); notes.push(`آخر الشارع ${hit.dir}`); continue; }
+      }
+    }
+
+    // حتة واسعة يمين | شمال
+    if (anchorEq(tok, "حتة", "حته")) {
+      let was = -1;
+      for (let j = i + 1; j <= i + 2 && j < tokens.length; j++) {
+        if (anchorEq(tokens[j], "واسعة", "واسعه")) { was = j; break; }
+      }
+      if (was !== -1) {
+        const hit = findDir(was + 1, 1);
+        if (hit) { consume(i, was); consume(i, hit.at); notes.push(`حتة واسعة ${hit.dir}`); continue; }
+      }
+    }
+  }
+
+  const rest = tokens.filter((_, i) => !used.has(i)).join(" ");
+  return { notes, rest };
+}
+
 // ─── Letter names → character ──────────────────────────────────────────────
 const LETTER_NAMES: [string, string][] = ([
   ["ألف",  "ا"], ["الف",  "ا"], ["آلف",  "ا"],
