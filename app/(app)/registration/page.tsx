@@ -40,7 +40,9 @@ import {
   saveUploadedFile,
   getUploadedFile,
   deleteUploadedFile,
+  saveFieldCheckEntry,
   type RecordingEntry,
+  type FieldCheckEntry,
 } from "@/lib/idb";
 import { parsePlateFromTranscript, extractMultiplePlates, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
@@ -1687,48 +1689,35 @@ export default function RegistrationPage() {
     if (updatedEntry) checkPlateMatch(trimmed, updatedEntry);
   }
 
+  // Push all recorded plates (voice + manual) onto شيت التسجيلات (field_check) —
+  // the same sheet the التشييك «السجلات» tab shows and the sort reads from.
   async function exportToTashyeek() {
-    const manualRecs = recordings.filter((r) => r.isManual);
-    if (manualRecs.length === 0) {
-      alert("لا توجد إدخالات يدوية للتصدير.");
+    if (recordings.length === 0) {
+      alert("مفيش تسجيلات للتصدير.");
       return;
     }
-
-    const newRows = manualRecs.map((r) => ({
-      "رقم اللوحة": r.plate,
-      "نوع المركبة": r.vehicleType ?? "",
-      "GPS": r.mapsLink ?? (r.lat && r.lng ? toMapsLink(r.lat, r.lng) : ""),
-      "الحي": r.district ?? "",
-      "الشارع": r.street ?? "",
-      "تاريخ التسجيل": formatDate(r.recordedAt),
-      "اسم المسجّل": r.recorderName ?? "",
-      "ملاحظات": r.notes ?? "",
-    }));
-
     try {
-      const existing = await getUploadedFile("local", "tashyeek");
-      const existingKeys = new Set(
-        (existing?.rows ?? []).map((r) => `${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`)
-      );
-      const freshRows = newRows.filter((r) => !existingKeys.has(`${r["رقم اللوحة"]}|${r["تاريخ التسجيل"]}`));
-      const allRows = [...(existing?.rows ?? []), ...freshRows];
-
-      // buildSpreadsheetBlob falls back to CSV if xlsx-building crashes on the
-      // device (the same WebView bug that broke the open/share buttons) — this
-      // was why the button "did nothing": buildExcelBlob threw before the save.
-      const { blob, ext } = buildSpreadsheetBlob(allRows, "ملف التشييك");
-      await saveUploadedFile({
-        key: "local:tashyeek",
-        agentId: "local",
-        slot: "tashyeek",
-        fileName: `ملف-التشييك.${ext}`,
-        headers: ["رقم اللوحة", "نوع المركبة", "GPS", "الحي", "الشارع", "تاريخ التسجيل", "اسم المسجّل", "ملاحظات"],
-        rows: allRows,
-        uploadedAt: new Date().toISOString(),
-        fileBlob: blob,
-      });
-
-      alert(`✅ تم التصدير لشيت التشييك الميداني — ${freshRows.length} إدخال جديد، الإجمالي: ${allRows.length}.\nافتح صفحة الفرز عشان تلاقيه في خانة شيت التشييك الميداني.`);
+      const stamp = Date.now();
+      let n = 0;
+      for (const r of recordings) {
+        const row: Record<string, string> = {};
+        if (r.vehicleType) row["النوع"] = r.vehicleType;
+        if (r.district) row["الحي"] = r.district;
+        if (r.street) row["الشارع"] = r.street;
+        if (r.notes) row["ملاحظات"] = r.notes;
+        const entry: FieldCheckEntry = {
+          id: `reg-${stamp}-${n++}`,
+          plate: r.plate,
+          row,
+          method: r.isManual ? "متشيكة يدوي" : "متشيكة بالصوت",
+          lat: r.lat,
+          lng: r.lng,
+          mapsLink: r.mapsLink ?? (r.lat && r.lng ? toMapsLink(r.lat, r.lng) : undefined),
+          checkedAt: r.recordedAt,
+        };
+        await saveFieldCheckEntry(entry);
+      }
+      alert(`✅ تم تصدير ${n} لوحة لشيت التسجيلات.\nهتلاقيهم في تبويب «السجلات» بصفحة التشييك، والفرز هيطابقهم تلقائياً.`);
     } catch (err: any) {
       alert(`تعذّر التصدير للتشييك: ${err?.message ?? err}`);
     }
@@ -2074,18 +2063,26 @@ export default function RegistrationPage() {
         const voiceOnly = recordings.filter((r) => !r.isManual && !r.plate.startsWith("📍"));
         if (voiceOnly.length === 0) return null;
         return (
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleShareExcelFor(voiceOnly)}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+              >
+                <Share2 size={16} /> مشاركة Excel
+              </button>
+              <button
+                onClick={() => handleExport(voiceOnly)}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+              >
+                <Download size={16} /> فتح في Excel
+              </button>
+            </div>
             <button
-              onClick={() => handleShareExcelFor(voiceOnly)}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90"
+              onClick={exportToTashyeek}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20"
             >
-              <Share2 size={16} /> مشاركة Excel
-            </button>
-            <button
-              onClick={() => handleExport(voiceOnly)}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
-            >
-              <Download size={16} /> فتح في Excel
+              <Download size={16} /> تصدير للتشييك
             </button>
           </div>
         );
