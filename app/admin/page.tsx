@@ -110,14 +110,19 @@ export default function AdminDashboard() {
 
   const enriched = useMemo(() => agents.map((a) => ({ a, sub: subStatus(a.subscription_end) })), [agents]);
 
+  // Super-admin first, then admins, then agents — alphabetical within each group.
+  const rank = (a: AgentProfile) => (a.is_super ? 0 : a.role === "admin" ? 1 : 2);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return enriched.filter(({ a, sub }) => {
-      if (q && !(a.username?.toLowerCase().includes(q) || a.email?.toLowerCase().includes(q) || a.phone?.includes(q))) return false;
-      if (filter === "all") return true;
-      if (a.role === "admin") return false;
-      return sub.status === (filter as SubStatus);
-    });
+    return enriched
+      .filter(({ a, sub }) => {
+        if (q && !(a.username?.toLowerCase().includes(q) || a.email?.toLowerCase().includes(q) || a.phone?.includes(q))) return false;
+        if (filter === "all") return true;
+        if (a.role === "admin") return false;
+        return sub.status === (filter as SubStatus);
+      })
+      .sort((x, y) => rank(x.a) - rank(y.a) || (x.a.username ?? "").localeCompare(y.a.username ?? ""));
   }, [enriched, search, filter]);
 
   const agentsOnly = enriched.filter((e) => e.a.role === "agent");
