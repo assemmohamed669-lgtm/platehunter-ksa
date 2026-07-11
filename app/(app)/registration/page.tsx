@@ -50,7 +50,7 @@ import {
 } from "@/lib/idb";
 import { parsePlateFromTranscript, extractMultiplePlates, extractNotePhrases, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { syncPending, syncPendingDetailed, registerOnlineSync } from "@/lib/sync";
+import { syncPending, forceSyncAll, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
@@ -1335,13 +1335,15 @@ export default function RegistrationPage() {
     if (!agentId) { alert("مفيش جلسة."); return; }
     setSyncing(true);
     try {
-      const res = await syncPendingDetailed(agentId);
+      // Force re-upload EVERYTHING (ignores the local synced flag) so rows
+      // falsely marked synced actually reach the server — and any real error surfaces.
+      const res = await forceSyncAll(agentId);
       if (res.error) {
-        alert(`❌ فشل المزامنة:\n${res.error}\n\n(المعلّق: ${res.pending})`);
-      } else if (res.pending === 0) {
-        alert("✅ كل التسجيلات متزامنة بالفعل.");
+        alert(`❌ فشل المزامنة:\n${res.error}\n\n(الإجمالي: ${res.total})`);
+      } else if (res.total === 0) {
+        alert("مفيش تسجيلات على الجهاز أصلاً.");
       } else {
-        alert(`✅ تمت مزامنة ${res.synced} من ${res.pending} لوحة.`);
+        alert(`✅ اترفع ${res.synced} من ${res.total} لوحة للسيرفر.`);
       }
       await loadRecordings(agentId);
     } catch (err: any) {

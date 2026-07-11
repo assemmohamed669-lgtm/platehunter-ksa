@@ -6,7 +6,7 @@
  */
 
 import { supabase } from "./supabaseClient";
-import { getPendingSync, markSynced, type RecordingEntry } from "./idb";
+import { getPendingSync, getAllRecordings, markSynced, type RecordingEntry } from "./idb";
 
 async function syncOne(entry: RecordingEntry): Promise<{ ok: boolean; error?: string }> {
   const { error } = await supabase.from("recordings").upsert(
@@ -78,6 +78,36 @@ export async function syncPendingDetailed(
   }
 
   return { synced, pending: pending.length, error: firstError };
+}
+
+/**
+ * Force-upload EVERY local recording for this agent, ignoring the local
+ * `synced` flag. Used when the flag got out of sync with the server (rows
+ * marked synced locally but the server row is missing). Re-stamps agent_id
+ * via syncOne's upsert. Returns diagnostics.
+ */
+export async function forceSyncAll(
+  agentId: string
+): Promise<{ synced: number; total: number; error?: string }> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return { synced: 0, total: 0, error: "الجهاز أوفلاين (navigator.onLine=false)" };
+  }
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return { synced: 0, total: 0, error: "مفيش جلسة مسجّلة (auth.uid فاضي)" };
+  if (uid !== agentId) {
+    return { synced: 0, total: 0, error: `عدم تطابق: auth.uid=${uid} ≠ agent_id=${agentId}` };
+  }
+
+  const all = await getAllRecordings(agentId);
+  let synced = 0;
+  let firstError: string | undefined;
+  for (const entry of all) {
+    const { ok, error } = await syncOne(entry);
+    if (ok) synced++;
+    else if (!firstError) firstError = error;
+  }
+  return { synced, total: all.length, error: firstError };
 }
 
 /**
