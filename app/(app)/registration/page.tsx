@@ -50,7 +50,7 @@ import {
 } from "@/lib/idb";
 import { parsePlateFromTranscript, extractMultiplePlates, extractNotePhrases, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { syncPending, registerOnlineSync } from "@/lib/sync";
+import { syncPending, syncPendingDetailed, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
@@ -1329,6 +1329,28 @@ export default function RegistrationPage() {
     }
   }
 
+  // «زامن دلوقتي» — يشغّل المزامنة ويعرض النتيجة/الخطأ الحقيقي (تشخيص).
+  const [syncing, setSyncing] = useState(false);
+  async function handleManualSync() {
+    if (!agentId) { alert("مفيش جلسة."); return; }
+    setSyncing(true);
+    try {
+      const res = await syncPendingDetailed(agentId);
+      if (res.error) {
+        alert(`❌ فشل المزامنة:\n${res.error}\n\n(المعلّق: ${res.pending})`);
+      } else if (res.pending === 0) {
+        alert("✅ كل التسجيلات متزامنة بالفعل.");
+      } else {
+        alert(`✅ تمت مزامنة ${res.synced} من ${res.pending} لوحة.`);
+      }
+      await loadRecordings(agentId);
+    } catch (err: any) {
+      alert(`❌ خطأ: ${err?.message ?? err}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   // ── Manual GPS pin ──────────────────────────────────────────────────
   async function handlePin() {
     if (!agentId) return;
@@ -1884,6 +1906,12 @@ export default function RegistrationPage() {
           </div>
         )}
       </div>
+
+      {/* مزامنة يدوية — تعرض النتيجة/الخطأ */}
+      <button onClick={handleManualSync} disabled={syncing}
+        className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-50">
+        <RefreshCw size={15} className={syncing ? "animate-spin" : ""} /> {syncing ? "جارٍ المزامنة..." : "زامن دلوقتي"}
+      </button>
 
       {/* Session fields: recorder name / district / excel export name */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

@@ -8,7 +8,7 @@
 import { supabase } from "./supabaseClient";
 import { getPendingSync, markSynced, type RecordingEntry } from "./idb";
 
-async function syncOne(entry: RecordingEntry): Promise<boolean> {
+async function syncOne(entry: RecordingEntry): Promise<{ ok: boolean; error?: string }> {
   const { error } = await supabase.from("recordings").upsert(
     {
       local_id: entry.localId,
@@ -27,11 +27,14 @@ async function syncOne(entry: RecordingEntry): Promise<boolean> {
 
   if (error) {
     console.warn("Sync error for", entry.localId, error.message);
-    return false;
+    // Surface the fullest signal we have (message + code + details/hint).
+    const parts = [error.message, (error as any).code, (error as any).details, (error as any).hint]
+      .filter(Boolean);
+    return { ok: false, error: parts.join(" · ") };
   }
 
   await markSynced(entry.localId);
-  return true;
+  return { ok: true };
 }
 
 /**
@@ -39,17 +42,42 @@ async function syncOne(entry: RecordingEntry): Promise<boolean> {
  * Safe to call multiple times — skips already-synced records.
  */
 export async function syncPending(agentId: string): Promise<number> {
-  if (!navigator.onLine) return 0;
+  const { synced } = await syncPendingDetailed(agentId);
+  return synced;
+}
+
+/**
+ * Same as syncPending but returns diagnostics — used by the manual «زامن دلوقتي»
+ * button so the delegate (and we) can see WHY a sync fails instead of it dying
+ * silently.
+ */
+export async function syncPendingDetailed(
+  agentId: string
+): Promise<{ synced: number; pending: number; error?: string }> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return { synced: 0, pending: 0, error: "الجهاز أوفلاين (navigator.onLine=false)" };
+  }
+
+  // Confirm the client is actually authenticated and the session uid matches
+  // the agent_id we're about to write (RLS requires auth.uid() = agent_id).
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return { synced: 0, pending: 0, error: "مفيش جلسة مسجّلة (auth.uid فاضي)" };
+  if (uid !== agentId) {
+    return { synced: 0, pending: 0, error: `عدم تطابق: auth.uid=${uid} ≠ agent_id=${agentId}` };
+  }
 
   const pending = await getPendingSync(agentId);
   let synced = 0;
+  let firstError: string | undefined;
 
   for (const entry of pending) {
-    const ok = await syncOne(entry);
+    const { ok, error } = await syncOne(entry);
     if (ok) synced++;
+    else if (!firstError) firstError = error;
   }
 
-  return synced;
+  return { synced, pending: pending.length, error: firstError };
 }
 
 /**
