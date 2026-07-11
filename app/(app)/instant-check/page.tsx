@@ -460,7 +460,10 @@ export default function InstantCheckPage() {
       .catch(() => {});
   }, []);
 
-  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+  // Pass the rows so detection works by CONTENT (robust to unusual column
+  // names) — name-only detection would fall back to the first column and
+  // silently break matching.
+  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
 
   const checkIndex = useMemo(() => {
@@ -1372,6 +1375,7 @@ export default function InstantCheckPage() {
           hint="القائمة المرجعية للبحث"
           parsedFile={checkFile}
           parsedRowCount={checkTable?.rows.length ?? null}
+          plateCount={checkIndex.size}
           onParsed={handleParsed}
           onClear={handleClear}
           showReplaceButtons

@@ -11,6 +11,8 @@ interface Props {
   parsedFile: File | null;
   parsedRowCount: number | null;
   onClear: () => void;
+  /** Number of actual plates read in the plate column (shown next to the file). */
+  plateCount?: number | null;
   /** When true: shows تغيير + مسح buttons instead of download + trash */
   showReplaceButtons?: boolean;
   /** When true: file is fixed — no تغيير/مسح, only a download button */
@@ -24,6 +26,7 @@ export default function FileUploadBox({
   parsedFile,
   parsedRowCount,
   onClear,
+  plateCount = null,
   showReplaceButtons = false,
   fixed = false,
 }: Props) {
@@ -103,7 +106,13 @@ export default function FileUploadBox({
             <FileSpreadsheet size={18} className="shrink-0 text-primary" />
             <div className="min-w-0">
               <p className="rtl-text truncate text-sm font-medium text-ink">{parsedFile.name}</p>
-              <p className="text-xs text-muted">{parsedRowCount} صف{activeSheet ? ` · ${activeSheet}` : ""}</p>
+              <p className="text-xs text-muted">
+                {parsedRowCount} صف
+                {plateCount != null && plateCount > 0 && (
+                  <> · <span className="font-bold text-primary">{plateCount.toLocaleString("en-US")} لوحة</span></>
+                )}
+                {activeSheet ? ` · ${activeSheet}` : ""}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">

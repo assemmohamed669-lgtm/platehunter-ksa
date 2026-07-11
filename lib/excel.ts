@@ -183,8 +183,18 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
 
 const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
 
-// يحسب نسبة اللوحات في أفضل عمود للورقة — يُرجع 0..1
-function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string): number {
+function _cellLooksLikePlate(raw: string): boolean {
+  const cleaned = raw.replace(/[\s\-_.ـ/]/g, "");
+  if (cleaned.length < 2 || cleaned.length > 10) return false;
+  const digitMatch = cleaned.match(/[0-9٠-٩]+/);
+  if (!digitMatch || digitMatch[0].length > 4) return false;
+  const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
+  return nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits);
+}
+
+// يعدّ اللوحات الفعلية في أفضل عمود للورقة (عدد مش نسبة) — الورقة صاحبة أكبر
+// عدد لوحات تكسب، عشان ملف بورقات كتير يشتغل على أكبر داتا فيها.
+function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string): number {
   try {
     const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
     if (password) (opts as Record<string, unknown>).password = password;
@@ -195,30 +205,30 @@ function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
     if (raw2d.length < 2) return 0;
 
-    const sample = raw2d.slice(1, Math.min(raw2d.length, 101));
-    const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[]).length));
+    const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[]).length), 0);
+    const sampleN = Math.min(raw2d.length, 201);
 
-    let bestRatio = 0;
+    let bestCol = -1, bestRatio = 0;
     for (let col = 0; col < numCols; col++) {
       let plateLike = 0, nonEmpty = 0;
-      for (const r of sample) {
-        const raw = String((r as unknown[])[col] ?? "").trim();
+      for (let i = 1; i < sampleN; i++) {
+        const raw = String((raw2d[i] as unknown[])?.[col] ?? "").trim();
         if (!raw) continue;
         nonEmpty++;
-        const cleaned = raw.replace(/[\s\-_.ـ/]/g, ""); // strip tatweel too
-        if (cleaned.length < 2 || cleaned.length > 10) continue;
-        const digitMatch = cleaned.match(/[0-9٠-٩]+/);
-        if (!digitMatch || digitMatch[0].length > 4) continue;
-        const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
-        if (nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits)) {
-          plateLike++;
-        }
+        if (_cellLooksLikePlate(raw)) plateLike++;
       }
       if (nonEmpty === 0) continue;
       const ratio = plateLike / nonEmpty;
-      if (ratio > bestRatio) bestRatio = ratio;
+      if (ratio > bestRatio) { bestRatio = ratio; bestCol = col; }
     }
-    return bestRatio;
+    if (bestCol < 0 || bestRatio < 0.3) return 0;
+
+    let count = 0;
+    for (let i = 1; i < raw2d.length; i++) {
+      const raw = String((raw2d[i] as unknown[])?.[bestCol] ?? "").trim();
+      if (raw && _cellLooksLikePlate(raw)) count++;
+    }
+    return count;
   } catch { return 0; }
 }
 
@@ -251,13 +261,13 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
   // Multi-sheet detection: score every sheet by plate-like content and pick
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
   if (allSheetNames.length > 1) {
-    let bestScore = 0;
+    let bestCount = 0;
     let bestName: string | undefined;
     for (const name of allSheetNames) {
-      const score = _sheetPlateScore(data, name, password);
-      if (score > bestScore) { bestScore = score; bestName = name; }
+      const count = _sheetPlateCount(data, name, password);
+      if (count > bestCount) { bestCount = count; bestName = name; }
     }
-    if (bestScore >= 0.1) {
+    if (bestCount > 0) {
       sheetName = bestName;
     } else {
       for (const name of allSheetNames) {
