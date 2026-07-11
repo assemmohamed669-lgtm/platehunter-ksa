@@ -118,8 +118,31 @@ export interface ExcelTable {
   allSheetNames?: string[];
 }
 
+/**
+ * يفكّ تشفير ملف محمي بكلمة مرور على السيرفر (SheetJS المجانية لا تفكّ التشفير).
+ * يعيد File بعد فك التشفير — جاهز للقراءة المحلية بدون باسوورد.
+ */
+async function decryptViaServer(file: File, password: string): Promise<File> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("password", password);
+  let res: Response;
+  try {
+    res = await fetch("/api/excel/decrypt", { method: "POST", body: fd });
+  } catch {
+    throw new Error("تعذّر الاتصال بالخادم لفك تشفير الملف — تأكد من الإنترنت.");
+  }
+  if (res.status === 401) throw new Error("كلمة مرور الملف غير صحيحة.");
+  if (!res.ok) throw new Error("تعذّر فك تشفير الملف — قد يكون محمياً بكلمة مرور.");
+  const buf = await res.arrayBuffer();
+  return new File([buf], file.name, { type: file.type });
+}
+
 export async function parseExcelFile(file: File, password?: string, forcedSheet?: string): Promise<ExcelTable> {
-  const buffer = await file.arrayBuffer();
+  // ملف محمي: نفكّ تشفيره على السيرفر أولاً ثم نقرأ النسخة المفكوكة محلياً
+  // (بدون تمرير الباسوورد للقارئ لأن الملف بقى غير مشفّر).
+  const workFile = password ? await decryptViaServer(file, password) : file;
+  const buffer = await workFile.arrayBuffer();
 
   // Try Web Worker first — parsing runs off the main thread so the UI stays responsive
   if (typeof Worker !== "undefined") {
@@ -166,8 +189,9 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
           reject(new Error("__WORKER_UNAVAILABLE__"));
         };
 
-        // No transfer — keep buffer available for the sync fallback
-        worker.postMessage({ buffer, password, forcedSheet });
+        // No transfer — keep buffer available for the sync fallback.
+        // الباسوورد مش بيتمرّر: الملف اتفك تشفيره بالفعل قبل هنا لو كان محمي.
+        worker.postMessage({ buffer, forcedSheet });
       });
       return result;
     } catch (err: unknown) {
@@ -178,7 +202,7 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
   }
 
   // Synchronous fallback (main-thread; may briefly freeze UI on very large files)
-  return _parseExcelSync(new Uint8Array(buffer), password);
+  return _parseExcelSync(new Uint8Array(buffer));
 }
 
 const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
