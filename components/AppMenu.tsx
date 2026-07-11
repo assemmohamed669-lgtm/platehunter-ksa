@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
   Type as TypeIcon, Palette, RotateCcw, ChevronDown, KeyRound,
-  RefreshCw, Download, MessageCircle, BarChart3,
+  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload,
 } from "lucide-react";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
 import { type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance } from "@/lib/appSettings";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+import { forceSyncAll, restoreRecordings } from "@/lib/sync";
+import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { supabase } from "@/lib/supabaseClient";
 
 const APP_VERSION = "0.3.0";
@@ -41,6 +43,7 @@ export default function AppMenu({
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
+  const [syncing, setSyncing] = useState(false);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -167,6 +170,34 @@ export default function AppMenu({
     window.location.replace(u.toString());
   }
 
+  // مزامنة كاملة في الاتجاهين: يرفع اللي على الجهاز للسيرفر، ويسحب اللي على
+  // السيرفر للجهاز (استرجاع). بيشتغل من أي مكان — مفيد بعد تغيير التليفون.
+  async function fullSync() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const { data } = await supabase.auth.getUser();
+      const uid = data.user?.id;
+      if (!uid) { alert("لازم تكون مسجّل دخول."); return; }
+      const pushR = await forceSyncAll(uid);
+      const pushF = await pushFieldChecks(uid);
+      const pullR = await restoreRecordings(uid);
+      const pullF = await restoreFieldChecks(uid);
+      const err = pushR.error || pushF.error || pullR.error || pullF.error;
+      alert(
+        `تمّت المزامنة:\n` +
+        `⬆️ رفع: ${pushR.synced} تسجيل + ${pushF.synced} تشييك\n` +
+        `⬇️ استرجاع: ${pullR.restored} تسجيل + ${pullF.restored} تشييك` +
+        (err ? `\n\n⚠️ ${err}` : "")
+      );
+      window.location.reload();
+    } catch (e: any) {
+      alert(`تعذّرت المزامنة: ${e?.message ?? e}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const translate = `translateX(${frac * 100}%)`;
   const visible = frac < 1;
 
@@ -265,6 +296,10 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <KeyRound size={16} className="text-alert" /> مفتاح Groq (التفريغ السحابي)
             </Link>
+            <button onClick={fullSync} disabled={syncing}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
+              <CloudDownload size={16} className="text-primary" /> {syncing ? "جارٍ المزامنة..." : "مزامنة واسترجاع بياناتي"}
+            </button>
             <Link href="/backup" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Download size={16} className="text-brand" /> نسخة احتياطية

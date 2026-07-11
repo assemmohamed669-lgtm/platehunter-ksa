@@ -50,7 +50,7 @@ import {
 } from "@/lib/idb";
 import { parsePlateFromTranscript, extractMultiplePlates, extractNotePhrases, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { syncPending, forceSyncAll, registerOnlineSync } from "@/lib/sync";
+import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
@@ -575,6 +575,8 @@ export default function RegistrationPage() {
         }
         loadRecordings(uid);
         registerOnlineSync(uid);
+        // استرجاع تلقائي: اسحب تسجيلات المندوب من السيرفر (لو غيّر التليفون).
+        restoreRecordings(uid).then((r) => { if (r.restored > 0) loadRecordings(uid); }).catch(() => {});
 
         // Restore check file — read from shared "local:check" slot
         const checkRec = await getUploadedFile("local", "check");

@@ -10,6 +10,8 @@ import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
+import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import PlateBadge from "@/components/PlateBadge";
 
@@ -385,9 +387,22 @@ export default function InstantCheckPage() {
     return map;
   }, [fieldEntries]);
 
-  // Load the field-check sheet from IDB on mount (local-only, durable per device)
+  // Load the field-check sheet from IDB on mount, then sync with the server:
+  // restore anything the delegate saved on another device, and push local rows up.
   useEffect(() => {
-    getAllFieldCheckEntries().then(setFieldEntries).catch(() => {});
+    (async () => {
+      const local = await getAllFieldCheckEntries().catch(() => []);
+      setFieldEntries(local);
+      try {
+        const { data } = await supabase.auth.getUser();
+        const uid = data.user?.id;
+        if (!uid) return;
+        await restoreFieldChecks(uid);
+        pushFieldChecks(uid).catch(() => {});
+        const merged = await getAllFieldCheckEntries();
+        setFieldEntries(merged);
+      } catch { /* offline / no session */ }
+    })();
   }, []);
 
   // Load hits from localStorage on mount

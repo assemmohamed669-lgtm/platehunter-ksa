@@ -6,7 +6,7 @@
  */
 
 import { supabase } from "./supabaseClient";
-import { getPendingSync, getAllRecordings, markSynced, type RecordingEntry } from "./idb";
+import { getPendingSync, getAllRecordings, saveRecording, markSynced, type RecordingEntry } from "./idb";
 
 async function syncOne(entry: RecordingEntry): Promise<{ ok: boolean; error?: string }> {
   const { error } = await supabase.from("recordings").upsert(
@@ -108,6 +108,41 @@ export async function forceSyncAll(
     else if (!firstError) firstError = error;
   }
   return { synced, total: all.length, error: firstError };
+}
+
+/**
+ * Restore this agent's recordings FROM the server INTO local IndexedDB.
+ * Used on a fresh device / after clearing cache so the delegate gets their
+ * data back just by logging in. Merges (upsert by localId); marks them synced.
+ */
+export async function restoreRecordings(
+  agentId: string
+): Promise<{ restored: number; error?: string }> {
+  const { data, error } = await supabase
+    .from("recordings")
+    .select("*")
+    .eq("agent_id", agentId);
+  if (error) return { restored: 0, error: error.message };
+
+  let restored = 0;
+  for (const r of data ?? []) {
+    const entry: RecordingEntry = {
+      localId: r.local_id,
+      agentId: r.agent_id,
+      plate: r.plate,
+      vehicleType: r.vehicle_type ?? undefined,
+      lat: r.lat ?? undefined,
+      lng: r.lng ?? undefined,
+      street: r.street ?? undefined,
+      district: r.district ?? undefined,
+      recordedAt: r.recorded_at,
+      mapsLink: r.maps_link ?? undefined,
+      synced: true,
+    };
+    await saveRecording(entry);
+    restored++;
+  }
+  return { restored };
 }
 
 /**
