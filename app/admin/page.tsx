@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -15,6 +15,7 @@ interface AgentProfile {
   email: string | null;
   phone: string | null;
   role: "admin" | "agent";
+  is_super: boolean;
   is_active: boolean;
   device_fingerprint: string | null;
   last_seen: string | null;
@@ -206,22 +207,33 @@ export default function AdminDashboard() {
           {loading && <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>}
           {!loading && filtered.map(({ a, sub }) => (
             <button key={a.id} onClick={() => router.push(`/admin/${a.id}`)}
-              className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3 text-right transition hover:border-primary/50">
-              <CircleUserRound size={30} className="shrink-0 text-muted" />
+              className={`flex items-center gap-3 rounded-xl border p-3 text-right transition ${
+                a.is_super ? "border-2 bg-black hover:opacity-90" : "border-border bg-surface hover:border-primary/50"
+              }`}
+              style={a.is_super ? { borderColor: "#D4AF37" } : undefined}>
+              <CircleUserRound size={30} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-sm font-bold text-ink">{a.username}</span>
-                  {a.role === "admin" && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">أدمن</span>}
+                  <span className="truncate text-sm font-bold text-ink" style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
+                  {a.role === "admin" && (
+                    a.is_super ? (
+                      <span className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>
+                        <Gem size={10} /> سوبر أدمن
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">أدمن</span>
+                    )
+                  )}
                   {!a.is_active && <span className="rounded-full bg-danger/10 px-1.5 py-0.5 text-[10px] text-danger">معطّل</span>}
                 </div>
-                <p className="truncate text-[11px] text-muted">{a.phone || "بدون تليفون"}</p>
+                <p className="truncate text-[11px] text-muted" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
               </div>
               {a.role === "agent" && (
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>
                   {sub.label}
                 </span>
               )}
-              <ArrowRight size={16} className="shrink-0 text-muted" />
+              <ArrowRight size={16} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
             </button>
           ))}
           {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد نتائج.</p>}

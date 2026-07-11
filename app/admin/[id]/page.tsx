@@ -4,14 +4,14 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
-  MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle,
+  MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
 
 interface Profile {
   id: string; username: string; email: string | null; phone: string | null;
-  role: "admin" | "agent"; is_active: boolean; device_fingerprint: string | null;
+  role: "admin" | "agent"; is_super: boolean; is_active: boolean; device_fingerprint: string | null;
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
 }
@@ -157,8 +157,16 @@ export default function AgentDetail() {
         </div>
 
         {/* Identity */}
-        <div className="rounded-2xl border border-border bg-surface p-4">
-          <h1 className="text-lg font-bold text-ink" dir="ltr">{p.username}</h1>
+        <div className={`rounded-2xl border p-4 ${p.is_super ? "border-2 bg-black" : "border-border bg-surface"}`}
+          style={p.is_super ? { borderColor: "#D4AF37" } : undefined}>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-bold text-ink" dir="ltr" style={p.is_super ? { color: "#F4D160" } : undefined}>{p.username}</h1>
+            {p.is_super && (
+              <span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>
+                <Gem size={11} /> سوبر أدمن
+              </span>
+            )}
+          </div>
           <div className="mt-2 flex flex-col gap-1 text-xs text-muted">
             <span className="flex items-center gap-1.5"><Mail size={12} /> {p.email || "—"}</span>
             <span className="flex items-center gap-1.5"><Phone size={12} /> {p.phone || "بدون تليفون"}</span>
