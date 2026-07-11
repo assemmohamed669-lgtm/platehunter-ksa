@@ -14,6 +14,7 @@ import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plat
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
 import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { subStatus } from "@/lib/subscription";
+import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 
 const APP_VERSION = "0.3.0";
@@ -130,6 +131,13 @@ export default function AppMenu({
     saveAppearance(DEFAULT_APPEARANCE);
     applyAppearance(DEFAULT_APPEARANCE);
   }
+
+  // While the drawer is open, the hardware back button closes it (instead of
+  // navigating away / exiting the app).
+  useEffect(() => {
+    if (!open) return;
+    return pushBackHandler(() => onOpenChange(false));
+  }, [open, onOpenChange]);
 
   // Quick counts, refreshed whenever the drawer opens.
   useEffect(() => {

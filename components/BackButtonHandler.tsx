@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { runTopBackHandler } from "@/lib/backStack";
 
 // Root pages where the hardware back should background the app (not navigate
 // deeper). Everywhere else, back navigates within the SPA history.
@@ -19,6 +20,8 @@ export default function BackButtonHandler() {
     import("@capacitor/app")
       .then(({ App }) =>
         App.addListener("backButton", () => {
+          // Close any open overlay (menu / modal) first.
+          if (runTopBackHandler()) return;
           const path = window.location.pathname;
           if (ROOT_PATHS.includes(path)) {
             App.minimizeApp();
