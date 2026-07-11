@@ -16,9 +16,14 @@ import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 const SUPER_ONLY = new Set(["delete", "setActive", "setRole"]);
 
 export async function POST(req: NextRequest) {
-  const admin = await verifyAdminContext(req.headers.get("authorization"));
+  const authHeader = req.headers.get("authorization");
+  const admin = await verifyAdminContext(authHeader);
   if (!admin) {
-    return NextResponse.json({ error: "غير مصرّح." }, { status: 403 });
+    const hasToken = !!authHeader?.startsWith("Bearer ");
+    return NextResponse.json(
+      { error: hasToken ? "الجلسة انتهت أو مش صلاحية أدمن — سجّل خروج ودخول وجرّب تاني." : "مفيش جلسة — سجّل دخول الأول." },
+      { status: 403 }
+    );
   }
   const adminId = admin.id;
 
