@@ -64,6 +64,7 @@ export interface UploadedFileRecord {
  */
 export interface FieldCheckEntry {
   id: string;                        // unique, generated locally
+  agentId?: string;                  // owner — so a shared device doesn't mix two agents' sheets
   plate: string;                     // the confirmed plate
   row: Record<string, string>;       // matched reference row (extra columns)
   method: string;                    // how it was checked, e.g. "متشيكة بالكاميرا"
@@ -303,17 +304,21 @@ export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void>
 }
 
 /** All field-check entries, newest first. */
-export async function getAllFieldCheckEntries(): Promise<FieldCheckEntry[]> {
+/**
+ * All field-check entries, newest first. Pass `agentId` to get only the
+ * current agent's rows (plus legacy rows saved before agent stamping) so two
+ * agents sharing one device don't see/upload each other's sheet.
+ */
+export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCheckEntry[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
     const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
-    req.onsuccess = () =>
-      resolve(
-        (req.result as FieldCheckEntry[]).sort(
-          (a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()
-        )
-      );
+    req.onsuccess = () => {
+      let rows = req.result as FieldCheckEntry[];
+      if (agentId) rows = rows.filter((e) => !e.agentId || e.agentId === agentId);
+      resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
+    };
     req.onerror = () => reject(req.error);
   });
 }

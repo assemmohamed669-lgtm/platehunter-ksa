@@ -64,7 +64,7 @@ export default function MapsPage() {
       const { data } = await supabase.auth.getUser();
       const [recs, fields, check] = await Promise.all([
         data.user ? getAllRecordings(data.user.id) : Promise.resolve([]),
-        getAllFieldCheckEntries(),
+        getAllFieldCheckEntries(data.user?.id),
         getUploadedFile("local", "check"),
       ]);
       setRecordings(recs);

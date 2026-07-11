@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Lock, Download, Share2, FileSpreadsheet, Mic, Keyboard, ShieldCheck } from "lucide-react";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
+import { supabase } from "@/lib/supabaseClient";
 import { buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 
 const LS_BACKUP_PIN_HASH = "ph:backup:pinHash";
@@ -58,7 +59,8 @@ export default function BackupPage() {
         }
       } catch { /* no data file */ }
       try {
-        const all = await getAllFieldCheckEntries();
+        const uid = (await supabase.auth.getUser()).data.user?.id;
+        const all = await getAllFieldCheckEntries(uid);
         const voice = all.filter((e) => e.method === "متشيكة بالصوت");
         const manual = all.filter((e) => e.method === "متشيكة يدوي");
         setVoiceEntries(voice); setVoiceCount(voice.length);

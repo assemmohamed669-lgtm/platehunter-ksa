@@ -387,20 +387,22 @@ export default function InstantCheckPage() {
     return map;
   }, [fieldEntries]);
 
-  // Load the field-check sheet from IDB on mount, then sync with the server:
-  // restore anything the delegate saved on another device, and push local rows up.
+  // Owner of new field-check rows — so a shared device doesn't mix two agents.
+  const agentIdRef = useRef<string | null>(null);
+
+  // Load the field-check sheet from IDB on mount (scoped to this agent), then
+  // sync with the server: restore what the agent saved elsewhere, push local up.
   useEffect(() => {
     (async () => {
-      const local = await getAllFieldCheckEntries().catch(() => []);
-      setFieldEntries(local);
+      let uid: string | undefined;
+      try { uid = (await supabase.auth.getUser()).data.user?.id; } catch { /* offline */ }
+      agentIdRef.current = uid ?? null;
+      setFieldEntries(await getAllFieldCheckEntries(uid).catch(() => []));
+      if (!uid) return;
       try {
-        const { data } = await supabase.auth.getUser();
-        const uid = data.user?.id;
-        if (!uid) return;
         await restoreFieldChecks(uid);
         pushFieldChecks(uid).catch(() => {});
-        const merged = await getAllFieldCheckEntries();
-        setFieldEntries(merged);
+        setFieldEntries(await getAllFieldCheckEntries(uid));
       } catch { /* offline / no session */ }
     })();
   }, []);
@@ -639,6 +641,7 @@ export default function InstantCheckPage() {
     const id = `man-${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const base: FieldCheckEntry = {
       id,
+      agentId: agentIdRef.current ?? undefined,
       plate: result?.plate ?? raw,
       row,
       method: "متشيكة يدوي",
@@ -812,6 +815,7 @@ export default function InstantCheckPage() {
     const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const base: FieldCheckEntry = {
       id,
+      agentId: agentIdRef.current ?? undefined,
       plate: result.plate,
       row: result.row ?? {},
       method: methodLabel[mode],
@@ -1185,6 +1189,7 @@ export default function InstantCheckPage() {
       mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
       return {
         id: `${stamp}-${i}`,
+        agentId: agentIdRef.current ?? undefined,
         plate: r.plate,
         row: mergedRow,
         method: "متشيكة بالصوت",
@@ -1195,7 +1200,7 @@ export default function InstantCheckPage() {
       };
     });
     for (const e of toSave) await saveFieldCheckEntry(e);
-    setFieldEntries(await getAllFieldCheckEntries());
+    setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
     setPttExportedIds(new Set(pttResults.map((r) => r.id)));
   }
 

@@ -1764,6 +1764,7 @@ export default function RegistrationPage() {
         if (r.notes) row["ملاحظات"] = r.notes;
         const entry: FieldCheckEntry = {
           id: `reg-${stamp}-${n++}`,
+          agentId: r.agentId,
           plate: r.plate,
           row,
           method: r.isManual ? "متشيكة يدوي" : "متشيكة بالصوت",

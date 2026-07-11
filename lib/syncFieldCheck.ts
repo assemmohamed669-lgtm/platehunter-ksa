@@ -25,7 +25,9 @@ export async function pushFieldChecks(
   const uid = await requireSession(agentId);
   if (!uid) return { synced: 0, total: 0, error: "مفيش جلسة صالحة" };
 
-  const all = await getAllFieldCheckEntries();
+  // Only this agent's own rows — never upload another agent's local sheet
+  // under this uid (would corrupt attribution on a shared device).
+  const all = await getAllFieldCheckEntries(uid);
   let synced = 0;
   let firstError: string | undefined;
   for (const e of all) {
@@ -63,6 +65,7 @@ export async function restoreFieldChecks(
   for (const r of data ?? []) {
     const entry: FieldCheckEntry = {
       id: r.local_id,
+      agentId,
       plate: r.plate,
       row: (r.extra as Record<string, string>) ?? {},
       method: r.method ?? "",
