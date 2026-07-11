@@ -720,16 +720,9 @@ export default function SortingPage() {
           {dataColsOpen && (
             <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
               <div>
-                <p className="mb-1.5 text-[11px] text-muted">عمود اللوحة — اضغط للتغيير:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {dataTable.headers.map((h) => (
-                    <button key={h}
-                      onClick={() => setDataPlateColOverride(h === effectiveDataPlateCol && dataPlateColOverride ? null : h)}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${h === effectiveDataPlateCol ? "border-primary bg-primary/20 text-primary font-bold" : "border-border text-muted hover:border-primary/50 hover:text-ink"}`}>
-                      {h}
-                    </button>
-                  ))}
-                </div>
+                <p className="text-[11px] text-muted">
+                  عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{effectiveDataPlateCol ?? "—"}</span>
+                </p>
               </div>
               <div>
                 <p className="mb-1.5 text-[11px] text-muted">أعمدة النتائج:</p>
@@ -799,16 +792,9 @@ export default function SortingPage() {
           {referralColsOpen && (
             <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
               <div>
-                <p className="mb-1.5 text-[11px] text-muted">عمود اللوحة — اضغط للتغيير:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {referralTable.headers.map((h) => (
-                    <button key={h}
-                      onClick={() => setReferralPlateColOverride(h === effectiveReferralPlateCol && referralPlateColOverride ? null : h)}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${h === effectiveReferralPlateCol ? "border-primary bg-primary/20 text-primary font-bold" : "border-border text-muted hover:border-primary/50 hover:text-ink"}`}>
-                      {h}
-                    </button>
-                  ))}
-                </div>
+                <p className="text-[11px] text-muted">
+                  عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{effectiveReferralPlateCol ?? "—"}</span>
+                </p>
               </div>
               <div>
                 <p className="mb-1.5 text-[11px] text-muted">أعمدة إضافية في النتائج:</p>

@@ -1384,19 +1384,31 @@ export function detectArabicPlateColumn(headers: string[]): string | null {
 export function detectPlateColumn(headers: string[], rows?: Record<string, string>[]): string | null {
   // الأولوية: اكتشاف بناءً على المحتوى الفعلي (يشتغل بغض النظر عن اسم العمود)
   if (rows && rows.length > 0) {
-    const byContent = detectPlateColumnByContent(headers, rows);
-    if (byContent) return byContent;
+    // تمريرة قوية: عمود نصّه لوحات بوضوح (≥ 50%)
+    const strong = detectPlateColumnByContent(headers, rows, 50, 0.5);
+    if (strong) return strong;
   }
 
-  // احتياطي: اسم العمود (للحالات اللي مفيهاش rows، أو المحتوى مش حاسم)
+  // احتياطي باسم العمود قبل التمريرة الضعيفة — عمود اسمه فيه «لوحة/plate»
+  // أوثق من عمود نسبته منخفضة.
   const keywords = ["لوحة", "اللوحة", "plate"];
   const matches = headers.filter((h) =>
     keywords.some((k) => h.toLowerCase().includes(k.toLowerCase()))
   );
-  if (matches.length === 0) return headers[0] ?? null;
-  // Prefer the column that includes "عربي" or "arabic" — it has the full Arabic plate
-  const preferred = matches.find((h) => /عربي|arabic/i.test(h));
-  return preferred ?? matches[0];
+  if (matches.length > 0) {
+    const preferred = matches.find((h) => /عربي|arabic/i.test(h));
+    return preferred ?? matches[0];
+  }
+
+  // تمريرة ضعيفة: مفيش اسم عمود واضح — خُد أعلى عمود لوحاتٍ حتى لو نسبته
+  // متواضعة (عيّنة أكبر + عتبة أقل). عمود التواريخ/الأرقام نسبته 0 فمابيكسبش
+  // أبداً، فده بيمنع الرجوع الخاطئ لأول عمود.
+  if (rows && rows.length > 0) {
+    const weak = detectPlateColumnByContent(headers, rows, 200, 0.12);
+    if (weak) return weak;
+  }
+
+  return headers[0] ?? null;
 }
 
 /**
