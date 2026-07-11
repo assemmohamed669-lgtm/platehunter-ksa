@@ -34,6 +34,8 @@ export default function FileUploadBox({
   const inputId = useId();
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
+  // الباسوورد اللي فتح الملف — يتحفظ عشان تبديل الورقة يفكّ التشفير تاني.
+  const [filePassword, setFilePassword] = useState<string | undefined>(undefined);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export default function FileUploadBox({
     try {
       const table = await parseExcelFile(file, undefined, forcedSheet);
       setLastFile(file);
+      setFilePassword(undefined);
       setAllSheets(table.allSheetNames ?? []);
       setActiveSheet(table.sheetName ?? null);
       onParsed(table, file);
@@ -73,6 +76,7 @@ export default function FileUploadBox({
     try {
       const table = await parseExcelFile(pendingFile, password);
       setLastFile(pendingFile);
+      setFilePassword(password);
       setAllSheets(table.allSheetNames ?? []);
       setActiveSheet(table.sheetName ?? null);
       onParsed(table, pendingFile);
@@ -182,7 +186,7 @@ export default function FileUploadBox({
                   if (name === activeSheet || !lastFile) return;
                   setLoading(true);
                   try {
-                    const table = await parseExcelFile(lastFile, undefined, name);
+                    const table = await parseExcelFile(lastFile, filePassword, name);
                     setActiveSheet(name);
                     onParsed(table, lastFile);
                   } catch { /* ignore */ } finally {
