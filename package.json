@@ -16,6 +16,7 @@
     "@capacitor-community/file-opener": "^8.0.1",
     "@capacitor-community/speech-recognition": "^7.0.1",
     "@capacitor/android": "^8.4.1",
+    "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
     "@capacitor/filesystem": "^8.1.2",
@@ -50,7 +51,7 @@
     "jsdom": "^29.1.1",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.4",
-    "typescript": "^5.5.3",
+    "typescript": "5.9.3",
     "vitest": "^4.1.9"
   }
 }
