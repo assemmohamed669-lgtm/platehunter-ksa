@@ -1711,6 +1711,10 @@ export default function InstantCheckPage() {
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted">
                     <Images size={14} /> المعرض
                   </button>
+                  <button onClick={resetCamera}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-danger/40 bg-danger/10 py-2.5 text-sm font-bold text-danger active:scale-95 transition">
+                    <Trash2 size={14} /> مسح
+                  </button>
                 </div>
               )}
 
