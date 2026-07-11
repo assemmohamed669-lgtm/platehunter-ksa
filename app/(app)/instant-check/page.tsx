@@ -9,6 +9,7 @@ import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTra
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
+import { authHeader } from "@/lib/authHeader";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import PlateBadge from "@/components/PlateBadge";
 
@@ -975,7 +976,7 @@ export default function InstantCheckPage() {
         try { groqKey = localStorage.getItem("ph:registration:groqApiKey") || ""; } catch { /* storage off */ }
         const apiRes = await fetch("/api/read-plate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await authHeader()) },
           body: JSON.stringify({ image: base64, mediaType: "image/jpeg", apiKey: groqKey.trim() }),
         });
         const json = await apiRes.json().catch(() => null);

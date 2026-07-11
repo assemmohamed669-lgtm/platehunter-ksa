@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifySession, rateLimit } from "@/lib/apiAuth";
 
 // Validates a Groq API key without needing a real recording — hits the
 // lightweight models-list endpoint instead of transcriptions. Lets an agent
@@ -6,6 +7,12 @@ import { NextRequest, NextResponse } from "next/server";
 // than discovering a bad key only after they finish talking.
 export async function POST(req: NextRequest) {
   try {
+    const userId = await verifySession(req.headers.get("authorization"));
+    if (!userId) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    if (!rateLimit(`groq-test:${userId}`, 20, 60_000)) {
+      return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
+    }
+
     const { apiKey } = await req.json();
     if (!apiKey || typeof apiKey !== "string") {
       return NextResponse.json({ ok: false, error: "missing_api_key" }, { status: 400 });

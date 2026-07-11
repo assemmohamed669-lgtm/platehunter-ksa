@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifySession, rateLimit } from "@/lib/apiAuth";
 
 const PROMPT = `Look at the license plate in this image.
 
@@ -38,6 +39,14 @@ function extractPlate(text: string): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth: only signed-in agents may call — blocks anonymous abuse of the
+    // server API key. Rate-limit per agent as a second layer.
+    const userId = await verifySession(req.headers.get("authorization"));
+    if (!userId) return NextResponse.json({ plate: null, error: "unauthorized" }, { status: 401 });
+    if (!rateLimit(`read-plate:${userId}`, 60, 60_000)) {
+      return NextResponse.json({ plate: null, error: "rate_limited" }, { status: 429 });
+    }
+
     const { image, mediaType, apiKey: clientKey } = await req.json();
     if (!image || !mediaType) {
       return NextResponse.json({ plate: null, error: "missing image" }, { status: 400 });

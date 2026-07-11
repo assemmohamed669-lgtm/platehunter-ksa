@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile, readFile, unlink } from "node:fs/promises";
@@ -111,6 +112,13 @@ async function cleanAudio(input: Buffer, inputExt: string): Promise<Buffer> {
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth: signed-in agents only. Rate-limit per agent.
+    const userId = await verifySession(req.headers.get("authorization"));
+    if (!userId) return NextResponse.json({ text: null, error: "unauthorized" }, { status: 401 });
+    if (!rateLimit(`transcribe:${userId}`, 120, 60_000)) {
+      return NextResponse.json({ text: null, error: "rate_limited" }, { status: 429 });
+    }
+
     const { audio, mimeType, apiKey } = await req.json();
     if (typeof audio !== "string" || !audio || typeof apiKey !== "string" || !apiKey) {
       return NextResponse.json({ text: null, error: "missing_audio_or_key" }, { status: 400 });

@@ -50,6 +50,7 @@ import { parsePlateFromTranscript, extractMultiplePlates, extractNotePhrases, fi
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
+import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
@@ -90,7 +91,7 @@ async function uploadGroqChunk(
   try {
     res = await fetch("/api/transcribe", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
       body: JSON.stringify({
         audio: chunk.value.recordDataBase64,
         mimeType: chunk.value.mimeType,
@@ -737,7 +738,7 @@ export default function RegistrationPage() {
     try {
       const res = await fetch("/api/groq-test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
         body: JSON.stringify({ apiKey: key }),
       });
       const data = await res.json();

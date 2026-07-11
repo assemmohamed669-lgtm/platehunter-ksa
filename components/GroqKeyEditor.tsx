@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, X, RefreshCw, CheckCircle2, XCircle } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { authHeader } from "@/lib/authHeader";
 
 // On-device only — never sent anywhere but our /api/transcribe route, which
 // forwards it straight to Groq. Same localStorage keys the recording flow reads.
@@ -134,7 +135,7 @@ export default function GroqKeyEditor() {
     try {
       const res = await fetch("/api/groq-test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
         body: JSON.stringify({ apiKey: key }),
       });
       const data = await res.json();
