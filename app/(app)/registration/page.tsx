@@ -25,7 +25,9 @@ import {
   XCircle,
   Upload,
   Check,
+  KeyRound,
 } from "lucide-react";
+import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -435,6 +437,8 @@ export default function RegistrationPage() {
   const [showPinInput, setShowPinInput] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
+  const [gpsBoxOpen, setGpsBoxOpen] = useState(true);
+  const [gpsRefreshing, setGpsRefreshing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
 
   // Recording state
@@ -1310,6 +1314,21 @@ export default function RegistrationPage() {
     if (isOnline) syncPending(agentId);
   }
 
+  // Force a fresh high-accuracy GPS read (the «تحديث» button on the GPS box).
+  async function refreshGps() {
+    setGpsRefreshing(true);
+    try {
+      const coords = await gpsService.pinCurrentLocation();
+      setGps(coords);
+      const addr = await reverseGeocode(coords.lat, coords.lng);
+      setGpsAddress(`${addr.street} • ${addr.district}`);
+    } catch {
+      /* still no fix — box stays red */
+    } finally {
+      setGpsRefreshing(false);
+    }
+  }
+
   // ── Manual GPS pin ──────────────────────────────────────────────────
   async function handlePin() {
     if (!agentId) return;
@@ -1837,17 +1856,33 @@ export default function RegistrationPage() {
       </div>
 
       {/* GPS status */}
-      <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3">
-        <MapPin size={16} className={gps ? "text-primary" : "text-muted"} />
-        <div className="flex-1 min-w-0">
-          <p className="truncate text-sm text-ink">{gpsAddress}</p>
-          {gps && (
-            <p className="text-xs text-muted">
-              {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • ±{Math.round(gps.accuracy)}م
-            </p>
-          )}
-        </div>
-        {!gps && <span className="text-xs text-alert">جارٍ الاستقبال...</span>}
+      <div className="flex flex-col gap-1.5">
+        <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
+          حالة الـ GPS
+          <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
+            {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
+          </span>
+          <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
+        </button>
+        {gpsBoxOpen && (
+          <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
+            <MapPin size={16} className={gps ? "text-primary" : "text-danger"} />
+            <div className="flex-1 min-w-0">
+              <p className={`truncate text-sm ${gps ? "text-ink" : "text-danger font-bold"}`}>
+                {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
+              </p>
+              {gps && (
+                <p className="text-xs text-muted">
+                  {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • ±{Math.round(gps.accuracy)}م
+                </p>
+              )}
+            </div>
+            <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
+              className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
+              <RefreshCw size={15} className={gpsRefreshing ? "animate-spin" : ""} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Session fields: recorder name / district / excel export name */}
@@ -1921,42 +1956,61 @@ export default function RegistrationPage() {
 
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
-        <button
-          onClick={() => isRecording ? stopRecording() : startRecording()}
-          disabled={isTranscribing}
-          className={`relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-150 select-none
-            ${isRecording
-              ? "bg-danger shadow-[0_0_32px_rgba(239,68,68,0.6)] scale-110"
-              : isTranscribing
-              ? "bg-surface-2 cursor-wait"
-              : "bg-brand shadow-brand-glow active:scale-95"
-            }`}
-        >
-          {isRecording ? (
-            <MicOff size={36} className="text-white" />
-          ) : isTranscribing ? (
-            <RefreshCw size={32} className="animate-spin text-muted" />
-          ) : (
-            <Mic size={36} className="text-night" />
-          )}
-          {isRecording && (
-            <span className="absolute top-1 right-1 h-3 w-3 rounded-full bg-danger animate-pulse" />
-          )}
-        </button>
-
-        {(isRecording || isTranscribing) && liveTranscript && (
-          <div className="mx-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
-            {liveTranscript}
+        {!groqApiKey.trim() ? (
+          // إجبار: مايقدرش يسجّل صوت من غير مفتاح Groq الخاص بيه.
+          <div className="flex w-full flex-col items-center gap-3 px-4">
+            <div className="flex h-24 w-24 items-center justify-center rounded-full bg-surface-2 opacity-60">
+              <Mic size={36} className="text-muted" />
+            </div>
+            <div className="flex items-start gap-2 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2.5 text-center text-sm text-danger">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span dir="rtl">لازم تدخل <b>مفتاح Groq الخاص بيك</b> عشان تسجّل بالصوت — منعتمدش كلنا على مفتاح واحد.</span>
+            </div>
+            <Link href="/groq"
+              className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-night transition active:scale-95">
+              <KeyRound size={16} /> أدخل مفتاح Groq
+            </Link>
           </div>
-        )}
+        ) : (
+          <>
+            <button
+              onClick={() => isRecording ? stopRecording() : startRecording()}
+              disabled={isTranscribing}
+              className={`relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-150 select-none
+                ${isRecording
+                  ? "bg-danger shadow-[0_0_32px_rgba(239,68,68,0.6)] scale-110"
+                  : isTranscribing
+                  ? "bg-surface-2 cursor-wait"
+                  : "bg-brand shadow-brand-glow active:scale-95"
+                }`}
+            >
+              {isRecording ? (
+                <MicOff size={36} className="text-white" />
+              ) : isTranscribing ? (
+                <RefreshCw size={32} className="animate-spin text-muted" />
+              ) : (
+                <Mic size={36} className="text-night" />
+              )}
+              {isRecording && (
+                <span className="absolute top-1 right-1 h-3 w-3 rounded-full bg-danger animate-pulse" />
+              )}
+            </button>
 
-        <p className="text-sm text-muted">
-          {isRecording
-            ? "جارٍ التسجيل... اضغط مرة ثانية للإيقاف"
-            : isTranscribing
-            ? "جارٍ معالجة الصوت..."
-            : "اضغط للتسجيل"}
-        </p>
+            {(isRecording || isTranscribing) && liveTranscript && (
+              <div className="mx-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
+                {liveTranscript}
+              </div>
+            )}
+
+            <p className="text-sm text-muted">
+              {isRecording
+                ? "جارٍ التسجيل... اضغط مرة ثانية للإيقاف"
+                : isTranscribing
+                ? "جارٍ معالجة الصوت..."
+                : "اضغط للتسجيل"}
+            </p>
+          </>
+        )}
 
         {recordingError && (
           <div className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
