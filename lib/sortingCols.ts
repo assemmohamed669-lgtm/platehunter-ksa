@@ -19,9 +19,15 @@ export const PREFERRED_COLS = [
   "سنة الصنع", "السنة", "سنة", "موديل", "Year Model", "Year",
 ];
 
-// Columns that must always appear in results — user cannot hide them.
+// Columns that must always appear in results — user cannot hide them (🔒).
+// GPS + الحي + الشارع تظهر تلقائياً مع كل نتيجة فرز ولا يمكن إخفاؤها.
 export const MANDATORY_COLS = [
+  // Street / Address
   "الشارع", "شارع", "العنوان", "عنوان",
+  // GPS / Location link
+  "GPS", "جي بي اس", "الموقع",
+  // District
+  "الحي", "حي",
 ];
 
 export function isMandatory(header: string): boolean {
