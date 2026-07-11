@@ -100,6 +100,8 @@ export default function SortingPage() {
   const [tashyeekTable, setTashyeekTable] = useState<ExcelTable | null>(null);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
   const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
+  const [tashyeekSelected, setTashyeekSelected] = useState<Set<number>>(new Set());
+  const [tashyeekCopiedIdx, setTashyeekCopiedIdx] = useState<number | null>(null);
   const [tashyeekColsOpen, setTashyeekColsOpen] = useState(false);
 
   // ── Sort results ──
@@ -554,6 +556,59 @@ export default function SortingPage() {
     const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
     for (const col of pasteAllCols) obj[col] = p.row[col] ?? "";
     return obj;
+  }
+
+  // ── نافذة المطلوبين (شيت التشييك) — helpers ──
+  function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
+    const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
+    const obj: Record<string, unknown> = { "رقم اللوحة": plate };
+    for (const h of tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol) ?? []) {
+      obj[h] = r.tashyeekRow[h] || r.referralRow[h] || "";
+    }
+    return obj;
+  }
+  function removeTashyeekRow(i: number) {
+    setTashyeekResults((prev) => (prev ? prev.filter((_, idx) => idx !== i) : prev));
+    setTashyeekSelected(new Set());
+  }
+  function shareTashyeekRow(r: TashyeekResultRow) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(buildRowSummaryText(buildTashyeekRowObj(r)))}`, "_blank");
+  }
+  async function copyTashyeekRow(r: TashyeekResultRow, i: number) {
+    await navigator.clipboard.writeText(buildRowSummaryText(buildTashyeekRowObj(r)));
+    setTashyeekCopiedIdx(i);
+    setTimeout(() => setTashyeekCopiedIdx(null), 1200);
+  }
+  function toggleTashyeekSel(i: number) {
+    setTashyeekSelected((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  }
+  function toggleTashyeekAll() {
+    setTashyeekSelected((prev) => prev.size === (tashyeekResults?.length ?? 0) ? new Set() : new Set((tashyeekResults ?? []).map((_, i) => i)));
+  }
+  function deleteTashyeekSelected() {
+    setTashyeekResults((prev) => (prev ? prev.filter((_, idx) => !tashyeekSelected.has(idx)) : prev));
+    setTashyeekSelected(new Set());
+  }
+  function shareTashyeekSelected() {
+    const rows = (tashyeekResults ?? []).filter((_, idx) => tashyeekSelected.has(idx));
+    if (!rows.length) return;
+    const text = `*سيارات مطلوبة (${rows.length})*\n\n` +
+      rows.map((r, i) => `${i + 1}. ${buildRowSummaryText(buildTashyeekRowObj(r))}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  async function shareTashyeekAll() {
+    const rows = (tashyeekResults ?? []).map(buildTashyeekRowObj);
+    if (!rows.length) return;
+    const { blob, ext } = buildSpreadsheetBlob(rows, "سيارات مطلوبة");
+    try { await shareExcelBlob(blob, `مطلوبين-${ts()}.${ext}`, "سيارات مطلوبة"); }
+    catch (e: any) { alert(e?.message ?? "تعذّرت المشاركة"); }
+  }
+  async function openTashyeekExcel() {
+    const rows = (tashyeekResults ?? []).map(buildTashyeekRowObj);
+    if (!rows.length) return;
+    const { blob, ext } = buildSpreadsheetBlob(rows, "سيارات مطلوبة");
+    try { await openExcelBlob(blob, `مطلوبين-${ts()}.${ext}`); }
+    catch (e: any) { alert(e?.message ?? "تعذّر الفتح"); }
   }
 
   // ── Export ──
@@ -1044,25 +1099,41 @@ export default function SortingPage() {
       {sorted && tashyeekResults !== null && (
         tashyeekResults.length > 0 ? (
           <div className="flex flex-col gap-3 rounded-2xl border-2 border-primary/60 bg-primary/5 p-3">
-            <div>
-              <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من التشييك الميداني</h2>
-              <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من التشييك الميداني</h2>
+                <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
+              </div>
+              <button onClick={toggleTashyeekAll}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0
+                  ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+              </button>
             </div>
             <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh" }}>
               <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-surface-2 text-muted">
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                     {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => (
                       <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                     ))}
+                    <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">⋮</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tashyeekResults.map((r, i) => {
                     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
+                    const sel = tashyeekSelected.has(i);
                     return (
-                      <tr key={i} className="border-b border-border bg-primary/5 hover:bg-primary/10 transition">
+                      <tr key={i} className={`border-b border-border transition ${sel ? "bg-primary/15" : "bg-primary/5 hover:bg-primary/10"}`}>
+                        <td className="border-l border-border px-2 py-2 text-center">
+                          <button onClick={() => toggleTashyeekSel(i)} className="text-muted hover:text-primary transition">
+                            {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                          </button>
+                        </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
                         {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => {
                           const val = r.tashyeekRow[h] || r.referralRow[h] || "";
@@ -1079,11 +1150,49 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
+                        <td className="px-2 py-2">
+                          <div className="flex items-center justify-center gap-2">
+                            <button onClick={() => copyTashyeekRow(r, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                              {tashyeekCopiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                            </button>
+                            <button onClick={() => shareTashyeekRow(r)} title="واتساب" className="text-muted hover:text-primary transition"><Share2 size={13} /></button>
+                            <button onClick={() => removeTashyeekRow(i)} title="حذف" className="text-muted hover:text-danger transition"><Trash2 size={13} /></button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+            {tashyeekSelected.size > 0 && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                <span className="text-xs font-bold text-ink">{tashyeekSelected.size} محددة</span>
+                <div className="flex gap-2">
+                  <button onClick={shareTashyeekSelected}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
+                    <Share2 size={13} /> واتساب
+                  </button>
+                  <button onClick={deleteTashyeekSelected}
+                    className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20">
+                    <Trash2 size={13} /> مسح الكل
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* أزرار تحت النافذة */}
+            <div className="flex gap-3">
+              <button onClick={shareTashyeekAll}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
+                <Share2 size={16} /> مشاركة
+              </button>
+              <button onClick={openTashyeekExcel}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
+                <ExternalLink size={16} /> فتح في Excel
+              </button>
             </div>
           </div>
         ) : (
