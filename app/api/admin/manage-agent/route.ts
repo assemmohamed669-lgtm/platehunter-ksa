@@ -37,6 +37,18 @@ export async function POST(req: NextRequest) {
   if (SUPER_ONLY.has(action) && !admin.isSuper) {
     return NextResponse.json({ error: "الإجراء ده للسوبر-أدمن فقط." }, { status: 403 });
   }
+  // Prevent the super admin from destroying / demoting / disabling their own
+  // account — there's no recovery path back to super via any endpoint.
+  if (agentId === adminId && (
+    action === "delete" ||
+    action === "setRole" ||
+    (action === "setActive" && !body.active)
+  )) {
+    return NextResponse.json({ error: "مايصحّش تعمل كده لحساب نفسك." }, { status: 400 });
+  }
+  if (!target) {
+    return NextResponse.json({ error: "الحساب مش موجود." }, { status: 404 });
+  }
   // Only a super admin may act on an admin account; and no one may act on the
   // super admin's account (except the super acting on non-super admins).
   if (target?.role === "admin" && !admin.isSuper) {

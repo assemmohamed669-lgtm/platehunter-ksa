@@ -18,6 +18,18 @@ interface Props {
   center?: [number, number];
 }
 
+// Escape any value going into popup HTML — plate/notes are user/OCR content
+// and could contain markup, which Leaflet would render as innerHTML.
+function esc(s: unknown): string {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)
+  );
+}
+function safeHttps(url: unknown): string | null {
+  const u = String(url ?? "");
+  return /^https:\/\//i.test(u) ? u : null;
+}
+
 export default function MapView({ points, center = [24.7136, 46.6753] }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<unknown>(null);
@@ -61,12 +73,13 @@ export default function MapView({ points, center = [24.7136, 46.6753] }: Props) 
           iconAnchor: [7, 7],
         });
 
+        const link = safeHttps(p.mapsLink);
         const popup = `
           <div dir="rtl" style="font-family:Tahoma,sans-serif;min-width:160px">
-            <b style="color:${color};font-size:15px">${p.plate}</b><br/>
-            ${p.subtitle ? `<span style="color:#666">${p.subtitle}</span><br/>` : ""}
-            ${p.when ? `<span style="color:#999;font-size:11px">${p.when}</span><br/>` : ""}
-            ${p.mapsLink ? `<a href="${p.mapsLink}" target="_blank" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
+            <b style="color:${color};font-size:15px">${esc(p.plate)}</b><br/>
+            ${p.subtitle ? `<span style="color:#666">${esc(p.subtitle)}</span><br/>` : ""}
+            ${p.when ? `<span style="color:#999;font-size:11px">${esc(p.when)}</span><br/>` : ""}
+            ${link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
           </div>
         `;
 

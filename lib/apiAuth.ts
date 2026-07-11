@@ -17,6 +17,10 @@ export async function verifySession(authHeader: string | null): Promise<string |
   try {
     const { data, error } = await supabaseAdmin.auth.getUser(token);
     if (error || !data.user) return null;
+    // Deactivated accounts can't spend the server API keys.
+    const { data: profile } = await supabaseAdmin
+      .from("profiles").select("is_active").eq("id", data.user.id).single();
+    if (profile?.is_active === false) return null;
     return data.user.id;
   } catch {
     return null;

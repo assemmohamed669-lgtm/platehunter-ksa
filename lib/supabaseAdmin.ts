@@ -41,11 +41,12 @@ export async function verifyAdminContext(
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from("profiles")
-    .select("role, is_super")
+    .select("role, is_super, is_active")
     .eq("id", userData.user.id)
     .single();
 
-  if (profileError || !profile || profile.role !== "admin") return null;
+  // A deactivated admin loses admin powers immediately (not just at next login).
+  if (profileError || !profile || profile.role !== "admin" || profile.is_active === false) return null;
 
   return { id: userData.user.id, isSuper: !!profile.is_super };
 }
