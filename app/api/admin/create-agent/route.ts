@@ -7,7 +7,7 @@
  * Agents get a monthly subscription (start = today, end = subscriptionEnd or +1 month).
  */
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin, verifyAdmin } from "@/lib/supabaseAdmin";
+import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 
 function normalizeEmail(raw: string): string {
   const v = raw.trim().toLowerCase();
@@ -21,10 +21,11 @@ function addMonths(d: Date, n: number): string {
 }
 
 export async function POST(req: NextRequest) {
-  const adminId = await verifyAdmin(req.headers.get("authorization"));
-  if (!adminId) {
+  const admin = await verifyAdminContext(req.headers.get("authorization"));
+  if (!admin) {
     return NextResponse.json({ error: "غير مصرّح. يجب تسجيل الدخول كأدمن." }, { status: 403 });
   }
+  const adminId = admin.id;
 
   const body = await req.json();
   const rawId: string = body.email ?? body.username ?? "";
@@ -32,6 +33,11 @@ export async function POST(req: NextRequest) {
   const phone: string | null = body.phone?.trim() || null;
   const role: "agent" | "admin" = body.role === "admin" ? "admin" : "agent";
   const subscriptionEnd: string | null = body.subscriptionEnd || null;
+
+  // Only a super admin can create other admins.
+  if (role === "admin" && !admin.isSuper) {
+    return NextResponse.json({ error: "إنشاء أدمن للسوبر-أدمن فقط." }, { status: 403 });
+  }
 
   if (!rawId.trim() || !password || password.length < 6) {
     return NextResponse.json(

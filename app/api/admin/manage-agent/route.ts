@@ -10,19 +10,40 @@
  *  - delete
  */
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin, verifyAdmin } from "@/lib/supabaseAdmin";
+import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
+
+// Actions only a SUPER admin may perform (destructive / privilege-changing).
+const SUPER_ONLY = new Set(["delete", "setActive", "setRole"]);
 
 export async function POST(req: NextRequest) {
-  const adminId = await verifyAdmin(req.headers.get("authorization"));
-  if (!adminId) {
+  const admin = await verifyAdminContext(req.headers.get("authorization"));
+  if (!admin) {
     return NextResponse.json({ error: "غير مصرّح." }, { status: 403 });
   }
+  const adminId = admin.id;
 
   const body = await req.json();
   const agentId: string = body.agentId ?? "";
   const action: string = body.action ?? "";
   if (!agentId || !action) {
     return NextResponse.json({ error: "بيانات ناقصة." }, { status: 400 });
+  }
+
+  // Look up the target so a non-super admin can't touch destructive actions
+  // or manage another ADMIN's account (which would allow takeover/lockout).
+  const { data: target } = await supabaseAdmin
+    .from("profiles").select("role, is_super").eq("id", agentId).single();
+
+  if (SUPER_ONLY.has(action) && !admin.isSuper) {
+    return NextResponse.json({ error: "الإجراء ده للسوبر-أدمن فقط." }, { status: 403 });
+  }
+  // Only a super admin may act on an admin account; and no one may act on the
+  // super admin's account (except the super acting on non-super admins).
+  if (target?.role === "admin" && !admin.isSuper) {
+    return NextResponse.json({ error: "مايصحّش تدير حساب أدمن." }, { status: 403 });
+  }
+  if (target?.is_super && agentId !== adminId) {
+    return NextResponse.json({ error: "مايصحّش تعدّل حساب السوبر-أدمن." }, { status: 403 });
   }
 
   try {
