@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -16,6 +16,7 @@ interface AgentProfile {
   phone: string | null;
   role: "admin" | "agent";
   is_super: boolean;
+  is_trial: boolean;
   is_active: boolean;
   device_fingerprint: string | null;
   last_seen: string | null;
@@ -58,6 +59,7 @@ export default function AdminDashboard() {
   const [cPassword, setCPassword] = useState("");
   const [cPhone, setCPhone] = useState("");
   const [cRole, setCRole] = useState<"agent" | "admin">("agent");
+  const [cTrial, setCTrial] = useState(false);
   const [cEnd, setCEnd] = useState(addMonths(1));
   const [cError, setCError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -86,7 +88,8 @@ export default function AdminDashboard() {
     if (!cEmail.trim() || cPassword.length < 6) {
       setCError("الإيميل وكلمة مرور (٦ أحرف على الأقل) مطلوبان."); return;
     }
-    if (cRole === "agent" && !cPhone.trim()) {
+    // التليفون إجباري للمندوب العادي فقط — اختياري لحساب التجربة.
+    if (cRole === "agent" && !cTrial && !cPhone.trim()) {
       setCError("رقم التليفون مطلوب للمندوب."); return;
     }
     setCreating(true);
@@ -96,13 +99,14 @@ export default function AdminDashboard() {
         headers: await authHeaders(),
         body: JSON.stringify({
           email: cEmail, password: cPassword, phone: cPhone,
-          role: cRole, subscriptionEnd: cRole === "agent" ? cEnd : null,
+          role: cRole, trial: cTrial,
+          subscriptionEnd: cRole === "agent" && !cTrial ? cEnd : null,
         }),
       });
       const json = await res.json();
       if (!res.ok) { setCError(json.error ?? "خطأ غير متوقع."); return; }
       setShowCreate(false);
-      setCEmail(""); setCPassword(""); setCPhone(""); setCRole("agent"); setCEnd(addMonths(1));
+      setCEmail(""); setCPassword(""); setCPhone(""); setCRole("agent"); setCTrial(false); setCEnd(addMonths(1));
       loadAgents();
     } catch { setCError("تعذّر الاتصال بالخادم."); }
     finally { setCreating(false); }
@@ -229,6 +233,9 @@ export default function AdminDashboard() {
                       <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">أدمن</span>
                     )
                   )}
+                  {a.is_trial && a.role === "agent" && (
+                    <span className="flex items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand"><Clock size={10} /> تجربة</span>
+                  )}
                   {!a.is_active && <span className="rounded-full bg-danger/10 px-1.5 py-0.5 text-[10px] text-danger">معطّل</span>}
                 </div>
                 <p className="truncate text-[11px] text-muted" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
@@ -258,22 +265,43 @@ export default function AdminDashboard() {
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} placeholder="كلمة المرور (٦ أحرف+)" dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-              <input value={cPhone} onChange={(e) => setCPhone(e.target.value)} placeholder="رقم واتساب المندوب ✱ إجباري" dir="ltr"
+              <input value={cPhone} onChange={(e) => setCPhone(e.target.value)}
+                placeholder={cTrial ? "رقم واتساب (اختياري)" : "رقم واتساب المندوب ✱ إجباري"} dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-              <div className="flex gap-2">
-                {(["agent", "admin"] as const).map((r) => (
-                  <button key={r} onClick={() => setCRole(r)}
-                    className={`flex-1 rounded-lg border py-2 text-sm transition ${cRole === r ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
-                    {r === "agent" ? "مندوب" : "أدمن"}
-                  </button>
-                ))}
-              </div>
-              {cRole === "agent" && (
-                <label className="flex items-center justify-between gap-2 text-xs text-muted">
-                  الاشتراك حتى:
-                  <input type="date" value={cEnd} onChange={(e) => setCEnd(e.target.value)}
-                    className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-                </label>
+
+              {/* توجّل حساب التجربة المجانية */}
+              <button
+                onClick={() => { setCTrial((v) => !v); setCRole("agent"); }}
+                className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-sm transition ${cTrial ? "border-brand bg-brand/15 text-brand font-bold" : "border-border text-muted"}`}
+              >
+                <span className="flex items-center gap-2"><Clock size={15} /> تجربة مجانية ١٥ يوم</span>
+                <span className={`flex h-5 w-9 items-center rounded-full p-0.5 transition ${cTrial ? "bg-brand justify-end" : "bg-border justify-start"}`}>
+                  <span className="h-4 w-4 rounded-full bg-white" />
+                </span>
+              </button>
+
+              {cTrial ? (
+                <p className="rounded-lg bg-brand/10 px-3 py-2 text-[11px] leading-relaxed text-brand">
+                  الحساب هيشتغل ١٥ يوم من دلوقتي، وبعدها يتقفل تلقائياً وتظهر رسالة انتهاء التجربة. التليفون اختياري.
+                </p>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    {(["agent", "admin"] as const).map((r) => (
+                      <button key={r} onClick={() => setCRole(r)}
+                        className={`flex-1 rounded-lg border py-2 text-sm transition ${cRole === r ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
+                        {r === "agent" ? "مندوب" : "أدمن"}
+                      </button>
+                    ))}
+                  </div>
+                  {cRole === "agent" && (
+                    <label className="flex items-center justify-between gap-2 text-xs text-muted">
+                      الاشتراك حتى:
+                      <input type="date" value={cEnd} onChange={(e) => setCEnd(e.target.value)}
+                        className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+                    </label>
+                  )}
+                </>
               )}
               {cError && (
                 <div className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">

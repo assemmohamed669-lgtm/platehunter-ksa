@@ -12,7 +12,7 @@ import AppMenu from "@/components/AppMenu";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
 import { supabase } from "@/lib/supabaseClient";
-import { subStatus, isCutOff, type SubInfo } from "@/lib/subscription";
+import { subStatus, isCutOff, GRACE_DAYS, type SubInfo } from "@/lib/subscription";
 
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -26,6 +26,7 @@ export default function AppShellLayout({
   const [isAdmin, setIsAdmin] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cutOff, setCutOff] = useState(false);
+  const [isTrial, setIsTrial] = useState(false);
   const [sub, setSub] = useState<SubInfo | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const isHome = pathname === "/dashboard";
@@ -38,13 +39,16 @@ export default function AppShellLayout({
       if (!data.user) return;
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, is_active, subscription_end")
+        .select("role, is_active, subscription_end, is_trial")
         .eq("id", data.user.id)
         .single();
       setIsAdmin(profile?.role === "admin");
       if (profile && profile.role === "agent") {
-        setSub(subStatus(profile.subscription_end));
-        setCutOff(isCutOff(profile.subscription_end, profile.is_active));
+        // حساب التجربة يتقطع فوراً بعد نهايته (بدون فترة سماح).
+        const grace = profile.is_trial ? 0 : GRACE_DAYS;
+        setIsTrial(!!profile.is_trial);
+        setSub(subStatus(profile.subscription_end, grace));
+        setCutOff(isCutOff(profile.subscription_end, profile.is_active, grace));
       }
       // heartbeat — «آخر ظهور» for the admin activity report.
       supabase.rpc("touch_last_seen").then(() => {}, () => {});
@@ -58,7 +62,9 @@ export default function AppShellLayout({
 
   // اشتراك مقطوع (بعد فترة السماح): شاشة حظر — المندوب مايستخدمش التطبيق.
   if (cutOff) {
-    const text = "السلام عليكم، برجاء تفعيل اشتراكي الشهري في تطبيق قناص اللوحات.";
+    const text = isTrial
+      ? "السلام عليكم، انتهت فترة التجربة المجانية وأرغب في الاشتراك في تطبيق قناص اللوحات."
+      : "السلام عليكم، برجاء تفعيل اشتراكي الشهري في تطبيق قناص اللوحات.";
     return (
       <SessionGuard>
         <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-night px-6 text-center">
@@ -66,8 +72,14 @@ export default function AppShellLayout({
             <CalendarClock size={30} className="text-danger" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-ink">الخدمة متوقّفة</h1>
-            <p className="mt-2 text-sm text-muted">لتشغيل الخدمة برجاء تسديد اشتراكك الشهري.</p>
+            <h1 className="text-lg font-bold text-ink">
+              {isTrial ? "انتهت فترة التجربة المجانية" : "الخدمة متوقّفة"}
+            </h1>
+            <p className="mt-2 text-sm text-muted">
+              {isTrial
+                ? "انتهت فترة التجربة المجانية (١٥ يوم). للاشتراك والاستمرار تواصل مع الأدمن."
+                : "لتشغيل الخدمة برجاء تسديد اشتراكك الشهري."}
+            </p>
           </div>
           <a href={`https://wa.me/${ADMIN_WHATSAPP}?text=${encodeURIComponent(text)}`} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-bold text-night transition active:scale-95">

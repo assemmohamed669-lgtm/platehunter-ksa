@@ -20,6 +20,14 @@ function addMonths(d: Date, n: number): string {
   return x.toISOString().slice(0, 10);
 }
 
+function addDays(d: Date, n: number): string {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x.toISOString().slice(0, 10);
+}
+
+const TRIAL_DAYS = 15;
+
 export async function POST(req: NextRequest) {
   const admin = await verifyAdminContext(req.headers.get("authorization"));
   if (!admin) {
@@ -31,7 +39,9 @@ export async function POST(req: NextRequest) {
   const rawId: string = body.email ?? body.username ?? "";
   const password: string = body.password ?? "";
   const phone: string | null = body.phone?.trim() || null;
-  const role: "agent" | "admin" = body.role === "admin" ? "admin" : "agent";
+  const trial: boolean = body.trial === true;
+  // حساب تجربة دائماً مندوب (مش أدمن)
+  const role: "agent" | "admin" = trial ? "agent" : (body.role === "admin" ? "admin" : "agent");
   const subscriptionEnd: string | null = body.subscriptionEnd || null;
 
   // Only a super admin can create other admins.
@@ -45,7 +55,8 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  if (role === "agent" && !phone) {
+  // التليفون إجباري للمندوب العادي فقط — اختياري لحساب التجربة.
+  if (role === "agent" && !trial && !phone) {
     return NextResponse.json({ error: "رقم التليفون مطلوب للمندوب." }, { status: 400 });
   }
 
@@ -66,8 +77,12 @@ export async function POST(req: NextRequest) {
 
   const today = new Date();
   const start = today.toISOString().slice(0, 10);
-  // Admins don't have a subscription; agents default to +1 month if none given.
-  const end = role === "admin" ? null : (subscriptionEnd || addMonths(today, 1));
+  // الأدمن بلا اشتراك · التجربة = 15 يوم من اليوم · المندوب العادي = +شهر أو التاريخ المُدخل.
+  const end = role === "admin"
+    ? null
+    : trial
+      ? addDays(today, TRIAL_DAYS)
+      : (subscriptionEnd || addMonths(today, 1));
 
   // 2. Create the matching profile row
   const { error: profileError } = await supabaseAdmin.from("profiles").insert({
@@ -77,6 +92,7 @@ export async function POST(req: NextRequest) {
     phone,
     role,
     is_active: true,
+    is_trial: trial,
     subscription_start: role === "admin" ? null : start,
     subscription_end: end,
   });
@@ -90,7 +106,9 @@ export async function POST(req: NextRequest) {
 
   if (role === "agent") {
     await supabaseAdmin.from("subscription_events").insert({
-      agent_id: created.user.id, new_end: end, note: "إنشاء الحساب", created_by: adminId,
+      agent_id: created.user.id, new_end: end,
+      note: trial ? `تجربة مجانية ${TRIAL_DAYS} يوم` : "إنشاء الحساب",
+      created_by: adminId,
     });
   }
 

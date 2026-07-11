@@ -92,7 +92,8 @@ export async function POST(req: NextRequest) {
       case "extendSubscription": {
         const subscriptionEnd: string = body.subscriptionEnd ?? "";
         if (!subscriptionEnd) return NextResponse.json({ error: "تاريخ النهاية مطلوب." }, { status: 400 });
-        const patch: Record<string, unknown> = { subscription_end: subscriptionEnd, is_active: true };
+        // تمديد الاشتراك يحوّل حساب التجربة لمشترك عادي.
+        const patch: Record<string, unknown> = { subscription_end: subscriptionEnd, is_active: true, is_trial: false };
         if (body.amount != null) patch.subscription_amount = Number(body.amount);
         const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
