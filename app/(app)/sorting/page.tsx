@@ -88,6 +88,7 @@ export default function SortingPage() {
   const [referralTable, setReferralTable] = useState<ExcelTable | null>(null);
   const [referralFile, setReferralFile] = useState<File | null>(null);
   const [referralColsOpen, setReferralColsOpen] = useState(false);
+  const [referralBoxOpen, setReferralBoxOpen] = useState(true); // collapse/expand the whole "مربع الإحالة"
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
   const [referralPlateColOverride, setReferralPlateColOverride] = useState<string | null>(null);
 
@@ -765,7 +766,12 @@ export default function SortingPage() {
       )}
 
       {/* ③ REFERRAL FILE */}
-      <p className="text-sm font-bold text-ink">ملف الإحالة</p>
+      <button onClick={() => setReferralBoxOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-sm font-bold text-ink">
+        <span>مربع الإحالة</span>
+        <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${referralBoxOpen ? "rotate-180" : ""}`} />
+      </button>
+      {referralBoxOpen && (<>
       <FileUploadBox
         title="ملف الإحالة"
         hint={sortMode === "new" ? "إحالة اليوم الجديدة" : "قائمة البنك بالسيارات المطلوبة"}
@@ -804,6 +810,7 @@ export default function SortingPage() {
           )}
         </div>
       )}
+      </>)}
 
       {/* ⑤ SORT BUTTON */}
       <button onClick={handleSort} disabled={sorting || !canSort}
@@ -1099,7 +1106,7 @@ export default function SortingPage() {
           <div className="mb-1 flex items-center justify-between">
             <label className="text-xs text-muted">الصق اللوحات هنا</label>
             {pasteText && (
-              <button onClick={() => { setPasteText(""); setPasteResults([]); setPasteRan(false); wipePasteResults(); }}
+              <button onClick={() => setPasteText("")}
                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:text-danger">
                 <Trash2 size={13} /> مسح الكل
               </button>
