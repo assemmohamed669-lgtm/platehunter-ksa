@@ -1919,14 +1919,6 @@ export default function RegistrationPage() {
         </div>
       </div>
 
-      {/* Groq key moved to its own page — reachable from the ☰ menu */}
-      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2.5">
-        <span className="text-[11px] text-muted" dir="rtl">
-          مفتاح Groq للتفريغ السحابي بقى في القائمة (☰) ← <span className="font-bold text-ink">مفتاح Groq</span>
-          {groqApiKey.trim() ? " — مفعّل ✅" : ""}
-        </span>
-      </div>
-
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
         <button

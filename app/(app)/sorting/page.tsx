@@ -745,13 +745,6 @@ export default function SortingPage() {
       )}
       </>)}
 
-      {/* ② شيت التسجيلات — تلقائي (يغذّي الفرز من سجلات التطبيق، بدون رفع ملف) */}
-      <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
-        <p className="text-xs text-muted" dir="rtl">
-          الفرز بيطابق كمان <span className="font-bold text-ink">شيت التسجيلات</span> (اللي بيتجمّع تلقائياً من التشييك يدوي/كاميرا/صوت){tashyeekTable ? ` — ${tashyeekTable.rows.length} لوحة` : " — لسه فاضي"}.
-        </p>
-      </div>
-
       {/* ③ SORT MODE TABS */}
       <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
         <button onClick={() => { setSortMode("new"); setSorted(false); setResults(null); setTashyeekResults(null); wipeSortResults(); }}
