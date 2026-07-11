@@ -102,6 +102,8 @@ export default function SortingPage() {
   const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
   const [tashyeekSelected, setTashyeekSelected] = useState<Set<number>>(new Set());
   const [tashyeekCopiedIdx, setTashyeekCopiedIdx] = useState<number | null>(null);
+  const [pasteSelected, setPasteSelected] = useState<Set<number>>(new Set());
+  const [pasteCopiedIdx, setPasteCopiedIdx] = useState<number | null>(null);
   const [tashyeekColsOpen, setTashyeekColsOpen] = useState(false);
 
   // ── Sort results ──
@@ -736,7 +738,30 @@ export default function SortingPage() {
   function deletePasteResult(i: number) {
     const next = pasteResults.filter((_, idx) => idx !== i);
     setPasteResults(next);
+    setPasteSelected(new Set());
     if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+  }
+  function togglePasteSel(i: number) { setPasteSelected((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; }); }
+  function togglePasteAll() { setPasteSelected((p) => p.size === pasteResults.length ? new Set() : new Set(pasteResults.map((_, i) => i))); }
+  function deletePasteSelected() {
+    const next = pasteResults.filter((_, idx) => !pasteSelected.has(idx));
+    setPasteResults(next);
+    setPasteSelected(new Set());
+    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+  }
+  function sharePasteSelected() {
+    const rows = pasteResults.filter((_, idx) => pasteSelected.has(idx));
+    if (!rows.length) return;
+    const text = `*اللوحات المطلوبة (${rows.length})*\n\n` +
+      rows.map((p, i) => `${i + 1}. 🚗 ${p.converted}\n` +
+        Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")
+      ).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  async function copyPasteRow(p: { converted: string; row: Record<string, string> }, i: number) {
+    await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRowObject(p)));
+    setPasteCopiedIdx(i);
+    setTimeout(() => setPasteCopiedIdx(null), 1200);
   }
 
   if (!hydrated) return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
@@ -1257,6 +1282,12 @@ export default function SortingPage() {
                 <span className="text-xs font-bold text-brand">{pasteResults.length} لوحة مطلوبة</span>
               </div>
               <div className="flex items-center gap-1">
+                <button onClick={togglePasteAll}
+                  className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-ink transition">
+                  {pasteSelected.size === pasteResults.length && pasteResults.length > 0
+                    ? <CheckSquare size={11} className="text-primary" /> : <Square size={11} />}
+                  تحديد الكل
+                </button>
                 <button
                   onClick={() => setPasteZoom((z) => Math.max(z - 1, 0))}
                   disabled={pasteZoom === 0}
@@ -1294,6 +1325,7 @@ export default function SortingPage() {
                 <table className="border-collapse w-full">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-surface-2 text-muted">
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">☐</th>
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                       {pasteAllCols.map((col) => (
@@ -1314,8 +1346,13 @@ export default function SortingPage() {
                       return (
                       <tr
                         key={i}
-                        className={`border-b border-border ${pasteBg}`}
+                        className={`border-b border-border ${pasteSelected.has(i) ? "bg-primary/15" : pasteBg}`}
                       >
+                        <td className="border-l border-border px-2 py-1.5 text-center">
+                          <button onClick={() => togglePasteSel(i)} className="text-muted hover:text-primary transition">
+                            {pasteSelected.has(i) ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                          </button>
+                        </td>
                         <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
                         <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
@@ -1345,9 +1382,17 @@ export default function SortingPage() {
                           );
                         })}
                         <td className="px-2 py-1.5">
-                          <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} className="text-muted hover:text-primary transition">
-                            <Share2 size={12} />
-                          </button>
+                          <div className="flex items-center justify-center gap-2">
+                            <button onClick={() => copyPasteRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                              {pasteCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
+                            </button>
+                            <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                              <Share2 size={12} />
+                            </button>
+                            <button onClick={() => deletePasteResult(i)} title="حذف" className="text-muted hover:text-danger transition">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                       );
@@ -1358,6 +1403,23 @@ export default function SortingPage() {
 
             </div>
             </div>
+
+            {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+            {pasteSelected.size > 0 && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                <span className="text-xs font-bold text-ink">{pasteSelected.size} محددة</span>
+                <div className="flex gap-2">
+                  <button onClick={sharePasteSelected}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
+                    <Share2 size={13} /> واتساب
+                  </button>
+                  <button onClick={deletePasteSelected}
+                    className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20">
+                    <Trash2 size={13} /> مسح الكل
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* أزرار تصدير كبيرة — خارج الكارت */}
             <div className="flex gap-3">
