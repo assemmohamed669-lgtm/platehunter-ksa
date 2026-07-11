@@ -19,15 +19,11 @@ export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const admin = await verifyAdminContext(authHeader);
   if (!admin) {
-    // تشخيص مؤقت: يكشف بالظبط ليه الصلاحية اترفضت
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
-    if (!token) return NextResponse.json({ error: "مفيش توكن — سجّل دخول." }, { status: 403 });
-    const { data: u, error: uErr } = await supabaseAdmin.auth.getUser(token);
-    if (uErr || !u.user) return NextResponse.json({ error: `توكن غير صالح — سجّل خروج ودخول. (${uErr?.message ?? "no user"})` }, { status: 403 });
-    const { data: prof, error: pErr } = await supabaseAdmin
-      .from("profiles").select("role, is_super, is_active").eq("id", u.user.id).single();
-    if (pErr) return NextResponse.json({ error: `خطأ قراءة الملف: ${pErr.message}` }, { status: 403 });
-    return NextResponse.json({ error: `ملفك: الدور=${prof?.role} · سوبر=${prof?.is_super} · نشط=${prof?.is_active}` }, { status: 403 });
+    const hasToken = !!authHeader?.startsWith("Bearer ");
+    return NextResponse.json(
+      { error: hasToken ? "الجلسة انتهت أو مش صلاحية أدمن — سجّل خروج ودخول وجرّب تاني." : "مفيش جلسة — سجّل دخول الأول." },
+      { status: 403 }
+    );
   }
   const adminId = admin.id;
 
