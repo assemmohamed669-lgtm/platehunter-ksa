@@ -85,6 +85,9 @@ export default function AdminDashboard() {
     if (!cEmail.trim() || cPassword.length < 6) {
       setCError("الإيميل وكلمة مرور (٦ أحرف على الأقل) مطلوبان."); return;
     }
+    if (cRole === "agent" && !cPhone.trim()) {
+      setCError("رقم التليفون مطلوب للمندوب."); return;
+    }
     setCreating(true);
     try {
       const res = await fetch("/api/admin/create-agent", {
@@ -234,11 +237,11 @@ export default function AdminDashboard() {
               <button onClick={() => setShowCreate(false)} className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
             <div className="flex flex-col gap-2.5">
-              <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="الإيميل" dir="ltr"
+              <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="الإيميل ✱ إجباري" dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} placeholder="كلمة المرور (٦ أحرف+)" dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-              <input value={cPhone} onChange={(e) => setCPhone(e.target.value)} placeholder="رقم التليفون (واتساب)" dir="ltr"
+              <input value={cPhone} onChange={(e) => setCPhone(e.target.value)} placeholder="رقم واتساب المندوب ✱ إجباري" dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <div className="flex gap-2">
                 {(["agent", "admin"] as const).map((r) => (

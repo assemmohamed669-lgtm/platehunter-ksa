@@ -66,15 +66,16 @@ export default function LoginPage() {
             htmlFor="username"
             className="mb-1.5 block text-sm font-medium text-ink"
           >
-            اسم المستخدم
+            الإيميل
           </label>
           <input
             id="username"
-            type="text"
+            type="email"
+            dir="ltr"
             autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="مثال: agent01"
+            placeholder="you@example.com"
             className="w-full rounded-lg border border-border bg-surface-2 px-4 py-3 text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
             disabled={loading}
           />
@@ -124,7 +125,15 @@ export default function LoginPage() {
           {loading ? "جارٍ التحقق..." : "تسجيل الدخول"}
         </button>
 
-        <div className="mt-5 flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5 text-xs leading-relaxed text-muted">
+        <a
+          href="https://wa.me/971542482545?text=%D8%A7%D9%84%D8%B3%D9%84%D8%A7%D9%85%20%D8%B9%D9%84%D9%8A%D9%83%D9%85%D8%8C%20%D9%86%D8%B3%D9%8A%D8%AA%20%D8%A8%D9%8A%D8%A7%D9%86%D8%A7%D8%AA%20%D8%A7%D9%84%D8%AF%D8%AE%D9%88%D9%84%20%D9%84%D8%AA%D8%B7%D8%A8%D9%8A%D9%82%20%D9%82%D9%86%D8%A7%D8%B5%20%D8%A7%D9%84%D9%84%D9%88%D8%AD%D8%A7%D8%AA."
+          target="_blank" rel="noopener noreferrer"
+          className="mt-4 block text-center text-xs text-primary underline"
+        >
+          نسيت الإيميل أو كلمة المرور؟ تواصل مع الإدارة
+        </a>
+
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5 text-xs leading-relaxed text-muted">
           <ShieldCheck size={32} className="shrink-0 text-primary" />
           <span>
             هذا الحساب مرتبط تلقائيًا بهذا الجهاز عند أول تسجيل دخول. لا

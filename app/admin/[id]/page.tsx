@@ -53,6 +53,8 @@ export default function AgentDetail() {
   const [newPass, setNewPass] = useState("");
   const [phone, setPhone] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [isSuper, setIsSuper] = useState(false);
+  const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,8 +73,9 @@ export default function AgentDetail() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (prof?.role !== "admin") { router.replace("/dashboard"); return; }
+      setIsSuper(!!prof?.is_super);
       load();
     })();
   }, [router, load]);
@@ -104,6 +107,25 @@ export default function AgentDetail() {
   async function savePhone() {
     if (await call("updateContact", { phone })) { setMsg("✅ اتحفظ التليفون."); load(); }
   }
+  // «إرسال بيانات الدخول»: يولّد باسوورد جديد، يحطّه، يفتح واتساب المندوب
+  // بالإيميل + الباسوورد، ويعرضهم في خانة نسخ.
+  async function sendCredentials() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let pass = "";
+    const arr = new Uint32Array(10);
+    (window.crypto || (window as any).msCrypto).getRandomValues(arr);
+    for (let i = 0; i < 10; i++) pass += chars[arr[i] % chars.length];
+    if (!(await call("setPassword", { password: pass }))) return;
+    const email = p?.email ?? p?.username ?? "";
+    setCreds({ email, password: pass });
+    setMsg("✅ اتعمل باسوورد جديد.");
+    const n = waNumber(p?.phone ?? null);
+    if (n) {
+      const text = `بيانات دخولك لتطبيق قناص اللوحات:\nالإيميل: ${email}\nكلمة المرور: ${pass}\n\nسجّل دخول بيهم من التطبيق.`;
+      window.open(`https://wa.me/${n}?text=${encodeURIComponent(text)}`, "_blank");
+    }
+  }
+
   function remindWhatsApp() {
     const n = waNumber(p?.phone ?? null);
     if (!n) { setMsg("مفيش رقم تليفون للمندوب."); return; }
@@ -195,20 +217,46 @@ export default function AgentDetail() {
               <KeyRound size={13} /> تغيير
             </button>
           </div>
-          <div className="flex gap-2">
-            <button onClick={async () => { if (await call("resetDevice")) { setMsg("✅ اتفكّ ربط الجهاز."); load(); } }} disabled={!p.device_fingerprint || busy}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted hover:text-primary disabled:opacity-40">
-              <Smartphone size={13} /> إعادة ضبط الجهاز
-            </button>
-            <button onClick={async () => { if (await call("setActive", { active: !p.is_active })) load(); }} disabled={busy}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border py-2 text-xs transition ${p.is_active ? "border-danger/40 text-danger" : "border-primary/40 text-primary"}`}>
-              {p.is_active ? <><ShieldOff size={13} /> تعطيل</> : <><ShieldCheck size={13} /> تفعيل</>}
-            </button>
-          </div>
-          <button onClick={del} disabled={busy}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/5 py-2 text-xs font-bold text-danger hover:bg-danger/10 transition">
-            <Trash2 size={13} /> حذف الحساب نهائياً
+          {/* إرسال بيانات الدخول (باسوورد جديد → واتساب + نسخ) */}
+          <button onClick={sendCredentials} disabled={busy}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-brand/90 py-2 text-xs font-bold text-night hover:bg-brand transition disabled:opacity-50">
+            <MessageCircle size={13} /> إرسال بيانات الدخول (باسوورد جديد)
           </button>
+          {creds && (
+            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-2 p-2.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted">الإيميل:</span>
+                <span className="truncate font-mono text-ink" dir="ltr">{creds.email}</span>
+                <button onClick={() => navigator.clipboard.writeText(creds.email)} className="shrink-0 text-primary">نسخ</button>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted">الباسوورد:</span>
+                <span className="truncate font-mono text-ink" dir="ltr">{creds.password}</span>
+                <button onClick={() => navigator.clipboard.writeText(creds.password)} className="shrink-0 text-primary">نسخ</button>
+              </div>
+              <button onClick={() => navigator.clipboard.writeText(`الإيميل: ${creds.email}\nالباسوورد: ${creds.password}`)}
+                className="mt-1 rounded-lg border border-border py-1 text-primary">نسخ الاتنين</button>
+            </div>
+          )}
+
+          <button onClick={async () => { if (await call("resetDevice")) { setMsg("✅ اتفكّ ربط الجهاز."); load(); } }} disabled={!p.device_fingerprint || busy}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted hover:text-primary disabled:opacity-40">
+            <Smartphone size={13} /> إعادة ضبط الجهاز
+          </button>
+
+          {/* تعطيل + حذف — للسوبر-أدمن فقط */}
+          {isSuper && (
+            <>
+              <button onClick={async () => { if (await call("setActive", { active: !p.is_active })) load(); }} disabled={busy}
+                className={`flex items-center justify-center gap-1.5 rounded-lg border py-2 text-xs transition ${p.is_active ? "border-danger/40 text-danger" : "border-primary/40 text-primary"}`}>
+                {p.is_active ? <><ShieldOff size={13} /> تعطيل الحساب</> : <><ShieldCheck size={13} /> تفعيل الحساب</>}
+              </button>
+              <button onClick={del} disabled={busy}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/5 py-2 text-xs font-bold text-danger hover:bg-danger/10 transition">
+                <Trash2 size={13} /> حذف الحساب نهائياً
+              </button>
+            </>
+          )}
         </div>
 
         {/* Subscription log */}

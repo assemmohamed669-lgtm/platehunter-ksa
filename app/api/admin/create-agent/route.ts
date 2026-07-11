@@ -39,6 +39,9 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  if (role === "agent" && !phone) {
+    return NextResponse.json({ error: "رقم التليفون مطلوب للمندوب." }, { status: 400 });
+  }
 
   const email = normalizeEmail(rawId);
 
