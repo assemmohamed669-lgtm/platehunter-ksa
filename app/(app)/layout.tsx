@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ShieldCheck, Menu } from "lucide-react";
+import { ShieldCheck, Menu, MessageCircle, LogOut, CalendarClock } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import SessionGuard from "@/components/SessionGuard";
 import BottomNav from "@/components/BottomNav";
@@ -12,6 +12,9 @@ import AppMenu from "@/components/AppMenu";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
 import { supabase } from "@/lib/supabaseClient";
+import { subStatus, isCutOff, type SubInfo } from "@/lib/subscription";
+
+const ADMIN_WHATSAPP = "971542482545";
 
 export default function AppShellLayout({
   children,
@@ -22,6 +25,9 @@ export default function AppShellLayout({
   const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [cutOff, setCutOff] = useState(false);
+  const [sub, setSub] = useState<SubInfo | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const isHome = pathname === "/dashboard";
 
   // Apply the saved appearance (font size / colours) app-wide on every load.
@@ -32,16 +38,47 @@ export default function AppShellLayout({
       if (!data.user) return;
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, is_active, subscription_end")
         .eq("id", data.user.id)
         .single();
       setIsAdmin(profile?.role === "admin");
+      if (profile && profile.role === "agent") {
+        setSub(subStatus(profile.subscription_end));
+        setCutOff(isCutOff(profile.subscription_end, profile.is_active));
+      }
+      // heartbeat — «آخر ظهور» for the admin activity report.
+      supabase.rpc("touch_last_seen").then(() => {}, () => {});
     });
   }, []);
 
   async function handleLogout() {
     await logoutAgent();
     router.replace("/login");
+  }
+
+  // اشتراك مقطوع (بعد فترة السماح): شاشة حظر — المندوب مايستخدمش التطبيق.
+  if (cutOff) {
+    const text = "السلام عليكم، برجاء تفعيل اشتراكي الشهري في تطبيق قناص اللوحات.";
+    return (
+      <SessionGuard>
+        <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-night px-6 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-danger/15">
+            <CalendarClock size={30} className="text-danger" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold text-ink">الخدمة متوقّفة</h1>
+            <p className="mt-2 text-sm text-muted">لتشغيل الخدمة برجاء تسديد اشتراكك الشهري.</p>
+          </div>
+          <a href={`https://wa.me/${ADMIN_WHATSAPP}?text=${encodeURIComponent(text)}`} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-bold text-night transition active:scale-95">
+            <MessageCircle size={18} /> تواصل مع الإدارة (واتساب)
+          </a>
+          <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs text-muted hover:text-ink transition">
+            <LogOut size={13} /> تسجيل الخروج
+          </button>
+        </div>
+      </SessionGuard>
+    );
   }
 
   return (
@@ -74,6 +111,15 @@ export default function AppShellLayout({
             </button>
           </div>
         </header>
+
+        {sub && (sub.status === "expiring" || sub.status === "grace") && !bannerDismissed && (
+          <div className="flex items-center gap-2 border-b border-alert/30 bg-alert/10 px-4 py-2 text-xs text-alert">
+            <CalendarClock size={14} className="shrink-0" />
+            <span className="flex-1">اشتراكك {sub.label} — برجاء السداد لعدم قطع الخدمة.</span>
+            <a href={`https://wa.me/${ADMIN_WHATSAPP}`} target="_blank" rel="noopener noreferrer" className="shrink-0 font-bold underline">تواصل</a>
+            <button onClick={() => setBannerDismissed(true)} className="shrink-0 text-alert/70">✕</button>
+          </div>
+        )}
 
         <main className="mx-auto w-full max-w-md px-4 py-5 min-h-[calc(100dvh-9rem)] overflow-x-hidden">{children}</main>
 

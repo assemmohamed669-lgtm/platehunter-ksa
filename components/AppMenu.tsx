@@ -13,6 +13,7 @@ import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/li
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
 import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { subStatus } from "@/lib/subscription";
 import { supabase } from "@/lib/supabaseClient";
 
 const APP_VERSION = "0.3.0";
@@ -43,6 +44,7 @@ export default function AppMenu({
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
+  const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -146,7 +148,12 @@ export default function AppMenu({
       let rec = 0;
       try {
         const { data } = await supabase.auth.getUser();
-        if (data.user) rec = (await getAllRecordings(data.user.id)).length;
+        if (data.user) {
+          rec = (await getAllRecordings(data.user.id)).length;
+          const { data: prof } = await supabase.from("profiles")
+            .select("role, subscription_end").eq("id", data.user.id).single();
+          if (prof?.role === "agent") setSubEnd(prof.subscription_end ?? null);
+        }
       } catch { /* offline */ }
       setStats({ field: fieldEntries.length, wanted, rec });
     })().catch(() => {});
@@ -288,6 +295,15 @@ export default function AppMenu({
               <div><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></div>
               <div><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></div>
             </div>
+            {subEnd && (() => {
+              const s = subStatus(subEnd);
+              return (
+                <div className="mt-2 flex items-center justify-between rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs">
+                  <span className="text-muted">اشتراكك حتى {subEnd}</span>
+                  <span className="font-bold" style={{ color: s.color }}>{s.label}</span>
+                </div>
+              );
+            })()}
           </section>
 
           {/* ── أدوات ── */}
