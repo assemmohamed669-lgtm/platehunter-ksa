@@ -76,6 +76,24 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
+      case "setRole": {
+        const role: "admin" | "agent" = body.role === "admin" ? "admin" : "agent";
+        const patch: Record<string, unknown> = { role, is_active: true };
+        if (role === "admin") {
+          // الأدمن بلا اشتراك
+          patch.subscription_start = null;
+          patch.subscription_end = null;
+        } else {
+          // رجوع لمندوب: امنحه شهر لو مفيش اشتراك
+          const d = new Date(); d.setMonth(d.getMonth() + 1);
+          patch.subscription_start = new Date().toISOString().slice(0, 10);
+          patch.subscription_end = d.toISOString().slice(0, 10);
+        }
+        const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
       case "setActive": {
         const { error } = await supabaseAdmin.from("profiles")
           .update({ is_active: !!body.active }).eq("id", agentId);

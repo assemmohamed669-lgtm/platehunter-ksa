@@ -244,9 +244,19 @@ export default function AgentDetail() {
             <Smartphone size={13} /> إعادة ضبط الجهاز
           </button>
 
-          {/* تعطيل + حذف — للسوبر-أدمن فقط */}
+          {/* تعطيل + حذف + ترقية — للسوبر-أدمن فقط */}
           {isSuper && (
             <>
+              <button
+                onClick={async () => {
+                  const toAdmin = p.role !== "admin";
+                  if (!confirm(toAdmin ? `تخلّي «${p.username}» أدمن بكل الصلاحيات؟` : `ترجّع «${p.username}» مندوب عادي؟`)) return;
+                  if (await call("setRole", { role: toAdmin ? "admin" : "agent" })) { setMsg("✅ اتغيّر الدور."); load(); }
+                }}
+                disabled={busy}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 py-2 text-xs font-bold text-primary hover:bg-primary/10 transition">
+                <ShieldCheck size={13} /> {p.role === "admin" ? "تحويل لمندوب" : "ترقية لأدمن (كل الصلاحيات)"}
+              </button>
               <button onClick={async () => { if (await call("setActive", { active: !p.is_active })) load(); }} disabled={busy}
                 className={`flex items-center justify-center gap-1.5 rounded-lg border py-2 text-xs transition ${p.is_active ? "border-danger/40 text-danger" : "border-primary/40 text-primary"}`}>
                 {p.is_active ? <><ShieldOff size={13} /> تعطيل الحساب</> : <><ShieldCheck size={13} /> تفعيل الحساب</>}
