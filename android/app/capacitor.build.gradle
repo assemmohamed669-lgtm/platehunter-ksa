@@ -11,9 +11,11 @@ apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
     implementation project(':capacitor-community-file-opener')
     implementation project(':capacitor-community-speech-recognition')
+    implementation project(':capacitor-app')
     implementation project(':capacitor-filesystem')
     implementation project(':capacitor-geolocation')
     implementation project(':capacitor-share')
+    implementation project(':independo-capacitor-voice-recorder')
 
 }
 

@@ -8,6 +8,9 @@ project(':capacitor-community-file-opener').projectDir = new File('../node_modul
 include ':capacitor-community-speech-recognition'
 project(':capacitor-community-speech-recognition').projectDir = new File('../node_modules/@capacitor-community/speech-recognition/android')
 
+include ':capacitor-app'
+project(':capacitor-app').projectDir = new File('../node_modules/@capacitor/app/android')
+
 include ':capacitor-filesystem'
 project(':capacitor-filesystem').projectDir = new File('../node_modules/@capacitor/filesystem/android')
 
@@ -16,3 +19,6 @@ project(':capacitor-geolocation').projectDir = new File('../node_modules/@capaci
 
 include ':capacitor-share'
 project(':capacitor-share').projectDir = new File('../node_modules/@capacitor/share/android')
+
+include ':independo-capacitor-voice-recorder'
+project(':independo-capacitor-voice-recorder').projectDir = new File('../node_modules/@independo/capacitor-voice-recorder/android')

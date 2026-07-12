@@ -19,7 +19,7 @@ interface Props {
  * deep link — falling back to a fixed route only when there's no
  * history to go back to.
  */
-export default function BackButton({ fallbackHref = "/dashboard", label = "رجوع" }: Props) {
+export default function BackButton({ fallbackHref = "/instant-check", label = "رجوع" }: Props) {
   const router = useRouter();
 
   function handleBack() {

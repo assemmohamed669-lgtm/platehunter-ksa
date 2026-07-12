@@ -1,17 +1,35 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { toMapsLink } from "@/lib/gps";
+import { toMapsLink, gpsService } from "@/lib/gps";
+import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
+import { authHeader } from "@/lib/authHeader";
+import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { supabase } from "@/lib/supabaseClient";
+import { shareImageWithText, buildPlateShareText } from "@/lib/share";
+import { fireWantedAlert } from "@/lib/wantedAlert";
+import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
+// Distinct row tints for duplicated plates in the recordings sheet — each
+// repeated plate group gets its own colour so it stands out at a glance.
+const FIELD_DUPE_COLORS = [
+  "bg-amber-500/20", "bg-purple-500/20", "bg-pink-500/20", "bg-cyan-500/20",
+  "bg-orange-500/20", "bg-lime-500/20", "bg-rose-500/20", "bg-indigo-500/20",
+];
+
+// Shared with the registration page so a correction on EITHER screen teaches
+// the other — same device, same voice, same mishearings.
+const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
+const LS_WORD_BLENDS = "ph:registration:wordBlends";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -29,7 +47,7 @@ interface CheckHit {
   checkedAt: string;
 }
 
-type CheckMode = "manual" | "camera" | "ptt";
+type CheckMode = "manual" | "camera" | "ptt" | "sheet";
 
 interface PlateResult {
   plate: string;
@@ -40,20 +58,23 @@ interface PlateResult {
   row?: Record<string, string>;
 }
 
-function playMatchAlert() {
-  try {
-    const ctx = new AudioContext();
-    [0, 0.18, 0.36].forEach((delay) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.frequency.value = 880; osc.type = "sine";
-      gain.gain.setValueAtTime(0.5, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.18);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.2);
-    });
-  } catch { /* audio unavailable */ }
+// One spoken plate in the voice (PTT) results window — compact row with its
+// details, the manually-typed location name, and its captured GPS.
+interface PttRow {
+  id: string;
+  plate: string;                 // displayed plate (after any learned correction / manual edit)
+  originalPlate: string;         // what the parser produced before correction — diffed on edit to teach
+  found: boolean;
+  matchType?: "exact" | "fuzzy";
+  similarity?: number;
+  row?: Record<string, string>;
+  vehicleType?: string;          // نوع السيارة spoken after the plate (ونيت/فان/…)
+  locationName: string;
+  lat?: number;
+  lng?: number;
+  mapsLink?: string;
+  gpsError?: boolean;
+  checkedAt: string;
 }
 
 function extractPlateFromOcrText(rawText: string): string | null {
@@ -118,7 +139,33 @@ function buildGpsLink(value: string): string | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
-function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string> }) {
+function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCheck }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void>; priorCheck?: FieldCheckEntry }) {
+  const [exportState, setExportState] = useState<"idle" | "saving" | "done">("idle");
+  const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
+
+  async function handleExport() {
+    if (!onExport || exportState !== "idle") return;
+    setExportState("saving");
+    try {
+      await onExport(result);
+      setExportState("done");
+    } catch {
+      setExportState("idle");
+    }
+  }
+
+  async function handleShare() {
+    if (!onShare || shareState !== "idle") return;
+    setShareState("sharing");
+    try {
+      await onShare(result);
+    } catch {
+      /* ignore — share fell back or was cancelled */
+    } finally {
+      setShareState("idle");
+    }
+  }
+
   if (!result.found) {
     return (
       <div className="rounded-xl border-2 border-danger/40 bg-danger/10 p-4">
@@ -153,6 +200,13 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
           {isFuzzy ? `مشتبه به ${result.similarity}%` : "موجود!"}
         </span>
       </div>
+      {/* Already-checked notice */}
+      {priorCheck && (
+        <div className="mb-3 flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-1.5 text-[11px] font-bold text-amber-500">
+          <History size={13} className="shrink-0" />
+          <span>اتشيّكت قبل كده — {formatDate(priorCheck.checkedAt)}</span>
+        </div>
+      )}
       {/* Plate badge */}
       <div className="flex justify-center mb-3">
         <PlateBadge value={result.plate} size="md" />
@@ -178,6 +232,41 @@ function ResultCard({ result, plateCol, selectedCols }: { result: PlateResult; p
           })}
         </div>
       )}
+      {/* Actions: export to the protected sheet + share (with photo) to WhatsApp */}
+      {(onExport || onShare) && (
+        <div className="mt-3 flex gap-2">
+          {onExport && (
+            <button
+              onClick={handleExport}
+              disabled={exportState !== "idle"}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-bold transition active:scale-95 disabled:active:scale-100 ${
+                exportState === "done" ? "bg-brand/20 text-brand" : "bg-brand text-night"
+              }`}
+            >
+              {exportState === "saving" ? (
+                <><Loader2 size={15} className="animate-spin" /> جارٍ...</>
+              ) : exportState === "done" ? (
+                <><Check size={15} /> أُضيفت</>
+              ) : (
+                <><ClipboardCheck size={15} /> تصدير للتشييك</>
+              )}
+            </button>
+          )}
+          {onShare && (
+            <button
+              onClick={handleShare}
+              disabled={shareState !== "idle"}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition active:scale-95 disabled:opacity-60"
+            >
+              {shareState === "sharing" ? (
+                <><Loader2 size={15} className="animate-spin" /> جارٍ...</>
+              ) : (
+                <><Share2 size={15} /> نشر واتساب</>
+              )}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -187,12 +276,29 @@ export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
-  const [mode, setMode] = useState<CheckMode>("manual");
+  const [mode, setMode] = useState<CheckMode>(() => {
+    if (typeof window === "undefined") return "manual";
+    const saved = window.localStorage.getItem("ph:check:mode");
+    return saved === "camera" || saved === "ptt" || saved === "sheet" ? saved : "manual";
+  });
+  // تذكّر التبويب النشط — يرجّع المندوب لنفس التبويب لما يرجع لصفحة تشييك.
+  useEffect(() => {
+    try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
+  }, [mode]);
 
   // Manual
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
+  const [manualLocationName, setManualLocationName] = useState("");
+  // Manual working-list (draft) — plates typed here stay local until the
+  // delegate presses «تصدير للسجلات», mirroring the voice (PTT) flow.
+  const [manualDraft, setManualDraft] = useState<FieldCheckEntry[]>([]);
+  const [draftEdit, setDraftEdit] = useState<{ id: string; field: string } | null>(null);
+  const [draftEditValue, setDraftEditValue] = useState("");
+  const [manualSel, setManualSel] = useState<Set<string>>(new Set());
+  const [manualCopiedId, setManualCopiedId] = useState<string | null>(null);
+  const [manualExporting, setManualExporting] = useState(false);
 
   // Camera
   const [cameraImage, setCameraImage] = useState<string | null>(null);
@@ -201,8 +307,36 @@ export default function InstantCheckPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraRawText, setCameraRawText] = useState<string | null>(null);
   const [cameraInputPlate, setCameraInputPlate] = useState("");
+  // GPS captured at the moment the photo was taken — reused by export + share
+  const [cameraGps, setCameraGps] = useState<{ lat: number; lng: number } | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  // تثبيت صورة الكاميرا: تفضل بعد الخروج من التطبيق، وتتمسح فقط لما المندوب
+  // يدوس «مسح» (resetCamera). نخزّنها في localStorage ونرجّعها عند التحميل.
+  useEffect(() => {
+    try {
+      const img = window.localStorage.getItem("ph:check:camImage");
+      if (!img) return;
+      setCameraImage(img);
+      setCameraInputPlate(window.localStorage.getItem("ph:check:camPlate") ?? "");
+      const r = window.localStorage.getItem("ph:check:camResult");
+      if (r) setCameraResult(JSON.parse(r) as PlateResult);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try {
+      if (cameraImage) {
+        window.localStorage.setItem("ph:check:camImage", cameraImage);
+        window.localStorage.setItem("ph:check:camPlate", cameraInputPlate);
+        window.localStorage.setItem("ph:check:camResult", cameraResult ? JSON.stringify(cameraResult) : "");
+      } else {
+        window.localStorage.removeItem("ph:check:camImage");
+        window.localStorage.removeItem("ph:check:camPlate");
+        window.localStorage.removeItem("ph:check:camResult");
+      }
+    } catch { /* quota / unavailable */ }
+  }, [cameraImage, cameraInputPlate, cameraResult]);
 
   // Live camera viewfinder
   const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
@@ -211,16 +345,94 @@ export default function InstantCheckPage() {
   // PTT
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
-  const [pttResults, setPttResults] = useState<PlateResult[]>([]);
+  const [pttResults, setPttResults] = useState<PttRow[]>([]);
   const [pttError, setPttError] = useState<string | null>(null);
+  const [pttLocationName, setPttLocationName] = useState("");
+  const [pttSel, setPttSel] = useState<Set<string>>(new Set());
+  const [pttCopiedId, setPttCopiedId] = useState<string | null>(null);
+  // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
+  const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
+  // Elapsed listening time (seconds) shown under the mic button while recording.
+  const [pttSeconds, setPttSeconds] = useState(0);
+  const pttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Mirror of pttLocationName so the listening loop reads the latest value
+  // (the loop's addPttResult closure would otherwise capture a stale one).
+  const pttLocationNameRef = useRef("");
+
+  // Self-learning maps (shared with the registration page). A voice-check edit
+  // teaches the same models the recording page uses, and vice versa.
+  const letterConfusionsRef = useRef<LetterConfusionMap>(new Map());
+  const wordBlendRef = useRef<WordBlendMap>(new Map());
+  // Inline plate editing in the voice results table
+  const [editingPttId, setEditingPttId] = useState<string | null>(null);
+  const [editPttValue, setEditPttValue] = useState("");
+  // Rows already pushed to the field-check sheet (shows a "تم" tick)
+  const [pttExportedIds, setPttExportedIds] = useState<Set<string>>(new Set());
+
+  // Load the learned-correction maps once on mount.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_LETTER_CONFUSIONS);
+      if (raw) letterConfusionsRef.current = deserializeLetterConfusions(JSON.parse(raw));
+    } catch { /* corrupt/missing — start fresh */ }
+    try {
+      const raw = localStorage.getItem(LS_WORD_BLENDS);
+      if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
+    } catch { /* corrupt/missing — start fresh */ }
+  }, []);
+
+  // Keep a live GPS watch running the whole time the page is open, so stamping
+  // a plate reads an already-fresh coordinate instantly (see getCurrentGps).
+  useEffect(() => {
+    gpsService.startTracking();
+    return () => gpsService.stopTracking();
+  }, []);
 
   // Check hits history (session-only)
   const [manualHits, setManualHits] = useState<CheckHit[]>([]);
   const [copiedHitId, setCopiedHitId] = useState<string | null>(null);
   const [hitsZoom, setHitsZoom] = useState(3);
   const [hitsSelected, setHitsSelected] = useState<Set<string>>(new Set());
+
+  // Recordings sheet (شيت التسجيلات) — persisted in IDB, fixed log the agent
+  // can only download or share (no delete / no edit).
+  const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
+  const [fieldZoom, setFieldZoom] = useState(3);
+  const [fieldSearch, setFieldSearch] = useState("");
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [editFieldValue, setEditFieldValue] = useState("");
+
+  // Colour index per DUPLICATED plate (plates appearing more than once).
+  const fieldColorMap = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of fieldEntries) { const k = plateKey(e.plate); if (k) counts.set(k, (counts.get(k) ?? 0) + 1); }
+    const map = new Map<string, number>();
+    let ci = 0;
+    for (const [k, c] of counts) { if (c > 1) { map.set(k, ci % FIELD_DUPE_COLORS.length); ci++; } }
+    return map;
+  }, [fieldEntries]);
+
+  // Owner of new field-check rows — so a shared device doesn't mix two agents.
+  const agentIdRef = useRef<string | null>(null);
+
+  // Load the field-check sheet from IDB on mount (scoped to this agent), then
+  // sync with the server: restore what the agent saved elsewhere, push local up.
+  useEffect(() => {
+    (async () => {
+      let uid: string | undefined;
+      try { uid = (await supabase.auth.getUser()).data.user?.id; } catch { /* offline */ }
+      agentIdRef.current = uid ?? null;
+      setFieldEntries(await getAllFieldCheckEntries(uid).catch(() => []));
+      if (!uid) return;
+      try {
+        await restoreFieldChecks(uid);
+        pushFieldChecks(uid).catch(() => {});
+        setFieldEntries(await getAllFieldCheckEntries(uid));
+      } catch { /* offline / no session */ }
+    })();
+  }, []);
 
   // Load hits from localStorage on mount
   useEffect(() => {
@@ -236,6 +448,37 @@ export default function InstantCheckPage() {
       localStorage.setItem("ic-hits", JSON.stringify(manualHits));
     } catch {}
   }, [manualHits]);
+
+  // Voice (PTT) results + location name persist too, so leaving the page and
+  // coming back doesn't wipe what was already checked.
+  useEffect(() => {
+    try {
+      const savedRows = localStorage.getItem("ic-ptt-results");
+      if (savedRows) setPttResults(JSON.parse(savedRows));
+      const savedLoc = localStorage.getItem("ic-ptt-location");
+      if (savedLoc) { setPttLocationName(savedLoc); pttLocationNameRef.current = savedLoc; }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("ic-ptt-results", JSON.stringify(pttResults)); } catch {}
+  }, [pttResults]);
+
+  // Manual draft persists across reloads too — an unexported working list.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ic-manual-draft");
+      if (saved) setManualDraft(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("ic-manual-draft", JSON.stringify(manualDraft)); } catch {}
+  }, [manualDraft]);
+
+  useEffect(() => {
+    try { localStorage.setItem("ic-ptt-location", pttLocationName); } catch {}
+  }, [pttLocationName]);
 
   // Attach live camera stream to video element whenever stream changes
   useEffect(() => {
@@ -262,7 +505,10 @@ export default function InstantCheckPage() {
       .catch(() => {});
   }, []);
 
-  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers) : null;
+  // Pass the rows so detection works by CONTENT (robust to unusual column
+  // names) — name-only detection would fall back to the first column and
+  // silently break matching.
+  const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
 
   const checkIndex = useMemo(() => {
@@ -283,6 +529,17 @@ export default function InstantCheckPage() {
     });
   }
 
+  // تفاصيل السيارة من صف التشييك (بالأعمدة المختارة) — تظهر في تنبيه المطلوبة الموحّد.
+  function rowToAlertInfo(row: Record<string, string>): [string, string][] {
+    return Object.entries(row)
+      .filter(([k, v]) =>
+        k !== checkPlateCol &&
+        String(v ?? "").trim() &&
+        (selectedCheckCols.size === 0 || selectedCheckCols.has(k))
+      )
+      .map(([k, v]) => [k, String(v)] as [string, string]);
+  }
+
   function searchInCheck(rawPlate: string): PlateResult | null {
     if (!checkPlateCol || checkIndex.size === 0) return null;
     const normalized = normalizePlate(bankPlateToArabic(rawPlate));
@@ -291,7 +548,7 @@ export default function InstantCheckPage() {
     // O(1) exact lookup
     const exactRow = checkIndex.get(normalized);
     if (exactRow) {
-      playMatchAlert();
+      fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
     }
 
@@ -305,7 +562,7 @@ export default function InstantCheckPage() {
         if (sim > bestSim) { bestSim = sim; bestRow = row; }
       }
       if (bestSim >= 88 && bestRow) {
-        playMatchAlert();
+        fireWantedAlert({ plate: rawPlate, matchType: "fuzzy", similarity: Math.round(bestSim), info: rowToAlertInfo(bestRow) });
         return { plate: rawPlate, normalized, found: true, matchType: "fuzzy", similarity: Math.round(bestSim), row: bestRow };
       }
     }
@@ -344,34 +601,41 @@ export default function InstantCheckPage() {
     void fetchGpsForHit(hitId);
   }
 
-  // Fetch GPS for a hit — tries Capacitor plugin first (Android), falls back to web API
-  async function fetchGpsForHit(hitId: string) {
+  // Read the current position. Prefers the warm coordinate from the always-on
+  // watch (gpsService) so stamping a plate is INSTANT — the old per-plate
+  // getCurrentPosition() call took seconds each. Falls back to a fresh lookup
+  // only when the watch hasn't produced a fix yet.
+  async function getCurrentGps(): Promise<{ lat: number; lng: number } | null> {
+    const warm = gpsService.getLastCoords();
+    if (warm) return { lat: warm.lat, lng: warm.lng };
+
     try {
-      let lat: number, lng: number;
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { Geolocation } = await import("@capacitor/geolocation");
+        await Geolocation.requestPermissions();
+        const pos = await Geolocation.getCurrentPosition({ timeout: 12000, enableHighAccuracy: false });
+        return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      }
+    } catch { /* not native or plugin error — fall through to web API */ }
 
-      // Native Android: use @capacitor/geolocation which handles permissions properly
-      try {
-        const { Capacitor } = await import("@capacitor/core");
-        if (Capacitor.isNativePlatform()) {
-          const { Geolocation } = await import("@capacitor/geolocation");
-          await Geolocation.requestPermissions();
-          const pos = await Geolocation.getCurrentPosition({ timeout: 12000, enableHighAccuracy: false });
-          lat = pos.coords.latitude;
-          lng = pos.coords.longitude;
-          setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
-          return;
-        }
-      } catch { /* not native or plugin error — fall through to web API */ }
-
-      // Web / PWA fallback
-      if (!navigator.geolocation) throw new Error("no_geo");
+    try {
+      if (!navigator.geolocation) return null;
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 12000, maximumAge: 60000, enableHighAccuracy: false })
       );
-      lat = pos.coords.latitude;
-      lng = pos.coords.longitude;
-      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng) } : h));
+      return { lat: pos.coords.latitude, lng: pos.coords.longitude };
     } catch {
+      return null;
+    }
+  }
+
+  // Fetch GPS for a hit and stamp it (or mark gpsError on failure)
+  async function fetchGpsForHit(hitId: string) {
+    const gps = await getCurrentGps();
+    if (gps) {
+      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : h));
+    } else {
       setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
     }
   }
@@ -382,12 +646,159 @@ export default function InstantCheckPage() {
     await fetchGpsForHit(hitId);
   }
 
-  function handleManualSearch() {
+  // GPS for a voice (PTT) row — stamps its coords, or marks gpsError on failure.
+  async function fetchGpsForPttRow(id: string) {
+    const gps = await getCurrentGps();
+    if (gps) {
+      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : r));
+    } else {
+      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r));
+    }
+  }
+
+  async function retryGpsForPttRow(id: string) {
+    setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: false } : r));
+    await fetchGpsForPttRow(id);
+  }
+
+  // Manual entry = check against the wanted list AND record it in شيت التسجيلات
+  // (with type / location / notes / GPS), just like the registration manual entry.
+  async function handleManualSearch() {
     const raw = manualInput.trim();
     if (!raw || manualError) return;
-    const result = searchInCheck(raw);
+    const result = searchInCheck(raw); // beeps + returns match (or {found:false})
     setManualResult(result);
-    if (result?.found) saveHitWithGps(result);
+
+    const row: Record<string, string> = {};
+    if (manualLocationName.trim()) row["اسم الموقع"] = manualLocationName.trim();
+    if (result?.found && result.row) {
+      for (const [k, v] of Object.entries(result.row)) {
+        if (k !== checkPlateCol && String(v).trim()) row[k] = v;
+      }
+    }
+    const id = `man-${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const base: FieldCheckEntry = {
+      id,
+      agentId: agentIdRef.current ?? undefined,
+      plate: result?.plate ?? raw,
+      row,
+      method: "متشيكة يدوي",
+      checkedAt: new Date().toISOString(),
+    };
+    // Add to the local working list only — NOT the field sheet yet.
+    setManualDraft((prev) => [base, ...prev]);
+    const gps = await getCurrentGps();
+    if (gps) {
+      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
+      setManualDraft((prev) => prev.map((e) => (e.id === id ? withGps : e)));
+    }
+
+    setManualInput(""); // ready for the next plate; keep the location for the run
+  }
+
+  // ── Manual draft (working list) helpers ──────────────────────────────────
+  function startDraftEdit(id: string, field: string, current: string) {
+    setDraftEdit({ id, field });
+    setDraftEditValue(current);
+  }
+
+  function applyDraftEdit() {
+    if (!draftEdit) return;
+    const { id, field } = draftEdit;
+    const value = draftEditValue.trim();
+    setManualDraft((prev) =>
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        if (field === "plate") return { ...e, plate: value || e.plate };
+        const row = { ...e.row };
+        if (value) row[field] = value; else delete row[field];
+        return { ...e, row };
+      })
+    );
+    setDraftEdit(null);
+    setDraftEditValue("");
+  }
+
+  function deleteDraftEntry(id: string) {
+    setManualDraft((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  function draftRowText(e: FieldCheckEntry): string {
+    const lines = [`🚗 اللوحة: ${e.plate}`];
+    for (const [k, v] of Object.entries(e.row)) {
+      if (String(v).trim()) lines.push(`${k}: ${v}`);
+    }
+    if (e.mapsLink) lines.push(`📍 الموقع: ${e.mapsLink}`);
+    return lines.join("\n");
+  }
+
+  function shareDraftRow(e: FieldCheckEntry) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(draftRowText(e))}`, "_blank");
+  }
+
+  async function copyDraftRow(e: FieldCheckEntry) {
+    try { await navigator.clipboard.writeText(draftRowText(e)); } catch { /* ignore */ }
+    setManualCopiedId(e.id);
+    setTimeout(() => setManualCopiedId(null), 1200);
+  }
+
+  // هل لوحة القائمة مطلوبة؟ (للتعليم الأخضر)
+  function isDraftMatched(e: FieldCheckEntry): boolean {
+    return checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)));
+  }
+
+  function toggleManualSel(id: string) {
+    setManualSel((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  function toggleManualSelAll() {
+    setManualSel((prev) => (prev.size === manualDraft.length ? new Set() : new Set(manualDraft.map((e) => e.id))));
+  }
+  function shareManualSelected() {
+    const rows = manualDraft.filter((e) => manualSel.has(e.id));
+    if (!rows.length) return;
+    const text = `*لوحات متشيّكة (${rows.length})*\n\n` + rows.map((e, i) => `${i + 1}. ${draftRowText(e)}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  function deleteManualSelected() {
+    setManualDraft((prev) => prev.filter((e) => !manualSel.has(e.id)));
+    setManualSel(new Set());
+  }
+
+  // ملف Excel لقائمة اليدوي — لأزرار فتح/تنزيل/مشاركة.
+  function buildManualDraftFile(): { blob: Blob; name: string } {
+    if (manualDraft.length === 0) throw new Error("مفيش لوحات في القائمة.");
+    const rows = manualDraft.map((e) => ({ "رقم اللوحة": e.plate, ...e.row, "GPS": e.mapsLink ?? "" }));
+    return { blob: buildExcelBlob(rows, "تشييك يدوي"), name: `تشييك-يدوي-${Date.now()}.xlsx` };
+  }
+  async function shareManualDraftFile() {
+    try {
+      const { blob, name } = buildManualDraftFile();
+      await shareExcelBlob(blob, name, "تشييك يدوي");
+    } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
+  }
+
+  // Commit the whole working list to شيت التسجيلات (field_check), then clear it.
+  async function exportManualDraft() {
+    if (manualDraft.length === 0) return;
+    setManualExporting(true);
+    try {
+      const toSave = [...manualDraft].reverse(); // keep chronological order in the sheet
+      for (const e of toSave) await saveFieldCheckEntry(e);
+      setFieldEntries((prev) => [...manualDraft, ...prev]);
+      setManualDraft([]);
+      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+    } finally {
+      setManualExporting(false);
+    }
+  }
+
+  async function deleteFieldEntry(id: string) {
+    await deleteFieldCheckEntry(id);
+    setFieldEntries((prev) => prev.filter((e) => e.id !== id));
   }
 
   // ── Hit helpers ────────────────────────────────────────────────────────────
@@ -449,12 +860,141 @@ export default function InstantCheckPage() {
 
   async function exportHitsExcel() {
     const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
-    await openExcelBlob(blob, `لوحات-مطلوبة-${Date.now()}.xlsx`);
+    try {
+      await openExcelBlob(blob, `لوحات-مطلوبة-${Date.now()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
   }
 
   async function shareHitsExcel() {
     const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
-    await shareExcelBlob(blob, "لوحات-مطلوبة.xlsx", "لوحات مطلوبة");
+    try {
+      await shareExcelBlob(blob, "لوحات-مطلوبة.xlsx", "لوحات مطلوبة");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
+
+  // ── Field-check sheet (protected) ───────────────────────────────────────────
+  const methodLabel: Record<CheckMode, string> = {
+    camera: "متشيكة بالكاميرا",
+    ptt: "متشيكة بالصوت",
+    manual: "متشيكة يدوي",
+    sheet: "متشيكة يدوي", // unused (the sheet tab never exports)
+  };
+
+  // Collect the extra (selected) detail columns for a matched row.
+  function resultDetails(result: PlateResult): [string, string][] {
+    if (!result.row) return [];
+    return Object.entries(result.row).filter(([k, v]) =>
+      k !== checkPlateCol && String(v).trim() && (selectedCheckCols.size === 0 || selectedCheckCols.has(k))
+    );
+  }
+
+  // Push a confirmed car onto the field-check sheet, stamping GPS. Duplicates
+  // are ALLOWED on purpose — the same plate checked again (another day/area) is
+  // a new row; the sheet colour-codes repeated plates so they're easy to spot.
+  async function exportToFieldCheck(result: PlateResult, mode: CheckMode, prefetchedGps?: { lat: number; lng: number } | null) {
+    if (!result.found) return;
+    const gpsPromise = prefetchedGps ? Promise.resolve(prefetchedGps) : getCurrentGps();
+
+    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const base: FieldCheckEntry = {
+      id,
+      agentId: agentIdRef.current ?? undefined,
+      plate: result.plate,
+      row: result.row ?? {},
+      method: methodLabel[mode],
+      checkedAt: new Date().toISOString(),
+    };
+    // Optimistic add + persist locally
+    setFieldEntries((prev) => [base, ...prev]);
+    await saveFieldCheckEntry(base);
+    // Stamp GPS (best-effort) and persist the update — the image itself is
+    // intentionally NOT stored on the sheet.
+    const gps = await gpsPromise;
+    if (gps) {
+      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
+      setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
+      await saveFieldCheckEntry(withGps);
+    }
+  }
+
+  // كل تفاصيل اللوحة (كل أعمدة الصف) — للمشاركة عشان متروحش أي معلومة.
+  function allResultDetails(result: PlateResult): [string, string][] {
+    if (!result.row) return [];
+    return Object.entries(result.row)
+      .filter(([k, v]) => k !== checkPlateCol && String(v).trim())
+      .map(([k, v]) => [k, String(v)] as [string, string]);
+  }
+
+  // Share the camera finding (كل التفاصيل + GPS + الصورة) to WhatsApp.
+  async function shareCameraResult(result: PlateResult) {
+    if (!cameraImage) return;
+    const gps = cameraGps ?? (await getCurrentGps());
+    const text = buildPlateShareText({
+      plate: result.plate,
+      status: result.found ? "متشيكة بالكاميرا — مطلوبة" : "متشيكة بالكاميرا",
+      details: allResultDetails(result),
+      mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
+      dateText: formatDate(new Date().toISOString()),
+    });
+    await shareImageWithText(cameraImage, text, `لوحة-${result.plate}.jpg`, "لوحة السيارة");
+  }
+
+  // Correct a wrong (mis-transcribed) plate in the sheet — and teach the
+  // learners so the same mistake auto-corrects next time. The sheet stays
+  // un-deletable; only the plate value can be fixed.
+  async function applyFieldEdit(id: string) {
+    const entry = fieldEntries.find((e) => e.id === id);
+    const trimmed = editFieldValue.trim();
+    setEditingFieldId(null);
+    if (!entry || !trimmed || trimmed === entry.plate) return;
+
+    const origLetters = normalizePlate(bankPlateToArabic(entry.plate)).replace(/[0-9]/g, "");
+    const corrLetters = normalizePlate(bankPlateToArabic(trimmed)).replace(/[0-9]/g, "");
+    if (origLetters && corrLetters && origLetters.length !== corrLetters.length) {
+      recordWordBlend(wordBlendRef.current, origLetters, corrLetters);
+      try { localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current))); } catch { /* full */ }
+    } else if (origLetters && corrLetters) {
+      recordLetterCorrections(letterConfusionsRef.current, entry.plate, trimmed);
+      try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
+    }
+
+    const updated: FieldCheckEntry = { ...entry, plate: trimmed };
+    setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
+    await saveFieldCheckEntry(updated);
+  }
+
+  function buildFieldRows() {
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    return fieldEntries.map((e) => {
+      const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
+      for (const h of dynCols) obj[h] = e.row[h] ?? "";
+      obj["الحالة"] = e.method;
+      obj["GPS"] = e.mapsLink ?? "";
+      obj["التاريخ"] = formatDate(e.checkedAt);
+      return obj;
+    });
+  }
+
+  async function exportFieldExcel() {
+    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+    try {
+      await openExcelBlob(blob, `التشييك-الميداني-${Date.now()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
+  }
+
+  async function shareFieldExcel() {
+    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+    try {
+      await shareExcelBlob(blob, "التشييك-الميداني.xlsx", "التشييك الميداني");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -534,6 +1074,7 @@ export default function InstantCheckPage() {
     setCameraError(null);
     setCameraResult(null);
     setCameraRawText(null);
+    setCameraGps(null);
     try {
       const resized = await resizeImageForOCR(dataUrl);
       let plate: string | null = null;
@@ -542,10 +1083,15 @@ export default function InstantCheckPage() {
       // ── Try 1: Groq API ────────────────────────────────────────────────────
       try {
         const base64 = resized.split(",")[1];
+        // Agent's own Groq key (same one entered on the registration page,
+        // shared via localStorage) so camera usage bills to their account,
+        // not a shared one. Empty → server falls back / on-device TextDetector.
+        let groqKey = "";
+        try { groqKey = localStorage.getItem("ph:registration:groqApiKey") || ""; } catch { /* storage off */ }
         const apiRes = await fetch("/api/read-plate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64, mediaType: "image/jpeg" }),
+          headers: { "Content-Type": "application/json", ...(await authHeader()) },
+          body: JSON.stringify({ image: base64, mediaType: "image/jpeg", apiKey: groqKey.trim() }),
         });
         const json = await apiRes.json().catch(() => null);
         if (apiRes.ok && json?.plate) {
@@ -587,7 +1133,10 @@ export default function InstantCheckPage() {
       if (displayPlate) {
         const result = searchInCheck(displayPlate);
         setCameraResult(result);
-        if (result?.found) saveHitWithGps(result);
+        if (result?.found) {
+          saveHitWithGps(result);
+          void getCurrentGps().then(setCameraGps); // GPS of where the photo was taken
+        }
       } else {
         setCameraError("لم يُتعرَّف على نمط لوحة — صحّح أدناه يدوياً");
       }
@@ -595,46 +1144,239 @@ export default function InstantCheckPage() {
       setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
     } finally {
       setCameraLoading(false);
+      // تصفير قيمة الخانتين عشان اختيار نفس الصورة تاني (بعد المسح) يشتغل.
       if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (galleryInputRef.current) galleryInputRef.current.value = "";
     }
   }
 
   function resetCamera() {
     closeLiveCamera();
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
     setCameraImage(null);
     setCameraResult(null);
     setCameraError(null);
     setCameraRawText(null);
     setCameraInputPlate("");
+    setCameraGps(null);
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
   // addResult: parse one utterance and append to results list
   function addPttResult(utterance: string) {
+    // Pull the vehicle type (ونيت/فان/مصدومة/…) out FIRST so it lands in its
+    // own column and isn't misread as plate letters.
+    const { vehicleType, rest } = extractVehicleType(utterance);
+
     // أول محاولة: ترجمة حرف حرف بالنطق المصري ("دال حه ره واحد اتنين...")
-    const egyptianMapped = mapEgyptianSpeech(utterance);
+    const egyptianMapped = mapEgyptianSpeech(rest);
     const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
     const letterPart     = egyptianNorm.replace(/[0-9]/g, "");
     const hasDigits      = /[0-9]/.test(egyptianNorm);
     // لوحة سعودية صحيحة: 1-3 حروف + أرقام — لو أكثر من 3 حروف يعني كلمات ما اتحولتش
     const isPlausiblePlate = hasDigits && letterPart.length >= 1 && letterPart.length <= 3;
 
-    const plate = isPlausiblePlate
+    const rawPlate = isPlausiblePlate
       ? egyptianMapped
-      : (parsePlateFromTranscript(utterance).plate || "");
+      : (parsePlateFromTranscript(rest).plate || "");
 
-    if (!plate) return;
-    const result = searchInCheck(plate);
-    if (result) {
-      setPttResults((prev) => [result, ...prev]);
+    if (!rawPlate) return;
+
+    // Apply what past edits taught: whole-fragment blend first, then per-letter
+    // confusion — so a mishearing corrected once auto-corrects next time.
+    const norm = normalizePlate(bankPlateToArabic(rawPlate));
+    const letters = norm.replace(/[0-9]/g, "");
+    const digits = norm.replace(/[^0-9]/g, "");
+    const blended = applyWordBlend(letters, wordBlendRef.current) || letters;
+    const corrected = applyLetterConfusions(blended + digits, letterConfusionsRef.current);
+
+    const result = searchInCheck(corrected);
+    if (!result) return; // no check file loaded
+
+    // Every spoken plate becomes a compact row (found or not), tagged with the
+    // current location name; `originalPlate` keeps the pre-correction value so
+    // a later edit can teach the learners. GPS is captured in the background.
+    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const row: PttRow = {
+      id,
+      plate: result.plate,
+      originalPlate: norm,
+      found: result.found,
+      matchType: result.matchType,
+      similarity: result.similarity,
+      row: result.row,
+      vehicleType,
+      locationName: pttLocationNameRef.current.trim(),
+      checkedAt: new Date().toISOString(),
+    };
+    setPttResults((prev) => [row, ...prev]);
+    // A matched (wanted) plate — exact OR suspected — pops the big alert.
+    if (result.found) setPttAlert(row);
+    void fetchGpsForPttRow(id);
+  }
+
+  // Save a manual edit of a voice row: teach the learners (same logic as the
+  // registration page), then re-check the corrected plate against the file.
+  function applyPttEdit(rowId: string) {
+    const row = pttResults.find((r) => r.id === rowId);
+    const trimmed = editPttValue.trim();
+    setEditingPttId(null);
+    if (!row || !trimmed || trimmed === row.plate) return;
+
+    const origLetters = normalizePlate(bankPlateToArabic(row.originalPlate)).replace(/[0-9]/g, "");
+    const corrLetters = normalizePlate(bankPlateToArabic(trimmed)).replace(/[0-9]/g, "");
+
+    if (origLetters && corrLetters && origLetters.length !== corrLetters.length) {
+      // Whole letter group was wrong (length changed) → learn the fragment.
+      recordWordBlend(wordBlendRef.current, origLetters, corrLetters);
+      try { localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current))); } catch { /* full */ }
+    } else if (origLetters && corrLetters) {
+      // One/few letters drifted → per-letter confusion learner.
+      recordLetterCorrections(letterConfusionsRef.current, row.originalPlate, trimmed);
+      try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
+    }
+
+    const res = searchInCheck(trimmed);
+    setPttResults((prev) => prev.map((r) => r.id === rowId
+      ? { ...r, plate: res?.plate ?? trimmed, found: res?.found ?? false, matchType: res?.matchType, similarity: res?.similarity, row: res?.row }
+      : r));
+  }
+
+  // ── Voice-list Excel export ─────────────────────────────────────────────
+  function buildPttRows() {
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    return pttResults.map((r) => {
+      const obj: Record<string, unknown> = {
+        "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
+        "رقم اللوحة": r.plate,
+        "النوع": r.vehicleType ?? "",
+      };
+      for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
+      obj["اسم الموقع"] = r.locationName;
+      obj["GPS"] = r.mapsLink ?? "";
+      obj["التاريخ"] = formatDate(r.checkedAt);
+      return obj;
+    });
+  }
+
+  // Push one voice row onto the protected field-check sheet (only matched ones).
+  async function exportPttRowToField(r: PttRow) {
+    const mergedRow = { ...(r.row ?? {}) };
+    if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
+    const result: PlateResult = { plate: r.plate, normalized: "", found: r.found, matchType: r.matchType, similarity: r.similarity, row: mergedRow };
+    const gps = (r.lat != null && r.lng != null) ? { lat: r.lat, lng: r.lng } : undefined;
+    await exportToFieldCheck(result, "ptt", gps);
+  }
+
+  // Remove a single voice row.
+  function deletePttRow(id: string) {
+    setPttResults((prev) => prev.filter((r) => r.id !== id));
+    setPttExportedIds((s) => { const n = new Set(s); n.delete(id); return n; });
+    setPttAlert((a) => (a?.id === id ? null : a));
+    setPttSel((s) => { const n = new Set(s); n.delete(id); return n; });
+  }
+
+  // نص صف الصوت — للنسخ والمشاركة.
+  function pttRowText(r: PttRow): string {
+    const lines = [`🚗 اللوحة: ${r.plate}`];
+    lines.push(r.found ? (r.matchType === "fuzzy" ? `الحالة: مطلوبة؟ ${r.similarity}%` : "الحالة: مطلوبة") : "الحالة: غير مطلوبة");
+    if (r.vehicleType) lines.push(`النوع: ${r.vehicleType}`);
+    for (const [k, v] of Object.entries(r.row ?? {})) { if (String(v).trim()) lines.push(`${k}: ${v}`); }
+    if (r.locationName) lines.push(`اسم الموقع: ${r.locationName}`);
+    if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
+    return lines.join("\n");
+  }
+  async function copyPttRow(r: PttRow) {
+    try { await navigator.clipboard.writeText(pttRowText(r)); } catch { /* ignore */ }
+    setPttCopiedId(r.id);
+    setTimeout(() => setPttCopiedId(null), 1200);
+  }
+  function togglePttSel(id: string) {
+    setPttSel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function togglePttSelAll() {
+    setPttSel((prev) => (prev.size === pttResults.length ? new Set() : new Set(pttResults.map((r) => r.id))));
+  }
+  function sharePttSelected() {
+    const rows = pttResults.filter((r) => pttSel.has(r.id));
+    if (!rows.length) return;
+    const text = `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` + rows.map((r, i) => `${i + 1}. ${pttRowText(r)}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  function deletePttSelected() {
+    const ids = pttSel;
+    setPttResults((prev) => prev.filter((r) => !ids.has(r.id)));
+    setPttExportedIds((s) => { const n = new Set(s); ids.forEach((i) => n.delete(i)); return n; });
+    setPttSel(new Set());
+  }
+  async function sharePttDraftFile() {
+    try {
+      const blob = buildExcelBlob(buildPttRows(), "تشييك صوتي");
+      await shareExcelBlob(blob, `تشييك-صوتي-${Date.now()}.xlsx`, "تشييك صوتي");
+    } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
+  }
+
+  // Append ALL voice rows to the field-check sheet, below whatever is already
+  // there. Duplicates are kept (a repeated plate = a new row).
+  async function exportAllPttToField() {
+    if (pttResults.length === 0) return;
+    const stamp = Date.now();
+    const toSave: FieldCheckEntry[] = pttResults.map((r, i) => {
+      const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
+      if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
+      if (r.locationName) mergedRow["اسم الموقع"] = r.locationName;
+      mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
+      return {
+        id: `${stamp}-${i}`,
+        agentId: agentIdRef.current ?? undefined,
+        plate: r.plate,
+        row: mergedRow,
+        method: "متشيكة بالصوت",
+        lat: r.lat,
+        lng: r.lng,
+        mapsLink: r.mapsLink,
+        checkedAt: new Date().toISOString(),
+      };
+    });
+    for (const e of toSave) await saveFieldCheckEntry(e);
+    setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
+    setPttExportedIds(new Set(pttResults.map((r) => r.id)));
+  }
+
+  async function exportPttExcel() {
+    try {
+      await openExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), `تشييك-صوتي-${Date.now()}.xlsx`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
     }
   }
+
+  async function sharePttExcel() {
+    try {
+      await shareExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), "تشييك-صوتي.xlsx", "تشييك صوتي");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
+
+  function startPttTimer() {
+    if (pttTimerRef.current) clearInterval(pttTimerRef.current);
+    setPttSeconds(0);
+    pttTimerRef.current = setInterval(() => setPttSeconds((s) => s + 1), 1000);
+  }
+  function stopPttTimer() {
+    if (pttTimerRef.current) { clearInterval(pttTimerRef.current); pttTimerRef.current = null; }
+  }
+  // Clear the timer if the component unmounts mid-listen.
+  useEffect(() => () => { if (pttTimerRef.current) clearInterval(pttTimerRef.current); }, []);
 
   async function startPtt() {
     setPttError(null);
     setPttLiveText("");
     isListeningRef.current = true;
     setPttListening(true);
+    startPttTimer();
 
     // Native (Capacitor)
     try {
@@ -643,23 +1385,36 @@ export default function InstantCheckPage() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
         await SpeechRecognition.requestPermissions();
+        // Continuous listening = a loop of one-shot recognitions. Android's
+        // SpeechRecognizer needs a beat to reset between sessions; starting
+        // again too fast throws ERROR_RECOGNIZER_BUSY. Every transient error
+        // (busy / no-speech / silence) must NOT end the session — the mic only
+        // stops when the USER presses stop (isListeningRef flips false). So we
+        // never give up on our own; we just back off and keep looping.
         while (isListeningRef.current) {
           try {
             const result = await SpeechRecognition.start({
               language: "ar-SA",
-              maxResults: 1,
+              maxResults: 5,          // get several hypotheses, keep the most plate-like
               partialResults: false,
               popup: false,
             });
-            const text: string = result?.matches?.[0] ?? "";
+            const text: string = pickBestHypothesis(result?.matches ?? []);
             if (text) {
               setPttLiveText(text);
               addPttResult(text);
             }
+            // Let the recognizer fully reset before the next plate.
+            await new Promise((r) => setTimeout(r, 250));
           } catch {
-            break;
+            // User pressed stop mid-session → exit cleanly.
+            if (!isListeningRef.current) break;
+            // Transient error between plates → back off briefly and retry.
+            // Never break out on our own — keep listening until the user stops.
+            await new Promise((r) => setTimeout(r, 350));
           }
         }
+        stopPttTimer();
         setPttListening(false);
         isListeningRef.current = false;
         return;
@@ -672,22 +1427,34 @@ export default function InstantCheckPage() {
       setPttError("المتصفح لا يدعم التعرف الصوتي — استخدم Chrome أو Edge");
       setPttListening(false);
       isListeningRef.current = false;
+      stopPttTimer();
       return;
     }
 
     recognition.lang = "ar-SA";
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 5;   // get several hypotheses, keep the most plate-like
     recognitionRef.current = recognition;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t;
-        else interim += t;
+        const result = event.results[i];
+        if (result.isFinal) {
+          // Pick the plate-likeliest alternative, not just the first —
+          // recognizer confidence breaks near-ties between plate-shaped ones.
+          const alts: string[] = [];
+          const confs: number[] = [];
+          for (let a = 0; a < result.length; a++) {
+            alts.push(result[a].transcript);
+            confs.push(result[a].confidence);
+          }
+          finalText += pickBestHypothesis(alts, confs);
+        } else {
+          interim += result[0].transcript;
+        }
       }
       setPttLiveText((finalText || interim).trim());
       if (finalText.trim()) addPttResult(finalText.trim());
@@ -701,7 +1468,13 @@ export default function InstantCheckPage() {
 
     recognition.onend = () => {
       if (isListeningRef.current) {
-        try { recognition.start(); } catch {}
+        // Restart on a short delay — calling start() synchronously inside onend
+        // can throw "already started" mid-teardown, which would silently end
+        // the session after one plate. The delay lets it fully reset.
+        setTimeout(() => {
+          if (!isListeningRef.current) return;
+          try { recognition.start(); } catch { setTimeout(() => { if (isListeningRef.current) { try { recognition.start(); } catch {} } }, 400); }
+        }, 250);
       } else {
         setPttListening(false);
       }
@@ -714,6 +1487,7 @@ export default function InstantCheckPage() {
     isListeningRef.current = false;
     setPttListening(false);
     setPttLiveText("");
+    stopPttTimer();
 
     try {
       const { Capacitor } = await import("@capacitor/core");
@@ -783,6 +1557,7 @@ export default function InstantCheckPage() {
           hint="القائمة المرجعية للبحث"
           parsedFile={checkFile}
           parsedRowCount={checkTable?.rows.length ?? null}
+          plateCount={checkIndex.size}
           onParsed={handleParsed}
           onClear={handleClear}
           showReplaceButtons
@@ -849,18 +1624,19 @@ export default function InstantCheckPage() {
       {checkTable && (
         <>
           {/* Tabs */}
-          <div className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-surface-2 p-1">
+          <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-2 p-1">
             {(
               [
                 { key: "manual", Icon: Type, label: "يدوي" },
                 { key: "camera", Icon: Camera, label: "كاميرا" },
                 { key: "ptt", Icon: Mic, label: "صوت" },
+                { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
               ] as const
             ).map(({ key, Icon, label }) => (
               <button
                 key={key}
                 onClick={() => setMode(key)}
-                className={`flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-sm font-bold transition ${
+                className={`flex items-center justify-center gap-1 rounded-lg py-2.5 text-xs font-bold transition ${
                   mode === key ? "bg-primary text-night" : "text-muted"
                 }`}
               >
@@ -873,6 +1649,14 @@ export default function InstantCheckPage() {
           {/* ── Manual ── */}
           {mode === "manual" && (
             <div className="flex flex-col gap-3">
+              {/* اسم الموقع (يتسجّل على كل لوحة تدخلها) */}
+              <div className="relative">
+                <MapPin size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+                <input dir="rtl" value={manualLocationName} onChange={(e) => setManualLocationName(e.target.value)}
+                  placeholder="اسم الموقع اللي بتشيّك فيه (اختياري)"
+                  className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+              </div>
+
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -892,7 +1676,7 @@ export default function InstantCheckPage() {
                   disabled={!manualInput.trim() || !!manualError}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
                 >
-                  بحث
+                  تشييك
                 </button>
               </div>
 
@@ -907,12 +1691,137 @@ export default function InstantCheckPage() {
               )}
 
               <p className="text-xs text-muted" dir="rtl">
-                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...)
+                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...) — كل لوحة تتشيّك ضد المطلوبين وتتضاف للقائمة تحت. تقدر تعدّل النوع والموقع والملاحظات من علامة القلم، وتصدّرهم للسجلات لما تخلّص.
               </p>
 
-              {manualResult && (
-                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
+              {manualResult?.found && (
+                <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} priorCheck={findDuplicateEntry(fieldEntries, manualResult.plate)} />
               )}
+
+              {/* قائمة الشغل اليدوية (محلية — تتصدّر للسجلات بالزر تحت) */}
+              {manualDraft.length > 0 && (() => {
+                const draftCell = (e: FieldCheckEntry, field: string) => {
+                  const cur = field === "plate" ? e.plate : (e.row[field] || "");
+                  if (draftEdit?.id === e.id && draftEdit.field === field) {
+                    return (
+                      <span className="inline-flex items-center gap-1">
+                        <input dir="rtl" value={draftEditValue}
+                          onChange={(ev) => setDraftEditValue(
+                            field === "plate"
+                              ? ev.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join("")
+                              : ev.target.value
+                          )}
+                          onKeyDown={(ev) => { if (ev.key === "Enter") applyDraftEdit(); if (ev.key === "Escape") setDraftEdit(null); }}
+                          autoFocus className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-ink outline-none" />
+                        <button onClick={applyDraftEdit} className="text-brand"><Check size={14} /></button>
+                        <button onClick={() => setDraftEdit(null)} className="text-muted"><X size={14} /></button>
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="inline-flex items-center gap-1.5">
+                      {field === "plate" ? e.plate : (cur || "—")}
+                      <button onClick={() => startDraftEdit(e.id, field, cur)} className="text-muted hover:text-primary transition" title="تعديل"><Pencil size={12} /></button>
+                    </span>
+                  );
+                };
+                const allSel = manualSel.size === manualDraft.length && manualDraft.length > 0;
+                return (
+                  <div className="flex flex-col gap-2 pt-2 border-t border-border">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
+                      <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                        {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                        {allSel ? "إلغاء الكل" : "تحديد الكل"}
+                      </button>
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
+                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-surface-2 text-muted">
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {manualDraft.map((e, i) => {
+                            const matched = isDraftMatched(e);
+                            const sel = manualSel.has(e.id);
+                            const rowBg = sel ? "bg-primary/15" : matched ? "bg-brand/10" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40";
+                            return (
+                            <tr key={e.id} className={`border-b border-border ${rowBg}`}>
+                              <td className="border-l border-border px-2 py-2 text-center">
+                                <button onClick={() => toggleManualSel(e.id)} className="text-muted hover:text-primary transition">
+                                  {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                </button>
+                              </td>
+                              <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`}>
+                                <span className="inline-flex items-center gap-1.5">
+                                  {draftCell(e, "plate")}
+                                  {matched && <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">مطلوبة</span>}
+                                </span>
+                              </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "النوع")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{draftCell(e, "اسم الموقع")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
+                              <td className="border-l border-border px-3 py-2">
+                                {e.mapsLink ? (
+                                  <a href={e.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
+                                ) : <span className="text-muted text-[10px] animate-pulse">جاري...</span>}
+                              </td>
+                              <td className="px-2 py-2">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
+                                    {manualCopiedId === e.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                  </button>
+                                  <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
+                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+                    {manualSel.size > 0 && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                        <span className="text-xs font-bold text-ink">{manualSel.size} محددة</span>
+                        <div className="flex gap-2">
+                          <button onClick={shareManualSelected} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={13} /> واتساب</button>
+                          <button onClick={deleteManualSelected} className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={13} /> مسح</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* أزرار الملف: فتح/تنزيل + مشاركة */}
+                    <div className="flex gap-2">
+                      <OpenDownloadButton build={buildManualDraftFile} label="فتح الملف"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60" />
+                      <button onClick={shareManualDraftFile}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition hover:bg-primary/90">
+                        <Share2 size={16} /> مشاركة الملف
+                      </button>
+                    </div>
+
+                    {/* تصدير للسجلات — زي ما هو */}
+                    <button
+                      onClick={exportManualDraft}
+                      disabled={manualExporting}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-40 active:scale-95"
+                    >
+                      <Download size={16} /> {manualExporting ? "جاري التصدير..." : `تصدير ${manualDraft.length} لوحة للسجلات`}
+                    </button>
+                  </div>
+                );
+              })()}
 
             </div>
           )}
@@ -1012,6 +1921,10 @@ export default function InstantCheckPage() {
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted">
                     <Images size={14} /> المعرض
                   </button>
+                  <button onClick={resetCamera}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-danger/40 bg-danger/10 py-2.5 text-sm font-bold text-danger active:scale-95 transition">
+                    <Trash2 size={14} /> مسح
+                  </button>
                 </div>
               )}
 
@@ -1026,7 +1939,7 @@ export default function InstantCheckPage() {
                     className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center focus:border-brand outline-none"
                   />
                   <button
-                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result?.found) saveHitWithGps(result); }}
+                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result?.found) { saveHitWithGps(result); void getCurrentGps().then(setCameraGps); } }}
                     className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                   >
                     بحث
@@ -1040,27 +1953,54 @@ export default function InstantCheckPage() {
                 </p>
               )}
 
-              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />}
+              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
             </div>
           )}
 
           {/* ── PTT ── */}
           {mode === "ptt" && (
             <div className="flex flex-col items-center gap-4">
-              {/* Big mic button */}
+              {/* اسم الموقع — يتسجّل على كل لوحة تتقال بعد كتابته */}
+              <div className="w-full">
+                <label className="mb-1 block text-[11px] text-muted">اسم الموقع اللي بتشيّك فيه</label>
+                <div className="relative">
+                  <MapPin size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input
+                    dir="rtl"
+                    value={pttLocationName}
+                    onChange={(e) => { setPttLocationName(e.target.value); pttLocationNameRef.current = e.target.value; }}
+                    placeholder="مثال: حي النرجس - شارع 15"
+                    className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع */}
               <button
                 onClick={pttListening ? stopPtt : startPtt}
-                className={`flex h-28 w-28 flex-col items-center justify-center gap-1.5 rounded-full border-4 transition active:scale-95 ${
+                className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 text-white transition active:scale-95 ${
                   pttListening
-                    ? "border-brand bg-brand/20 text-brand animate-pulse"
-                    : "border-border bg-surface-2 text-muted"
+                    ? "border-red-600 bg-red-500 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.55)]"
+                    : "border-emerald-600 bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"
                 }`}
               >
-                <Mic size={32} />
+                <Mic size={28} />
                 <span className="text-xs font-bold">
                   {pttListening ? "إيقاف" : "ابدأ"}
                 </span>
               </button>
+
+              {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع */}
+              {pttListening && (
+                <div
+                  dir="ltr"
+                  className="flex items-center gap-1.5 font-mono text-lg font-black tabular-nums text-red-500"
+                >
+                  <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+                  {String(Math.floor(pttSeconds / 60)).padStart(2, "0")}:
+                  {String(pttSeconds % 60).padStart(2, "0")}
+                </div>
+              )}
 
               {pttListening && (
                 <p className="text-center text-xs text-muted">
@@ -1072,30 +2012,191 @@ export default function InstantCheckPage() {
                 <p className="text-center text-xs text-danger">{pttError}</p>
               )}
 
-              {pttResults.length > 0 && (
-                <div className="w-full flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted">
-                      {pttResults.length} نتيجة
-                    </span>
-                    <button
-                      onClick={() => setPttResults([])}
-                      className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
-                    >
-                      <Trash2 size={12} />
-                      مسح
-                    </button>
+              {/* ── تنبيه كبير: يظهر فقط لما اللوحة تطلع مطلوبة (تطابق تام أو مشتبه) ── */}
+              {pttAlert && (
+                <div className="w-full relative">
+                  <div className="mb-1 flex items-center justify-center gap-1.5 text-danger">
+                    <AlertTriangle size={16} className="animate-pulse" />
+                    <span className="text-sm font-black">🚨 لوحة مطلوبة!</span>
                   </div>
-                  {pttResults.map((r, i) => (
-                    <ResultCard key={i} result={r} plateCol={checkPlateCol} selectedCols={selectedCheckCols} />
-                  ))}
+                  <button
+                    onClick={() => setPttAlert(null)}
+                    className="absolute left-2 top-7 z-10 rounded-full bg-black/50 p-1.5"
+                    title="إخفاء"
+                  >
+                    <X size={14} className="text-white" />
+                  </button>
+                  <ResultCard
+                    result={{ plate: pttAlert.plate, normalized: "", found: pttAlert.found, matchType: pttAlert.matchType, similarity: pttAlert.similarity, row: pttAlert.row }}
+                    plateCol={checkPlateCol}
+                    selectedCols={selectedCheckCols}
+                    onExport={(r) => exportToFieldCheck(r, "ptt")}
+                    priorCheck={findDuplicateEntry(fieldEntries, pttAlert.plate)}
+                  />
                 </div>
               )}
+
+              {/* نافذة النتائج — كل لوحة تتقال كصف مضغوط بتفاصيلها وموقعها */}
+              {pttResults.length > 0 && (() => {
+                const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+                return (
+                  <div className="w-full flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted">{pttResults.length} لوحة</span>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={togglePttSelAll}
+                          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                          {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                          {pttSel.size === pttResults.length && pttResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                        </button>
+                        <button
+                          onClick={() => { setPttResults([]); setPttAlert(null); setPttSel(new Set()); }}
+                          className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
+                        >
+                          <Trash2 size={12} /> مسح
+                        </button>
+                      </div>
+                    </div>
+                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-surface-2 text-muted">
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                            <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">الحالة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                            {dynCols.map((h) => (
+                              <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                            ))}
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pttResults.map((r) => (
+                            <tr key={r.id} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
+                              <td className="border-l border-border px-2 py-2 text-center">
+                                <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
+                                  {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                </button>
+                              </td>
+                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                                {!r.found ? (
+                                  <span className="inline-flex items-center gap-0.5 text-muted"><XCircle size={13} /> غير مطلوبة</span>
+                                ) : r.matchType === "fuzzy" ? (
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} /> مطلوبة؟ {r.similarity}%</span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
+                                )}
+                              </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
+                                {editingPttId === r.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <input
+                                      dir="rtl"
+                                      value={editPttValue}
+                                      onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                      onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
+                                      autoFocus
+                                      className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none"
+                                    />
+                                    <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={14} /></button>
+                                    <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={14} /></button>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {r.plate}
+                                    <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="text-muted hover:text-primary transition" title="تعديل اللوحة">
+                                      <Pencil size={12} />
+                                    </button>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.vehicleType || "—"}</td>
+                              {dynCols.map((h) => (
+                                <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
+                              ))}
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.locationName || "—"}</td>
+                              <td className="border-l border-border px-3 py-2">
+                                {r.mapsLink ? (
+                                  <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                                    <MapPin size={10} /> خريطة
+                                  </a>
+                                ) : r.gpsError ? (
+                                  <button onClick={() => retryGpsForPttRow(r.id)} className="flex items-center gap-0.5 text-muted text-[10px]" title="إعادة المحاولة">
+                                    <MapPin size={10} /> إعادة
+                                  </button>
+                                ) : (
+                                  <span className="text-muted text-[10px] animate-pulse">جاري...</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-center whitespace-nowrap">
+                                <div className="flex items-center justify-center gap-2">
+                                  {r.found && (
+                                    pttExportedIds.has(r.id) ? (
+                                      <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
+                                    ) : (
+                                      <button
+                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
+                                        className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
+                                        title="تصدير للتشييك"
+                                      >
+                                        <ClipboardCheck size={12} /> تشييك
+                                      </button>
+                                    )
+                                  )}
+                                  <button onClick={() => copyPttRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
+                                    {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                  </button>
+                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+                    {pttSel.size > 0 && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                        <span className="text-xs font-bold text-ink">{pttSel.size} محددة</span>
+                        <div className="flex gap-2">
+                          <button onClick={sharePttSelected} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={13} /> واتساب</button>
+                          <button onClick={deletePttSelected} className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={13} /> مسح</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* تصدير كل لوحات الصوت لشيت التسجيلات */}
+                    <button onClick={exportAllPttToField}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
+                      <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
+                    </button>
+
+                    {/* فتح / مشاركة Excel */}
+                    <div className="flex gap-2">
+                      <OpenDownloadButton
+                        build={() => ({ blob: buildExcelBlob(buildPttRows(), "تشييك صوتي"), name: `تشييك-صوتي-${Date.now()}.xlsx` })}
+                        label="فتح في Excel"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
+                      />
+                      <button onClick={sharePttExcel}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                        <Share2 size={14} /> مشاركة Excel
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
-          {/* ── Hits history table — visible in all modes ── */}
-          {manualHits.length > 0 && (() => {
+          {/* ── Hits history table — hidden on the السجلات tab ── */}
+          {mode !== "sheet" && manualHits.length > 0 && (() => {
             const scale = HIT_ZOOM_LEVELS[hitsZoom];
             const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
             const allSel = hitsSelected.size === manualHits.length;
@@ -1219,10 +2320,11 @@ export default function InstantCheckPage() {
 
                 {/* Export / Share Excel */}
                 <div className="flex gap-2">
-                  <button onClick={exportHitsExcel}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
-                    <Download size={14} /> فتح في Excel
-                  </button>
+                  <OpenDownloadButton
+                    build={() => ({ blob: buildExcelBlob(buildHitsRows(), "لوحات مطلوبة"), name: `لوحات-مطلوبة-${Date.now()}.xlsx` })}
+                    label="فتح في Excel"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
+                  />
                   <button onClick={shareHitsExcel}
                     className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
                     <Share2 size={14} /> مشاركة Excel
@@ -1233,6 +2335,145 @@ export default function InstantCheckPage() {
           })()}
         </>
       )}
+
+      {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
+      {mode === "sheet" && fieldEntries.length === 0 && (
+        <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
+          لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
+        </div>
+      )}
+      {mode === "sheet" && fieldEntries.length > 0 && (() => {
+        const scale = HIT_ZOOM_LEVELS[fieldZoom];
+        const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        const visible = filterFieldEntries(fieldEntries, fieldSearch);
+        return (
+          <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <ClipboardCheck size={15} className="text-brand shrink-0" />
+              <h2 className="text-sm font-bold text-ink truncate">شيت التسجيلات (صوتي+يدوي)</h2>
+              <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
+            </div>
+            <p className="text-[11px] text-muted" dir="rtl">
+              سجل ثابت محفوظ على الجهاز — للتحميل أو المشاركة فقط (لا يُحذف ولا يُعدّل)
+            </p>
+
+            {/* Search */}
+            <div className="relative">
+              <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                dir="rtl"
+                value={fieldSearch}
+                onChange={(e) => setFieldSearch(e.target.value)}
+                placeholder="بحث برقم اللوحة أو الحي..."
+                className="w-full rounded-xl border border-border bg-surface-2 py-2 pr-9 pl-8 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+              />
+              {fieldSearch && (
+                <button onClick={() => setFieldSearch("")} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            {fieldSearch.trim() && (
+              <p className="text-[11px] text-muted">{visible.length} من {fieldEntries.length}</p>
+            )}
+
+            {/* Zoom */}
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 w-fit">
+              <button onClick={() => setFieldZoom((z) => Math.max(z - 1, 0))} disabled={fieldZoom === 0}
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                <ZoomOut size={14} />
+              </button>
+              <span className="text-xs text-muted w-10 text-center">{Math.round(scale * 100)}%</span>
+              <button onClick={() => setFieldZoom((z) => Math.min(z + 1, HIT_ZOOM_LEVELS.length - 1))} disabled={fieldZoom === HIT_ZOOM_LEVELS.length - 1}
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
+                <ZoomIn size={14} />
+              </button>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "50vh" }}>
+              <div style={{ fontSize: `${scale * 12}px`, minWidth: "max-content" }}>
+                <table className="border-collapse w-full" style={{ direction: "rtl" }}>
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-surface-2 text-muted">
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      {dynCols.map((h) => (
+                        <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                      ))}
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                      <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((e, i) => {
+                      const cIdx = fieldColorMap.get(plateKey(e.plate));
+                      const rowBg = cIdx !== undefined ? FIELD_DUPE_COLORS[cIdx] : (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
+                      return (
+                      <tr key={e.id} className={`border-b border-border ${rowBg}`}>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
+                          {editingFieldId === e.id ? (
+                            <span className="inline-flex items-center gap-1">
+                              <input
+                                dir="rtl"
+                                value={editFieldValue}
+                                onChange={(ev) => setEditFieldValue(ev.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                onKeyDown={(ev) => { if (ev.key === "Enter") applyFieldEdit(e.id); if (ev.key === "Escape") setEditingFieldId(null); }}
+                                autoFocus
+                                className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none"
+                              />
+                              <button onClick={() => applyFieldEdit(e.id)} className="text-brand" title="حفظ"><Check size={14} /></button>
+                              <button onClick={() => setEditingFieldId(null)} className="text-muted" title="إلغاء"><X size={14} /></button>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              {e.plate}
+                              <button onClick={() => { setEditingFieldId(e.id); setEditFieldValue(e.plate); }} className="text-muted hover:text-primary transition" title="تعديل اللوحة">
+                                <Pencil size={12} />
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                        {dynCols.map((h) => (
+                          <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>
+                        ))}
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                          <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-bold text-brand">{e.method}</span>
+                        </td>
+                        <td className="border-l border-border px-3 py-2">
+                          {e.mapsLink ? (
+                            <a href={e.mapsLink} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                              <MapPin size={10} /> خريطة
+                            </a>
+                          ) : (
+                            <span className="text-muted text-[10px] animate-pulse">جاري...</span>
+                          )}
+                        </td>
+                        <td className="border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
+                      </tr>
+                    );})}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Export / Share Excel */}
+            <div className="flex gap-2">
+              <OpenDownloadButton
+                build={() => ({ blob: buildExcelBlob(buildFieldRows(), "التشييك الميداني"), name: `التشييك-الميداني-${Date.now()}.xlsx` })}
+                label="فتح في Excel"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
+              />
+              <button onClick={shareFieldExcel}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                <Share2 size={14} /> مشاركة واتساب
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }

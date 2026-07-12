@@ -10,30 +10,30 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Base surfaces — light mode (off-white, easy on eyes)
-        night: "#F3F5F7",        // app background — cool off-white
-        "night-oled": "#FFFFFF", // brightest white variant
-        surface: "#FFFFFF",      // cards, nav bar — pure white
-        "surface-2": "#EBEEf2",  // inputs, elevated surfaces — light cool gray
-        border: "#CDD2D8",       // subtle separator lines
+        // All tokens resolve to CSS variables so one class on <html> ("oled" =
+        // battery-saving dark mode) swaps the whole palette at once, hover/focus
+        // variants included. Light values live in :root and the dark overrides
+        // in html.oled — see app/globals.css. Light mode is byte-identical to
+        // the old hardcoded hex, so it's unaffected.
+        night: "var(--c-night)",
+        "night-oled": "var(--c-night-oled)",
+        surface: "var(--c-surface)",
+        "surface-2": "var(--c-surface-2)",
+        border: "var(--c-border)",
 
-        // UI accent — deep blue, high contrast on white
-        primary: "#1A6CC4",      // rich blue: buttons, active states, focus rings
-        "primary-dark": "#DBE9F8", // light blue tint: subtle chip backgrounds
-        glow: "#0969DA",         // vivid blue: highlights, active nav
+        primary: "var(--c-primary)",
+        "primary-dark": "var(--c-primary-dark)",
+        glow: "var(--c-glow)",
 
-        // Match / Recording green — deepened for white backgrounds
-        brand: "#1A7F37",
-        "brand-dark": "#DAFBE1",
-        "brand-glow": "#2DA44E",
+        brand: "var(--c-brand)",
+        "brand-dark": "var(--c-brand-dark)",
+        "brand-glow": "var(--c-brand-glow)",
 
-        // Text — dark charcoal for maximum readability on white
-        ink: "#1A1F24",          // near-black charcoal (softer than pure black)
-        muted: "#57606A",        // medium warm gray — always readable on white
+        ink: "var(--c-ink)",
+        muted: "var(--c-muted)",
 
-        // Status
-        alert: "#9A6700",        // amber (adjusted for light bg)
-        danger: "#CF222E",       // clear red (adjusted for light bg)
+        alert: "var(--c-alert)",
+        danger: "var(--c-danger)",
       },
       fontFamily: {
         sans: ["var(--font-tajawal)", "Tahoma", "sans-serif"],

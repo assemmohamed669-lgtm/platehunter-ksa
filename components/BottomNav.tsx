@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, ListFilter, Mic, MapPin, ScanLine } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine } from "lucide-react";
 
 const TABS = [
-  { href: "/dashboard", label: "الرئيسية", icon: LayoutGrid },
   { href: "/sorting", label: "الفرز", icon: ListFilter },
-  { href: "/registration", label: "التسجيل", icon: Mic },
   { href: "/instant-check", label: "تشييك", icon: ScanLine },
+  { href: "/registration", label: "التسجيل", icon: Mic },
   { href: "/maps", label: "الخرائط", icon: MapPin },
 ] as const;
 

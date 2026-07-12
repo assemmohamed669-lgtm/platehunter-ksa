@@ -5,21 +5,33 @@
  */
 
 const DB_NAME = "platehunter";
-const DB_VERSION = 2; // bumped: v2 adds the uploaded_files store below
+const DB_VERSION = 4; // v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions
 const STORE = "recordings";
 const FILES_STORE = "uploaded_files";
+const FIELD_CHECK_STORE = "field_check";
+const SESSIONS_STORE = "voice_sessions";
 
 export interface RecordingEntry {
   localId: string;           // uuid generated locally
   agentId: string;           // Supabase auth user id
   plate: string;             // joined, no spaces e.g. أبح1234
+  originalPlate?: string;    // raw value the recognizer produced, before any correction —
+                             // kept so a later edit can teach the letter-confusion learner
+  uncertain?: boolean;       // extraction wasn't confident (garbled/fallback/auto-corrected) —
+                             // worth a quick glance; cleared once the user edits/confirms it
+  rawLetterSource?: string;  // the raw garbled word / overflow letter-run behind an uncertain
+                             // guess (MultiPlateResult.rawLetterSource) — kept so a later edit
+                             // can teach the whole-fragment WordBlendMap learner
   vehicleType?: string;      // ونيت / فان / دباب / مصدومة
   lat?: number;
   lng?: number;
   street?: string;
   district?: string;
   recordedAt: string;        // ISO timestamp
-  audioBlobBase64?: string;  // base64 encoded audio
+  audioBlobBase64?: string;  // base64 encoded audio — the session's recording, shared across
+                             // every plate saved from that session (same as GPS coords)
+  audioMimeType?: string;    // MIME type of audioBlobBase64 — playback must use this, not a
+                             // hardcoded guess (native records AAC, web records webm/mp4/etc.)
   mapsLink?: string;
   notes?: string;            // ملاحظات يدوية
   recorderName?: string;     // اسم المسجّل
@@ -44,6 +56,39 @@ export interface UploadedFileRecord {
   fileBlob?: Blob;                   // original bytes, so "download" still works after a refresh
 }
 
+/**
+ * One car that a delegate confirmed in the field and pushed onto the
+ * protected field-check sheet ("شيت التشييك الميداني"). Persisted in IDB so
+ * it survives app restarts/updates; only clearable via the password gate
+ * (see lib/fieldCheckLock.ts). The `method` label records how it was checked
+ * (e.g. "متشيكة بالكاميرا").
+ */
+export interface FieldCheckEntry {
+  id: string;                        // unique, generated locally
+  agentId?: string;                  // owner — so a shared device doesn't mix two agents' sheets
+  plate: string;                     // the confirmed plate
+  row: Record<string, string>;       // matched reference row (extra columns)
+  method: string;                    // how it was checked, e.g. "متشيكة بالكاميرا"
+  lat?: number;
+  lng?: number;
+  mapsLink?: string;
+  checkedAt: string;                 // ISO timestamp
+}
+
+/**
+ * جلسة تسجيل صوتي كاملة — النص الخام المتراكم + سجل الأحداث (event log).
+ * بتتحفظ عشان أي تحسين مستقبلي في المحلّل يقدر يعيد المعالجة (replay) على
+ * جلسات قديمة، وعشان تشخيص «ليه اللوحة دي طلعت كده؟» يبقى ممكن.
+ */
+export interface VoiceSessionRecord {
+  id: string;                        // uuid generated locally
+  agentId: string;
+  startedAt: string;                 // ISO timestamp
+  endedAt?: string;
+  transcript: string;                // النص الخام المتراكم من كل الأجزاء بالترتيب
+  events: { type: string; value: string; seq: number }[];
+}
+
 let _db: IDBDatabase | null = null;
 
 function openDB(): Promise<IDBDatabase> {
@@ -63,11 +108,29 @@ function openDB(): Promise<IDBDatabase> {
         const filesStore = db.createObjectStore(FILES_STORE, { keyPath: "key" });
         filesStore.createIndex("agentId", "agentId", { unique: false });
       }
+      if (!db.objectStoreNames.contains(FIELD_CHECK_STORE)) {
+        db.createObjectStore(FIELD_CHECK_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
+        const sessionsStore = db.createObjectStore(SESSIONS_STORE, { keyPath: "id" });
+        sessionsStore.createIndex("agentId", "agentId", { unique: false });
+      }
     };
 
     req.onsuccess = (e) => {
       _db = (e.target as IDBOpenDBRequest).result;
+      // لو تبويب/نسخة أحدث طلبت ترقية الإصدار، سيب الاتصال فوراً عشان
+      // الترقية تعدّي بدل ما التبويب ده يحجزها للأبد (upgrade blocked).
+      _db.onversionchange = () => {
+        try { _db?.close(); } catch { /* already closing */ }
+        _db = null;
+      };
       resolve(_db);
+    };
+
+    // تبويب قديم ماسك الداتابيز بإصدار أقدم — الترقية مستنية لحد ما يقفل.
+    req.onblocked = () => {
+      console.warn("IDB upgrade blocked — قفل باقي تبويبات التطبيق عشان الترقية تكمل.");
     };
 
     req.onerror = () => reject(req.error);
@@ -79,6 +142,17 @@ export async function saveRecording(entry: RecordingEntry): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).put(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** يحفظ/يحدّث جلسة تسجيل صوتي (upsert بالـ id) — بيتنادى مع كل chunk. */
+export async function saveVoiceSession(session: VoiceSessionRecord): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SESSIONS_STORE, "readwrite");
+    tx.objectStore(SESSIONS_STORE).put(session);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -151,6 +225,47 @@ export async function updateNotes(localId: string, notes: string): Promise<void>
   });
 }
 
+export async function updatePlate(localId: string, plate: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const req = store.get(localId);
+    req.onsuccess = () => {
+      const entry = req.result as RecordingEntry;
+      if (entry) {
+        entry.plate = plate;
+        entry.uncertain = false; // a human looked at and confirmed this plate
+        store.put(entry);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function updateRecordingField(
+  localId: string,
+  field: "vehicleType" | "notes",
+  value: string
+): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const req = store.get(localId);
+    req.onsuccess = () => {
+      const entry = req.result as RecordingEntry;
+      if (entry) {
+        entry[field] = value;
+        store.put(entry);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function updateGeodata(
   localId: string,
   street: string,
@@ -207,6 +322,65 @@ export async function deleteUploadedFile(agentId: string, slot: "data" | "referr
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readwrite");
     tx.objectStore(FILES_STORE).delete(`${agentId}:${slot}`);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// =====================================================================
+// Field-check sheet (شيت التشييك الميداني) — the protected, persistent
+// record of cars confirmed in the field. Never auto-cleared; deletion is
+// gated behind the password in lib/fieldCheckLock.ts at the UI layer.
+// =====================================================================
+
+/** Add or overwrite one field-check entry (put by id). */
+export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    tx.objectStore(FIELD_CHECK_STORE).put(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** All field-check entries, newest first. */
+/**
+ * All field-check entries, newest first. Pass `agentId` to get only the
+ * current agent's rows (plus legacy rows saved before agent stamping) so two
+ * agents sharing one device don't see/upload each other's sheet.
+ */
+export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCheckEntry[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
+    const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
+    req.onsuccess = () => {
+      let rows = req.result as FieldCheckEntry[];
+      if (agentId) rows = rows.filter((e) => !e.agentId || e.agentId === agentId);
+      resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** Delete one field-check entry by id. */
+export async function deleteFieldCheckEntry(id: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    tx.objectStore(FIELD_CHECK_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** Wipe the entire field-check sheet. */
+export async function clearFieldCheck(): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    tx.objectStore(FIELD_CHECK_STORE).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

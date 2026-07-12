@@ -1,6 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { matchesPreferred, guessDefaultColumns } from "@/lib/sortingCols";
 
+describe("matchesPreferred — English headers (case-insensitive)", () => {
+  it("matches color / type / make regardless of case", () => {
+    expect(matchesPreferred("COLOR")).toBe(true);
+    expect(matchesPreferred("Color")).toBe(true);
+    expect(matchesPreferred("color")).toBe(true);
+    expect(matchesPreferred("TYPE OF CAR")).toBe(true);
+    expect(matchesPreferred("Type Of Car")).toBe(true);
+    expect(matchesPreferred("Make")).toBe(true);
+    expect(matchesPreferred("Year Model")).toBe(true);
+  });
+  it("matches Arabic color/type/district/year", () => {
+    expect(matchesPreferred("لون المركبة الأساسي")).toBe(true);
+    expect(matchesPreferred("نوع السيارة")).toBe(true);
+    expect(matchesPreferred("الحي")).toBe(true);
+    expect(matchesPreferred("سنة الصنع")).toBe(true);
+  });
+});
+
 // ─── Columns from actual uploaded files ──────────────────────────────────────
 
 // Data file (نسخه من التفريغ / داتا ج): رقم اللوحة, GPS, تاريخ التسجيل, الحي, نوع السيارة, ...

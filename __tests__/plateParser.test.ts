@@ -1,5 +1,772 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+
+// ─── plateContentScore / pickBestHypothesis ────────────────────────────────
+describe("plateContentScore & pickBestHypothesis", () => {
+  it("clean letter-name spelling scores higher than a mashed invented word", () => {
+    expect(plateContentScore("راء قاف سين 3944")).toBeGreaterThan(
+      plateContentScore("راقوف سين 3944")
+    );
+  });
+
+  it("plate-like text scores higher than pure junk", () => {
+    expect(plateContentScore("دال لام لام 9679")).toBeGreaterThan(
+      plateContentScore("السلام عليكم ازيك")
+    );
+  });
+
+  it("picks the cleanest hypothesis among alternatives", () => {
+    const best = pickBestHypothesis(["راقوف سين 3944", "راء قاف سين 3944", "راقو 3944"]);
+    expect(best).toBe("راء قاف سين 3944");
+  });
+
+  it("falls back to the first non-empty candidate", () => {
+    expect(pickBestHypothesis(["", "حمل 8121"])).toBe("حمل 8121");
+    expect(pickBestHypothesis([])).toBe("");
+  });
+
+  it("uses recognizer confidence as a tiebreaker when content scores are equal", () => {
+    // Both hypotheses have identical plate-content shape (3 single letters + 4 digits),
+    // so plateContentScore alone can't distinguish them — confidence should decide.
+    const best = pickBestHypothesis(
+      ["ر ق س 3944", "د ل ن 3944"],
+      [0.4, 0.9]
+    );
+    expect(best).toBe("د ل ن 3944");
+  });
+
+  it("still prefers a clearly better content score over a higher-confidence but junkier candidate", () => {
+    const best = pickBestHypothesis(
+      ["السلام عليكم", "دال لام لام 9679"],
+      [0.95, 0.5]
+    );
+    expect(best).toBe("دال لام لام 9679");
+  });
+});
+
+// ─── Letter-confusion self-learning ────────────────────────────────────────
+describe("diffLetterCorrections", () => {
+  it("finds letter diffs when digits and letter count match", () => {
+    expect(diffLetterCorrections("صح6469", "سح6469")).toEqual([{ heard: "ص", corrected: "س" }]);
+  });
+
+  it("ignores diffs when digits differ (can't be confident it's the same plate)", () => {
+    expect(diffLetterCorrections("صح6469", "سح1111")).toEqual([]);
+  });
+
+  it("ignores diffs when letter count differs", () => {
+    expect(diffLetterCorrections("صح6469", "سبح6469")).toEqual([]);
+  });
+
+  it("returns nothing for identical plates", () => {
+    expect(diffLetterCorrections("صح6469", "صح6469")).toEqual([]);
+  });
+
+  it("treats هـ as a single unit", () => {
+    expect(diffLetterCorrections("هـح6469", "بح6469")).toEqual([{ heard: "هـ", corrected: "ب" }]);
+  });
+});
+
+describe("recordLetterCorrections & applyLetterConfusions", () => {
+  it("does not correct below the minimum count", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح6469", "سح6469");
+    recordLetterCorrections(map, "صك1122", "سك1122");
+    expect(applyLetterConfusions("صط5555", map)).toBe("صط5555");
+  });
+
+  it("corrects once the pattern is seen enough times and is dominant", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح6469", "سح6469");
+    recordLetterCorrections(map, "صك1122", "سك1122");
+    recordLetterCorrections(map, "صط7777", "سط7777");
+    expect(applyLetterConfusions("صل5555", map)).toBe("سل5555");
+  });
+
+  it("does not correct when the corrections for a letter are ambiguous (no dominant pattern)", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح1111", "سح1111");
+    recordLetterCorrections(map, "صك2222", "سك2222");
+    recordLetterCorrections(map, "صط3333", "طط3333");
+    recordLetterCorrections(map, "صل4444", "طل4444");
+    expect(applyLetterConfusions("صم5555", map)).toBe("صم5555");
+  });
+
+  it("leaves digits untouched", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح1111", "سح1111");
+    recordLetterCorrections(map, "صك2222", "سك2222");
+    recordLetterCorrections(map, "صط3333", "سط3333");
+    expect(applyLetterConfusions("صم9999", map)).toBe("سم9999");
+  });
+});
+
+describe("serializeLetterConfusions & deserializeLetterConfusions", () => {
+  it("round-trips a confusion map through plain-object form", () => {
+    const map: LetterConfusionMap = new Map();
+    recordLetterCorrections(map, "صح6469", "سح6469");
+    recordLetterCorrections(map, "صك1122", "سك1122");
+
+    const plain = serializeLetterConfusions(map);
+    const restored = deserializeLetterConfusions(plain);
+
+    expect(restored.get("ص")?.get("س")).toBe(2);
+  });
+
+  it("deserializing null/undefined returns an empty map", () => {
+    expect(deserializeLetterConfusions(undefined).size).toBe(0);
+    expect(deserializeLetterConfusions(null).size).toBe(0);
+  });
+});
+
+// ─── extractMultiplePlates ────────────────────────────────────────────────────
+describe("extractMultiplePlates", () => {
+  it("extracts a single spaced plate + vehicle type", () => {
+    // Regression: the diacritic-strip range once ate base Arabic letters, so
+    // "حمل" collapsed to "" and the whole plate was dropped.
+    const r = extractMultiplePlates("حمل 8121 ونيت");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+  });
+
+  it("extracts a plate spoken as one glued letters-word + digits", () => {
+    const r = extractMultiplePlates("حمل8121 ونيت");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+  });
+
+  it("extracts several plates spoken back-to-back", () => {
+    const r = extractMultiplePlates("ابل2150 حمس3652 دبع6152 ربس6061 الط6125 ونيت");
+    expect(r.map((x) => x.plate)).toEqual([
+      "ابل2150", "حمس3652", "دبع6152", "ربس6061", "الط6125",
+    ]);
+    // vehicle keyword at the very end attaches to the last plate
+    expect(r[r.length - 1].vehicleType).toBe("ونيت");
+  });
+
+  it("routes non-plate location words into notes, not the plate", () => {
+    const r = extractMultiplePlates("حمل 8121 باركن يمين");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toContain("باركن");
+  });
+});
+
+describe("extractMultiplePlates — corpus", () => {
+  // ── Single clean plate ────────────────────────────────────────────────────
+  it("single spaced plate", () => {
+    const r = extractMultiplePlates("دنب 6806");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("دنب6806");
+    expect(r[0].notes).toBe("");
+    expect(r[0].vehicleType).toBeUndefined();
+    expect(r[0].normalized).toBe("دنب6806");
+  });
+
+  it("single glued letters+digits plate", () => {
+    const r = extractMultiplePlates("حمل8121");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("");
+  });
+
+  // ── Letter-name normalization (فصحى) ──────────────────────────────────────
+  it("fus-ha letter names: دال لام لام → دلل", () => {
+    const r = extractMultiplePlates("دال لام لام 9679");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("دلل9679");
+  });
+
+  it("mixed letter-name + bare letter: صاد ح → صح (two-letter plate)", () => {
+    const r = extractMultiplePlates("صاد ح 6469");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("صح6469");
+    expect(r[0].normalized).toBe("صح6469");
+  });
+
+  it("letter names: را قاف سين → رقس", () => {
+    const r = extractMultiplePlates("را قاف سين 3944");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("رقس3944");
+  });
+
+  // ── Egyptian short letter names ───────────────────────────────────────────
+  it("egyptian short names: حا را با → حرب", () => {
+    const r = extractMultiplePlates("حا را با 8531");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حرب8531");
+  });
+
+  it("egyptian short names: طا را سين → طرس", () => {
+    const r = extractMultiplePlates("طا را سين 4521");
+    expect(r[0].plate).toBe("طرس4521");
+  });
+
+  // ── Spoken numbers (number-words → digits) ────────────────────────────────
+  it("spoken single-digit words: خمسة تسعة تلاتة اربعة → 5934", () => {
+    const r = extractMultiplePlates("حمن خمسة تسعة تلاتة اربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمن5934");
+  });
+
+  it("egyptian number words: تمانية خمسة تلاتة واحد → 8531", () => {
+    const r = extractMultiplePlates("درق تمانية خمسة تلاتة واحد");
+    expect(r[0].plate).toBe("درق8531");
+  });
+
+  it("spoken hundreds: مئة → 0100 (zero-padded)", () => {
+    const r = extractMultiplePlates("حمن مئة");
+    expect(r[0].plate).toBe("حمن0100");
+  });
+
+  // ── Multi-plate back-to-back ──────────────────────────────────────────────
+  it("two glued plates back-to-back", () => {
+    const r = extractMultiplePlates("رقس3944 دلل9679");
+    expect(r.map((x) => x.plate)).toEqual(["رقس3944", "دلل9679"]);
+    expect(r.every((x) => x.notes === "")).toBe(true);
+  });
+
+  it("two spaced plates back-to-back", () => {
+    const r = extractMultiplePlates("دنب 6806 حنص 4482");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
+  });
+
+  // ── Notes between / after plates ──────────────────────────────────────────
+  it("trailing note attaches to preceding plate (ه→هـ applied inside notes)", () => {
+    const r = extractMultiplePlates("حكل 80 جوه");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حكل0080");
+    expect(r[0].notes).toBe("جوهـ");
+  });
+
+  it("taa-marbuta note kept verbatim: برحة stays برحة", () => {
+    const r = extractMultiplePlates("اصك 4577 برحة");
+    expect(r[0].plate).toBe("اصك4577");
+    expect(r[0].notes).toBe("برحة");
+  });
+
+  it("note between two plates attaches to the PRECEDING plate", () => {
+    const r = extractMultiplePlates("اصك 4577 يمين حنص 4482");
+    expect(r.map((x) => x.plate)).toEqual(["اصك4577", "حنص4482"]);
+    expect(r[0].notes).toBe("يمين");
+    expect(r[1].notes).toBe("");
+  });
+
+  it("notes split across two plates (trailing then trailing)", () => {
+    const r = extractMultiplePlates("دنب 6806 جراج حنص 4482 يمين");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
+    expect(r[0].notes).toBe("جراج");
+    expect(r[1].notes).toBe("يمين");
+  });
+
+  it("multi-word trailing note preserves order", () => {
+    const r = extractMultiplePlates("حنص 4482 باركن يمين جوه");
+    expect(r[0].plate).toBe("حنص4482");
+    expect(r[0].notes).toBe("باركن يمين جوهـ");
+  });
+
+  it("leading note attaches to the FOLLOWING plate", () => {
+    const r = extractMultiplePlates("باركن يمين حمل 8121");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("باركن يمين");
+  });
+
+  // ── Vehicle types ─────────────────────────────────────────────────────────
+  it("vehicle word before plate → vehicleType", () => {
+    const r = extractMultiplePlates("دباب حمن 8531");
+    expect(r[0].plate).toBe("حمن8531");
+    expect(r[0].vehicleType).toBe("دباب");
+    expect(r[0].notes).toBe("");
+  });
+
+  it("نقليات before plate → vehicleType (not eaten as letters)", () => {
+    const r = extractMultiplePlates("نقليات ابك 5632");
+    expect(r[0].plate).toBe("ابك5632");
+    expect(r[0].vehicleType).toBe("نقليات");
+  });
+
+  it("second vehicle word on same plate spills into notes", () => {
+    const r = extractMultiplePlates("دباب حمن 8531 ونيت");
+    expect(r[0].plate).toBe("حمن8531");
+    expect(r[0].vehicleType).toBe("دباب");
+    expect(r[0].notes).toBe("ونيت");
+  });
+
+  it("vehicle word between two plates attaches to the PRECEDING plate", () => {
+    const r = extractMultiplePlates("حمل 8121 صالون دنب 6806");
+    expect(r.map((x) => x.plate)).toEqual(["حمل8121", "دنب6806"]);
+    expect(r[0].vehicleType).toBe("صالون");
+    expect(r[1].vehicleType).toBeUndefined();
+  });
+
+  it("vehicle keyword glued to digits is treated as a vehicle, dropping the digits → no plate", () => {
+    const r = extractMultiplePlates("شاحنة8121");
+    expect(r).toEqual([]);
+  });
+
+  // ── 1-2 letter plates with zero-pad ───────────────────────────────────────
+  it("single-letter plate zero-pads digits: ا 80 → ا0080", () => {
+    const r = extractMultiplePlates("ا 80");
+    expect(r[0].plate).toBe("ا0080");
+  });
+
+  it("two-letter plate zero-pads a single digit: بح 8 → بح0008", () => {
+    const r = extractMultiplePlates("بح 8");
+    expect(r[0].plate).toBe("بح0008");
+  });
+
+  it("three-digit group zero-pads to four: حكل 800 → حكل0800", () => {
+    const r = extractMultiplePlates("حكل 800");
+    expect(r[0].plate).toBe("حكل0800");
+  });
+
+  it("repeated letter plate: دال دال → دد", () => {
+    const r = extractMultiplePlates("دال دال 9679");
+    expect(r[0].plate).toBe("دد9679");
+  });
+
+  // ── Garbled long-word best-effort ─────────────────────────────────────────
+  it("garbled all-letters word adjacent to digits yields first 3 valid letters", () => {
+    const r = extractMultiplePlates("راقوف 3944");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("راق3944");
+  });
+
+  // ── Clean letters stranded behind a garbled word ──────────────────────────
+  // Real field recording: plate درط (د-ر-ط) dictated as "دال راء طاء" — Whisper
+  // misheard طاء as تق (ت isn't a valid plate letter, so "تق" isn't a clean
+  // token). Before this fix, the salvage path used ONLY تق's one valid letter
+  // (ق) and never looked past it, so the cleanly-dictated د and ر were lost —
+  // worse, they got silently misattributed as a NOTE on a totally unrelated
+  // neighboring plate (Step 5 assigns unconsumed atoms to the nearest plate).
+  it("pulls clean letters from before a garbled salvage word instead of losing them", () => {
+    const r = extractMultiplePlates("دال راء تق 3478");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("درق3478"); // د ر recovered; ق is still what was misheard
+    expect(r[0].uncertain).toBe(true);
+    expect(r[0].rawLetterSource).toBe("درتق"); // full contributing span, for WordBlendMap
+  });
+
+  it("does not reach past a real note word to steal its letters", () => {
+    // "يمين" is an explicit NOTE_KEYWORDS entry (always letters:[]) despite
+    // being spelled entirely with valid plate letters, so the supplemental
+    // scan must never fire for it even though it sits right before a
+    // garbled salvage word.
+    const r = extractMultiplePlates("يمين راقوف 3944");
+    expect(r[0].plate).toBe("راق3944");
+    expect(r[0].notes).toBe("يمين");
+  });
+
+  it("phonetic-merge word normalizes then seeds the plate: احلام → احل", () => {
+    const r = extractMultiplePlates("احلام 1234");
+    expect(r[0].plate).toBe("احل1234");
+  });
+
+  // Real field recording: plate ريق (ر-ي-ق) dictated by letter names "راء
+  // ياء قاف" — Whisper glued the first two names into one garbled word
+  // "رأياء" (normalizes to "راياء") with no space between them, so neither
+  // LETTER_NAMES entry (راء→ر, ياء→ي) could match at a word boundary. The
+  // clean scan then found only "ق" (1 letter, below the 3-cap) and stopped
+  // dead at the garbled word without trying to pull anything from it, since
+  // the letters.length===0 salvage path never fires when 1-2 letters were
+  // already found.
+  it("resolves the two-letter-names-glued-together garble راياء → ري", () => {
+    const r = extractMultiplePlates("رأياء قاف 5344");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ريق5344");
+  });
+
+  // Real field recording: "ياء سين" (letters ي س) glued by Whisper into the
+  // word "ياسين" — same class as راياء above.
+  it("resolves the glued letter names ياسين → ي س", () => {
+    const r = extractMultiplePlates("دال ياسين سبعة زيرو تسعة تمانية");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ديس7098");
+  });
+
+  // ── Spoken-number gaps found in real recordings ───────────────────────────
+  // "زيرو" (English "zero", arabized) is extremely common in dictation but
+  // wasn't a recognized form for 0 — it fell through and got salvaged as the
+  // letters ي/ر/و, spawning phantom plates and dropping the intended 0.
+  it("recognizes زيرو as the digit 0", () => {
+    const r = extractMultiplePlates("حاء لام باء خمسة زيرو خمسة اربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حلب5054");
+  });
+
+  it("recognizes زيرو as 0 at the end of a plate too", () => {
+    const r = extractMultiplePlates("ألف دال طاء خمسة خمسة خمسة زيرو");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ادط5550");
+  });
+
+  // Whisper spells the arabized "zero" a different way almost every take
+  // (زير / زيرو / زيرة / زيره …). Rather than chase each variant, the whole
+  // "زير*" family is normalized to 0 — this must cover ALL of them.
+  it("recognizes every Whisper spelling of zero (زير family)", () => {
+    for (const z of ["زير", "زيرو", "زيرة", "زيره", "زيرا"]) {
+      const r = extractMultiplePlates(`حاء لام باء خمسة ${z} خمسة أربعة`);
+      expect(r, z).toHaveLength(1);
+      expect(r[0].plate, z).toBe("حلب5054");
+    }
+  });
+
+  it("does not turn the real word وزير (minister) into a zero", () => {
+    const r = extractMultiplePlates("قاف وزير خمسة أربعة تلاتة اتنين");
+    // وزير is salvaged as letters, NOT converted to a spurious 0
+    expect(r[0].plate).not.toContain("0");
+    expect(r[0].plate).toMatch(/\d{4}$/); // digits still 5432
+    expect(r[0].plate.endsWith("5432")).toBe(true);
+  });
+
+  // "ربعة" (colloquial أربعة) wasn't a recognized form for 4.
+  it("recognizes ربعة as the digit 4", () => {
+    const r = extractMultiplePlates("حاء حاء عين سبعة ستة ربعة واحد");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ححع7641");
+  });
+
+  // ── Arabic comma glued to a number/letter ─────────────────────────────────
+  // Whisper punctuates between dictated plates with the Arabic comma "،"
+  // (U+060C), attached to the preceding word ("اثنين،"). U+060C sits INSIDE
+  // the [؀-ۿ] Arabic block that replaceAll's word-boundary lookaround guards
+  // on, so it wrongly blocked the number/letter conversion — the attached
+  // digit was lost to notes and the plate came out short (حمل0218 for the
+  // dictated 2182: the trailing "اثنين،" never became 2).
+  it("converts a number even when an Arabic comma is glued to it", () => {
+    const r = extractMultiplePlates("قاف اثنين، واحد ثمانية اثنين");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ق2182");
+  });
+
+  it("real uploaded-file transcript: commas between plates don't drop digits", () => {
+    const r = extractMultiplePlates(
+      "حاء ميم لام اثنين واحد ثمانية اثنين، ألف باء دال اثنين واحد خمسة اثنين، حاء لام كاف ستة واحد ثمانية اثنين."
+    );
+    expect(r.map((p) => p.plate)).toEqual(["حمل2182", "ابد2152", "حلك6182"]);
+  });
+
+  // ── Digit-joining conjunction و ────────────────────────────────────────────
+  // Spoken Arabic joins digits with "و" ("6 و 1 و 2 و 1" = 6121). The
+  // recognizer emits it as a standalone token identical to the plate letter
+  // waw — it must be treated as "and" when it sits between digits that still
+  // fit ONE plate number, and as a letter otherwise.
+  it("merges و-joined single digits into one plate number, flagged uncertain", () => {
+    const r = extractMultiplePlates("ا ب ح 6 و 1 و 2 و 1");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("ابح6121");
+    // A merge is always a guess — a genuine short second plate whose only
+    // letter is واو can look identical — so it's flagged for a quick glance
+    // even though the letters themselves were dictated cleanly.
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("does not flag uncertain when no و-merge happened", () => {
+    const r = extractMultiplePlates("ا ب ح 1234");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
+  it("the explicit letter name واو is never treated as the conjunction", () => {
+    const r = extractMultiplePlates("ك م ل 12 واو 34");
+    expect(r).toHaveLength(2);
+    expect(r[0].plate).toBe("كمل0012");
+    expect(r[1].plate).toBe("و0034");
+  });
+
+  // ── ألف is always the LETTER ا in multi-plate dictation ───────────────────
+  // extractMultiplePlates no longer has an ألف→1000 rewrite: it concatenates
+  // digits (doesn't sum), and "ألف" is almost always the letter ا here. The
+  // old rewrite kept eating ا into a phantom 1000 whenever the next word merely
+  // started with و — the misheard "واو" (داو6151) and "وواب" (داو6521) both
+  // triggered it.
+  it("دال ألف واو dictation keeps all 3 letters — ألف is the letter ا", () => {
+    const r = extractMultiplePlates("دال ألف واو 6151");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("داو6151");
+  });
+
+  it("ألف before a و-word is never turned into a phantom 1000", () => {
+    // Real field recording: "دال ألف وواب ..." used to yield د1000 + a phantom.
+    const r = extractMultiplePlates("دال ألف وواب ستة خمسة اتنين واحد");
+    expect(r.every((p) => !p.plate.includes("1000"))).toBe(true);
+    // the ا survives as a real plate letter
+    expect(r.some((p) => p.plate.includes("ا"))).toBe(true);
+  });
+
+  it("a genuine ألف-compound number still works via the single-plate fallback", () => {
+    // extractMultiplePlates yields no digit group for "ألف وخمسمية" (its و
+    // blocks the hundreds word), so extractPlates falls back to
+    // parsePlateFromTranscript, which sums the compound correctly.
+    expect(parsePlateFromTranscript("حمن ألف وخمسمية").plate).toBe("حمن1500");
+  });
+
+  // ── Letter-count overflow ───────────────────────────────────────────────
+  // Real field recording: "الألف نون راو" dictated for a 3-letter plate ا ن ر
+  // was misheard by Whisper as 5 clean letters (ا ن ر ا و — an extra "را" got
+  // glued on). A plate has at most 3 letters, so the closest 3 to the digits
+  // are kept as the guess (unchanged), but with 2+ more clean letters sitting
+  // right before them, picking the last 3 over the first 3 is exactly that —
+  // a guess — and must be flagged for a glance rather than trusted silently.
+  it("flags uncertain when more than 3 clean letters precede the digits", () => {
+    const r = extractMultiplePlates("ا ن ر ا و 6652");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("راو6652"); // nearest 3 kept, same as before this fix
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("does not flag uncertain when exactly 3 clean letters precede the digits", () => {
+    const r = extractMultiplePlates("ا ن ر 6652");
+    expect(r[0].plate).toBe("انر6652");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
+  // ── rawLetterSource — the raw fragment behind an uncertain guess ──────────
+  // Exposed so a later human correction can teach a whole-fragment blend
+  // (see WordBlendMap tests below) instead of a misleading letter-by-letter
+  // diff. Only ever set when the guess actually came from a fragment.
+  it("exposes the FULL overflow run (not just the kept 3) as rawLetterSource", () => {
+    const r = extractMultiplePlates("ا ن ر ا و 6652");
+    expect(r[0].rawLetterSource).toBe("انراو");
+  });
+
+  it("exposes the raw garbled word as rawLetterSource for the salvage path", () => {
+    const r = extractMultiplePlates("راقوف 3944");
+    expect(r[0].rawLetterSource).toBe("راقوف");
+  });
+
+  it("leaves rawLetterSource unset for a confident, non-guessed plate", () => {
+    const r = extractMultiplePlates("ا ب ح 1234");
+    expect(r[0].rawLetterSource).toBeUndefined();
+  });
+
+  // ── WordBlendMap — whole-fragment self-learning ───────────────────────────
+  // Complements LetterConfusionMap: a mishearing that replaces an entire
+  // dictated letter group (not one letter drifting) must be learned as one
+  // unit, or diffing it position-by-position teaches individually-wrong
+  // single-letter rules. Same minCount/minDominance safety threshold as the
+  // letter-confusion learner — a one-off correction must not immediately
+  // start auto-applying.
+  it("does not auto-apply a blend seen fewer than minCount times", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    expect(applyWordBlend("انراو", map)).toBeNull();
+  });
+
+  it("auto-applies a blend once it dominates at minCount+", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    expect(applyWordBlend("انراو", map)).toBe("انر");
+  });
+
+  it("does not apply an inconsistent (non-dominant) blend", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "باكاف", "حبك");
+    recordWordBlend(map, "باكاف", "حبك");
+    recordWordBlend(map, "باكاف", "بكا"); // a different correction, breaks dominance
+    expect(applyWordBlend("باكاف", map)).toBeNull();
+  });
+
+  it("returns null for an unseen fragment or missing source", () => {
+    const map: WordBlendMap = new Map();
+    expect(applyWordBlend("غير معروف", map)).toBeNull();
+    expect(applyWordBlend(undefined, map)).toBeNull();
+  });
+
+  it("round-trips WordBlendMap through serialize/deserialize", () => {
+    const map: WordBlendMap = new Map();
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    recordWordBlend(map, "انراو", "انر");
+    const restored = deserializeWordBlend(serializeWordBlend(map));
+    expect(applyWordBlend("انراو", restored)).toBe("انر");
+  });
+
+  it("keeps و as the next plate's letter between two complete 4-digit groups", () => {
+    const r = extractMultiplePlates("ا ب ح 1234 و 5678");
+    expect(r).toHaveLength(2);
+    expect(r[0].plate).toBe("ابح1234");
+    expect(r[1].plate).toBe("و5678");
+  });
+
+  // ── Real field transcript (Groq Whisper, single plate حبل6121) ────────────
+  // Whisper merged the spelled letters "حا با لام" into the words
+  // "حابة علامة" and joined every digit with و.
+  it("real Whisper transcript: حابة علامة 6 و 1 و 2 و 1 → حبل6121", () => {
+    const r = extractMultiplePlates("حابة علامة 6 و 1 و 2 و 1");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حبل6121");
+    // Letters are confidently resolved (compound phonetic merge), but every
+    // digit was still joined by a guessed و — worth a glance either way.
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("same transcript spelled with ه instead of ة still → حبل6121", () => {
+    const r = extractMultiplePlates("حابه علامه 6 و 1 و 2 و 1");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حبل6121");
+  });
+
+  // ── Full failure-data transcript (the 7 real plates) ──────────────────────
+  it("recovers all 7 plates from the real garbled recording", () => {
+    const r = extractMultiplePlates(
+      "رقس 3944 دلل 9679 بطس 4284 و بصح 6469 و اصك 4577 مركونه حنص 4482 دنب 6806"
+    );
+    expect(r.map((x) => x.plate)).toEqual([
+      "رقس3944", "دلل9679", "بطس4284", "بصح6469", "اصك4577", "حنص4482", "دنب6806",
+    ]);
+    expect(r[2].notes).toBe("و");
+    expect(r[3].notes).toBe("و");
+    expect(r[4].vehicleType).toBe("مركونه"); // status word, not a note (see below)
+    expect(r[4].notes).toBe("");
+  });
+
+  // ── Empty / no-digit input ────────────────────────────────────────────────
+  it("returns [] when there is no digit group at all", () => {
+    expect(extractMultiplePlates("حمن فقط")).toEqual([]);
+  });
+
+  it("returns [] for empty input", () => {
+    expect(extractMultiplePlates("")).toEqual([]);
+  });
+});
+
+describe("extractMultiplePlates — vehicle & location routing", () => {
+  it("vehicle word after the plate → vehicleType", () => {
+    const r = extractMultiplePlates("حمل 8121 ونيت");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+    expect(r[0].notes).toBe("");
+  });
+
+  it("شاحنة / دباب after the plate → vehicleType", () => {
+    expect(extractMultiplePlates("دنب 6806 شاحنة")[0].vehicleType).toBe("شاحنة");
+    expect(extractMultiplePlates("دنب 6806 دباب")[0].vehicleType).toBe("دباب");
+  });
+
+  // Status words (car condition, not a vehicle type in the strict sense) —
+  // field agents dictate them the same way as ونيت/فان right after the
+  // plate, and want them landing in the same vehicleType field, not notes.
+  it("status words مصدومة / مركونة / معطلة → vehicleType, not notes", () => {
+    const r1 = extractMultiplePlates("ب ح ر 6522 مصدومة");
+    expect(r1[0].vehicleType).toBe("مصدومة");
+    expect(r1[0].notes).toBe("");
+
+    const r2 = extractMultiplePlates("ب ح ر 6522 مركونة");
+    expect(r2[0].vehicleType).toBe("مركونة");
+    expect(r2[0].notes).toBe("");
+
+    const r3 = extractMultiplePlates("ب ح ر 6522 معطلة");
+    expect(r3[0].vehicleType).toBe("معطلة");
+    expect(r3[0].notes).toBe("");
+  });
+
+  it("a second type/status word for the same plate falls back to notes", () => {
+    const r = extractMultiplePlates("ب ح ر 6522 ونيت مصدومة");
+    expect(r[0].vehicleType).toBe("ونيت");
+    expect(r[0].notes).toBe("مصدومة");
+  });
+
+  // Location/directional words are ALL valid plate letters (يمين=ي م ي ن,
+  // يسار=ي س ا ر) so without a guard they could be salvaged into the plate.
+  it("directional word 'يمين' → notes, never plate letters", () => {
+    const r = extractMultiplePlates("حمل 8121 يمين");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("يمين");
+  });
+
+  it("directional word 'يسار' → notes", () => {
+    const r = extractMultiplePlates("حمل 8121 يسار");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].notes).toBe("يسار");
+  });
+
+  it("location words جراج / برحة / شارع → notes", () => {
+    expect(extractMultiplePlates("حمل 8121 جراج")[0].notes).toBe("جراج");
+    expect(extractMultiplePlates("حمل 8121 برحة")[0].notes).toContain("برح");
+    expect(extractMultiplePlates("حمل 8121 شارع الملك")[0].notes).toContain("شارع");
+  });
+
+  it("a location word with NO clean letters before digits must NOT become the plate", () => {
+    // يمين is all-valid-letters; guard must stop it seeding a letterless-digit plate
+    const r = extractMultiplePlates("يمين 1234");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("1234"); // digits only, letters not salvaged from يمين
+    expect(r[0].notes).toBe("يمين");
+  });
+
+  it("vehicle + location together route to the correct fields", () => {
+    const r = extractMultiplePlates("حمل 8121 ونيت جراج يمين");
+    expect(r[0].plate).toBe("حمل8121");
+    expect(r[0].vehicleType).toBe("ونيت");
+    expect(r[0].notes).toBe("جراج يمين");
+  });
+
+  it("location words route to the correct plate in multi-plate input", () => {
+    const r = extractMultiplePlates("دنب 6806 يمين حنص 4482 جراج");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806", "حنص4482"]);
+    expect(r[0].notes).toBe("يمين");
+    expect(r[1].notes).toBe("جراج");
+  });
+});
+
+// ─── extractMultiplePlates — long digit runs split into 4-digit chunks ─────
+describe("extractMultiplePlates — digit-run chunking", () => {
+  // A real Saudi plate always has letters. Field agents confirmed they never
+  // dictate a standalone number (as a separate plate OR as a note) — any
+  // digits without letters are always leftover from a longer run (usually a
+  // spurious extra digit the recognizer added), never a genuine second
+  // plate. So a letters-less chunk is folded into the nearest lettered
+  // plate's notes instead of becoming its own confusing phantom record.
+  it("folds an 8-digit run's letters-less second half into the first plate's notes", () => {
+    const r = extractMultiplePlates("دنب 6806 4482");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+    expect(r[0].notes).toBe("4482");
+  });
+
+  it("folds every letters-less leftover chunk from an uneven digit run into notes", () => {
+    const r = extractMultiplePlates("دنب 68064482 1");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+    expect(r[0].notes).toBe("4482 0001");
+  });
+
+  it("does not affect a normal single 4-digit plate", () => {
+    const r = extractMultiplePlates("دنب 6806");
+    expect(r.map((x) => x.plate)).toEqual(["دنب6806"]);
+  });
+
+  it("keeps a letters-less chunk as its own uncertain entry when no lettered plate exists at all", () => {
+    const r = extractMultiplePlates("6806 4482");
+    expect(r.map((x) => x.plate)).toEqual(["6806", "4482"]);
+    expect(r.every((p) => p.uncertain)).toBe(true);
+  });
+});
+
+// ─── extractMultiplePlates — uncertain flag ────────────────────────────────
+describe("extractMultiplePlates — uncertain flag", () => {
+  it("is not set when letters come from clean, separately-dictated letters", () => {
+    const r = extractMultiplePlates("را قاف سين 3944");
+    expect(r[0].plate).toBe("رقس3944");
+    expect(r[0].uncertain).toBeFalsy();
+  });
+
+  it("is set when letters are salvaged from a garbled word next to the digits", () => {
+    const r = extractMultiplePlates("راقوف 3944");
+    expect(r[0].plate).toBe("راق3944");
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("is set when no letters at all precede the digit group", () => {
+    const r = extractMultiplePlates("3944");
+    expect(r[0].plate).toBe("3944");
+    expect(r[0].uncertain).toBe(true);
+  });
+});
 
 // ─── bankPlateToArabic ────────────────────────────────────────────────────────
 describe("bankPlateToArabic", () => {
@@ -187,11 +954,10 @@ describe("parsePlateFromTranscript", () => {
     expect(r.notes).toContain("يمين");
   });
 
-  it("captures مركونه as notes (not vehicleType)", () => {
+  it("captures مركونه as vehicleType, not notes", () => {
     const r = parsePlateFromTranscript("درق 4121 مركونه");
     expect(r.plate).toBe("درق4121");
-    expect(r.vehicleType).toBeUndefined();
-    expect(r.notes).toBeTruthy();
+    expect(r.vehicleType).toBe("مركونه");
   });
 
   it("captures جراج يمين as notes after the plate", () => {
@@ -208,9 +974,10 @@ describe("parsePlateFromTranscript", () => {
     expect(r.notes).toContain("يمين");
   });
 
-  it("captures جراج يمين before plate and مركونه after", () => {
+  it("captures جراج يمين before plate and مركونه after as vehicleType", () => {
     const r = parsePlateFromTranscript("جراج يمين حمن 8531 مركونه");
     expect(r.plate).toBe("حمن8531");
+    expect(r.vehicleType).toBe("مركونه");
     expect(r.notes).toContain("جراج");
     expect(r.notes).toContain("يمين");
   });
@@ -498,18 +1265,16 @@ describe("parsePlateFromTranscript — real-world voice scenarios", () => {
     expect(r.notes).toContain("يمين");
   });
 
-  it("مصدومة → notes (not vehicleType)", () => {
+  it("مصدومة → vehicleType, not notes", () => {
     const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين مصدومة");
     expect(r.plate).toBe("روع7171");
-    expect(r.vehicleType).toBeUndefined();
-    expect(r.notes).toContain("مصدومة");
+    expect(r.vehicleType).toBe("مصدومة");
   });
 
-  it("مركونة → notes", () => {
+  it("مركونة → vehicleType", () => {
     const r = parsePlateFromTranscript("روع سبعة آلاف ومئة وواحد وسبعين مركونة");
     expect(r.plate).toBe("روع7171");
-    expect(r.vehicleType).toBeUndefined();
-    expect(r.notes).toContain("مركون");
+    expect(r.vehicleType).toBe("مركونة");
   });
 
   it("جراج يسار → notes", () => {
@@ -546,6 +1311,30 @@ describe("parsePlateFromTranscript — real-world voice scenarios", () => {
     expect(r.plate).toBe("حمن3921");
     expect(r.vehicleType).toBe("دباب");
     expect(r.notes).toContain("مركون");
+  });
+});
+
+// ─── parsePlateFromTranscript — uncertain flag ─────────────────────────────
+describe("parsePlateFromTranscript — uncertain flag", () => {
+  it("is not set when the primary token scan finds clean letters", () => {
+    const r = parsePlateFromTranscript("دنب 6806");
+    expect(r.plate).toBe("دنب6806");
+    expect(r.uncertain).toBeFalsy();
+  });
+
+  it("is set when digits are found but no letters precede or follow them", () => {
+    const r = parsePlateFromTranscript("6806");
+    expect(r.plate).toBe("6806");
+    expect(r.uncertain).toBe(true);
+  });
+
+  it("is set when the primary token scan fails and the regex fallback is used", () => {
+    // "68064482" is an 8-digit run — too long for the primary token scan's <=4
+    // digit-token check, so it falls through to the regex fallback, which only
+    // picks up the first 4 digits.
+    const r = parsePlateFromTranscript("دنب 68064482");
+    expect(r.plate).toBe("دنب6806");
+    expect(r.uncertain).toBe(true);
   });
 });
 

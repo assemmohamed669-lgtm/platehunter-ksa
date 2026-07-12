@@ -20,6 +20,19 @@ export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
  * or null if verification fails for any reason.
  */
 export async function verifyAdmin(authHeader: string | null): Promise<string | null> {
+  const ctx = await verifyAdminContext(authHeader);
+  return ctx?.id ?? null;
+}
+
+/**
+ * Like verifyAdmin but also reports whether the caller is a super admin.
+ * Sensitive actions (delete / deactivate / change role / touch another admin)
+ * must be gated on `isSuper` in the ROUTE — the UI hiding buttons is not
+ * enough, since the API can be called directly.
+ */
+export async function verifyAdminContext(
+  authHeader: string | null
+): Promise<{ id: string; isSuper: boolean } | null> {
   if (!authHeader?.startsWith("Bearer ")) return null;
   const token = authHeader.slice("Bearer ".length);
 
@@ -28,11 +41,12 @@ export async function verifyAdmin(authHeader: string | null): Promise<string | n
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from("profiles")
-    .select("role")
+    .select("role, is_super, is_active")
     .eq("id", userData.user.id)
     .single();
 
-  if (profileError || !profile || profile.role !== "admin") return null;
+  // A deactivated admin loses admin powers immediately (not just at next login).
+  if (profileError || !profile || profile.role !== "admin" || profile.is_active === false) return null;
 
-  return userData.user.id;
+  return { id: userData.user.id, isSuper: !!profile.is_super };
 }

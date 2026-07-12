@@ -9,17 +9,19 @@ import {
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import {
-  type ExcelTable, buildExcelBlob, downloadExcelBlob,
+  type ExcelTable, buildSpreadsheetBlob, buildCsvBlob, downloadExcelBlob,
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
+import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
+  getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
+import OpenDownloadButton from "@/components/OpenDownloadButton";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
@@ -79,6 +81,7 @@ export default function SortingPage() {
   const [dataTable, setDataTable] = useState<ExcelTable | null>(null);
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [dataColsOpen, setDataColsOpen] = useState(false);
+  const [dataBoxOpen, setDataBoxOpen] = useState(true); // collapse/expand the whole "مربع الداتا"
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
 
@@ -86,6 +89,7 @@ export default function SortingPage() {
   const [referralTable, setReferralTable] = useState<ExcelTable | null>(null);
   const [referralFile, setReferralFile] = useState<File | null>(null);
   const [referralColsOpen, setReferralColsOpen] = useState(false);
+  const [referralBoxOpen, setReferralBoxOpen] = useState(true); // collapse/expand the whole "مربع الإحالة"
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
   const [referralPlateColOverride, setReferralPlateColOverride] = useState<string | null>(null);
 
@@ -97,6 +101,10 @@ export default function SortingPage() {
   const [tashyeekTable, setTashyeekTable] = useState<ExcelTable | null>(null);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
   const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
+  const [tashyeekSelected, setTashyeekSelected] = useState<Set<number>>(new Set());
+  const [tashyeekCopiedIdx, setTashyeekCopiedIdx] = useState<number | null>(null);
+  const [pasteSelected, setPasteSelected] = useState<Set<number>>(new Set());
+  const [pasteCopiedIdx, setPasteCopiedIdx] = useState<number | null>(null);
   const [tashyeekColsOpen, setTashyeekColsOpen] = useState(false);
 
   // ── Sort results ──
@@ -127,9 +135,8 @@ export default function SortingPage() {
       getUploadedFile("local", "data"),
       getUploadedFile("local", "referral"),
       getUploadedFile("local", "check"),
-      getUploadedFile("local", "tashyeek"),
     ])
-      .then(([dataRec, refRec, checkRec, tashyeekRec]) => {
+      .then(async ([dataRec, refRec, checkRec]) => {
         if (dataRec) {
           setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
           setDataFile(new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -143,10 +150,20 @@ export default function SortingPage() {
         if (checkRec) {
           setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
         }
-        if (tashyeekRec) {
-          setTashyeekTable({ headers: tashyeekRec.headers, rows: tashyeekRec.rows });
-          setTashyeekFile(new File([tashyeekRec.fileBlob ?? new Blob()], tashyeekRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-        }
+        // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
+        // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
+        try {
+          const fieldEntries = await getAllFieldCheckEntries();
+          if (fieldEntries.length > 0) {
+            const keys = new Set<string>(["رقم اللوحة"]);
+            for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
+            keys.add("GPS");
+            const headers = [...keys];
+            const rows = fieldEntries.map((e) => ({ "رقم اللوحة": e.plate, ...e.row, "GPS": e.mapsLink ?? "" } as Record<string, string>));
+            setTashyeekTable({ headers, rows });
+            setTashyeekFile(null);
+          }
+        } catch { /* no field sheet yet */ }
         try {
           const raw = localStorage.getItem(SORT_RESULTS_KEY);
           if (raw) {
@@ -262,13 +279,28 @@ export default function SortingPage() {
     if (!nearestActive || !userLoc || !gpsCol) return matchedResults;
     return [...matchedResults]
       .map((r) => {
-        const link = r.dataRow?.[gpsCol] ?? "";
-        const coords = link ? extractLatLngFromMapsLink(link) : null;
+        const coords = parseLatLngCell(r.dataRow?.[gpsCol] ?? "");
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
-        return { ...r, _dist: dist };
+        return { ...r, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
       .sort((a, b) => a._dist - b._dist);
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
+
+  // عمود GPS في شيت التسجيلات — لترتيب «الأقرب» + حساب الوقت.
+  const tashyeekGpsCol = useMemo(() => (tashyeekTable ? findGpsColumn(tashyeekTable.headers) : null), [tashyeekTable]);
+
+  // نافذة التسجيلات مرتّبة بالأقرب (لو مفعّل) مع الاحتفاظ بالفهرس الأصلي للتحديد.
+  const displayTashyeek = useMemo(() => {
+    const base = (tashyeekResults ?? []).map((r, idx) => ({ r, idx, _dist: Infinity, _min: Infinity }));
+    if (!nearestActive || !userLoc || !tashyeekGpsCol) return base;
+    return base
+      .map((x) => {
+        const coords = parseLatLngCell(x.r.tashyeekRow?.[tashyeekGpsCol] ?? x.r.referralRow?.[tashyeekGpsCol] ?? "");
+        const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
+        return { ...x, _dist: dist, _min: estimateDriveMinutes(dist) };
+      })
+      .sort((a, b) => a._dist - b._dist);
+  }, [tashyeekResults, nearestActive, userLoc, tashyeekGpsCol]);
 
   const pasteColorMap = useMemo(() => {
     if (!pasteResults.length) return new Map<string, number>();
@@ -323,7 +355,8 @@ export default function SortingPage() {
   }
 
   const persistAndSetTashyeek = useCallback(async (table: ExcelTable, file: File) => {
-    const blob = buildExcelBlob(table.rows, "ملف التشييك");
+    // crash-safe (xlsx → CSV fallback); the stored blob is only for re-download
+    const { blob } = buildSpreadsheetBlob(table.rows, "ملف التشييك");
     await saveUploadedFile({
       key: "local:tashyeek", agentId: "local", slot: "tashyeek",
       fileName: file.name, headers: table.headers, rows: table.rows,
@@ -339,14 +372,25 @@ export default function SortingPage() {
 
   async function shareTashyeekFile() {
     if (!tashyeekTable) return;
-    const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
-    await shareExcelBlob(blob, "ملف-التشييك.xlsx", "ملف التشييك");
+    try {
+      // buildSpreadsheetBlob (xlsx → CSV fallback) so the build can't crash
+      // on the device WebView — that crash, when buildExcelBlob was outside
+      // the try, was why these buttons did nothing.
+      const { blob, ext } = buildSpreadsheetBlob(tashyeekTable.rows, "ملف التشييك");
+      await shareExcelBlob(blob, `ملف-التشييك.${ext}`, "ملف التشييك");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت مشاركة الملف");
+    }
   }
 
   async function downloadTashyeekFile() {
     if (!tashyeekTable) return;
-    const blob = buildExcelBlob(tashyeekTable.rows, "ملف التشييك");
-    await openExcelBlob(blob, "ملف-التشييك.xlsx");
+    try {
+      const { blob, ext } = buildSpreadsheetBlob(tashyeekTable.rows, "ملف التشييك");
+      await openExcelBlob(blob, `ملف-التشييك.${ext}`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
   }
 
   function toggleSet(set: Set<string>, key: string, setter: (s: Set<string>) => void) {
@@ -429,14 +473,18 @@ export default function SortingPage() {
         return true;
       });
       setNewPlatesCount(newRefRows.length);
-      const dataIndex = new Map<string, Record<string, string>[]>();
-      for (const row of dataTable.rows) {
+      // Track each data row's original position so results can be ordered the
+      // same way as the data file (not the referral file) — cars at the same
+      // location sit adjacent in the data file, so this keeps them grouped.
+      const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
+      for (let i = 0; i < dataTable.rows.length; i++) {
+        const row = dataTable.rows[i];
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
         if (!n) continue;
         const arr = dataIndex.get(n);
-        if (arr) arr.push(row); else dataIndex.set(n, [row]);
+        if (arr) arr.push({ row, dataIdx: i }); else dataIndex.set(n, [{ row, dataIdx: i }]);
       }
-      const matches: MatchResult[] = [];
+      const matches: (MatchResult & { dataIdx: number })[] = [];
       for (const refRow of newRefRows) {
         const raw = String(refRow[effectiveReferralPlateCol] ?? "");
         const n = referralPlateIsArabic
@@ -449,11 +497,12 @@ export default function SortingPage() {
             : undefined
         );
         if (dataRows) {
-          for (const dataRow of dataRows) {
-            matches.push({ referralRow: refRow, dataRow, status: "exact" });
+          for (const { row: dataRow, dataIdx } of dataRows) {
+            matches.push({ referralRow: refRow, dataRow, status: "exact", dataIdx });
           }
         }
       }
+      matches.sort((a, b) => a.dataIdx - b.dataIdx);
       let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
@@ -527,26 +576,124 @@ export default function SortingPage() {
     return obj;
   }
 
+  // ── نافذة المطلوبين (شيت التشييك) — helpers ──
+  function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
+    const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
+    const obj: Record<string, unknown> = { "رقم اللوحة": plate };
+    for (const h of tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol) ?? []) {
+      obj[h] = r.tashyeekRow[h] || r.referralRow[h] || "";
+    }
+    return obj;
+  }
+  function removeTashyeekRow(i: number) {
+    setTashyeekResults((prev) => (prev ? prev.filter((_, idx) => idx !== i) : prev));
+    setTashyeekSelected(new Set());
+  }
+  function shareTashyeekRow(r: TashyeekResultRow) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(buildRowSummaryText(buildTashyeekRowObj(r)))}`, "_blank");
+  }
+  async function copyTashyeekRow(r: TashyeekResultRow, i: number) {
+    await navigator.clipboard.writeText(buildRowSummaryText(buildTashyeekRowObj(r)));
+    setTashyeekCopiedIdx(i);
+    setTimeout(() => setTashyeekCopiedIdx(null), 1200);
+  }
+  function toggleTashyeekSel(i: number) {
+    setTashyeekSelected((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  }
+  function toggleTashyeekAll() {
+    setTashyeekSelected((prev) => prev.size === (tashyeekResults?.length ?? 0) ? new Set() : new Set((tashyeekResults ?? []).map((_, i) => i)));
+  }
+  function deleteTashyeekSelected() {
+    setTashyeekResults((prev) => (prev ? prev.filter((_, idx) => !tashyeekSelected.has(idx)) : prev));
+    setTashyeekSelected(new Set());
+  }
+  function shareTashyeekSelected() {
+    const rows = (tashyeekResults ?? []).filter((_, idx) => tashyeekSelected.has(idx));
+    if (!rows.length) return;
+    const text = `*سيارات مطلوبة (${rows.length})*\n\n` +
+      rows.map((r, i) => `${i + 1}. ${buildRowSummaryText(buildTashyeekRowObj(r))}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  async function shareTashyeekAll() {
+    const rows = (tashyeekResults ?? []).map(buildTashyeekRowObj);
+    if (!rows.length) return;
+    const { blob, ext } = buildSpreadsheetBlob(rows, "سيارات مطلوبة");
+    try { await shareExcelBlob(blob, `مطلوبين-${ts()}.${ext}`, "سيارات مطلوبة"); }
+    catch (e: any) { alert(e?.message ?? "تعذّرت المشاركة"); }
+  }
+  async function openTashyeekExcel() {
+    const rows = (tashyeekResults ?? []).map(buildTashyeekRowObj);
+    if (!rows.length) return;
+    const { blob, ext } = buildSpreadsheetBlob(rows, "سيارات مطلوبة");
+    try { await openExcelBlob(blob, `مطلوبين-${ts()}.${ext}`); }
+    catch (e: any) { alert(e?.message ?? "تعذّر الفتح"); }
+  }
+
   // ── Export ──
   const ts = () => new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
 
-  async function buildSortExcelBlob(): Promise<Blob> {
+  // Colored xlsx, but falls back to a plain CSV if the xlsx build crashes on
+  // the device WebView (loses the row colors, but the data always comes out).
+  async function buildSortExcelBlob(): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
     const rowObjects = matchedResults.map(buildRowObject);
-    const rowColors = matchedResults.map((r) => {
-      const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-      const idx = plateColorMap.get(k);
-      return idx !== undefined ? DUPE_COLORS[idx].hex : null;
-    });
-    return buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors);
+    try {
+      const rowColors = matchedResults.map((r) => {
+        const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+        const idx = plateColorMap.get(k);
+        return idx !== undefined ? DUPE_COLORS[idx].hex : null;
+      });
+      return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
+    } catch {
+      return { blob: buildCsvBlob(rowObjects), ext: "csv" };
+    }
   }
 
-  async function handleOpenSort() { setExportingAll(true); await openExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
-  async function handleDownloadSort() { setExportingAll(true); downloadExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`); setExportingAll(false); }
-  async function handleShareSort() { await shareExcelBlob(await buildSortExcelBlob(), `فرز-${ts()}.xlsx`, "نتائج الفرز"); }
+  async function handleOpenSort() {
+    setExportingAll(true);
+    try {
+      const { blob, ext } = await buildSortExcelBlob();
+      await openExcelBlob(blob, `فرز-${ts()}.${ext}`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    } finally {
+      setExportingAll(false);
+    }
+  }
+  async function handleDownloadSort() {
+    setExportingAll(true);
+    const { blob, ext } = await buildSortExcelBlob();
+    downloadExcelBlob(blob, `فرز-${ts()}.${ext}`);
+    setExportingAll(false);
+  }
+  async function handleShareSort() {
+    try {
+      const { blob, ext } = await buildSortExcelBlob();
+      await shareExcelBlob(blob, `فرز-${ts()}.${ext}`, "نتائج الفرز");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
 
-  async function handleOpenPaste() { await openExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
-  async function handleDownloadPaste() { downloadExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`); }
-  async function handleSharePaste() { await shareExcelBlob(buildExcelBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق"), `لصق-${ts()}.xlsx`, "نتائج اللصق"); }
+  async function handleOpenPaste() {
+    try {
+      const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
+      await openExcelBlob(blob, `لصق-${ts()}.${ext}`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر فتح الملف");
+    }
+  }
+  async function handleDownloadPaste() {
+    const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
+    downloadExcelBlob(blob, `لصق-${ts()}.${ext}`);
+  }
+  async function handleSharePaste() {
+    try {
+      const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
+      await shareExcelBlob(blob, `لصق-${ts()}.${ext}`, "نتائج اللصق");
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّرت المشاركة");
+    }
+  }
 
   // ── Paste sort ──
   function runPasteSort() {
@@ -607,7 +754,30 @@ export default function SortingPage() {
   function deletePasteResult(i: number) {
     const next = pasteResults.filter((_, idx) => idx !== i);
     setPasteResults(next);
+    setPasteSelected(new Set());
     if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+  }
+  function togglePasteSel(i: number) { setPasteSelected((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; }); }
+  function togglePasteAll() { setPasteSelected((p) => p.size === pasteResults.length ? new Set() : new Set(pasteResults.map((_, i) => i))); }
+  function deletePasteSelected() {
+    const next = pasteResults.filter((_, idx) => !pasteSelected.has(idx));
+    setPasteResults(next);
+    setPasteSelected(new Set());
+    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+  }
+  function sharePasteSelected() {
+    const rows = pasteResults.filter((_, idx) => pasteSelected.has(idx));
+    if (!rows.length) return;
+    const text = `*اللوحات المطلوبة (${rows.length})*\n\n` +
+      rows.map((p, i) => `${i + 1}. 🚗 ${p.converted}\n` +
+        Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")
+      ).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  async function copyPasteRow(p: { converted: string; row: Record<string, string> }, i: number) {
+    await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRowObject(p)));
+    setPasteCopiedIdx(i);
+    setTimeout(() => setPasteCopiedIdx(null), 1200);
   }
 
   if (!hydrated) return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
@@ -622,7 +792,12 @@ export default function SortingPage() {
       </div>
 
       {/* ① DATA FILE */}
-      <p className="text-sm font-bold text-ink">مربع الداتا</p>
+      <button onClick={() => setDataBoxOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-sm font-bold text-ink">
+        <span>مربع الداتا</span>
+        <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${dataBoxOpen ? "rotate-180" : ""}`} />
+      </button>
+      {dataBoxOpen && (<>
       <FileUploadBox
         title="ملف الداتا"
         hint="بيانات التفريغ الميداني"
@@ -642,16 +817,9 @@ export default function SortingPage() {
           {dataColsOpen && (
             <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
               <div>
-                <p className="mb-1.5 text-[11px] text-muted">عمود اللوحة — اضغط للتغيير:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {dataTable.headers.map((h) => (
-                    <button key={h}
-                      onClick={() => setDataPlateColOverride(h === effectiveDataPlateCol && dataPlateColOverride ? null : h)}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${h === effectiveDataPlateCol ? "border-primary bg-primary/20 text-primary font-bold" : "border-border text-muted hover:border-primary/50 hover:text-ink"}`}>
-                      {h}
-                    </button>
-                  ))}
-                </div>
+                <p className="text-[11px] text-muted">
+                  عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{effectiveDataPlateCol ?? "—"}</span>
+                </p>
               </div>
               <div>
                 <p className="mb-1.5 text-[11px] text-muted">أعمدة النتائج:</p>
@@ -672,46 +840,7 @@ export default function SortingPage() {
           )}
         </div>
       )}
-
-      {/* ② TASHYEEK FILE */}
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-bold text-ink">شيت التسجيل</p>
-        <FileUploadBox
-          title="ملف التشييك"
-          hint="يُصدَّر من صفحة التسجيل (الإدخال اليدوي)"
-          parsedFile={tashyeekFile}
-          parsedRowCount={tashyeekTable?.rows.length ?? null}
-          onParsed={(table, file) => persistAndSetTashyeek(table, file)}
-          onClear={clearTashyeekSlot}
-          showReplaceButtons
-        />
-        {tashyeekTable && (
-          <>
-            <button onClick={() => setTashyeekColsOpen((v) => !v)}
-              className="flex items-center justify-between px-1 text-xs text-muted hover:text-ink transition">
-              <span>الأعمدة ({tashyeekTable.headers.length})</span>
-              <ChevronDown size={14} className={`transition-transform duration-200 ${tashyeekColsOpen ? "rotate-180" : ""}`} />
-            </button>
-            {tashyeekColsOpen && (
-              <div className="flex flex-wrap gap-1.5 px-1">
-                {tashyeekTable.headers.map((h) => (
-                  <span key={h} className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">{h}</span>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button onClick={shareTashyeekFile}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-bold text-white transition hover:opacity-90">
-                <Share2 size={15} /> واتساب
-              </button>
-              <button onClick={downloadTashyeekFile}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
-                <Download size={15} /> تحميل
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+      </>)}
 
       {/* ③ SORT MODE TABS */}
       <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
@@ -733,7 +862,12 @@ export default function SortingPage() {
       )}
 
       {/* ③ REFERRAL FILE */}
-      <p className="text-sm font-bold text-ink">ملف الإحالة</p>
+      <button onClick={() => setReferralBoxOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-sm font-bold text-ink">
+        <span>مربع الإحالة</span>
+        <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${referralBoxOpen ? "rotate-180" : ""}`} />
+      </button>
+      {referralBoxOpen && (<>
       <FileUploadBox
         title="ملف الإحالة"
         hint={sortMode === "new" ? "إحالة اليوم الجديدة" : "قائمة البنك بالسيارات المطلوبة"}
@@ -753,16 +887,9 @@ export default function SortingPage() {
           {referralColsOpen && (
             <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
               <div>
-                <p className="mb-1.5 text-[11px] text-muted">عمود اللوحة — اضغط للتغيير:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {referralTable.headers.map((h) => (
-                    <button key={h}
-                      onClick={() => setReferralPlateColOverride(h === effectiveReferralPlateCol && referralPlateColOverride ? null : h)}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs transition ${h === effectiveReferralPlateCol ? "border-primary bg-primary/20 text-primary font-bold" : "border-border text-muted hover:border-primary/50 hover:text-ink"}`}>
-                      {h}
-                    </button>
-                  ))}
-                </div>
+                <p className="text-[11px] text-muted">
+                  عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{effectiveReferralPlateCol ?? "—"}</span>
+                </p>
               </div>
               <div>
                 <p className="mb-1.5 text-[11px] text-muted">أعمدة إضافية في النتائج:</p>
@@ -779,6 +906,7 @@ export default function SortingPage() {
           )}
         </div>
       )}
+      </>)}
 
       {/* ⑤ SORT BUTTON */}
       <button onClick={handleSort} disabled={sorting || !canSort}
@@ -857,7 +985,6 @@ export default function SortingPage() {
                   <tr className="bg-surface-2 text-muted">
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
                     {displayCols.map((col) => (
                       <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                     ))}
@@ -865,6 +992,7 @@ export default function SortingPage() {
                       <th key={`ref-${col}`} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                     ))}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
+                    {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
                     <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
                   </tr>
                 </thead>
@@ -883,9 +1011,6 @@ export default function SortingPage() {
                           </button>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        <td className="border-l border-border px-3 py-2 whitespace-nowrap">
-                          <span className="flex items-center gap-1 font-bold text-brand-glow text-xs"><CheckCircle2 size={12} /> مطلوبة</span>
-                        </td>
                         {displayCols.map((col) => {
                           const val = r.dataRow?.[col] ?? "";
                           return (
@@ -905,7 +1030,12 @@ export default function SortingPage() {
                         ))}
                         {nearestActive && "_dist" in r && (
                           <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">
-                            {Number.isFinite((r as { _dist: number })._dist) ? `${(r as { _dist: number })._dist.toFixed(1)} كم` : "—"}
+                            {formatDistanceKm((r as { _dist: number })._dist)}
+                          </td>
+                        )}
+                        {nearestActive && "_min" in r && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">
+                            {formatDurationMin((r as { _min: number })._min)}
                           </td>
                         )}
                         <td className="px-2 py-2">
@@ -1016,25 +1146,51 @@ export default function SortingPage() {
       {sorted && tashyeekResults !== null && (
         tashyeekResults.length > 0 ? (
           <div className="flex flex-col gap-3 rounded-2xl border-2 border-primary/60 bg-primary/5 p-3">
-            <div>
-              <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من ملف التشييك</h2>
-              <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من ملف التشييك موجودة في قائمة الإحالة</p>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من التشييك الميداني</h2>
+                <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {tashyeekGpsCol && (
+                  <button onClick={handleNearest} disabled={locating}
+                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
+                    <Navigation size={12} /> {locating ? "..." : "الأقرب"}
+                  </button>
+                )}
+                <button onClick={toggleTashyeekAll}
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                  {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0
+                    ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                  {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                </button>
+              </div>
             </div>
             <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh" }}>
               <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-surface-2 text-muted">
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                     {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => (
                       <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                     ))}
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
+                    <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">⋮</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tashyeekResults.map((r, i) => {
+                  {displayTashyeek.map(({ r, idx: i, _dist, _min }) => {
                     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
+                    const sel = tashyeekSelected.has(i);
                     return (
-                      <tr key={i} className="border-b border-border bg-primary/5 hover:bg-primary/10 transition">
+                      <tr key={i} className={`border-b border-border transition ${sel ? "bg-primary/15" : "bg-primary/5 hover:bg-primary/10"}`}>
+                        <td className="border-l border-border px-2 py-2 text-center">
+                          <button onClick={() => toggleTashyeekSel(i)} className="text-muted hover:text-primary transition">
+                            {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                          </button>
+                        </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
                         {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => {
                           const val = r.tashyeekRow[h] || r.referralRow[h] || "";
@@ -1051,11 +1207,59 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
+                        {nearestActive && tashyeekGpsCol && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">{formatDistanceKm(_dist)}</td>
+                        )}
+                        {nearestActive && tashyeekGpsCol && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">{formatDurationMin(_min)}</td>
+                        )}
+                        <td className="px-2 py-2">
+                          <div className="flex items-center justify-center gap-2">
+                            <button onClick={() => copyTashyeekRow(r, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                              {tashyeekCopiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                            </button>
+                            <button onClick={() => shareTashyeekRow(r)} title="واتساب" className="text-muted hover:text-primary transition"><Share2 size={13} /></button>
+                            <button onClick={() => removeTashyeekRow(i)} title="حذف" className="text-muted hover:text-danger transition"><Trash2 size={13} /></button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+            {tashyeekSelected.size > 0 && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                <span className="text-xs font-bold text-ink">{tashyeekSelected.size} محددة</span>
+                <div className="flex gap-2">
+                  <button onClick={shareTashyeekSelected}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
+                    <Share2 size={13} /> واتساب
+                  </button>
+                  <button onClick={deleteTashyeekSelected}
+                    className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20">
+                    <Trash2 size={13} /> مسح الكل
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* أزرار تحت النافذة */}
+            <div className="flex gap-3">
+              <button onClick={shareTashyeekAll}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
+                <Share2 size={16} /> مشاركة
+              </button>
+              <OpenDownloadButton
+                build={() => {
+                  const { blob, ext } = buildSpreadsheetBlob((tashyeekResults ?? []).map(buildTashyeekRowObj), "سيارات مطلوبة");
+                  return { blob, name: `مطلوبين-${ts()}.${ext}` };
+                }}
+                label="فتح في Excel"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60"
+              />
             </div>
           </div>
         ) : (
@@ -1078,7 +1282,7 @@ export default function SortingPage() {
           <div className="mb-1 flex items-center justify-between">
             <label className="text-xs text-muted">الصق اللوحات هنا</label>
             {pasteText && (
-              <button onClick={() => { setPasteText(""); setPasteResults([]); setPasteRan(false); wipePasteResults(); }}
+              <button onClick={() => setPasteText("")}
                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:text-danger">
                 <Trash2 size={13} /> مسح الكل
               </button>
@@ -1120,6 +1324,12 @@ export default function SortingPage() {
                 <span className="text-xs font-bold text-brand">{pasteResults.length} لوحة مطلوبة</span>
               </div>
               <div className="flex items-center gap-1">
+                <button onClick={togglePasteAll}
+                  className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-ink transition">
+                  {pasteSelected.size === pasteResults.length && pasteResults.length > 0
+                    ? <CheckSquare size={11} className="text-primary" /> : <Square size={11} />}
+                  تحديد الكل
+                </button>
                 <button
                   onClick={() => setPasteZoom((z) => Math.max(z - 1, 0))}
                   disabled={pasteZoom === 0}
@@ -1157,6 +1367,7 @@ export default function SortingPage() {
                 <table className="border-collapse w-full">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-surface-2 text-muted">
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">☐</th>
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                       {pasteAllCols.map((col) => (
@@ -1177,8 +1388,13 @@ export default function SortingPage() {
                       return (
                       <tr
                         key={i}
-                        className={`border-b border-border ${pasteBg}`}
+                        className={`border-b border-border ${pasteSelected.has(i) ? "bg-primary/15" : pasteBg}`}
                       >
+                        <td className="border-l border-border px-2 py-1.5 text-center">
+                          <button onClick={() => togglePasteSel(i)} className="text-muted hover:text-primary transition">
+                            {pasteSelected.has(i) ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                          </button>
+                        </td>
                         <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
                         <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
@@ -1208,9 +1424,17 @@ export default function SortingPage() {
                           );
                         })}
                         <td className="px-2 py-1.5">
-                          <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} className="text-muted hover:text-primary transition">
-                            <Share2 size={12} />
-                          </button>
+                          <div className="flex items-center justify-center gap-2">
+                            <button onClick={() => copyPasteRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                              {pasteCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
+                            </button>
+                            <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                              <Share2 size={12} />
+                            </button>
+                            <button onClick={() => deletePasteResult(i)} title="حذف" className="text-muted hover:text-danger transition">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                       );
@@ -1221,6 +1445,23 @@ export default function SortingPage() {
 
             </div>
             </div>
+
+            {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+            {pasteSelected.size > 0 && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                <span className="text-xs font-bold text-ink">{pasteSelected.size} محددة</span>
+                <div className="flex gap-2">
+                  <button onClick={sharePasteSelected}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
+                    <Share2 size={13} /> واتساب
+                  </button>
+                  <button onClick={deletePasteSelected}
+                    className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20">
+                    <Trash2 size={13} /> مسح الكل
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* أزرار تصدير كبيرة — خارج الكارت */}
             <div className="flex gap-3">

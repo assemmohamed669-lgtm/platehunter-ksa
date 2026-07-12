@@ -11,8 +11,12 @@ interface Props {
   parsedFile: File | null;
   parsedRowCount: number | null;
   onClear: () => void;
+  /** Number of actual plates read in the plate column (shown next to the file). */
+  plateCount?: number | null;
   /** When true: shows تغيير + مسح buttons instead of download + trash */
   showReplaceButtons?: boolean;
+  /** When true: file is fixed — no تغيير/مسح, only a download button */
+  fixed?: boolean;
 }
 
 export default function FileUploadBox({
@@ -22,12 +26,16 @@ export default function FileUploadBox({
   parsedFile,
   parsedRowCount,
   onClear,
+  plateCount = null,
   showReplaceButtons = false,
+  fixed = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
+  // الباسوورد اللي فتح الملف — يتحفظ عشان تبديل الورقة يفكّ التشفير تاني.
+  const [filePassword, setFilePassword] = useState<string | undefined>(undefined);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +49,7 @@ export default function FileUploadBox({
     try {
       const table = await parseExcelFile(file, undefined, forcedSheet);
       setLastFile(file);
+      setFilePassword(undefined);
       setAllSheets(table.allSheetNames ?? []);
       setActiveSheet(table.sheetName ?? null);
       onParsed(table, file);
@@ -67,6 +76,7 @@ export default function FileUploadBox({
     try {
       const table = await parseExcelFile(pendingFile, password);
       setLastFile(pendingFile);
+      setFilePassword(password);
       setAllSheets(table.allSheetNames ?? []);
       setActiveSheet(table.sheetName ?? null);
       onParsed(table, pendingFile);
@@ -100,11 +110,25 @@ export default function FileUploadBox({
             <FileSpreadsheet size={18} className="shrink-0 text-primary" />
             <div className="min-w-0">
               <p className="rtl-text truncate text-sm font-medium text-ink">{parsedFile.name}</p>
-              <p className="text-xs text-muted">{parsedRowCount} صف{activeSheet ? ` · ${activeSheet}` : ""}</p>
+              <p className="text-xs text-muted">
+                {parsedRowCount} صف
+                {plateCount != null && plateCount > 0 && (
+                  <> · <span className="font-bold text-primary">{plateCount.toLocaleString("en-US")} لوحة</span></>
+                )}
+                {activeSheet ? ` · ${activeSheet}` : ""}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
-            {showReplaceButtons ? (
+            {fixed ? (
+              <button
+                onClick={handleDownloadOriginal}
+                title="تنزيل"
+                className="rounded-full border border-border p-1.5 text-muted hover:text-primary transition"
+              >
+                <Download size={14} />
+              </button>
+            ) : showReplaceButtons ? (
               <>
                 <label
                   className={`cursor-pointer rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition ${loading ? "pointer-events-none opacity-50" : ""}`}
@@ -162,7 +186,7 @@ export default function FileUploadBox({
                   if (name === activeSheet || !lastFile) return;
                   setLoading(true);
                   try {
-                    const table = await parseExcelFile(lastFile, undefined, name);
+                    const table = await parseExcelFile(lastFile, filePassword, name);
                     setActiveSheet(name);
                     onParsed(table, lastFile);
                   } catch { /* ignore */ } finally {

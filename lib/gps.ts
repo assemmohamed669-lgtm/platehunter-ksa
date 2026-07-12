@@ -23,10 +23,29 @@ class GpsService {
       if (Capacitor.isNativePlatform()) {
         const { Geolocation } = await import("@capacitor/geolocation");
         await Geolocation.requestPermissions();
+
+        // Phase 1 — a FAST, coarse fix (network/wi-fi, no satellite lock) so a
+        // location shows in ~1-2s instead of the 15-45s a cold high-accuracy
+        // GPS lock can take. Best-effort; the watch below refines it.
+        Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 8000 })
+          .then((pos) => {
+            if (!pos) return;
+            this.lastCoords = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: pos.coords.accuracy,
+              timestamp: pos.timestamp,
+            };
+            this.notifyListeners(this.lastCoords);
+          })
+          .catch(() => {});
+
+        // Phase 2 — keep refining with high accuracy in the background.
         this.capWatchId = await Geolocation.watchPosition(
-          { enableHighAccuracy: true, timeout: 10000 },
+          { enableHighAccuracy: true, timeout: 20000 },
           (pos, err) => {
-            if (err || !pos) { this.notifyListeners(null); return; }
+            // A transient watch error must NOT wipe an already-good fix.
+            if (err || !pos) { if (!this.lastCoords) this.notifyListeners(null); return; }
             this.lastCoords = {
               lat: pos.coords.latitude,
               lng: pos.coords.longitude,
@@ -48,6 +67,23 @@ class GpsService {
       console.warn("Geolocation not supported");
       return;
     }
+
+    // Phase 1 — fast, coarse fix (cached up to 60s is fine) shown immediately.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.lastCoords = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: pos.timestamp,
+        };
+        this.notifyListeners(this.lastCoords);
+      },
+      () => {},
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 8000 }
+    );
+
+    // Phase 2 — high-accuracy watch refines it in the background.
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
         this.lastCoords = {
@@ -60,9 +96,9 @@ class GpsService {
       },
       (err) => {
         console.warn("GPS error:", err.message);
-        this.notifyListeners(null);
+        if (!this.lastCoords) this.notifyListeners(null);
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
     );
     this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 5000);
   }
@@ -101,7 +137,8 @@ class GpsService {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
         const { Geolocation } = await import("@capacitor/geolocation");
-        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
+        // Accept a fix up to 10s old so a good recent lock returns instantly.
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 });
         const coords: GpsCoords = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -113,11 +150,17 @@ class GpsService {
       }
     } catch (e) {
       console.warn("Capacitor getCurrentPosition failed:", e);
+      // Don't strand the caller — a fix from the running watch is good enough.
+      if (this.lastCoords) return this.lastCoords;
     }
 
     // Web fallback
     return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) { reject(new Error("Geolocation not supported")); return; }
+      if (!navigator.geolocation) {
+        if (this.lastCoords) { resolve(this.lastCoords); return; }
+        reject(new Error("Geolocation not supported"));
+        return;
+      }
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const coords: GpsCoords = {
@@ -129,8 +172,12 @@ class GpsService {
           this.lastCoords = coords;
           resolve(coords);
         },
-        (err) => reject(new Error(err.message)),
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+        (err) => {
+          // Fall back to the most recent watch fix rather than failing outright.
+          if (this.lastCoords) resolve(this.lastCoords);
+          else reject(new Error(err.message));
+        },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
       );
     });
   }
@@ -150,6 +197,47 @@ export function extractLatLngFromMapsLink(url: string): { lat: number; lng: numb
   const match = url.match(/q=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
   if (!match) return null;
   return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+}
+
+/**
+ * يحاول يطلّع إحداثيات من خلية GPS — يدعم رابط خرائط (q=lat,lng) وكمان
+ * صيغة "lat,lng" الخام.
+ */
+export function parseLatLngCell(raw: string): { lat: number; lng: number } | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const fromLink = extractLatLngFromMapsLink(s);
+  if (fromLink) return fromLink;
+  const m = s.match(/^\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*$/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  return null;
+}
+
+// تقدير زمن الوصول بالسيارة (أوفلاين) من المسافة المستقيمة:
+// نضرب في معامل الطرق (الطرق أطول من الخط المستقيم) ونقسم على سرعة مدينة متوسطة.
+const ROAD_FACTOR = 1.3;      // الطريق الفعلي ≈ 1.3× المسافة المستقيمة
+const CITY_SPEED_KMH = 30;    // سرعة متوسطة داخل المدينة
+
+export function estimateDriveMinutes(straightKm: number): number {
+  if (!isFinite(straightKm) || straightKm < 0) return Infinity;
+  return (straightKm * ROAD_FACTOR) / CITY_SPEED_KMH * 60;
+}
+
+/** مسافة مقروءة: أمتار تحت الكيلو، وإلا كيلومترات. */
+export function formatDistanceKm(km: number): string {
+  if (!isFinite(km)) return "—";
+  if (km < 1) return `${Math.round(km * 1000)} م`;
+  return `${km.toFixed(1)} كم`;
+}
+
+/** زمن مقروء: دقائق، أو ساعات ودقائق. */
+export function formatDurationMin(min: number): string {
+  if (!isFinite(min)) return "—";
+  const m = Math.max(1, Math.round(min));
+  if (m < 60) return `${m} د`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h} س ${r} د` : `${h} س`;
 }
 
 export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {

@@ -1,402 +1,324 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
-  UserPlus,
-  Smartphone,
-  ShieldOff,
-  ShieldCheck,
-  RefreshCw,
-  Search,
-  Users,
-  Database,
-  AlertCircle,
-  X,
-  KeyRound,
+  UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { subStatus, type SubStatus } from "@/lib/subscription";
 
 interface AgentProfile {
   id: string;
   username: string;
+  email: string | null;
+  phone: string | null;
   role: "admin" | "agent";
+  is_super: boolean;
+  is_trial: boolean;
   is_active: boolean;
   device_fingerprint: string | null;
+  last_seen: string | null;
+  subscription_end: string | null;
+  subscription_amount: number | null;
   created_at: string;
 }
 
+function addMonths(n: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+async function authHeaders() {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+const FILTERS: { key: string; label: string }[] = [
+  { key: "all", label: "الكل" },
+  { key: "active", label: "نشط" },
+  { key: "expiring", label: "قرب ينتهي" },
+  { key: "grace", label: "في السماح" },
+  { key: "expired", label: "مقطوع" },
+];
+
 export default function AdminDashboard() {
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+
+  // create form
   const [showCreate, setShowCreate] = useState(false);
-  const [newUsername, setNewUsername] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [cEmail, setCEmail] = useState("");
+  const [cPassword, setCPassword] = useState("");
+  const [cPhone, setCPhone] = useState("");
+  const [cRole, setCRole] = useState<"agent" | "admin">("agent");
+  const [cTrial, setCTrial] = useState(false);
+  const [cEnd, setCEnd] = useState(addMonths(1));
+  const [cError, setCError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [totalRecordings, setTotalRecordings] = useState<number | null>(null);
-  const [secondaryPasswordSet, setSecondaryPasswordSet] = useState(false);
-  const [showSecondaryModal, setShowSecondaryModal] = useState(false);
-  const [secondaryPass, setSecondaryPass] = useState("");
-  const [secondaryPassConfirm, setSecondaryPassConfirm] = useState("");
-  const [secondaryError, setSecondaryError] = useState<string | null>(null);
-  const [savingSecondary, setSavingSecondary] = useState(false);
 
   const loadAgents = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (!error && data) setAgents(data as AgentProfile[]);
+    const { data } = await supabase.from("profiles").select("*").order("username", { ascending: true });
+    if (data) setAgents(data as AgentProfile[]);
     setLoading(false);
   }, []);
 
+  // Access guard — admins only.
   useEffect(() => {
-    loadAgents();
-    supabase
-      .from("recordings")
-      .select("*", { count: "exact", head: true })
-      .then(({ count }) => setTotalRecordings(count ?? 0));
-    supabase.rpc("secondary_password_is_set").then(({ data }) => {
-      setSecondaryPasswordSet(!!data);
-    });
-  }, [loadAgents]);
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) { router.replace("/login"); return; }
+      const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+      if (prof?.role !== "admin") { router.replace("/instant-check"); return; }
+      setAuthorized(true);
+      loadAgents();
+    })();
+  }, [router, loadAgents]);
 
-  async function handleCreateAgent() {
-    setCreateError(null);
-
-    if (!newUsername.trim() || newPassword.length < 6) {
-      setCreateError("اسم المستخدم مطلوب وكلمة المرور ٦ أحرف على الأقل.");
-      return;
+  async function handleCreate() {
+    setCError(null);
+    if (!cEmail.trim() || cPassword.length < 6) {
+      setCError("الإيميل وكلمة مرور (٦ أحرف على الأقل) مطلوبان."); return;
     }
-
+    // التليفون إجباري للمندوب العادي فقط — اختياري لحساب التجربة.
+    if (cRole === "agent" && !cTrial && !cPhone.trim()) {
+      setCError("رقم التليفون مطلوب للمندوب."); return;
+    }
     setCreating(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const token = session.session?.access_token;
-
       const res = await fetch("/api/admin/create-agent", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ username: newUsername, password: newPassword }),
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          email: cEmail, password: cPassword, phone: cPhone,
+          role: cRole, trial: cTrial,
+          subscriptionEnd: cRole === "agent" && !cTrial ? cEnd : null,
+        }),
       });
-
       const json = await res.json();
-      if (!res.ok) {
-        setCreateError(json.error ?? "حدث خطأ غير متوقع.");
-        return;
-      }
-
+      if (!res.ok) { setCError(json.error ?? "خطأ غير متوقع."); return; }
       setShowCreate(false);
-      setNewUsername("");
-      setNewPassword("");
+      setCEmail(""); setCPassword(""); setCPhone(""); setCRole("agent"); setCTrial(false); setCEnd(addMonths(1));
       loadAgents();
-    } catch {
-      setCreateError("تعذّر الاتصال بالخادم.");
-    } finally {
-      setCreating(false);
-    }
+    } catch { setCError("تعذّر الاتصال بالخادم."); }
+    finally { setCreating(false); }
   }
 
-  async function resetDevice(id: string) {
-    await supabase.from("profiles").update({ device_fingerprint: null, session_token: null }).eq("id", id);
-    loadAgents();
+  const enriched = useMemo(() => agents.map((a) => ({ a, sub: subStatus(a.subscription_end) })), [agents]);
+
+  // Super-admin first, then admins, then agents — alphabetical within each group.
+  const rank = (a: AgentProfile) => (a.is_super ? 0 : a.role === "admin" ? 1 : 2);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return enriched
+      .filter(({ a, sub }) => {
+        if (q && !(a.username?.toLowerCase().includes(q) || a.email?.toLowerCase().includes(q) || a.phone?.includes(q))) return false;
+        if (filter === "all") return true;
+        if (a.role === "admin") return false;
+        return sub.status === (filter as SubStatus);
+      })
+      .sort((x, y) => rank(x.a) - rank(y.a) || (x.a.username ?? "").localeCompare(y.a.username ?? ""));
+  }, [enriched, search, filter]);
+
+  const agentsOnly = enriched.filter((e) => e.a.role === "agent");
+  const stat = {
+    total: agentsOnly.length,
+    active: agentsOnly.filter((e) => e.sub.status === "active").length,
+    warn: agentsOnly.filter((e) => e.sub.status === "expiring" || e.sub.status === "grace").length,
+    cut: agentsOnly.filter((e) => e.sub.status === "expired").length,
+  };
+  const expiringSoon = agentsOnly
+    .filter((e) => e.sub.status === "expiring" || e.sub.status === "grace")
+    .sort((x, y) => x.sub.daysLeft - y.sub.daysLeft);
+
+  if (authorized === null) {
+    return <div className="flex min-h-screen items-center justify-center bg-night text-sm text-muted">جارٍ التحقق...</div>;
   }
-
-  async function toggleActive(id: string, current: boolean) {
-    await supabase.from("profiles").update({ is_active: !current }).eq("id", id);
-    loadAgents();
-  }
-
-  async function handleSaveSecondaryPassword() {
-    setSecondaryError(null);
-
-    if (secondaryPass.length < 4) {
-      setSecondaryError("كلمة المرور ٤ أحرف على الأقل.");
-      return;
-    }
-    if (secondaryPass !== secondaryPassConfirm) {
-      setSecondaryError("كلمتا المرور غير متطابقتين.");
-      return;
-    }
-
-    setSavingSecondary(true);
-    const { error } = await supabase.rpc("set_secondary_password", {
-      p_password: secondaryPass,
-    });
-    setSavingSecondary(false);
-
-    if (error) {
-      setSecondaryError("فشل الحفظ. تأكد أنك مسجّل كأدمن.");
-      return;
-    }
-
-    setSecondaryPasswordSet(true);
-    setShowSecondaryModal(false);
-    setSecondaryPass("");
-    setSecondaryPassConfirm("");
-  }
-
-  async function handleClearSecondaryPassword() {
-    setSavingSecondary(true);
-    await supabase.rpc("clear_secondary_password");
-    setSavingSecondary(false);
-    setSecondaryPasswordSet(false);
-  }
-
-  const filtered = agents.filter((a) =>
-    a.username.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const agentCount = agents.filter((a) => a.role === "agent").length;
-  const activeCount = agents.filter((a) => a.is_active && a.role === "agent").length;
-  const boundCount = agents.filter((a) => a.device_fingerprint && a.role === "agent").length;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold text-ink">إدارة العملاء</h1>
-          <p className="text-xs text-muted">إنشاء الحسابات وضبط الأجهزة</p>
-        </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-night"
-        >
-          <UserPlus size={14} />
-          عميل جديد
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-2">
-        {[
-          { label: "عملاء نشطون", val: `${activeCount}/${agentCount}`, icon: <Users size={14} /> },
-          { label: "أجهزة مربوطة", val: boundCount, icon: <Smartphone size={14} /> },
-          { label: "إجمالي السجلات", val: totalRecordings ?? "—", icon: <Database size={14} /> },
-        ].map((s) => (
-          <div key={s.label} className="rounded-xl border border-border bg-surface p-3">
-            <div className="flex items-center gap-1.5 text-primary mb-1">
-              {s.icon}
-              <span className="text-lg font-black text-ink">{s.val}</span>
-            </div>
-            <p className="text-xs text-muted">{s.label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Secondary password protection */}
-      <div className="rounded-xl border border-border bg-surface p-3">
+    <main className="min-h-screen bg-night">
+      <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-5">
+        {/* Header */}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <KeyRound size={16} className="text-primary" />
-            <div>
-              <p className="text-sm font-bold text-ink">كلمة مرور التصدير/الاستيراد</p>
-              <p className="text-xs text-muted">
-                {secondaryPasswordSet ? "مفعّلة حاليًا" : "غير مفعّلة — أي عميل يقدر يصدّر/يستورد بحرية"}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="mt-2.5 flex gap-2">
-          <button
-            onClick={() => setShowSecondaryModal(true)}
-            className="flex-1 rounded-lg border border-primary/40 py-1.5 text-xs text-primary hover:bg-primary/10 transition"
-          >
-            {secondaryPasswordSet ? "تغيير كلمة المرور" : "تفعيل كلمة مرور"}
+          <button onClick={() => router.push("/instant-check")}
+            className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-muted hover:text-ink transition">
+            <ChevronLeft size={15} /> رجوع
           </button>
-          {secondaryPasswordSet && (
-            <button
-              onClick={handleClearSecondaryPassword}
-              disabled={savingSecondary}
-              className="flex-1 rounded-lg border border-danger/40 py-1.5 text-xs text-danger hover:bg-danger/10 transition disabled:opacity-50"
-            >
-              إلغاء الحماية
+          <div className="text-center">
+            <h1 className="text-lg font-bold text-ink">إدارة المناديب</h1>
+            <p className="text-[11px] text-muted">الحسابات والاشتراكات</p>
+          </div>
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-night">
+            <UserPlus size={14} /> جديد
+          </button>
+        </div>
+
+        {/* Summary */}
+        <div className="grid grid-cols-4 gap-2 text-center">
+          {[
+            { label: "الكل", val: stat.total, c: "text-ink" },
+            { label: "نشط", val: stat.active, c: "text-brand" },
+            { label: "تحذير", val: stat.warn, c: "text-alert" },
+            { label: "مقطوع", val: stat.cut, c: "text-danger" },
+          ].map((s) => (
+            <div key={s.label} className="rounded-xl border border-border bg-surface p-2.5">
+              <p className={`text-xl font-black ${s.c}`}>{s.val}</p>
+              <p className="text-[11px] text-muted">{s.label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Expiring soon */}
+        {expiringSoon.length > 0 && (
+          <div className="rounded-xl border border-alert/40 bg-alert/5 p-3">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-alert">
+              <CalendarClock size={14} /> قرب ينتهي اشتراكهم ({expiringSoon.length})
+            </div>
+            <div className="flex flex-col gap-1">
+              {expiringSoon.slice(0, 5).map(({ a, sub }) => (
+                <button key={a.id} onClick={() => router.push(`/admin/${a.id}`)}
+                  className="flex items-center justify-between rounded-lg px-2 py-1 text-xs hover:bg-surface transition">
+                  <span className="truncate text-ink">{a.username}</span>
+                  <span className="shrink-0 font-bold" style={{ color: sub.color }}>{sub.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Search + filter */}
+        <div className="relative">
+          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث بالإيميل/التليفون..."
+            className="w-full rounded-lg border border-border bg-surface-2 py-2.5 pr-9 pl-4 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {FILTERS.map((f) => (
+            <button key={f.key} onClick={() => setFilter(f.key)}
+              className={`rounded-full border px-3 py-1 text-xs transition ${filter === f.key ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
+              {f.label}
             </button>
-          )}
+          ))}
+        </div>
+
+        {/* List */}
+        <div className="flex flex-col gap-2">
+          {loading && <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>}
+          {!loading && filtered.map(({ a, sub }) => (
+            <button key={a.id} onClick={() => router.push(`/admin/${a.id}`)}
+              className={`flex items-center gap-3 rounded-xl border p-3 text-right transition ${
+                a.is_super ? "border-2 bg-black hover:opacity-90" : "border-border bg-surface hover:border-primary/50"
+              }`}
+              style={a.is_super ? { borderColor: "#D4AF37" } : undefined}>
+              <CircleUserRound size={30} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-bold text-ink" style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
+                  {a.role === "admin" && (
+                    a.is_super ? (
+                      <span className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>
+                        <Gem size={10} /> سوبر أدمن
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">أدمن</span>
+                    )
+                  )}
+                  {a.is_trial && a.role === "agent" && (
+                    <span className="flex items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand"><Clock size={10} /> تجربة</span>
+                  )}
+                  {!a.is_active && <span className="rounded-full bg-danger/10 px-1.5 py-0.5 text-[10px] text-danger">معطّل</span>}
+                </div>
+                <p className="truncate text-[11px] text-muted" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
+              </div>
+              {a.role === "agent" && (
+                <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>
+                  {sub.label}
+                </span>
+              )}
+              <ArrowRight size={16} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
+            </button>
+          ))}
+          {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد نتائج.</p>}
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="ابحث باسم المستخدم..."
-          className="w-full rounded-lg border border-border bg-surface-2 py-2.5 pr-9 pl-4 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
-
-      {/* Agent list */}
-      <div className="flex flex-col gap-2">
-        {loading && (
-          <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>
-        )}
-
-        {!loading && filtered.map((agent) => (
-          <div key={agent.id} className="rounded-xl border border-border bg-surface p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="font-mono font-bold text-ink">{agent.username}</span>
-                {agent.role === "admin" && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">أدمن</span>
-                )}
-                {agent.is_active ? (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">نشط</span>
-                ) : (
-                  <span className="rounded-full bg-danger/10 px-2 py-0.5 text-xs text-danger">معطّل</span>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
-              <Smartphone size={12} />
-              {agent.device_fingerprint ? "مرتبط بجهاز" : "غير مرتبط بأي جهاز"}
-            </div>
-
-            {agent.role === "agent" && (
-              <div className="mt-2.5 flex gap-2">
-                <button
-                  onClick={() => resetDevice(agent.id)}
-                  disabled={!agent.device_fingerprint}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border py-1.5 text-xs text-muted transition hover:text-primary disabled:opacity-40"
-                >
-                  <RefreshCw size={12} />
-                  إعادة ضبط الجهاز
-                </button>
-                <button
-                  onClick={() => toggleActive(agent.id, agent.is_active)}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs transition ${
-                    agent.is_active
-                      ? "border-danger/40 text-danger hover:bg-danger/10"
-                      : "border-primary/40 text-primary hover:bg-primary/10"
-                  }`}
-                >
-                  {agent.is_active ? <ShieldOff size={12} /> : <ShieldCheck size={12} />}
-                  {agent.is_active ? "تعطيل" : "تفعيل"}
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {!loading && filtered.length === 0 && (
-          <p className="py-8 text-center text-sm text-muted">لا توجد نتائج.</p>
-        )}
-      </div>
-
-      {/* Create agent modal */}
+      {/* Create modal */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-bold text-ink">إنشاء عميل جديد</h3>
-              <button onClick={() => setShowCreate(false)} className="text-muted hover:text-ink">
-                <X size={18} />
-              </button>
+              <h3 className="font-bold text-ink">حساب جديد</h3>
+              <button onClick={() => setShowCreate(false)} className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
+            <div className="flex flex-col gap-2.5">
+              <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="الإيميل ✱ إجباري" dir="ltr"
+                className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              <input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} placeholder="كلمة المرور (٦ أحرف+)" dir="ltr"
+                className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              <input value={cPhone} onChange={(e) => setCPhone(e.target.value)}
+                placeholder={cTrial ? "رقم واتساب (اختياري)" : "رقم واتساب المندوب ✱ إجباري"} dir="ltr"
+                className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
 
-            <label className="mb-1 block text-xs text-muted">اسم المستخدم</label>
-            <input
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
-              placeholder="مثال: agent02"
-              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary"
-            />
+              {/* توجّل حساب التجربة المجانية */}
+              <button
+                onClick={() => { setCTrial((v) => !v); setCRole("agent"); }}
+                className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-sm transition ${cTrial ? "border-brand bg-brand/15 text-brand font-bold" : "border-border text-muted"}`}
+              >
+                <span className="flex items-center gap-2"><Clock size={15} /> تجربة مجانية ١٥ يوم</span>
+                <span className={`flex h-5 w-9 items-center rounded-full p-0.5 transition ${cTrial ? "bg-brand justify-end" : "bg-border justify-start"}`}>
+                  <span className="h-4 w-4 rounded-full bg-white" />
+                </span>
+              </button>
 
-            <label className="mb-1 block text-xs text-muted">كلمة المرور</label>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="٦ أحرف على الأقل"
-              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-
-            {createError && (
-              <div className="mb-3 flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
-                <AlertCircle size={14} />
-                {createError}
+              {cTrial ? (
+                <p className="rounded-lg bg-brand/10 px-3 py-2 text-[11px] leading-relaxed text-brand">
+                  الحساب هيشتغل ١٥ يوم من دلوقتي، وبعدها يتقفل تلقائياً وتظهر رسالة انتهاء التجربة. التليفون اختياري.
+                </p>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    {(["agent", "admin"] as const).map((r) => (
+                      <button key={r} onClick={() => setCRole(r)}
+                        className={`flex-1 rounded-lg border py-2 text-sm transition ${cRole === r ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
+                        {r === "agent" ? "مندوب" : "أدمن"}
+                      </button>
+                    ))}
+                  </div>
+                  {cRole === "agent" && (
+                    <label className="flex items-center justify-between gap-2 text-xs text-muted">
+                      الاشتراك حتى:
+                      <input type="date" value={cEnd} onChange={(e) => setCEnd(e.target.value)}
+                        className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+                    </label>
+                  )}
+                </>
+              )}
+              {cError && (
+                <div className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
+                  <AlertCircle size={14} /> {cError}
+                </div>
+              )}
+              <div className="mt-1 flex gap-2">
+                <button onClick={() => setShowCreate(false)} className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted">إلغاء</button>
+                <button onClick={handleCreate} disabled={creating}
+                  className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-60">
+                  {creating ? "جارٍ..." : "إنشاء"}
+                </button>
               </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowCreate(false)}
-                className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted"
-              >
-                إلغاء
-              </button>
-              <button
-                onClick={handleCreateAgent}
-                disabled={creating}
-                className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-60"
-              >
-                {creating ? "جارٍ الإنشاء..." : "إنشاء"}
-              </button>
             </div>
           </div>
         </div>
       )}
-      {/* Set secondary password modal */}
-      {showSecondaryModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-bold text-ink">كلمة مرور التصدير/الاستيراد</h3>
-              <button onClick={() => setShowSecondaryModal(false)} className="text-muted hover:text-ink">
-                <X size={18} />
-              </button>
-            </div>
-            <p className="mb-3 text-xs text-muted">
-              هذه الكلمة سيُطلب إدخالها من كل عميل قبل تصدير Excel أو استيراد قائمة بنك.
-            </p>
-
-            <label className="mb-1 block text-xs text-muted">كلمة المرور الجديدة</label>
-            <input
-              type="password"
-              value={secondaryPass}
-              onChange={(e) => setSecondaryPass(e.target.value)}
-              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-
-            <label className="mb-1 block text-xs text-muted">تأكيد كلمة المرور</label>
-            <input
-              type="password"
-              value={secondaryPassConfirm}
-              onChange={(e) => setSecondaryPassConfirm(e.target.value)}
-              className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-
-            {secondaryError && (
-              <div className="mb-3 flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
-                <AlertCircle size={14} />
-                {secondaryError}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowSecondaryModal(false)}
-                className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted"
-              >إلغاء</button>
-              <button
-                onClick={handleSaveSecondaryPassword}
-                disabled={savingSecondary}
-                className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-60"
-              >
-                {savingSecondary ? "جارٍ الحفظ..." : "حفظ"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </main>
   );
 }

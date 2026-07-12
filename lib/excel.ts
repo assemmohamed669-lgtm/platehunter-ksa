@@ -118,8 +118,31 @@ export interface ExcelTable {
   allSheetNames?: string[];
 }
 
+/**
+ * يفكّ تشفير ملف محمي بكلمة مرور على السيرفر (SheetJS المجانية لا تفكّ التشفير).
+ * يعيد File بعد فك التشفير — جاهز للقراءة المحلية بدون باسوورد.
+ */
+async function decryptViaServer(file: File, password: string): Promise<File> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("password", password);
+  let res: Response;
+  try {
+    res = await fetch("/api/excel/decrypt", { method: "POST", body: fd });
+  } catch {
+    throw new Error("تعذّر الاتصال بالخادم لفك تشفير الملف — تأكد من الإنترنت.");
+  }
+  if (res.status === 401) throw new Error("كلمة مرور الملف غير صحيحة.");
+  if (!res.ok) throw new Error("تعذّر فك تشفير الملف — قد يكون محمياً بكلمة مرور.");
+  const buf = await res.arrayBuffer();
+  return new File([buf], file.name, { type: file.type });
+}
+
 export async function parseExcelFile(file: File, password?: string, forcedSheet?: string): Promise<ExcelTable> {
-  const buffer = await file.arrayBuffer();
+  // ملف محمي: نفكّ تشفيره على السيرفر أولاً ثم نقرأ النسخة المفكوكة محلياً
+  // (بدون تمرير الباسوورد للقارئ لأن الملف بقى غير مشفّر).
+  const workFile = password ? await decryptViaServer(file, password) : file;
+  const buffer = await workFile.arrayBuffer();
 
   // Try Web Worker first — parsing runs off the main thread so the UI stays responsive
   if (typeof Worker !== "undefined") {
@@ -166,8 +189,9 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
           reject(new Error("__WORKER_UNAVAILABLE__"));
         };
 
-        // No transfer — keep buffer available for the sync fallback
-        worker.postMessage({ buffer, password, forcedSheet });
+        // No transfer — keep buffer available for the sync fallback.
+        // الباسوورد مش بيتمرّر: الملف اتفك تشفيره بالفعل قبل هنا لو كان محمي.
+        worker.postMessage({ buffer, forcedSheet });
       });
       return result;
     } catch (err: unknown) {
@@ -178,15 +202,26 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
   }
 
   // Synchronous fallback (main-thread; may briefly freeze UI on very large files)
-  return _parseExcelSync(new Uint8Array(buffer), password);
+  return _parseExcelSync(new Uint8Array(buffer));
 }
 
 const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
 
-// يحسب نسبة اللوحات في أفضل عمود للورقة — يُرجع 0..1
-function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string): number {
+function _cellLooksLikePlate(raw: string): boolean {
+  const cleaned = raw.replace(/[\s\-_.ـ/]/g, "");
+  if (cleaned.length < 2 || cleaned.length > 10) return false;
+  const digitMatch = cleaned.match(/[0-9٠-٩]+/);
+  if (!digitMatch || digitMatch[0].length > 4) return false;
+  const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
+  return nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits);
+}
+
+// يعدّ اللوحات الفعلية في أفضل عمود للورقة (عدد مش نسبة) — الورقة صاحبة أكبر
+// عدد لوحات تكسب، عشان ملف بورقات كتير يشتغل على أكبر داتا فيها.
+function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string): number {
   try {
     const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
@@ -195,30 +230,30 @@ function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
     if (raw2d.length < 2) return 0;
 
-    const sample = raw2d.slice(1, Math.min(raw2d.length, 101));
-    const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[]).length));
+    const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[]).length), 0);
+    const sampleN = Math.min(raw2d.length, 201);
 
-    let bestRatio = 0;
+    let bestCol = -1, bestRatio = 0;
     for (let col = 0; col < numCols; col++) {
       let plateLike = 0, nonEmpty = 0;
-      for (const r of sample) {
-        const raw = String((r as unknown[])[col] ?? "").trim();
+      for (let i = 1; i < sampleN; i++) {
+        const raw = String((raw2d[i] as unknown[])?.[col] ?? "").trim();
         if (!raw) continue;
         nonEmpty++;
-        const cleaned = raw.replace(/[\s\-_.ـ/]/g, ""); // strip tatweel too
-        if (cleaned.length < 2 || cleaned.length > 10) continue;
-        const digitMatch = cleaned.match(/[0-9٠-٩]+/);
-        if (!digitMatch || digitMatch[0].length > 4) continue;
-        const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
-        if (nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits)) {
-          plateLike++;
-        }
+        if (_cellLooksLikePlate(raw)) plateLike++;
       }
       if (nonEmpty === 0) continue;
       const ratio = plateLike / nonEmpty;
-      if (ratio > bestRatio) bestRatio = ratio;
+      if (ratio > bestRatio) { bestRatio = ratio; bestCol = col; }
     }
-    return bestRatio;
+    if (bestCol < 0 || bestRatio < 0.3) return 0;
+
+    let count = 0;
+    for (let i = 1; i < raw2d.length; i++) {
+      const raw = String((raw2d[i] as unknown[])?.[bestCol] ?? "").trim();
+      if (raw && _cellLooksLikePlate(raw)) count++;
+    }
+    return count;
   } catch { return 0; }
 }
 
@@ -226,6 +261,7 @@ function _sheetPlateScore(data: Uint8Array, sheetName: string, password?: string
 function _sheetHasPlateCol(data: Uint8Array, sheetName: string, password?: string): boolean {
   try {
     const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
@@ -251,13 +287,13 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
   // Multi-sheet detection: score every sheet by plate-like content and pick
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
   if (allSheetNames.length > 1) {
-    let bestScore = 0;
+    let bestCount = 0;
     let bestName: string | undefined;
     for (const name of allSheetNames) {
-      const score = _sheetPlateScore(data, name, password);
-      if (score > bestScore) { bestScore = score; bestName = name; }
+      const count = _sheetPlateCount(data, name, password);
+      if (count > bestCount) { bestCount = count; bestName = name; }
     }
-    if (bestScore >= 0.1) {
+    if (bestCount > 0) {
       sheetName = bestName;
     } else {
       for (const name of allSheetNames) {
@@ -274,6 +310,8 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     cellStyles: false,
     sheetStubs: false,
   };
+  // dense mode — faster & far lower memory on huge sheets (see xlsxWorker.ts).
+  (opts as Record<string, unknown>).dense = true;
   if (password) (opts as Record<string, unknown>).password = password;
   if (sheetName) (opts as Record<string, unknown>).sheets = [sheetName];
 
@@ -433,6 +471,40 @@ export function buildExcelBlob(
   });
 }
 
+// Pure-JS CSV builder — no SheetJS write path at all, so it can't hit the
+// "null.indexOf" crash that XLSX.write throws inside some Android WebViews.
+// UTF-8 BOM (﻿) makes Excel read the Arabic text correctly, and Excel
+// opens .csv natively into columns. Used as a guaranteed fallback when the
+// xlsx build fails on-device.
+export function buildCsvBlob(rows: Record<string, unknown>[]): Blob {
+  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const esc = (v: unknown) => {
+    const s = v == null ? "" : String(v);
+    // Quote if it contains a comma, quote, or newline; double interior quotes.
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [
+    headers.map(esc).join(","),
+    ...rows.map((r) => headers.map((h) => esc(r[h])).join(",")),
+  ];
+  return new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+}
+
+// Builds the spreadsheet as a real .xlsx, but if XLSX.write throws (a known
+// SheetJS failure inside some Android WebViews — "null.indexOf"), falls back
+// to a plain CSV that opens in Excel just the same. Returns the extension so
+// the caller can name the file correctly.
+export function buildSpreadsheetBlob(
+  rows: Record<string, unknown>[],
+  sheetName: string,
+): { blob: Blob; ext: "xlsx" | "csv" } {
+  try {
+    return { blob: buildExcelBlob(rows, sheetName), ext: "xlsx" };
+  } catch {
+    return { blob: buildCsvBlob(rows), ext: "csv" };
+  }
+}
+
 export function downloadExcelBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -444,11 +516,54 @@ export function downloadExcelBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+// A native call failing for a REAL reason (FileProvider misconfigured, no
+// app installed to open .xlsx, plugin not registered in this APK build) must
+// never be confused with "this isn't a native platform" — both used to funnel
+// into the same catch-and-ignore, silently falling through to a download
+// mechanism (<a download>) that doesn't work inside a Capacitor WebView
+// either, so the user saw the button do literally nothing with no way for
+// anyone to know why. Callers must catch this and show the real message.
+export class NativeExportError extends Error {
+  constructor(action: string, cause: unknown) {
+    super(`${action}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "NativeExportError";
+  }
+}
+
+// Android's cache dir + FileProvider + FileOpener/Share chain is unreliable
+// with non-ASCII filenames (the default export name is Arabic, e.g.
+// "اكسيل-05-07-2026.xlsx", and audio shares use the Arabic plate as the
+// name) — the content:// URI can come back unusable and the open/share
+// silently no-ops or errors. The temp file in Cache is throwaway, so give it
+// an ASCII-safe name for the write while callers keep the human-readable
+// Arabic name for the web-download path (browsers handle Arabic names fine).
+export function toSafeCacheFilename(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  const rawExt = dot > 0 ? filename.slice(dot + 1) : "";
+  const rawBase = dot > 0 ? filename.slice(0, dot) : filename;
+  const ext = rawExt.replace(/[^a-zA-Z0-9]/g, "") || "dat";
+  const base =
+    rawBase
+      .replace(/[^a-zA-Z0-9._-]+/g, "-") // Arabic / spaces / punctuation → dash
+      .replace(/-{2,}/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "") || "file";
+  return `${base}.${ext}`;
+}
+
+// The MIME type must match the ACTUAL file, not always xlsx — the export now
+// falls back to .csv on devices where xlsx-building fails, and telling the
+// opener a .csv is an xlsx makes the spreadsheet app report it as corrupt.
+function contentTypeForFilename(filename: string): string {
+  const ext = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
+  if (ext === "csv") return "text/csv";
+  if (ext === "xls") return "application/vnd.ms-excel";
+  return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+}
+
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
-  // On native Android (Capacitor): write to filesystem then open with FileOpener
-  try {
-    const { Capacitor } = await import("@capacitor/core");
-    if (Capacitor.isNativePlatform()) {
+  const { Capacitor } = await import("@capacitor/core");
+  if (Capacitor.isNativePlatform()) {
+    try {
       const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { FileOpener } = await import("@capacitor-community/file-opener");
 
@@ -458,19 +573,22 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
       const base64 = btoa(binary);
 
+      const safeName = toSafeCacheFilename(filename);
       const { uri } = await Filesystem.writeFile({
-        path: filename,
+        path: safeName,
         data: base64,
         directory: Directory.Cache,
       });
 
       await FileOpener.open({
         filePath: uri,
-        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        contentType: contentTypeForFilename(safeName),
       });
       return "opened";
+    } catch (err) {
+      throw new NativeExportError("تعذّر فتح ملف Excel", err);
     }
-  } catch { /* not native or plugin unavailable */ }
+  }
 
   // Web fallback: download normally
   downloadExcelBlob(blob, filename);
@@ -478,10 +596,9 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
 }
 
 export async function shareExcelBlob(blob: Blob, filename: string, title: string): Promise<void> {
-  // On native Android (Capacitor): write to cache then share via native share sheet
-  try {
-    const { Capacitor } = await import("@capacitor/core");
-    if (Capacitor.isNativePlatform()) {
+  const { Capacitor } = await import("@capacitor/core");
+  if (Capacitor.isNativePlatform()) {
+    try {
       const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { Share } = await import("@capacitor/share");
 
@@ -492,15 +609,18 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
       const base64 = btoa(binary);
 
       const { uri } = await Filesystem.writeFile({
-        path: filename,
+        path: toSafeCacheFilename(filename),
         data: base64,
         directory: Directory.Cache,
       });
 
       await Share.share({ title, url: uri, dialogTitle: title });
       return;
+    } catch (err: any) {
+      if (err?.name === "AbortError" || /cancel/i.test(err?.message ?? "")) return; // user dismissed the share sheet
+      throw new NativeExportError("تعذّرت مشاركة ملف Excel", err);
     }
-  } catch { /* not native or plugin unavailable */ }
+  }
 
   // Web fallback: Web Share API with file, then download
   const file = new File([blob], filename, { type: blob.type });

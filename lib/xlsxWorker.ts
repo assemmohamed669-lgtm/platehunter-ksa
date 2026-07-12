@@ -23,26 +23,36 @@ function cellLooksLikePlate(raw: string): boolean {
   return true;
 }
 
-// يحسب نسبة الخلايا التي تشبه اللوحات في أفضل عمود — يُرجع 0..1
-function scorePlateColumnByContent(raw2d: any[][], headerRowIdx: number): number {
-  const headerRow = (raw2d[headerRowIdx] as any[]).map((h) => String(h ?? "").trim());
-  const sample = raw2d.slice(headerRowIdx + 1, headerRowIdx + 1 + 100);
+// يعدّ اللوحات الفعلية في أفضل عمود بالورقة كلها — مش نسبة، عدد فعلي.
+// نختار العمود بأعلى نسبة من عينة أول 200 صف، بعدين نعدّه كامل. كده الورقة
+// اللي فيها 40 ألف لوحة تكسب ورقة صغيرة نسبتها 100% بس فيها 10 صفوف.
+function countPlatesInBestColumn(raw2d: any[][]): number {
+  if (raw2d.length < 2) return 0;
+  const numCols = Math.max(...raw2d.slice(0, 5).map((r) => (r as any[])?.length ?? 0), 0);
+  const sampleN = Math.min(raw2d.length, 201);
 
+  let bestCol = -1;
   let bestRatio = 0;
-  for (let col = 0; col < headerRow.length; col++) {
-    let plateLike = 0;
-    let nonEmpty = 0;
-    for (const r of sample) {
-      const raw = String((r as any[])[col] ?? "").trim();
+  for (let col = 0; col < numCols; col++) {
+    let plateLike = 0, nonEmpty = 0;
+    for (let i = 1; i < sampleN; i++) {
+      const raw = String((raw2d[i] as any[])?.[col] ?? "").trim();
       if (!raw) continue;
       nonEmpty++;
       if (cellLooksLikePlate(raw)) plateLike++;
     }
     if (nonEmpty === 0) continue;
     const ratio = plateLike / nonEmpty;
-    if (ratio > bestRatio) bestRatio = ratio;
+    if (ratio > bestRatio) { bestRatio = ratio; bestCol = col; }
   }
-  return bestRatio;
+  if (bestCol < 0 || bestRatio < 0.3) return 0;
+
+  let count = 0;
+  for (let i = 1; i < raw2d.length; i++) {
+    const raw = String((raw2d[i] as any[])?.[bestCol] ?? "").trim();
+    if (raw && cellLooksLikePlate(raw)) count++;
+  }
+  return count;
 }
 
 onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; forcedSheet?: string }>) {
@@ -70,23 +80,24 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     // no sheet scores above the minimum threshold.
     const PLATE_DET_KWS = ["لوحة", "اللوحة", "plate"];
     if (!sheetName && allSheetNames.length > 1) {
-      // المحاولة الأولى: score كل ورقة واختر الأعلى
-      let bestScore = 0;
+      // المحاولة الأولى: اختر الورقة صاحبة أكبر عدد لوحات فعلية (أكبر داتا)
+      let bestCount = 0;
       let bestName: string | undefined;
       for (const name of allSheetNames) {
         try {
           const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+          (scanOpts as Record<string, unknown>).dense = true;
           if (password) (scanOpts as Record<string, unknown>).password = password;
           const wbScan = XLSX.read(data, scanOpts);
           const wsScan = wbScan.Sheets[name];
           if (!wsScan) continue;
           const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false, defval: null });
           if (scanRows.length < 2) continue;
-          const score = scorePlateColumnByContent(scanRows, 0);
-          if (score > bestScore) { bestScore = score; bestName = name; }
+          const count = countPlatesInBestColumn(scanRows);
+          if (count > bestCount) { bestCount = count; bestName = name; }
         } catch { continue; }
       }
-      if (bestScore >= 0.1) {
+      if (bestCount > 0) {
         sheetName = bestName;
       }
 
@@ -95,6 +106,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
         for (const name of allSheetNames) {
           try {
             const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+            (scanOpts as Record<string, unknown>).dense = true;
             if (password) (scanOpts as Record<string, unknown>).password = password;
             const wbScan = XLSX.read(data, scanOpts);
             const wsScan = wbScan.Sheets[name];
@@ -121,6 +133,10 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
       cellStyles: false,  // skip style parsing
       sheetStubs: false,  // no stubs for empty cells
     };
+    // dense mode: array-backed worksheet — much faster & far lower memory on
+    // huge sheets (the 464K-row data file), which also avoids the low-end-device
+    // out-of-memory white screen. sheet_to_json reads dense sheets transparently.
+    (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     if (sheetName) (opts as Record<string, unknown>).sheets = [sheetName];
 

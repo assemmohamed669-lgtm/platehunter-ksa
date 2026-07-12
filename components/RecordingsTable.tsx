@@ -13,6 +13,10 @@ import {
   Clock,
   CheckSquare,
   Square,
+  Pencil,
+  AlertTriangle,
+  Play,
+  Pause,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
@@ -39,15 +43,24 @@ interface Props {
   recordings: RecordingEntry[];
   onDelete: (id: string) => void;
   onDeleteMany?: (ids: string[]) => void;
+  onUpdatePlate?: (id: string, plate: string) => void;
+  onUpdateField?: (id: string, field: "vehicleType" | "notes", value: string) => void;
+  onPlayAudio?: (entry: RecordingEntry) => void;
+  onShareAudio?: (entry: RecordingEntry) => void;
+  playingId?: string | null;
   checkPlates?: Set<string>;
 }
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany, checkPlates }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editingField, setEditingField] = useState<{ id: string; field: "vehicleType" | "notes" } | null>(null);
+  const [editFieldValue, setEditFieldValue] = useState("");
 
   const duplicates = useMemo(
     () => findDuplicates(recordings.map((r) => r.plate)),
@@ -94,6 +107,35 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, ch
       .join("\n\n──────────\n\n");
     const full = `*السجلات الميدانية (${rows.length})*\n\n${text}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(full)}`, "_blank");
+  }
+
+  function startEdit(entry: RecordingEntry) {
+    if (!onUpdatePlate || entry.plate.startsWith("📍")) return;
+    setEditingId(entry.localId);
+    setEditValue(entry.plate);
+  }
+
+  function commitEdit() {
+    if (editingId) {
+      const trimmed = editValue.trim();
+      if (trimmed) onUpdatePlate?.(editingId, trimmed);
+    }
+    setEditingId(null);
+    setEditValue("");
+  }
+
+  function startFieldEdit(entry: RecordingEntry, field: "vehicleType" | "notes") {
+    if (!onUpdateField) return;
+    setEditingField({ id: entry.localId, field });
+    setEditFieldValue((field === "vehicleType" ? entry.vehicleType : entry.notes) || "");
+  }
+
+  function commitFieldEdit() {
+    if (editingField) {
+      onUpdateField?.(editingField.id, editingField.field, editFieldValue.trim());
+    }
+    setEditingField(null);
+    setEditFieldValue("");
   }
 
   function deleteSelected() {
@@ -206,30 +248,73 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, ch
 
                     {/* Plate */}
                     <td className="border-l border-border px-3 py-2">
-                      <div className="flex items-center gap-1.5 whitespace-nowrap">
-                        {entry.synced
-                          ? <CheckCircle2 size={10} className="text-primary shrink-0" />
-                          : <Clock size={10} className="text-muted shrink-0" />
-                        }
-                        <span className={`font-bold ${isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
-                          {entry.plate}
-                        </span>
-                        {isMatched && (
-                          <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
-                            مطلوبة
+                      {editingId === entry.localId ? (
+                        <input
+                          autoFocus
+                          dir="rtl"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={commitEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            if (e.key === "Escape") { setEditingId(null); setEditValue(""); }
+                          }}
+                          className="w-24 rounded-lg border border-primary bg-surface px-2 py-1 text-sm font-bold text-ink focus:outline-none"
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 whitespace-nowrap ${onUpdatePlate && !isPin ? "cursor-pointer" : ""}`}
+                          onClick={() => startEdit(entry)}
+                        >
+                          {entry.synced
+                            ? <CheckCircle2 size={10} className="text-primary shrink-0" />
+                            : <Clock size={10} className="text-muted shrink-0" />
+                          }
+                          <span className={`font-bold ${isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
+                            {entry.plate}
                           </span>
-                        )}
-                        {isDup && !isMatched && (
-                          <span className="rounded-full bg-alert/20 px-1 py-0.5 text-[9px] font-bold text-alert leading-none">
-                            مكررة
-                          </span>
-                        )}
-                      </div>
+                          {onUpdatePlate && !isPin && <Pencil size={10} className="text-muted shrink-0" />}
+                          {entry.uncertain && (
+                            <span title="الاستخراج مش متأكد منه — يستاهل نظرة" className="flex items-center rounded-full bg-alert/20 px-1 py-0.5 leading-none">
+                              <AlertTriangle size={10} className="text-alert" />
+                            </span>
+                          )}
+                          {isMatched && (
+                            <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">
+                              مطلوبة
+                            </span>
+                          )}
+                          {isDup && !isMatched && (
+                            <span className="rounded-full bg-alert/20 px-1 py-0.5 text-[9px] font-bold text-alert leading-none">
+                              مكررة
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     {/* Vehicle type */}
                     <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                      {entry.vehicleType || "—"}
+                      {editingField?.id === entry.localId && editingField.field === "vehicleType" ? (
+                        <input
+                          autoFocus dir="rtl" value={editFieldValue}
+                          onChange={(e) => setEditFieldValue(e.target.value)}
+                          onBlur={commitFieldEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitFieldEdit();
+                            if (e.key === "Escape") { setEditingField(null); setEditFieldValue(""); }
+                          }}
+                          className="w-28 rounded-lg border border-primary bg-surface px-2 py-1 text-sm text-ink focus:outline-none"
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 ${onUpdateField ? "cursor-pointer" : ""}`}
+                          onClick={() => startFieldEdit(entry, "vehicleType")}
+                        >
+                          <span>{entry.vehicleType || "—"}</span>
+                          {onUpdateField && <Pencil size={10} className="text-muted shrink-0" />}
+                        </div>
+                      )}
                     </td>
 
                     {/* Street */}
@@ -249,7 +334,26 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, ch
 
                     {/* Notes */}
                     <td className="border-l border-border px-3 py-2 text-ink">
-                      {entry.notes || "—"}
+                      {editingField?.id === entry.localId && editingField.field === "notes" ? (
+                        <input
+                          autoFocus dir="rtl" value={editFieldValue}
+                          onChange={(e) => setEditFieldValue(e.target.value)}
+                          onBlur={commitFieldEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitFieldEdit();
+                            if (e.key === "Escape") { setEditingField(null); setEditFieldValue(""); }
+                          }}
+                          className="w-36 rounded-lg border border-primary bg-surface px-2 py-1 text-sm text-ink focus:outline-none"
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 ${onUpdateField ? "cursor-pointer" : ""}`}
+                          onClick={() => startFieldEdit(entry, "notes")}
+                        >
+                          <span>{entry.notes || "—"}</span>
+                          {onUpdateField && <Pencil size={10} className="text-muted shrink-0" />}
+                        </div>
+                      )}
                     </td>
 
                     {/* Recorder */}
@@ -270,6 +374,21 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, ch
                     {/* Actions */}
                     <td className="px-2 py-2">
                       <div className="flex items-center gap-2">
+                        {onPlayAudio && entry.audioBlobBase64 && (
+                          <button onClick={() => onPlayAudio(entry)} title="تشغيل المقطع الصوتي"
+                            className="text-muted hover:text-primary transition">
+                            {playingId === entry.localId
+                              ? <Pause size={13} className="text-primary" />
+                              : <Play size={13} />
+                            }
+                          </button>
+                        )}
+                        {onShareAudio && entry.audioBlobBase64 && (
+                          <button onClick={() => onShareAudio(entry)} title="مشاركة المقطع الصوتي"
+                            className="text-muted hover:text-primary transition">
+                            <Share2 size={13} />
+                          </button>
+                        )}
                         <button onClick={() => copyRow(entry)} title="نسخ"
                           className="text-muted hover:text-primary transition">
                           {copiedId === entry.localId
