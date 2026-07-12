@@ -1061,6 +1061,77 @@ function splitPlateUnits(plate: string): { letters: string[]; digits: string } {
   return { letters: extractLettersFromToken(plate.slice(0, i)), digits: plate.slice(i) };
 }
 
+// ─── Wanted-list phonetic anchor (تصحيح حرف الحلق بقائمة المطلوبين) ──────────
+// أزواج الالتباس الصوتي اللي التفريغ بيلخبط فيها — كلها حروف لوحات صالحة، فمينفعش
+// نصحّح أعمى. بس لو الأرقام مطابقة ولوحة في المطلوبين تفرق بحرف واحد بالظبط من
+// زوج من دول → نرجّح إنها هي (المندوب بيدوّر عليها أصلاً). ح↔ه أشهر واحد.
+const CONFUSION_CLASS: Record<string, string> = {
+  "ح": "ح|ه", "ه": "ح|ه",
+  "س": "س|ص", "ص": "س|ص",
+  "ق": "ق|ك", "ك": "ق|ك",
+  "د": "د|ط", "ط": "د|ط",
+};
+function isConfusablePair(a: string, b: string): boolean {
+  return a !== b && CONFUSION_CLASS[a] !== undefined && CONFUSION_CLASS[a] === CONFUSION_CLASS[b];
+}
+
+/** يبني فهرس المطلوبين: آخر 4 أرقام → قائمة اللوحات المطبّعة اللي بتنتهي بيها. */
+export function buildWantedIndex(wanted: Set<string> | Iterable<string>): Map<string, string[]> {
+  const idx = new Map<string, string[]>();
+  for (const raw of wanted) {
+    const norm = normalizePlate(raw);
+    const { digits } = splitPlateUnits(norm);
+    if (digits.length !== 4) continue;
+    const arr = idx.get(digits);
+    if (arr) { if (!arr.includes(norm)) arr.push(norm); }
+    else idx.set(digits, [norm]);
+  }
+  return idx;
+}
+
+export interface AnchorResult {
+  plate: string;       // اللوحة بعد أي تصحيح (أو زي ما هي)
+  original: string;    // اللوحة قبل التصحيح
+  matched: boolean;    // في المطلوبين (تماماً أو بعد تصحيح)
+  corrected: boolean;  // اتصحّحت بحرف التباس
+  ambiguous: boolean;  // كذا مرشّح صالح → مفيش تصحيح تلقائي (يستاهل نظرة)
+}
+
+/**
+ * يثبّت لوحة على قائمة المطلوبين لو التفريغ لخبط حرف حلق (ح↔ه، س↔ص، ق↔ك، د↔ط)
+ * لكن الأرقام صح. exact يسبق التصحيح؛ التصحيح مشروط بـ: نفس الأرقام + نفس عدد
+ * الحروف + فرق حرف واحد بالظبط من زوج التباس + مرشّح وحيد (وإلا يُعلَّم غموض ولا
+ * يُصحَّح). عمره ما يخترع لوحة مش في القائمة.
+ */
+export function anchorPlateToWanted(candidate: string, index: Map<string, string[]>): AnchorResult {
+  const norm = normalizePlate(candidate);
+  const base: AnchorResult = { plate: norm, original: norm, matched: false, corrected: false, ambiguous: false };
+  const { letters, digits } = splitPlateUnits(norm);
+  const bucket = index.get(digits);
+  if (!bucket || bucket.length === 0) return base;
+
+  // exact match أولاً — مفيش داعي لأي تصحيح.
+  if (bucket.includes(norm)) return { ...base, matched: true };
+
+  // المرشّحون: نفس عدد الحروف + صفر اختلاف صعب + فرق حرف واحد التباس بالظبط.
+  const autoCands: string[] = [];
+  for (const w of bucket) {
+    const wl = splitPlateUnits(w).letters;
+    if (wl.length !== letters.length) continue;
+    let confus = 0, hard = 0;
+    for (let i = 0; i < letters.length; i++) {
+      if (letters[i] === wl[i]) continue;
+      if (isConfusablePair(letters[i], wl[i])) confus++;
+      else hard++;
+    }
+    if (hard === 0 && confus === 1) autoCands.push(w);
+  }
+
+  if (autoCands.length === 1) return { plate: autoCands[0], original: norm, matched: true, corrected: true, ambiguous: false };
+  if (autoCands.length > 1) return { ...base, ambiguous: true };
+  return base;
+}
+
 export interface LetterCorrectionDiff { heard: string; corrected: string }
 
 /**

@@ -51,7 +51,7 @@ import {
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, buildWantedIndex, anchorPlateToWanted, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -402,6 +402,7 @@ export default function RegistrationPage() {
   const recorderNameRef = useRef("");
   const manualDistrictRef = useRef("");
   const checkPlatesRef = useRef<Set<string>>(new Set());
+  const wantedIndexRef = useRef<Map<string, string[]>>(new Map());
   useEffect(() => { agentIdRef.current = agentId; }, [agentId]);
   useEffect(() => { recorderNameRef.current = recorderName; }, [recorderName]);
   useEffect(() => { manualDistrictRef.current = manualDistrict; }, [manualDistrict]);
@@ -465,7 +466,11 @@ export default function RegistrationPage() {
 
   // Check file (bank list for matching)
   const [checkPlates, setCheckPlates] = useState<Set<string>>(new Set());
-  useEffect(() => { checkPlatesRef.current = checkPlates; }, [checkPlates]);
+  useEffect(() => {
+    checkPlatesRef.current = checkPlates;
+    // فهرس المطلوبين بالأرقام لتصحيح حرف الحلق (anchorPlateToWanted).
+    wantedIndexRef.current = buildWantedIndex(checkPlates);
+  }, [checkPlates]);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkHeaders, setCheckHeaders] = useState<string[]>([]);
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
@@ -818,23 +823,53 @@ export default function RegistrationPage() {
     const plates = checkPlatesRef.current;
     if (plates.size === 0) return;
     const norm = normalizePlate(plate);
-    if (plates.has(norm)) {
+    const source = entry.isManual ? "manual" : "voice";
+
+    // مُطلِق التنبيه + إضافة اللوحة لقائمة المطابقة (مع تفاصيلها).
+    const fire = (shownPlate: string, matchType: "exact" | "fuzzy", extra: [string, string][] = []) => {
       setMatchedIds((prev) => new Set(prev).add(entry.localId));
-      const info: [string, string][] = [];
+      const info: [string, string][] = [...extra];
       if (entry.vehicleType) info.push(["النوع", entry.vehicleType]);
       if (entry.street) info.push(["الشارع", entry.street]);
       if (entry.district) info.push(["الحي", entry.district]);
-      fireWantedAlert({ plate, matchType: "exact", info, source: entry.isManual ? "manual" : "voice" });
+      fireWantedAlert({ plate: shownPlate, matchType, info, source });
       setMatchedPlates((prev) => [
         ...prev,
-        {
-          plate,
-          vehicleType: entry.vehicleType,
-          street: entry.street,
-          district: entry.district,
-          mapsLink: entry.mapsLink,
-        },
+        { plate: shownPlate, vehicleType: entry.vehicleType, street: entry.street, district: entry.district, mapsLink: entry.mapsLink },
       ]);
+    };
+    // يعيد حفظ السجل بعد تعديل موضعي (تصحيح/تعليم غير-مؤكد) + تحديث القائمة.
+    const persist = () => {
+      saveRecording(entry).then(() => { if (agentIdRef.current) loadRecordings(agentIdRef.current); }).catch(() => {});
+    };
+
+    // ① مطابقة مباشرة — للصوت واليدوي.
+    if (plates.has(norm)) { fire(norm, "exact"); return; }
+
+    // ② تصحيح حرف الحلق بقائمة المطلوبين — للصوت/الكاميرا فقط. اللوحة اليدوية
+    // المندوب كتبها بقصد، فمنعرّضهاش لتصحيح تلقائي لمطلوبة تانية.
+    if (entry.isManual) return;
+
+    const a = anchorPlateToWanted(norm, wantedIndexRef.current);
+    if (a.corrected) {
+      // تصحيح موضعي على السجل نفسه + احتفاظ بالأصل + تعليم «غير مؤكد» للمراجعة.
+      // مهم: مابنغذّيش قاموس التصحيح العام (LS_LETTER_CONFUSIONS) بتخمين الـ
+      // anchor — ده كان هيعامل التخمين كحقيقة ويحرّف كل اللوحات المستقبلية
+      // (feedback loop). التعلّم بيحصل فقط من تصحيح المندوب اليدوي في الجدول.
+      entry.originalPlate = entry.originalPlate ?? norm;
+      entry.plate = a.plate;
+      entry.uncertain = true;
+      persist();
+      fire(a.plate, "fuzzy", [["تصحيح تلقائي — راجعها", `${norm} ← ${a.plate}`]]);
+      return;
+    }
+    if (a.ambiguous) {
+      // سيارة مطلوبة موجودة فعلاً بس فيه أكتر من مرشّح — نعلّم ونطلّق تنبيه
+      // مراجعة، من غير ما نختار واحدة تلقائياً.
+      entry.uncertain = true;
+      persist();
+      fire(norm, "fuzzy", [["اشتباه — راجعها", "قريبة من أكتر من لوحة مطلوبة"]]);
+      return;
     }
   }
 

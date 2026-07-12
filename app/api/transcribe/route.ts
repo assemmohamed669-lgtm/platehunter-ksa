@@ -160,19 +160,30 @@ export async function POST(req: NextRequest) {
     };
     const blob = new Blob([new Uint8Array(buffer)], { type: EXT_TO_CONTENT_TYPE[ext] ?? mimeType ?? "audio/mp4" });
 
-    // Whisper's `prompt` biases both vocabulary and formatting toward
-    // whatever text it's given — without it, the model treats spelled-out
-    // plate letters as ordinary speech and blends them into real words it
-    // knows (observed: "حاء باء لام" → "حابة علامة", "واو" → "راو"). Priming
-    // it with the actual letter names and digit words steers it toward
-    // recognizing this as letter-by-letter dictation instead.
+    // Whisper's `prompt` is a STYLE/vocabulary exemplar prepended to the decoder
+    // (not an instruction) — it shifts the language-model prior toward whatever
+    // text it's given. Two things matter, both verified against Whisper docs:
+    //   • Only the LAST ~224 tokens are read (Whisper drops the head), and Arabic
+    //     tokenizes heavier than English — so the load-bearing content (the
+    //     throat-letter pairs + "space out every letter" style) goes at the END.
+    //   • It works as a soft prior for spelling-disambiguation of acoustically
+    //     close tokens (exactly our ح/ه case) but is NOT reliable on its own —
+    //     the wanted-list anchor (anchorPlateToWanted) is the authoritative net;
+    //     this only reduces how often a plate reaches it already-wrong.
     //
-    // The field agents are mostly Egyptian, so the prompt primes BOTH the
-    // Egyptian short pronunciations (به، حه، ره، طه، اتنين، تلاتة...) and the
-    // classical/Gulf ones — otherwise Whisper (trained mostly on MSA) mishears
-    // the Egyptian dictation itself, before the letter-map ever sees it.
+    // Observed failures this targets: adjacent Egyptian letter-names merged into
+    // real words ("حاء باء لام"→"حابة علامة", "حه هه"→"حهة"), ح heard as bare ه,
+    // and repeated digits collapsed/summarized ("صفر صفر صفر"→"ثلاثة صفار") or the
+    // model editorializing ("أو مثلاً"). The style exemplar shows: every letter is
+    // its own spaced word, ح and ه appear as TWO distinct adjacent tokens
+    // (balanced so the prior doesn't over-swing either way), and repeated digits
+    // are written out literally, never summarized.
+    // ملاحظة: الأمثلة كلها بالصيغة الصحيحة فقط — ممنوع إدراج صيغ خاطئة (زي «رهع»
+    // بدل «رحع») لأن Whisper بيميل يكرّر أمثلة الـ prompt حرفياً في المخرجات
+    // (bias-hallucination)، فمثال غلط بيعلّمه يطلّع الغلط. وممنوع سرد لوحات
+    // كاملة كأمثلة عشان مايهلوسهاش كنتائج — الأمثلة أسلوب إملاء فقط.
     const PLATE_DICTATION_PROMPT =
-      "تسجيل لوحة سيارة سعودية بصوت مأمور مصري: يُملي حروف اللوحة حرفاً حرفاً، أحياناً بالنطق المصري مثل ألف به حه دال ره سين صاد طه عين قاف كاف لام ميم نون هه واو يه، وأحياناً بالفصحى مثل باء حاء راء طاء هاء ياء. ثم يُملي الأرقام رقماً رقماً بالنطق المصري مثل صفر واحد اتنين تلاتة اربعة خمسة ستة سبعة تمانية تسعة، أو بالفصحى مثل اثنان ثلاثة أربعة ثمانية.";
+      "إملاء لوحة سيارة سعودية، مأمور مصري، كل حرف كلمة منفصلة وكل رقم منفصل، بدون أي تعليق أو تلخيص، والأرقام المكررة تُكتب كما تُنطق: صفر صفر صفر مش ثلاثة أصفار. أسلوب الإملاء: دال به نون اتنين اربعة ستة تمانية. حه ميم كاف خمسة ستة سبعة واحد. الحروف المتشابهة تُكتب متمايزة كل واحدة لحالها: حه غير هه، حاء غير هاء، سين غير صاد، قاف غير كاف، دال غير طاء، عين غير ألف.";
 
     // whisper-large-v3 (not the "-turbo" variant) — turbo trades accuracy for
     // speed, and this app's whole failure mode today has been mishearing
