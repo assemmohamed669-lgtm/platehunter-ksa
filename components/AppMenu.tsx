@@ -316,9 +316,9 @@ export default function AppMenu({
 
           {/* ── أدوات ── */}
           <section className="flex flex-col gap-2 border-t border-border pt-3">
-            <Link href="/groq" onClick={() => onOpenChange(false)}
+            <Link href="/keys" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
-              <KeyRound size={16} className="text-alert" /> مفتاح Groq (التفريغ السحابي)
+              <KeyRound size={16} className="text-alert" /> المفاتيح
             </Link>
             <button onClick={fullSync} disabled={syncing}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
