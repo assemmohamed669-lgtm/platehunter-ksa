@@ -14,6 +14,7 @@ import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
+import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -1972,10 +1973,11 @@ export default function InstantCheckPage() {
 
                     {/* فتح / مشاركة Excel */}
                     <div className="flex gap-2">
-                      <button onClick={exportPttExcel}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
-                        <Download size={14} /> فتح في Excel
-                      </button>
+                      <OpenDownloadButton
+                        build={() => ({ blob: buildExcelBlob(buildPttRows(), "تشييك صوتي"), name: `تشييك-صوتي-${Date.now()}.xlsx` })}
+                        label="فتح في Excel"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
+                      />
                       <button onClick={sharePttExcel}
                         className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
                         <Share2 size={14} /> مشاركة Excel
@@ -2112,10 +2114,11 @@ export default function InstantCheckPage() {
 
                 {/* Export / Share Excel */}
                 <div className="flex gap-2">
-                  <button onClick={exportHitsExcel}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
-                    <Download size={14} /> فتح في Excel
-                  </button>
+                  <OpenDownloadButton
+                    build={() => ({ blob: buildExcelBlob(buildHitsRows(), "لوحات مطلوبة"), name: `لوحات-مطلوبة-${Date.now()}.xlsx` })}
+                    label="فتح في Excel"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
+                  />
                   <button onClick={shareHitsExcel}
                     className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
                     <Share2 size={14} /> مشاركة Excel
@@ -2251,10 +2254,11 @@ export default function InstantCheckPage() {
 
             {/* Export / Share Excel */}
             <div className="flex gap-2">
-              <button onClick={exportFieldExcel}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition">
-                <Download size={14} /> فتح في Excel
-              </button>
+              <OpenDownloadButton
+                build={() => ({ blob: buildExcelBlob(buildFieldRows(), "التشييك الميداني"), name: `التشييك-الميداني-${Date.now()}.xlsx` })}
+                label="فتح في Excel"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
+              />
               <button onClick={shareFieldExcel}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
                 <Share2 size={14} /> مشاركة واتساب

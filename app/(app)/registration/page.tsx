@@ -30,6 +30,7 @@ import {
 import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
+import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -1451,17 +1452,12 @@ export default function RegistrationPage() {
       });
   }
 
-  async function handleExport(recs = recordings) {
+  // يبني ملف Excel للتسجيلات — يستخدمه زر «فتح» (فتح/تنزيل).
+  function buildExportFile(recs = recordings): { blob: Blob; name: string } {
     const rows = buildRows(recs);
-    if (rows.length === 0) { alert("مفيش لوحات تتصدّر."); return; }
-    // buildSpreadsheetBlob falls back to CSV if xlsx build fails on-device.
+    if (rows.length === 0) throw new Error("مفيش لوحات تتصدّر.");
     const { blob, ext } = buildSpreadsheetBlob(rows, "اللوحات");
-    const filename = `${excelName.trim() || defaultExcelName()}.${ext}`;
-    try {
-      await openExcelBlob(blob, filename);
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّر فتح الملف");
-    }
+    return { blob, name: `${excelName.trim() || defaultExcelName()}.${ext}` };
   }
 
   async function handleShareExcelFor(recs = recordings) {
@@ -2094,12 +2090,11 @@ export default function RegistrationPage() {
               >
                 <Share2 size={16} /> مشاركة Excel
               </button>
-              <button
-                onClick={() => handleExport(voiceOnly)}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
-              >
-                <Download size={16} /> فتح في Excel
-              </button>
+              <OpenDownloadButton
+                build={() => buildExportFile(voiceOnly)}
+                label="فتح في Excel"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+              />
             </div>
             <button
               onClick={() => exportToTashyeek(voiceOnly)}
@@ -2238,10 +2233,11 @@ export default function RegistrationPage() {
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
                 <Share2 size={16} /> مشاركة Excel
               </button>
-              <button onClick={() => handleExport(manualRecs)}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
-                <Download size={16} /> فتح في Excel
-              </button>
+              <OpenDownloadButton
+                build={() => buildExportFile(manualRecs)}
+                label="فتح في Excel"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary"
+              />
             </div>
             <button
               onClick={() => exportToTashyeek(manualRecs)}

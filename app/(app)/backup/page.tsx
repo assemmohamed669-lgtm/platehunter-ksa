@@ -5,6 +5,7 @@ import { Lock, Download, Share2, FileSpreadsheet, Mic, Keyboard, ShieldCheck } f
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
 import { supabase } from "@/lib/supabaseClient";
 import { buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
+import OpenDownloadButton from "@/components/OpenDownloadButton";
 
 const LS_BACKUP_PIN_HASH = "ph:backup:pinHash";
 
@@ -198,13 +199,11 @@ export default function BackupPage() {
             </div>
             {has ? (
               <div className="flex gap-2">
-                <button
-                  onClick={() => doOpen(s.key, s.blob!, s.name)}
-                  disabled={busy === `open:${s.key}`}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-ink transition hover:border-primary hover:text-primary disabled:opacity-50"
-                >
-                  <Download size={16} /> {busy === `open:${s.key}` ? "..." : "فتح الشيت"}
-                </button>
+                <OpenDownloadButton
+                  build={() => ({ blob: s.blob!, name: s.name })}
+                  label="فتح الشيت"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-ink transition hover:border-primary hover:text-primary disabled:opacity-50"
+                />
                 <button
                   onClick={() => doShare(s.key, s.blob!, s.name, s.shareTitle)}
                   disabled={busy === `share:${s.key}`}
