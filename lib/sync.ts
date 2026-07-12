@@ -124,8 +124,14 @@ export async function restoreRecordings(
     .eq("agent_id", agentId);
   if (error) return { restored: 0, error: error.message };
 
+  // السيرفر مابيخزّنش isManual — نحافظ على علامة اليدوي من النسخة المحلية
+  // عشان الإدخال اليدوي مايتنقلش لنافذة الصوت بعد الاسترجاع.
+  const existing = new Map<string, RecordingEntry>();
+  for (const e of await getAllRecordings(agentId)) existing.set(e.localId, e);
+
   let restored = 0;
   for (const r of data ?? []) {
+    const prev = existing.get(r.local_id);
     const entry: RecordingEntry = {
       localId: r.local_id,
       agentId: r.agent_id,
@@ -137,6 +143,7 @@ export async function restoreRecordings(
       district: r.district ?? undefined,
       recordedAt: r.recorded_at,
       mapsLink: r.maps_link ?? undefined,
+      isManual: (r as { is_manual?: boolean }).is_manual ?? prev?.isManual,
       synced: true,
     };
     await saveRecording(entry);

@@ -2175,42 +2175,8 @@ export default function RegistrationPage() {
         )}
       </div>
 
-      {/* ── جدول اللوحات المطلوبة (المطابقة مع ملف التشييك) ── */}
-      {(() => {
-        const matchedRecs = recordings.filter((r) => matchedIds.has(r.localId));
-        return matchedRecs.length > 0 ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-bold text-brand">اللوحات المطلوبة ({matchedRecs.length})</p>
-            <RecordingsTable
-              recordings={matchedRecs}
-              onDelete={handleDelete}
-              onDeleteMany={async (ids) => { for (const id of ids) await handleDelete(id); }}
-              onUpdatePlate={handlePlateEdit}
-              onUpdateField={handleFieldEdit}
-              onPlayAudio={togglePlay}
-              onShareAudio={shareAudio}
-              playingId={playingId}
-              checkPlates={checkPlates}
-            />
-            <div className="flex gap-2">
-              <button onClick={async () => {
-                try {
-                  const { blob, ext } = buildSpreadsheetBlob(
-                    matchedRecs.map((r) => ({ "رقم اللوحة": r.plate, "الشارع": r.street ?? "", "الحي": r.district ?? "", "GPS": r.mapsLink ?? "" })),
-                    "المطلوبة"
-                  );
-                  await shareBlob(blob, `مطلوبة-${new Date().toISOString().slice(0,10)}.${ext}`, "اللوحات المطلوبة");
-                } catch (err: any) {
-                  alert(err?.message ?? "تعذّرت المشاركة");
-                }
-              }}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
-                <Share2 size={16} /> مشاركة المطلوبة
-              </button>
-            </div>
-          </div>
-        ) : null;
-      })()}
+      {/* نافذة «اللوحات المطلوبة» المشتركة اتشالت — اللوحة المطلوبة بتفضل في
+          نافذة مصدرها (صوتي/يدوي) متعلّم عليها بالأخضر + شارة «مطلوبة». */}
 
       {/* Manual plate entry */}
       <div className="rounded-2xl border border-border bg-surface px-4 py-4">
@@ -2287,9 +2253,7 @@ export default function RegistrationPage() {
         ) : null;
       })()}
 
-      {recordings.filter((r) => !r.isManual && !matchedIds.has(r.localId)).length === 0 &&
-       recordings.filter((r) => r.isManual).length === 0 &&
-       !isTranscribing && (
+      {recordings.length === 0 && !isTranscribing && (
         <div className="flex flex-col items-center gap-2 py-10 text-center">
           <Mic size={32} className="text-muted/40" />
           <p className="text-sm text-muted">
