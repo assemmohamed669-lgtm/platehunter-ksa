@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { MapPin, Search, Trash2, Mic, Keyboard, Camera, ShieldAlert } from "lucide-react";
+import { MapPin, Search, Trash2, Mic, Keyboard, Camera, ShieldAlert, X, Share2, Download, CheckSquare, Square, Navigation, ClipboardList } from "lucide-react";
 import {
   getAllRecordings,
   getAllFieldCheckEntries,
@@ -14,6 +14,8 @@ import {
 } from "@/lib/idb";
 import { detectPlateColumn, detectPlateColumnByContent } from "@/lib/plateParser";
 import { plateKey } from "@/lib/fieldCheck";
+import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
+import { gpsService, haversineKm } from "@/lib/gps";
 import { supabase } from "@/lib/supabaseClient";
 import PlateBadge from "@/components/PlateBadge";
 import type { MapPoint } from "@/components/MapView";
@@ -171,14 +173,116 @@ export default function MapsPage() {
     [filtered]
   );
 
-  async function remove(m: Match) {
-    if (!confirm(`تحذف اللوحة ${m.plate} من القائمة؟`)) return;
-    if (m.source === "rec") {
-      await deleteRecording(m.id);
-      setRecordings((prev) => prev.filter((r) => r.localId !== m.id));
-    } else {
-      await deleteFieldCheckEntry(m.id);
-      setFieldEntries((prev) => prev.filter((e) => e.id !== m.id));
+  // ── نافذة اللوحات (#4) ────────────────────────────────────────────────────
+  const [windowOpen, setWindowOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [nearestSort, setNearestSort] = useState(false);
+  const [myLoc, setMyLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // ترتيب حسب الأقرب لموقعي — يجلب الموقع الحالي ثم يرتّب بالمسافة.
+  async function toggleNearest() {
+    if (nearestSort) { setNearestSort(false); return; }
+    setLocating(true);
+    try {
+      const c = await gpsService.pinCurrentLocation();
+      setMyLoc({ lat: c.lat, lng: c.lng });
+      setNearestSort(true);
+    } catch {
+      alert("تعذّر تحديد موقعك الحالي — تأكد من تفعيل الـ GPS.");
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  // القائمة المعروضة داخل النافذة، مرتّبة بالأقرب عند التفعيل.
+  const windowList = useMemo<Match[]>(() => {
+    if (!nearestSort || !myLoc) return filtered;
+    const dist = (m: Match) =>
+      m.lat != null && m.lng != null
+        ? haversineKm(myLoc.lat, myLoc.lng, m.lat, m.lng)
+        : Infinity; // اللوحات بدون موقع تنزل آخر القائمة
+    return [...filtered].sort((a, b) => dist(a) - dist(b));
+  }, [filtered, nearestSort, myLoc]);
+
+  function toggleSelect(key: string) {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+  }
+  function toggleSelectAll() {
+    setSelected((prev) =>
+      prev.size === windowList.length ? new Set() : new Set(windowList.map((m) => m.key))
+    );
+  }
+
+  const selectedMatches = useMemo(
+    () => windowList.filter((m) => selected.has(m.key)),
+    [windowList, selected]
+  );
+
+  // صف Excel/مشاركة لكل لوحة — يحوي كل التفاصيل.
+  function matchToRow(m: Match): Record<string, unknown> {
+    const row: Record<string, unknown> = {
+      "رقم اللوحة": m.plate,
+      "طريقة التشييك": m.method,
+    };
+    for (const [k, v] of m.info) if (!(k in row)) row[k] = v;
+    row["التاريخ"] = formatDate(m.when);
+    row["GPS"] = m.mapsLink ?? "";
+    return row;
+  }
+
+  async function deleteMatches(list: Match[]) {
+    const recIds = new Set(list.filter((m) => m.source === "rec").map((m) => m.id));
+    const fieldIds = new Set(list.filter((m) => m.source === "field").map((m) => m.id));
+    await Promise.all([
+      ...[...recIds].map((id) => deleteRecording(id)),
+      ...[...fieldIds].map((id) => deleteFieldCheckEntry(id)),
+    ]);
+    if (recIds.size) setRecordings((prev) => prev.filter((r) => !recIds.has(r.localId)));
+    if (fieldIds.size) setFieldEntries((prev) => prev.filter((e) => !fieldIds.has(e.id)));
+    setSelected((prev) => {
+      const n = new Set(prev);
+      for (const m of list) n.delete(m.key);
+      return n;
+    });
+  }
+
+  async function deleteSelected() {
+    if (selectedMatches.length === 0) return;
+    if (!confirm(`تحذف ${selectedMatches.length} لوحة من القائمة؟`)) return;
+    await deleteMatches(selectedMatches);
+  }
+
+  async function shareSelected() {
+    const list = selectedMatches.length ? selectedMatches : windowList;
+    if (list.length === 0) return;
+    setBusy(true);
+    try {
+      const { blob, ext } = buildSpreadsheetBlob(list.map(matchToRow), "لوحات مطلوبة");
+      await shareExcelBlob(blob, `لوحات-مطلوبة.${ext}`, "لوحات مطلوبة اتلاقت");
+    } catch {
+      alert("تعذّرت المشاركة.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function excelSelected() {
+    const list = selectedMatches.length ? selectedMatches : windowList;
+    if (list.length === 0) return;
+    setBusy(true);
+    try {
+      const { blob, ext } = buildSpreadsheetBlob(list.map(matchToRow), "لوحات مطلوبة");
+      await openExcelBlob(blob, `لوحات-مطلوبة.${ext}`);
+    } catch {
+      alert("تعذّر فتح Excel.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -228,51 +332,136 @@ export default function MapsPage() {
           </p>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {filtered.map((m) => {
-            const Icon = METHOD_ICON[m.methodIcon];
-            return (
-              <div key={m.key} className="flex flex-col gap-2 rounded-2xl border border-brand/30 bg-brand/5 p-3">
-                <div className="flex items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <PlateBadge value={m.plate} size="sm" />
-                  </div>
-                  <span className="flex items-center gap-1 rounded-full bg-surface px-2 py-1 text-[11px] font-bold text-ink shrink-0">
-                    <Icon size={12} style={{ color: COLOR[m.methodIcon] }} /> {m.method}
-                  </span>
-                  <button
-                    onClick={() => remove(m)}
-                    className="shrink-0 rounded-lg p-1.5 text-muted transition hover:bg-danger/10 hover:text-danger"
-                    title="حذف"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+        <button
+          onClick={() => setWindowOpen(true)}
+          className="flex items-center justify-center gap-2 rounded-2xl border border-brand/40 bg-brand/10 py-3.5 text-sm font-bold text-brand transition active:scale-[0.98]"
+        >
+          <ClipboardList size={18} />
+          عرض قائمة اللوحات ({filtered.length})
+        </button>
+      )}
 
-                {/* كل معلومات السيارة */}
-                {m.info.length > 0 && (
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl bg-surface/60 p-2.5">
-                    {m.info.map(([k, v], i) => (
-                      <div key={i} className="flex gap-1 text-xs min-w-0">
-                        <span className="text-muted shrink-0">{k}:</span>
-                        <span className="text-ink truncate font-medium">{v}</span>
+      {/* ── نافذة اللوحات المطلوبة (#4) ── */}
+      {windowOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-night/70 backdrop-blur-sm" onClick={() => setWindowOpen(false)}>
+          <div
+            className="mx-auto mt-auto flex max-h-[92dvh] w-full max-w-md flex-col rounded-t-2xl border border-border bg-surface shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* رأس النافذة */}
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="text-sm font-bold text-ink">
+                اللوحات المطلوبة ({windowList.length})
+              </h2>
+              <button onClick={() => setWindowOpen(false)} className="rounded-lg p-1.5 text-muted hover:text-ink" title="إغلاق">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* شريط الأدوات */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+              <button
+                onClick={toggleNearest}
+                disabled={locating}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                  nearestSort ? "bg-brand text-white" : "bg-surface-2 text-ink"
+                }`}
+              >
+                <Navigation size={13} className={locating ? "animate-pulse" : ""} />
+                {locating ? "بيحدد موقعك..." : nearestSort ? "الأقرب أولاً ✓" : "رتّب حسب الأقرب"}
+              </button>
+              <button onClick={toggleSelectAll} className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition">
+                {selected.size === windowList.length && windowList.length > 0 ? <CheckSquare size={13} /> : <Square size={13} />}
+                تحديد الكل
+              </button>
+              <span className="mr-auto text-[11px] text-muted">{selected.size} محدّدة</span>
+            </div>
+
+            {/* أزرار الإجراءات الجماعية */}
+            <div className="grid grid-cols-3 gap-2 border-b border-border px-3 py-2">
+              <button
+                onClick={deleteSelected}
+                disabled={selected.size === 0 || busy}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-danger/10 py-2 text-xs font-bold text-danger transition disabled:opacity-40"
+              >
+                <Trash2 size={14} /> مسح
+              </button>
+              <button
+                onClick={shareSelected}
+                disabled={busy || windowList.length === 0}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-surface-2 py-2 text-xs font-bold text-ink transition disabled:opacity-40"
+              >
+                <Share2 size={14} /> مشاركة
+              </button>
+              <button
+                onClick={excelSelected}
+                disabled={busy || windowList.length === 0}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-surface-2 py-2 text-xs font-bold text-ink transition disabled:opacity-40"
+              >
+                <Download size={14} /> إكسيل
+              </button>
+            </div>
+
+            {/* قائمة اللوحات — خط عادي منظّم */}
+            <div className="flex-1 overflow-y-auto px-3 py-3">
+              <div className="flex flex-col gap-2.5">
+                {windowList.map((m) => {
+                  const Icon = METHOD_ICON[m.methodIcon];
+                  const isSel = selected.has(m.key);
+                  const km = nearestSort && myLoc && m.lat != null && m.lng != null
+                    ? haversineKm(myLoc.lat, myLoc.lng, m.lat, m.lng)
+                    : null;
+                  return (
+                    <div
+                      key={m.key}
+                      className={`flex flex-col gap-2 rounded-xl border p-2.5 transition ${
+                        isSel ? "border-brand bg-brand/10" : "border-border bg-surface-2"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => toggleSelect(m.key)} className="shrink-0 text-brand" title="تحديد">
+                          {isSel ? <CheckSquare size={18} /> : <Square size={18} className="text-muted" />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <PlateBadge value={m.plate} size="xs" />
+                        </div>
+                        {km != null && (
+                          <span className="flex items-center gap-0.5 rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand shrink-0">
+                            <Navigation size={10} /> {km < 1 ? `${Math.round(km * 1000)} م` : `${km.toFixed(1)} كم`}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[10px] font-bold text-ink shrink-0">
+                          <Icon size={11} style={{ color: COLOR[m.methodIcon] }} /> {m.method}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                )}
 
-                <div className="flex items-center gap-2 text-[11px] text-muted">
-                  <span>🕐 {formatDate(m.when)}</span>
-                  {m.mapsLink && (
-                    <a href={m.mapsLink} target="_blank" rel="noopener noreferrer"
-                      className="mr-auto flex items-center gap-0.5 text-primary underline">
-                      <MapPin size={11} /> الموقع على الخريطة
-                    </a>
-                  )}
-                </div>
+                      {/* كل تفاصيل اللوحة — خط عادي */}
+                      {m.info.length > 0 && (
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 rounded-lg bg-surface/70 p-2">
+                          {m.info.map(([k, v], i) => (
+                            <div key={i} className="flex gap-1 text-[11px] min-w-0">
+                              <span className="text-muted shrink-0">{k}:</span>
+                              <span className="text-ink truncate font-medium">{v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 text-[10px] text-muted">
+                        <span>🕐 {formatDate(m.when)}</span>
+                        {m.mapsLink && (
+                          <a href={m.mapsLink} target="_blank" rel="noopener noreferrer"
+                            className="mr-auto flex items-center gap-0.5 text-primary underline">
+                            <MapPin size={10} /> الموقع
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          </div>
         </div>
       )}
     </div>
