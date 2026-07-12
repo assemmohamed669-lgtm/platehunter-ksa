@@ -84,8 +84,15 @@ export async function POST(req: NextRequest) {
       ? addDays(today, TRIAL_DAYS)
       : (subscriptionEnd || addMonths(today, 1));
 
-  // 2. Create the matching profile row
-  const { error: profileError } = await supabaseAdmin.from("profiles").insert({
+  // 2. Create (or fill in) the matching profile row.
+  // UPSERT, not INSERT: some Supabase projects have an on-auth-user trigger that
+  // auto-creates a bare profile row the instant the auth user is made. A plain
+  // insert then collides on the primary key (id) and fails with a "duplicate
+  // key" error — which surfaced to the admin as «بيانات مكررة» even though the
+  // email/phone were brand new, and nothing got added. Upserting on id updates
+  // that pre-made row instead of fighting it (and still inserts when no trigger
+  // exists), so adding a new agent works either way.
+  const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
     id: created.user.id,
     username: email,
     email,
@@ -95,7 +102,7 @@ export async function POST(req: NextRequest) {
     is_trial: trial,
     subscription_start: role === "admin" ? null : start,
     subscription_end: end,
-  });
+  }, { onConflict: "id" });
   if (profileError) {
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);
     // Don't blame the email blindly — a reused PHONE also trips a unique
