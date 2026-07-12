@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -1243,12 +1243,12 @@ export default function InstantCheckPage() {
           try {
             const result = await SpeechRecognition.start({
               language: "ar-SA",
-              maxResults: 1,
+              maxResults: 5,          // get several hypotheses, keep the most plate-like
               partialResults: false,
               popup: false,
             });
             consecutiveErrors = 0;
-            const text: string = result?.matches?.[0] ?? "";
+            const text: string = pickBestHypothesis(result?.matches ?? []);
             if (text) {
               setPttLiveText(text);
               addPttResult(text);
@@ -1285,16 +1285,27 @@ export default function InstantCheckPage() {
     recognition.lang = "ar-SA";
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 5;   // get several hypotheses, keep the most plate-like
     recognitionRef.current = recognition;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t;
-        else interim += t;
+        const result = event.results[i];
+        if (result.isFinal) {
+          // Pick the plate-likeliest alternative, not just the first —
+          // recognizer confidence breaks near-ties between plate-shaped ones.
+          const alts: string[] = [];
+          const confs: number[] = [];
+          for (let a = 0; a < result.length; a++) {
+            alts.push(result[a].transcript);
+            confs.push(result[a].confidence);
+          }
+          finalText += pickBestHypothesis(alts, confs);
+        } else {
+          interim += result[0].transcript;
+        }
       }
       setPttLiveText((finalText || interim).trim());
       if (finalText.trim()) addPttResult(finalText.trim());
