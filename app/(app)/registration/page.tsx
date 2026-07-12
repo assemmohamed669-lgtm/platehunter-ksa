@@ -30,7 +30,6 @@ import {
 import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
-import FileUploadBox from "@/components/FileUploadBox";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import {
@@ -1827,60 +1826,8 @@ export default function RegistrationPage() {
         </div>
       </div>
 
-      {/* Check file */}
-      <div className="flex flex-col gap-2">
-        <FileUploadBox
-          title="ملف التشييك"
-          hint="القائمة المرجعية للمطابقة"
-          parsedFile={checkFile}
-          parsedRowCount={checkPlates.size || null}
-          onParsed={handleCheckFile}
-          onClear={handleDeleteCheck}
-          showReplaceButtons
-        />
-        {checkHeaders.length > 0 && (
-          <div className="mt-2 rounded-xl border border-border bg-surface">
-            <button
-              onClick={() => setCheckColsOpen((v) => !v)}
-              className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
-            >
-              <span>الأعمدة ({checkHeaders.length})</span>
-              <ChevronDown
-                size={14}
-                className={`text-muted transition-transform duration-200 ${checkColsOpen ? "rotate-180" : ""}`}
-              />
-            </button>
-            {checkColsOpen && (
-              <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] text-muted shrink-0">عمود البحث:</span>
-                  <span className="rounded-full border border-primary bg-primary/20 px-2.5 py-0.5 text-xs font-bold text-primary">
-                    {checkPlateCol ?? "—"}
-                  </span>
-                </div>
-                <div>
-                  <p className="mb-1.5 text-[11px] text-muted">الأعمدة — اضغط لتفعيل/إيقاف:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {checkHeaders.filter((h) => h !== checkPlateCol).map((h) => (
-                      <button
-                        key={h}
-                        onClick={() => toggleCheckCol(h)}
-                        className={`rounded-full border px-3 py-1 text-xs transition ${
-                          selectedCheckCols.has(h)
-                            ? "bg-primary text-night font-bold border-primary"
-                            : "border-border text-muted"
-                        }`}
-                      >
-                        {h}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* ملف التشييك المشترك (local:check) — يُقرأ عند التحميل للمقارنة فقط.
+          الرفع/التغيير/الحذف من صفحة «تشييك» — مفيش مربع رفع هنا. */}
 
       {/* GPS status */}
       <div className="flex flex-col gap-1.5">

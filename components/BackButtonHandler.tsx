@@ -5,7 +5,7 @@ import { runTopBackHandler } from "@/lib/backStack";
 
 // Root pages where the hardware back should background the app (not navigate
 // deeper). Everywhere else, back navigates within the SPA history.
-const ROOT_PATHS = ["/", "/dashboard", "/login"];
+const ROOT_PATHS = ["/", "/instant-check", "/login"];
 
 /**
  * Handles the Android hardware back button. Without this, Capacitor's default

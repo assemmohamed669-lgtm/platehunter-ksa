@@ -74,7 +74,7 @@ export default function AgentDetail() {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
       const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
-      if (prof?.role !== "admin") { router.replace("/dashboard"); return; }
+      if (prof?.role !== "admin") { router.replace("/instant-check"); return; }
       setIsSuper(!!prof?.is_super);
       load();
     })();

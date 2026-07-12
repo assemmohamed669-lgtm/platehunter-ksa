@@ -290,7 +290,15 @@ export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
-  const [mode, setMode] = useState<CheckMode>("manual");
+  const [mode, setMode] = useState<CheckMode>(() => {
+    if (typeof window === "undefined") return "manual";
+    const saved = window.localStorage.getItem("ph:check:mode");
+    return saved === "camera" || saved === "ptt" || saved === "sheet" ? saved : "manual";
+  });
+  // تذكّر التبويب النشط — يرجّع المندوب لنفس التبويب لما يرجع لصفحة تشييك.
+  useEffect(() => {
+    try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
+  }, [mode]);
 
   // Manual
   const [manualInput, setManualInput] = useState("");
@@ -1049,12 +1057,16 @@ export default function InstantCheckPage() {
       setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
     } finally {
       setCameraLoading(false);
+      // تصفير قيمة الخانتين عشان اختيار نفس الصورة تاني (بعد المسح) يشتغل.
       if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (galleryInputRef.current) galleryInputRef.current.value = "";
     }
   }
 
   function resetCamera() {
     closeLiveCamera();
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
     setCameraImage(null);
     setCameraResult(null);
     setCameraError(null);
