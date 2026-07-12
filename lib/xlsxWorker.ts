@@ -86,6 +86,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
       for (const name of allSheetNames) {
         try {
           const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+          (scanOpts as Record<string, unknown>).dense = true;
           if (password) (scanOpts as Record<string, unknown>).password = password;
           const wbScan = XLSX.read(data, scanOpts);
           const wsScan = wbScan.Sheets[name];
@@ -105,6 +106,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
         for (const name of allSheetNames) {
           try {
             const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+            (scanOpts as Record<string, unknown>).dense = true;
             if (password) (scanOpts as Record<string, unknown>).password = password;
             const wbScan = XLSX.read(data, scanOpts);
             const wsScan = wbScan.Sheets[name];
@@ -131,6 +133,10 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
       cellStyles: false,  // skip style parsing
       sheetStubs: false,  // no stubs for empty cells
     };
+    // dense mode: array-backed worksheet — much faster & far lower memory on
+    // huge sheets (the 464K-row data file), which also avoids the low-end-device
+    // out-of-memory white screen. sheet_to_json reads dense sheets transparently.
+    (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     if (sheetName) (opts as Record<string, unknown>).sheets = [sheetName];
 
