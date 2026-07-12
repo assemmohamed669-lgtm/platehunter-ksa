@@ -13,6 +13,7 @@ import { authHeader } from "@/lib/authHeader";
 import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
+import { fireWantedAlert } from "@/lib/wantedAlert";
 import PlateBadge from "@/components/PlateBadge";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -73,22 +74,6 @@ interface PttRow {
   mapsLink?: string;
   gpsError?: boolean;
   checkedAt: string;
-}
-
-function playMatchAlert() {
-  try {
-    const ctx = new AudioContext();
-    [0, 0.18, 0.36].forEach((delay) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.frequency.value = 880; osc.type = "sine";
-      gain.gain.setValueAtTime(0.5, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.18);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.2);
-    });
-  } catch { /* audio unavailable */ }
 }
 
 function extractPlateFromOcrText(rawText: string): string | null {
@@ -510,6 +495,17 @@ export default function InstantCheckPage() {
     });
   }
 
+  // تفاصيل السيارة من صف التشييك (بالأعمدة المختارة) — تظهر في تنبيه المطلوبة الموحّد.
+  function rowToAlertInfo(row: Record<string, string>): [string, string][] {
+    return Object.entries(row)
+      .filter(([k, v]) =>
+        k !== checkPlateCol &&
+        String(v ?? "").trim() &&
+        (selectedCheckCols.size === 0 || selectedCheckCols.has(k))
+      )
+      .map(([k, v]) => [k, String(v)] as [string, string]);
+  }
+
   function searchInCheck(rawPlate: string): PlateResult | null {
     if (!checkPlateCol || checkIndex.size === 0) return null;
     const normalized = normalizePlate(bankPlateToArabic(rawPlate));
@@ -518,7 +514,7 @@ export default function InstantCheckPage() {
     // O(1) exact lookup
     const exactRow = checkIndex.get(normalized);
     if (exactRow) {
-      playMatchAlert();
+      fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
     }
 
@@ -532,7 +528,7 @@ export default function InstantCheckPage() {
         if (sim > bestSim) { bestSim = sim; bestRow = row; }
       }
       if (bestSim >= 88 && bestRow) {
-        playMatchAlert();
+        fireWantedAlert({ plate: rawPlate, matchType: "fuzzy", similarity: Math.round(bestSim), info: rowToAlertInfo(bestRow) });
         return { plate: rawPlate, normalized, found: true, matchType: "fuzzy", similarity: Math.round(bestSim), row: bestRow };
       }
     }

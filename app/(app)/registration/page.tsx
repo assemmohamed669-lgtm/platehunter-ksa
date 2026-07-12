@@ -31,6 +31,7 @@ import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
+import { fireWantedAlert } from "@/lib/wantedAlert";
 import { reverseGeocode } from "@/lib/geocoding";
 import {
   saveRecording,
@@ -281,27 +282,6 @@ function defaultExcelName(): string {
 
 function emailToName(email: string): string {
   return email.replace("@platehunter.local", "").replace(/@.*/, "");
-}
-
-// ── Audio alert ─────────────────────────────────────────────────────────────
-function playMatchAlert() {
-  try {
-    const ctx = new AudioContext();
-    [0, 0.25, 0.5].forEach((delay) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 880;
-      osc.type = "sine";
-      gain.gain.setValueAtTime(0.6, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.2);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.2);
-    });
-  } catch {
-    // Audio not available
-  }
 }
 
 // ── Web Speech API types ─────────────────────────────────────────────────────
@@ -801,7 +781,11 @@ export default function RegistrationPage() {
     const norm = normalizePlate(plate);
     if (checkPlates.has(norm)) {
       setMatchedIds((prev) => new Set(prev).add(entry.localId));
-      playMatchAlert();
+      const info: [string, string][] = [];
+      if (entry.vehicleType) info.push(["النوع", entry.vehicleType]);
+      if (entry.street) info.push(["الشارع", entry.street]);
+      if (entry.district) info.push(["الحي", entry.district]);
+      fireWantedAlert({ plate, matchType: "exact", info, source: entry.isManual ? "manual" : "voice" });
       setMatchedPlates((prev) => [
         ...prev,
         {

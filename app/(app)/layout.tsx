@@ -8,6 +8,7 @@ import BottomNav from "@/components/BottomNav";
 import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import IncomingExcelHandler from "@/components/IncomingExcelHandler";
+import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import AppMenu from "@/components/AppMenu";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
@@ -137,6 +138,7 @@ export default function AppShellLayout({
 
         <BottomNav />
         <IncomingExcelHandler />
+        <WantedAlertOverlay />
         <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} />
       </div>
     </SessionGuard>
