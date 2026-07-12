@@ -199,6 +199,47 @@ export function extractLatLngFromMapsLink(url: string): { lat: number; lng: numb
   return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
 }
 
+/**
+ * يحاول يطلّع إحداثيات من خلية GPS — يدعم رابط خرائط (q=lat,lng) وكمان
+ * صيغة "lat,lng" الخام.
+ */
+export function parseLatLngCell(raw: string): { lat: number; lng: number } | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const fromLink = extractLatLngFromMapsLink(s);
+  if (fromLink) return fromLink;
+  const m = s.match(/^\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*$/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  return null;
+}
+
+// تقدير زمن الوصول بالسيارة (أوفلاين) من المسافة المستقيمة:
+// نضرب في معامل الطرق (الطرق أطول من الخط المستقيم) ونقسم على سرعة مدينة متوسطة.
+const ROAD_FACTOR = 1.3;      // الطريق الفعلي ≈ 1.3× المسافة المستقيمة
+const CITY_SPEED_KMH = 30;    // سرعة متوسطة داخل المدينة
+
+export function estimateDriveMinutes(straightKm: number): number {
+  if (!isFinite(straightKm) || straightKm < 0) return Infinity;
+  return (straightKm * ROAD_FACTOR) / CITY_SPEED_KMH * 60;
+}
+
+/** مسافة مقروءة: أمتار تحت الكيلو، وإلا كيلومترات. */
+export function formatDistanceKm(km: number): string {
+  if (!isFinite(km)) return "—";
+  if (km < 1) return `${Math.round(km * 1000)} م`;
+  return `${km.toFixed(1)} كم`;
+}
+
+/** زمن مقروء: دقائق، أو ساعات ودقائق. */
+export function formatDurationMin(min: number): string {
+  if (!isFinite(min)) return "—";
+  const m = Math.max(1, Math.round(min));
+  if (m < 60) return `${m} د`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h} س ${r} د` : `${h} س`;
+}
+
 export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;

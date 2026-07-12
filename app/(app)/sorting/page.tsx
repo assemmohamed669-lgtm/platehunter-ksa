@@ -16,11 +16,12 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { haversineKm, extractLatLngFromMapsLink, toMapsLink } from "@/lib/gps";
+import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
+import OpenDownloadButton from "@/components/OpenDownloadButton";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
@@ -278,13 +279,28 @@ export default function SortingPage() {
     if (!nearestActive || !userLoc || !gpsCol) return matchedResults;
     return [...matchedResults]
       .map((r) => {
-        const link = r.dataRow?.[gpsCol] ?? "";
-        const coords = link ? extractLatLngFromMapsLink(link) : null;
+        const coords = parseLatLngCell(r.dataRow?.[gpsCol] ?? "");
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
-        return { ...r, _dist: dist };
+        return { ...r, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
       .sort((a, b) => a._dist - b._dist);
   }, [matchedResults, nearestActive, userLoc, gpsCol]);
+
+  // عمود GPS في شيت التسجيلات — لترتيب «الأقرب» + حساب الوقت.
+  const tashyeekGpsCol = useMemo(() => (tashyeekTable ? findGpsColumn(tashyeekTable.headers) : null), [tashyeekTable]);
+
+  // نافذة التسجيلات مرتّبة بالأقرب (لو مفعّل) مع الاحتفاظ بالفهرس الأصلي للتحديد.
+  const displayTashyeek = useMemo(() => {
+    const base = (tashyeekResults ?? []).map((r, idx) => ({ r, idx, _dist: Infinity, _min: Infinity }));
+    if (!nearestActive || !userLoc || !tashyeekGpsCol) return base;
+    return base
+      .map((x) => {
+        const coords = parseLatLngCell(x.r.tashyeekRow?.[tashyeekGpsCol] ?? x.r.referralRow?.[tashyeekGpsCol] ?? "");
+        const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
+        return { ...x, _dist: dist, _min: estimateDriveMinutes(dist) };
+      })
+      .sort((a, b) => a._dist - b._dist);
+  }, [tashyeekResults, nearestActive, userLoc, tashyeekGpsCol]);
 
   const pasteColorMap = useMemo(() => {
     if (!pasteResults.length) return new Map<string, number>();
@@ -976,6 +992,7 @@ export default function SortingPage() {
                       <th key={`ref-${col}`} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
                     ))}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
+                    {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
                     <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
                   </tr>
                 </thead>
@@ -1013,7 +1030,12 @@ export default function SortingPage() {
                         ))}
                         {nearestActive && "_dist" in r && (
                           <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">
-                            {Number.isFinite((r as { _dist: number })._dist) ? `${(r as { _dist: number })._dist.toFixed(1)} كم` : "—"}
+                            {formatDistanceKm((r as { _dist: number })._dist)}
+                          </td>
+                        )}
+                        {nearestActive && "_min" in r && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">
+                            {formatDurationMin((r as { _min: number })._min)}
                           </td>
                         )}
                         <td className="px-2 py-2">
@@ -1129,12 +1151,20 @@ export default function SortingPage() {
                 <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من التشييك الميداني</h2>
                 <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
               </div>
-              <button onClick={toggleTashyeekAll}
-                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-                {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0
-                  ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-                {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
-              </button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {tashyeekGpsCol && (
+                  <button onClick={handleNearest} disabled={locating}
+                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
+                    <Navigation size={12} /> {locating ? "..." : "الأقرب"}
+                  </button>
+                )}
+                <button onClick={toggleTashyeekAll}
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                  {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0
+                    ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                  {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                </button>
+              </div>
             </div>
             <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh" }}>
               <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
@@ -1145,11 +1175,13 @@ export default function SortingPage() {
                     {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => (
                       <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                     ))}
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
                     <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">⋮</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tashyeekResults.map((r, i) => {
+                  {displayTashyeek.map(({ r, idx: i, _dist, _min }) => {
                     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
                     const sel = tashyeekSelected.has(i);
                     return (
@@ -1175,6 +1207,12 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
+                        {nearestActive && tashyeekGpsCol && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">{formatDistanceKm(_dist)}</td>
+                        )}
+                        {nearestActive && tashyeekGpsCol && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">{formatDurationMin(_min)}</td>
+                        )}
                         <td className="px-2 py-2">
                           <div className="flex items-center justify-center gap-2">
                             <button onClick={() => copyTashyeekRow(r, i)} title="نسخ" className="text-muted hover:text-primary transition">
@@ -1214,10 +1252,14 @@ export default function SortingPage() {
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
                 <Share2 size={16} /> مشاركة
               </button>
-              <button onClick={openTashyeekExcel}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary">
-                <ExternalLink size={16} /> فتح في Excel
-              </button>
+              <OpenDownloadButton
+                build={() => {
+                  const { blob, ext } = buildSpreadsheetBlob((tashyeekResults ?? []).map(buildTashyeekRowObj), "سيارات مطلوبة");
+                  return { blob, name: `مطلوبين-${ts()}.${ext}` };
+                }}
+                label="فتح في Excel"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60"
+              />
             </div>
           </div>
         ) : (
