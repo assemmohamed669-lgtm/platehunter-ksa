@@ -23,7 +23,7 @@ export default function HomePage() {
     let dest = "/login";
     const session = supabase.auth
       .getSession()
-      .then(({ data }) => { dest = data.session ? "/dashboard" : "/login"; })
+      .then(({ data }) => { dest = data.session ? "/sorting" : "/login"; })
       .catch(() => {});
     const delay = new Promise<void>((r) => setTimeout(r, 2000));
     Promise.all([session, delay]).then(() => router.replace(dest));

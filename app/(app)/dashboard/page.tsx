@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ListFilter, Mic, MapPin, Database, ScanLine } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 
 function useLiveClock() {
@@ -38,12 +38,6 @@ const TILES = [
     label: "التشييك الفوري",
     desc: "كاميرا / كتابة / صوت",
     icon: ScanLine,
-  },
-  {
-    href: "/checking",
-    label: "قاعدة البيانات",
-    desc: "كل السجلات + تصدير",
-    icon: Database,
   },
 ] as const;
 
