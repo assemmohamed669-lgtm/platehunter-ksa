@@ -4,8 +4,10 @@ import { useEffect } from "react";
 import { runTopBackHandler } from "@/lib/backStack";
 
 // Root pages where the hardware back should background the app (not navigate
-// deeper). Everywhere else, back navigates within the SPA history.
-const ROOT_PATHS = ["/", "/instant-check", "/login"];
+// deeper). Everywhere else, back navigates within the SPA history. The landing
+// page is /sorting, so it's the root — on it, back minimizes the app instead of
+// exiting; on any other page back returns to the previous screen.
+const ROOT_PATHS = ["/", "/sorting", "/login"];
 
 /**
  * Handles the Android hardware back button. Without this, Capacitor's default
