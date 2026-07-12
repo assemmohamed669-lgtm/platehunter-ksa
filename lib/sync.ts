@@ -124,8 +124,10 @@ export async function restoreRecordings(
     .eq("agent_id", agentId);
   if (error) return { restored: 0, error: error.message };
 
-  // السيرفر مابيخزّنش isManual — نحافظ على علامة اليدوي من النسخة المحلية
-  // عشان الإدخال اليدوي مايتنقلش لنافذة الصوت بعد الاسترجاع.
+  // الاسترجاع بيعمل put كامل فوق السجل المحلي — والسيرفر مايعرفش كل الحقول
+  // (الملاحظات/الصوت/عدم-اليقين/اسم المسجّل/isManual مش بتتزامن). من غير دمج،
+  // كل فتح للتطبيق كان بيمسح الملاحظات والصوت من كل سجل متزامن. نحافظ على
+  // الحقول المحلية-فقط من النسخة الموجودة، والسيرفر يكسب بس فيما يعرفه.
   const existing = new Map<string, RecordingEntry>();
   for (const e of await getAllRecordings(agentId)) existing.set(e.localId, e);
 
@@ -136,13 +138,21 @@ export async function restoreRecordings(
       localId: r.local_id,
       agentId: r.agent_id,
       plate: r.plate,
-      vehicleType: r.vehicle_type ?? undefined,
-      lat: r.lat ?? undefined,
-      lng: r.lng ?? undefined,
-      street: r.street ?? undefined,
-      district: r.district ?? undefined,
+      vehicleType: r.vehicle_type ?? prev?.vehicleType ?? undefined,
+      lat: r.lat ?? prev?.lat ?? undefined,
+      lng: r.lng ?? prev?.lng ?? undefined,
+      street: r.street ?? prev?.street ?? undefined,
+      district: r.district ?? prev?.district ?? undefined,
       recordedAt: r.recorded_at,
-      mapsLink: r.maps_link ?? undefined,
+      mapsLink: r.maps_link ?? prev?.mapsLink ?? undefined,
+      // حقول محلية-فقط — السيرفر مايشيلهاش، فبنحافظ عليها من النسخة المحلية:
+      notes: prev?.notes,
+      uncertain: prev?.uncertain,
+      originalPlate: prev?.originalPlate,
+      rawLetterSource: prev?.rawLetterSource,
+      recorderName: prev?.recorderName,
+      audioBlobBase64: prev?.audioBlobBase64,
+      audioMimeType: prev?.audioMimeType,
       isManual: (r as { is_manual?: boolean }).is_manual ?? prev?.isManual,
       synced: true,
     };

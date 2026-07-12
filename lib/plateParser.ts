@@ -165,11 +165,21 @@ export function pickBestHypothesis(candidates: string[], confidences?: number[])
 }
 
 /**
- * يستخرج عدة لوحات من تسجيل صوتي واحد.
- * الترتيب المتوقع: [ملاحظات] [حروف اللوحة] [أرقام اللوحة] [نوع السيارة] [تكرار]
- * كل لوحة = 1-3 حروف سعودية + 4 أرقام.
+ * ذرّة تحليل لوحة — حرف (L) / رقم (D) / نوع مركبة (V) / كلمة ملاحظة (N).
+ * مُصدَّرة عشان sessionParser يقدر يعمل carry-over على مستوى الذرّات
+ * (لوحة مقطوعة على حدود chunk تترحّل للـ chunk الجاي بدل ما تضيع).
  */
-export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
+export type PlateAtom =
+  | { t: "L"; v: string; fromName?: boolean }
+  | { t: "D"; v: string; joinedByWaw?: boolean }
+  | { t: "V"; v: string }
+  | { t: "N"; v: string; letters: string[] };
+
+/**
+ * Steps 1-2.5 من استخراج اللوحات المتعددة: التطبيع الكامل + تصنيف التوكنات
+ * لذرّات مرتّبة. مفصولة عن التجميع عشان تنفع للتحليل التدريجي (streaming).
+ */
+export function plateAtoms(transcript: string): PlateAtom[] {
   // ── Step 1: run the SAME normalization the single-plate parser uses, so
   // spoken letter-names (لام→ل), phonetic merges, and number-words (خمسة→5)
   // become plate letters/digits BEFORE segmentation. Vehicle words are kept
@@ -215,13 +225,7 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   //   atom.t: "L" single plate letter | "D" single digit | "V" vehicle | "N" note.
   //   "N" atoms carry a best-effort `letters[]` so a garbled all-letters word
   //   adjacent to a digit group can still yield a correctable plate.
-  type Atom =
-    | { t: "L"; v: string; fromName?: boolean }
-    | { t: "D"; v: string; joinedByWaw?: boolean }
-    | { t: "V"; v: string }
-    | { t: "N"; v: string; letters: string[] };
-
-  const atoms: Atom[] = [];
+  const atoms: PlateAtom[] = [];
   for (const raw of rawTokens) {
     // The protected letter-name placeholder — always a deliberate letter و,
     // flagged so Step 2.5 never mistakes it for the conjunction.
@@ -302,6 +306,13 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
     }
   }
 
+  return atoms;
+}
+
+/**
+ * Steps 3-6: تجميع الذرّات المرتّبة للوحات كاملة (حروف + 4 أرقام + نوع + ملاحظات).
+ */
+export function platesFromAtoms(atoms: PlateAtom[]): MultiPlateResult[] {
   // ── Step 3: anchor on digit groups (runs of D atoms), split into 4-digit
   //   chunks. Several plate numbers dictated back-to-back with no letter
   //   naming between them are still ONE run of consecutive D atoms — without
@@ -475,6 +486,15 @@ export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
   });
 }
 
+/**
+ * يستخرج عدة لوحات من تسجيل صوتي واحد.
+ * الترتيب المتوقع: [ملاحظات] [حروف اللوحة] [أرقام اللوحة] [نوع السيارة] [تكرار]
+ * كل لوحة = 1-3 حروف سعودية + 4 أرقام.
+ */
+export function extractMultiplePlates(transcript: string): MultiPlateResult[] {
+  return platesFromAtoms(plateAtoms(transcript));
+}
+
 // ─── English → Arabic plate letter mapping ────────────────────────────────
 export const EN_TO_AR: Record<string, string> = {
   A: "ا", B: "ب", C: "ح", J: "ح", D: "د", R: "ر", S: "س", X: "ص", T: "ط",
@@ -569,53 +589,73 @@ function spokenToDigits(tok: string): string {
   return m ? m[0] : "";
 }
 
+/** جزء من تقسيم النص: نص عادي (فيه لوحات) أو عبارة ملاحظة معتمدة. */
+export type NoteSplitPart =
+  | { kind: "text"; text: string }
+  | { kind: "note"; note: string };
+
 /**
- * يستخرج عبارات الملاحظات الثابتة من نص التفريغ ويرجّعها منفصلة عن باقي النص
- * (اللي فيه اللوحة). كل عبارة تترجع في صيغتها المعتمدة حتى لو التفريغ سمعها غلط.
+ * يقسّم نص التفريغ لأجزاء مرتّبة بمواقعها: نص عادي / عبارة ملاحظة معتمدة —
+ * بدون ما يفقد ترتيب الكلام. ده الأساس اللي sessionParser بيبني عليه قاعدة
+ * «الملاحظة تنطبق على اللوحات اللي بعدها» (السياق الأمامي).
+ *
+ * holdPending (وضع الستريمنج): لو آخر التوكنات anchor لعبارة اتقطعت على حدود
+ * chunk («جراج» من غير اتجاه، «رقم» من غير الرقم) بترجع في pendingTail عشان
+ * تترحّل للـ chunk الجاي بدل ما تتفسّر غلط. بدونه (batch) بتتعامل كنص عادي —
+ * نفس سلوك extractNotePhrases التاريخي بالظبط.
  */
-export function extractNotePhrases(text: string): { notes: string[]; rest: string } {
+export function splitByNotePhrases(
+  text: string,
+  opts?: { holdPending?: boolean }
+): { parts: NoteSplitPart[]; pendingTail: string } {
+  const parts: NoteSplitPart[] = [];
   const normalized = normForNotes(text);
-  if (!normalized) return { notes: [], rest: "" };
+  if (!normalized) return { parts, pendingTail: "" };
   const tokens = normalized.split(/\s+/).filter(Boolean);
-  const used = new Set<number>();
-  const notes: string[] = [];
+  const holdPending = !!opts?.holdPending;
   const LR = new Set(["يمين", "يسار"]);
 
-  // أقرب اتجاه ضمن نافذة توكنات بعد الفهرس i.
+  // أقرب اتجاه ضمن نافذة توكنات بعد الفهرس from.
   const findDir = (from: number, span: number, allowed?: Set<string>) => {
     for (let j = from; j <= from + span && j < tokens.length; j++) {
-      if (used.has(j)) continue;
       const d = matchDirection(tokens[j]);
       if (d && (!allowed || allowed.has(d))) return { dir: d, at: j };
     }
     return null;
   };
-  const consume = (a: number, b: number) => { for (let k = a; k <= b; k++) used.add(k); };
 
-  for (let i = 0; i < tokens.length; i++) {
-    if (used.has(i)) continue;
+  // يحاول مطابقة عبارة ملاحظة كاملة عند i.
+  //   {note, end}  → عبارة مكتملة (تستهلك i..end)
+  //   "incomplete" → الـ anchor ماتش بس التوكنات خلصت قبل اكتمال العبارة
+  //   null         → مش عبارة ملاحظة هنا
+  const matchAt = (i: number): { note: string; end: number } | "incomplete" | null => {
     const tok = tokens[i];
+    const remaining = tokens.length - i;
 
     // الشارع بيلف يمين / شمال / يسار
     if (anchorEq(tok, "الشارع")) {
       const hit = findDir(i + 1, 2);
-      if (hit) { consume(i, hit.at); notes.push(`الشارع بيلف ${hit.dir}`); continue; }
+      if (hit) return { note: `الشارع بيلف ${hit.dir}`, end: hit.at };
+      if (remaining <= 3) return "incomplete";
+      return null;
     }
 
     // جراج / كراج يمين | يسار [رقم N]
     if (anchorEq(tok, "جراج", "كراج", "الجراج", "الكراج")) {
       const hit = findDir(i + 1, 1, LR);
       if (hit) {
-        consume(i, hit.at);
         let note = `جراج ${hit.dir}`;
+        let end = hit.at;
         const j = hit.at + 1;
-        if (j < tokens.length && !used.has(j) && anchorEq(tokens[j], "رقم")) {
+        if (j < tokens.length && anchorEq(tokens[j], "رقم")) {
+          if (j + 1 >= tokens.length) return "incomplete"; // «رقم» والرقم في الchunk الجاي
           const num = spokenToDigits(tokens[j + 1] ?? "");
-          if (num) { note += ` رقم ${num}`; consume(j, j + 1); }
+          if (num) { note += ` رقم ${num}`; end = j + 1; }
         }
-        notes.push(note);
-        continue;
+        return { note, end };
       }
+      if (remaining <= 2) return "incomplete";
+      return null;
     }
 
     // برحة يمين | شمال  —  أو  برحة أول الشارع
@@ -625,9 +665,11 @@ export function extractNotePhrases(text: string): { notes: string[]; rest: strin
         if (anchorEq(tokens[j], "اول")) awal = j;
         else if (awal !== -1 && anchorEq(tokens[j], "الشارع")) shr = j;
       }
-      if (awal !== -1 && shr !== -1) { consume(i, shr); notes.push("برحة أول الشارع"); continue; }
+      if (awal !== -1 && shr !== -1) return { note: "برحة أول الشارع", end: shr };
       const hit = findDir(i + 1, 1);
-      if (hit) { consume(i, hit.at); notes.push(`برحة ${hit.dir}`); continue; }
+      if (hit) return { note: `برحة ${hit.dir}`, end: hit.at };
+      if (remaining <= 3) return "incomplete";
+      return null;
     }
 
     // آخر الشارع يمين | يسار
@@ -638,8 +680,12 @@ export function extractNotePhrases(text: string): { notes: string[]; rest: strin
       }
       if (shr !== -1) {
         const hit = findDir(shr + 1, 1, LR);
-        if (hit) { consume(i, hit.at); notes.push(`آخر الشارع ${hit.dir}`); continue; }
+        if (hit) return { note: `آخر الشارع ${hit.dir}`, end: hit.at };
+        if (tokens.length - shr <= 2) return "incomplete";
+        return null;
       }
+      if (remaining <= 2) return "incomplete";
+      return null;
     }
 
     // حتة واسعة يمين | شمال
@@ -650,13 +696,57 @@ export function extractNotePhrases(text: string): { notes: string[]; rest: strin
       }
       if (was !== -1) {
         const hit = findDir(was + 1, 1);
-        if (hit) { consume(i, was); consume(i, hit.at); notes.push(`حتة واسعة ${hit.dir}`); continue; }
+        if (hit) return { note: `حتة واسعة ${hit.dir}`, end: hit.at };
+        if (tokens.length - was <= 2) return "incomplete";
+        return null;
       }
+      if (remaining <= 2) return "incomplete";
+      return null;
     }
-  }
 
-  const rest = tokens.filter((_, i) => !used.has(i)).join(" ");
-  return { notes, rest };
+    return null;
+  };
+
+  let buf: string[] = [];
+  const flush = () => {
+    if (buf.length) { parts.push({ kind: "text", text: buf.join(" ") }); buf = []; }
+  };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const m = matchAt(i);
+    if (m === "incomplete") {
+      if (holdPending) {
+        flush();
+        return { parts, pendingTail: tokens.slice(i).join(" ") };
+      }
+      buf.push(tokens[i]);
+      continue;
+    }
+    if (m) {
+      flush();
+      parts.push({ kind: "note", note: m.note });
+      i = m.end;
+      continue;
+    }
+    buf.push(tokens[i]);
+  }
+  flush();
+  return { parts, pendingTail: "" };
+}
+
+/**
+ * يستخرج عبارات الملاحظات الثابتة من نص التفريغ ويرجّعها منفصلة عن باقي النص
+ * (اللي فيه اللوحة). كل عبارة تترجع في صيغتها المعتمدة حتى لو التفريغ سمعها غلط.
+ */
+export function extractNotePhrases(text: string): { notes: string[]; rest: string } {
+  const { parts } = splitByNotePhrases(text);
+  const notes: string[] = [];
+  const restParts: string[] = [];
+  for (const p of parts) {
+    if (p.kind === "note") notes.push(p.note);
+    else restParts.push(p.text);
+  }
+  return { notes, rest: restParts.join(" ") };
 }
 
 // ─── Letter names → character ──────────────────────────────────────────────

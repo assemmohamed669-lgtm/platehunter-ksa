@@ -5,10 +5,11 @@
  */
 
 const DB_NAME = "platehunter";
-const DB_VERSION = 3; // v2 adds uploaded_files, v3 adds field_check (protected field-check sheet)
+const DB_VERSION = 4; // v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions
 const STORE = "recordings";
 const FILES_STORE = "uploaded_files";
 const FIELD_CHECK_STORE = "field_check";
+const SESSIONS_STORE = "voice_sessions";
 
 export interface RecordingEntry {
   localId: string;           // uuid generated locally
@@ -74,6 +75,20 @@ export interface FieldCheckEntry {
   checkedAt: string;                 // ISO timestamp
 }
 
+/**
+ * جلسة تسجيل صوتي كاملة — النص الخام المتراكم + سجل الأحداث (event log).
+ * بتتحفظ عشان أي تحسين مستقبلي في المحلّل يقدر يعيد المعالجة (replay) على
+ * جلسات قديمة، وعشان تشخيص «ليه اللوحة دي طلعت كده؟» يبقى ممكن.
+ */
+export interface VoiceSessionRecord {
+  id: string;                        // uuid generated locally
+  agentId: string;
+  startedAt: string;                 // ISO timestamp
+  endedAt?: string;
+  transcript: string;                // النص الخام المتراكم من كل الأجزاء بالترتيب
+  events: { type: string; value: string; seq: number }[];
+}
+
 let _db: IDBDatabase | null = null;
 
 function openDB(): Promise<IDBDatabase> {
@@ -96,11 +111,26 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(FIELD_CHECK_STORE)) {
         db.createObjectStore(FIELD_CHECK_STORE, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
+        const sessionsStore = db.createObjectStore(SESSIONS_STORE, { keyPath: "id" });
+        sessionsStore.createIndex("agentId", "agentId", { unique: false });
+      }
     };
 
     req.onsuccess = (e) => {
       _db = (e.target as IDBOpenDBRequest).result;
+      // لو تبويب/نسخة أحدث طلبت ترقية الإصدار، سيب الاتصال فوراً عشان
+      // الترقية تعدّي بدل ما التبويب ده يحجزها للأبد (upgrade blocked).
+      _db.onversionchange = () => {
+        try { _db?.close(); } catch { /* already closing */ }
+        _db = null;
+      };
       resolve(_db);
+    };
+
+    // تبويب قديم ماسك الداتابيز بإصدار أقدم — الترقية مستنية لحد ما يقفل.
+    req.onblocked = () => {
+      console.warn("IDB upgrade blocked — قفل باقي تبويبات التطبيق عشان الترقية تكمل.");
     };
 
     req.onerror = () => reject(req.error);
@@ -112,6 +142,17 @@ export async function saveRecording(entry: RecordingEntry): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).put(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** يحفظ/يحدّث جلسة تسجيل صوتي (upsert بالـ id) — بيتنادى مع كل chunk. */
+export async function saveVoiceSession(session: VoiceSessionRecord): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SESSIONS_STORE, "readwrite");
+    tx.objectStore(SESSIONS_STORE).put(session);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

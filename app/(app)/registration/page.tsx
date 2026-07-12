@@ -33,6 +33,7 @@ import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { fireWantedAlert } from "@/lib/wantedAlert";
+import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
 import { reverseGeocode } from "@/lib/geocoding";
 import {
   saveRecording,
@@ -46,10 +47,11 @@ import {
   getUploadedFile,
   deleteUploadedFile,
   saveFieldCheckEntry,
+  saveVoiceSession,
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { parsePlateFromTranscript, extractMultiplePlates, extractNotePhrases, findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -71,7 +73,11 @@ const LS_WORD_BLENDS = "ph:registration:wordBlends";
 // Fewer switches ⇒ fewer boundaries ⇒ fewer chances to lose a plate. (Chunk
 // TEXTS are joined before parsing, so a lossless cut is healed automatically —
 // only the live switch-gap actually drops audio, which this reduces.)
-const GROQ_CHUNK_MS = 180_000;
+// 90 ثانية بدل 180: أول نتيجة أسرع 2×. الذيل النصي الناقص بيترحّل عبر
+// sessionParser (carry-over) — لكن انتبه: تبديل المسجّل نفسه بيسيب فجوة صوتية
+// فيزيائية ~100-300ms كل دورة (كلام فيها مش بيتسجّل أصلاً والترحيل مايقدرش
+// يصلّح صوت ماتسجّلش) — فمابننزلش عن 90ث عشان مانضاعفش عدد الفجوات.
+const GROQ_CHUNK_MS = 90_000;
 
 interface GroqChunkResult {
   text: string;
@@ -390,6 +396,15 @@ export default function RegistrationPage() {
   const [agentId, setAgentId] = useState<string | null>(null);
   const [recorderName, setRecorderName] = useState<string>("");
   const [manualDistrict, setManualDistrict] = useState<string>("");
+  // نسخ حية للقيم اللي الحفظ الحي (closures المؤقّت/الطابور) محتاج أحدث نسخة
+  // منها — الـ state المجمّد وقت بدء التسجيل مايتغيّرش جوّه الـ closure.
+  const agentIdRef = useRef<string | null>(null);
+  const recorderNameRef = useRef("");
+  const manualDistrictRef = useRef("");
+  const checkPlatesRef = useRef<Set<string>>(new Set());
+  useEffect(() => { agentIdRef.current = agentId; }, [agentId]);
+  useEffect(() => { recorderNameRef.current = recorderName; }, [recorderName]);
+  useEffect(() => { manualDistrictRef.current = manualDistrict; }, [manualDistrict]);
   const [excelName, setExcelName] = useState<string>("");
   // When set, recording switches from the local (free, less accurate) device
   // speech recognizer to actual audio capture sent to Groq's cloud Whisper —
@@ -450,6 +465,7 @@ export default function RegistrationPage() {
 
   // Check file (bank list for matching)
   const [checkPlates, setCheckPlates] = useState<Set<string>>(new Set());
+  useEffect(() => { checkPlatesRef.current = checkPlates; }, [checkPlates]);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkHeaders, setCheckHeaders] = useState<string[]>([]);
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
@@ -502,6 +518,25 @@ export default function RegistrationPage() {
   const groqChunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const groqChunksRef = useRef<Promise<GroqChunkResult>[]>([]);
   const groqChunkBusyRef = useRef(false); // guards against overlapping chunk switches
+
+  // ── جلسة التفريغ الحدثية (مسار Groq الحي) ────────────────────────────────
+  // sessionParser state + طابور معالجة تسلسلي: الأجزاء بترفع بالتوازي لكن
+  // بتتحلّل وتتحفظ بالترتيب (السياق «جراج يمين» لازم يمشي بترتيب الكلام).
+  //
+  // مهم: الحفظ الحي بيحصل من closures اتعملت وقت بدء التسجيل — أي قيمة بتتغيّر
+  // أثناء الجلسة (تسجيل دخول، تعديل الحي/الاسم، تحميل ملف التشييك) لازم تتقري
+  // من refs مش من الـ state المجمّد.
+  const stoppingRef = useRef(false); // يمنع بدء جلسة جديدة أثناء إنهاء القديمة
+  const sessionStateRef = useRef<SessionState>(newSessionState());
+  const sessionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionCoordsRef = useRef<(GpsCoords | null)[]>([]);   // GPS لحظة بداية كل chunk
+  const sessionChunkIndexRef = useRef(0);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionStartedAtRef = useRef("");
+  const sessionTranscriptRef = useRef("");
+  const sessionEventsRef = useRef<SessionEvent[]>([]);
+  const sessionSavedCountRef = useRef(0);
+  const sessionFailedChunksRef = useRef(0);
   // Session audio ready to attach to whatever plates get saved from
   // `pendingTranscript` — set on stop, consumed (and cleared) on save.
   const pendingAudioRef = useRef<{ base64: string; mimeType: string } | null>(null);
@@ -778,9 +813,12 @@ export default function RegistrationPage() {
   }
 
   function checkPlateMatch(plate: string, entry: RecordingEntry) {
-    if (checkPlates.size === 0) return;
+    // من الـ ref مش الـ state: الحفظ الحي بينادي من closure قديم — لو ملف
+    // التشييك اتحمّل بعد بدء التسجيل، النسخة الحية هي اللي فيها اللوحات.
+    const plates = checkPlatesRef.current;
+    if (plates.size === 0) return;
     const norm = normalizePlate(plate);
-    if (checkPlates.has(norm)) {
+    if (plates.has(norm)) {
       setMatchedIds((prev) => new Set(prev).add(entry.localId));
       const info: [string, string][] = [];
       if (entry.vehicleType) info.push(["النوع", entry.vehicleType]);
@@ -835,6 +873,16 @@ export default function RegistrationPage() {
     // recognizer; the audio is sent to Groq in chunks (see GROQ_CHUNK_MS)
     // rather than as one upload for the whole session.
     if (groqApiKey.trim()) {
+      // جلسة قديمة لسه بتقفل؟ استنى — بدء جديد دلوقتي هيتصارع معاها على المسجّل.
+      if (stoppingRef.current) {
+        setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية.");
+        return;
+      }
+      // الحفظ الحي محتاج حساب — من غيره اللوحات هتتحلّل وتضيع بصمت.
+      if (!agentIdRef.current) {
+        setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك.");
+        return;
+      }
       try {
         const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
         const perm = await VoiceRecorder.requestAudioRecordingPermission();
@@ -849,6 +897,18 @@ export default function RegistrationPage() {
         setDebugStatus("✅ STARTED (Groq Cloud)");
         groqChunksRef.current = [];
         groqChunkBusyRef.current = false;
+
+        // تهيئة جلسة التحليل الحدثي — سياق جديد، طابور فاضي، GPS أول جزء
+        sessionStateRef.current = newSessionState();
+        sessionQueueRef.current = Promise.resolve();
+        sessionCoordsRef.current = [gpsService.getLastCoords()];
+        sessionChunkIndexRef.current = 0;
+        sessionIdRef.current = uid();
+        sessionStartedAtRef.current = new Date().toISOString();
+        sessionTranscriptRef.current = "";
+        sessionEventsRef.current = [];
+        sessionSavedCountRef.current = 0;
+        sessionFailedChunksRef.current = 0;
 
         // A single upload covering a long session risks exceeding Vercel's
         // hard 4.5MB request-body limit (~5 minutes of audio at this
@@ -872,11 +932,19 @@ export default function RegistrationPage() {
             setRecordingError(`تعذّر إنهاء جزء من التسجيل: ${err?.message ?? err}`);
           }
           try {
-            if (isRecordingRef.current) await VR.startRecording();
+            if (isRecordingRef.current) {
+              await VR.startRecording();
+              // GPS لحظة بداية الجزء الجديد — لوحاته هتاخد الموقع ده مش موقع
+              // أول الجلسة (مندوب ماشي في شارع = كل جزء بمكانه الحقيقي).
+              sessionCoordsRef.current.push(gpsService.getLastCoords());
+            }
           } catch (err: any) {
             setRecordingError(`تعذّر استئناف التسجيل: ${err?.message ?? err}`);
           }
-          if (chunk) groqChunksRef.current.push(uploadGroqChunk(chunk, groqApiKey.trim()));
+          if (chunk) {
+            const idx = sessionChunkIndexRef.current++;
+            enqueueGroqChunk(uploadGroqChunk(chunk, groqApiKey.trim()), idx);
+          }
           groqChunkBusyRef.current = false;
         }, GROQ_CHUNK_MS);
       } catch (err: any) {
@@ -1007,6 +1075,10 @@ export default function RegistrationPage() {
 
     // ── Cloud transcription (Groq Whisper) ──────────────────────────────
     if (groqApiKey.trim()) {
+      // امنع بدء جلسة جديدة لحد ما القديمة تقفل بالكامل (الاتنين بيتصارعوا
+      // على نفس المسجّل والطابور والـ state لو اتداخلوا).
+      stoppingRef.current = true;
+      setIsTranscribing(true);
       if (groqChunkTimerRef.current) {
         clearInterval(groqChunkTimerRef.current);
         groqChunkTimerRef.current = null;
@@ -1016,44 +1088,51 @@ export default function RegistrationPage() {
       // VoiceRecorder.stopRecording(), and only one can win.
       while (groqChunkBusyRef.current) await new Promise((r) => setTimeout(r, 50));
       setDebugStatus("⏳ جارٍ رفع آخر جزء…");
-      setIsTranscribing(true);
       try {
         const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
         try {
           const lastChunk = await VoiceRecorder.stopRecording();
-          groqChunksRef.current.push(uploadGroqChunk(lastChunk, groqApiKey.trim()));
+          const idx = sessionChunkIndexRef.current++;
+          enqueueGroqChunk(uploadGroqChunk(lastChunk, groqApiKey.trim()), idx);
         } catch (err: any) {
           // EMPTY_RECORDING when the user stops right after a chunk-switch —
           // fine, just means there's nothing new to add.
           setDebugStatus(`⚠️ آخر جزء فشل: ${err?.message ?? err}`);
         }
 
-        setDebugStatus("⏳ جارٍ تجميع كل الأجزاء…");
-        const settled = await Promise.allSettled(groqChunksRef.current);
-        const ok = settled.filter((s): s is PromiseFulfilledResult<GroqChunkResult> => s.status === "fulfilled").map((s) => s.value);
-        const failedCount = settled.length - ok.length;
-        const transcript = ok.map((c) => c.text).join(" ").trim();
+        // اللوحات اتحفظت أولاً بأول مع كل جزء — استنى الطابور يخلّص بس.
+        setDebugStatus("⏳ جارٍ تفريغ وحفظ آخر الأجزاء…");
+        await sessionQueueRef.current;
 
-        // Save the session's audio for later playback/deletion/sharing.
-        pendingAudioRef.current = assembleSessionAudio(ok);
+        // فرّغ الذيل المرحَّل (لوحة اتقطعت على آخر حد chunks) — final flush.
+        const lastCoords =
+          sessionCoordsRef.current[sessionCoordsRef.current.length - 1] ??
+          gpsAtRecordRef.current;
+        await applySessionText("", lastCoords, null, true);
 
-        if (transcript) {
-          setPendingTranscript(transcript);
-          setDebugFinal(transcript);
-          setDebugRaw(transcript);
+        const saved = sessionSavedCountRef.current;
+        const failed = sessionFailedChunksRef.current;
+        if (saved > 0) {
           setDebugStatus(
-            failedCount > 0
-              ? `⚠️ تم التفريغ (${failedCount} جزء فشل ولوحاته اتفقدت)`
-              : "✅ تم التفريغ السحابي"
+            failed > 0
+              ? `⚠️ اتحفظ ${saved} لوحة (${failed} جزء فشل تفريغه)`
+              : `✅ اتحفظ ${saved} لوحة تلقائياً`
           );
-          if (failedCount > 0) {
-            setRecordingError(`${failedCount} جزء من التسجيل فشل تفريغه — أي لوحات فيه اتفقدت. النص الباقي جاهز تحت.`);
+          if (failed > 0) {
+            setRecordingError(`${failed} جزء من التسجيل فشل تفريغه — أي لوحات فيه اتفقدت.`);
           }
+        } else if (sessionTranscriptRef.current.trim()) {
+          // فيه كلام بس مفيش لوحات مكتملة — اعرض النص للمندوب يفرّغه يدوياً.
+          setPendingTranscript(sessionTranscriptRef.current.trim());
+          setDebugFinal(sessionTranscriptRef.current.trim());
+          setDebugStatus("✅ تم التفريغ — مفيش لوحات مكتملة، راجع النص تحت");
         } else {
-          const firstFailure = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
-          const reason = firstFailure ? String(firstFailure.reason?.message ?? firstFailure.reason) : "سبب غير معروف";
-          setRecordingError(`فشل التفريغ السحابي بالكامل — ${reason}`);
-          setDebugStatus(`❌ ERROR: كل الأجزاء فشلت — ${reason}`);
+          setRecordingError(
+            failed > 0
+              ? `فشل التفريغ السحابي — ${failed} جزء فشل.`
+              : "مفيش كلام اتسجّل."
+          );
+          setDebugStatus("❌ مفيش نتيجة");
         }
       } catch (err: any) {
         setRecordingError(`تعذّر التفريغ السحابي: ${err?.message ?? err}`);
@@ -1061,6 +1140,7 @@ export default function RegistrationPage() {
       } finally {
         setIsTranscribing(false);
         groqChunksRef.current = [];
+        stoppingRef.current = false;
       }
       return;
     }
@@ -1088,6 +1168,111 @@ export default function RegistrationPage() {
     setDebugFinal(transcript || "(فارغ)");
   }
 
+  // ── الجلسة الحدثية: تحفظ اللوحات فوراً أثناء التسجيل (مسار Groq) ──────────
+  // يطبّق نص جزء مفرَّغ على sessionParser: يحدّث السياق («جراج يمين» تنطبق على
+  // ما بعدها)، يصحّح بالتعلّم، يحفظ اللوحات المكتملة append-only بموقع الجزء
+  // وصوته، ويحدّث سجل الجلسة (النص الخام + الأحداث) لإعادة المعالجة مستقبلاً.
+  async function applySessionText(
+    text: string,
+    coords: GpsCoords | null,
+    audio: { base64: string; mimeType: string } | null,
+    final: boolean
+  ) {
+    if (text.trim()) {
+      sessionTranscriptRef.current = `${sessionTranscriptRef.current} ${text}`.trim();
+      setDebugRaw(sessionTranscriptRef.current);
+    }
+
+    const res = parseSessionChunk(text, sessionStateRef.current, { final });
+    sessionStateRef.current = res.state;
+    sessionEventsRef.current.push(...res.events);
+
+    // القيم الحية — مش الـ state المجمّد في closure المؤقّت (تعديل الحي/الاسم
+    // أثناء الجلسة لازم يلحق اللوحات الجاية).
+    const liveAgentId = agentIdRef.current;
+    const liveDistrict = manualDistrictRef.current.trim();
+    const savedIds: string[] = [];
+    for (const r of res.records) {
+      // نفس تصحيح التعلّم المستخدم في مسار «فرّغ واحفظ»
+      let working = r.plate;
+      if (r.rawLetterSource) {
+        const learned = applyWordBlend(r.rawLetterSource, wordBlendRef.current);
+        if (learned) working = learned + r.plate.replace(/^\D+/, "");
+      }
+      const corrected = applyLetterConfusions(working, letterConfusionsRef.current);
+      if (!liveAgentId) continue;
+      const localId = uid();
+      const entry: RecordingEntry = {
+        localId,
+        agentId: liveAgentId,
+        plate: corrected,
+        originalPlate: corrected !== r.plate ? r.plate : undefined,
+        uncertain: (r.uncertain || corrected !== r.plate) || undefined,
+        rawLetterSource: r.rawLetterSource,
+        vehicleType: r.vehicleType?.trim() || "ملاكي",
+        notes: r.notes?.trim() || undefined,
+        lat: coords?.lat,
+        lng: coords?.lng,
+        recordedAt: new Date().toISOString(),
+        mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
+        recorderName: recorderNameRef.current,
+        district: liveDistrict || undefined,
+        // صوت الجزء بيتحفظ مرة واحدة (على أول سجل) مش مكرر على كل لوحة —
+        // 60-90ث صوت × عشرات اللوحات كان هينفخ التخزين على موبايلات الميدان.
+        audioBlobBase64: savedIds.length === 0 ? audio?.base64 : undefined,
+        audioMimeType: savedIds.length === 0 ? audio?.mimeType : undefined,
+        synced: false,
+      };
+      await saveRecording(entry);
+      savedIds.push(localId);
+      sessionSavedCountRef.current++;
+      checkPlateMatch(corrected, entry);
+    }
+
+    if (savedIds.length && coords) {
+      reverseGeocode(coords.lat, coords.lng)
+        .then(async (addr) => {
+          for (const id of savedIds) {
+            await updateGeodata(id, addr.street, liveDistrict || addr.district);
+          }
+          if (agentIdRef.current) loadRecordings(agentIdRef.current);
+        })
+        .catch(() => {});
+    }
+    if (savedIds.length && liveAgentId) {
+      await loadRecordings(liveAgentId);
+      if (typeof navigator === "undefined" || navigator.onLine) syncPending(liveAgentId);
+      setDebugStatus(`✅ اتحفظ ${sessionSavedCountRef.current} لوحة حتى الآن…`);
+    }
+
+    // upsert سجل الجلسة — النص الخام + الأحداث
+    if (sessionIdRef.current && liveAgentId) {
+      saveVoiceSession({
+        id: sessionIdRef.current,
+        agentId: liveAgentId,
+        startedAt: sessionStartedAtRef.current,
+        endedAt: final ? new Date().toISOString() : undefined,
+        transcript: sessionTranscriptRef.current,
+        events: sessionEventsRef.current,
+      }).catch(() => {});
+    }
+  }
+
+  // يضيف جزء مرفوع لطابور المعالجة التسلسلي — الرفع بالتوازي، التحليل بالترتيب
+  // (السياق لازم يمشي بترتيب الكلام، مش بترتيب وصول الردود).
+  function enqueueGroqChunk(chunkPromise: Promise<GroqChunkResult>, chunkIndex: number) {
+    sessionQueueRef.current = sessionQueueRef.current.then(async () => {
+      try {
+        const res = await chunkPromise;
+        const coords = sessionCoordsRef.current[chunkIndex] ?? gpsService.getLastCoords();
+        await applySessionText(res.text, coords, { base64: res.audioBase64, mimeType: res.mimeType }, false);
+      } catch (err: unknown) {
+        sessionFailedChunksRef.current++;
+        setRecordingError(`جزء من التسجيل فشل تفريغه: ${(err as { message?: string })?.message ?? err}`);
+      }
+    });
+  }
+
   // Extract plates from the transcript and pre-correct their letters using
   // patterns learned from this device's past mishearings. Updates the debug
   // panel with the extraction result.
@@ -1098,32 +1283,15 @@ export default function RegistrationPage() {
     setDebugVehicle("");
     setDebugNotes("");
 
-    // Pull the delegate's fixed note phrases (الشارع بيلف يمين / جراج يسار رقم ٥ …)
-    // out FIRST — snapped to their canonical form even if mis-heard — so their
-    // words (especially a garage number) never get mistaken for plate letters
-    // or plate digits. The plate extractor then runs on the leftover text.
-    const { notes: notePhrases, rest } = extractNotePhrases(transcript);
-    const phraseNote = notePhrases.join(" ، ");
-
-    let plates = extractMultiplePlates(rest);
-    if (plates.length === 0) {
-      const parsed = parsePlateFromTranscript(rest);
-      if (parsed.plate) {
-        plates = [{ plate: parsed.plate, vehicleType: parsed.vehicleType, notes: parsed.notes, normalized: parsed.normalized, uncertain: parsed.uncertain }];
-      }
-    }
+    // المحلّل الحدثي (batch): السياق الأمامي — «جراج يمين» تنطبق على اللوحات
+    // اللي *بعدها* لحد ملاحظة جديدة (مش على آخر لوحة قبلها زي زمان)، ورقم
+    // الجراج عمره ما يتلغبط بأرقام اللوحات.
+    const { records: plates } = parseSessionChunk(transcript, newSessionState(), { final: true });
 
     if (plates.length === 0) {
       setDebugPlate("(لم يُستخرج)");
-      setDebugNotes(phraseNote || "(لا توجد لوحات)");
+      setDebugNotes("(لا توجد لوحات)");
       return [];
-    }
-
-    // Attach the recognised note phrase(s) to the last plate — a spoken note
-    // almost always follows the plate it describes.
-    if (phraseNote) {
-      const last = plates.length - 1;
-      plates[last] = { ...plates[last], notes: [plates[last].notes, phraseNote].filter(Boolean).join(" ، ") };
     }
 
     setDebugPlate(plates.map((p) => p.plate).join(" | "));
