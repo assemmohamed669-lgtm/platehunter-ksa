@@ -296,6 +296,8 @@ export default function InstantCheckPage() {
   const [manualDraft, setManualDraft] = useState<FieldCheckEntry[]>([]);
   const [draftEdit, setDraftEdit] = useState<{ id: string; field: string } | null>(null);
   const [draftEditValue, setDraftEditValue] = useState("");
+  const [manualSel, setManualSel] = useState<Set<string>>(new Set());
+  const [manualCopiedId, setManualCopiedId] = useState<string | null>(null);
   const [manualExporting, setManualExporting] = useState(false);
 
   // Camera
@@ -346,6 +348,8 @@ export default function InstantCheckPage() {
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   const [pttError, setPttError] = useState<string | null>(null);
   const [pttLocationName, setPttLocationName] = useState("");
+  const [pttSel, setPttSel] = useState<Set<string>>(new Set());
+  const [pttCopiedId, setPttCopiedId] = useState<string | null>(null);
   // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
@@ -716,13 +720,62 @@ export default function InstantCheckPage() {
     setManualDraft((prev) => prev.filter((e) => e.id !== id));
   }
 
-  function shareDraftRow(e: FieldCheckEntry) {
+  function draftRowText(e: FieldCheckEntry): string {
     const lines = [`🚗 اللوحة: ${e.plate}`];
     for (const [k, v] of Object.entries(e.row)) {
       if (String(v).trim()) lines.push(`${k}: ${v}`);
     }
     if (e.mapsLink) lines.push(`📍 الموقع: ${e.mapsLink}`);
-    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
+    return lines.join("\n");
+  }
+
+  function shareDraftRow(e: FieldCheckEntry) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(draftRowText(e))}`, "_blank");
+  }
+
+  async function copyDraftRow(e: FieldCheckEntry) {
+    try { await navigator.clipboard.writeText(draftRowText(e)); } catch { /* ignore */ }
+    setManualCopiedId(e.id);
+    setTimeout(() => setManualCopiedId(null), 1200);
+  }
+
+  // هل لوحة القائمة مطلوبة؟ (للتعليم الأخضر)
+  function isDraftMatched(e: FieldCheckEntry): boolean {
+    return checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)));
+  }
+
+  function toggleManualSel(id: string) {
+    setManualSel((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  function toggleManualSelAll() {
+    setManualSel((prev) => (prev.size === manualDraft.length ? new Set() : new Set(manualDraft.map((e) => e.id))));
+  }
+  function shareManualSelected() {
+    const rows = manualDraft.filter((e) => manualSel.has(e.id));
+    if (!rows.length) return;
+    const text = `*لوحات متشيّكة (${rows.length})*\n\n` + rows.map((e, i) => `${i + 1}. ${draftRowText(e)}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  function deleteManualSelected() {
+    setManualDraft((prev) => prev.filter((e) => !manualSel.has(e.id)));
+    setManualSel(new Set());
+  }
+
+  // ملف Excel لقائمة اليدوي — لأزرار فتح/تنزيل/مشاركة.
+  function buildManualDraftFile(): { blob: Blob; name: string } {
+    if (manualDraft.length === 0) throw new Error("مفيش لوحات في القائمة.");
+    const rows = manualDraft.map((e) => ({ "رقم اللوحة": e.plate, ...e.row, "GPS": e.mapsLink ?? "" }));
+    return { blob: buildExcelBlob(rows, "تشييك يدوي"), name: `تشييك-يدوي-${Date.now()}.xlsx` };
+  }
+  async function shareManualDraftFile() {
+    try {
+      const { blob, name } = buildManualDraftFile();
+      await shareExcelBlob(blob, name, "تشييك يدوي");
+    } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
   }
 
   // Commit the whole working list to شيت التسجيلات (field_check), then clear it.
@@ -1218,6 +1271,47 @@ export default function InstantCheckPage() {
     setPttResults((prev) => prev.filter((r) => r.id !== id));
     setPttExportedIds((s) => { const n = new Set(s); n.delete(id); return n; });
     setPttAlert((a) => (a?.id === id ? null : a));
+    setPttSel((s) => { const n = new Set(s); n.delete(id); return n; });
+  }
+
+  // نص صف الصوت — للنسخ والمشاركة.
+  function pttRowText(r: PttRow): string {
+    const lines = [`🚗 اللوحة: ${r.plate}`];
+    lines.push(r.found ? (r.matchType === "fuzzy" ? `الحالة: مطلوبة؟ ${r.similarity}%` : "الحالة: مطلوبة") : "الحالة: غير مطلوبة");
+    if (r.vehicleType) lines.push(`النوع: ${r.vehicleType}`);
+    for (const [k, v] of Object.entries(r.row ?? {})) { if (String(v).trim()) lines.push(`${k}: ${v}`); }
+    if (r.locationName) lines.push(`اسم الموقع: ${r.locationName}`);
+    if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
+    return lines.join("\n");
+  }
+  async function copyPttRow(r: PttRow) {
+    try { await navigator.clipboard.writeText(pttRowText(r)); } catch { /* ignore */ }
+    setPttCopiedId(r.id);
+    setTimeout(() => setPttCopiedId(null), 1200);
+  }
+  function togglePttSel(id: string) {
+    setPttSel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function togglePttSelAll() {
+    setPttSel((prev) => (prev.size === pttResults.length ? new Set() : new Set(pttResults.map((r) => r.id))));
+  }
+  function sharePttSelected() {
+    const rows = pttResults.filter((r) => pttSel.has(r.id));
+    if (!rows.length) return;
+    const text = `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` + rows.map((r, i) => `${i + 1}. ${pttRowText(r)}`).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+  function deletePttSelected() {
+    const ids = pttSel;
+    setPttResults((prev) => prev.filter((r) => !ids.has(r.id)));
+    setPttExportedIds((s) => { const n = new Set(s); ids.forEach((i) => n.delete(i)); return n; });
+    setPttSel(new Set());
+  }
+  async function sharePttDraftFile() {
+    try {
+      const blob = buildExcelBlob(buildPttRows(), "تشييك صوتي");
+      await shareExcelBlob(blob, `تشييك-صوتي-${Date.now()}.xlsx`, "تشييك صوتي");
+    } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
   }
 
   // Append ALL voice rows to the field-check sheet, below whatever is already
@@ -1607,13 +1701,21 @@ export default function InstantCheckPage() {
                     </span>
                   );
                 };
+                const allSel = manualSel.size === manualDraft.length && manualDraft.length > 0;
                 return (
                   <div className="flex flex-col gap-2 pt-2 border-t border-border">
-                    <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
+                      <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                        {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                        {allSel ? "إلغاء الكل" : "تحديد الكل"}
+                      </button>
+                    </div>
                     <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
@@ -1623,9 +1725,23 @@ export default function InstantCheckPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {manualDraft.map((e, i) => (
-                            <tr key={e.id} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">{draftCell(e, "plate")}</td>
+                          {manualDraft.map((e, i) => {
+                            const matched = isDraftMatched(e);
+                            const sel = manualSel.has(e.id);
+                            const rowBg = sel ? "bg-primary/15" : matched ? "bg-brand/10" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40";
+                            return (
+                            <tr key={e.id} className={`border-b border-border ${rowBg}`}>
+                              <td className="border-l border-border px-2 py-2 text-center">
+                                <button onClick={() => toggleManualSel(e.id)} className="text-muted hover:text-primary transition">
+                                  {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                </button>
+                              </td>
+                              <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`}>
+                                <span className="inline-flex items-center gap-1.5">
+                                  {draftCell(e, "plate")}
+                                  {matched && <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">مطلوبة</span>}
+                                </span>
+                              </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "النوع")}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{draftCell(e, "اسم الموقع")}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
@@ -1636,19 +1752,46 @@ export default function InstantCheckPage() {
                               </td>
                               <td className="px-2 py-2">
                                 <div className="flex items-center justify-center gap-2">
+                                  <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
+                                    {manualCopiedId === e.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                  </button>
                                   <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
                                   <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
                                 </div>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
+
+                    {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+                    {manualSel.size > 0 && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                        <span className="text-xs font-bold text-ink">{manualSel.size} محددة</span>
+                        <div className="flex gap-2">
+                          <button onClick={shareManualSelected} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={13} /> واتساب</button>
+                          <button onClick={deleteManualSelected} className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={13} /> مسح</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* أزرار الملف: فتح/تنزيل + مشاركة */}
+                    <div className="flex gap-2">
+                      <OpenDownloadButton build={buildManualDraftFile} label="فتح الملف"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60" />
+                      <button onClick={shareManualDraftFile}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition hover:bg-primary/90">
+                        <Share2 size={16} /> مشاركة الملف
+                      </button>
+                    </div>
+
+                    {/* تصدير للسجلات — زي ما هو */}
                     <button
                       onClick={exportManualDraft}
                       disabled={manualExporting}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-40 active:scale-95"
                     >
                       <Download size={16} /> {manualExporting ? "جاري التصدير..." : `تصدير ${manualDraft.length} لوحة للسجلات`}
                     </button>
@@ -1864,17 +2007,25 @@ export default function InstantCheckPage() {
                   <div className="w-full flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{pttResults.length} لوحة</span>
-                      <button
-                        onClick={() => { setPttResults([]); setPttAlert(null); }}
-                        className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
-                      >
-                        <Trash2 size={12} /> مسح
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={togglePttSelAll}
+                          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                          {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                          {pttSel.size === pttResults.length && pttResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                        </button>
+                        <button
+                          onClick={() => { setPttResults([]); setPttAlert(null); setPttSel(new Set()); }}
+                          className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
+                        >
+                          <Trash2 size={12} /> مسح
+                        </button>
+                      </div>
                     </div>
                     <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                             <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
@@ -1888,7 +2039,12 @@ export default function InstantCheckPage() {
                         </thead>
                         <tbody>
                           {pttResults.map((r) => (
-                            <tr key={r.id} className={`border-b border-border ${r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
+                            <tr key={r.id} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
+                              <td className="border-l border-border px-2 py-2 text-center">
+                                <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
+                                  {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                </button>
+                              </td>
                               <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
                                 {!r.found ? (
                                   <span className="inline-flex items-center gap-0.5 text-muted"><XCircle size={13} /> غير مطلوبة</span>
@@ -1954,6 +2110,9 @@ export default function InstantCheckPage() {
                                       </button>
                                     )
                                   )}
+                                  <button onClick={() => copyPttRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
+                                    {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                  </button>
                                   <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
                                     <Trash2 size={13} />
                                   </button>
@@ -1964,6 +2123,17 @@ export default function InstantCheckPage() {
                         </tbody>
                       </table>
                     </div>
+
+                    {/* شريط جماعي — يظهر لما يبقى فيه محدّد */}
+                    {pttSel.size > 0 && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
+                        <span className="text-xs font-bold text-ink">{pttSel.size} محددة</span>
+                        <div className="flex gap-2">
+                          <button onClick={sharePttSelected} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={13} /> واتساب</button>
+                          <button onClick={deletePttSelected} className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={13} /> مسح</button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* تصدير كل لوحات الصوت لشيت التسجيلات */}
                     <button onClick={exportAllPttToField}
