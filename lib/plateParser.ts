@@ -165,6 +165,49 @@ export function pickBestHypothesis(candidates: string[], confidences?: number[])
 }
 
 /**
+ * مفتاح مطابقة متسامح بين ه↔ح — أكثر زوج حروف يخلط فيه محرك التعرف الصوتي
+ * العربي (الهاء الخفيفة والحاء). يطبّع اللوحة أولاً (يشيل المسافات، يوحّد الألف،
+ * يشيل التطويل فـ هـ→ه) ثم يوحّد ه و ح في حرف واحد، بحيث لوحة اتسمعت بأحدهما
+ * تلاقي نظيرتها في ملف التشييك. مقصور على هذا الزوج فقط — باقي الحروف تظل مميّزة.
+ */
+export function confusableKey(plate: string): string {
+  return normalizePlate(plate).replace(/[هح]/g, "ه");
+}
+
+/**
+ * من عدة احتمالات ينطقها محرك الصوت لنفس اللوحة، يختار الاحتمال الذي يطابق لوحة
+ * مطلوبة فعلاً في ملف التشييك — فيتحول التخمين إلى اختيار من قائمة معروفة.
+ *
+ * @param candidateNorms لوحات الاحتمالات بعد التطبيع (normalizePlate)
+ * @param wanted مجموعة اللوحات المطلوبة (مفاتيح checkIndex، مطبّعة)
+ * @returns فهرس الاحتمال الفائز ونوع المطابقة، أو null إن لم يطابق أي منها
+ *
+ * الأولوية: مطابقة تامة على أي احتمال أولاً، ثم مطابقة متسامحة ه↔ح — فالتام
+ * دائماً يفوز حتى لو جاء بعد المتسامح.
+ */
+export function pickCheckAlternative(
+  candidateNorms: string[],
+  wanted: Set<string>,
+): { index: number; matchType: "exact" | "confusable" } | null {
+  // Pass 1: exact — a candidate that is literally a wanted plate wins outright.
+  for (let i = 0; i < candidateNorms.length; i++) {
+    if (candidateNorms[i] && wanted.has(candidateNorms[i])) {
+      return { index: i, matchType: "exact" };
+    }
+  }
+  // Pass 2: ه↔ح tolerant — resolves the case where every alternative misheard
+  // the soft/hard H the same way, so no exact match exists.
+  const wantedConfusable = new Set<string>();
+  for (const w of wanted) wantedConfusable.add(confusableKey(w));
+  for (let i = 0; i < candidateNorms.length; i++) {
+    if (candidateNorms[i] && wantedConfusable.has(confusableKey(candidateNorms[i]))) {
+      return { index: i, matchType: "confusable" };
+    }
+  }
+  return null;
+}
+
+/**
  * يستخرج عدة لوحات من تسجيل صوتي واحد.
  * الترتيب المتوقع: [ملاحظات] [حروف اللوحة] [أرقام اللوحة] [نوع السيارة] [تكرار]
  * كل لوحة = 1-3 حروف سعودية + 4 أرقام.

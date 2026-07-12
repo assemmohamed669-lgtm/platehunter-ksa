@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, confusableKey, pickCheckAlternative, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 
 // ─── plateContentScore / pickBestHypothesis ────────────────────────────────
 describe("plateContentScore & pickBestHypothesis", () => {
@@ -1352,5 +1352,51 @@ describe("similarityPercent", () => {
     const sim = similarityPercent("أبح1234", "أبح1235");
     expect(sim).toBeGreaterThan(0);
     expect(sim).toBeLessThan(100);
+  });
+});
+
+// ─── confusableKey (ه↔ح tolerance) ───────────────────────────────────────────
+describe("confusableKey", () => {
+  it("collapses ه and ح to the same canonical letter", () => {
+    // The soft/hard H pair is the most-confused by ar-SA speech recognition.
+    expect(confusableKey("هبك1234")).toBe(confusableKey("حبك1234"));
+  });
+
+  it("treats هـ (with tatweel) the same as ه", () => {
+    expect(confusableKey("هـبك1234")).toBe(confusableKey("حبك1234"));
+  });
+
+  it("keeps genuinely different plates distinct", () => {
+    expect(confusableKey("دبك1234")).not.toBe(confusableKey("حبك1234"));
+  });
+
+  it("normalizes before collapsing (spaces, alef variants)", () => {
+    expect(confusableKey("أ ه ب 1234")).toBe(confusableKey("احب1234"));
+  });
+});
+
+// ─── pickCheckAlternative — choose the recognizer alt that's actually wanted ──
+describe("pickCheckAlternative", () => {
+  const wanted = new Set(["هبك1234", "دلم5678"]);
+
+  it("prefers the alternative that exactly matches a wanted plate", () => {
+    // #0 looks plate-shaped but isn't wanted; #1 is the real wanted plate.
+    const r = pickCheckAlternative(["حبك1234", "هبك1234"], wanted);
+    expect(r).toEqual({ index: 1, matchType: "exact" });
+  });
+
+  it("falls back to a ه↔ح confusable match when no exact one exists", () => {
+    // All alternatives misheard the ه as ح — still resolves to the wanted plate.
+    const r = pickCheckAlternative(["حبك1234", "حبك1299"], wanted);
+    expect(r).toEqual({ index: 0, matchType: "confusable" });
+  });
+
+  it("returns null when nothing matches the check set", () => {
+    expect(pickCheckAlternative(["سصط0000", "نمن1111"], wanted)).toBeNull();
+  });
+
+  it("exact match wins even if it comes after a confusable one", () => {
+    const r = pickCheckAlternative(["حبك1234", "هبك1234"], wanted);
+    expect(r.matchType).toBe("exact");
   });
 });

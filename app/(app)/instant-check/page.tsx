@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, confusableKey, pickCheckAlternative, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -494,6 +494,21 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
+  // The set of wanted plate keys — passed to pickCheckAlternative to choose the
+  // recognizer hypothesis that's actually in the file.
+  const checkKeySet = useMemo(() => new Set(checkIndex.keys()), [checkIndex]);
+
+  // ه↔ح-tolerant index: a plate misheard with the wrong soft/hard H still finds
+  // its wanted twin in O(1). First plate to claim a collapsed key wins.
+  const checkConfusableIndex = useMemo(() => {
+    const map = new Map<string, Record<string, string>>();
+    for (const [key, row] of checkIndex) {
+      const ck = confusableKey(key);
+      if (!map.has(ck)) map.set(ck, row);
+    }
+    return map;
+  }, [checkIndex]);
+
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -514,13 +529,26 @@ export default function InstantCheckPage() {
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
     }
 
-    // Fuzzy fallback (88% threshold, first-char optimization)
+    // O(1) ه↔ح-tolerant lookup — the soft/hard H is the top confusion in Arabic
+    // speech recognition, so a plate heard with the wrong one still resolves.
+    // Reported as fuzzy (suspected) since one letter is uncertain.
+    const ck = confusableKey(normalized);
+    const confRow = checkConfusableIndex.get(ck);
+    if (confRow) {
+      playMatchAlert();
+      return { plate: rawPlate, normalized, found: true, matchType: "fuzzy", similarity: 96, row: confRow };
+    }
+
+    // Fuzzy fallback (88% threshold). Compare on ه↔ح-collapsed keys so the H pair
+    // never costs similarity, and gate on the collapsed first char so a plate
+    // whose FIRST letter is a misheard ه/ح isn't skipped outright.
     if (normalized.length >= 4) {
       let bestSim = 0;
       let bestRow: Record<string, string> | undefined;
       for (const [key, row] of checkIndex) {
-        if (key[0] !== normalized[0]) continue;
-        const sim = similarityPercent(normalized, key);
+        const ckey = confusableKey(key);
+        if (ckey[0] !== ck[0]) continue;
+        const sim = similarityPercent(ck, ckey);
         if (sim > bestSim) { bestSim = sim; bestRow = row; }
       }
       if (bestSim >= 88 && bestRow) {
@@ -1064,8 +1092,12 @@ export default function InstantCheckPage() {
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
-  // addResult: parse one utterance and append to results list
-  function addPttResult(utterance: string) {
+  // Parse ONE recognizer hypothesis into a candidate plate — no side effects,
+  // no state. Returns the corrected plate (learners applied), its normalized
+  // match key, the pre-correction normalized value, and the vehicle type.
+  function computePttPlate(utterance: string):
+    | { corrected: string; matchNorm: string; norm: string; vehicleType?: string }
+    | null {
     // Pull the vehicle type (ونيت/فان/مصدومة/…) out FIRST so it lands in its
     // own column and isn't misread as plate letters.
     const { vehicleType, rest } = extractVehicleType(utterance);
@@ -1082,7 +1114,7 @@ export default function InstantCheckPage() {
       ? egyptianMapped
       : (parsePlateFromTranscript(rest).plate || "");
 
-    if (!rawPlate) return;
+    if (!rawPlate) return null;
 
     // Apply what past edits taught: whole-fragment blend first, then per-letter
     // confusion — so a mishearing corrected once auto-corrects next time.
@@ -1092,7 +1124,13 @@ export default function InstantCheckPage() {
     const blended = applyWordBlend(letters, wordBlendRef.current) || letters;
     const corrected = applyLetterConfusions(blended + digits, letterConfusionsRef.current);
 
-    const result = searchInCheck(corrected);
+    return { corrected, matchNorm: normalizePlate(bankPlateToArabic(corrected)), norm, vehicleType };
+  }
+
+  // Search a parsed candidate against the check file and, if it resolves,
+  // append it as a compact row (found or not).
+  function commitPttResult(c: { corrected: string; norm: string; vehicleType?: string }) {
+    const result = searchInCheck(c.corrected);
     if (!result) return; // no check file loaded
 
     // Every spoken plate becomes a compact row (found or not), tagged with the
@@ -1102,12 +1140,12 @@ export default function InstantCheckPage() {
     const row: PttRow = {
       id,
       plate: result.plate,
-      originalPlate: norm,
+      originalPlate: c.norm,
       found: result.found,
       matchType: result.matchType,
       similarity: result.similarity,
       row: result.row,
-      vehicleType,
+      vehicleType: c.vehicleType,
       locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
     };
@@ -1115,6 +1153,36 @@ export default function InstantCheckPage() {
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
     if (result.found) setPttAlert(row);
     void fetchGpsForPttRow(id);
+  }
+
+  // Single-hypothesis path (kept for callers that only have one string).
+  function addPttResult(utterance: string) {
+    const c = computePttPlate(utterance);
+    if (c) commitPttResult(c);
+  }
+
+  // Multi-hypothesis path — the recognizer returns up to 5 alternatives for the
+  // SAME utterance. Instead of trusting the first, parse them all and PREFER the
+  // one that resolves to a plate actually wanted in the check file. This rescues
+  // the very common soft/hard-H (ه↔ح) mishearing: if any alternative got the ه
+  // right it wins outright, and pickCheckAlternative's ه↔ح-tolerant fallback
+  // catches the case where every alternative misheard it the same way. Only when
+  // NO alternative matches a wanted plate do we fall back to the plate-likeliest
+  // by shape (pickBestHypothesis).
+  function addPttResults(alts: string[], confs?: number[]) {
+    const cleaned = alts.filter(Boolean);
+    if (cleaned.length === 0) return;
+    if (cleaned.length === 1) { addPttResult(cleaned[0]); return; }
+
+    const computed = alts.map((a) => (a ? computePttPlate(a) : null));
+    const norms = computed.map((c) => c?.matchNorm ?? "");
+    const pick = pickCheckAlternative(norms, checkKeySet);
+    if (pick && computed[pick.index]) { commitPttResult(computed[pick.index]!); return; }
+
+    // No alternative is a wanted plate → keep the shape-likeliest hypothesis.
+    const shapeBest = pickBestHypothesis(alts, confs);
+    const c = shapeBest ? computePttPlate(shapeBest) : null;
+    if (c) commitPttResult(c);
   }
 
   // Save a manual edit of a voice row: teach the learners (same logic as the
@@ -1248,10 +1316,11 @@ export default function InstantCheckPage() {
               popup: false,
             });
             consecutiveErrors = 0;
-            const text: string = pickBestHypothesis(result?.matches ?? []);
+            const matches: string[] = result?.matches ?? [];
+            const text: string = pickBestHypothesis(matches);
             if (text) {
               setPttLiveText(text);
-              addPttResult(text);
+              addPttResults(matches);
             }
             // Let the recognizer fully reset before the next plate.
             await new Promise((r) => setTimeout(r, 250));
@@ -1290,25 +1359,26 @@ export default function InstantCheckPage() {
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
-      let finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
-          // Pick the plate-likeliest alternative, not just the first —
-          // recognizer confidence breaks near-ties between plate-shaped ones.
+          // Each final result is one spoken plate. Collect ALL its alternatives
+          // and let addPttResults prefer the one that's actually a wanted plate
+          // (rescues the ه↔ح mishearing); the shape-best drives the live text.
           const alts: string[] = [];
           const confs: number[] = [];
           for (let a = 0; a < result.length; a++) {
             alts.push(result[a].transcript);
             confs.push(result[a].confidence);
           }
-          finalText += pickBestHypothesis(alts, confs);
+          const best = pickBestHypothesis(alts, confs);
+          if (best) setPttLiveText(best);
+          addPttResults(alts, confs);
         } else {
           interim += result[0].transcript;
         }
       }
-      setPttLiveText((finalText || interim).trim());
-      if (finalText.trim()) addPttResult(finalText.trim());
+      if (interim) setPttLiveText(interim.trim());
     };
 
     recognition.onerror = (event: { error: string }) => {
