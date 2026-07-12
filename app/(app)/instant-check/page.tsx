@@ -309,6 +309,32 @@ export default function InstantCheckPage() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
+  // تثبيت صورة الكاميرا: تفضل بعد الخروج من التطبيق، وتتمسح فقط لما المندوب
+  // يدوس «مسح» (resetCamera). نخزّنها في localStorage ونرجّعها عند التحميل.
+  useEffect(() => {
+    try {
+      const img = window.localStorage.getItem("ph:check:camImage");
+      if (!img) return;
+      setCameraImage(img);
+      setCameraInputPlate(window.localStorage.getItem("ph:check:camPlate") ?? "");
+      const r = window.localStorage.getItem("ph:check:camResult");
+      if (r) setCameraResult(JSON.parse(r) as PlateResult);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try {
+      if (cameraImage) {
+        window.localStorage.setItem("ph:check:camImage", cameraImage);
+        window.localStorage.setItem("ph:check:camPlate", cameraInputPlate);
+        window.localStorage.setItem("ph:check:camResult", cameraResult ? JSON.stringify(cameraResult) : "");
+      } else {
+        window.localStorage.removeItem("ph:check:camImage");
+        window.localStorage.removeItem("ph:check:camPlate");
+        window.localStorage.removeItem("ph:check:camResult");
+      }
+    } catch { /* quota / unavailable */ }
+  }, [cameraImage, cameraInputPlate, cameraResult]);
+
   // Live camera viewfinder
   const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -838,18 +864,26 @@ export default function InstantCheckPage() {
     }
   }
 
-  // Share the camera finding (details + GPS + the photo) to WhatsApp.
+  // كل تفاصيل اللوحة (كل أعمدة الصف) — للمشاركة عشان متروحش أي معلومة.
+  function allResultDetails(result: PlateResult): [string, string][] {
+    if (!result.row) return [];
+    return Object.entries(result.row)
+      .filter(([k, v]) => k !== checkPlateCol && String(v).trim())
+      .map(([k, v]) => [k, String(v)] as [string, string]);
+  }
+
+  // Share the camera finding (كل التفاصيل + GPS + الصورة) to WhatsApp.
   async function shareCameraResult(result: PlateResult) {
-    if (!result.found || !cameraImage) return;
+    if (!cameraImage) return;
     const gps = cameraGps ?? (await getCurrentGps());
     const text = buildPlateShareText({
       plate: result.plate,
-      status: "متشيكة بالكاميرا",
-      details: resultDetails(result),
+      status: result.found ? "متشيكة بالكاميرا — مطلوبة" : "متشيكة بالكاميرا",
+      details: allResultDetails(result),
       mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
       dateText: formatDate(new Date().toISOString()),
     });
-    await shareImageWithText(cameraImage, text, `لوحة-${result.plate}.jpg`, "لوحة مطلوبة");
+    await shareImageWithText(cameraImage, text, `لوحة-${result.plate}.jpg`, "لوحة السيارة");
   }
 
   // Correct a wrong (mis-transcribed) plate in the sheet — and teach the
