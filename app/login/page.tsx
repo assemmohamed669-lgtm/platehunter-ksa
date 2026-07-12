@@ -44,7 +44,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace("/instant-check");
+    router.replace("/sorting");
   }
 
   return (
