@@ -58,10 +58,11 @@ function wipeSortResults() {
 
 function persistPasteResults(
   results: TokenMatch[],
+  recordResults: TokenMatch[],
   text: string,
 ) {
   try {
-    localStorage.setItem(PASTE_RESULTS_KEY, JSON.stringify({ results, text }));
+    localStorage.setItem(PASTE_RESULTS_KEY, JSON.stringify({ results, recordResults, text }));
   } catch { /* storage full */ }
 }
 
@@ -105,6 +106,7 @@ export default function SortingPage() {
   const [tashyeekCopiedIdx, setTashyeekCopiedIdx] = useState<number | null>(null);
   const [pasteSelected, setPasteSelected] = useState<Set<number>>(new Set());
   const [pasteCopiedIdx, setPasteCopiedIdx] = useState<number | null>(null);
+  const [pasteRecordCopiedIdx, setPasteRecordCopiedIdx] = useState<number | null>(null);
   const [tashyeekColsOpen, setTashyeekColsOpen] = useState(false);
 
   // ── Sort results ──
@@ -125,6 +127,9 @@ export default function SortingPage() {
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
   const [pasteResults, setPasteResults] = useState<TokenMatch[]>([]);
+  // تطابق نفس اللوحات الملصوقة مع شيت السجلات (tashyeekTable) — لوحات سبق
+  // تشييكها صوت/يدوي قبل كدة، منفصلة عن تطابق ملف الداتا لأن أعمدتها مختلفة.
+  const [pasteRecordResults, setPasteRecordResults] = useState<TokenMatch[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteZoom, setPasteZoom] = useState(1);
   const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
@@ -183,6 +188,7 @@ export default function SortingPage() {
             const s = JSON.parse(rawPaste);
             if (Array.isArray(s.results) && s.results.length > 0) {
               setPasteResults(s.results);
+              if (Array.isArray(s.recordResults)) setPasteRecordResults(s.recordResults);
               setPasteText(s.text ?? "");
               setPasteRan(true);
             }
@@ -319,6 +325,7 @@ export default function SortingPage() {
   }, [pasteResults]);
 
   const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
+  const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
 
   const canSort = sortMode === "new"
     ? !!dataTable && !!referralTable && !!checkTable && !!effectiveDataPlateCol && !!effectiveReferralPlateCol && !!effectiveCheckPlateCol
@@ -576,6 +583,12 @@ export default function SortingPage() {
     return obj;
   }
 
+  function buildPasteRecordRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
+    const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
+    for (const col of pasteRecordCols) obj[col] = p.row[col] ?? "";
+    return obj;
+  }
+
   // ── نافذة المطلوبين (شيت التشييك) — helpers ──
   function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
@@ -711,9 +724,17 @@ export default function SortingPage() {
     const tokens = pasteText.split(/[\s,،]+/).map((t) => t.trim()).filter(Boolean);
     const matches = matchTokensAgainstRows(tokens, dataTable.rows, effectiveDataPlateCol);
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
+
+    // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
+    const recordMatches = tashyeekTable && tashyeekPlateCol
+      ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol)
+      : [];
+    recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);
+
     setPasteResults(matches);
+    setPasteRecordResults(recordMatches);
     setPasteRan(true);
-    persistPasteResults(matches, pasteText);
+    persistPasteResults(matches, recordMatches, pasteText);
   }
 
   // ── WhatsApp ──
@@ -747,7 +768,7 @@ export default function SortingPage() {
     const next = pasteResults.filter((_, idx) => idx !== i);
     setPasteResults(next);
     setPasteSelected(new Set());
-    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteRecordResults, pasteText);
   }
   function togglePasteSel(i: number) { setPasteSelected((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; }); }
   function togglePasteAll() { setPasteSelected((p) => p.size === pasteResults.length ? new Set() : new Set(pasteResults.map((_, i) => i))); }
@@ -755,7 +776,7 @@ export default function SortingPage() {
     const next = pasteResults.filter((_, idx) => !pasteSelected.has(idx));
     setPasteResults(next);
     setPasteSelected(new Set());
-    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteText);
+    if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteRecordResults, pasteText);
   }
   function sharePasteSelected() {
     const rows = pasteResults.filter((_, idx) => pasteSelected.has(idx));
@@ -770,6 +791,12 @@ export default function SortingPage() {
     await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRowObject(p)));
     setPasteCopiedIdx(i);
     setTimeout(() => setPasteCopiedIdx(null), 1200);
+  }
+
+  async function copyPasteRecordRow(p: { converted: string; row: Record<string, string> }, i: number) {
+    await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRecordRowObject(p)));
+    setPasteRecordCopiedIdx(i);
+    setTimeout(() => setPasteRecordCopiedIdx(null), 1200);
   }
 
   if (!hydrated) return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
@@ -1459,7 +1486,82 @@ export default function SortingPage() {
                 </div>
               </div>
             )}
+          </>
+        )}
 
+        {/* لوحات ملصوقة سبق تشييكها — تطابق ضد شيت السجلات (صوت/يدوي)، منفصلة
+            عن جدول ملف الداتا (أعمدة مختلفة) وعن شرط pasteResults.length > 0
+            عشان تظهر حتى لو اللوحة مش موجودة في ملف الداتا أصلاً. */}
+        {pasteRan && pasteRecordResults.length > 0 && (
+              <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
+                <div className="flex items-center justify-between border-b border-brand/20 bg-brand/10 px-3 py-2">
+                  <span className="text-xs font-bold text-brand">
+                    {pasteRecordResults.length} لوحة سبق تشييكها (شيت السجلات)
+                  </span>
+                </div>
+                <div className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl" }}>
+                  <table className="border-collapse w-full text-xs">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-surface-2 text-muted">
+                        <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
+                        <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                        {pasteRecordCols.map((col) => (
+                          <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
+                            {col}
+                          </th>
+                        ))}
+                        <th className="border-b border-border px-2 py-1.5" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pasteRecordResults.map((p, i) => (
+                        <tr key={i} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                          <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
+                          <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-ink">{p.converted}</span>
+                              {p.status === "fuzzy" && (
+                                <span className="rounded-full bg-alert/20 px-1 py-0.5 font-bold text-alert leading-none" style={{ fontSize: "0.75em" }} title="تطابق تقريبي — راجع اللوحة">
+                                  تقريبية {p.similarity}%
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          {pasteRecordCols.map((col) => {
+                            const v = String(p.row[col] ?? "");
+                            const isUrl = !!v && /^https?:\/\//i.test(v);
+                            return (
+                              <td key={col} className="border-l border-border px-3 py-1.5 whitespace-nowrap">
+                                {isUrl ? (
+                                  <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
+                                ) : v ? (
+                                  <span className="text-ink">{v}</span>
+                                ) : (
+                                  <span className="text-muted">—</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="px-2 py-1.5">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => copyPasteRecordRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                                {pasteRecordCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
+                              </button>
+                              <button onClick={() => shareRowToWhatsApp(buildPasteRecordRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                                <Share2 size={12} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+        {pasteRan && pasteResults.length > 0 && (
+          <>
             {/* أزرار تصدير كبيرة — خارج الكارت */}
             <div className="flex gap-3">
               <div className="relative flex-1">
