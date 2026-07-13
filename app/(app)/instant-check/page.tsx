@@ -1332,6 +1332,33 @@ export default function InstantCheckPage() {
     }
   }
 
+  // Short, soft "ready — talk now" cue — distinct from the loud multi-beep
+  // wanted-plate alert. Marks the exact instant the native engine confirmed
+  // (via the `listeningState` plugin event) it actually started capturing
+  // audio, since start()'s call returning does NOT mean the mic is live yet —
+  // that gap is what was clipping the leading letters of every plate after
+  // the first one in a continuous session.
+  function playReadyCue() {
+    try {
+      const Ctor: typeof AudioContext =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      const ctx = new Ctor();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.5, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.16);
+      osc.onended = () => ctx.close().catch(() => {});
+    } catch { /* best-effort cue only */ }
+  }
+
   function startPttTimer() {
     if (pttTimerRef.current) clearInterval(pttTimerRef.current);
     setPttSeconds(0);
@@ -1377,6 +1404,21 @@ export default function InstantCheckPage() {
         // But a run of NOTHING-but-errors isn't transient anymore (broken plugin,
         // unsupported locale, permission revoked mid-session) — that must surface
         // an error instead of spinning the mic forever with no feedback.
+        // Fire a short "ready — talk now" cue the instant the engine confirms
+        // (via its own listeningState event) that it's actually capturing
+        // audio. start()'s call resolving does NOT mean the mic went live
+        // immediately — the agent, guessing from the screen alone, was
+        // starting to speak before capture actually began, clipping the
+        // leading letters of every plate after the first one in a session.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let listeningStateHandle: any = null;
+        try {
+          listeningStateHandle = await SpeechRecognition.addListener(
+            "listeningState",
+            (data: { status: string }) => { if (data.status === "started") playReadyCue(); }
+          );
+        } catch { /* event unsupported on this device — loop still works, just without the cue */ }
+
         let consecutiveFailures = 0;
         const MAX_CONSECUTIVE_FAILURES = 10;
         while (isListeningRef.current) {
@@ -1407,6 +1449,7 @@ export default function InstantCheckPage() {
             await new Promise((r) => setTimeout(r, 350));
           }
         }
+        try { await listeningStateHandle?.remove(); } catch {}
         stopPttTimer();
         setPttListening(false);
         isListeningRef.current = false;
