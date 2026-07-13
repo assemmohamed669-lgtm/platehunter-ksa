@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, extractMultiplePlates, pickBestHypothesis, similarityPercent, EN_TO_AR, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -1152,28 +1152,37 @@ export default function InstantCheckPage() {
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
-  // addResult: parse one utterance and append to results list
+  // addResult: an utterance can hold MORE than one plate if the delegate reads
+  // them back-to-back with no gap the recognizer treats as a sentence break
+  // ("دال بحر واحد اتنين تلاتة اربعة صاد طاء سين خمسة ستة سبعة تمنية…") — so
+  // this always runs the multi-plate extractor first (same engine the
+  // registration page's session parser uses) and appends one row per plate.
   function addPttResult(utterance: string) {
-    // Pull the vehicle type (ونيت/فان/مصدومة/…) out FIRST so it lands in its
-    // own column and isn't misread as plate letters.
-    const { vehicleType, rest } = extractVehicleType(utterance);
+    let plates = extractMultiplePlates(utterance);
+    if (plates.length === 0) {
+      // Some compounds (spoken hundred/thousand merges etc.) are only handled
+      // by the single-plate parser — same fallback lib/sessionParser.ts uses
+      // when extractMultiplePlates comes back empty.
+      const parsed = parsePlateFromTranscript(utterance);
+      if (parsed.plate) {
+        plates = [{
+          plate: parsed.plate,
+          vehicleType: parsed.vehicleType,
+          notes: parsed.notes ?? "",
+          normalized: parsed.normalized || normalizePlate(parsed.plate),
+          uncertain: parsed.uncertain,
+        }];
+      }
+    }
+    plates.forEach((p, i) => addOnePttRow(p.plate, p.vehicleType, i));
+  }
 
-    // أول محاولة: ترجمة حرف حرف بالنطق المصري ("دال حه ره واحد اتنين...")
-    const egyptianMapped = mapEgyptianSpeech(rest);
-    const egyptianNorm   = normalizePlate(bankPlateToArabic(egyptianMapped));
-    const letterPart     = egyptianNorm.replace(/[0-9]/g, "");
-    const hasDigits      = /[0-9]/.test(egyptianNorm);
-    // لوحة سعودية صحيحة: 1-3 حروف + أرقام — لو أكثر من 3 حروف يعني كلمات ما اتحولتش
-    const isPlausiblePlate = hasDigits && letterPart.length >= 1 && letterPart.length <= 3;
-
-    const rawPlate = isPlausiblePlate
-      ? egyptianMapped
-      : (parsePlateFromTranscript(rest).plate || "");
-
-    if (!rawPlate) return;
-
-    // Apply what past edits taught: whole-fragment blend first, then per-letter
-    // confusion — so a mishearing corrected once auto-corrects next time.
+  // Apply what past edits taught (whole-fragment blend first, then per-letter
+  // confusion — so a mishearing corrected once auto-corrects next time), check
+  // against the file, and append one compact row (found or not). GPS is
+  // captured in the background. `idx` disambiguates the id when several rows
+  // are added from the same utterance within the same millisecond.
+  function addOnePttRow(rawPlate: string, vehicleType: string | undefined, idx: number) {
     const norm = normalizePlate(bankPlateToArabic(rawPlate));
     const letters = norm.replace(/[0-9]/g, "");
     const digits = norm.replace(/[^0-9]/g, "");
@@ -1183,10 +1192,9 @@ export default function InstantCheckPage() {
     const result = searchInCheck(corrected);
     if (!result) return; // no check file loaded
 
-    // Every spoken plate becomes a compact row (found or not), tagged with the
-    // current location name; `originalPlate` keeps the pre-correction value so
-    // a later edit can teach the learners. GPS is captured in the background.
-    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    // `originalPlate` keeps the pre-correction value so a later edit can teach
+    // the learners.
+    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}-${idx}`;
     const row: PttRow = {
       id,
       plate: result.plate,
