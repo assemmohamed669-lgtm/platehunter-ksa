@@ -196,7 +196,6 @@ export function plateAtoms(transcript: string): PlateAtom[] {
   text = text.replace(/[،؛؟۔.,;!?]/g, " ");
   text = text.replace(ZERO_WORD_RE, " 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
   text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
-  text = text.replace(/ه(?!ـ)/g, "هـ");      // standalone ه → هـ (SR drops the tatweel)
   // NB: no ألف→1000 rewrite here (unlike parsePlateFromTranscript). In
   // letter-by-letter dictation "ألف" is almost always the LETTER ا, and this
   // segmenter concatenates rather than sums, so the rewrite only ever ATE the
@@ -216,6 +215,13 @@ export function plateAtoms(transcript: string): PlateAtom[] {
   text = replaceAll(text, LETTER_NAMES);     // دال→د, صاد→ص, لام→ل …
   text = replaceAll(text, PHONETIC_MERGES);  // احلام→ا ح ل …
   text = replaceAll(text, SPOKEN_NUMBERS);   // خمسة→5, تلاتين→30, ألفين→2000 …
+  // standalone ه → هـ (SR drops the tatweel) — MUST run AFTER the word maps
+  // above, not before: converting bare ه too early corrupts the letter name
+  // "هاء" into "هـاء" (no longer matches LETTER_NAMES, so the ه silently
+  // disappears) and mangles heh-spelled number words like "ميه" (100). By this
+  // point every multi-char word containing ه has already been resolved, so
+  // any ه still bare here is a genuine standalone single-letter utterance.
+  text = text.replace(/ه(?!ـ)/g, "هـ");
   text = normalizeNumerals(text);            // ٥→5
 
   const rawTokens = text.split(/\s+/).filter(Boolean);
@@ -791,10 +797,16 @@ const PHONETIC_MERGES: [string, string][] = ([
   // legitimate field-note vocabulary ("جنب علامة الطريق", "المالكة حابة
   // تسدد") — merging either unconditionally was found (adversarial review)
   // to corrupt real notes and adjacent plates. The pipeline's ه→هـ rewrite
-  // runs BEFORE this table, so raw "حابه"/"علامه" arrive here as "حابهـ"/
-  // "علامهـ" — all 4 spelling combinations must match.
+  // now runs AFTER this table (moved to fix "هاء"/"ميه" getting corrupted if
+  // it ran earlier — see the rewrite's own comment below), so raw SR output
+  // reaches here with BARE ه, not هـ. Every realistic teh-marbuta/bare-heh/
+  // tatweel-heh spelling combination is listed so none of them depend on
+  // ordering relative to that rewrite.
   ["حابة علامة", "ح ب ل"], ["حابهـ علامهـ", "ح ب ل"],
   ["حابة علامهـ", "ح ب ل"], ["حابهـ علامة", "ح ب ل"],
+  ["حابه علامه", "ح ب ل"], ["حابه علامة", "ح ب ل"],
+  ["حابة علامه", "ح ب ل"], ["حابه علامهـ", "ح ب ل"],
+  ["حابهـ علامه", "ح ب ل"],
   // "راء ياء" (letters ر ي) glued into one word with no space between them —
   // neither LETTER_NAMES entry can match mid-word, and it's not a real
   // Arabic word otherwise, so low collision risk.

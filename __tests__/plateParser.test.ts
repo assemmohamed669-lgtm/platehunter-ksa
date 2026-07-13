@@ -152,6 +152,28 @@ describe("extractMultiplePlates", () => {
   });
 });
 
+// ─── الهاء في مسار اللوحات المتعددة (نفس باگ parsePlateFromTranscript، لكن هنا
+// في plateAtoms — المسار الحي الأساسي المستخدم في sessionParser) ──────────────
+describe("extractMultiplePlates — ه (haa) survives letter-name dictation", () => {
+  it("keeps ه when dictated by its letter name 'هاء' between other letters", () => {
+    const r = extractMultiplePlates("الف هاء باء واحد اثنين ثلاثة اربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("اهب1234");
+  });
+
+  it("keeps ه after ح (throat pair) via letter names", () => {
+    const r = extractMultiplePlates("حاء هاء نون واحد اثنين ثلاثة اربعة");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("حهن1234");
+  });
+
+  it("does not corrupt number words containing literal ه (ميه = 100)", () => {
+    const r = extractMultiplePlates("دال راء نون ميه");
+    expect(r).toHaveLength(1);
+    expect(r[0].plate).toBe("درن0100");
+  });
+});
+
 describe("extractMultiplePlates — corpus", () => {
   // ── Single clean plate ────────────────────────────────────────────────────
   it("single spaced plate", () => {
