@@ -1356,13 +1356,29 @@ export default function InstantCheckPage() {
       if (Capacitor.isNativePlatform()) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
-        await SpeechRecognition.requestPermissions();
+        const perm = await SpeechRecognition.requestPermissions();
+        // requestPermissions() resolves with a status — it does NOT throw when
+        // denied. Ignoring that (as before) let the mic show "listening" forever
+        // with zero result: start() below fails every time on denied permission,
+        // and the loop's "never give up" retry swallows every failure silently.
+        if (perm?.speechRecognition && perm.speechRecognition !== "granted") {
+          setPttError("لازم تسمح للتطبيق باستخدام الميكروفون — من إعدادات الهاتف ← التطبيقات ← قناص اللوحات ← الأذونات.");
+          stopPttTimer();
+          setPttListening(false);
+          isListeningRef.current = false;
+          return;
+        }
         // Continuous listening = a loop of one-shot recognitions. Android's
         // SpeechRecognizer needs a beat to reset between sessions; starting
         // again too fast throws ERROR_RECOGNIZER_BUSY. Every transient error
         // (busy / no-speech / silence) must NOT end the session — the mic only
         // stops when the USER presses stop (isListeningRef flips false). So we
-        // never give up on our own; we just back off and keep looping.
+        // never give up on transient errors — we just back off and keep looping.
+        // But a run of NOTHING-but-errors isn't transient anymore (broken plugin,
+        // unsupported locale, permission revoked mid-session) — that must surface
+        // an error instead of spinning the mic forever with no feedback.
+        let consecutiveFailures = 0;
+        const MAX_CONSECUTIVE_FAILURES = 10;
         while (isListeningRef.current) {
           try {
             const result = await SpeechRecognition.start({
@@ -1371,6 +1387,7 @@ export default function InstantCheckPage() {
               partialResults: false,
               popup: false,
             });
+            consecutiveFailures = 0;
             const text: string = pickBestHypothesis(result?.matches ?? []);
             if (text) {
               setPttLiveText(text);
@@ -1381,8 +1398,12 @@ export default function InstantCheckPage() {
           } catch {
             // User pressed stop mid-session → exit cleanly.
             if (!isListeningRef.current) break;
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              setPttError("التعرف الصوتي مش بيستجيب على جهازك — جرّب تحديث التطبيق من القائمة (☰) أو أعد تشغيل الميكروفون.");
+              break;
+            }
             // Transient error between plates → back off briefly and retry.
-            // Never break out on our own — keep listening until the user stops.
             await new Promise((r) => setTimeout(r, 350));
           }
         }
