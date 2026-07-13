@@ -1770,3 +1770,65 @@ export function matchReferralAgainstData(
     return { referralRow: refRow, status: "none" as const };
   });
 }
+
+export interface TokenMatch {
+  converted: string;
+  row: Record<string, string>;
+  dataIdx: number;
+  status: "exact" | "fuzzy";
+  similarity?: number;
+}
+
+// Matches free-typed/pasted plate tokens against a data file — the reverse
+// direction of matchDataAgainstReferral (there, each DATA row looks up a
+// referral index; here, each TOKEN looks up a data index). Kept as its own
+// function rather than reusing buildReferralIndex's single-row-per-key exact
+// map, because a token can legitimately match MULTIPLE data rows (the same
+// plate spotted more than once in the field) and all of them must surface.
+export function matchTokensAgainstRows(
+  tokens: string[],
+  dataRows: Record<string, string>[],
+  dataPlateCol: string,
+  fuzzyThreshold = 88,
+): TokenMatch[] {
+  const exactMap = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
+  const byFirstChar = new Map<string, Array<{ norm: string; row: Record<string, string>; dataIdx: number }>>();
+  for (let i = 0; i < dataRows.length; i++) {
+    const row = dataRows[i];
+    const norm = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
+    if (!norm) continue;
+    const arr = exactMap.get(norm);
+    if (arr) arr.push({ row, dataIdx: i });
+    else exactMap.set(norm, [{ row, dataIdx: i }]);
+    const key = norm[0];
+    if (!byFirstChar.has(key)) byFirstChar.set(key, []);
+    byFirstChar.get(key)!.push({ norm, row, dataIdx: i });
+  }
+
+  const results: TokenMatch[] = [];
+  for (const token of tokens) {
+    const converted = bankPlateToArabic(token);
+    const norm = normalizePlate(converted);
+    if (!norm) continue;
+
+    const exactEntries = exactMap.get(norm);
+    if (exactEntries) {
+      for (const { row, dataIdx } of exactEntries) {
+        results.push({ converted, row, dataIdx, status: "exact" });
+      }
+      continue;
+    }
+
+    if (exactMap.size > 50_000) continue;
+
+    let best: { row: Record<string, string>; dataIdx: number; sim: number } | null = null;
+    const candidates = byFirstChar.get(norm[0]) ?? [];
+    for (const { norm: rowNorm, row, dataIdx } of candidates) {
+      if (Math.abs(rowNorm.length - norm.length) > 1) continue;
+      const sim = similarityPercent(norm, rowNorm);
+      if (sim >= fuzzyThreshold && (!best || sim > best.sim)) best = { row, dataIdx, sim };
+    }
+    if (best) results.push({ converted, row: best.row, dataIdx: best.dataIdx, status: "fuzzy", similarity: best.sim });
+  }
+  return results;
+}

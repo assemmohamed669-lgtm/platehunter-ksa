@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 
 // ─── plateContentScore / pickBestHypothesis ────────────────────────────────
 describe("plateContentScore & pickBestHypothesis", () => {
@@ -1396,5 +1396,51 @@ describe("ه (haa) survives in spoken plates", () => {
 
   it("does not corrupt number words containing ه (سبعة/ستة)", () => {
     expect(P("دال راء نون سبعة ستة خمسة اربعة")).toBe("درن7654");
+  });
+});
+
+// ─── matchTokensAgainstRows (paste-sort matching) ──────────────────────────
+describe("matchTokensAgainstRows", () => {
+  const rows = [
+    { "رقم اللوحة": "نكد5678", "الحي": "العليا" },
+    { "رقم اللوحة": "ابد1234", "الحي": "النزهة" },
+    { "رقم اللوحة": "نكد5678", "الحي": "الملز" }, // same plate seen twice — both should surface
+  ];
+
+  it("finds an exact match after normalizing/converting the pasted token", () => {
+    const results = matchTokensAgainstRows(["نكد 5678"], rows, "رقم اللوحة");
+    expect(results.filter((r) => r.status === "exact")).toHaveLength(2); // both occurrences
+  });
+
+  it("converts an English-lettered token before matching", () => {
+    const results = matchTokensAgainstRows(["ABD1234"], rows, "رقم اللوحة");
+    expect(results).toHaveLength(1);
+    expect(results[0].row["الحي"]).toBe("النزهة");
+    expect(results[0].status).toBe("exact");
+  });
+
+  it("falls back to a fuzzy match when a lower threshold is given (one digit off)", () => {
+    // similarity = (1 - 1/7) * 100 = 85.7% (rounds to 86) — below the default
+    // 88% threshold (see the equivalent matchDataAgainstReferral case above),
+    // so pass an explicit lower threshold to exercise the fuzzy fallback path.
+    const results = matchTokensAgainstRows(["ابد1235"], rows, "رقم اللوحة", 80); // 1234 -> 1235
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe("fuzzy");
+    expect(results[0].similarity).toBe(86);
+  });
+
+  it("does not fuzzy-match at the default 88% threshold for a one-digit-off 7-char plate", () => {
+    const results = matchTokensAgainstRows(["ابد1235"], rows, "رقم اللوحة");
+    expect(results).toHaveLength(0);
+  });
+
+  it("returns nothing for a token with no exact or close-enough match", () => {
+    const results = matchTokensAgainstRows(["طسق9999"], rows, "رقم اللوحة");
+    expect(results).toHaveLength(0);
+  });
+
+  it("keeps each token's own converted display value alongside the matched row", () => {
+    const results = matchTokensAgainstRows(["ABD1234"], rows, "رقم اللوحة");
+    expect(results[0].converted).toBe("ابد1234");
   });
 });

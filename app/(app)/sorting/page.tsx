@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, type MatchResult,
+  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
@@ -57,7 +57,7 @@ function wipeSortResults() {
 }
 
 function persistPasteResults(
-  results: { converted: string; row: Record<string, string>; dataIdx: number }[],
+  results: TokenMatch[],
   text: string,
 ) {
   try {
@@ -124,7 +124,7 @@ export default function SortingPage() {
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
-  const [pasteResults, setPasteResults] = useState<{ converted: string; row: Record<string, string>; dataIdx: number }[]>([]);
+  const [pasteResults, setPasteResults] = useState<TokenMatch[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteZoom, setPasteZoom] = useState(1);
   const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
@@ -702,26 +702,14 @@ export default function SortingPage() {
   // ── Paste sort ──
   function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
-    const sourceMap = new Map<string, { row: Record<string, string>; dataIdx: number }[]>();
-    for (let i = 0; i < dataTable.rows.length; i++) {
-      const row = dataTable.rows[i];
-      const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
-      if (!n) continue;
-      const arr = sourceMap.get(n);
-      if (arr) arr.push({ row, dataIdx: i });
-      else sourceMap.set(n, [{ row, dataIdx: i }]);
-    }
-    const tokens = pasteText.split(/[\n,،]+/).map((t) => t.trim()).filter(Boolean);
-    const matches: { converted: string; row: Record<string, string>; dataIdx: number }[] = [];
-    for (const token of tokens) {
-      const converted = bankPlateToArabic(token);
-      const entries = sourceMap.get(normalizePlate(converted));
-      if (entries) {
-        for (const { row, dataIdx } of entries) {
-          matches.push({ converted, row, dataIdx });
-        }
-      }
-    }
+    // Split on whitespace too, not just newline/comma — a normalized plate never
+    // legitimately contains a space, so any run of whitespace between tokens is
+    // safe to treat as a separator. Without this, plates pasted the way people
+    // naturally share them (space-separated on one line, e.g. from WhatsApp)
+    // collapse into one garbled string after normalizePlate strips the spaces,
+    // and silently match nothing.
+    const tokens = pasteText.split(/[\s,،]+/).map((t) => t.trim()).filter(Boolean);
+    const matches = matchTokensAgainstRows(tokens, dataTable.rows, effectiveDataPlateCol);
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
     setPasteResults(matches);
     setPasteRan(true);
@@ -1406,6 +1394,11 @@ export default function SortingPage() {
                             <span className="rounded-full bg-brand/20 px-1 py-0.5 font-bold text-brand leading-none" style={{ fontSize: "0.75em" }}>
                               مطلوبة
                             </span>
+                            {p.status === "fuzzy" && (
+                              <span className="rounded-full bg-alert/20 px-1 py-0.5 font-bold text-alert leading-none" style={{ fontSize: "0.75em" }} title="تطابق تقريبي — راجع اللوحة">
+                                تقريبية {p.similarity}%
+                              </span>
+                            )}
                           </div>
                         </td>
                         {pasteAllCols.map((col) => {
