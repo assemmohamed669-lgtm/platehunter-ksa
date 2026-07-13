@@ -1393,13 +1393,6 @@ export default function InstantCheckPage() {
               setPttLiveText(text);
               addPttResult(text);
             }
-            // start()'s promise resolving does NOT mean the native session tore
-            // down cleanly — without an explicit stop(), leftover session state
-            // compounds across restarts (observed in the field: 1st plate in a
-            // listening run transcribes perfectly, each one after loses more
-            // leading letters, by the 5th-6th plate the letters are gone
-            // entirely). Force a clean teardown before the next start().
-            try { await SpeechRecognition.stop(); } catch {}
             // Let the recognizer fully reset before the next plate.
             await new Promise((r) => setTimeout(r, 250));
           } catch {
