@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import {
   MapPin, Search, Trash2, Mic, Keyboard, Camera, ShieldAlert,
   Navigation, Crosshair, Copy, Check, CheckSquare, Square, EyeOff, Eye, Share2,
+  ChevronDown, Minimize2, Maximize2,
 } from "lucide-react";
 import {
   getAllRecordings, getAllFieldCheckEntries, getUploadedFile,
@@ -54,6 +55,12 @@ interface Match {
 const METHOD_ICON = { voice: Mic, manual: Keyboard, camera: Camera };
 const COLOR = { voice: "#1FAE6E", manual: "#3B82F6", camera: "#8B5CF6" };
 
+// أحجام نافذة الخريطة المستقلة — المندوب يتحكم فيها بحرّية (تكبير/تصغير/إخفاء).
+type MapSize = "small" | "medium" | "large";
+const MAP_HEIGHTS: Record<MapSize, number> = { small: 220, medium: 420, large: 640 };
+const LS_MAP_COLLAPSED = "ph:maps:collapsed";
+const LS_MAP_SIZE = "ph:maps:size";
+
 export default function MapsPage() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
@@ -68,6 +75,28 @@ export default function MapsPage() {
   const [recenterKey, setRecenterKey] = useState(0);
   const [pointsHidden, setPointsHidden] = useState(false);
   const [nearest, setNearest] = useState(false);
+
+  // نافذة الخريطة مستقلة تماماً عن قائمة اللوحات — حجمها وحالة طيّها يتحفظوا.
+  const [mapCollapsed, setMapCollapsed] = useState(false);
+  const [mapSize, setMapSize] = useState<MapSize>("medium");
+  useEffect(() => {
+    try {
+      setMapCollapsed(localStorage.getItem(LS_MAP_COLLAPSED) === "1");
+      const s = localStorage.getItem(LS_MAP_SIZE);
+      if (s === "small" || s === "medium" || s === "large") setMapSize(s);
+    } catch { /* storage unavailable */ }
+  }, []);
+  function toggleMapCollapsed() {
+    setMapCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem(LS_MAP_COLLAPSED, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }
+  function changeMapSize(size: MapSize) {
+    setMapSize(size);
+    try { localStorage.setItem(LS_MAP_SIZE, size); } catch { /* ignore */ }
+  }
 
   // تحديد/نسخ في نافذة المطلوبة
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -235,57 +264,87 @@ export default function MapsPage() {
         <span className="ml-auto text-xs text-muted">{allPoints.length} نقطة على الخريطة</span>
       </div>
 
-      {/* أدوات الخريطة */}
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => setRecenterKey((k) => k + 1)} disabled={!userLoc}
-          className="flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-40">
-          <Crosshair size={14} /> موقعي
+      {/* ── نافذة الخريطة — مستقلة تماماً عن قائمة اللوحات، بحجمها الخاص ── */}
+      <div className="rounded-2xl border border-border bg-surface p-3">
+        <button onClick={toggleMapCollapsed} className="flex w-full items-center justify-between">
+          <span className="text-sm font-bold text-ink">الخريطة</span>
+          <ChevronDown size={16} className={`text-muted transition-transform ${mapCollapsed ? "" : "rotate-180"}`} />
         </button>
-        <button onClick={() => setPointsHidden((v) => !v)}
-          className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition ${pointsHidden ? "bg-primary text-night" : "border border-border text-muted hover:text-ink"}`}>
-          {pointsHidden ? <><Eye size={14} /> إظهار النقاط</> : <><EyeOff size={14} /> مسح النقاط</>}
-        </button>
-        <button onClick={() => setNearest((v) => !v)} disabled={!userLoc}
-          className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition disabled:opacity-40 ${nearest ? "bg-primary text-night" : "border border-border text-muted hover:text-primary"}`}>
-          <Navigation size={14} /> الأقرب
-        </button>
-      </div>
-      {pointsHidden && <p className="-mt-2 text-[11px] text-muted">النقاط متخفية من العرض فقط — السجلات محفوظة زي ما هي.</p>}
 
-      {/* Map */}
-      <MapView points={allPoints} userLocation={userLoc} recenterKey={recenterKey} />
+        {!mapCollapsed && (
+          <div className="mt-3 flex flex-col gap-3">
+            {/* أدوات الخريطة + التحكم في الحجم */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={() => setRecenterKey((k) => k + 1)} disabled={!userLoc}
+                className="flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-40">
+                <Crosshair size={14} /> موقعي
+              </button>
+              <button onClick={() => setPointsHidden((v) => !v)}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition ${pointsHidden ? "bg-primary text-night" : "border border-border text-muted hover:text-ink"}`}>
+                {pointsHidden ? <><Eye size={14} /> إظهار النقاط</> : <><EyeOff size={14} /> مسح النقاط</>}
+              </button>
+              <button onClick={() => setNearest((v) => !v)} disabled={!userLoc}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition disabled:opacity-40 ${nearest ? "bg-primary text-night" : "border border-border text-muted hover:text-primary"}`}>
+                <Navigation size={14} /> الأقرب
+              </button>
+              {/* تكبير/تصغير حجم نافذة الخريطة */}
+              <div className="mr-auto flex items-center gap-1 rounded-xl border border-border p-1">
+                <button onClick={() => changeMapSize("small")} title="أصغر"
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${mapSize === "small" ? "bg-primary text-night" : "text-muted hover:text-ink"}`}>
+                  <Minimize2 size={13} />
+                </button>
+                <button onClick={() => changeMapSize("medium")} title="متوسطة"
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${mapSize === "medium" ? "bg-primary text-night" : "text-muted hover:text-ink"}`}>
+                  <Square size={13} />
+                </button>
+                <button onClick={() => changeMapSize("large")} title="أكبر"
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${mapSize === "large" ? "bg-primary text-night" : "text-muted hover:text-ink"}`}>
+                  <Maximize2 size={13} />
+                </button>
+              </div>
+            </div>
+            {pointsHidden && <p className="text-[11px] text-muted">النقاط متخفية من العرض فقط — السجلات محفوظة زي ما هي.</p>}
 
-      {/* Search */}
-      <div className="relative">
-        <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
-        <input dir="rtl" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث عن لوحة..."
-          className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
-      </div>
-
-      {/* Matched list */}
-      {!ready ? (
-        <p className="py-8 text-center text-sm text-muted">جارٍ التحميل...</p>
-      ) : wanted.map.size === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-border bg-surface py-10 text-center">
-          <MapPin size={36} className="text-muted/30" />
-          <p className="text-sm text-muted">ارفع «ملف التشييك المرجعي» الأول عشان نعرف المطلوبين.</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-border bg-surface py-10 text-center">
-          <MapPin size={36} className="text-muted/30" />
-          <p className="text-sm text-muted">{query ? "مفيش لوحة بالبحث ده." : "لسه مفيش سيارة مطلوبة اتلاقت."}</p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-brand">السيارات المطلوبة ({filtered.length})</span>
-            <button onClick={toggleSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-              {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-              {allSel ? "إلغاء الكل" : "تحديد الكل"}
-            </button>
+            <MapView points={allPoints} userLocation={userLoc} recenterKey={recenterKey} heightPx={MAP_HEIGHTS[mapSize]} />
           </div>
+        )}
+      </div>
 
-          {filtered.map((m) => {
+      {/* ── نافذة قائمة اللوحات — مستقلة تماماً عن الخريطة ── */}
+      <div className="rounded-2xl border border-border bg-surface p-3">
+        <p className="mb-3 text-sm font-bold text-ink">قائمة اللوحات المطلوبة</p>
+
+        {/* Search */}
+        <div className="relative mb-3">
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input dir="rtl" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث عن لوحة..."
+            className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+        </div>
+
+        {/* Matched list */}
+        {!ready ? (
+          <p className="py-8 text-center text-sm text-muted">جارٍ التحميل...</p>
+        ) : wanted.map.size === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            <MapPin size={36} className="text-muted/30" />
+            <p className="text-sm text-muted">ارفع «ملف التشييك المرجعي» الأول عشان نعرف المطلوبين.</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            <MapPin size={36} className="text-muted/30" />
+            <p className="text-sm text-muted">{query ? "مفيش لوحة بالبحث ده." : "لسه مفيش سيارة مطلوبة اتلاقت."}</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-brand">{filtered.length} لوحة</span>
+              <button onClick={toggleSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                {allSel ? "إلغاء الكل" : "تحديد الكل"}
+              </button>
+            </div>
+
+            {filtered.map((m) => {
             const Icon = METHOD_ICON[m.methodIcon];
             const sel = selected.has(m.key);
             return (
@@ -349,6 +408,7 @@ export default function MapsPage() {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

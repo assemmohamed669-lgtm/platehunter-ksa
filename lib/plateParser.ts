@@ -1173,7 +1173,7 @@ export function recordLetterCorrections(map: LetterConfusionMap, extractedPlate:
 export function applyLetterConfusions(
   plate: string,
   map: LetterConfusionMap,
-  minCount = 3,
+  minCount = 2,
   minDominance = 0.7,
 ): string {
   const { letters, digits } = splitPlateUnits(plate);
@@ -1232,7 +1232,7 @@ export function recordWordBlend(map: WordBlendMap, rawSource: string, correctedL
 export function applyWordBlend(
   rawSource: string | undefined,
   map: WordBlendMap,
-  minCount = 3,
+  minCount = 2,
   minDominance = 0.7,
 ): string | null {
   if (!rawSource) return null;

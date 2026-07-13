@@ -20,6 +20,8 @@ interface Props {
   userLocation?: { lat: number; lng: number } | null;
   /** كل ما يتغيّر الرقم ده → الخريطة ترجع لموقع المندوب وتكمّل تتبّع. */
   recenterKey?: number;
+  /** ارتفاع الحاوية بالبكسل — نافذة الخريطة المستقلة تتحكم في حجمها بيه. */
+  heightPx?: number;
 }
 
 // Escape any value going into popup HTML — plate/notes are user/OCR content.
@@ -34,7 +36,7 @@ function safeHttps(url: unknown): string | null {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export default function MapView({ points, center = [24.7136, 46.6753], userLocation, recenterKey }: Props) {
+export default function MapView({ points, center = [24.7136, 46.6753], userLocation, recenterKey, heightPx = 420 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const LRef = useRef<any>(null);
@@ -137,6 +139,16 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
   useEffect(() => { renderMarkers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [points]);
   useEffect(() => { renderUser(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userLocation]);
 
+  // لما نافذة الخريطة تتكبّر/تتصغّر بتغيير heightPx، الحاوية بتاخد وقت CSS
+  // قصير لتطبّق الارتفاع الجديد — نستنى شوية بعدها ونعمل invalidateSize عشان
+  // Leaflet يعيد رسم الـ tiles على المقاس الصحيح (وإلا يفضل فيه فراغ رمادي).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const t = setTimeout(() => map.invalidateSize(), 260);
+    return () => clearTimeout(t);
+  }, [heightPx]);
+
   // زر «موقعي» — يرجّع التتبّع ويروح للموقع.
   useEffect(() => {
     if (recenterKey === undefined) return;
@@ -149,7 +161,8 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
   return (
     <div
       ref={containerRef}
-      className="h-[420px] w-full rounded-2xl overflow-hidden border border-border"
+      className="w-full rounded-2xl overflow-hidden border border-border transition-[height] duration-200"
+      style={{ height: heightPx }}
     />
   );
 }

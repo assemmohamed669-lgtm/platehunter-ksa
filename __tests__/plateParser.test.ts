@@ -71,15 +71,13 @@ describe("recordLetterCorrections & applyLetterConfusions", () => {
   it("does not correct below the minimum count", () => {
     const map: LetterConfusionMap = new Map();
     recordLetterCorrections(map, "صح6469", "سح6469");
-    recordLetterCorrections(map, "صك1122", "سك1122");
     expect(applyLetterConfusions("صط5555", map)).toBe("صط5555");
   });
 
-  it("corrects once the pattern is seen enough times and is dominant", () => {
+  it("corrects once the pattern is seen enough times and is dominant (minCount=2)", () => {
     const map: LetterConfusionMap = new Map();
     recordLetterCorrections(map, "صح6469", "سح6469");
     recordLetterCorrections(map, "صك1122", "سك1122");
-    recordLetterCorrections(map, "صط7777", "سط7777");
     expect(applyLetterConfusions("صل5555", map)).toBe("سل5555");
   });
 
@@ -552,13 +550,11 @@ describe("extractMultiplePlates — corpus", () => {
   it("does not auto-apply a blend seen fewer than minCount times", () => {
     const map: WordBlendMap = new Map();
     recordWordBlend(map, "انراو", "انر");
-    recordWordBlend(map, "انراو", "انر");
     expect(applyWordBlend("انراو", map)).toBeNull();
   });
 
-  it("auto-applies a blend once it dominates at minCount+", () => {
+  it("auto-applies a blend once it dominates at minCount+ (minCount=2)", () => {
     const map: WordBlendMap = new Map();
-    recordWordBlend(map, "انراو", "انر");
     recordWordBlend(map, "انراو", "انر");
     recordWordBlend(map, "انراو", "انر");
     expect(applyWordBlend("انراو", map)).toBe("انر");

@@ -1879,16 +1879,16 @@ export default function RegistrationPage() {
     // entry's plate was typed, so editing it later is a typo fix, not a
     // mishearing signal, and must not teach either learner.
     //
-    // Branch on rawLetterSource FIRST, not on entry.uncertain: updatePlate()
-    // below unconditionally clears uncertain on every edit, but never touches
-    // rawLetterSource. Gating on uncertain would mean a SECOND edit of an
-    // already-corrected entry falls through to the letter-confusion branch
-    // using a now-stale originalPlate — silently dropping the correction (if
-    // digits differ) or, worse, diffing a whole wrong 3-letter guess against
-    // the new fix position-by-position and fabricating bogus single-letter
-    // rules. rawLetterSource reflects which learner model actually fits this
-    // entry's mistake shape and doesn't change across edits, so it's checked
-    // independent of the entry's current uncertain value.
+    // Branch on rawLetterSource first: it reflects which learner model fits
+    // this entry's mistake shape (whole-fragment blend vs single letter) and
+    // doesn't change across edits. We do NOT also gate the letter-confusion
+    // branch on entry.uncertain — diffLetterCorrections already refuses to
+    // learn anything when the digit part or letter COUNT differs, so it's
+    // safe to run unconditionally here. This matters for an entry the
+    // wanted-list anchor already auto-corrected (anchorPlateToWanted): it's
+    // marked uncertain for review but has the SAME letter count by
+    // construction, so a further manual fix should still teach the learner
+    // instead of silently falling through neither branch.
     if (!entry.isManual && entry.rawLetterSource) {
       // An uncertain extraction (garbled-word salvage or letter-overflow
       // guess): the WHOLE letter group was likely wrong, not one letter
@@ -1901,7 +1901,7 @@ export default function RegistrationPage() {
           localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current)));
         } catch { /* storage full */ }
       }
-    } else if (!entry.isManual && !entry.uncertain) {
+    } else if (!entry.isManual) {
       // A confident extraction that still needed a fix: one letter drifted
       // (a heard letter substituted for the actual one) — the per-letter
       // confusion learner fits this.
