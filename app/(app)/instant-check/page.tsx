@@ -768,19 +768,6 @@ export default function InstantCheckPage() {
     setManualSel(new Set());
   }
 
-  // ملف Excel لقائمة اليدوي — لأزرار فتح/تنزيل/مشاركة.
-  function buildManualDraftFile(): { blob: Blob; name: string } {
-    if (manualDraft.length === 0) throw new Error("مفيش لوحات في القائمة.");
-    const rows = manualDraft.map((e) => ({ "رقم اللوحة": e.plate, ...e.row, "GPS": e.mapsLink ?? "" }));
-    return { blob: buildExcelBlob(rows, "تشييك يدوي"), name: `تشييك-يدوي-${Date.now()}.xlsx` };
-  }
-  async function shareManualDraftFile() {
-    try {
-      const { blob, name } = buildManualDraftFile();
-      await shareExcelBlob(blob, name, "تشييك يدوي");
-    } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
-  }
-
   // Commit the whole working list to شيت التسجيلات (field_check), then clear it.
   async function exportManualDraft() {
     if (manualDraft.length === 0) return;
@@ -846,33 +833,29 @@ export default function InstantCheckPage() {
     window.open(`https://wa.me/?text=${encodeURIComponent(`*لوحات مطلوبة (${hits.length})*\n\n${text}`)}`, "_blank");
   }
 
-  function buildHitsRows() {
-    return manualHits.map((hit) => {
-      const obj: Record<string, unknown> = { "رقم اللوحة": hit.plate };
-      for (const [k, v] of Object.entries(hit.row)) {
-        if (k !== checkPlateCol) obj[k] = v;
-      }
-      obj["GPS"] = hit.mapsLink ?? "";
-      obj["التاريخ"] = formatDate(hit.checkedAt);
-      return obj;
-    });
-  }
-
-  async function exportHitsExcel() {
-    const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
+  // Commit every auto-logged camera hit onto شيت التسجيلات (the one unified
+  // sheet). A fresh id per row — same "duplicates allowed" rule as the other
+  // export-to-field-check paths, so re-exporting never silently overwrites.
+  async function exportAllHitsToField() {
+    if (manualHits.length === 0) return;
+    const stamp = Date.now();
+    const toSave: FieldCheckEntry[] = manualHits.map((h, i) => ({
+      id: `${stamp}-${i}`,
+      agentId: agentIdRef.current ?? undefined,
+      plate: h.plate,
+      row: h.row,
+      method: "متشيكة بالكاميرا",
+      lat: h.lat,
+      lng: h.lng,
+      mapsLink: h.mapsLink,
+      checkedAt: h.checkedAt,
+    }));
     try {
-      await openExcelBlob(blob, `لوحات-مطلوبة-${Date.now()}.xlsx`);
+      for (const e of toSave) await saveFieldCheckEntry(e);
+      setFieldEntries((prev) => [...toSave, ...prev]);
+      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
     } catch (err: any) {
-      alert(err?.message ?? "تعذّر فتح الملف");
-    }
-  }
-
-  async function shareHitsExcel() {
-    const blob = buildExcelBlob(buildHitsRows(), "لوحات مطلوبة");
-    try {
-      await shareExcelBlob(blob, "لوحات-مطلوبة.xlsx", "لوحات مطلوبة");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّرت المشاركة");
+      alert(err?.message ?? "تعذّر تصدير اللوحات.");
     }
   }
 
@@ -1349,22 +1332,6 @@ export default function InstantCheckPage() {
     }
   }
 
-  async function exportPttExcel() {
-    try {
-      await openExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), `تشييك-صوتي-${Date.now()}.xlsx`);
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّر فتح الملف");
-    }
-  }
-
-  async function sharePttExcel() {
-    try {
-      await shareExcelBlob(buildExcelBlob(buildPttRows(), "تشييك صوتي"), "تشييك-صوتي.xlsx", "تشييك صوتي");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّرت المشاركة");
-    }
-  }
-
   function startPttTimer() {
     if (pttTimerRef.current) clearInterval(pttTimerRef.current);
     setPttSeconds(0);
@@ -1807,17 +1774,7 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
-                    {/* أزرار الملف: فتح/تنزيل + مشاركة */}
-                    <div className="flex gap-2">
-                      <OpenDownloadButton build={buildManualDraftFile} label="فتح الملف"
-                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60" />
-                      <button onClick={shareManualDraftFile}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition hover:bg-primary/90">
-                        <Share2 size={16} /> مشاركة الملف
-                      </button>
-                    </div>
-
-                    {/* تصدير للسجلات — زي ما هو */}
+                    {/* تصدير للسجلات — الشيت الموحّد الوحيد لكل طرق التشييك */}
                     <button
                       onClick={exportManualDraft}
                       disabled={manualExporting}
@@ -2177,24 +2134,11 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
-                    {/* تصدير كل لوحات الصوت لشيت التسجيلات */}
+                    {/* تصدير كل لوحات الصوت لشيت التسجيلات — الشيت الموحّد الوحيد */}
                     <button onClick={exportAllPttToField}
                       className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
                       <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
                     </button>
-
-                    {/* فتح / مشاركة Excel */}
-                    <div className="flex gap-2">
-                      <OpenDownloadButton
-                        build={() => ({ blob: buildExcelBlob(buildPttRows(), "تشييك صوتي"), name: `تشييك-صوتي-${Date.now()}.xlsx` })}
-                        label="فتح في Excel"
-                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
-                      />
-                      <button onClick={sharePttExcel}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
-                        <Share2 size={14} /> مشاركة Excel
-                      </button>
-                    </div>
                   </div>
                 );
               })()}
@@ -2324,18 +2268,11 @@ export default function InstantCheckPage() {
                   </div>
                 )}
 
-                {/* Export / Share Excel */}
-                <div className="flex gap-2">
-                  <OpenDownloadButton
-                    build={() => ({ blob: buildExcelBlob(buildHitsRows(), "لوحات مطلوبة"), name: `لوحات-مطلوبة-${Date.now()}.xlsx` })}
-                    label="فتح في Excel"
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
-                  />
-                  <button onClick={shareHitsExcel}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
-                    <Share2 size={14} /> مشاركة Excel
-                  </button>
-                </div>
+                {/* تصدير الكل لشيت التسجيلات — الشيت الموحّد الوحيد */}
+                <button onClick={exportAllHitsToField}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
+                  <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
+                </button>
               </div>
             );
           })()}
