@@ -1393,6 +1393,19 @@ export default function InstantCheckPage() {
               setPttLiveText(text);
               addPttResult(text);
             }
+            // start()'s promise resolving does NOT guarantee the native session
+            // tore down cleanly — leftover session state seems to compound
+            // across restarts (1st plate in a listening run transcribes
+            // perfectly, each one after loses more leading letters). A bare
+            // `await stop()` was tried and made things WORSE — it hung
+            // indefinitely when there was no active session left to stop,
+            // freezing the whole loop after the 1st plate. Race it against a
+            // short timeout so the absolute worst case is "stop() did nothing,
+            // we waited 300ms extra" — never another full freeze.
+            await Promise.race([
+              SpeechRecognition.stop().catch(() => {}),
+              new Promise((r) => setTimeout(r, 300)),
+            ]);
             // Let the recognizer fully reset before the next plate.
             await new Promise((r) => setTimeout(r, 250));
           } catch {
