@@ -1339,9 +1339,14 @@ export default function InstantCheckPage() {
         checkedAt: new Date().toISOString(),
       };
     });
-    for (const e of toSave) await saveFieldCheckEntry(e);
-    setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
-    setPttExportedIds(new Set(pttResults.map((r) => r.id)));
+    try {
+      for (const e of toSave) await saveFieldCheckEntry(e);
+      setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
+      setPttExportedIds(new Set(pttResults.map((r) => r.id)));
+      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+    } catch (err: any) {
+      alert(err?.message ?? "تعذّر تصدير اللوحات.");
+    }
   }
 
   async function exportPttExcel() {
