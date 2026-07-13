@@ -161,7 +161,10 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
   return (
     <div
       ref={containerRef}
-      className="w-full rounded-2xl overflow-hidden border border-border transition-[height] duration-200"
+      // isolate + relative: يحصر أي طبقات داخلية لـ Leaflet (tiles/controls/
+      // popups) في سياق تكديس (stacking context) خاص بيها، عشان مايفلتوش
+      // فوق أي modal/overlay خارجي مهما كان z-index الداخلي بتاعهم.
+      className="relative isolate w-full rounded-2xl overflow-hidden border border-border transition-[height] duration-200"
       style={{ height: heightPx }}
     />
   );

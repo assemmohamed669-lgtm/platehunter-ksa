@@ -1372,3 +1372,29 @@ describe("similarityPercent", () => {
     expect(sim).toBeLessThan(100);
   });
 });
+
+// ─── الهاء في التفريغ الصوتي (regression: كانت تُدرَج ثم تُحذف) ─────────────────
+describe("ه (haa) survives in spoken plates", () => {
+  const P = (t: string) => normalizePlate(parsePlateFromTranscript(t).plate);
+
+  it("keeps ه when dictated by its letter name 'هاء' between other letters", () => {
+    // كان يطلع 'اب1234' — الهاء تضيع
+    expect(P("الف هاء باء واحد اثنين ثلاثة اربعة")).toBe("اهب1234");
+  });
+
+  it("keeps ه after ح (throat pair) via letter names", () => {
+    expect(P("حاء هاء نون واحد اثنين ثلاثة اربعة")).toBe("حهن1234");
+  });
+
+  it("keeps a leading ه", () => {
+    expect(P("هاء باء دال واحد اثنين ثلاثة اربعة")).toBe("هبد1234");
+  });
+
+  it("still keeps a bare ه (single-letter form)", () => {
+    expect(P("ا ه ب 1234")).toBe("اهب1234");
+  });
+
+  it("does not corrupt number words containing ه (سبعة/ستة)", () => {
+    expect(P("دال راء نون سبعة ستة خمسة اربعة")).toBe("درن7654");
+  });
+});

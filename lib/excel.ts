@@ -221,6 +221,7 @@ function _cellLooksLikePlate(raw: string): boolean {
 function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string): number {
   try {
     const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
@@ -260,6 +261,7 @@ function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string
 function _sheetHasPlateCol(data: Uint8Array, sheetName: string, password?: string): boolean {
   try {
     const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
@@ -308,6 +310,8 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     cellStyles: false,
     sheetStubs: false,
   };
+  // dense mode — faster & far lower memory on huge sheets (see xlsxWorker.ts).
+  (opts as Record<string, unknown>).dense = true;
   if (password) (opts as Record<string, unknown>).password = password;
   if (sheetName) (opts as Record<string, unknown>).sheets = [sheetName];
 

@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -354,6 +354,9 @@ export default function InstantCheckPage() {
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
+  // Elapsed listening time (seconds) shown under the mic button while recording.
+  const [pttSeconds, setPttSeconds] = useState(0);
+  const pttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Mirror of pttLocationName so the listening loop reads the latest value
   // (the loop's addPttResult closure would otherwise capture a stale one).
   const pttLocationNameRef = useRef("");
@@ -1357,11 +1360,23 @@ export default function InstantCheckPage() {
     }
   }
 
+  function startPttTimer() {
+    if (pttTimerRef.current) clearInterval(pttTimerRef.current);
+    setPttSeconds(0);
+    pttTimerRef.current = setInterval(() => setPttSeconds((s) => s + 1), 1000);
+  }
+  function stopPttTimer() {
+    if (pttTimerRef.current) { clearInterval(pttTimerRef.current); pttTimerRef.current = null; }
+  }
+  // Clear the timer if the component unmounts mid-listen.
+  useEffect(() => () => { if (pttTimerRef.current) clearInterval(pttTimerRef.current); }, []);
+
   async function startPtt() {
     setPttError(null);
     setPttLiveText("");
     isListeningRef.current = true;
     setPttListening(true);
+    startPttTimer();
 
     // Native (Capacitor)
     try {
@@ -1372,20 +1387,19 @@ export default function InstantCheckPage() {
         await SpeechRecognition.requestPermissions();
         // Continuous listening = a loop of one-shot recognitions. Android's
         // SpeechRecognizer needs a beat to reset between sessions; starting
-        // again too fast throws ERROR_RECOGNIZER_BUSY. That transient error
-        // must NOT end the whole session (the old code broke on any error, so
-        // it stopped after the first plate) — back off briefly and keep going.
-        let consecutiveErrors = 0;
+        // again too fast throws ERROR_RECOGNIZER_BUSY. Every transient error
+        // (busy / no-speech / silence) must NOT end the session — the mic only
+        // stops when the USER presses stop (isListeningRef flips false). So we
+        // never give up on our own; we just back off and keep looping.
         while (isListeningRef.current) {
           try {
             const result = await SpeechRecognition.start({
               language: "ar-SA",
-              maxResults: 1,
+              maxResults: 5,          // get several hypotheses, keep the most plate-like
               partialResults: false,
               popup: false,
             });
-            consecutiveErrors = 0;
-            const text: string = result?.matches?.[0] ?? "";
+            const text: string = pickBestHypothesis(result?.matches ?? []);
             if (text) {
               setPttLiveText(text);
               addPttResult(text);
@@ -1395,15 +1409,12 @@ export default function InstantCheckPage() {
           } catch {
             // User pressed stop mid-session → exit cleanly.
             if (!isListeningRef.current) break;
-            // Transient error between plates (busy / no-speech) → retry, don't quit.
-            consecutiveErrors++;
-            if (consecutiveErrors >= 6) {
-              setPttError("توقف الاستماع — اضغط «ابدأ» من جديد");
-              break;
-            }
+            // Transient error between plates → back off briefly and retry.
+            // Never break out on our own — keep listening until the user stops.
             await new Promise((r) => setTimeout(r, 350));
           }
         }
+        stopPttTimer();
         setPttListening(false);
         isListeningRef.current = false;
         return;
@@ -1416,22 +1427,34 @@ export default function InstantCheckPage() {
       setPttError("المتصفح لا يدعم التعرف الصوتي — استخدم Chrome أو Edge");
       setPttListening(false);
       isListeningRef.current = false;
+      stopPttTimer();
       return;
     }
 
     recognition.lang = "ar-SA";
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 5;   // get several hypotheses, keep the most plate-like
     recognitionRef.current = recognition;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t;
-        else interim += t;
+        const result = event.results[i];
+        if (result.isFinal) {
+          // Pick the plate-likeliest alternative, not just the first —
+          // recognizer confidence breaks near-ties between plate-shaped ones.
+          const alts: string[] = [];
+          const confs: number[] = [];
+          for (let a = 0; a < result.length; a++) {
+            alts.push(result[a].transcript);
+            confs.push(result[a].confidence);
+          }
+          finalText += pickBestHypothesis(alts, confs);
+        } else {
+          interim += result[0].transcript;
+        }
       }
       setPttLiveText((finalText || interim).trim());
       if (finalText.trim()) addPttResult(finalText.trim());
@@ -1464,6 +1487,7 @@ export default function InstantCheckPage() {
     isListeningRef.current = false;
     setPttListening(false);
     setPttLiveText("");
+    stopPttTimer();
 
     try {
       const { Capacitor } = await import("@capacitor/core");
@@ -1952,13 +1976,13 @@ export default function InstantCheckPage() {
                 </div>
               </div>
 
-              {/* Big mic button */}
+              {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع */}
               <button
                 onClick={pttListening ? stopPtt : startPtt}
-                className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 transition active:scale-95 ${
+                className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 text-white transition active:scale-95 ${
                   pttListening
-                    ? "border-brand bg-brand/20 text-brand animate-pulse"
-                    : "border-border bg-surface-2 text-muted"
+                    ? "border-red-600 bg-red-500 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.55)]"
+                    : "border-emerald-600 bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"
                 }`}
               >
                 <Mic size={28} />
@@ -1966,6 +1990,18 @@ export default function InstantCheckPage() {
                   {pttListening ? "إيقاف" : "ابدأ"}
                 </span>
               </button>
+
+              {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع */}
+              {pttListening && (
+                <div
+                  dir="ltr"
+                  className="flex items-center gap-1.5 font-mono text-lg font-black tabular-nums text-red-500"
+                >
+                  <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+                  {String(Math.floor(pttSeconds / 60)).padStart(2, "0")}:
+                  {String(pttSeconds % 60).padStart(2, "0")}
+                </div>
+              )}
 
               {pttListening && (
                 <p className="text-center text-xs text-muted">

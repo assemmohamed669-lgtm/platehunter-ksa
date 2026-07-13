@@ -1327,9 +1327,6 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // 3. Normalize alef variants (أ إ آ → ا) — SR may return these for the letter ا
   text = text.replace(/[أإآ]/g, "ا");
 
-  // 3b. Normalize standalone ه → هـ (SR often omits the tatweel)
-  text = text.replace(/ه(?!ـ)/g, "هـ");
-
   // 3c. Resolve ألف/الف ambiguity: when followed by و (number compound context)
   // treat as 1000, not the letter ا. Must run BEFORE LETTER_NAMES consumes "ألف".
   // Excludes the letter NAME واو/وا specifically — "دال ألف واو" (spelling
@@ -1347,6 +1344,13 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
   // 6. Replace spoken numbers (multi-word 10-90 sorted first, then 0-9)
   text = replaceAll(text, SPOKEN_NUMBERS);
+
+  // 6b. Normalize any REMAINING bare ه → هـ (SR often omits the tatweel). This
+  // MUST run AFTER the word maps above — running it earlier corrupted the letter
+  // name "هاء" into "هـاء" (so it never matched LETTER_NAMES and the ه was
+  // silently dropped), and mangled number words containing ه (سبعه/ميه…).
+  // The (?!ـ) guard leaves an already-formed هـ untouched.
+  text = text.replace(/ه(?!ـ)/g, "هـ");
 
   // 7. Normalize Arabic-Indic numerals
   text = normalizeNumerals(text);

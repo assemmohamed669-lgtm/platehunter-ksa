@@ -7,6 +7,8 @@ import { navStack } from "@/lib/navStack";
 
 // Root pages where the hardware back should background the app (not navigate
 // deeper). Everywhere else, back navigates within our own tracked nav stack.
+// The landing page is /sorting, so it's a root too — on it, back minimizes
+// the app instead of exiting.
 const ROOT_PATHS = ["/", "/sorting", "/login"];
 
 /**
