@@ -35,7 +35,7 @@ export default function ResetPasswordPage() {
     }
 
     setDone(true);
-    setTimeout(() => router.replace("/instant-check"), 2000);
+    setTimeout(() => router.replace("/sorting"), 2000);
   }
 
   return (

@@ -77,7 +77,7 @@ export default function AdminDashboard() {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
       const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
-      if (prof?.role !== "admin") { router.replace("/instant-check"); return; }
+      if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setAuthorized(true);
       loadAgents();
     })();
@@ -149,7 +149,7 @@ export default function AdminDashboard() {
       <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-5">
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
-          <button onClick={() => router.push("/instant-check")}
+          <button onClick={() => router.push("/sorting")}
             className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-muted hover:text-ink transition">
             <ChevronLeft size={15} /> رجوع
           </button>

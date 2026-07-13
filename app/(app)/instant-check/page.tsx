@@ -1599,13 +1599,14 @@ export default function InstantCheckPage() {
       {/* ── Mode tabs + content (only shown when file is loaded) ── */}
       {checkTable && (
         <>
+          <h2 className="text-sm font-bold text-ink">التشييك</h2>
           {/* Tabs */}
           <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-2 p-1">
             {(
               [
                 { key: "manual", Icon: Type, label: "يدوي" },
                 { key: "camera", Icon: Camera, label: "كاميرا" },
-                { key: "ptt", Icon: Mic, label: "صوت" },
+                { key: "ptt", Icon: Mic, label: "صوتي" },
                 { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
               ] as const
             ).map(({ key, Icon, label }) => (

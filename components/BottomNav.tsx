@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Database, ListFilter, Mic, MapPin, ScanLine } from "lucide-react";
 
 const TABS = [
-  { href: "/instant-check", label: "تشييك", icon: ScanLine },
+  { href: "/instant-check", label: "التشييك", icon: ScanLine },
   { href: "/sorting", label: "الفرز", icon: ListFilter },
   { href: "/registration", label: "التسجيل", icon: Mic },
   { href: "/checking", label: "قاعدة البيانات", icon: Database },

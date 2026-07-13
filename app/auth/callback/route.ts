@@ -8,5 +8,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/auth/reset-password`);
   }
 
-  return NextResponse.redirect(`${origin}/instant-check`);
+  return NextResponse.redirect(`${origin}/sorting`);
 }

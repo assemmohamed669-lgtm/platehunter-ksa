@@ -30,7 +30,7 @@ export default function AppShellLayout({
   const [isTrial, setIsTrial] = useState(false);
   const [sub, setSub] = useState<SubInfo | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const isHome = pathname === "/instant-check";
+  const isHome = pathname === "/sorting";
 
   // Apply the saved appearance (font size / colours) app-wide on every load.
   useEffect(() => { initAppearance(); }, []);
