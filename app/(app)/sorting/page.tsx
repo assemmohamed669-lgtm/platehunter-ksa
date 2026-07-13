@@ -652,7 +652,8 @@ export default function SortingPage() {
     setExportingAll(true);
     try {
       const { blob, ext } = await buildSortExcelBlob();
-      await openExcelBlob(blob, `فرز-${ts()}.${ext}`);
+      const result = await openExcelBlob(blob, `فرز-${ts()}.${ext}`);
+      alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     } finally {
@@ -663,6 +664,7 @@ export default function SortingPage() {
     setExportingAll(true);
     const { blob, ext } = await buildSortExcelBlob();
     downloadExcelBlob(blob, `فرز-${ts()}.${ext}`);
+    alert("تم تصدير الملف وتنزيله.");
     setExportingAll(false);
   }
   async function handleShareSort() {
@@ -677,7 +679,8 @@ export default function SortingPage() {
   async function handleOpenPaste() {
     try {
       const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
-      await openExcelBlob(blob, `لصق-${ts()}.${ext}`);
+      const result = await openExcelBlob(blob, `لصق-${ts()}.${ext}`);
+      alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     }
@@ -685,6 +688,7 @@ export default function SortingPage() {
   async function handleDownloadPaste() {
     const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
     downloadExcelBlob(blob, `لصق-${ts()}.${ext}`);
+    alert("تم تصدير الملف وتنزيله.");
   }
   async function handleSharePaste() {
     try {

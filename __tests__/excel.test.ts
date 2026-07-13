@@ -1,5 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob } from "@/lib/excel";
+import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64 } from "@/lib/excel";
+
+describe("bytesToBase64", () => {
+  it("encodes an empty array as an empty string", () => {
+    expect(bytesToBase64(new Uint8Array(0))).toBe("");
+  });
+
+  it("matches the reference byte-by-byte encoding for small input", () => {
+    const bytes = new Uint8Array([72, 101, 108, 108, 111, 33]); // "Hello!"
+    const reference = btoa(String.fromCharCode(...bytes));
+    expect(bytesToBase64(bytes)).toBe(reference);
+  });
+
+  it("round-trips large input spanning multiple chunks (>32KB)", () => {
+    const size = 100_000;
+    const bytes = new Uint8Array(size);
+    for (let i = 0; i < size; i++) bytes[i] = i % 256;
+    const encoded = bytesToBase64(bytes);
+    const decoded = atob(encoded);
+    expect(decoded.length).toBe(size);
+    for (let i = 0; i < size; i++) expect(decoded.charCodeAt(i)).toBe(bytes[i]);
+  });
+});
 
 describe("buildCsvBlob", () => {
   // Blob.text() strips a leading BOM on decode, so read raw bytes to assert

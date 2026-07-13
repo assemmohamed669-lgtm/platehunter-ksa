@@ -560,6 +560,22 @@ function contentTypeForFilename(filename: string): string {
   return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 }
 
+// Converting a large Blob to base64 one byte at a time (`binary += String.
+// fromCharCode(bytes[i])`) runs millions of individual string-concat ops on
+// the main thread for a big export (e.g. a sort result with thousands of
+// rows) and freezes the whole app for the duration. Encoding in 32KB chunks
+// with String.fromCharCode.apply cuts that to a handful of calls instead —
+// same output, no more freeze. (32KB keeps well clear of the engine's
+// max-arguments limit for Function.apply.)
+export function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(binary);
+}
+
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
@@ -568,10 +584,7 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
       const { FileOpener } = await import("@capacitor-community/file-opener");
 
       const arrayBuffer = await blob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
+      const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
 
       const safeName = toSafeCacheFilename(filename);
       const { uri } = await Filesystem.writeFile({
@@ -603,10 +616,7 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
       const { Share } = await import("@capacitor/share");
 
       const arrayBuffer = await blob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
+      const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
 
       const { uri } = await Filesystem.writeFile({
         path: toSafeCacheFilename(filename),

@@ -137,7 +137,7 @@ export default function FileUploadBox({
                   {loading ? "جارٍ..." : "تغيير"}
                   <input
                     type="file"
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx,.xls,.xlsb,.xlsm,.ods,.csv"
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
@@ -221,7 +221,7 @@ export default function FileUploadBox({
         <input
           ref={inputRef}
           type="file"
-          accept=".xlsx,.xls,.csv"
+          accept=".xlsx,.xls,.xlsb,.xlsm,.ods,.csv"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
           onChange={(e) => {
             const file = e.target.files?.[0];

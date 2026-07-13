@@ -245,7 +245,8 @@ export default function MapsPage() {
     setBusy(true);
     try {
       const { blob, ext } = buildSpreadsheetBlob(rows.map(matchToRow), "لوحات مطلوبة");
-      await openExcelBlob(blob, `لوحات-مطلوبة.${ext}`);
+      const result = await openExcelBlob(blob, `لوحات-مطلوبة.${ext}`);
+      alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
     } catch {
       alert("تعذّر فتح Excel.");
     } finally {

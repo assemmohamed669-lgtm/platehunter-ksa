@@ -23,8 +23,13 @@ export default function OpenDownloadButton({ build, label = "فتح", className 
     setBusy(kind);
     try {
       const { blob, name } = await build();
-      if (kind === "open") await openExcelBlob(blob, name);
-      else downloadExcelBlob(blob, name);
+      if (kind === "open") {
+        const result = await openExcelBlob(blob, name);
+        alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
+      } else {
+        downloadExcelBlob(blob, name);
+        alert("تم تصدير الملف وتنزيله.");
+      }
     } catch (e) {
       alert((e as { message?: string })?.message ?? (kind === "open" ? "تعذّر فتح الملف" : "تعذّر تنزيل الملف"));
     } finally {
