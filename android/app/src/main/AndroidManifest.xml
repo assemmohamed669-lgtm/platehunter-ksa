@@ -22,18 +22,24 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Open .xlsx files from WhatsApp / Files / email -->
+            <!-- Open Excel/spreadsheet files from WhatsApp / Files / email. Content
+                 URIs from a sharing app (WhatsApp's own FileProvider, Gmail, a
+                 file manager…) need an explicit scheme declared alongside the
+                 mimeType — a mimeType-only <data> element is not reliably
+                 matched against content:// (or file://) URIs on every Android
+                 version/OEM skin, which silently drops this app out of the
+                 "Open with" chooser entirely. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-            </intent-filter>
-
-            <!-- Open .xls files -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/vnd.ms-excel" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" /> <!-- .xlsx -->
+                <data android:mimeType="application/vnd.ms-excel" /> <!-- .xls -->
+                <data android:mimeType="application/vnd.ms-excel.sheet.binary.macroenabled.12" /> <!-- .xlsb -->
+                <data android:mimeType="application/vnd.ms-excel.sheet.macroenabled.12" /> <!-- .xlsm -->
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" /> <!-- .ods -->
             </intent-filter>
 
         </activity>
