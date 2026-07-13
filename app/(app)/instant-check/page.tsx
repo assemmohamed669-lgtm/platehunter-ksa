@@ -354,6 +354,12 @@ export default function InstantCheckPage() {
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isListeningRef = useRef(false);
+  // Latest live (interim) text from the native partialResults event — lets the
+  // UI show words as they're recognized instead of only after the recognizer
+  // decides the utterance is over. Also doubles as a fallback final value on
+  // plugin builds where a partialResults session resolves start() with no
+  // matches (some versions hand everything through the event instead).
+  const pttPartialTextRef = useRef("");
   // Elapsed listening time (seconds) shown under the mic button while recording.
   const [pttSeconds, setPttSeconds] = useState(0);
   const pttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1368,6 +1374,18 @@ export default function InstantCheckPage() {
           isListeningRef.current = false;
           return;
         }
+        // Live captions: show recognized words AS they're heard instead of only
+        // once the recognizer decides the utterance ended (Android's own
+        // silence-detection delay, which this plugin doesn't let us configure).
+        // Purely additive — addPttResult still only fires from the awaited
+        // start() result below, so accuracy/behavior is unchanged if this
+        // event never fires on a given device.
+        await SpeechRecognition.removeAllListeners();
+        await SpeechRecognition.addListener("partialResults", (data: { matches?: string[] }) => {
+          const t = data?.matches?.[0] ?? "";
+          if (t) { pttPartialTextRef.current = t; setPttLiveText(t); }
+        });
+
         // Continuous listening = a loop of one-shot recognitions. Android's
         // SpeechRecognizer needs a beat to reset between sessions; starting
         // again too fast throws ERROR_RECOGNIZER_BUSY. Every transient error
@@ -1381,20 +1399,25 @@ export default function InstantCheckPage() {
         const MAX_CONSECUTIVE_FAILURES = 10;
         while (isListeningRef.current) {
           try {
+            pttPartialTextRef.current = "";
             const result = await SpeechRecognition.start({
               language: "ar-SA",
               maxResults: 5,          // get several hypotheses, keep the most plate-like
-              partialResults: false,
+              partialResults: true,
               popup: false,
             });
             consecutiveFailures = 0;
-            const text: string = pickBestHypothesis(result?.matches ?? []);
+            // Prefer the confirmed final matches; fall back to the last live
+            // caption if this plugin build resolves partialResults sessions
+            // with no matches (behavior isn't consistent across versions).
+            const matches = result?.matches?.length ? result.matches : [pttPartialTextRef.current];
+            const text: string = pickBestHypothesis(matches);
             if (text) {
               setPttLiveText(text);
               addPttResult(text);
             }
             // Let the recognizer fully reset before the next plate.
-            await new Promise((r) => setTimeout(r, 250));
+            await new Promise((r) => setTimeout(r, 120));
           } catch {
             // User pressed stop mid-session → exit cleanly.
             if (!isListeningRef.current) break;
@@ -1407,6 +1430,7 @@ export default function InstantCheckPage() {
             await new Promise((r) => setTimeout(r, 350));
           }
         }
+        try { await SpeechRecognition.removeAllListeners(); } catch {}
         stopPttTimer();
         setPttListening(false);
         isListeningRef.current = false;
