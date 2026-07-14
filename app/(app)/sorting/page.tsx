@@ -261,7 +261,28 @@ export default function SortingPage() {
   const displayCols = useMemo(() => {
     const mandatory = dataTable?.headers.filter((h) => h !== effectiveDataPlateCol && isMandatory(h)) ?? [];
     const rest = [...outputCols].filter((h) => !isMandatory(h));
-    return [...new Set([...mandatory, ...rest])];
+    const cols = [...new Set([...mandatory, ...rest])];
+    // ترتيب ثابت مطلوب من المستخدم (بعد رقم اللوحة اللي بيتعرض أول عمود لوحده):
+    // نوع السيارة → صانع المركبة → العنوان → GPS → باقي الأعمدة المحددة.
+    // المطابقة بالاسم عشان تشتغل مهما كان اسم العمود الفعلي في الملف.
+    const ORDER_GROUPS = [
+      ["نوع", "type of car", "car type", "vehicle type"], // 0 — نوع السيارة
+      ["صانع", "manufacturer", "make"],                    // 1 — صانع المركبة
+      ["الشارع", "شارع", "العنوان", "عنوان", "الحي", "حي"], // 2 — العنوان
+      ["gps", "الموقع", "جي بي اس"],                        // 3 — GPS
+    ];
+    const rank = (h: string) => {
+      const x = h.trim().toLowerCase();
+      for (let i = 0; i < ORDER_GROUPS.length; i++) {
+        if (ORDER_GROUPS[i].some((k) => x.includes(k.toLowerCase()))) return i;
+      }
+      return ORDER_GROUPS.length; // الباقي
+    };
+    // ترتيب ثابت (stable) — العناصر بنفس الرتبة تحافظ على ترتيبها الأصلي.
+    return cols
+      .map((h, i) => ({ h, i, r: rank(h) }))
+      .sort((a, b) => a.r - b.r || a.i - b.i)
+      .map((x) => x.h);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataTable, effectiveDataPlateCol, outputCols]);
 
