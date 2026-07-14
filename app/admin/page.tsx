@@ -31,6 +31,18 @@ function addMonths(n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// حالة نشاط المندوب من آخر ظهور (last_seen). التطبيق بيحدّث last_seen كل ما
+// المندوب يفتحه، فـ«نشط» = فتح التطبيق من ٥ دقايق أو أقل.
+function activityStatus(lastSeen: string | null): { online: boolean; label: string } {
+  if (!lastSeen) return { online: false, label: "لم يفتح البرنامج" };
+  const mins = Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000);
+  if (mins <= 5) return { online: true, label: "نشط الآن" };
+  if (mins < 60) return { online: false, label: `آخر ظهور من ${mins} دقيقة` };
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return { online: false, label: `آخر ظهور من ${hrs} ساعة` };
+  return { online: false, label: `آخر ظهور من ${Math.floor(hrs / 24)} يوم` };
+}
+
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -215,7 +227,9 @@ export default function AdminDashboard() {
         {/* List */}
         <div className="flex flex-col gap-2">
           {loading && <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>}
-          {!loading && filtered.map(({ a, sub }) => (
+          {!loading && filtered.map(({ a, sub }) => {
+            const act = activityStatus(a.last_seen);
+            return (
             <button key={a.id} onClick={() => router.push(`/admin/${a.id}`)}
               className={`flex items-center gap-3 rounded-xl border p-3 text-right transition ${
                 a.is_super ? "border-2 bg-black hover:opacity-90" : "border-border bg-surface hover:border-primary/50"
@@ -224,6 +238,9 @@ export default function AdminDashboard() {
               <CircleUserRound size={30} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
+                  {/* نقطة حالة النشاط قدام الاسم — أخضر = نشط، رمادي = مش فاتح */}
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${act.online ? "bg-green-500 animate-pulse" : "bg-muted/40"}`}
+                    title={act.label} />
                   <span className="truncate text-sm font-bold text-ink" style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
                   {a.role === "admin" && (
                     a.is_super ? (
@@ -239,7 +256,10 @@ export default function AdminDashboard() {
                   )}
                   {!a.is_active && <span className="rounded-full bg-danger/10 px-1.5 py-0.5 text-[10px] text-danger">معطّل</span>}
                 </div>
-                <p className="truncate text-[11px] text-muted" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
+                <p className="truncate text-[11px]" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>
+                  <span className={act.online ? "font-bold text-green-500" : "text-muted"}>{act.label}</span>
+                  <span className="text-muted"> · {a.phone || "بدون تليفون"}</span>
+                </p>
               </div>
               {a.role === "agent" && (
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>
@@ -248,7 +268,8 @@ export default function AdminDashboard() {
               )}
               <ArrowRight size={16} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
             </button>
-          ))}
+            );
+          })}
           {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد نتائج.</p>}
         </div>
       </div>

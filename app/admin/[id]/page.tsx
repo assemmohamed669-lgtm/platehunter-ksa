@@ -308,8 +308,10 @@ export default function AgentDetail() {
           </div>
         )}
 
-        {/* ── مربع «الحساب» — ترقية / تعطيل مؤقت / حذف (للسوبر-أدمن فقط) ── */}
-        {isSuper && (
+        {/* ── مربع «الحساب» — ترقية / تعطيل مؤقت / حذف ──
+            للسوبر-أدمن فقط، ومش بيظهر على حساب السوبر-أدمن نفسه (حسابه مايتلغيش
+            ولا يتعطّل ولا يترجّع مندوب من داخل البرنامج). */}
+        {isSuper && !p.is_super && (
           <div className="rounded-2xl border border-border bg-surface p-4 flex flex-col gap-2.5">
             <div className="text-sm font-bold text-ink">الحساب</div>
 
