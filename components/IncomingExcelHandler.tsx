@@ -184,6 +184,19 @@ export default function IncomingExcelHandler() {
             )}
 
             <div className="flex flex-col gap-2">
+              {/* Data (sorting) — الأول */}
+              <button
+                disabled={loading}
+                onClick={() => openAs("data")}
+                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
+              >
+                <ListFilter size={20} className="shrink-0 text-primary" />
+                <div>
+                  <p className="text-sm font-bold text-ink">إضافة ملف الداتا</p>
+                  <p className="text-xs text-muted">خانة الداتا في صفحة الفرز</p>
+                </div>
+              </button>
+
               {/* Referral (sorting) */}
               <button
                 disabled={loading}
@@ -192,21 +205,8 @@ export default function IncomingExcelHandler() {
               >
                 <ListFilter size={20} className="shrink-0 text-primary" />
                 <div>
-                  <p className="text-sm font-bold text-ink">فرز — ملف إحالة</p>
-                  <p className="text-xs text-muted">قائمة البنك / شركة التمويل</p>
-                </div>
-              </button>
-
-              {/* Data (sorting) */}
-              <button
-                disabled={loading}
-                onClick={() => openAs("data")}
-                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
-              >
-                <ListFilter size={20} className="shrink-0 text-muted" />
-                <div>
-                  <p className="text-sm font-bold text-ink">فرز — ملف داتا</p>
-                  <p className="text-xs text-muted">بيانات التفريغ الميداني</p>
+                  <p className="text-sm font-bold text-ink">إضافة لخانة الإحالة</p>
+                  <p className="text-xs text-muted">خانة الإحالة في صفحة الفرز</p>
                 </div>
               </button>
 
@@ -218,8 +218,8 @@ export default function IncomingExcelHandler() {
               >
                 <CheckCircle2 size={20} className="shrink-0 text-primary" />
                 <div>
-                  <p className="text-sm font-bold text-ink">تشييك</p>
-                  <p className="text-xs text-muted">ملف البحث السريع</p>
+                  <p className="text-sm font-bold text-ink">إضافة لخانة التشييك</p>
+                  <p className="text-xs text-muted">خانة التشييك في صفحة تشييك</p>
                 </div>
               </button>
             </div>

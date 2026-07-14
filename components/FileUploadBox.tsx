@@ -1,8 +1,8 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download } from "lucide-react";
-import { parseExcelFile, type ExcelTable } from "@/lib/excel";
+import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download, ExternalLink } from "lucide-react";
+import { parseExcelFile, openExcelBlob, type ExcelTable } from "@/lib/excel";
 
 interface Props {
   title: string;
@@ -90,6 +90,13 @@ export default function FileUploadBox({
     }
   }
 
+  // «فتح الشيت» — يفتح الملف المحمّل في المربع بتطبيق الإكسيل (موبايل: FileOpener،
+  // ويب: تنزيل)، عشان المندوب يقدر يشوف/يفتح الشيت اللي رافعه في أي خانة.
+  async function handleOpenSheet() {
+    if (!parsedFile) return;
+    try { await openExcelBlob(parsedFile, parsedFile.name); } catch { /* ignore open/download failure */ }
+  }
+
   function handleDownloadOriginal() {
     if (!parsedFile) return;
     const url = URL.createObjectURL(parsedFile);
@@ -120,6 +127,14 @@ export default function FileUploadBox({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
+            {/* «فتح الشيت» — متاح في كل الأوضاع لكل مربع رفع إكسيل */}
+            <button
+              onClick={handleOpenSheet}
+              title="فتح الشيت"
+              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition"
+            >
+              <ExternalLink size={13} /> فتح
+            </button>
             {fixed ? (
               <button
                 onClick={handleDownloadOriginal}
