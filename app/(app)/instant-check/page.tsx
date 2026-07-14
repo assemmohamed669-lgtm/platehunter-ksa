@@ -42,6 +42,9 @@ interface CheckHit {
   id: string;
   plate: string;
   row: Record<string, string>;
+  found?: boolean;                 // مطلوبة (في ملف التشييك) أو لأ
+  matchType?: "exact" | "fuzzy";
+  similarity?: number;
   lat?: number;
   lng?: number;
   mapsLink?: string;
@@ -620,8 +623,12 @@ export default function InstantCheckPage() {
   }
 
   function saveHitWithGps(result: PlateResult) {
-    const hitId = String(Date.now());
-    const hit: CheckHit = { id: hitId, plate: result.plate, row: result.row ?? {}, checkedAt: new Date().toISOString() };
+    const hitId = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const hit: CheckHit = {
+      id: hitId, plate: result.plate, row: result.row ?? {},
+      found: result.found, matchType: result.matchType, similarity: result.similarity,
+      checkedAt: new Date().toISOString(),
+    };
     setManualHits((prev) => [hit, ...prev]);
     void fetchGpsForHit(hitId);
   }
@@ -1212,7 +1219,10 @@ export default function InstantCheckPage() {
       if (displayPlate) {
         const result = searchInCheck(displayPlate);
         setCameraResult(result);
-        if (result?.found) {
+        // تُسجّل كل صورة اتصوّرت في قائمة الكاميرا تحت — مطلوبة أو مش مطلوبة —
+        // مع موقعها، وتتصدّر بعدين لشيت السجلات. (searchInCheck بيطلّع التنبيه
+        // لوحده لو مطلوبة.)
+        if (result) {
           saveHitWithGps(result);
           void getCurrentGps().then(setCameraGps); // GPS of where the photo was taken
         }
@@ -2051,7 +2061,7 @@ export default function InstantCheckPage() {
                     className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center focus:border-brand outline-none"
                   />
                   <button
-                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result?.found) { saveHitWithGps(result); void getCurrentGps().then(setCameraGps); } }}
+                    onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const result = searchInCheck(v); setCameraResult(result); if (result) { saveHitWithGps(result); void getCurrentGps().then(setCameraGps); } }}
                     className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                   >
                     بحث
@@ -2343,6 +2353,7 @@ export default function InstantCheckPage() {
                         <tr className="bg-surface-2 text-muted">
                           <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
                           {dynCols.map((h) => (
                             <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                           ))}
@@ -2362,6 +2373,15 @@ export default function InstantCheckPage() {
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
                               {hit.plate}
+                            </td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                              {hit.found ? (
+                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${hit.matchType === "fuzzy" ? "bg-alert/15 text-alert" : "bg-brand/15 text-brand"}`}>
+                                  {hit.matchType === "fuzzy" ? `مطلوبة؟ ${hit.similarity ?? ""}%` : "مطلوبة"}
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted">غير مطلوبة</span>
+                              )}
                             </td>
                             {dynCols.map((h) => (
                               <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
