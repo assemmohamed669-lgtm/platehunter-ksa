@@ -47,8 +47,18 @@ type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Rec
 // localStorage عشان الفرز مايضيعش لمجرد إنك رحت صفحة تانية ورجعت.
 type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number };
 type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string };
-let sortResultsCache: SortCache | null = null;
+// نتايج الفرز محفوظة لكل وضع لوحده (جديد/كلي) — عشان التبديل بين الوضعين
+// مايمسحش نتايج الوضع التاني؛ كل وضع بيفضّل نتايجه لحد ما تعمل فرز جديد فيه
+// أو تمسحه. sortActiveMode = آخر وضع اشتغلت عليه (للاسترجاع بعد التنقّل/الفتح).
+const sortCacheByMode: { new: SortCache | null; full: SortCache | null } = { new: null, full: null };
+let sortActiveMode: "new" | "full" = "new";
 let pasteResultsCache: PasteCache | null = null;
+
+function persistSortCache() {
+  try {
+    localStorage.setItem(SORT_RESULTS_KEY, JSON.stringify({ byMode: sortCacheByMode, activeMode: sortActiveMode }));
+  } catch { /* storage full — الكاش في الذاكرة بيغطّي */ }
+}
 
 function persistSortResults(
   results: MatchResult[],
@@ -56,15 +66,16 @@ function persistSortResults(
   sortMode: "new" | "full",
   newPlatesCount: number,
 ) {
-  sortResultsCache = { results, tashyeekResults, sortMode, newPlatesCount };
-  try {
-    localStorage.setItem(SORT_RESULTS_KEY, JSON.stringify({ results, tashyeekResults, sortMode, newPlatesCount }));
-  } catch { /* storage full — الكاش في الذاكرة بيغطّي */ }
+  sortCacheByMode[sortMode] = { results, tashyeekResults, sortMode, newPlatesCount };
+  sortActiveMode = sortMode;
+  persistSortCache();
 }
 
-function wipeSortResults() {
-  sortResultsCache = null;
-  try { localStorage.removeItem(SORT_RESULTS_KEY); } catch { /* ignore */ }
+// يمسح نتايج وضع واحد (أو الاتنين لو مفيش وضع محدد — زي مسح الملفات).
+function wipeSortResults(mode?: "new" | "full") {
+  if (mode) sortCacheByMode[mode] = null;
+  else { sortCacheByMode.new = null; sortCacheByMode.full = null; }
+  persistSortCache();
 }
 
 function persistPasteResults(
@@ -185,13 +196,21 @@ export default function SortingPage() {
         } catch { /* no field sheet yet */ }
         try {
           // الكاش في الذاكرة أولاً (بيعيش عبر التنقّل)، وإلا localStorage.
-          let s: SortCache | null = sortResultsCache;
-          if (!s) {
+          if (!sortCacheByMode.new && !sortCacheByMode.full) {
             const raw = localStorage.getItem(SORT_RESULTS_KEY);
-            if (raw) s = JSON.parse(raw) as SortCache;
+            if (raw) {
+              const parsed = JSON.parse(raw) as { byMode?: typeof sortCacheByMode; activeMode?: "new" | "full" };
+              if (parsed.byMode) {
+                sortCacheByMode.new = parsed.byMode.new ?? null;
+                sortCacheByMode.full = parsed.byMode.full ?? null;
+                sortActiveMode = parsed.activeMode ?? "new";
+              }
+            }
           }
+          const active = sortActiveMode;
+          const s = sortCacheByMode[active];
+          setSortMode(active);
           if (s && Array.isArray(s.results) && s.results.length > 0) {
-            setSortMode(s.sortMode ?? "full");
             setNewPlatesCount(s.newPlatesCount ?? 0);
             setResults(s.results);
             setSorted(true);
@@ -617,8 +636,28 @@ export default function SortingPage() {
 
   function handleSort() {
     setResults(null); setSorted(false); setTashyeekResults(null);
-    wipeSortResults();
+    wipeSortResults(sortMode); // امسح كاش الوضع الحالي بس — الوضع التاني يفضل بنتايجه
     if (sortMode === "new") runNewSort(); else runFullSort();
+  }
+
+  // التبديل بين «فرز جديد» و«فرز كلي» — بيحفظ نتايج كل وضع لوحده ويسترجع
+  // نتايج الوضع اللي رحتله (لو عملت فيه فرز قبل كده)، بدل ما يمسح.
+  function switchMode(target: "new" | "full") {
+    if (target === sortMode) return;
+    setSortMode(target);
+    sortActiveMode = target;
+    persistSortCache();
+    const c = sortCacheByMode[target];
+    setSelectedResults(new Set());
+    setVisibleCount(PAGE_SIZE);
+    if (c && c.results.length > 0) {
+      setResults(c.results);
+      setTashyeekResults(c.tashyeekResults);
+      setNewPlatesCount(c.newPlatesCount);
+      setSorted(true);
+    } else {
+      setResults(null); setTashyeekResults(null); setSorted(false);
+    }
   }
 
   // ── GPS ──
@@ -894,11 +933,11 @@ export default function SortingPage() {
 
       {/* ③ SORT MODE TABS */}
       <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
-        <button onClick={() => { setSortMode("new"); setSorted(false); setResults(null); setTashyeekResults(null); wipeSortResults(); }}
+        <button onClick={() => switchMode("new")}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "new" ? "bg-primary text-night font-bold" : "text-muted"}`}>
           <ScanLine size={15} /> فرز جديد
         </button>
-        <button onClick={() => { setSortMode("full"); setSorted(false); setResults(null); setTashyeekResults(null); wipeSortResults(); }}
+        <button onClick={() => switchMode("full")}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "full" ? "bg-primary text-night font-bold" : "text-muted"}`}>
           <FileSpreadsheet size={15} /> فرز كلي
         </button>
