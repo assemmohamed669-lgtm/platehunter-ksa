@@ -79,8 +79,9 @@ export const CAR_NAMES = [
   "فيلوستر", "كريتا", "باليسيد", "سيراتو", "ريو", "سبورتاج", "سورينتو", "اوبتيما",
   "كادينزا", "بيكانتو", "كارنيفال", "سيلتوس", "تاهو", "سوبربان", "سلفرادو", "ماليبو",
   "كابرس", "كابريس", "كروز", "افيو", "دورانجو", "تشارجر", "تشالنجر",
-  // أنواع/هياكل بتتقال كموديل
-  "بكب", "غمارة", "غمارتين", "ونيت", "دباب",
+  // ملاحظة: أنواع الهيكل (ونيت/بكب/غمارة/صالون/دباب) مش هنا عمداً — دي «نوع
+  // السيارة» (خانة تانية) مش الماركة/الموديل، وإدراجها كان بيخلّي عمود النوع
+  // يتلخبط مع عمود الماركة في الكشف بالمحتوى.
   // Makes / models (EN)
   "toyota", "nissan", "hyundai", "kia", "honda", "ford", "chevrolet", "gmc", "lexus",
   "mercedes", "bmw", "mazda", "mitsubishi", "renault", "peugeot", "suzuki", "daihatsu",
@@ -105,9 +106,10 @@ export function looksLikeCarName(value: string): boolean {
 }
 
 /**
- * يكتشف عمود اسم/موديل المركبة. أولاً باسم العمود (aliases)، وإلا بفحص محتوى
- * القيم — العمود اللي أعلى نسبة قيمه أسماء سيارات (>=30%) بيتختار. بيرجّع null
- * لو مفيش عمود واضح.
+ * يكتشف عمود اسم/موديل المركبة. الأولوية **للمحتوى** — العمود اللي قيمه أسماء
+ * سيارات فعلاً (أعلى نسبة، >=35%) — لأن اسم العمود بيتغير كتير وأحياناً بيبقى
+ * ملتبس (زي «النوع» اللي ممكن يكون موديل أو نوع هيكل). لو المحتوى مش حاسم
+ * (مفيش صفوف أو مفيش عمود واضح) بنرجع لمطابقة اسم العمود كـfallback.
  */
 export function detectMakeModelColumn(
   headers: string[],
@@ -116,32 +118,33 @@ export function detectMakeModelColumn(
 ): string | null {
   const cols = headers.filter((h) => h && h !== exclude);
 
-  // (١) مطابقة اسم العمود.
+  // (١) الكشف بالمحتوى أولاً — عيّنة من أول ٨٠ صف لكل عمود.
+  if (rows && rows.length > 0) {
+    const sample = rows.slice(0, 80);
+    let best: string | null = null;
+    let bestRatio = 0;
+    for (const h of cols) {
+      let hits = 0, nonEmpty = 0;
+      for (const r of sample) {
+        const v = String(r[h] ?? "").trim();
+        if (!v) continue;
+        nonEmpty++;
+        if (looksLikeCarName(v)) hits++;
+      }
+      if (nonEmpty >= 3) {
+        const ratio = hits / nonEmpty;
+        if (ratio > bestRatio) { bestRatio = ratio; best = h; }
+      }
+    }
+    if (bestRatio >= 0.35) return best;
+  }
+
+  // (٢) fallback: مطابقة اسم العمود (لو المحتوى مش حاسم أو مفيش صفوف).
   const byHeader = cols.find((h) => {
     const hl = h.trim().toLowerCase();
     return MAKE_MODEL_HEADER_ALIASES.some((a) => hl === a || hl.includes(a) || a.includes(hl));
   });
-  if (byHeader) return byHeader;
-
-  // (٢) فحص المحتوى — عيّنة من أول ٨٠ صف لكل عمود.
-  if (!rows || rows.length === 0) return null;
-  const sample = rows.slice(0, 80);
-  let best: string | null = null;
-  let bestRatio = 0;
-  for (const h of cols) {
-    let hits = 0, nonEmpty = 0;
-    for (const r of sample) {
-      const v = String(r[h] ?? "").trim();
-      if (!v) continue;
-      nonEmpty++;
-      if (looksLikeCarName(v)) hits++;
-    }
-    if (nonEmpty >= 3) {
-      const ratio = hits / nonEmpty;
-      if (ratio > bestRatio) { bestRatio = ratio; best = h; }
-    }
-  }
-  return bestRatio >= 0.3 ? best : null;
+  return byHeader ?? null;
 }
 
 export function guessDefaultColumns(headers: string[], exclude?: string | null): string[] {

@@ -32,13 +32,21 @@ describe("detectMakeModelColumn — by content when the header is unrecognizable
     ];
     expect(detectMakeModelColumn(["رقم اللوحة", "الحي", "اللون"], plain)).toBeNull();
   });
-  it("prefers the header match over content scan", () => {
+  it("does NOT mistake a body-type column (ونيت/صالون/نقل) for the make column", () => {
     const rows2 = [
-      { "الماركة": "تويوتا", "ملاحظة": "كامري أبيض" },
-      { "الماركة": "نيسان", "ملاحظة": "صني" },
-      { "الماركة": "كيا", "ملاحظة": "ريو" },
+      { "نوع السيارة": "ونيت", "الماركة": "تويوتا" },
+      { "نوع السيارة": "صالون", "الماركة": "هيونداي" },
+      { "نوع السيارة": "نقل", "الماركة": "نيسان" },
     ];
-    expect(detectMakeModelColumn(["الماركة", "ملاحظة"], rows2)).toBe("الماركة");
+    expect(detectMakeModelColumn(["نوع السيارة", "الماركة"], rows2)).toBe("الماركة");
+  });
+  it("picks the model column even when its header is النوع, ignoring a separate body-type column", () => {
+    const rows3 = [
+      { "نوع الهيكل": "ونيت", "النوع": "هايلوكس" },
+      { "نوع الهيكل": "صالون", "النوع": "كامري" },
+      { "نوع الهيكل": "صالون", "النوع": "سوناتا" },
+    ];
+    expect(detectMakeModelColumn(["نوع الهيكل", "النوع"], rows3)).toBe("النوع");
   });
 });
 
