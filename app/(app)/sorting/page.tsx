@@ -950,15 +950,7 @@ export default function SortingPage() {
         {sorting ? "جارٍ الفرز..." : "فرز"}
       </button>
 
-      {/* ⑤ SORT RESULTS — مسح */}
-      {sorted && results && (
-        <button
-          onClick={() => { setResults(null); setSorted(false); setTashyeekResults(null); wipeSortResults(); }}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/40 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10"
-        >
-          <Trash2 size={15} /> مسح نتايج الفرز
-        </button>
-      )}
+      {/* زر «مسح نتايج الفرز» العام اتشال — بقى فيه زر مسح خاص جوه كل نافذة نتائج */}
 
       {/* ⑤ SORT RESULTS — مع تطابقات */}
       {sorted && results && matchedResults.length > 0 && (
