@@ -381,6 +381,8 @@ export default function InstantCheckPage() {
   const [editPttValue, setEditPttValue] = useState("");
   // Rows already pushed to the field-check sheet (shows a "تم" tick)
   const [pttExportedIds, setPttExportedIds] = useState<Set<string>>(new Set());
+  // صور الكاميرا اللي اتصدّرت خلاص — عشان «تصدير الكل» يبعت الجديد بس (مايكررش).
+  const [hitsExportedIds, setHitsExportedIds] = useState<Set<string>>(new Set());
 
   // Load the learned-correction maps once on mount.
   useEffect(() => {
@@ -891,13 +893,14 @@ export default function InstantCheckPage() {
     window.open(`https://wa.me/?text=${encodeURIComponent(`*لوحات مطلوبة (${hits.length})*\n\n${text}`)}`, "_blank");
   }
 
-  // Commit every auto-logged camera hit onto شيت التسجيلات (the one unified
-  // sheet). A fresh id per row — same "duplicates allowed" rule as the other
-  // export-to-field-check paths, so re-exporting never silently overwrites.
+  // يصدّر صور الكاميرا لشيت التسجيلات — الجديد بس (اللي ما اتصدّرش قبل كده).
+  // التكرار مسموح (لوحة تتصوّر مرتين = صفّين)، لكن إعادة الضغط مابتعيدش تصدير
+  // اللي اتصدّر خلاص — بيبعت الجديد اللي اتضاف بعد آخر تصدير فقط.
   async function exportAllHitsToField() {
-    if (manualHits.length === 0) return;
+    const fresh = manualHits.filter((h) => !hitsExportedIds.has(h.id));
+    if (fresh.length === 0) { alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة."); return; }
     const stamp = Date.now();
-    const toSave: FieldCheckEntry[] = manualHits.map((h, i) => ({
+    const toSave: FieldCheckEntry[] = fresh.map((h, i) => ({
       id: `${stamp}-${i}`,
       agentId: agentIdRef.current ?? undefined,
       plate: h.plate,
@@ -911,6 +914,7 @@ export default function InstantCheckPage() {
     try {
       for (const e of toSave) await saveFieldCheckEntry(e);
       setFieldEntries((prev) => [...toSave, ...prev]);
+      setHitsExportedIds((s) => { const n = new Set(s); fresh.forEach((h) => n.add(h.id)); return n; });
       alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر تصدير اللوحات.");
@@ -1432,12 +1436,14 @@ export default function InstantCheckPage() {
     } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
   }
 
-  // Append ALL voice rows to the field-check sheet, below whatever is already
-  // there. Duplicates are kept (a repeated plate = a new row).
+  // يصدّر لوحات الصوت لشيت التسجيلات — الجديد بس (اللي ما اتصدّرش قبل كده).
+  // التكرار مسموح، لكن إعادة الضغط بتبعت اللوحات اللي اتضافت بعد آخر تصدير فقط
+  // مش كل القائمة تاني.
   async function exportAllPttToField() {
-    if (pttResults.length === 0) return;
+    const freshRows = pttResults.filter((r) => !pttExportedIds.has(r.id));
+    if (freshRows.length === 0) { alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة."); return; }
     const stamp = Date.now();
-    const toSave: FieldCheckEntry[] = pttResults.map((r, i) => {
+    const toSave: FieldCheckEntry[] = freshRows.map((r, i) => {
       const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
       if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
       if (r.locationName) mergedRow["اسم الموقع"] = r.locationName;
@@ -1457,7 +1463,9 @@ export default function InstantCheckPage() {
     try {
       for (const e of toSave) await saveFieldCheckEntry(e);
       setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
-      setPttExportedIds(new Set(pttResults.map((r) => r.id)));
+      // نضيف اللي اتصدّر دلوقتي للمصدَّرين (union) — مش نستبدل، عشان القديم
+      // يفضل متعلّم إنه اتصدّر والجديد بس هو اللي يتصدّر المرة الجاية.
+      setPttExportedIds((s) => { const n = new Set(s); freshRows.forEach((r) => n.add(r.id)); return n; });
       alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر تصدير اللوحات.");
