@@ -20,6 +20,8 @@ import {
   gpsService, haversineKm, estimateDriveMinutes, formatDistanceKm, formatDurationMin,
 } from "@/lib/gps";
 import PlateBadge from "@/components/PlateBadge";
+import PlateImagesButton from "@/components/PlateImagesButton";
+import { objToPlateRow } from "@/lib/plateImage";
 import type { MapPoint } from "@/components/MapView";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
@@ -390,6 +392,9 @@ export default function MapsPage() {
               <button onClick={toggleSelAll} className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition">
                 {allSel ? <CheckSquare size={13} /> : <Square size={13} />} تحديد الكل
               </button>
+              <PlateImagesButton title="اللوحات المطلوبة"
+                build={() => filtered.map((m) => { const r = matchToRow(m); delete r["GPS"]; return objToPlateRow(r); })}
+                className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition" />
               <span className="mr-auto text-[11px] text-muted">{selected.size} محددة</span>
             </div>
 

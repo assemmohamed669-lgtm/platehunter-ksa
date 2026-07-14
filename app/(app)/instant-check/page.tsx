@@ -8,6 +8,8 @@ import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
+import PlateImagesButton from "@/components/PlateImagesButton";
+import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
 import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -1319,6 +1321,29 @@ export default function InstantCheckPage() {
     });
   }
 
+  // ── صفوف الصورة (بند 2) — تحويل قوائم اللوحات لـ PlateImageRow ──────────────
+  function fieldEntryImgRows(list: FieldCheckEntry[]): PlateImageRow[] {
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    return list.map((e) => {
+      const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
+      for (const h of dynCols) obj[h] = e.row[h] ?? "";
+      obj["الحالة"] = e.method;
+      return objToPlateRow(obj);
+    });
+  }
+  function pttImgRows(list: PttRow[]): PlateImageRow[] {
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    return list.map((r) => {
+      const obj: Record<string, unknown> = {
+        "رقم اللوحة": r.plate,
+        "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
+        "النوع": r.vehicleType ?? "",
+      };
+      for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
+      return objToPlateRow(obj);
+    });
+  }
+
   // Push one voice row onto the protected field-check sheet (only matched ones).
   async function exportPttRowToField(r: PttRow) {
     const mergedRow = { ...(r.row ?? {}) };
@@ -1805,6 +1830,9 @@ export default function InstantCheckPage() {
                           className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
                           <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
                         </button>
+                        <PlateImagesButton title="لوحات التشييك (يدوي)"
+                          build={() => fieldEntryImgRows(sortNear(manualDraft))}
+                          className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
                         <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                           {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
                           {allSel ? "إلغاء الكل" : "تحديد الكل"}
@@ -2114,6 +2142,9 @@ export default function InstantCheckPage() {
                           className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
                           <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
                         </button>
+                        <PlateImagesButton title="لوحات التشييك (صوتي)"
+                          build={() => pttImgRows(sortNear(pttResults))}
+                          className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
                         <button onClick={togglePttSelAll}
                           className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                           {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
@@ -2402,8 +2433,11 @@ export default function InstantCheckPage() {
               <ClipboardCheck size={15} className="text-brand shrink-0" />
               <h2 className="text-sm font-bold text-ink truncate">شيت التسجيلات (صوتي+يدوي)</h2>
               <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
+              <PlateImagesButton title="شيت التسجيلات"
+                build={() => fieldEntryImgRows(sortNear(visible))}
+                className="ml-auto flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs shrink-0 text-muted hover:text-primary transition" />
               <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
-                className={`ml-auto flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs shrink-0 transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
+                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs shrink-0 transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
                 <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
               </button>
             </div>

@@ -22,6 +22,8 @@ import {
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
 import { haversineKm, gpsService } from "@/lib/gps";
+import PlateImagesButton from "@/components/PlateImagesButton";
+import type { PlateImageRow } from "@/lib/plateImage";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -101,6 +103,18 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
       r.lat != null && r.lng != null ? haversineKm(userLoc.lat, userLoc.lng, r.lat, r.lng) : Infinity;
     return [...recordings].sort((a, b) => distOf(a) - distOf(b));
   }, [recordings, nearest, userLoc]);
+
+  function imgRows(): PlateImageRow[] {
+    return sortedRecordings.map((e) => {
+      const details: [string, string][] = [];
+      if (e.vehicleType) details.push(["النوع", e.vehicleType]);
+      if (e.street) details.push(["الشارع", e.street]);
+      if (e.district) details.push(["الحي", e.district]);
+      if (e.notes) details.push(["ملاحظات", e.notes]);
+      if (e.recorderName) details.push(["المسجّل", e.recorderName]);
+      return { plate: e.plate, details };
+    });
+  }
 
   const scale = ZOOM_LEVELS[zoom];
 
@@ -226,6 +240,8 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
             className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
             <Navigation size={13} /> {locating ? "..." : "الأقرب"}
           </button>
+          <PlateImagesButton title="السجلات الميدانية" build={imgRows}
+            className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
           <button onClick={toggleAll}
             className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
             {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}

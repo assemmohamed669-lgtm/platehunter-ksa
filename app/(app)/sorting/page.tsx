@@ -22,6 +22,8 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
+import PlateImagesButton from "@/components/PlateImagesButton";
+import { objToPlateRow } from "@/lib/plateImage";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
@@ -1001,11 +1003,15 @@ export default function SortingPage() {
                 <ZoomIn size={14} />
               </button>
             </div>
-            <button onClick={toggleAllResults}
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-              {selectedResults.size === displayResults.length && displayResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-              {selectedResults.size === displayResults.length && displayResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <PlateImagesButton title="السيارات المطلوبة للسحب"
+                build={() => displayResults.map((r) => objToPlateRow(buildRowObject(r)))} />
+              <button onClick={toggleAllResults}
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                {selectedResults.size === displayResults.length && displayResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                {selectedResults.size === displayResults.length && displayResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+              </button>
+            </div>
           </div>
 
           <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
@@ -1188,6 +1194,9 @@ export default function SortingPage() {
                     <Navigation size={12} /> {locating ? "..." : "الأقرب"}
                   </button>
                 )}
+                <PlateImagesButton title="سيارات مطلوبة من التشييك الميداني"
+                  build={() => displayTashyeek.map(({ r }) => objToPlateRow(buildTashyeekRowObj(r)))}
+                  className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
                 <button onClick={toggleTashyeekAll}
                   className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                   {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0
@@ -1381,6 +1390,9 @@ export default function SortingPage() {
                 >
                   <ZoomIn size={11} />
                 </button>
+                <PlateImagesButton title="اللوحات المطلوبة"
+                  build={() => displayPaste.map((p) => objToPlateRow(buildPasteRowObject(p)))}
+                  className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-primary transition" />
                 <button
                   onClick={handleSharePaste}
                   className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
@@ -1520,6 +1532,9 @@ export default function SortingPage() {
                   <span className="text-xs font-bold text-brand">
                     {pasteRecordResults.length} لوحة سبق تشييكها (شيت السجلات)
                   </span>
+                  <PlateImagesButton title="لوحات سبق تشييكها"
+                    build={() => pasteRecordResults.map((p) => objToPlateRow(buildPasteRecordRowObject(p)))}
+                    className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-primary transition" />
                 </div>
                 <div className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl" }}>
                   <table className="border-collapse w-full text-xs">
