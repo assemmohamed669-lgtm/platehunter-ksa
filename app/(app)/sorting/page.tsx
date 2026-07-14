@@ -708,6 +708,28 @@ export default function SortingPage() {
     }
   }
 
+  // ── مسح نتايج نافذة واحدة (بتأكيد) — كل زر يمسح نتايج نافذته فقط ──
+  function clearMainResults() {
+    if (!confirm("متأكد تمسح نتايج الفرز؟")) return;
+    setResults(null); setSorted(false); setSelectedResults(new Set());
+    persistSortResults([], tashyeekResults, sortMode, 0);
+  }
+  function clearTashyeekResults() {
+    if (!confirm("متأكد تمسح نتايج فرز السجلات؟")) return;
+    setTashyeekResults(null); setTashyeekSelected(new Set());
+    persistSortResults(results ?? [], null, sortMode, newPlatesCount);
+  }
+  function clearPasteResults() {
+    if (!confirm("متأكد تمسح نتايج اللصق النصي؟")) return;
+    setPasteResults([]); setPasteSelected(new Set());
+    persistPasteResults([], pasteRecordResults, pasteText);
+  }
+  function clearPasteRecordResults() {
+    if (!confirm("متأكد تمسح لوحات سبق تشييكها؟")) return;
+    setPasteRecordResults([]);
+    persistPasteResults(pasteResults, [], pasteText);
+  }
+
   // ── Paste sort ──
   function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
@@ -962,7 +984,9 @@ export default function SortingPage() {
           </div>
 
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-brand">السيارات المطلوبة للسحب</h2>
+            <h2 className="text-sm font-bold text-brand">
+              {sortMode === "new" ? "نتيجة السيارات المطلوبة في فرز جديد" : "نتيجة السيارات المطلوبة في فرز كلي"}
+            </h2>
             {gpsCol && (
               <button onClick={handleNearest} disabled={locating}
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
@@ -1090,6 +1114,10 @@ export default function SortingPage() {
           <ShareSortButton title="نتائج الفرز"
             rows={() => displayResults.map(buildRowObject)}
             excelBlob={buildSortExcelBlob} />
+          <button onClick={clearMainResults}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
+            <Trash2 size={15} /> مسح نتايج الفرز
+          </button>
         </div>
       )}
 
@@ -1156,7 +1184,7 @@ export default function SortingPage() {
           <div className="flex flex-col gap-3 rounded-2xl border-2 border-primary/60 bg-primary/5 p-3">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من التشييك الميداني</h2>
+                <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من ملف التشييك (السجلات)</h2>
                 <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
@@ -1255,8 +1283,12 @@ export default function SortingPage() {
             )}
 
             {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
-            <ShareSortButton title="سيارات مطلوبة من التشييك الميداني"
+            <ShareSortButton title="سيارات مطلوبة من ملف التشييك (السجلات)"
               rows={() => displayTashyeek.map(({ r }) => buildTashyeekRowObj(r))} />
+            <button onClick={clearTashyeekResults}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
+              <Trash2 size={15} /> مسح نتايج الفرز
+            </button>
           </div>
         ) : (
           <div className="rounded-xl border border-primary/30 bg-surface p-3 text-center">
@@ -1313,6 +1345,7 @@ export default function SortingPage() {
 
         {pasteRan && pasteResults.length > 0 && (
           <>
+            <h2 className="text-sm font-bold text-brand">نتيجة فرز لصق نصي</h2>
             <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
             <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
               <div className="flex items-center gap-1.5">
@@ -1533,17 +1566,27 @@ export default function SortingPage() {
                     </tbody>
                   </table>
                 </div>
-                {/* مشاركة الفرز — لوحات سبق تشييكها */}
-                <div className="border-t border-brand/20 p-3">
+                {/* مشاركة الفرز + مسح — لوحات سبق تشييكها */}
+                <div className="flex flex-col gap-2 border-t border-brand/20 p-3">
                   <ShareSortButton title="لوحات سبق تشييكها"
                     rows={() => pasteRecordResults.map((p) => buildPasteRecordRowObject(p))} />
+                  <button onClick={clearPasteRecordResults}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
+                    <Trash2 size={15} /> مسح نتايج الفرز
+                  </button>
                 </div>
               </div>
             )}
 
         {pasteRan && pasteResults.length > 0 && (
-          /* مشاركة الفرز — نتائج اللصق النصي (فتح / واتساب / صورة) */
-          <ShareSortButton title="نتائج اللصق" rows={() => displayPaste.map((p) => buildPasteRowObject(p))} />
+          /* مشاركة الفرز + مسح — نتائج اللصق النصي */
+          <>
+            <ShareSortButton title="نتائج اللصق" rows={() => displayPaste.map((p) => buildPasteRowObject(p))} />
+            <button onClick={clearPasteResults}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
+              <Trash2 size={15} /> مسح نتايج الفرز
+            </button>
+          </>
         )}
       </div>
     </div>
