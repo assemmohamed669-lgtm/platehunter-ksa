@@ -277,6 +277,14 @@ function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCh
   );
 }
 
+// كاش على مستوى الموديول — بيخلّي قوائم التشييك (يدوي/كاميرا/صوتي) تعيش عبر
+// التنقّل بين الصفحات وفتح/قفل التطبيق (طول ما الجلسة شغّالة)، مايتأثرش بحد
+// مساحة localStorage. القوائم تتمسح بس لما المندوب يمسحها بنفسه.
+let icHitsCache: CheckHit[] | null = null;
+let icPttCache: PttRow[] | null = null;
+let icManualDraftCache: FieldCheckEntry[] | null = null;
+let icPttLocationCache: string | null = null;
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
@@ -455,51 +463,60 @@ export default function InstantCheckPage() {
     })();
   }, []);
 
-  // Load hits from localStorage on mount
+  // hydrated: يبقى true بعد ما الاسترجاع يخلّص — عشان تأثيرات الحفظ ماتكتبش
+  // القيمة الابتدائية الفاضية فوق المحفوظ (clobber) وقت التحميل.
+  const listsHydrated = useRef(false);
+
+  // استرجاع القوائم عند التحميل: الكاش في الذاكرة أولاً (بيعيش عبر التنقّل)،
+  // وإلا localStorage. القوائم متتمسحش إلا لما المندوب يمسحها بنفسه.
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("ic-hits");
-      if (saved) setManualHits(JSON.parse(saved));
+      if (icHitsCache) setManualHits(icHitsCache);
+      else { const s = localStorage.getItem("ic-hits"); if (s) { const v = JSON.parse(s) as CheckHit[]; icHitsCache = v; setManualHits(v); } }
+    } catch {}
+    try {
+      if (icPttCache) setPttResults(icPttCache);
+      else { const s = localStorage.getItem("ic-ptt-results"); if (s) { const v = JSON.parse(s) as PttRow[]; icPttCache = v; setPttResults(v); } }
+    } catch {}
+    try {
+      if (icManualDraftCache) setManualDraft(icManualDraftCache);
+      else { const s = localStorage.getItem("ic-manual-draft"); if (s) { const v = JSON.parse(s) as FieldCheckEntry[]; icManualDraftCache = v; setManualDraft(v); } }
+    } catch {}
+    try {
+      const loc = icPttLocationCache ?? localStorage.getItem("ic-ptt-location");
+      if (loc) { icPttLocationCache = loc; setPttLocationName(loc); pttLocationNameRef.current = loc; }
     } catch {}
   }, []);
 
-  // Save hits to localStorage on every change
+  // حفظ كل قائمة (كاش الذاكرة + localStorage) عند أي تغيير — بس بعد الاسترجاع.
   useEffect(() => {
-    try {
-      localStorage.setItem("ic-hits", JSON.stringify(manualHits));
-    } catch {}
+    if (!listsHydrated.current) return;
+    icHitsCache = manualHits;
+    try { localStorage.setItem("ic-hits", JSON.stringify(manualHits)); } catch {}
   }, [manualHits]);
 
-  // Voice (PTT) results + location name persist too, so leaving the page and
-  // coming back doesn't wipe what was already checked.
   useEffect(() => {
-    try {
-      const savedRows = localStorage.getItem("ic-ptt-results");
-      if (savedRows) setPttResults(JSON.parse(savedRows));
-      const savedLoc = localStorage.getItem("ic-ptt-location");
-      if (savedLoc) { setPttLocationName(savedLoc); pttLocationNameRef.current = savedLoc; }
-    } catch {}
-  }, []);
-
-  useEffect(() => {
+    if (!listsHydrated.current) return;
+    icPttCache = pttResults;
     try { localStorage.setItem("ic-ptt-results", JSON.stringify(pttResults)); } catch {}
   }, [pttResults]);
 
-  // Manual draft persists across reloads too — an unexported working list.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("ic-manual-draft");
-      if (saved) setManualDraft(JSON.parse(saved));
-    } catch {}
-  }, []);
-
-  useEffect(() => {
+    if (!listsHydrated.current) return;
+    icManualDraftCache = manualDraft;
     try { localStorage.setItem("ic-manual-draft", JSON.stringify(manualDraft)); } catch {}
   }, [manualDraft]);
 
   useEffect(() => {
+    if (!listsHydrated.current) return;
+    icPttLocationCache = pttLocationName;
     try { localStorage.setItem("ic-ptt-location", pttLocationName); } catch {}
   }, [pttLocationName]);
+
+  // بعد ما تأثيرات الاسترجاع + الحفظ الابتدائية تعدّي، نعلّم إن الاسترجاع خلّص.
+  // (لازم يكون آخر تأثير عشان تأثيرات الحفظ فوقه تتخطّى الكتابة الابتدائية
+  // الفاضية على المحفوظ.) بعد إعادة الرندر بالقيم المسترجَعة، الحفظ يكتب عادي.
+  useEffect(() => { listsHydrated.current = true; }, []);
 
   // Attach live camera stream to video element whenever stream changes
   useEffect(() => {
