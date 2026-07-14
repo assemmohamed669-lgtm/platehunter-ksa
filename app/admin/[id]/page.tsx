@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
   MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
+  Eye, EyeOff, Pencil, UserRound, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
@@ -53,6 +54,9 @@ export default function AgentDetail() {
   const [newPass, setNewPass] = useState("");
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [editingBio, setEditingBio] = useState(false);
+  const [showPass, setShowPass] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [isSuper, setIsSuper] = useState(false);
   const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
@@ -62,7 +66,7 @@ export default function AgentDetail() {
     const { data } = await supabase.from("profiles").select("*").eq("id", id).single();
     if (data) {
       const prof = data as Profile;
-      setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? "");
+      setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? ""); setEmail(prof.email ?? "");
       setAmount(prof.subscription_amount != null ? String(prof.subscription_amount) : "");
     }
     const { data: ev } = await supabase.from("subscription_events").select("*").eq("agent_id", id).order("created_at", { ascending: false });
@@ -101,12 +105,26 @@ export default function AgentDetail() {
       setMsg("✅ اتحفظ التمديد."); load();
     }
   }
-  async function changePassword() {
-    if (newPass.length < 6) { setMsg("كلمة المرور ٦ أحرف على الأقل."); return; }
-    if (await call("setPassword", { password: newPass })) { setNewPass(""); setMsg("✅ اتغيّرت كلمة المرور."); }
+  // حفظ بيانات المندوب (اسم/إيميل/تليفون) + باسوورد جديد لو المندوب كتبه.
+  async function saveBio() {
+    if (newPass.trim() && newPass.trim().length < 6) {
+      setMsg("❌ كلمة المرور ٦ أحرف على الأقل."); return;
+    }
+    const payload: Record<string, unknown> = { name, phone };
+    if (email.trim() && email.trim().toLowerCase() !== (p?.email ?? "").toLowerCase()) {
+      payload.email = email.trim();
+    }
+    if (!(await call("updateContact", payload))) return;
+    if (newPass.trim()) {
+      if (!(await call("setPassword", { password: newPass.trim() }))) return;
+      setNewPass("");
+    }
+    setMsg("✅ اتحفظت بيانات المندوب."); setEditingBio(false); setShowPass(false); load();
   }
-  async function saveContact() {
-    if (await call("updateContact", { name, phone })) { setMsg("✅ اتحفظت بيانات المندوب."); load(); }
+  function cancelBio() {
+    // رجّع القيم لأصلها وألغِ التعديل.
+    setName(p?.username ?? ""); setEmail(p?.email ?? ""); setPhone(p?.phone ?? "");
+    setNewPass(""); setShowPass(false); setEditingBio(false); setMsg(null);
   }
   // «إرسال بيانات الدخول»: يولّد باسوورد جديد، يحطّه، يفتح واتساب المندوب
   // بالإيميل + الباسوورد، ويعرضهم في خانة نسخ.
@@ -157,22 +175,101 @@ export default function AgentDetail() {
           )}
         </div>
 
-        {/* Identity */}
-        <div className={`rounded-2xl border p-4 ${p.is_super ? "border-2 bg-black" : "border-border bg-surface"}`}
+        {/* ── مربع «بيانات المندوب» ── */}
+        <div className={`rounded-2xl border p-4 flex flex-col gap-3 ${p.is_super ? "border-2 bg-black" : "border-border bg-surface"}`}
           style={p.is_super ? { borderColor: "#D4AF37" } : undefined}>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-ink" dir="ltr" style={p.is_super ? { color: "#F4D160" } : undefined}>{p.username}</h1>
-            {p.is_super && (
-              <span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>
-                <Gem size={11} /> سوبر أدمن
-              </span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-ink" style={p.is_super ? { color: "#F4D160" } : undefined}>بيانات المندوب</span>
+              {p.is_super && (
+                <span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>
+                  <Gem size={10} /> سوبر أدمن
+                </span>
+              )}
+            </div>
+            {!editingBio && (
+              <button onClick={() => setEditingBio(true)}
+                className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
+                <Pencil size={13} /> تعديل
+              </button>
             )}
           </div>
-          <div className="mt-2 flex flex-col gap-1 text-xs text-muted">
-            <span className="flex items-center gap-1.5"><Mail size={12} /> {p.email || "—"}</span>
-            <span className="flex items-center gap-1.5"><Phone size={12} /> {p.phone || "بدون تليفون"}</span>
-            <span className="flex items-center gap-1.5"><Clock size={12} /> آخر ظهور: {daysAgo(p.last_seen)}</span>
-            <span className="flex items-center gap-1.5"><Smartphone size={12} /> {p.device_fingerprint ? "مرتبط بجهاز" : "غير مرتبط بجهاز"}</span>
+
+          {!editingBio ? (
+            /* ── وضع العرض ── */
+            <div className="flex flex-col gap-1.5 text-xs">
+              <div className="flex items-center gap-1.5 text-ink"><UserRound size={13} className="text-muted" /> <span className="font-bold">{p.username}</span></div>
+              <div className="flex items-center gap-1.5 text-muted"><Mail size={13} /> <span className="text-ink" dir="ltr">{p.email || "—"}</span></div>
+              <div className="flex items-center gap-1.5 text-muted"><KeyRound size={13} /> <span className="text-ink">••••••••</span> <span className="text-[10px]">(مشفّر — للتغيير اضغط «تعديل»)</span></div>
+              <div className="flex items-center gap-1.5 text-muted"><Phone size={13} /> <span className="text-ink" dir="ltr">{p.phone || "بدون تليفون"}</span></div>
+              <div className="mt-1 flex items-center gap-1.5 text-muted"><Clock size={12} /> آخر ظهور: {daysAgo(p.last_seen)}</div>
+              <div className="flex items-center gap-1.5 text-muted"><Smartphone size={12} /> {p.device_fingerprint ? "مرتبط بجهاز" : "غير مرتبط بجهاز"}</div>
+            </div>
+          ) : (
+            /* ── وضع التعديل ── */
+            <div className="flex flex-col gap-2">
+              <label className="text-[11px] text-muted">الاسم
+                <input value={name} onChange={(e) => setName(e.target.value)} dir="rtl"
+                  className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              </label>
+              <label className="text-[11px] text-muted">الإيميل
+                <input value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr"
+                  className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              </label>
+              <label className="text-[11px] text-muted">باسوورد جديد
+                <div className="relative mt-1">
+                  <input type={showPass ? "text" : "password"} value={newPass} onChange={(e) => setNewPass(e.target.value)}
+                    placeholder="سيبه فاضي عشان متغيرش" dir="ltr"
+                    className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 pl-10 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <button type="button" onClick={() => setShowPass((v) => !v)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary" title={showPass ? "إخفاء" : "إظهار"}>
+                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </label>
+              <label className="text-[11px] text-muted">رقم التليفون
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} dir="ltr"
+                  className="mt-1 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              </label>
+              <div className="flex gap-2">
+                <button onClick={saveBio} disabled={busy}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-50">
+                  <Save size={15} /> {busy ? "جارٍ..." : "حفظ التغييرات"}
+                </button>
+                <button onClick={cancelBio} disabled={busy}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-sm text-muted">
+                  <X size={15} /> إلغاء
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* بيانات الدخول (باسوورد جديد + واتساب) + ضبط الجهاز */}
+          <div className="flex flex-col gap-2 border-t border-border pt-2">
+            <button onClick={sendCredentials} disabled={busy}
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-brand/90 py-2 text-xs font-bold text-night hover:bg-brand transition disabled:opacity-50">
+              <MessageCircle size={13} /> إرسال بيانات دخول جديدة للمندوب (واتساب)
+            </button>
+            {creds && (
+              <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-2 p-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted">الإيميل:</span>
+                  <span className="truncate font-mono text-ink" dir="ltr">{creds.email}</span>
+                  <button onClick={() => navigator.clipboard.writeText(creds.email)} className="shrink-0 text-primary">نسخ</button>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted">الباسوورد:</span>
+                  <span className="truncate font-mono text-ink" dir="ltr">{creds.password}</span>
+                  <button onClick={() => navigator.clipboard.writeText(creds.password)} className="shrink-0 text-primary">نسخ</button>
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(`الإيميل: ${creds.email}\nالباسوورد: ${creds.password}`)}
+                  className="mt-1 rounded-lg border border-border py-1 text-primary">نسخ الاتنين</button>
+              </div>
+            )}
+            <button onClick={async () => { if (await call("resetDevice")) { setMsg("✅ اتفكّ ربط الجهاز."); load(); } }} disabled={!p.device_fingerprint || busy}
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted hover:text-primary disabled:opacity-40">
+              <Smartphone size={13} /> إعادة ضبط الجهاز
+            </button>
           </div>
         </div>
 
@@ -211,79 +308,42 @@ export default function AgentDetail() {
           </div>
         )}
 
-        {/* Account actions */}
-        <div className="rounded-2xl border border-border bg-surface p-4 flex flex-col gap-3">
-          <div className="text-sm font-bold text-ink">الحساب</div>
-          {/* اسم المندوب + التليفون — تعديل وحفظ مرة واحدة */}
-          <div className="flex flex-col gap-2">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="اسم المندوب" dir="rtl"
-              className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-            <div className="flex gap-2">
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="رقم التليفون" dir="ltr"
-                className="flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-              <button onClick={saveContact} disabled={busy} className="flex items-center gap-1 rounded-lg border border-border px-3 text-xs text-muted hover:text-primary">
-                <Save size={13} /> حفظ
-              </button>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="كلمة مرور جديدة" dir="ltr"
-              className="flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-            <button onClick={changePassword} disabled={busy} className="flex items-center gap-1 rounded-lg border border-border px-3 text-xs text-muted hover:text-primary">
-              <KeyRound size={13} /> تغيير
+        {/* ── مربع «الحساب» — ترقية / تعطيل مؤقت / حذف (للسوبر-أدمن فقط) ── */}
+        {isSuper && (
+          <div className="rounded-2xl border border-border bg-surface p-4 flex flex-col gap-2.5">
+            <div className="text-sm font-bold text-ink">الحساب</div>
+
+            {/* ترقية لأدمن / رجوع لمندوب */}
+            <button
+              onClick={async () => {
+                const toAdmin = p.role !== "admin";
+                if (!confirm(toAdmin ? `تخلّي «${p.username}» أدمن بكل الصلاحيات؟` : `ترجّع «${p.username}» مندوب عادي؟`)) return;
+                if (await call("setRole", { role: toAdmin ? "admin" : "agent" })) { setMsg("✅ اتغيّر الدور."); load(); }
+              }}
+              disabled={busy}
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 py-2.5 text-xs font-bold text-primary hover:bg-primary/10 transition">
+              <ShieldCheck size={13} /> {p.role === "admin" ? "تحويل لمندوب عادي" : "ترقية لأدمن"}
             </button>
+
+            {/* تعطيل مؤقت / إرجاع تشغيل */}
+            <button
+              onClick={async () => {
+                if (p.is_active && !confirm(`توقف حساب «${p.username}» مؤقتاً؟ (تقدر ترجّعه في أي وقت)`)) return;
+                if (await call("setActive", { active: !p.is_active })) { setMsg(p.is_active ? "✅ اتعطّل الحساب مؤقتاً." : "✅ اترجّع تشغيل الحساب."); load(); }
+              }}
+              disabled={busy}
+              className={`flex items-center justify-center gap-1.5 rounded-lg border py-2.5 text-xs font-bold transition ${p.is_active ? "border-alert/50 bg-alert/5 text-alert hover:bg-alert/10" : "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10"}`}>
+              {p.is_active ? <><ShieldOff size={13} /> تعطيل الحساب مؤقتاً</> : <><ShieldCheck size={13} /> إرجاع تشغيل الحساب</>}
+            </button>
+
+            {/* حذف نهائي */}
+            <button onClick={del} disabled={busy}
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/5 py-2.5 text-xs font-bold text-danger hover:bg-danger/10 transition">
+              <Trash2 size={13} /> حذف الحساب نهائياً
+            </button>
+            <p className="text-[10px] text-muted text-center">الحذف نهائي — بس تقدر ترجّع نفس الإيميل بإضافته كمستخدم جديد بعدين.</p>
           </div>
-          {/* إرسال بيانات الدخول (باسوورد جديد → واتساب + نسخ) */}
-          <button onClick={sendCredentials} disabled={busy}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-brand/90 py-2 text-xs font-bold text-night hover:bg-brand transition disabled:opacity-50">
-            <MessageCircle size={13} /> إرسال بيانات الدخول (باسوورد جديد)
-          </button>
-          {creds && (
-            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-2 p-2.5 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted">الإيميل:</span>
-                <span className="truncate font-mono text-ink" dir="ltr">{creds.email}</span>
-                <button onClick={() => navigator.clipboard.writeText(creds.email)} className="shrink-0 text-primary">نسخ</button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted">الباسوورد:</span>
-                <span className="truncate font-mono text-ink" dir="ltr">{creds.password}</span>
-                <button onClick={() => navigator.clipboard.writeText(creds.password)} className="shrink-0 text-primary">نسخ</button>
-              </div>
-              <button onClick={() => navigator.clipboard.writeText(`الإيميل: ${creds.email}\nالباسوورد: ${creds.password}`)}
-                className="mt-1 rounded-lg border border-border py-1 text-primary">نسخ الاتنين</button>
-            </div>
-          )}
-
-          <button onClick={async () => { if (await call("resetDevice")) { setMsg("✅ اتفكّ ربط الجهاز."); load(); } }} disabled={!p.device_fingerprint || busy}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted hover:text-primary disabled:opacity-40">
-            <Smartphone size={13} /> إعادة ضبط الجهاز
-          </button>
-
-          {/* تعطيل + حذف + ترقية — للسوبر-أدمن فقط */}
-          {isSuper && (
-            <>
-              <button
-                onClick={async () => {
-                  const toAdmin = p.role !== "admin";
-                  if (!confirm(toAdmin ? `تخلّي «${p.username}» أدمن بكل الصلاحيات؟` : `ترجّع «${p.username}» مندوب عادي؟`)) return;
-                  if (await call("setRole", { role: toAdmin ? "admin" : "agent" })) { setMsg("✅ اتغيّر الدور."); load(); }
-                }}
-                disabled={busy}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 py-2 text-xs font-bold text-primary hover:bg-primary/10 transition">
-                <ShieldCheck size={13} /> {p.role === "admin" ? "تحويل لمندوب" : "ترقية لأدمن (كل الصلاحيات)"}
-              </button>
-              <button onClick={async () => { if (await call("setActive", { active: !p.is_active })) load(); }} disabled={busy}
-                className={`flex items-center justify-center gap-1.5 rounded-lg border py-2 text-xs transition ${p.is_active ? "border-danger/40 text-danger" : "border-primary/40 text-primary"}`}>
-                {p.is_active ? <><ShieldOff size={13} /> تعطيل الحساب</> : <><ShieldCheck size={13} /> تفعيل الحساب</>}
-              </button>
-              <button onClick={del} disabled={busy}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/5 py-2 text-xs font-bold text-danger hover:bg-danger/10 transition">
-                <Trash2 size={13} /> حذف الحساب نهائياً
-              </button>
-            </>
-          )}
-        </div>
+        )}
 
         {/* Subscription log */}
         {events.length > 0 && (
