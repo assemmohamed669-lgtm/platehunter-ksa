@@ -3,13 +3,13 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
-  Navigation, ZoomIn, ZoomOut, FileSpreadsheet, Download,
-  ExternalLink, ChevronDown, CheckSquare, Square, Trash2, ScanLine, X,
+  Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
+  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import {
-  type ExcelTable, buildSpreadsheetBlob, buildCsvBlob, downloadExcelBlob,
+  type ExcelTable, buildSpreadsheetBlob, buildCsvBlob,
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
@@ -21,9 +21,7 @@ import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
-import OpenDownloadButton from "@/components/OpenDownloadButton";
-import PlateImagesButton from "@/components/PlateImagesButton";
-import { objToPlateRow } from "@/lib/plateImage";
+import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -123,8 +121,6 @@ export default function SortingPage() {
   const [nearestActive, setNearestActive] = useState(false);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
-  const [exportingAll, setExportingAll] = useState(false);
-  const [showExcelMenuSort, setShowExcelMenuSort] = useState(false);
   const [newPlatesCount, setNewPlatesCount] = useState(0);
   // التشخيص التقني يظهر للأدمن فقط، ومطوي افتراضياً (سهم لفتحه). المندوب
   // مايشوفهوش خالص.
@@ -139,7 +135,6 @@ export default function SortingPage() {
   const [pasteRecordResults, setPasteRecordResults] = useState<TokenMatch[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteZoom, setPasteZoom] = useState(1);
-  const [showExcelMenuPaste, setShowExcelMenuPaste] = useState(false);
 
   // ── Bootstrap ──
   useEffect(() => {
@@ -693,20 +688,6 @@ export default function SortingPage() {
       rows.map((r, i) => `${i + 1}. ${buildRowSummaryText(buildTashyeekRowObj(r))}`).join("\n\n──────────\n\n");
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
-  async function shareTashyeekAll() {
-    const rows = (tashyeekResults ?? []).map(buildTashyeekRowObj);
-    if (!rows.length) return;
-    const { blob, ext } = buildSpreadsheetBlob(rows, "سيارات مطلوبة");
-    try { await shareExcelBlob(blob, `مطلوبين-${ts()}.${ext}`, "سيارات مطلوبة"); }
-    catch (e: any) { alert(e?.message ?? "تعذّرت المشاركة"); }
-  }
-  async function openTashyeekExcel() {
-    const rows = (tashyeekResults ?? []).map(buildTashyeekRowObj);
-    if (!rows.length) return;
-    const { blob, ext } = buildSpreadsheetBlob(rows, "سيارات مطلوبة");
-    try { await openExcelBlob(blob, `مطلوبين-${ts()}.${ext}`); }
-    catch (e: any) { alert(e?.message ?? "تعذّر الفتح"); }
-  }
 
   // ── Export ──
   const ts = () => new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
@@ -724,57 +705,6 @@ export default function SortingPage() {
       return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
     } catch {
       return { blob: buildCsvBlob(rowObjects), ext: "csv" };
-    }
-  }
-
-  async function handleOpenSort() {
-    setExportingAll(true);
-    try {
-      const { blob, ext } = await buildSortExcelBlob();
-      const result = await openExcelBlob(blob, `فرز-${ts()}.${ext}`);
-      alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّر فتح الملف");
-    } finally {
-      setExportingAll(false);
-    }
-  }
-  async function handleDownloadSort() {
-    setExportingAll(true);
-    const { blob, ext } = await buildSortExcelBlob();
-    downloadExcelBlob(blob, `فرز-${ts()}.${ext}`);
-    alert("تم تصدير الملف وتنزيله.");
-    setExportingAll(false);
-  }
-  async function handleShareSort() {
-    try {
-      const { blob, ext } = await buildSortExcelBlob();
-      await shareExcelBlob(blob, `فرز-${ts()}.${ext}`, "نتائج الفرز");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّرت المشاركة");
-    }
-  }
-
-  async function handleOpenPaste() {
-    try {
-      const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
-      const result = await openExcelBlob(blob, `لصق-${ts()}.${ext}`);
-      alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّر فتح الملف");
-    }
-  }
-  async function handleDownloadPaste() {
-    const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
-    downloadExcelBlob(blob, `لصق-${ts()}.${ext}`);
-    alert("تم تصدير الملف وتنزيله.");
-  }
-  async function handleSharePaste() {
-    try {
-      const { blob, ext } = buildSpreadsheetBlob(pasteResults.map(buildPasteRowObject), "نتائج اللصق");
-      await shareExcelBlob(blob, `لصق-${ts()}.${ext}`, "نتائج اللصق");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّرت المشاركة");
     }
   }
 
@@ -1054,15 +984,11 @@ export default function SortingPage() {
                 <ZoomIn size={14} />
               </button>
             </div>
-            <div className="flex items-center gap-1.5">
-              <PlateImagesButton title="السيارات المطلوبة للسحب"
-                build={() => displayResults.map((r) => objToPlateRow(buildRowObject(r)))} />
-              <button onClick={toggleAllResults}
-                className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-                {selectedResults.size === displayResults.length && displayResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-                {selectedResults.size === displayResults.length && displayResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
-              </button>
-            </div>
+            <button onClick={toggleAllResults}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+              {selectedResults.size === displayResults.length && displayResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+              {selectedResults.size === displayResults.length && displayResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+            </button>
           </div>
 
           <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
@@ -1159,28 +1085,11 @@ export default function SortingPage() {
             </div>
           )}
 
-          {/* ⑥ SORT EXPORT */}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <button onClick={() => setShowExcelMenuSort((v) => !v)} disabled={exportingAll}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60">
-                <ExternalLink size={16} /> فتح في Excel
-              </button>
-              {showExcelMenuSort && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuSort(false)} />
-                  <div className="absolute bottom-full mb-1 right-0 z-20 w-full rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-                    <button onClick={() => { handleOpenSort(); setShowExcelMenuSort(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-2"><ExternalLink size={14} /> فتح</button>
-                    <button onClick={() => { handleDownloadSort(); setShowExcelMenuSort(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-surface-2"><Download size={14} /> تنزيل</button>
-                  </div>
-                </>
-              )}
-            </div>
-            <button onClick={handleShareSort} disabled={exportingAll}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-60">
-              <Share2 size={16} /> مشاركة لواتساب
-            </button>
-          </div>
+          {/* ⑥ مشاركة الفرز — زر موحّد (فتح / واتساب / صورة).
+              excelBlob = النسخة الملوّنة (تمييز المكرّرات) لملف الفرز. */}
+          <ShareSortButton title="نتائج الفرز"
+            rows={() => displayResults.map(buildRowObject)}
+            excelBlob={buildSortExcelBlob} />
         </div>
       )}
 
@@ -1257,9 +1166,6 @@ export default function SortingPage() {
                     <Navigation size={12} /> {locating ? "..." : "الأقرب"}
                   </button>
                 )}
-                <PlateImagesButton title="سيارات مطلوبة من التشييك الميداني"
-                  build={() => displayTashyeek.map(({ r }) => objToPlateRow(buildTashyeekRowObj(r)))}
-                  className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
                 <button onClick={toggleTashyeekAll}
                   className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                   {tashyeekSelected.size === tashyeekResults.length && tashyeekResults.length > 0
@@ -1348,21 +1254,9 @@ export default function SortingPage() {
               </div>
             )}
 
-            {/* أزرار تحت النافذة */}
-            <div className="flex gap-3">
-              <button onClick={shareTashyeekAll}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90">
-                <Share2 size={16} /> مشاركة
-              </button>
-              <OpenDownloadButton
-                build={() => {
-                  const { blob, ext } = buildSpreadsheetBlob((tashyeekResults ?? []).map(buildTashyeekRowObj), "سيارات مطلوبة");
-                  return { blob, name: `مطلوبين-${ts()}.${ext}` };
-                }}
-                label="فتح في Excel"
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-3 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60"
-              />
-            </div>
+            {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
+            <ShareSortButton title="سيارات مطلوبة من التشييك الميداني"
+              rows={() => displayTashyeek.map(({ r }) => buildTashyeekRowObj(r))} />
           </div>
         ) : (
           <div className="rounded-xl border border-primary/30 bg-surface p-3 text-center">
@@ -1452,21 +1346,6 @@ export default function SortingPage() {
                   className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted disabled:opacity-30 hover:text-ink transition"
                 >
                   <ZoomIn size={11} />
-                </button>
-                <PlateImagesButton title="اللوحات المطلوبة"
-                  build={() => displayPaste.map((p) => objToPlateRow(buildPasteRowObject(p)))}
-                  className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-primary transition" />
-                <button
-                  onClick={handleSharePaste}
-                  className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
-                >
-                  <Share2 size={11} />
-                </button>
-                <button
-                  onClick={handleOpenPaste}
-                  className="flex h-6 w-6 items-center justify-center rounded border border-border bg-surface text-muted hover:text-ink transition"
-                >
-                  <Download size={11} />
                 </button>
               </div>
             </div>
@@ -1595,9 +1474,6 @@ export default function SortingPage() {
                   <span className="text-xs font-bold text-brand">
                     {pasteRecordResults.length} لوحة سبق تشييكها (شيت السجلات)
                   </span>
-                  <PlateImagesButton title="لوحات سبق تشييكها"
-                    build={() => pasteRecordResults.map((p) => objToPlateRow(buildPasteRecordRowObject(p)))}
-                    className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-primary transition" />
                 </div>
                 <div className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl" }}>
                   <table className="border-collapse w-full text-xs">
@@ -1657,44 +1533,17 @@ export default function SortingPage() {
                     </tbody>
                   </table>
                 </div>
+                {/* مشاركة الفرز — لوحات سبق تشييكها */}
+                <div className="border-t border-brand/20 p-3">
+                  <ShareSortButton title="لوحات سبق تشييكها"
+                    rows={() => pasteRecordResults.map((p) => buildPasteRecordRowObject(p))} />
+                </div>
               </div>
             )}
 
         {pasteRan && pasteResults.length > 0 && (
-          <>
-            {/* أزرار تصدير كبيرة — خارج الكارت */}
-            <div className="flex gap-3">
-              <div className="relative flex-1">
-                <button
-                  onClick={() => setShowExcelMenuPaste((v) => !v)}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-white shadow hover:bg-brand/90 transition"
-                >
-                  <ExternalLink size={16} /> فتح في Excel
-                </button>
-                {showExcelMenuPaste && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setShowExcelMenuPaste(false)} />
-                    <div className="absolute bottom-full mb-1 left-0 z-20 w-36 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-                      <button onClick={() => { handleOpenPaste(); setShowExcelMenuPaste(false); }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                        <ExternalLink size={13} /> فتح
-                      </button>
-                      <button onClick={() => { handleDownloadPaste(); setShowExcelMenuPaste(false); }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-ink hover:bg-surface-2">
-                        <Download size={13} /> تنزيل
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-              <button
-                onClick={handleSharePaste}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white shadow hover:bg-green-700 transition"
-              >
-                <Share2 size={16} /> مشاركة واتساب
-              </button>
-            </div>
-          </>
+          /* مشاركة الفرز — نتائج اللصق النصي (فتح / واتساب / صورة) */
+          <ShareSortButton title="نتائج اللصق" rows={() => displayPaste.map((p) => buildPasteRowObject(p))} />
         )}
       </div>
     </div>
