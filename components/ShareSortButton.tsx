@@ -10,11 +10,12 @@
  * اللي كانت متفرّقة (فتح إكسيل + واتساب + صورة) في مكان واحد.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2 } from "lucide-react";
 import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { renderPlateImages, objToPlateRow, downloadDataUrl } from "@/lib/plateImage";
 import { shareImageWithText } from "@/lib/share";
+import { pushBackHandler } from "@/lib/backStack";
 
 interface Props {
   /** اسم الشيت + عنوان الصورة + أساس اسم الملف. */
@@ -35,6 +36,11 @@ export default function ShareSortButton({ title, rows, excelBlob, className }: P
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<string[] | null>(null);
+
+  // زر الرجوع (الهاتف) يقفل الصور المعروضة الأول، ثم القائمة — بدل ما يطلّع من
+  // التطبيق أو ينقلك لصفحة تانية.
+  useEffect(() => { if (images) return pushBackHandler(() => setImages(null)); }, [images]);
+  useEffect(() => { if (menuOpen) return pushBackHandler(() => setMenuOpen(false)); }, [menuOpen]);
 
   function getRows(): Record<string, unknown>[] | null {
     const r = rows();

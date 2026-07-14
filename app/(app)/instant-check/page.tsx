@@ -8,6 +8,7 @@ import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
+import { pushBackHandler } from "@/lib/backStack";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -419,6 +420,8 @@ export default function InstantCheckPage() {
   const [draftFieldEntries, setDraftFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [peSearch, setPeSearch] = useState("");            // بحث برقم اللوحة داخل المحرّر
   const [peCols, setPeCols] = useState<Set<string>>(new Set()); // الأعمدة المعروضة في المحرّر
+  // زر الرجوع (الهاتف) يقفل نافذة «إظهار وتعديل اللوحات» بدل ما يتنقّل بعيد.
+  useEffect(() => { if (platesEditorOpen) return pushBackHandler(() => setPlatesEditorOpen(false)); }, [platesEditorOpen]);
 
   // Colour index per DUPLICATED plate (plates appearing more than once).
   const fieldColorMap = useMemo(() => {

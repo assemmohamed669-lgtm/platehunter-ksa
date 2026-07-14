@@ -42,18 +42,28 @@ const DUPE_COLORS = [
 
 type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string> };
 
+// كاش على مستوى الموديول — بيعيش طول ما التطبيق مفتوح (عبر التنقّل بين الصفحات)
+// حتى لو localStorage فشل (نتايج كبيرة تتعدّى حد المساحة). الاسترجاع بيفضّله على
+// localStorage عشان الفرز مايضيعش لمجرد إنك رحت صفحة تانية ورجعت.
+type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number };
+type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string };
+let sortResultsCache: SortCache | null = null;
+let pasteResultsCache: PasteCache | null = null;
+
 function persistSortResults(
   results: MatchResult[],
   tashyeekResults: TashyeekResultRow[] | null,
   sortMode: "new" | "full",
   newPlatesCount: number,
 ) {
+  sortResultsCache = { results, tashyeekResults, sortMode, newPlatesCount };
   try {
     localStorage.setItem(SORT_RESULTS_KEY, JSON.stringify({ results, tashyeekResults, sortMode, newPlatesCount }));
-  } catch { /* storage full */ }
+  } catch { /* storage full — الكاش في الذاكرة بيغطّي */ }
 }
 
 function wipeSortResults() {
+  sortResultsCache = null;
   try { localStorage.removeItem(SORT_RESULTS_KEY); } catch { /* ignore */ }
 }
 
@@ -62,12 +72,14 @@ function persistPasteResults(
   recordResults: TokenMatch[],
   text: string,
 ) {
+  pasteResultsCache = { results, recordResults, text };
   try {
     localStorage.setItem(PASTE_RESULTS_KEY, JSON.stringify({ results, recordResults, text }));
-  } catch { /* storage full */ }
+  } catch { /* storage full — الكاش في الذاكرة بيغطّي */ }
 }
 
 function wipePasteResults() {
+  pasteResultsCache = null;
   try { localStorage.removeItem(PASTE_RESULTS_KEY); } catch { /* ignore */ }
 }
 
@@ -172,28 +184,31 @@ export default function SortingPage() {
           }
         } catch { /* no field sheet yet */ }
         try {
-          const raw = localStorage.getItem(SORT_RESULTS_KEY);
-          if (raw) {
-            const s = JSON.parse(raw);
-            if (Array.isArray(s.results) && s.results.length > 0) {
-              setSortMode(s.sortMode ?? "full");
-              setNewPlatesCount(s.newPlatesCount ?? 0);
-              setResults(s.results);
-              setSorted(true);
-              if (Array.isArray(s.tashyeekResults)) setTashyeekResults(s.tashyeekResults);
-            }
+          // الكاش في الذاكرة أولاً (بيعيش عبر التنقّل)، وإلا localStorage.
+          let s: SortCache | null = sortResultsCache;
+          if (!s) {
+            const raw = localStorage.getItem(SORT_RESULTS_KEY);
+            if (raw) s = JSON.parse(raw) as SortCache;
+          }
+          if (s && Array.isArray(s.results) && s.results.length > 0) {
+            setSortMode(s.sortMode ?? "full");
+            setNewPlatesCount(s.newPlatesCount ?? 0);
+            setResults(s.results);
+            setSorted(true);
+            if (Array.isArray(s.tashyeekResults)) setTashyeekResults(s.tashyeekResults);
           }
         } catch { /* corrupt storage */ }
         try {
-          const rawPaste = localStorage.getItem(PASTE_RESULTS_KEY);
-          if (rawPaste) {
-            const s = JSON.parse(rawPaste);
-            if (Array.isArray(s.results) && s.results.length > 0) {
-              setPasteResults(s.results);
-              if (Array.isArray(s.recordResults)) setPasteRecordResults(s.recordResults);
-              setPasteText(s.text ?? "");
-              setPasteRan(true);
-            }
+          let s: PasteCache | null = pasteResultsCache;
+          if (!s) {
+            const rawPaste = localStorage.getItem(PASTE_RESULTS_KEY);
+            if (rawPaste) s = JSON.parse(rawPaste) as PasteCache;
+          }
+          if (s && Array.isArray(s.results) && s.results.length > 0) {
+            setPasteResults(s.results);
+            if (Array.isArray(s.recordResults)) setPasteRecordResults(s.recordResults);
+            setPasteText(s.text ?? "");
+            setPasteRan(true);
           }
         } catch { /* corrupt paste storage */ }
       })

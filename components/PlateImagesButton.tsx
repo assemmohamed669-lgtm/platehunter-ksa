@@ -6,10 +6,11 @@
  * (فرز/تشييك/تسجيل/خرايط) بنفس الشكل.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ImageDown, X, Download, Share2, Loader2 } from "lucide-react";
 import { renderPlateImages, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
 import { shareImageWithText } from "@/lib/share";
+import { pushBackHandler } from "@/lib/backStack";
 
 interface Props {
   title: string;
@@ -22,6 +23,9 @@ interface Props {
 export default function PlateImagesButton({ title, build, label = "صورة", className }: Props) {
   const [images, setImages] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // زر الرجوع (الهاتف) يقفل معاينة الصور بدل ما يطلّع من التطبيق.
+  useEffect(() => { if (images) return pushBackHandler(() => setImages(null)); }, [images]);
 
   async function generate() {
     setBusy(true);
