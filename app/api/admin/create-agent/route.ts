@@ -1,7 +1,8 @@
 /**
  * POST /api/admin/create-agent
- * Body: { email, password, phone?, role?: 'agent'|'admin', subscriptionEnd?: 'YYYY-MM-DD' }
- * (Back-compat: accepts `username` instead of `email`.)
+ * Body: { email, password, name?, phone?, role?: 'agent'|'admin', subscriptionEnd?: 'YYYY-MM-DD' }
+ * (Back-compat: accepts `username` instead of `email` as the login id.)
+ * `name` is the display name (profiles.username); falls back to email when blank.
  *
  * Admin-only. Creates the Supabase Auth user + the matching `profiles` row.
  * Agents get a monthly subscription (start = today, end = subscriptionEnd or +1 month).
@@ -38,6 +39,9 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const rawId: string = body.email ?? body.username ?? "";
+  // Display name shown as the primary label in the agents list. Optional —
+  // falls back to the login email when left blank (the prior behaviour).
+  const name: string = (body.name ?? "").trim();
   const password: string = body.password ?? "";
   const phone: string | null = body.phone?.trim() || null;
   const trial: boolean = body.trial === true;
@@ -94,7 +98,7 @@ export async function POST(req: NextRequest) {
   // exists), so adding a new agent works either way.
   const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
     id: created.user.id,
-    username: email,
+    username: name || email,
     email,
     phone,
     role,

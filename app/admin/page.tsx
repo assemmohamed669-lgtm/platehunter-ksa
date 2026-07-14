@@ -55,6 +55,7 @@ export default function AdminDashboard() {
 
   // create form
   const [showCreate, setShowCreate] = useState(false);
+  const [cName, setCName] = useState("");
   const [cEmail, setCEmail] = useState("");
   const [cPassword, setCPassword] = useState("");
   const [cPhone, setCPhone] = useState("");
@@ -98,7 +99,7 @@ export default function AdminDashboard() {
         method: "POST",
         headers: await authHeaders(),
         body: JSON.stringify({
-          email: cEmail, password: cPassword, phone: cPhone,
+          email: cEmail, password: cPassword, name: cName, phone: cPhone,
           role: cRole, trial: cTrial,
           subscriptionEnd: cRole === "agent" && !cTrial ? cEnd : null,
         }),
@@ -106,7 +107,7 @@ export default function AdminDashboard() {
       const json = await res.json();
       if (!res.ok) { setCError(json.error ?? "خطأ غير متوقع."); return; }
       setShowCreate(false);
-      setCEmail(""); setCPassword(""); setCPhone(""); setCRole("agent"); setCTrial(false); setCEnd(addMonths(1));
+      setCName(""); setCEmail(""); setCPassword(""); setCPhone(""); setCRole("agent"); setCTrial(false); setCEnd(addMonths(1));
       loadAgents();
     } catch { setCError("تعذّر الاتصال بالخادم."); }
     finally { setCreating(false); }
@@ -261,6 +262,8 @@ export default function AdminDashboard() {
               <button onClick={() => setShowCreate(false)} className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
             <div className="flex flex-col gap-2.5">
+              <input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="اسم المندوب (يظهر في القائمة)" dir="rtl"
+                className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="الإيميل ✱ إجباري" dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} placeholder="كلمة المرور (٦ أحرف+)" dir="ltr"
