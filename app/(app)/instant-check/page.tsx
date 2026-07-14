@@ -414,6 +414,8 @@ export default function InstantCheckPage() {
   // IDB إلا لما المندوب يدوس «حفظ التعديلات». «إلغاء» بترمي الـ draft.
   const [platesEditorOpen, setPlatesEditorOpen] = useState(false);
   const [draftFieldEntries, setDraftFieldEntries] = useState<FieldCheckEntry[]>([]);
+  const [peSearch, setPeSearch] = useState("");            // بحث برقم اللوحة داخل المحرّر
+  const [peCols, setPeCols] = useState<Set<string>>(new Set()); // الأعمدة المعروضة في المحرّر
 
   // Colour index per DUPLICATED plate (plates appearing more than once).
   const fieldColorMap = useMemo(() => {
@@ -1000,6 +1002,10 @@ export default function InstantCheckPage() {
   function openPlatesEditor() {
     // نسخة عميقة من الصفوف (نسخ row كمان) عشان التعديل يفضل معزول لحد الحفظ.
     setDraftFieldEntries(fieldEntries.map((e) => ({ ...e, row: { ...e.row } })));
+    // كل الأعمدة المتاحة تظهر افتراضياً، والبحث يبدأ فاضي.
+    const dyn = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    setPeCols(new Set(dyn));
+    setPeSearch("");
     setPlatesEditorOpen(true);
   }
   function peUpdatePlate(id: string, value: string) {
@@ -2582,39 +2588,87 @@ export default function InstantCheckPage() {
 
       {/* ── نافذة «إظهار وتعديل اللوحات» — تعديل/حذف بتأكيد حفظ ── */}
       {platesEditorOpen && (() => {
-        const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        const allCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        const shownCols = allCols.filter((h) => peCols.has(h));
+        // بحث برقم اللوحة — نطبّع الاتنين عشان المطابقة تشتغل مع/بدون فراغات وحروف EN.
+        const q = normalizePlate(bankPlateToArabic(peSearch.trim()));
+        const rows = q
+          ? draftFieldEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q))
+          : draftFieldEntries;
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
-            <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
+            <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <h3 className="text-sm font-bold text-ink">تعديل اللوحات ({draftFieldEntries.length})</h3>
                 <button onClick={() => setPlatesEditorOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
               </div>
 
-              <div className="flex flex-1 flex-col gap-2 overflow-auto p-3">
-                {draftFieldEntries.length === 0 && (
-                  <p className="py-6 text-center text-sm text-muted">مفيش لوحات في الشيت.</p>
-                )}
-                {draftFieldEntries.map((e) => (
-                  <div key={e.id} className="flex flex-col gap-2 rounded-xl border border-border bg-surface-2 p-2.5">
-                    <div className="flex items-center gap-2">
-                      <input dir="rtl" value={e.plate}
-                        onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
-                        className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-bold text-ink focus:border-primary focus:outline-none" />
-                      <button onClick={() => peDeleteEntry(e.id)} title="حذف اللوحة"
-                        className="rounded-lg border border-danger/40 bg-danger/10 p-2 text-danger transition hover:bg-danger/20"><Trash2 size={15} /></button>
-                    </div>
-                    {dynCols.length > 0 && (
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {dynCols.map((h) => (
-                          <input key={h} dir="rtl" value={e.row[h] ?? ""} placeholder={h}
-                            onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}
-                            className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink focus:border-primary focus:outline-none" />
-                        ))}
-                      </div>
-                    )}
+              {/* بحث برقم اللوحة */}
+              <div className="border-b border-border px-3 py-2">
+                <div className="relative">
+                  <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input dir="rtl" value={peSearch} onChange={(e) => setPeSearch(e.target.value)}
+                    placeholder="ابحث برقم اللوحة..."
+                    className="w-full rounded-xl border border-border bg-surface-2 py-2 pr-9 pl-8 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+                  {peSearch && (
+                    <button onClick={() => setPeSearch("")} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={14} /></button>
+                  )}
+                </div>
+                {q && <p className="mt-1 text-[11px] text-muted">{rows.length} نتيجة</p>}
+                {/* تحديد الأعمدة المعروضة */}
+                {allCols.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {allCols.map((h) => {
+                      const on = peCols.has(h);
+                      return (
+                        <button key={h}
+                          onClick={() => setPeCols((prev) => { const n = new Set(prev); n.has(h) ? n.delete(h) : n.add(h); return n; })}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${on ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
+                          {on ? "✓ " : ""}{h}
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
+                )}
+              </div>
+
+              {/* جدول زي الإكسيل — كل خانة قابلة للتعديل، وكل صف فيه زر حذف */}
+              <div className="flex-1 overflow-auto p-2">
+                {rows.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted">{q ? "مفيش لوحة بالرقم ده." : "مفيش لوحات في الشيت."}</p>
+                ) : (
+                  <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-surface-2 text-muted">
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                        {shownCols.map((h) => (
+                          <th key={h} className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                        ))}
+                        <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">حذف</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((e) => (
+                        <tr key={e.id} className="border-b border-border">
+                          <td className="border-l border-border p-1 whitespace-nowrap">
+                            <input dir="rtl" value={e.plate} onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
+                              className="w-28 rounded border border-transparent bg-transparent px-2 py-1 font-bold text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
+                          </td>
+                          {shownCols.map((h) => (
+                            <td key={h} className="border-l border-border p-1 whitespace-nowrap">
+                              <input dir="rtl" value={e.row[h] ?? ""} onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}
+                                className="w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
+                            </td>
+                          ))}
+                          <td className="p-1 text-center">
+                            <button onClick={() => peDeleteEntry(e.id)} title="حذف اللوحة"
+                              className="rounded-lg border border-danger/40 bg-danger/10 p-1.5 text-danger transition hover:bg-danger/20"><Trash2 size={14} /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
 
               <div className="border-t border-border p-3">
