@@ -52,6 +52,7 @@ export default function AgentDetail() {
   const [amount, setAmount] = useState("");
   const [newPass, setNewPass] = useState("");
   const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [isSuper, setIsSuper] = useState(false);
   const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
@@ -61,7 +62,7 @@ export default function AgentDetail() {
     const { data } = await supabase.from("profiles").select("*").eq("id", id).single();
     if (data) {
       const prof = data as Profile;
-      setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? "");
+      setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? "");
       setAmount(prof.subscription_amount != null ? String(prof.subscription_amount) : "");
     }
     const { data: ev } = await supabase.from("subscription_events").select("*").eq("agent_id", id).order("created_at", { ascending: false });
@@ -104,8 +105,8 @@ export default function AgentDetail() {
     if (newPass.length < 6) { setMsg("كلمة المرور ٦ أحرف على الأقل."); return; }
     if (await call("setPassword", { password: newPass })) { setNewPass(""); setMsg("✅ اتغيّرت كلمة المرور."); }
   }
-  async function savePhone() {
-    if (await call("updateContact", { phone })) { setMsg("✅ اتحفظ التليفون."); load(); }
+  async function saveContact() {
+    if (await call("updateContact", { name, phone })) { setMsg("✅ اتحفظت بيانات المندوب."); load(); }
   }
   // «إرسال بيانات الدخول»: يولّد باسوورد جديد، يحطّه، يفتح واتساب المندوب
   // بالإيميل + الباسوورد، ويعرضهم في خانة نسخ.
@@ -213,10 +214,17 @@ export default function AgentDetail() {
         {/* Account actions */}
         <div className="rounded-2xl border border-border bg-surface p-4 flex flex-col gap-3">
           <div className="text-sm font-bold text-ink">الحساب</div>
-          <div className="flex gap-2">
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="رقم التليفون" dir="ltr"
-              className="flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-            <button onClick={savePhone} disabled={busy} className="rounded-lg border border-border px-3 text-xs text-muted hover:text-primary">حفظ</button>
+          {/* اسم المندوب + التليفون — تعديل وحفظ مرة واحدة */}
+          <div className="flex flex-col gap-2">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="اسم المندوب" dir="rtl"
+              className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+            <div className="flex gap-2">
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="رقم التليفون" dir="ltr"
+                className="flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              <button onClick={saveContact} disabled={busy} className="flex items-center gap-1 rounded-lg border border-border px-3 text-xs text-muted hover:text-primary">
+                <Save size={13} /> حفظ
+              </button>
+            </div>
           </div>
           <div className="flex gap-2">
             <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="كلمة مرور جديدة" dir="ltr"

@@ -3,7 +3,7 @@
  * Body: { agentId, action, ...payload }  — admin-only.
  * Actions:
  *  - setPassword      { password }
- *  - updateContact    { email?, phone? }
+ *  - updateContact    { email?, phone?, name? }  (name = display name / profiles.username)
  *  - extendSubscription { subscriptionEnd, amount?, months?, note? }
  *  - resetDevice
  *  - setActive        { active }
@@ -82,6 +82,13 @@ export async function POST(req: NextRequest) {
           patch.username = email;
           const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(agentId, { email });
           if (authErr) return NextResponse.json({ error: authErr.message }, { status: 400 });
+        }
+        // Display name (profiles.username) — set AFTER the email block so an
+        // explicit name wins over the email-derived username when both arrive.
+        // A blank name is ignored (keeps the current display name) rather than
+        // wiping it back to the email.
+        if (typeof body.name === "string" && body.name.trim()) {
+          patch.username = body.name.trim();
         }
         if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
         const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
