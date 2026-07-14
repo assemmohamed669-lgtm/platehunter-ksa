@@ -161,6 +161,9 @@ export default function AgentDetail() {
   }
   const sub = subStatus(p.subscription_end);
   const isAgent = p.role === "agent";
+  // ألوان ذهبية لبيانات السوبر-أدمن (قيم فاتحة، أيقونات/تفاصيل أغمق شوية).
+  const goldText = p.is_super ? { color: "#F4D160" } : undefined;
+  const goldDim = p.is_super ? { color: "#D4AF37" } : undefined;
 
   return (
     <main className="min-h-screen bg-night">
@@ -198,12 +201,12 @@ export default function AgentDetail() {
           {!editingBio ? (
             /* ── وضع العرض ── */
             <div className="flex flex-col gap-1.5 text-xs">
-              <div className="flex items-center gap-1.5 text-ink"><UserRound size={13} className="text-muted" /> <span className="font-bold">{p.username}</span></div>
-              <div className="flex items-center gap-1.5 text-muted"><Mail size={13} /> <span className="text-ink" dir="ltr">{p.email || "—"}</span></div>
-              <div className="flex items-center gap-1.5 text-muted"><KeyRound size={13} /> <span className="text-ink">••••••••</span> <span className="text-[10px]">(مشفّر — للتغيير اضغط «تعديل»)</span></div>
-              <div className="flex items-center gap-1.5 text-muted"><Phone size={13} /> <span className="text-ink" dir="ltr">{p.phone || "بدون تليفون"}</span></div>
-              <div className="mt-1 flex items-center gap-1.5 text-muted"><Clock size={12} /> آخر ظهور: {daysAgo(p.last_seen)}</div>
-              <div className="flex items-center gap-1.5 text-muted"><Smartphone size={12} /> {p.device_fingerprint ? "مرتبط بجهاز" : "غير مرتبط بجهاز"}</div>
+              <div className="flex items-center gap-1.5 text-ink"><UserRound size={13} className="text-muted" style={goldDim} /> <span className="font-bold" style={goldText}>{p.username}</span></div>
+              <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Mail size={13} /> <span className="text-ink" dir="ltr" style={goldText}>{p.email || "—"}</span></div>
+              <div className="flex items-center gap-1.5 text-muted" style={goldDim}><KeyRound size={13} /> <span className="text-ink" style={goldText}>••••••••</span> <span className="text-[10px]">(مشفّر — للتغيير اضغط «تعديل»)</span></div>
+              <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Phone size={13} /> <span className="text-ink" dir="ltr" style={goldText}>{p.phone || "بدون تليفون"}</span></div>
+              <div className="mt-1 flex items-center gap-1.5 text-muted" style={goldDim}><Clock size={12} /> آخر ظهور: {daysAgo(p.last_seen)}</div>
+              <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Smartphone size={12} /> {p.device_fingerprint ? "مرتبط بجهاز" : "غير مرتبط بجهاز"}</div>
             </div>
           ) : (
             /* ── وضع التعديل ── */
