@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, type MatchResult, type TokenMatch,
+  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
@@ -715,13 +715,7 @@ export default function SortingPage() {
   // ── Paste sort ──
   function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
-    // Split on whitespace too, not just newline/comma — a normalized plate never
-    // legitimately contains a space, so any run of whitespace between tokens is
-    // safe to treat as a separator. Without this, plates pasted the way people
-    // naturally share them (space-separated on one line, e.g. from WhatsApp)
-    // collapse into one garbled string after normalizePlate strips the spaces,
-    // and silently match nothing.
-    const tokens = pasteText.split(/[\s,،]+/).map((t) => t.trim()).filter(Boolean);
+    const tokens = tokenizePastedPlates(pasteText);
     const matches = matchTokensAgainstRows(tokens, dataTable.rows, effectiveDataPlateCol);
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
 

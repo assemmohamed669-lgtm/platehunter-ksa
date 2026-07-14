@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, tokenizePastedPlates, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 
 // ─── plateContentScore / pickBestHypothesis ────────────────────────────────
 describe("plateContentScore & pickBestHypothesis", () => {
@@ -1442,5 +1442,34 @@ describe("matchTokensAgainstRows", () => {
   it("keeps each token's own converted display value alongside the matched row", () => {
     const results = matchTokensAgainstRows(["ABD1234"], rows, "رقم اللوحة");
     expect(results[0].converted).toBe("ابد1234");
+  });
+});
+
+describe("tokenizePastedPlates", () => {
+  it("joins one plate's space-separated letters + trailing digits into a single token per line", () => {
+    const text = "س ب ق 5765\nب ق م 9457\nر ق ي 9018";
+    expect(tokenizePastedPlates(text)).toEqual(["سبق5765", "بقم9457", "رقي9018"]);
+  });
+
+  it("handles the last letter glued directly to the digits with no space before it", () => {
+    // real pasted example: letters space-separated, but the LAST letter runs
+    // straight into the digits with no space ("ر ر ح7459") — the letter must
+    // still join the earlier pending letters, not get treated as its own thing.
+    expect(tokenizePastedPlates("ر ر ح7459")).toEqual(["ررح7459"]);
+    expect(tokenizePastedPlates("ح د م7008")).toEqual(["حدم7008"]);
+  });
+
+  it("keeps multiple already-glued complete plates on one line as separate tokens", () => {
+    const text = "سبق5765 بقم9457 رقي9018";
+    expect(tokenizePastedPlates(text)).toEqual(["سبق5765", "بقم9457", "رقي9018"]);
+  });
+
+  it("splits on commas too, within or across lines", () => {
+    const text = "س ب ق 5765، ب ق م 9457\nر ق ي 9018,ب ط س 7026";
+    expect(tokenizePastedPlates(text)).toEqual(["سبق5765", "بقم9457", "رقي9018", "بطس7026"]);
+  });
+
+  it("handles a plate with only two letters ('ر ون 5939' -> رون5939)", () => {
+    expect(tokenizePastedPlates("ر ون 5939")).toEqual(["رون5939"]);
   });
 });

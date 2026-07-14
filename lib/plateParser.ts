@@ -1832,3 +1832,42 @@ export function matchTokensAgainstRows(
   }
   return results;
 }
+
+// Splits free-typed/pasted plate text into one token per plate — for
+// matchTokensAgainstRows above. Real pasted lists mix two shapes: a plate
+// already glued together ("سبق5765"), and a plate spelled with a space
+// between EACH letter ("س ب ق 5765", sometimes with the last letter run
+// straight into the digits: "س ب ق5765"). Splitting on whitespace alone (the
+// previous approach) explodes the second shape into meaningless single-letter
+// and bare-digit fragments that match nothing. Newlines/commas are always
+// hard plate boundaries; a run of short (<=3 char) bare-letter chunks is held
+// as "pending" until the next digit run (or a letter+digit chunk) completes
+// it into one plate — so both shapes end up as one correct token each.
+export function tokenizePastedPlates(text: string): string[] {
+  const tokens: string[] = [];
+  const letterDigitGlued = /^([A-Za-z؀-ۿ]{1,3})(\d+)$/;
+  for (const line of text.split(/[\n\r]+/)) {
+    for (const segment of line.split(/[,،]+/)) {
+      let pendingLetters = "";
+      for (const chunk of segment.split(/\s+/).map((c) => c.trim()).filter(Boolean)) {
+        const isPureLetters = chunk.length <= 3 && /^[A-Za-z؀-ۿ]+$/.test(chunk);
+        const isPureDigits = /^\d+$/.test(chunk);
+        const glued = chunk.match(letterDigitGlued);
+        if (isPureLetters) {
+          pendingLetters += chunk;
+        } else if (isPureDigits) {
+          tokens.push(pendingLetters + chunk);
+          pendingLetters = "";
+        } else if (glued) {
+          tokens.push(pendingLetters + glued[1] + glued[2]);
+          pendingLetters = "";
+        } else {
+          if (pendingLetters) { tokens.push(pendingLetters); pendingLetters = ""; }
+          tokens.push(chunk);
+        }
+      }
+      if (pendingLetters) tokens.push(pendingLetters);
+    }
+  }
+  return tokens.filter(Boolean);
+}
