@@ -308,6 +308,19 @@ export default function SortingPage() {
       .sort((a, b) => a._dist - b._dist);
   }, [tashyeekResults, nearestActive, userLoc, tashyeekGpsCol]);
 
+  // نتائج اللصق مرتّبة بالأقرب (لو مفعّل) — لوحات اللصق بتطابق ملف الداتا،
+  // فبنقرأ نفس عمود GPS بتاع الداتا (gpsCol). لو مش مفعّل → نفس الترتيب الأصلي.
+  const displayPaste = useMemo(() => {
+    if (!nearestActive || !userLoc || !gpsCol) return pasteResults;
+    return [...pasteResults]
+      .map((p) => {
+        const coords = parseLatLngCell(String(p.row?.[gpsCol] ?? ""));
+        const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
+        return { ...p, _dist: dist, _min: estimateDriveMinutes(dist) };
+      })
+      .sort((a, b) => a._dist - b._dist);
+  }, [pasteResults, nearestActive, userLoc, gpsCol]);
+
   const pasteColorMap = useMemo(() => {
     if (!pasteResults.length) return new Map<string, number>();
     const counts = new Map<string, number>();
@@ -758,22 +771,26 @@ export default function SortingPage() {
   function toggleResult(i: number) { setSelectedResults((p) => { const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n; }); }
   function toggleAllResults() { setSelectedResults((p) => p.size === displayResults.length ? new Set() : new Set(displayResults.map((_, i) => i))); }
   function deleteResult(i: number) { const r = displayResults[i]; setResults((p) => p ? p.filter((x) => x !== r) : null); setSelectedResults(new Set()); }
+  // الحذف/التحديد بيشتغلوا على القائمة المعروضة (displayPaste) — اللي ممكن تكون
+  // مرتّبة بالأقرب — بالهوية (اللوحة نفسها) مش بالرقم، عشان الترتيب مايخربطش.
   function deletePasteResult(i: number) {
-    const next = pasteResults.filter((_, idx) => idx !== i);
+    const target = displayPaste[i];
+    const next = pasteResults.filter((x) => x !== target);
     setPasteResults(next);
     setPasteSelected(new Set());
     if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteRecordResults, pasteText);
   }
   function togglePasteSel(i: number) { setPasteSelected((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; }); }
-  function togglePasteAll() { setPasteSelected((p) => p.size === pasteResults.length ? new Set() : new Set(pasteResults.map((_, i) => i))); }
+  function togglePasteAll() { setPasteSelected((p) => p.size === displayPaste.length ? new Set() : new Set(displayPaste.map((_, i) => i))); }
   function deletePasteSelected() {
-    const next = pasteResults.filter((_, idx) => !pasteSelected.has(idx));
+    const toDelete = new Set(Array.from(pasteSelected).map((idx) => displayPaste[idx]));
+    const next = pasteResults.filter((x) => !toDelete.has(x));
     setPasteResults(next);
     setPasteSelected(new Set());
     if (next.length === 0) wipePasteResults(); else persistPasteResults(next, pasteRecordResults, pasteText);
   }
   function sharePasteSelected() {
-    const rows = pasteResults.filter((_, idx) => pasteSelected.has(idx));
+    const rows = displayPaste.filter((_, idx) => pasteSelected.has(idx));
     if (!rows.length) return;
     const text = `*اللوحات المطلوبة (${rows.length})*\n\n` +
       rows.map((p, i) => `${i + 1}. 🚗 ${p.converted}\n` +
@@ -1337,9 +1354,13 @@ export default function SortingPage() {
                 <span className="text-xs font-bold text-brand">{pasteResults.length} لوحة مطلوبة</span>
               </div>
               <div className="flex items-center gap-1">
+                <button onClick={handleNearest} disabled={locating} title="ترتيب حسب الأقرب لموقعك"
+                  className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border bg-surface text-muted hover:text-primary"}`}>
+                  <Navigation size={11} /> {locating ? "..." : "الأقرب"}
+                </button>
                 <button onClick={togglePasteAll}
                   className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-muted hover:text-ink transition">
-                  {pasteSelected.size === pasteResults.length && pasteResults.length > 0
+                  {pasteSelected.size === displayPaste.length && displayPaste.length > 0
                     ? <CheckSquare size={11} className="text-primary" /> : <Square size={11} />}
                   تحديد الكل
                 </button>
@@ -1383,6 +1404,7 @@ export default function SortingPage() {
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">☐</th>
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      {nearestActive && <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">المسافة</th>}
                       {pasteAllCols.map((col) => (
                         <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
                           {col}
@@ -1392,12 +1414,13 @@ export default function SortingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pasteResults.map((p, i) => {
+                    {displayPaste.map((p, i) => {
                       const pasteKey = normalizePlate(bankPlateToArabic(p.converted));
                       const pasteColorIdx = pasteColorMap.get(pasteKey);
                       const pasteBg = pasteColorIdx !== undefined
                         ? DUPE_COLORS[pasteColorIdx].tw
                         : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40";
+                      const pasteDist = (p as { _dist?: number })._dist;
                       return (
                       <tr
                         key={i}
@@ -1422,6 +1445,11 @@ export default function SortingPage() {
                             )}
                           </div>
                         </td>
+                        {nearestActive && (
+                          <td className="border-l border-border px-3 py-1.5 font-bold text-primary whitespace-nowrap">
+                            {pasteDist != null && pasteDist !== Infinity ? formatDistanceKm(pasteDist) : "—"}
+                          </td>
+                        )}
                         {pasteAllCols.map((col) => {
                           const v = String(p.row[col] ?? "");
                           const isUrl = !!v && /^https?:\/\//i.test(v);
