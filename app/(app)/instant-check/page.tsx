@@ -9,6 +9,7 @@ import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTra
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
+import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -379,6 +380,11 @@ export default function InstantCheckPage() {
   // Mirror of pttLocationName so the listening loop reads the latest value
   // (the loop's addPttResult closure would otherwise capture a stale one).
   const pttLocationNameRef = useRef("");
+  // ── مسار Whisper السحابي المتواصل (لو فيه مفتاح Groq) ──
+  const pttChunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pttChunkBusyRef = useRef(false);            // جزء بيتبدّل/بيترفع دلوقتي؟
+  const pttSessionStateRef = useRef<SessionState>(newSessionState()); // carry-over للمحلّل
+  const pttRowIdxRef = useRef(0);                    // ترقيم فريد لصفوف نفس الملّي ثانية
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1295,7 +1301,14 @@ export default function InstantCheckPage() {
       : (parsePlateFromTranscript(rest).plate || "");
 
     if (!rawPlate) return;
+    addOnePttRow(rawPlate, vehicleType);
+  }
 
+  // يضيف صف لوحة واحدة للقائمة: تصحيح متعلَّم → تشييك ضد الملف → صفّ + تنبيه لو
+  // مطلوبة. مشترك بين المحرك المحلي (لوحة لكل نتيجة) ومسار Whisper (كل لوحة
+  // بيطلّعها sessionParser من المقطع). idx بيميّز الـ id لو أكتر من لوحة اتضافت
+  // في نفس الملّي ثانية.
+  function addOnePttRow(rawPlate: string, vehicleType?: string, idx = 0) {
     // Apply what past edits taught: whole-fragment blend first, then per-letter
     // confusion — so a mishearing corrected once auto-corrects next time.
     const norm = normalizePlate(bankPlateToArabic(rawPlate));
@@ -1310,7 +1323,7 @@ export default function InstantCheckPage() {
     // Every spoken plate becomes a compact row (found or not), tagged with the
     // current location name; `originalPlate` keeps the pre-correction value so
     // a later edit can teach the learners. GPS is captured in the background.
-    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}-${idx}`;
     const row: PttRow = {
       id,
       plate: result.plate,
@@ -1498,7 +1511,73 @@ export default function InstantCheckPage() {
     if (pttTimerRef.current) { clearInterval(pttTimerRef.current); pttTimerRef.current = null; }
   }
   // Clear the timer if the component unmounts mid-listen.
-  useEffect(() => () => { if (pttTimerRef.current) clearInterval(pttTimerRef.current); }, []);
+  useEffect(() => () => {
+    if (pttTimerRef.current) clearInterval(pttTimerRef.current);
+    if (pttChunkTimerRef.current) clearInterval(pttChunkTimerRef.current);
+  }, []);
+
+  // مفتاح Groq المحفوظ (نفس بتاع التسجيل/الكاميرا) — لو موجود بنستخدم Whisper.
+  function getGroqKey(): string {
+    try { return (localStorage.getItem("ph:registration:groqApiKey") || "").trim(); } catch { return ""; }
+  }
+
+  // يرفع مقطع صوت لـ Whisper (عبر /api/transcribe) ويرجّع النص المفرَّغ.
+  async function transcribeChunk(recordDataBase64: string, mimeType: string, apiKey: string): Promise<string> {
+    try {
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({ audio: recordDataBase64, mimeType, apiKey }),
+      });
+      const data = await res.json().catch(() => null);
+      return typeof data?.text === "string" ? data.text.trim() : "";
+    } catch { return ""; }
+  }
+
+  // يعالج نص مقطع مفرَّغ: parseSessionChunk (نفس محلّل التسجيل — carry-over
+  // ومتعدد اللوحات) ثم يضيف صف لكل لوحة مكتملة + تشييك + تنبيه لو مطلوبة.
+  function processWhisperText(text: string, final: boolean) {
+    if (text.trim()) setPttLiveText(text.trim());
+    const res = parseSessionChunk(text, pttSessionStateRef.current, { final });
+    pttSessionStateRef.current = res.state;
+    res.records.forEach((r) => addOnePttRow(r.plate, r.vehicleType, pttRowIdxRef.current++));
+  }
+
+  // مسار Whisper المتواصل: تسجيل متواصل، وكل ~7 ثواني نوقف المقطع الحالي ونشغّل
+  // واحد جديد ونفرّغ القديم في الخلفية — فمفيش صوت بيضيع (غير فجوة التبديل
+  // الصغيرة اللي بيصلّحها لزق نص المقاطع في المحلّل). بيرجّع true لو بدأ بنجاح.
+  async function startWhisperPtt(apiKey: string): Promise<boolean> {
+    try {
+      const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
+      const perm = await VoiceRecorder.requestAudioRecordingPermission();
+      if (!perm.value) { setPttError("محتاج صلاحية الميكروفون عشان التفريغ السحابي يشتغل."); return false; }
+      await VoiceRecorder.startRecording();
+      pttSessionStateRef.current = newSessionState();
+      pttChunkBusyRef.current = false;
+      pttRowIdxRef.current = 0;
+      pttChunkTimerRef.current = setInterval(async () => {
+        if (!isListeningRef.current || pttChunkBusyRef.current) return;
+        pttChunkBusyRef.current = true;
+        try {
+          const { VoiceRecorder: VR } = await import("@independo/capacitor-voice-recorder");
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let chunk: any = null;
+          try { chunk = await VR.stopRecording(); } catch { /* EMPTY_RECORDING بين اللوحات — عادي */ }
+          try { if (isListeningRef.current) await VR.startRecording(); } catch { /* هنحاول تاني الدورة الجاية */ }
+          if (chunk?.value?.recordDataBase64) {
+            const text = await transcribeChunk(chunk.value.recordDataBase64, chunk.value.mimeType, apiKey);
+            if (text) processWhisperText(text, false);
+          }
+        } finally {
+          pttChunkBusyRef.current = false;
+        }
+      }, 7000);
+      return true;
+    } catch (err) {
+      setPttError(`تعذّر بدء التفريغ السحابي: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
 
   async function startPtt() {
     setPttError(null);
@@ -1511,6 +1590,13 @@ export default function InstantCheckPage() {
     try {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
+        // لو المندوب مفعّل مفتاح Groq → تفريغ سحابي بـ Whisper (أدق بكتير من
+        // المحرك المحلي). لو البدء فشل بنكمّل بالمحرك المحلي.
+        const groqKey = getGroqKey();
+        if (groqKey) {
+          const ok = await startWhisperPtt(groqKey);
+          if (ok) return;
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
         const perm = await SpeechRecognition.requestPermissions();
@@ -1638,6 +1724,25 @@ export default function InstantCheckPage() {
     setPttListening(false);
     setPttLiveText("");
     stopPttTimer();
+
+    // مسار Whisper المتواصل شغّال؟ وقّف المؤقّت والمسجّل وفرّغ آخر مقطع (final).
+    if (pttChunkTimerRef.current) {
+      clearInterval(pttChunkTimerRef.current);
+      pttChunkTimerRef.current = null;
+      try {
+        const { VoiceRecorder } = await import("@independo/capacitor-voice-recorder");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let last: any = null;
+        try { last = await VoiceRecorder.stopRecording(); } catch { /* مفيش مقطع أخير */ }
+        if (last?.value?.recordDataBase64) {
+          const text = await transcribeChunk(last.value.recordDataBase64, last.value.mimeType, getGroqKey());
+          if (text) processWhisperText(text, true);
+        } else {
+          processWhisperText("", true); // flush أي بقايا في المحلّل
+        }
+      } catch { /* ignore */ }
+      return;
+    }
 
     try {
       const { Capacitor } = await import("@capacitor/core");
