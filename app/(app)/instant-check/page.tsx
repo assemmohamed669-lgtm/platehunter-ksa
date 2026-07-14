@@ -408,6 +408,10 @@ export default function InstantCheckPage() {
   const [fieldSearch, setFieldSearch] = useState("");
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [editFieldValue, setEditFieldValue] = useState("");
+  // «إظهار اللوحات»: نافذة تعديل/حذف على نسخة draft — التغييرات ماتتحفظش في
+  // IDB إلا لما المندوب يدوس «حفظ التعديلات». «إلغاء» بترمي الـ draft.
+  const [platesEditorOpen, setPlatesEditorOpen] = useState(false);
+  const [draftFieldEntries, setDraftFieldEntries] = useState<FieldCheckEntry[]>([]);
 
   // Colour index per DUPLICATED plate (plates appearing more than once).
   const fieldColorMap = useMemo(() => {
@@ -976,6 +980,50 @@ export default function InstantCheckPage() {
     const updated: FieldCheckEntry = { ...entry, plate: trimmed };
     setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
     await saveFieldCheckEntry(updated);
+  }
+
+  // ── «إظهار اللوحات»: نافذة تعديل/حذف بتأكيد حفظ ──────────────────────────
+  function openPlatesEditor() {
+    // نسخة عميقة من الصفوف (نسخ row كمان) عشان التعديل يفضل معزول لحد الحفظ.
+    setDraftFieldEntries(fieldEntries.map((e) => ({ ...e, row: { ...e.row } })));
+    setPlatesEditorOpen(true);
+  }
+  function peUpdatePlate(id: string, value: string) {
+    const norm = value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join("");
+    setDraftFieldEntries((prev) => prev.map((e) => (e.id === id ? { ...e, plate: norm } : e)));
+  }
+  function peUpdateField(id: string, col: string, value: string) {
+    setDraftFieldEntries((prev) => prev.map((e) => (e.id === id ? { ...e, row: { ...e.row, [col]: value } } : e)));
+  }
+  function peDeleteEntry(id: string) {
+    setDraftFieldEntries((prev) => prev.filter((e) => e.id !== id));
+  }
+  // في تغييرات لسه ماتحفظتش؟ (حذف صف، أو تعديل لوحة/خانة)
+  const platesEditorDirty = useMemo(() => {
+    if (draftFieldEntries.length !== fieldEntries.length) return true;
+    const byId = new Map(fieldEntries.map((e) => [e.id, e]));
+    for (const d of draftFieldEntries) {
+      const o = byId.get(d.id);
+      if (!o) return true;
+      if (d.plate !== o.plate) return true;
+      const keys = new Set([...Object.keys(d.row), ...Object.keys(o.row)]);
+      for (const k of keys) if ((d.row[k] ?? "") !== (o.row[k] ?? "")) return true;
+    }
+    return false;
+  }, [draftFieldEntries, fieldEntries]);
+
+  async function savePlatesEditor() {
+    const draftIds = new Set(draftFieldEntries.map((e) => e.id));
+    const removed = fieldEntries.filter((e) => !draftIds.has(e.id));
+    for (const r of removed) await deleteFieldCheckEntry(r.id);
+    const byId = new Map(fieldEntries.map((e) => [e.id, e]));
+    for (const d of draftFieldEntries) {
+      const o = byId.get(d.id);
+      const changed = !o || d.plate !== o.plate || JSON.stringify(d.row) !== JSON.stringify(o.row);
+      if (changed && d.plate.trim()) await saveFieldCheckEntry(d);
+    }
+    setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined).catch(() => []));
+    setPlatesEditorOpen(false);
   }
 
   function buildFieldRows() {
@@ -2360,7 +2408,7 @@ export default function InstantCheckPage() {
               </button>
             </div>
             <p className="text-[11px] text-muted" dir="rtl">
-              سجل ثابت محفوظ على الجهاز — للتحميل أو المشاركة فقط (لا يُحذف ولا يُعدّل)
+              سجل محفوظ على الجهاز — للتحميل والمشاركة، والتعديل/الحذف من زر «إظهار وتعديل اللوحات»
             </p>
 
             {/* Search */}
@@ -2464,17 +2512,81 @@ export default function InstantCheckPage() {
               </div>
             </div>
 
+            {/* إظهار وتعديل اللوحات — نافذة تعديل/حذف بتأكيد حفظ */}
+            <button onClick={openPlatesEditor}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10">
+              <Pencil size={15} /> إظهار وتعديل اللوحات
+            </button>
+
             {/* Export / Share Excel */}
             <div className="flex gap-2">
               <OpenDownloadButton
                 build={() => ({ blob: buildExcelBlob(buildFieldRows(), "التشييك الميداني"), name: `التشييك-الميداني-${Date.now()}.xlsx` })}
-                label="فتح في Excel"
+                label="فتح الشيت"
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
               />
               <button onClick={shareFieldExcel}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
                 <Share2 size={14} /> مشاركة واتساب
               </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── نافذة «إظهار وتعديل اللوحات» — تعديل/حذف بتأكيد حفظ ── */}
+      {platesEditorOpen && (() => {
+        const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
+            <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <h3 className="text-sm font-bold text-ink">تعديل اللوحات ({draftFieldEntries.length})</h3>
+                <button onClick={() => setPlatesEditorOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
+              </div>
+
+              <div className="flex flex-1 flex-col gap-2 overflow-auto p-3">
+                {draftFieldEntries.length === 0 && (
+                  <p className="py-6 text-center text-sm text-muted">مفيش لوحات في الشيت.</p>
+                )}
+                {draftFieldEntries.map((e) => (
+                  <div key={e.id} className="flex flex-col gap-2 rounded-xl border border-border bg-surface-2 p-2.5">
+                    <div className="flex items-center gap-2">
+                      <input dir="rtl" value={e.plate}
+                        onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
+                        className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-bold text-ink focus:border-primary focus:outline-none" />
+                      <button onClick={() => peDeleteEntry(e.id)} title="حذف اللوحة"
+                        className="rounded-lg border border-danger/40 bg-danger/10 p-2 text-danger transition hover:bg-danger/20"><Trash2 size={15} /></button>
+                    </div>
+                    {dynCols.length > 0 && (
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {dynCols.map((h) => (
+                          <input key={h} dir="rtl" value={e.row[h] ?? ""} placeholder={h}
+                            onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}
+                            className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink focus:border-primary focus:outline-none" />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="border-t border-border p-3">
+                {platesEditorDirty ? (
+                  <div className="flex flex-col gap-1.5">
+                    <p className="text-center text-[11px] text-alert">عملت تعديلات — تحب تحفظها؟</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setPlatesEditorOpen(false)}
+                        className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted transition active:scale-95">لا، إلغاء</button>
+                      <button onClick={savePlatesEditor}
+                        className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition active:scale-95">نعم، احفظ التعديلات</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setPlatesEditorOpen(false)}
+                    className="w-full rounded-xl border border-border py-2.5 text-sm text-muted">إغلاق</button>
+                )}
+              </div>
             </div>
           </div>
         );
