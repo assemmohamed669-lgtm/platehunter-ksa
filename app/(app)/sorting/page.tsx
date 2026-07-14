@@ -15,7 +15,7 @@ import {
 import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
-import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
+import { matchesPreferred, guessDefaultColumns, isMandatory, detectMakeModelColumn } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
@@ -258,12 +258,22 @@ export default function SortingPage() {
   const effectiveCheckPlateCol = checkPlateColOverride ?? checkPlateCol;
   const tashyeekPlateCol = tashyeekTable ? detectPlateColumn(tashyeekTable.headers, tashyeekTable.rows) : null;
 
+  // كشف ذكي لعمود اسم/موديل المركبة (كورولا/يارس/أزيرا...) — باسم العمود أو
+  // بمحتواه لو الاسم غير متوقّع. بيتحط في مكان «صانع المركبة» بالترتيب، وبيتضاف
+  // للعرض حتى لو المستخدم ماختارهوش صراحةً (لأنه أهم عمود بعد اللوحة).
+  const makeModelCol = useMemo(
+    () => (dataTable ? detectMakeModelColumn(dataTable.headers, dataTable.rows, effectiveDataPlateCol) : null),
+    [dataTable, effectiveDataPlateCol],
+  );
+
   const displayCols = useMemo(() => {
     const mandatory = dataTable?.headers.filter((h) => h !== effectiveDataPlateCol && isMandatory(h)) ?? [];
     const rest = [...outputCols].filter((h) => !isMandatory(h));
-    const cols = [...new Set([...mandatory, ...rest])];
+    // نضمن ظهور عمود اسم/موديل المركبة المكتشف حتى لو مش متحدد.
+    const forced = makeModelCol && makeModelCol !== effectiveDataPlateCol ? [makeModelCol] : [];
+    const cols = [...new Set([...mandatory, ...rest, ...forced])];
     // ترتيب ثابت مطلوب من المستخدم (بعد رقم اللوحة اللي بيتعرض أول عمود لوحده):
-    // نوع السيارة → صانع المركبة → العنوان → GPS → باقي الأعمدة المحددة.
+    // نوع السيارة → صانع/موديل المركبة → العنوان → GPS → باقي الأعمدة المحددة.
     // المطابقة بالاسم عشان تشتغل مهما كان اسم العمود الفعلي في الملف.
     const ORDER_GROUPS = [
       ["نوع", "type of car", "car type", "vehicle type"], // 0 — نوع السيارة
@@ -272,6 +282,9 @@ export default function SortingPage() {
       ["gps", "الموقع", "جي بي اس"],                        // 3 — GPS
     ];
     const rank = (h: string) => {
+      // العمود المكتشف كاسم/موديل مركبة بياخد مكان «صانع المركبة» (رتبة ١)
+      // مهما كان اسمه الفعلي — بس من غير ما يسبق «نوع السيارة».
+      if (h === makeModelCol) return 1;
       const x = h.trim().toLowerCase();
       for (let i = 0; i < ORDER_GROUPS.length; i++) {
         if (ORDER_GROUPS[i].some((k) => x.includes(k.toLowerCase()))) return i;
@@ -284,7 +297,7 @@ export default function SortingPage() {
       .sort((a, b) => a.r - b.r || a.i - b.i)
       .map((x) => x.h);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataTable, effectiveDataPlateCol, outputCols]);
+  }, [dataTable, effectiveDataPlateCol, outputCols, makeModelCol]);
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 

@@ -1,5 +1,54 @@
 import { describe, it, expect } from "vitest";
-import { matchesPreferred, guessDefaultColumns } from "@/lib/sortingCols";
+import { matchesPreferred, guessDefaultColumns, detectMakeModelColumn, looksLikeCarName } from "@/lib/sortingCols";
+
+describe("detectMakeModelColumn — by header name", () => {
+  it("matches an explicit Arabic make column", () => {
+    expect(detectMakeModelColumn(["رقم اللوحة", "صانع المركبة", "الحي"])).toBe("صانع المركبة");
+  });
+  it("matches الماركة", () => {
+    expect(detectMakeModelColumn(["رقم اللوحة", "الماركة", "GPS"])).toBe("الماركة");
+  });
+  it("matches an English Vehicle Name / Model column", () => {
+    expect(detectMakeModelColumn(["Plate Number", "Vehicle Name", "Chassis"])).toBe("Vehicle Name");
+    expect(detectMakeModelColumn(["Plate", "Model", "Year"])).toBe("Model");
+  });
+});
+
+describe("detectMakeModelColumn — by content when the header is unrecognizable", () => {
+  const rows = [
+    { "رقم اللوحة": "أبح1234", "عمود ١": "كورولا", "الحي": "العليا" },
+    { "رقم اللوحة": "دبك5678", "عمود ١": "يارس", "الحي": "الملز" },
+    { "رقم اللوحة": "سصع9012", "عمود ١": "هايلوكس", "الحي": "النزهة" },
+    { "رقم اللوحة": "طقن3456", "عمود ١": "أزيرا", "الحي": "الروضة" },
+  ];
+  it("detects the column whose VALUES are car names even with a meaningless header", () => {
+    expect(detectMakeModelColumn(["رقم اللوحة", "عمود ١", "الحي"], rows)).toBe("عمود ١");
+  });
+  it("returns null when no column has car-name content and no header matches", () => {
+    const plain = [
+      { "رقم اللوحة": "أبح1234", "الحي": "العليا", "اللون": "أبيض" },
+      { "رقم اللوحة": "دبك5678", "الحي": "الملز", "اللون": "أسود" },
+      { "رقم اللوحة": "سصع9012", "الحي": "النزهة", "اللون": "فضي" },
+    ];
+    expect(detectMakeModelColumn(["رقم اللوحة", "الحي", "اللون"], plain)).toBeNull();
+  });
+  it("prefers the header match over content scan", () => {
+    const rows2 = [
+      { "الماركة": "تويوتا", "ملاحظة": "كامري أبيض" },
+      { "الماركة": "نيسان", "ملاحظة": "صني" },
+      { "الماركة": "كيا", "ملاحظة": "ريو" },
+    ];
+    expect(detectMakeModelColumn(["الماركة", "ملاحظة"], rows2)).toBe("الماركة");
+  });
+});
+
+describe("looksLikeCarName", () => {
+  it("recognizes Arabic and English car names inside a longer value", () => {
+    expect(looksLikeCarName("تويوتا كورولا 2020")).toBe(true);
+    expect(looksLikeCarName("Toyota Hilux")).toBe(true);
+    expect(looksLikeCarName("أبيض")).toBe(false);
+  });
+});
 
 describe("matchesPreferred — English headers (case-insensitive)", () => {
   it("matches color / type / make regardless of case", () => {
