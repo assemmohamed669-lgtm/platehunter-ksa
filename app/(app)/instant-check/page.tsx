@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { toMapsLink, gpsService } from "@/lib/gps";
+import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
 import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -346,6 +346,11 @@ export default function InstantCheckPage() {
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
+  // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
+  // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
+  const [icNearest, setIcNearest] = useState(false);
+  const [icUserLoc, setIcUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [icLocating, setIcLocating] = useState(false);
   const [pttError, setPttError] = useState<string | null>(null);
   const [pttLocationName, setPttLocationName] = useState("");
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
@@ -628,6 +633,29 @@ export default function InstantCheckPage() {
     } catch {
       return null;
     }
+  }
+
+  // «الأقرب»: يجيب موقع المندوب الحالي ويفعّل ترتيب القوائم بالمسافة. لو مفعّل
+  // بالفعل، الضغطة بتطفّيه (toggle) فترجع القوائم لترتيبها الأصلي.
+  async function handleNearestIC() {
+    if (icNearest) { setIcNearest(false); return; }
+    setIcLocating(true);
+    try {
+      const gps = await getCurrentGps();
+      if (!gps) { alert("تعذّر الوصول للموقع. تأكد من إذن الـ GPS."); return; }
+      setIcUserLoc(gps);
+      setIcNearest(true);
+    } finally { setIcLocating(false); }
+  }
+
+  // ترتيب أي قائمة لوحات (فيها lat/lng) حسب الأقرب لموقع المندوب. لو الترتيب
+  // مش مفعّل بيرجّع القائمة زي ما هي. التحديد في القوائم دي بالـ id مش بالرقم،
+  // فإعادة الترتيب مابتخربطش أي لوحة متحدّدة.
+  function sortNear<T extends { lat?: number; lng?: number }>(list: T[]): T[] {
+    if (!icNearest || !icUserLoc) return list;
+    const distOf = (x: T) =>
+      x.lat != null && x.lng != null ? haversineKm(icUserLoc.lat, icUserLoc.lng, x.lat, x.lng) : Infinity;
+    return [...list].sort((a, b) => distOf(a) - distOf(b));
   }
 
   // Fetch GPS for a hit and stamp it (or mark gpsError on failure)
@@ -1724,10 +1752,16 @@ export default function InstantCheckPage() {
                   <div className="flex flex-col gap-2 pt-2 border-t border-border">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
-                      <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-                        {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-                        {allSel ? "إلغاء الكل" : "تحديد الكل"}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
+                          className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
+                          <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
+                        </button>
+                        <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                          {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                          {allSel ? "إلغاء الكل" : "تحديد الكل"}
+                        </button>
+                      </div>
                     </div>
                     <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
@@ -1743,7 +1777,7 @@ export default function InstantCheckPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {manualDraft.map((e, i) => {
+                          {sortNear(manualDraft).map((e, i) => {
                             const matched = isDraftMatched(e);
                             const sel = manualSel.has(e.id);
                             const rowBg = sel ? "bg-primary/15" : matched ? "bg-brand/10" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40";
@@ -2028,6 +2062,10 @@ export default function InstantCheckPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{pttResults.length} لوحة</span>
                       <div className="flex items-center gap-1.5">
+                        <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
+                          className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
+                          <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
+                        </button>
                         <button onClick={togglePttSelAll}
                           className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                           {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
@@ -2058,7 +2096,7 @@ export default function InstantCheckPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {pttResults.map((r) => (
+                          {sortNear(pttResults).map((r) => (
                             <tr key={r.id} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
                               <td className="border-l border-border px-2 py-2 text-center">
                                 <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
@@ -2316,6 +2354,10 @@ export default function InstantCheckPage() {
               <ClipboardCheck size={15} className="text-brand shrink-0" />
               <h2 className="text-sm font-bold text-ink truncate">شيت التسجيلات (صوتي+يدوي)</h2>
               <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
+              <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
+                className={`ml-auto flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs shrink-0 transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
+                <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
+              </button>
             </div>
             <p className="text-[11px] text-muted" dir="rtl">
               سجل ثابت محفوظ على الجهاز — للتحميل أو المشاركة فقط (لا يُحذف ولا يُعدّل)
@@ -2370,7 +2412,7 @@ export default function InstantCheckPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((e, i) => {
+                    {sortNear(visible).map((e, i) => {
                       const cIdx = fieldColorMap.get(plateKey(e.plate));
                       const rowBg = cIdx !== undefined ? FIELD_DUPE_COLORS[cIdx] : (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
                       return (

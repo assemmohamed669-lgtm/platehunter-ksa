@@ -17,9 +17,11 @@ import {
   AlertTriangle,
   Play,
   Pause,
+  Navigation,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
+import { haversineKm, gpsService } from "@/lib/gps";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -61,11 +63,44 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
   const [editValue, setEditValue] = useState("");
   const [editingField, setEditingField] = useState<{ id: string; field: "vehicleType" | "notes" } | null>(null);
   const [editFieldValue, setEditFieldValue] = useState("");
+  // «الأقرب» — ترتيب التسجيلات حسب أقرب سيارة لموقع المندوب. التحديد بالـ localId
+  // فإعادة الترتيب مابتخربطش أي صف متحدّد.
+  const [nearest, setNearest] = useState(false);
+  const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
 
   const duplicates = useMemo(
     () => findDuplicates(recordings.map((r) => r.plate)),
     [recordings]
   );
+
+  async function handleNearest() {
+    if (nearest) { setNearest(false); return; }
+    setLocating(true);
+    try {
+      const warm = gpsService.getLastCoords();
+      let loc = warm ? { lat: warm.lat, lng: warm.lng } : null;
+      if (!loc && navigator.geolocation) {
+        loc = await new Promise<{ lat: number; lng: number } | null>((resolve) =>
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            () => resolve(null),
+            { timeout: 10000, maximumAge: 60000 }
+          )
+        );
+      }
+      if (!loc) { alert("تعذّر الوصول للموقع. تأكد من إذن الـ GPS."); return; }
+      setUserLoc(loc);
+      setNearest(true);
+    } finally { setLocating(false); }
+  }
+
+  const sortedRecordings = useMemo(() => {
+    if (!nearest || !userLoc) return recordings;
+    const distOf = (r: RecordingEntry) =>
+      r.lat != null && r.lng != null ? haversineKm(userLoc.lat, userLoc.lng, r.lat, r.lng) : Infinity;
+    return [...recordings].sort((a, b) => distOf(a) - distOf(b));
+  }, [recordings, nearest, userLoc]);
 
   const scale = ZOOM_LEVELS[zoom];
 
@@ -186,11 +221,17 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
             <ZoomIn size={14} />
           </button>
         </div>
-        <button onClick={toggleAll}
-          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-          {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-          {allSelected ? "إلغاء الكل" : "تحديد الكل"}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button onClick={handleNearest} disabled={locating} title="ترتيب حسب الأقرب لموقعك"
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
+            <Navigation size={13} /> {locating ? "..." : "الأقرب"}
+          </button>
+          <button onClick={toggleAll}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+            {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+            {allSelected ? "إلغاء الكل" : "تحديد الكل"}
+          </button>
+        </div>
       </div>
 
       {/* Table container — fixed height, scrollable both axes */}
@@ -215,7 +256,7 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
               </tr>
             </thead>
             <tbody>
-              {recordings.map((entry, i) => {
+              {sortedRecordings.map((entry, i) => {
                 const normPlate = normalizePlate(entry.plate);
                 const isDup = duplicates.has(normPlate);
                 const isMatched = !!(checkPlates?.has(normPlate));
