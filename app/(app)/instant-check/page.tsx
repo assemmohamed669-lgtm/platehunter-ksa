@@ -500,20 +500,32 @@ export default function InstantCheckPage() {
     return () => { liveStream.getTracks().forEach((t) => t.stop()); };
   }, [liveStream]);
 
-  // Load check file from IDB on mount
+  // Load check file from IDB on mount — AND whenever it changes underneath us.
   useEffect(() => {
-    getUploadedFile("local", "check")
-      .then((rec) => {
-        if (rec) {
-          setCheckTable({ headers: rec.headers, rows: rec.rows });
-          setCheckFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          }));
-          const plate = detectPlateColumn(rec.headers);
-          setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate && matchesPreferred(h))));
-        }
-      })
-      .catch(() => {});
+    const loadCheck = () => {
+      getUploadedFile("local", "check")
+        .then((rec) => {
+          if (rec) {
+            setCheckTable({ headers: rec.headers, rows: rec.rows });
+            setCheckFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, {
+              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            }));
+            const plate = detectPlateColumn(rec.headers);
+            setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate && matchesPreferred(h))));
+          }
+        })
+        .catch(() => {});
+    };
+    loadCheck();
+    // لو ملف التشييك اتضاف من نافذة «الإكسيل الوارد من واتساب» والصفحة مفتوحة
+    // بالفعل (router.push لنفس الصفحة مابيعملش remount)، نعيد قراءته فور ما
+    // الحدث ييجي — بدل ما المندوب يضطر يطلع من الصفحة ويرجع عشان الملف يبان.
+    const onIdbUpdate = (e: Event) => {
+      const slot = (e as CustomEvent<{ slot?: string }>).detail?.slot;
+      if (!slot || slot === "check") loadCheck();
+    };
+    window.addEventListener("idbFileUpdated", onIdbUpdate);
+    return () => window.removeEventListener("idbFileUpdated", onIdbUpdate);
   }, []);
 
   // Pass the rows so detection works by CONTENT (robust to unusual column
