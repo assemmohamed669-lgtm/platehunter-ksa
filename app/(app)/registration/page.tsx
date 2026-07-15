@@ -1411,7 +1411,7 @@ export default function RegistrationPage() {
 
       const params = new URLSearchParams({
         model: "nova-3",
-        language: "ar-EG",       // لهجة مصرية
+        language: "ar",          // عربي عام — بيغطّي المصري والسعودي والعامية
         interim_results: "true", // نتائج حيّة أثناء الكلام (للعرض)
         smart_format: "false",
         punctuate: "false",

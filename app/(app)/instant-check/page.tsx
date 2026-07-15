@@ -1577,7 +1577,7 @@ export default function InstantCheckPage() {
 
       const params = new URLSearchParams({
         model: "nova-3",
-        language: "ar-EG",       // لهجة مصرية
+        language: "ar",          // عربي عام — بيغطّي المصري والسعودي والعامية
         interim_results: "true", // نتائج حيّة أثناء الكلام
         smart_format: "false",
         punctuate: "false",
