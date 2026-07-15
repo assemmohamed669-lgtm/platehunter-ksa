@@ -11,6 +11,8 @@ import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
 import { getActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
+import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
@@ -364,7 +366,7 @@ export default function InstantCheckPage() {
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
   // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
-  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "whisper" | "local">(null);
+  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
@@ -398,6 +400,7 @@ export default function InstantCheckPage() {
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
+  const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1693,6 +1696,19 @@ export default function InstantCheckPage() {
     setPttListening(true);
     startPttTimer();
 
+    // (٠) Speechmatics لو هو المحرك المختار وفيه مفتاح — نفس مسار المحلّل.
+    if (getVoiceEngine() === "speechmatics" && getSpeechmaticsKey()) {
+      pttSessionStateRef.current = newSessionState();
+      pttRowIdxRef.current = 0;
+      const h = await startSpeechmatics(getSpeechmaticsKey(), {
+        onPartial: (t) => setPttLiveText(t),
+        onFinal: (t) => processWhisperText(t, false),
+        onError: (m) => setPttError(m),
+      });
+      if (h) { smHandleRef.current = h; setPttEngine("speechmatics"); return; }
+      // فشل البدء → نكمّل بالمسارات التانية.
+    }
+
     // (١) الأولوية لـ Deepgram لو مفعّل وشغّال — أدق تفريغ لحظي (يشتغل على
     // الويب والموبايل عبر getUserMedia، مش محتاج plugin native). getActiveDeepgramKey
     // بترجّع فاضي لو المستخدم موقفه مؤقتاً → بيرجع للمحرك التاني.
@@ -1845,6 +1861,14 @@ export default function InstantCheckPage() {
     setPttEngine(null);
     setPttMicActive(false);
     stopPttTimer();
+
+    // مسار Speechmatics شغّال؟ وقّفه وفلّش المحلّل.
+    if (smHandleRef.current) {
+      const h = smHandleRef.current; smHandleRef.current = null;
+      try { await h.stop(); } catch {}
+      processWhisperText("", true);
+      return;
+    }
 
     // مسار Deepgram شغّال؟ وقّف المسجّل، اقفل السوكيت، وفلّش المحلّل.
     if (dgSocketRef.current || dgRecorderRef.current || dgStreamRef.current) {
@@ -2397,11 +2421,12 @@ export default function InstantCheckPage() {
               {pttListening && pttEngine && (
                 <div className="flex flex-col items-center gap-1">
                   <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
-                    pttEngine === "deepgram" ? "bg-brand/15 text-brand"
+                    pttEngine === "deepgram" || pttEngine === "speechmatics" ? "bg-brand/15 text-brand"
                     : pttEngine === "whisper" ? "bg-primary/15 text-primary"
                     : "bg-alert/15 text-alert"
                   }`}>
                     {pttEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
+                     : pttEngine === "speechmatics" ? "🎙️ Speechmatics — دقة عالية"
                      : pttEngine === "whisper" ? "☁️ Whisper سحابي"
                      : "⚠️ المحرك العادي — دقة أقل"}
                   </span>

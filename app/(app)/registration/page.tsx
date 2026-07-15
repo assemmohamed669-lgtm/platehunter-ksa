@@ -33,6 +33,8 @@ import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
+import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
@@ -445,10 +447,11 @@ export default function RegistrationPage() {
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   // أي محرك تفريغ شغّال + هل بيسمع (VAD) — نفس مؤشّر تشييك صوت.
-  const [regEngine, setRegEngine] = useState<null | "deepgram" | "whisper" | "local">(null);
+  const [regEngine, setRegEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local">(null);
   const [regMicActive, setRegMicActive] = useState(false);
-  // فيه مفتاح Deepgram محفوظ؟ (عشان التسجيل يشتغل حتى من غير مفتاح Groq).
+  // فيه مفتاح Deepgram/Speechmatics محفوظ؟ (عشان التسجيل يشتغل حتى من غير مفتاح Groq).
   const [hasDgKey, setHasDgKey] = useState(false);
+  const [hasSmKey, setHasSmKey] = useState(false);
 
   // Transcript captured from the last recording session, held until the user
   // presses "احفظ وصدّر الإكسيل" to extract + save plates from it.
@@ -567,6 +570,8 @@ export default function RegistrationPage() {
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
+  const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
+  const smActiveRef = useRef(false); // الجلسة الحالية بتستخدم Speechmatics؟
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
@@ -595,8 +600,8 @@ export default function RegistrationPage() {
       }
     } catch { /* storage unavailable */ }
 
-    // فيه مفتاح Deepgram؟ لو آه، التسجيل يشتغل حتى من غير مفتاح Groq.
-    try { setHasDgKey(getDeepgramKey().trim() !== ""); } catch { /* ignore */ }
+    // فيه مفتاح Deepgram/Speechmatics؟ لو آه، التسجيل يشتغل حتى من غير مفتاح Groq.
+    try { setHasDgKey(getDeepgramKey().trim() !== ""); setHasSmKey(getSpeechmaticsKey().trim() !== ""); } catch { /* ignore */ }
 
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
@@ -922,6 +927,36 @@ export default function RegistrationPage() {
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
 
+    // ── Speechmatics (لو هو المحرك المختار) — نفس مسار الحفظ الحدثي.
+    if (getVoiceEngine() === "speechmatics" && getSpeechmaticsKey()) {
+      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
+      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
+      sessionStateRef.current = newSessionState();
+      sessionQueueRef.current = Promise.resolve();
+      sessionCoordsRef.current = [gpsService.getLastCoords()];
+      sessionChunkIndexRef.current = 0;
+      sessionIdRef.current = uid();
+      sessionStartedAtRef.current = new Date().toISOString();
+      sessionTranscriptRef.current = "";
+      sessionEventsRef.current = [];
+      sessionSavedCountRef.current = 0;
+      sessionFailedChunksRef.current = 0;
+      smActiveRef.current = true;
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      gpsAtRecordRef.current = gpsService.getLastCoords();
+      setDebugStatus("✅ STARTED (Speechmatics)");
+      setRegEngine("speechmatics");
+      const h = await startSpeechmatics(getSpeechmaticsKey(), {
+        onPartial: (t) => { setLiveTranscript(t); setDebugRaw(t); },
+        onFinal: (t) => enqueueDeepgramText(t),
+        onError: (m) => setRecordingError(m),
+      });
+      if (h) { smHandleRef.current = h; return; }
+      // فشل البدء → نظّف ونكمّل بالمسارات التانية.
+      smActiveRef.current = false; isRecordingRef.current = false; setIsRecording(false); setRegEngine(null);
+    }
+
     // ── Deepgram (الأولوية) — تفريغ لحظي مستمر أدق بالمصري، بيحفظ اللوحات
     // (لوحة/نوع/ملاحظة) فوراً أثناء الكلام عبر applySessionText. نفس مفتاح
     // تشييك صوت. لو البدء فشل بنكمّل بالمسارات التانية.
@@ -1147,6 +1182,37 @@ export default function RegistrationPage() {
     setIsRecording(false);
     setRegEngine(null);
     setRegMicActive(false);
+
+    // ── Speechmatics: أوقف البث، استنى الطابور، flush نهائي واحفظ. ──
+    if (smActiveRef.current) {
+      smActiveRef.current = false;
+      setIsTranscribing(true);
+      try {
+        try { await smHandleRef.current?.stop(); } catch { /* closed */ }
+        smHandleRef.current = null;
+        await sessionQueueRef.current;
+        const lastCoords = gpsService.getLastCoords() ?? gpsAtRecordRef.current;
+        await applySessionText("", lastCoords, null, true);
+        await sessionQueueRef.current;
+        const saved = sessionSavedCountRef.current;
+        if (saved > 0) {
+          setDebugStatus(`✅ اتحفظ ${saved} لوحة تلقائياً`);
+        } else if (sessionTranscriptRef.current.trim()) {
+          setPendingTranscript(sessionTranscriptRef.current.trim());
+          setDebugFinal(sessionTranscriptRef.current.trim());
+          setDebugStatus("✅ تم التفريغ — مفيش لوحات مكتملة، راجع النص تحت");
+        } else {
+          setRecordingError("مفيش كلام اتسجّل.");
+          setDebugStatus("❌ مفيش نتيجة");
+        }
+      } catch (err: any) {
+        setRecordingError(`تعذّر التفريغ اللحظي: ${err?.message ?? err}`);
+        setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
+      } finally {
+        setIsTranscribing(false);
+      }
+      return;
+    }
 
     // ── Deepgram: أوقف البث، استنى آخر النتايج، اعمل flush نهائي واحفظ ──
     if (dgActiveRef.current) {
@@ -2322,7 +2388,7 @@ export default function RegistrationPage() {
 
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
-        {!groqApiKey.trim() && !hasDgKey ? (
+        {!groqApiKey.trim() && !hasDgKey && !hasSmKey ? (
           // إجبار: مايقدرش يسجّل صوت من غير مفتاح خاص بيه (Deepgram أو Groq).
           <div className="flex w-full flex-col items-center gap-3 px-4">
             <div className="flex h-24 w-24 items-center justify-center rounded-full bg-surface-2 opacity-60">
@@ -2366,11 +2432,12 @@ export default function RegistrationPage() {
             {isRecording && regEngine && (
               <div className="flex flex-col items-center gap-1">
                 <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
-                  regEngine === "deepgram" ? "bg-brand/15 text-brand"
+                  regEngine === "deepgram" || regEngine === "speechmatics" ? "bg-brand/15 text-brand"
                   : regEngine === "whisper" ? "bg-primary/15 text-primary"
                   : "bg-alert/15 text-alert"
                 }`}>
                   {regEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
+                   : regEngine === "speechmatics" ? "🎙️ Speechmatics — دقة عالية"
                    : regEngine === "whisper" ? "☁️ Whisper سحابي"
                    : "⚠️ المحرك العادي — دقة أقل"}
                 </span>
