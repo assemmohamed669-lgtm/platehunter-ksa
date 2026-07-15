@@ -512,6 +512,17 @@ export default function SortingPage() {
     setResults(null); setSorted(false); wipeSortResults();
   }
 
+  // مسح الملف بس — المربع يفضل فاضي جاهز لرفع ملف تاني (زر «مسح» جوه الصندوق).
+  function clearExtraReferralFile(i: number) {
+    setExtraReferrals((prev) => {
+      const next = prev.map((e, idx) => (idx === i ? { ...e, table: null, file: null } : e));
+      void persistExtraSlots(next);
+      return next;
+    });
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
+  // إلغاء المربع بالكامل — يختفي مكانه (زر «مسح المربع» فوق الصندوق).
   function clearExtraReferral(i: number) {
     setExtraReferrals((prev) => {
       const next = prev.filter((_, idx) => idx !== i);
@@ -1071,18 +1082,27 @@ export default function SortingPage() {
         </div>
       )}
 
-      {/* شيتات إحالة إضافية (إحالة ٢، ٣، ٤...) — بتتدمج كلها في فرز واحد */}
+      {/* شيتات إحالة إضافية (إحالة ٢، ٣، ٤...) — بتتدمج كلها في فرز واحد.
+          كل مربع مُضاف ليه زر «مسح المربع» يلغيه بالكامل (الأول ثابت). */}
       {extraReferrals.map((er, i) => (
-        <FileUploadBox
-          key={er.id}
-          title={`ملف الإحالة ${i + 2}`}
-          hint="إحالة إضافية تُدمج مع الأولى في نفس الفرز"
-          parsedFile={er.file}
-          parsedRowCount={er.table?.rows.length ?? null}
-          onParsed={(table, file) => onExtraReferralParsed(i, table, file)}
-          onClear={() => clearExtraReferral(i)}
-          showReplaceButtons
-        />
+        <div key={er.id} className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-xs font-bold text-muted">إحالة إضافية {i + 2}</span>
+            <button onClick={() => clearExtraReferral(i)} title="مسح هذا المربع"
+              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger">
+              <X size={13} /> مسح المربع
+            </button>
+          </div>
+          <FileUploadBox
+            title={`ملف الإحالة ${i + 2}`}
+            hint="إحالة إضافية تُدمج مع الأولى في نفس الفرز"
+            parsedFile={er.file}
+            parsedRowCount={er.table?.rows.length ?? null}
+            onParsed={(table, file) => onExtraReferralParsed(i, table, file)}
+            onClear={() => clearExtraReferralFile(i)}
+            showReplaceButtons
+          />
+        </div>
       ))}
 
       {/* زر إضافة شيت إحالة جديد */}
