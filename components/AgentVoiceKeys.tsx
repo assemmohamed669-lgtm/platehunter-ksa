@@ -120,7 +120,8 @@ export default function AgentVoiceKeys({
 
   const keyRow = (
     value: string, setValue: (v: string) => void, show: boolean, setShow: (b: boolean) => void,
-    onTest: () => void, testing: boolean, result: TestState, placeholder: string, balanceUrl: string,
+    onTest: () => void, testing: boolean, result: TestState, placeholder: string,
+    balanceUrl: string, signupUrl: string,
   ) => (
     <>
       <div className="flex items-center gap-1.5">
@@ -141,11 +142,17 @@ export default function AgentVoiceKeys({
         {result === "ok" && <span className="flex items-center gap-1 text-xs font-bold text-brand"><CheckCircle2 size={13} /> شغّال ✓</span>}
         {result === "bad" && <span className="flex items-center gap-1 text-xs font-bold text-danger"><XCircle size={13} /> مرفوض</span>}
       </div>
-      {/* لينك للرصيد/الخطة المتبقّية تحت المفتاح */}
-      <a href={balanceUrl} target="_blank" rel="noopener noreferrer"
-        className="flex items-center gap-1 text-[11px] font-bold text-primary hover:underline">
-        <ExternalLink size={11} /> شوف الخطة والرصيد المتبقّي
-      </a>
+      {/* لينكات: صفحة التسجيل/إنشاء الحساب + الرصيد/الخطة */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <a href={signupUrl} target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1 text-[11px] font-bold text-primary hover:underline">
+          <ExternalLink size={11} /> صفحة التسجيل / إنشاء حساب
+        </a>
+        <a href={balanceUrl} target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1 text-[11px] font-bold text-muted hover:text-primary hover:underline">
+          <ExternalLink size={11} /> الرصيد والخطة
+        </a>
+      </div>
     </>
   );
 
@@ -190,19 +197,19 @@ export default function AgentVoiceKeys({
       {/* Deepgram */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "deepgram" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
         <span className="text-xs font-bold text-ink">مفتاح Deepgram</span>
-        {keyRow(deepgram, setDeepgram, showDg, setShowDg, testDeepgram, testingDg, testDg, "مفتاح Deepgram", "https://console.deepgram.com/")}
+        {keyRow(deepgram, setDeepgram, showDg, setShowDg, testDeepgram, testingDg, testDg, "مفتاح Deepgram", "https://console.deepgram.com/", "https://console.deepgram.com/signup")}
       </div>
 
       {/* Speechmatics */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "speechmatics" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
         <span className="text-xs font-bold text-ink">مفتاح Speechmatics</span>
-        {keyRow(speechmatics, setSpeechmatics, showSm, setShowSm, testSpeechmatics, testingSm, testSm, "مفتاح Speechmatics", "https://portal.speechmatics.com/")}
+        {keyRow(speechmatics, setSpeechmatics, showSm, setShowSm, testSpeechmatics, testingSm, testSm, "مفتاح Speechmatics", "https://portal.speechmatics.com/", "https://portal.speechmatics.com/signup")}
       </div>
 
       {/* Soniox */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "soniox" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
         <span className="text-xs font-bold text-ink">مفتاح Soniox</span>
-        {keyRow(soniox, setSoniox, showSn, setShowSn, testSoniox, testingSn, testSn, "مفتاح Soniox", "https://console.soniox.com/")}
+        {keyRow(soniox, setSoniox, showSn, setShowSn, testSoniox, testingSn, testSn, "مفتاح Soniox", "https://console.soniox.com/", "https://soniox.com/")}
       </div>
 
       {/* بيانات حساب الخدمة (سجل للأدمن — ظاهرة وقابلة للنسخ) */}
