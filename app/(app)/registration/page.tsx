@@ -1427,17 +1427,27 @@ export default function RegistrationPage() {
       gpsAtRecordRef.current = gpsService.getLastCoords();
       setDebugStatus("✅ STARTED (Deepgram)");
 
+      // ابدأ التسجيل فوراً (قبل ما الاتصال يفتح) عشان مانفقدش أول حرف أثناء فتح
+      // الاتصال. الأجزاء قبل الفتح تتخزّن وتتبعت بالترتيب. تيار WebM مترابط
+      // فمنعش نرمي أجزاء.
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      dgRecorderRef.current = rec;
+      const pending: Blob[] = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size === 0) return;
+        if (ws.readyState === WebSocket.OPEN) {
+          while (pending.length) { try { ws.send(pending.shift()!); } catch { /* closed */ } }
+          ws.send(e.data);
+        } else {
+          pending.push(e.data);
+        }
+      };
+      rec.start(250); // يبعت جزء صوت كل 250ms
+
       ws.onopen = () => {
-        if (!isRecordingRef.current) { try { ws.close(); } catch { /* closed */ } return; }
-        const rec = new MediaRecorder(stream, { mimeType: mime });
-        dgRecorderRef.current = rec;
-        // إرسال متصل — صوت WebM تيار مترابط، فمنعش نرمي أجزاء (كان بيكسر التيار
-        // ويخلّي Deepgram يفرّغ غلط). توفير التكلفة هيترجّع بطريقة صحيحة لاحقاً.
-        rec.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
-        };
-        rec.start(250); // يبعت جزء صوت كل 250ms
-        // أثناء الصمت مانبعتش صوت — بس KeepAlive عشان Deepgram مايقفلش الاتصال.
+        if (!isRecordingRef.current) { try { ws.close(); } catch { /* closed */ } try { rec.stop(); } catch { /* stopped */ } return; }
+        while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch { /* closed */ } }
+        // KeepAlive عشان Deepgram مايقفلش الاتصال في فترات الصمت.
         dgKeepAliveRef.current = setInterval(() => {
           const s = dgSocketRef.current;
           const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;

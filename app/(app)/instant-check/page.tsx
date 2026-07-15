@@ -1593,18 +1593,29 @@ export default function InstantCheckPage() {
       const ws = new WebSocket(url, ["token", apiKey]);
       dgSocketRef.current = ws;
 
+      // ابدأ التسجيل فوراً (قبل ما الاتصال يفتح) عشان مانفقدش أول حرف أثناء فتح
+      // الاتصال (كان بيبدأ في onopen فيضيع أول ~نص ثانية). الأجزاء اللي تتسجّل
+      // قبل الفتح تتخزّن وتتبعت بالترتيب أول ما يفتح. إرسال متصل — تيار WebM
+      // مترابط فمنعش نرمي أجزاء.
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      dgRecorderRef.current = rec;
+      const pending: Blob[] = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size === 0) return;
+        if (ws.readyState === WebSocket.OPEN) {
+          while (pending.length) { try { ws.send(pending.shift()!); } catch {} }
+          ws.send(e.data);
+        } else {
+          pending.push(e.data); // الاتصال لسه بيفتح — خزّن بالترتيب
+        }
+      };
+      rec.start(250); // يبعت جزء صوت كل 250ms
+
       ws.onopen = () => {
-        if (!isListeningRef.current) { try { ws.close(); } catch {} return; }
-        const rec = new MediaRecorder(stream, { mimeType: mime });
-        dgRecorderRef.current = rec;
-        // إرسال متصل — صوت WebM تيار مترابط، فمنعش نرمي أجزاء (كان بيكسر التيار
-        // ويخلّي Deepgram يفرّغ غلط). البوابة (VAD) بقت للمؤشّر بس. توفير التكلفة
-        // هيترجّع بطريقة صحيحة (PCM خام) لاحقاً.
-        rec.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
-        };
-        rec.start(250); // يبعت جزء صوت كل 250ms
-        // أثناء الصمت مانبعتش صوت — بس نبعت KeepAlive عشان Deepgram مايقفلش الاتصال.
+        if (!isListeningRef.current) { try { ws.close(); } catch {} try { rec.stop(); } catch {} return; }
+        // فضّي أي أجزاء اتسجّلت قبل ما الاتصال يفتح.
+        while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch {} }
+        // KeepAlive عشان Deepgram مايقفلش الاتصال في فترات الصمت.
         dgKeepAliveRef.current = setInterval(() => {
           const s = dgSocketRef.current;
           const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
