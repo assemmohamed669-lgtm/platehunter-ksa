@@ -53,7 +53,7 @@ import {
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, buildWantedIndex, anchorPlateToWanted, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -1328,7 +1328,8 @@ export default function RegistrationPage() {
         agentId: liveAgentId,
         plate: corrected,
         originalPlate: corrected !== r.plate ? r.plate : undefined,
-        uncertain: (r.uncertain || corrected !== r.plate) || undefined,
+        // مكسورة الشكل (أرقام بس/حرف غريب) → علّمها للمراجعة كمان.
+        uncertain: (r.uncertain || corrected !== r.plate || plateNeedsReview(corrected)) || undefined,
         rawLetterSource: r.rawLetterSource,
         vehicleType: r.vehicleType?.trim() || "ملاكي",
         notes: r.notes?.trim() || undefined,
@@ -1430,6 +1431,7 @@ export default function RegistrationPage() {
         smart_format: "false",
         punctuate: "false",
         numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
+        endpointing: "300",      // يستنى وقفة 300ms قبل ما يقفل الجملة — يمنع قطع اللوحة نصّين
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       // المتصفح مايقدرش يبعت هيدر Authorization على WebSocket — Deepgram بيدعم
@@ -1551,8 +1553,8 @@ export default function RegistrationPage() {
         vehicleType: p.vehicleType ?? "",
         notes: p.notes ?? "",
         // Flag for a quick glance if the parser itself was unsure, OR if we just
-        // auto-corrected it — either learner is a heuristic, not a certainty.
-        uncertain: !!p.uncertain || corrected !== p.plate,
+        // auto-corrected it, OR the shape is broken (only numbers / bad letter).
+        uncertain: !!p.uncertain || corrected !== p.plate || plateNeedsReview(corrected),
         rawLetterSource: p.rawLetterSource,
       };
     });

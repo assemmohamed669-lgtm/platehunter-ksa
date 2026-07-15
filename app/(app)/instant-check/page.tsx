@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
@@ -78,6 +78,7 @@ interface PttRow {
   similarity?: number;
   row?: Record<string, string>;
   vehicleType?: string;          // نوع السيارة spoken after the plate (ونيت/فان/…)
+  needsReview?: boolean;         // الشكل مكسور (أرقام بس/حرف غريب) → محتاجة مراجعة
   locationName: string;
   lat?: number;
   lng?: number;
@@ -1345,6 +1346,7 @@ export default function InstantCheckPage() {
       similarity: result.similarity,
       row: result.row,
       vehicleType,
+      needsReview: plateNeedsReview(corrected),
       locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
     };
@@ -1586,6 +1588,7 @@ export default function InstantCheckPage() {
         smart_format: "false",
         punctuate: "false",
         numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
+        endpointing: "300",      // يستنى وقفة 300ms قبل ما يقفل الجملة — يمنع قطع اللوحة نصّين
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
@@ -2526,6 +2529,11 @@ export default function InstantCheckPage() {
                                     <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="text-muted hover:text-primary transition" title="تعديل اللوحة">
                                       <Pencil size={12} />
                                     </button>
+                                    {r.needsReview && (
+                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-alert/15 px-1.5 py-0.5 text-[10px] font-bold text-alert" title="الشكل مكسور — راجع اللوحة وعدّلها">
+                                        <AlertTriangle size={10} /> راجع
+                                      </span>
+                                    )}
                                   </span>
                                 )}
                               </td>

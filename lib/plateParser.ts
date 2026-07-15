@@ -1661,6 +1661,25 @@ export function normalizeReferralPlate(raw: string, isArabic: boolean): string {
   return isArabic ? normalizePlate(raw) : normalizePlate(bankPlateToArabic(raw));
 }
 
+// حروف اللوحات السعودية المعتمدة (بعد التطبيع) — 17 حرف.
+const VALID_PLATE_LETTERS = new Set("ابحدرسصطعقكلمنهوي".split(""));
+
+/**
+ * هل اللوحة المطبّعة مكسورة الشكل وتحتاج مراجعة يدوية؟ بترجع true لو: فاضية،
+ * أرقام بس (بدون حروف)، بدون أرقام، أكتر من 3 حروف (كلمات ما اتحولتش)، أكتر من
+ * 4 أرقام، أو فيها حرف مش من حروف اللوحات المعتمدة. متسامحة مع 1-2 حرف و 1-3
+ * أرقام عشان ماتعلّمش لوحات سليمة بالغلط. (بتدعم الأرقام العربية واللاتينية.)
+ */
+export function plateNeedsReview(normalized: string): boolean {
+  if (!normalized) return true;
+  const letters = normalized.replace(/[0-9٠-٩]/g, "");
+  const digits = normalized.replace(/[^0-9٠-٩]/g, "");
+  if (letters.length === 0 || digits.length === 0) return true;
+  if (letters.length > 3 || digits.length > 4) return true;
+  for (const ch of letters) if (!VALID_PLATE_LETTERS.has(ch)) return true;
+  return false;
+}
+
 /**
  * يدمج عدة شيتات إحالة في قائمة واحدة مطبّعة ومزالة التكرار (أول ظهور يكسب).
  * الخلايا الفارغة تُتخطى. الترتيب يحافظ على ترتيب الشيتات ثم الصفوف.
