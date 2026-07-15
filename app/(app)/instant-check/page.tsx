@@ -11,6 +11,7 @@ import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
 import { getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -390,6 +391,8 @@ export default function InstantCheckPage() {
   const dgSocketRef = useRef<WebSocket | null>(null);
   const dgRecorderRef = useRef<MediaRecorder | null>(null);
   const dgStreamRef = useRef<MediaStream | null>(null);
+  const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
+  const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1566,6 +1569,9 @@ export default function InstantCheckPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dgStreamRef.current = stream;
+      // بوابة الكلام: نبعت الصوت وقت الكلام بس (الصمت مايتبعتش فمايتحسّبش). لو
+      // فشلت التهيئة بنسيبها null → بنبعت كل حاجة زي الأول (مايضيّعش لوحات).
+      try { dgGateRef.current = createSpeechGate(stream); } catch { dgGateRef.current = null; }
       pttSessionStateRef.current = newSessionState();
       pttRowIdxRef.current = 0;
 
@@ -1587,10 +1593,30 @@ export default function InstantCheckPage() {
         if (!isListeningRef.current) { try { ws.close(); } catch {} return; }
         const rec = new MediaRecorder(stream, { mimeType: mime });
         dgRecorderRef.current = rec;
+        let prevChunk: Blob | null = null; // preroll: آخر جزء صمت قبل الكلام
+        let sentLast = false;
         rec.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+          if (e.data.size === 0 || ws.readyState !== WebSocket.OPEN) return;
+          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
+          if (speaking) {
+            // أول ما الكلام يبدأ، ابعت الجزء السابق كمان عشان بداية الكلمة ماتتقصّش.
+            if (!sentLast && prevChunk) { try { ws.send(prevChunk); } catch {} }
+            ws.send(e.data);
+            sentLast = true;
+          } else {
+            sentLast = false;
+          }
+          prevChunk = e.data;
         };
         rec.start(250); // يبعت جزء صوت كل 250ms
+        // أثناء الصمت مانبعتش صوت — بس نبعت KeepAlive عشان Deepgram مايقفلش الاتصال.
+        dgKeepAliveRef.current = setInterval(() => {
+          const s = dgSocketRef.current;
+          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
+          if (s && s.readyState === WebSocket.OPEN && !speaking) {
+            try { s.send(JSON.stringify({ type: "KeepAlive" })); } catch {}
+          }
+        }, 7000);
       };
       ws.onmessage = (ev) => {
         try {
@@ -1803,6 +1829,9 @@ export default function InstantCheckPage() {
 
     // مسار Deepgram شغّال؟ وقّف المسجّل، اقفل السوكيت، وفلّش المحلّل.
     if (dgSocketRef.current || dgRecorderRef.current || dgStreamRef.current) {
+      if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+      try { dgGateRef.current?.close(); } catch {}
+      dgGateRef.current = null;
       try { dgRecorderRef.current?.stop(); } catch {}
       try { dgSocketRef.current?.send(JSON.stringify({ type: "CloseStream" })); } catch {}
       try { dgSocketRef.current?.close(); } catch {}

@@ -33,6 +33,7 @@ import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -558,6 +559,8 @@ export default function RegistrationPage() {
   const dgSocketRef = useRef<WebSocket | null>(null);
   const dgRecorderRef = useRef<MediaRecorder | null>(null);
   const dgActiveRef = useRef(false); // الجلسة الحالية بتستخدم Deepgram؟ (للإيقاف)
+  const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
+  const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
@@ -1137,6 +1140,9 @@ export default function RegistrationPage() {
       dgActiveRef.current = false;
       setIsTranscribing(true);
       try {
+        if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+        try { dgGateRef.current?.close(); } catch { /* closed */ }
+        dgGateRef.current = null;
         try { dgRecorderRef.current?.stop(); } catch { /* already stopped */ }
         try { dgSocketRef.current?.send(JSON.stringify({ type: "CloseStream" })); } catch { /* closed */ }
         // استنى شوية عشان آخر نتايج نهائية توصل قبل ما نقفل السوكِت.
@@ -1387,6 +1393,9 @@ export default function RegistrationPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dgStreamRef.current = stream;
+      // بوابة الكلام: نبعت الصوت وقت الكلام بس (الصمت مايتبعتش فمايتحسّبش). لو
+      // فشلت التهيئة بنسيبها null → بنبعت كل حاجة زي الأول (مايضيّعش لوحات).
+      try { dgGateRef.current = createSpeechGate(stream); } catch { dgGateRef.current = null; }
 
       // تهيئة جلسة التحليل الحدثي (نفس مسار Groq) — سياق جديد، طابور فاضي.
       sessionStateRef.current = newSessionState();
@@ -1422,10 +1431,29 @@ export default function RegistrationPage() {
         if (!isRecordingRef.current) { try { ws.close(); } catch { /* closed */ } return; }
         const rec = new MediaRecorder(stream, { mimeType: mime });
         dgRecorderRef.current = rec;
+        let prevChunk: Blob | null = null; // preroll: آخر جزء صمت قبل الكلام
+        let sentLast = false;
         rec.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+          if (e.data.size === 0 || ws.readyState !== WebSocket.OPEN) return;
+          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
+          if (speaking) {
+            if (!sentLast && prevChunk) { try { ws.send(prevChunk); } catch { /* closed */ } }
+            ws.send(e.data);
+            sentLast = true;
+          } else {
+            sentLast = false;
+          }
+          prevChunk = e.data;
         };
         rec.start(250); // يبعت جزء صوت كل 250ms
+        // أثناء الصمت مانبعتش صوت — بس KeepAlive عشان Deepgram مايقفلش الاتصال.
+        dgKeepAliveRef.current = setInterval(() => {
+          const s = dgSocketRef.current;
+          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
+          if (s && s.readyState === WebSocket.OPEN && !speaking) {
+            try { s.send(JSON.stringify({ type: "KeepAlive" })); } catch { /* closed */ }
+          }
+        }, 7000);
       };
       ws.onmessage = (ev) => {
         try {
