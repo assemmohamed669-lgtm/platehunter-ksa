@@ -14,7 +14,8 @@ function cellLooksLikePlate(raw: string): boolean {
 
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch) return false;
-  if (digitMatch[0].length > 4) return false;
+  // اللوحة السعودية = 3-4 أرقام — أكواد قصيرة (R8) مش لوحات.
+  if (digitMatch[0].length < 3 || digitMatch[0].length > 4) return false;
 
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   if (nonDigits.length === 0 || nonDigits.length > 3) return false;

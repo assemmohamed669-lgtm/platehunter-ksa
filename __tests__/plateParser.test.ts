@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, tokenizePastedPlates, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, tokenizePastedPlates, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, detectPlateColumn, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+
+describe("detectPlateColumn — لا يخلط عمود اللوحة بعمود تصنيفات قصيرة (R8)", () => {
+  // ملف إحالة حقيقي: عمود Risk Grading قيمه «R8» (حرف + رقم واحد) كان بيتحسب
+  // «شكله لوحة» ويكسب على عمود PLATE# الحقيقي (3 حروف + 4 أرقام).
+  const headers = ["#", "Agreement No", "Risk Grading", "Bucket", "PLATE#", "Brand", "Year"];
+  const rows = [
+    { "#": "1", "Agreement No": "2018603285200001", "Risk Grading": "R8", "Bucket": "7", "PLATE#": "ح ه ه 9482", "Brand": "دودج", "Year": "2016" },
+    { "#": "2", "Agreement No": "2018603067320001", "Risk Grading": "R8", "Bucket": "7", "PLATE#": "د د ن 2138", "Brand": "هونداي", "Year": "2017" },
+    { "#": "3", "Agreement No": "4011601366000001", "Risk Grading": "R8", "Bucket": "7", "PLATE#": "و ن ن 0004", "Brand": "مرسيدس", "Year": "2021" },
+  ];
+  it("picks PLATE# (3 letters + 4 digits) over Risk Grading (R8)", () => {
+    expect(detectPlateColumn(headers, rows)).toBe("PLATE#");
+  });
+});
 
 // ─── plateContentScore / pickBestHypothesis ────────────────────────────────
 describe("plateContentScore & pickBestHypothesis", () => {

@@ -211,7 +211,7 @@ function _cellLooksLikePlate(raw: string): boolean {
   const cleaned = raw.replace(/[\s\-_.ـ/]/g, "");
   if (cleaned.length < 2 || cleaned.length > 10) return false;
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
-  if (!digitMatch || digitMatch[0].length > 4) return false;
+  if (!digitMatch || digitMatch[0].length < 3 || digitMatch[0].length > 4) return false;
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   return nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits);
 }
