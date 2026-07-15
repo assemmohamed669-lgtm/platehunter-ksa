@@ -9,14 +9,16 @@ import { setDeepgramKey, setDeepgramEnabled, getDeepgramKey } from "./deepgramKe
 
 export const LS_SPEECHMATICS_API_KEY = "ph:speechmatics:apiKey";
 export const LS_SONIOX_API_KEY = "ph:soniox:apiKey";
+export const LS_OPENAI_API_KEY = "ph:openai:apiKey";
 export const LS_VOICE_ENGINE = "ph:voice:engine";
 
-export type VoiceEngine = "deepgram" | "speechmatics" | "soniox";
+export type VoiceEngine = "deepgram" | "speechmatics" | "soniox" | "openai";
 
 export interface ServiceKeys {
   deepgram?: string;
   speechmatics?: string;
   soniox?: string;
+  openai?: string;
   engine?: VoiceEngine;
   // بيانات حساب الخدمة للمندوب (سجل للأدمن بس — مش بتنزل لجهاز المندوب).
   email?: string;
@@ -45,7 +47,18 @@ export function setSonioxKey(v: string): void {
   } catch { /* storage unavailable */ }
 }
 
-const VOICE_ENGINES: VoiceEngine[] = ["deepgram", "speechmatics", "soniox"];
+export function getOpenaiKey(): string {
+  if (typeof window === "undefined") return "";
+  try { return (window.localStorage.getItem(LS_OPENAI_API_KEY) || "").trim(); } catch { return ""; }
+}
+export function setOpenaiKey(v: string): void {
+  try {
+    if (v.trim()) window.localStorage.setItem(LS_OPENAI_API_KEY, v.trim());
+    else window.localStorage.removeItem(LS_OPENAI_API_KEY);
+  } catch { /* storage unavailable */ }
+}
+
+const VOICE_ENGINES: VoiceEngine[] = ["deepgram", "speechmatics", "soniox", "openai"];
 export function getVoiceEngine(): VoiceEngine {
   if (typeof window === "undefined") return "deepgram";
   try {
@@ -62,11 +75,12 @@ export function normalizeServiceKeys(sk: unknown): ServiceKeys {
   if (!sk || typeof sk !== "object") return {};
   const o = sk as Record<string, unknown>;
   const engine: VoiceEngine =
-    o.engine === "speechmatics" ? "speechmatics" : o.engine === "soniox" ? "soniox" : "deepgram";
+    o.engine === "speechmatics" ? "speechmatics" : o.engine === "soniox" ? "soniox" : o.engine === "openai" ? "openai" : "deepgram";
   return {
     deepgram: typeof o.deepgram === "string" ? o.deepgram.trim() : "",
     speechmatics: typeof o.speechmatics === "string" ? o.speechmatics.trim() : "",
     soniox: typeof o.soniox === "string" ? o.soniox.trim() : "",
+    openai: typeof o.openai === "string" ? o.openai.trim() : "",
     engine,
     email: typeof o.email === "string" ? o.email : "",
     password: typeof o.password === "string" ? o.password : "",
@@ -84,6 +98,7 @@ export function applyServiceKeys(sk: unknown): void {
   setDeepgramKey(n.deepgram || "");
   setSpeechmaticsKey(n.speechmatics || "");
   setSonioxKey(n.soniox || "");
+  setOpenaiKey(n.openai || "");
   setVoiceEngine(n.engine || "deepgram");
   setDeepgramEnabled(n.engine === "deepgram"); // Deepgram شغّال بس لو هو المختار (حصري)
 }
@@ -91,6 +106,9 @@ export function applyServiceKeys(sk: unknown): void {
 /** المفتاح النشط للمحرك المختار (للاستخدام في مسار الصوت لاحقاً). */
 export function getActiveVoiceKey(): { engine: VoiceEngine; key: string } {
   const engine = getVoiceEngine();
-  const key = engine === "speechmatics" ? getSpeechmaticsKey() : engine === "soniox" ? getSonioxKey() : getDeepgramKey();
+  const key = engine === "speechmatics" ? getSpeechmaticsKey()
+    : engine === "soniox" ? getSonioxKey()
+    : engine === "openai" ? getOpenaiKey()
+    : getDeepgramKey();
   return { engine, key };
 }

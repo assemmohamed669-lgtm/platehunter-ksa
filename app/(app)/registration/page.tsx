@@ -33,9 +33,10 @@ import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
-import { getVoiceEngine, getSpeechmaticsKey, getSonioxKey } from "@/lib/voiceKeys";
+import { getVoiceEngine, getSpeechmaticsKey, getSonioxKey, getOpenaiKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { startSoniox, type SonioxHandle } from "@/lib/sonioxRT";
+import { startOpenAI, type OpenAIHandle } from "@/lib/openaiRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
@@ -448,12 +449,13 @@ export default function RegistrationPage() {
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   // أي محرك تفريغ شغّال + هل بيسمع (VAD) — نفس مؤشّر تشييك صوت.
-  const [regEngine, setRegEngine] = useState<null | "deepgram" | "speechmatics" | "soniox" | "whisper" | "local">(null);
+  const [regEngine, setRegEngine] = useState<null | "deepgram" | "speechmatics" | "soniox" | "openai" | "whisper" | "local">(null);
   const [regMicActive, setRegMicActive] = useState(false);
-  // فيه مفتاح صوت محفوظ (Deepgram/Speechmatics/Soniox)؟ (عشان التسجيل يشتغل حتى من غير Groq).
+  // فيه مفتاح صوت محفوظ (Deepgram/Speechmatics/Soniox/OpenAI)؟ (عشان التسجيل يشتغل حتى من غير Groq).
   const [hasDgKey, setHasDgKey] = useState(false);
   const [hasSmKey, setHasSmKey] = useState(false);
   const [hasSnKey, setHasSnKey] = useState(false);
+  const [hasOaKey, setHasOaKey] = useState(false);
 
   // Transcript captured from the last recording session, held until the user
   // presses "احفظ وصدّر الإكسيل" to extract + save plates from it.
@@ -576,6 +578,8 @@ export default function RegistrationPage() {
   const smActiveRef = useRef(false); // الجلسة الحالية بتستخدم Speechmatics؟
   const snHandleRef = useRef<SonioxHandle | null>(null); // جلسة Soniox
   const snActiveRef = useRef(false); // الجلسة الحالية بتستخدم Soniox؟
+  const oaHandleRef = useRef<OpenAIHandle | null>(null); // جلسة OpenAI
+  const oaActiveRef = useRef(false); // الجلسة الحالية بتستخدم OpenAI؟
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
@@ -605,7 +609,7 @@ export default function RegistrationPage() {
     } catch { /* storage unavailable */ }
 
     // فيه مفتاح صوت؟ لو آه، التسجيل يشتغل حتى من غير مفتاح Groq.
-    try { setHasDgKey(getDeepgramKey().trim() !== ""); setHasSmKey(getSpeechmaticsKey().trim() !== ""); setHasSnKey(getSonioxKey().trim() !== ""); } catch { /* ignore */ }
+    try { setHasDgKey(getDeepgramKey().trim() !== ""); setHasSmKey(getSpeechmaticsKey().trim() !== ""); setHasSnKey(getSonioxKey().trim() !== ""); setHasOaKey(getOpenaiKey().trim() !== ""); } catch { /* ignore */ }
 
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
@@ -990,6 +994,35 @@ export default function RegistrationPage() {
       snActiveRef.current = false; isRecordingRef.current = false; setIsRecording(false); setRegEngine(null);
     }
 
+    // ── OpenAI (لو هو المحرك المختار) — نفس أداة ChatGPT الصوتية، نفس مسار الحفظ الحدثي.
+    if (getVoiceEngine() === "openai" && getOpenaiKey()) {
+      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
+      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
+      sessionStateRef.current = newSessionState();
+      sessionQueueRef.current = Promise.resolve();
+      sessionCoordsRef.current = [gpsService.getLastCoords()];
+      sessionChunkIndexRef.current = 0;
+      sessionIdRef.current = uid();
+      sessionStartedAtRef.current = new Date().toISOString();
+      sessionTranscriptRef.current = "";
+      sessionEventsRef.current = [];
+      sessionSavedCountRef.current = 0;
+      sessionFailedChunksRef.current = 0;
+      oaActiveRef.current = true;
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      gpsAtRecordRef.current = gpsService.getLastCoords();
+      setDebugStatus("✅ STARTED (OpenAI)");
+      setRegEngine("openai");
+      const h = await startOpenAI(getOpenaiKey(), {
+        onPartial: (t) => { setLiveTranscript(t); setDebugRaw(t); },
+        onFinal: (t) => enqueueDeepgramText(t),
+        onError: (m) => setRecordingError(m),
+      });
+      if (h) { oaHandleRef.current = h; return; }
+      oaActiveRef.current = false; isRecordingRef.current = false; setIsRecording(false); setRegEngine(null);
+    }
+
     // ── Deepgram (الأولوية) — تفريغ لحظي مستمر أدق بالمصري، بيحفظ اللوحات
     // (لوحة/نوع/ملاحظة) فوراً أثناء الكلام عبر applySessionText. نفس مفتاح
     // تشييك صوت. لو البدء فشل بنكمّل بالمسارات التانية.
@@ -1216,16 +1249,19 @@ export default function RegistrationPage() {
     setRegEngine(null);
     setRegMicActive(false);
 
-    // ── Speechmatics/Soniox: أوقف البث، استنى الطابور، flush نهائي واحفظ. ──
-    if (smActiveRef.current || snActiveRef.current) {
+    // ── Speechmatics/Soniox/OpenAI: أوقف البث، استنى الطابور، flush نهائي واحفظ. ──
+    if (smActiveRef.current || snActiveRef.current || oaActiveRef.current) {
       smActiveRef.current = false;
       snActiveRef.current = false;
+      oaActiveRef.current = false;
       setIsTranscribing(true);
       try {
         try { await smHandleRef.current?.stop(); } catch { /* closed */ }
         try { await snHandleRef.current?.stop(); } catch { /* closed */ }
+        try { await oaHandleRef.current?.stop(); } catch { /* closed */ }
         smHandleRef.current = null;
         snHandleRef.current = null;
+        oaHandleRef.current = null;
         await sessionQueueRef.current;
         const lastCoords = gpsService.getLastCoords() ?? gpsAtRecordRef.current;
         await applySessionText("", lastCoords, null, true);
@@ -2424,7 +2460,7 @@ export default function RegistrationPage() {
 
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
-        {!groqApiKey.trim() && !hasDgKey && !hasSmKey && !hasSnKey ? (
+        {!groqApiKey.trim() && !hasDgKey && !hasSmKey && !hasSnKey && !hasOaKey ? (
           // إجبار: مايقدرش يسجّل صوت من غير مفتاح خاص بيه (Deepgram أو Groq).
           <div className="flex w-full flex-col items-center gap-3 px-4">
             <div className="flex h-24 w-24 items-center justify-center rounded-full bg-surface-2 opacity-60">
@@ -2468,13 +2504,14 @@ export default function RegistrationPage() {
             {isRecording && regEngine && (
               <div className="flex flex-col items-center gap-1">
                 <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
-                  regEngine === "deepgram" || regEngine === "speechmatics" || regEngine === "soniox" ? "bg-brand/15 text-brand"
+                  regEngine === "deepgram" || regEngine === "speechmatics" || regEngine === "soniox" || regEngine === "openai" ? "bg-brand/15 text-brand"
                   : regEngine === "whisper" ? "bg-primary/15 text-primary"
                   : "bg-alert/15 text-alert"
                 }`}>
                   {regEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
                    : regEngine === "speechmatics" ? "🎙️ Speechmatics — دقة عالية"
                    : regEngine === "soniox" ? "🎙️ Soniox — دقة عالية"
+                   : regEngine === "openai" ? "🎙️ OpenAI — دقة عالية"
                    : regEngine === "whisper" ? "☁️ Whisper سحابي"
                    : "⚠️ المحرك العادي — دقة أقل"}
                 </span>

@@ -5,9 +5,10 @@ import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, Ext
 import type { ServiceKeys, VoiceEngine } from "@/lib/voiceKeys";
 
 /**
- * إدارة مفاتيح الصوت لمندوب — للأدمن فقط (جوه صفحة المندوب). محرّكين: Deepgram
- * و Speechmatics، واحد نشط بس (حصري). اختبار كل مفتاح + لينك للرصيد/الخطة تحته.
- * + بيانات حساب الخدمة (إيميل/باسوورد) ظاهرة وقابلة للنسخ — سجل للأدمن.
+ * إدارة مفاتيح الصوت لمندوب — للأدمن فقط (جوه صفحة المندوب). أربع محرّكات:
+ * Deepgram / Speechmatics / Soniox / OpenAI، واحد نشط بس (حصري). اختبار كل مفتاح
+ * + لينك للتسجيل والرصيد تحته. + بيانات حساب الخدمة (إيميل/باسوورد) ظاهرة وقابلة
+ * للنسخ — سجل للأدمن.
  */
 type TestState = null | "ok" | "bad";
 
@@ -23,18 +24,22 @@ export default function AgentVoiceKeys({
   const [deepgram, setDeepgram] = useState(initial.deepgram ?? "");
   const [speechmatics, setSpeechmatics] = useState(initial.speechmatics ?? "");
   const [soniox, setSoniox] = useState(initial.soniox ?? "");
+  const [openai, setOpenai] = useState(initial.openai ?? "");
   const [engine, setEngine] = useState<VoiceEngine>(initial.engine ?? "deepgram");
   const [email, setEmail] = useState(initial.email ?? "");
   const [password, setPassword] = useState(initial.password ?? "");
   const [showDg, setShowDg] = useState(false);
   const [showSm, setShowSm] = useState(false);
   const [showSn, setShowSn] = useState(false);
+  const [showOa, setShowOa] = useState(false);
   const [testDg, setTestDg] = useState<TestState>(null);
   const [testSm, setTestSm] = useState<TestState>(null);
   const [testSn, setTestSn] = useState<TestState>(null);
+  const [testOa, setTestOa] = useState<TestState>(null);
   const [testingDg, setTestingDg] = useState(false);
   const [testingSm, setTestingSm] = useState(false);
   const [testingSn, setTestingSn] = useState(false);
+  const [testingOa, setTestingOa] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -101,9 +106,25 @@ export default function AgentVoiceKeys({
     } catch { finish("bad"); }
   }
 
+  // اختبار OpenAI: نستدعي GET /v1/models بالمفتاح — 200 = المفتاح صح، 401 = مرفوض.
+  // (api.openai.com بيسمح بالاستدعاء من المتصفح — CORS مفعّل.)
+  async function testOpenai() {
+    const k = openai.trim();
+    if (!k || testingOa) return;
+    setTestingOa(true); setTestOa(null);
+    try {
+      const r = await fetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${k}` },
+      });
+      setTestOa(r.ok ? "ok" : "bad");
+    } catch { setTestOa("bad"); }
+    finally { setTestingOa(false); }
+  }
+
   async function save() {
     const ok = await onSave({
-      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), soniox: soniox.trim(), engine,
+      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), soniox: soniox.trim(),
+      openai: openai.trim(), engine,
       email: email.trim(), password,
     });
     if (ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
@@ -183,13 +204,14 @@ export default function AgentVoiceKeys({
       {/* المحرك النشط — واحد بس */}
       <div>
         <p className="mb-1.5 text-[11px] text-muted">المحرك النشط للمندوب (واحد بس):</p>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {engineBtn("deepgram", "Deepgram")}
           {engineBtn("speechmatics", "Speechmatics")}
           {engineBtn("soniox", "Soniox")}
+          {engineBtn("openai", "OpenAI")}
         </div>
         <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-brand">
-          <CheckCircle2 size={12} /> المندوب هيستخدم: {engine === "deepgram" ? "Deepgram" : engine === "speechmatics" ? "Speechmatics" : "Soniox"}
+          <CheckCircle2 size={12} /> المندوب هيستخدم: {engine === "deepgram" ? "Deepgram" : engine === "speechmatics" ? "Speechmatics" : engine === "soniox" ? "Soniox" : "OpenAI"}
           <span className="font-normal text-muted">— بعد ما تدوس حفظ</span>
         </p>
       </div>
@@ -210,6 +232,12 @@ export default function AgentVoiceKeys({
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "soniox" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
         <span className="text-xs font-bold text-ink">مفتاح Soniox</span>
         {keyRow(soniox, setSoniox, showSn, setShowSn, testSoniox, testingSn, testSn, "مفتاح Soniox", "https://console.soniox.com/", "https://soniox.com/")}
+      </div>
+
+      {/* OpenAI (نفس أداة تفريغ الصوت في ChatGPT) */}
+      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "openai" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+        <span className="text-xs font-bold text-ink">مفتاح OpenAI <span className="font-normal text-muted">(نفس أداة ChatGPT الصوتية)</span></span>
+        {keyRow(openai, setOpenai, showOa, setShowOa, testOpenai, testingOa, testOa, "sk-...", "https://platform.openai.com/usage", "https://platform.openai.com/signup")}
       </div>
 
       {/* بيانات حساب الخدمة (سجل للأدمن — ظاهرة وقابلة للنسخ) */}

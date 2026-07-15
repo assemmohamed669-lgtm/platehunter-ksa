@@ -154,7 +154,8 @@ export async function POST(req: NextRequest) {
           deepgram: typeof sk.deepgram === "string" ? sk.deepgram.trim() : "",
           speechmatics: typeof sk.speechmatics === "string" ? sk.speechmatics.trim() : "",
           soniox: typeof sk.soniox === "string" ? sk.soniox.trim() : "",
-          engine: sk.engine === "speechmatics" ? "speechmatics" : sk.engine === "soniox" ? "soniox" : "deepgram",
+          openai: typeof sk.openai === "string" ? sk.openai.trim() : "",
+          engine: sk.engine === "speechmatics" ? "speechmatics" : sk.engine === "soniox" ? "soniox" : sk.engine === "openai" ? "openai" : "deepgram",
           email: typeof sk.email === "string" ? sk.email.trim() : "",
           password: typeof sk.password === "string" ? sk.password : "",
         };
