@@ -1634,6 +1634,50 @@ export interface MatchResult {
   dataRow?: Record<string, string>;
   status: "exact" | "fuzzy" | "none";
   similarity?: number;
+  // اللوحة المطبّعة لصف الإحالة — بتتحسب وقت الفرز عشان تلوين المكرر والتصدير
+  // يشتغلوا حتى لما الصف جاي من شيت إحالة إضافي بعمود لوحة مختلف عن الأساسي.
+  refPlateNorm?: string;
+}
+
+// ─── دمج شيتات إحالة متعددة (صفحة الفرز) ────────────────────────────────
+// المستخدم يقدر يرفع أكتر من شيت إحالة (إحالة ١، ٢، ٣...). كل شيت ليه عمود
+// لوحته الخاص وممكن يكون عربي أو إنجليزي (بنك). الدوال دي بتوحّدهم في قائمة
+// لوحات مطبّعة واحدة عشان الفرز يعاملهم كقائمة واحدة.
+export interface ReferralSource {
+  rows: Record<string, string>[];
+  plateCol: string;
+  isArabic: boolean; // true = عمود عربي (تطبيع مباشر)، false = عمود بنك إنجليزي
+}
+
+export interface ReferralEntry {
+  norm: string;                    // اللوحة المطبّعة (المفتاح الموحّد)
+  row: Record<string, string>;     // صف الإحالة الأصلي
+  raw: string;                     // نص اللوحة الخام (قبل التطبيع)
+  isArabic: boolean;               // مصدر الصف عربي ولا إنجليزي
+}
+
+/** يطبّع خلية لوحة إحالة حسب نوع عمودها (عربي مباشر / إنجليزي بنكي). */
+export function normalizeReferralPlate(raw: string, isArabic: boolean): string {
+  return isArabic ? normalizePlate(raw) : normalizePlate(bankPlateToArabic(raw));
+}
+
+/**
+ * يدمج عدة شيتات إحالة في قائمة واحدة مطبّعة ومزالة التكرار (أول ظهور يكسب).
+ * الخلايا الفارغة تُتخطى. الترتيب يحافظ على ترتيب الشيتات ثم الصفوف.
+ */
+export function collectReferralEntries(sources: ReferralSource[]): ReferralEntry[] {
+  const seen = new Set<string>();
+  const out: ReferralEntry[] = [];
+  for (const src of sources) {
+    for (const row of src.rows) {
+      const raw = String(row[src.plateCol] ?? "");
+      const norm = normalizeReferralPlate(raw, src.isArabic);
+      if (!norm || seen.has(norm)) continue;
+      seen.add(norm);
+      out.push({ norm, row, raw, isArabic: src.isArabic });
+    }
+  }
+  return out;
 }
 
 // Two-row Levenshtein: O(n) space instead of O(nm), no per-call allocation

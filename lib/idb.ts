@@ -45,10 +45,21 @@ export interface RecordingEntry {
  * the agent only has to upload it once, and explicitly deletes it via
  * the trash icon when they're done with it.
  */
+/**
+ * Slot id for an uploaded sorting file. The known slots are documented as a
+ * literal union, but extra referral sheets use dynamic ids ("referral-2",
+ * "referral-3", …) — so the type also allows any string while keeping the
+ * literal autocomplete via the `(string & {})` idiom.
+ */
+export type UploadedSlot =
+  | "data" | "referral" | "check" | "tashyeek"
+  | `referral-${number}`
+  | (string & {});
+
 export interface UploadedFileRecord {
   key: string;                       // `${agentId}:${slot}`
   agentId: string;
-  slot: "data" | "referral" | "check" | "tashyeek";
+  slot: UploadedSlot;
   fileName: string;
   headers: string[];
   rows: Record<string, string>[];
@@ -306,7 +317,7 @@ export async function saveUploadedFile(record: UploadedFileRecord): Promise<void
 
 export async function getUploadedFile(
   agentId: string,
-  slot: "data" | "referral" | "check" | "tashyeek"
+  slot: UploadedSlot
 ): Promise<UploadedFileRecord | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -317,7 +328,7 @@ export async function getUploadedFile(
   });
 }
 
-export async function deleteUploadedFile(agentId: string, slot: "data" | "referral" | "check" | "tashyeek"): Promise<void> {
+export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readwrite");

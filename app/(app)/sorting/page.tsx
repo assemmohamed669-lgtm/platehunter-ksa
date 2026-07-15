@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
-  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X,
+  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -13,7 +13,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, type MatchResult, type TokenMatch,
+  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory, detectMakeModelColumn } from "@/lib/sortingCols";
 import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
@@ -118,6 +118,14 @@ export default function SortingPage() {
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
   const [referralPlateColOverride, setReferralPlateColOverride] = useState<string | null>(null);
 
+  // ── شيتات إحالة إضافية (زر "+" — إحالة ٢، ٣، ٤...) ──
+  // كل شيت إضافي بيتخزّن في slot خاص (referral-2, referral-3, ...) وبيتدمج مع
+  // الإحالة الأساسية وقت الفرز. صندوق فاضي (بدون ملف) عادي — بيتخطّى في الفرز.
+  type ExtraReferral = { id: string; table: ExcelTable | null; file: File | null };
+  const [extraReferrals, setExtraReferrals] = useState<ExtraReferral[]>([]);
+  const extraIdRef = useRef(1);                 // عدّاد لمفاتيح React ثابتة
+  const extraHighWaterRef = useRef(1);          // أعلى رقم slot اتكتب (للتنظيف)
+
   // ── Check file (read from IDB, uploaded in صفحة التشييك) ──
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
@@ -180,6 +188,22 @@ export default function SortingPage() {
         if (checkRec) {
           setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
         }
+        // شيتات الإحالة الإضافية: نبحث في slots متتابعة (referral-2, referral-3, ...)
+        // لحد أول slot فاضي — كده تفضل بعد إعادة فتح التطبيق.
+        try {
+          const extras: ExtraReferral[] = [];
+          for (let n = 2; n < 100; n++) {
+            const rec = await getUploadedFile("local", `referral-${n}`);
+            if (!rec) break;
+            extras.push({
+              id: `ref-b${n}`,
+              table: { headers: rec.headers, rows: rec.rows },
+              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+            });
+            extraHighWaterRef.current = n;
+          }
+          if (extras.length > 0) setExtraReferrals(extras);
+        } catch { /* no extra referrals */ }
         // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
         try {
@@ -348,10 +372,12 @@ export default function SortingPage() {
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
   const plateColorMap = useMemo(() => {
-    if (!results || !effectiveReferralPlateCol) return new Map<string, number>();
+    if (!results) return new Map<string, number>();
     const counts = new Map<string, number>();
     for (const r of results) {
-      const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol] ?? "")));
+      // refPlateNorm محسوبة وقت الفرز (تشتغل عبر شيتات إحالة متعددة)؛ fallback
+      // للحساب من عمود الإحالة الأساسي لنتايج قديمة محفوظة قبل الميزة.
+      const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
       if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
     }
     const map = new Map<string, number>();
@@ -456,6 +482,71 @@ export default function SortingPage() {
     setResults(null); setSorted(false); wipeSortResults();
   }
 
+  // ── شيتات الإحالة الإضافية ──
+  // يكتب الشيتات المرفوعة في slots متتابعة (referral-2, referral-3, ...) وبيمسح
+  // أي slots زايدة من مصفوفة أكبر قديمة. الصناديق الفاضية (بدون ملف) بتتخطى.
+  async function persistExtraSlots(arr: ExtraReferral[]) {
+    const filled = arr.filter((e) => e.table && e.file);
+    for (let i = 0; i < filled.length; i++) {
+      const slot = `referral-${i + 2}`;
+      const e = filled[i];
+      await saveUploadedFile({
+        key: `local:${slot}`, agentId: "local", slot,
+        fileName: e.file!.name, headers: e.table!.headers, rows: e.table!.rows,
+        uploadedAt: new Date().toISOString(), fileBlob: e.file!,
+      });
+    }
+    const lastWritten = filled.length + 1; // آخر رقم slot اتكتب (٢ = أول إضافي)
+    for (let n = lastWritten + 1; n <= extraHighWaterRef.current; n++) {
+      await deleteUploadedFile("local", `referral-${n}`);
+    }
+    extraHighWaterRef.current = Math.max(lastWritten, 1);
+  }
+
+  function onExtraReferralParsed(i: number, table: ExcelTable, file: File) {
+    setExtraReferrals((prev) => {
+      const next = prev.map((e, idx) => (idx === i ? { ...e, table, file } : e));
+      void persistExtraSlots(next);
+      return next;
+    });
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
+  function clearExtraReferral(i: number) {
+    setExtraReferrals((prev) => {
+      const next = prev.filter((_, idx) => idx !== i);
+      void persistExtraSlots(next);
+      return next;
+    });
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
+  function addReferralBox() {
+    setExtraReferrals((prev) => [...prev, { id: `ref-a${extraIdRef.current++}`, table: null, file: null }]);
+    setReferralBoxOpen(true);
+  }
+
+  // كل مصادر الإحالة (الأساسية + الإضافية) كـ ReferralSource للفرز الموحّد.
+  function collectRefSources(): ReferralSource[] {
+    const srcs: ReferralSource[] = [];
+    if (referralTable && effectiveReferralPlateCol) {
+      srcs.push({ rows: referralTable.rows, plateCol: effectiveReferralPlateCol, isArabic: referralPlateIsArabic });
+    }
+    for (const er of extraReferrals) {
+      if (!er.table) continue;
+      const arabicCol = detectArabicPlateColumn(er.table.headers);
+      const plateCol = arabicCol ?? detectPlateColumn(er.table.headers, er.table.rows);
+      if (!plateCol) continue;
+      srcs.push({ rows: er.table.rows, plateCol, isArabic: arabicCol !== null });
+    }
+    return srcs;
+  }
+
+  // إجمالي صفوف الإحالة عبر كل الشيتات (للعداد في نتيجة الفرز الكلي).
+  const totalReferralRows =
+    (referralTable?.rows.length ?? 0) +
+    extraReferrals.reduce((s, e) => s + (e.table?.rows.length ?? 0), 0);
+
   const persistAndSetTashyeek = useCallback(async (table: ExcelTable, file: File) => {
     // crash-safe (xlsx → CSV fallback); the stored blob is only for re-download
     const { blob } = buildSpreadsheetBlob(table.rows, "ملف التشييك");
@@ -502,22 +593,19 @@ export default function SortingPage() {
   }
 
   // ── Full sort ──
+  // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
+  // ملف الداتا → نتيجة واحدة مجمّعة.
   async function runFullSort() {
     if (!dataTable || !referralTable || !effectiveDataPlateCol || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
-      const refIndex = new Map<string, Record<string, string>>();
-      for (const row of referralTable.rows) {
-        const raw = String(row[effectiveReferralPlateCol] ?? "");
-        const n = referralPlateIsArabic
-          ? normalizePlate(raw)
-          : normalizePlate(bankPlateToArabic(raw));
-        if (!n || refIndex.has(n)) continue;
-        refIndex.set(n, row);
-        if (!referralPlateIsArabic && /[A-Za-z]/.test(raw)) {
-          const rev = reversePlateLetters(n);
-          if (rev !== n) refIndex.set(rev, row);
+      const refIndex = new Map<string, { row: Record<string, string>; norm: string }>();
+      for (const e of collectReferralEntries(collectRefSources())) {
+        if (!refIndex.has(e.norm)) refIndex.set(e.norm, { row: e.row, norm: e.norm });
+        if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
+          const rev = reversePlateLetters(e.norm);
+          if (rev !== e.norm && !refIndex.has(rev)) refIndex.set(rev, { row: e.row, norm: e.norm });
         }
       }
       const matches: MatchResult[] = [];
@@ -529,8 +617,8 @@ export default function SortingPage() {
           const dataRow = rows[j];
           const n = normalizePlate(bankPlateToArabic(String(dataRow[effectiveDataPlateCol] ?? "")));
           if (!n) continue;
-          const refRow = refIndex.get(n);
-          if (refRow) matches.push({ referralRow: refRow, dataRow, status: "exact" });
+          const hit = refIndex.get(n);
+          if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm });
         }
         if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
       }
@@ -540,8 +628,8 @@ export default function SortingPage() {
         for (const row of tashyeekTable.rows) {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
           if (!n) continue;
-          const refRow = refIndex.get(n);
-          if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
+          const hit = refIndex.get(n);
+          if (hit) tashyeekMatches.push({ tashyeekRow: row, referralRow: hit.row });
         }
         finalTashyeek = tashyeekMatches;
       }
@@ -553,6 +641,8 @@ export default function SortingPage() {
   }
 
   // ── New sort ──
+  // اللوحات الجديدة = لوحات الإحالة (كل الشيتات) غير الموجودة في ملف التشييك،
+  // وبعدين بتتطابق على ملف الداتا وعلى شيت السجلات → الجديد بس في النتيجة.
   async function runNewSort() {
     if (!dataTable || !referralTable || !checkTable || !effectiveDataPlateCol || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true);
@@ -564,17 +654,9 @@ export default function SortingPage() {
         if (!n) continue;
         checkSet.add(n);
       }
-      const seenNew = new Set<string>();
-      const newRefRows = referralTable.rows.filter((row) => {
-        const raw = String(row[effectiveReferralPlateCol] ?? "");
-        const n = referralPlateIsArabic
-          ? normalizePlate(raw)
-          : normalizePlate(bankPlateToArabic(raw));
-        if (!n || checkSet.has(n) || seenNew.has(n)) return false;
-        seenNew.add(n);
-        return true;
-      });
-      setNewPlatesCount(newRefRows.length);
+      // كل شيتات الإحالة مدموجة، ناقص اللي موجود في التشييك = الجديد.
+      const newEntries = collectReferralEntries(collectRefSources()).filter((e) => !checkSet.has(e.norm));
+      setNewPlatesCount(newEntries.length);
       // Track each data row's original position so results can be ordered the
       // same way as the data file (not the referral file) — cars at the same
       // location sit adjacent in the data file, so this keeps them grouped.
@@ -587,35 +669,28 @@ export default function SortingPage() {
         if (arr) arr.push({ row, dataIdx: i }); else dataIndex.set(n, [{ row, dataIdx: i }]);
       }
       const matches: (MatchResult & { dataIdx: number })[] = [];
-      for (const refRow of newRefRows) {
-        const raw = String(refRow[effectiveReferralPlateCol] ?? "");
-        const n = referralPlateIsArabic
-          ? normalizePlate(raw)
-          : normalizePlate(bankPlateToArabic(raw));
-        if (!n) continue;
-        const dataRows = dataIndex.get(n) ?? (
-          !referralPlateIsArabic && /[A-Za-z]/.test(raw)
-            ? dataIndex.get(reversePlateLetters(n))
+      for (const e of newEntries) {
+        const dataRows = dataIndex.get(e.norm) ?? (
+          !e.isArabic && /[A-Za-z]/.test(e.raw)
+            ? dataIndex.get(reversePlateLetters(e.norm))
             : undefined
         );
         if (dataRows) {
           for (const { row: dataRow, dataIdx } of dataRows) {
-            matches.push({ referralRow: refRow, dataRow, status: "exact", dataIdx });
+            matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm });
           }
         }
       }
       matches.sort((a, b) => a.dataIdx - b.dataIdx);
+      // شيت السجلات (الميداني): طابق اللوحات الجديدة عليه كمان.
       let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
-        for (const row of referralTable.rows) {
-          const raw = String(row[effectiveReferralPlateCol] ?? "");
-          const n = normalizePlate(bankPlateToArabic(raw));
-          if (!n || tashyeekRefIndex.has(n)) continue;
-          tashyeekRefIndex.set(n, row);
-          if (/[A-Za-z]/.test(raw)) {
-            const rev = reversePlateLetters(n);
-            if (rev !== n) tashyeekRefIndex.set(rev, row);
+        for (const e of newEntries) {
+          if (!tashyeekRefIndex.has(e.norm)) tashyeekRefIndex.set(e.norm, e.row);
+          if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
+            const rev = reversePlateLetters(e.norm);
+            if (rev !== e.norm && !tashyeekRefIndex.has(rev)) tashyeekRefIndex.set(rev, e.row);
           }
         }
         const tashyeekMatches: TashyeekResultRow[] = [];
@@ -629,7 +704,7 @@ export default function SortingPage() {
       }
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
-      persistSortResults(matches, finalTashyeek, "new", newRefRows.length);
+      persistSortResults(matches, finalTashyeek, "new", newEntries.length);
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
@@ -752,7 +827,7 @@ export default function SortingPage() {
     const rowObjects = matchedResults.map(buildRowObject);
     try {
       const rowColors = matchedResults.map((r) => {
-        const k = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+        const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
         const idx = plateColorMap.get(k);
         return idx !== undefined ? DUPE_COLORS[idx].hex : null;
       });
@@ -958,7 +1033,7 @@ export default function SortingPage() {
       </button>
       {referralBoxOpen && (<>
       <FileUploadBox
-        title="ملف الإحالة"
+        title={extraReferrals.length > 0 ? "ملف الإحالة 1" : "ملف الإحالة"}
         hint={sortMode === "new" ? "إحالة اليوم الجديدة" : "قائمة البنك بالسيارات المطلوبة"}
         parsedFile={referralFile}
         parsedRowCount={referralTable?.rows.length ?? null}
@@ -995,6 +1070,26 @@ export default function SortingPage() {
           )}
         </div>
       )}
+
+      {/* شيتات إحالة إضافية (إحالة ٢، ٣، ٤...) — بتتدمج كلها في فرز واحد */}
+      {extraReferrals.map((er, i) => (
+        <FileUploadBox
+          key={er.id}
+          title={`ملف الإحالة ${i + 2}`}
+          hint="إحالة إضافية تُدمج مع الأولى في نفس الفرز"
+          parsedFile={er.file}
+          parsedRowCount={er.table?.rows.length ?? null}
+          onParsed={(table, file) => onExtraReferralParsed(i, table, file)}
+          onClear={() => clearExtraReferral(i)}
+          showReplaceButtons
+        />
+      ))}
+
+      {/* زر إضافة شيت إحالة جديد */}
+      <button onClick={addReferralBox}
+        className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-primary/50 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10">
+        <Plus size={16} /> إضافة ملف إحالة
+      </button>
       </>)}
 
       {/* ⑤ SORT BUTTON */}
@@ -1023,8 +1118,10 @@ export default function SortingPage() {
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-surface p-3">
-                <p className="text-xl font-black text-ink">{referralTable?.rows.length ?? 0}</p>
-                <p className="text-xs text-muted">إجمالي الإحالة</p>
+                <p className="text-xl font-black text-ink">{totalReferralRows}</p>
+                <p className="text-xs text-muted">
+                  إجمالي الإحالة{extraReferrals.some((e) => e.table) ? ` (${collectRefSources().length} شيتات)` : ""}
+                </p>
               </div>
             )}
           </div>
