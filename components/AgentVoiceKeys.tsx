@@ -119,6 +119,10 @@ export default function AgentVoiceKeys({
           {engineBtn("deepgram", "Deepgram")}
           {engineBtn("speechmatics", "Speechmatics")}
         </div>
+        <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-brand">
+          <CheckCircle2 size={12} /> المندوب هيستخدم: {engine === "deepgram" ? "Deepgram" : "Speechmatics"}
+          <span className="font-normal text-muted">— بعد ما تدوس حفظ</span>
+        </p>
       </div>
 
       {/* Deepgram */}
