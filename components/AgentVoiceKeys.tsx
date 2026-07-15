@@ -22,15 +22,19 @@ export default function AgentVoiceKeys({
 }) {
   const [deepgram, setDeepgram] = useState(initial.deepgram ?? "");
   const [speechmatics, setSpeechmatics] = useState(initial.speechmatics ?? "");
+  const [soniox, setSoniox] = useState(initial.soniox ?? "");
   const [engine, setEngine] = useState<VoiceEngine>(initial.engine ?? "deepgram");
   const [email, setEmail] = useState(initial.email ?? "");
   const [password, setPassword] = useState(initial.password ?? "");
   const [showDg, setShowDg] = useState(false);
   const [showSm, setShowSm] = useState(false);
+  const [showSn, setShowSn] = useState(false);
   const [testDg, setTestDg] = useState<TestState>(null);
   const [testSm, setTestSm] = useState<TestState>(null);
+  const [testSn, setTestSn] = useState<TestState>(null);
   const [testingDg, setTestingDg] = useState(false);
   const [testingSm, setTestingSm] = useState(false);
+  const [testingSn, setTestingSn] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -76,9 +80,30 @@ export default function AgentVoiceKeys({
     finally { setTestingSm(false); }
   }
 
+  // اختبار Soniox: نفتح WS ونبعت config بالمفتاح — خطأ سريع = مرفوض، ومن غير
+  // خطأ خلال ٣ث = مقبول (المفتاح بيتحقّق في أول رسالة).
+  function testSoniox() {
+    const k = soniox.trim();
+    if (!k || testingSn) return;
+    setTestingSn(true); setTestSn(null);
+    let settled = false; let ws: WebSocket | null = null;
+    const finish = (r: TestState) => {
+      if (settled) return; settled = true; clearTimeout(t);
+      setTestingSn(false); setTestSn(r); try { ws?.close(); } catch { /* ignore */ }
+    };
+    const t = setTimeout(() => finish("ok"), 3000);
+    try {
+      ws = new WebSocket("wss://stt-rt.soniox.com/transcribe-websocket");
+      ws.onopen = () => { try { ws!.send(JSON.stringify({ api_key: k, model: "stt-rt-v5", audio_format: "s16le", sample_rate: 16000, num_channels: 1, language_hints: ["ar"] })); } catch { /* ignore */ } };
+      ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.error_code || m.error_message) finish("bad"); } catch { /* ignore */ } };
+      ws.onerror = () => finish("bad");
+      ws.onclose = (e) => { if (!settled && e.code !== 1000) finish("bad"); };
+    } catch { finish("bad"); }
+  }
+
   async function save() {
     const ok = await onSave({
-      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), engine,
+      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), soniox: soniox.trim(), engine,
       email: email.trim(), password,
     });
     if (ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
@@ -154,9 +179,10 @@ export default function AgentVoiceKeys({
         <div className="flex gap-2">
           {engineBtn("deepgram", "Deepgram")}
           {engineBtn("speechmatics", "Speechmatics")}
+          {engineBtn("soniox", "Soniox")}
         </div>
         <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-brand">
-          <CheckCircle2 size={12} /> المندوب هيستخدم: {engine === "deepgram" ? "Deepgram" : "Speechmatics"}
+          <CheckCircle2 size={12} /> المندوب هيستخدم: {engine === "deepgram" ? "Deepgram" : engine === "speechmatics" ? "Speechmatics" : "Soniox"}
           <span className="font-normal text-muted">— بعد ما تدوس حفظ</span>
         </p>
       </div>
@@ -171,6 +197,12 @@ export default function AgentVoiceKeys({
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "speechmatics" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
         <span className="text-xs font-bold text-ink">مفتاح Speechmatics</span>
         {keyRow(speechmatics, setSpeechmatics, showSm, setShowSm, testSpeechmatics, testingSm, testSm, "مفتاح Speechmatics", "https://portal.speechmatics.com/")}
+      </div>
+
+      {/* Soniox */}
+      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "soniox" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+        <span className="text-xs font-bold text-ink">مفتاح Soniox</span>
+        {keyRow(soniox, setSoniox, showSn, setShowSn, testSoniox, testingSn, testSn, "مفتاح Soniox", "https://console.soniox.com/")}
       </div>
 
       {/* بيانات حساب الخدمة (سجل للأدمن — ظاهرة وقابلة للنسخ) */}

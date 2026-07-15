@@ -153,7 +153,8 @@ export async function POST(req: NextRequest) {
         const clean = {
           deepgram: typeof sk.deepgram === "string" ? sk.deepgram.trim() : "",
           speechmatics: typeof sk.speechmatics === "string" ? sk.speechmatics.trim() : "",
-          engine: sk.engine === "speechmatics" ? "speechmatics" : "deepgram",
+          soniox: typeof sk.soniox === "string" ? sk.soniox.trim() : "",
+          engine: sk.engine === "speechmatics" ? "speechmatics" : sk.engine === "soniox" ? "soniox" : "deepgram",
           email: typeof sk.email === "string" ? sk.email.trim() : "",
           password: typeof sk.password === "string" ? sk.password : "",
         };
