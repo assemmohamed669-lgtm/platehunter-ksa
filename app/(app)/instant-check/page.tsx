@@ -10,7 +10,7 @@ import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
-import { getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { getActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
@@ -1679,9 +1679,10 @@ export default function InstantCheckPage() {
     setPttListening(true);
     startPttTimer();
 
-    // (١) الأولوية لـ Deepgram لو مفعّل — أدق تفريغ لحظي بالمصري (يشتغل على
-    // الويب والموبايل عبر getUserMedia، مش محتاج plugin native).
-    const dgKey = getDeepgramKey();
+    // (١) الأولوية لـ Deepgram لو مفعّل وشغّال — أدق تفريغ لحظي (يشتغل على
+    // الويب والموبايل عبر getUserMedia، مش محتاج plugin native). getActiveDeepgramKey
+    // بترجّع فاضي لو المستخدم موقفه مؤقتاً → بيرجع للمحرك التاني.
+    const dgKey = getActiveDeepgramKey();
     if (dgKey) {
       const ok = await startDeepgramPtt(dgKey);
       if (ok) return;

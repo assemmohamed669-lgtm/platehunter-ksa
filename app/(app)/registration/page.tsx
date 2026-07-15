@@ -32,7 +32,7 @@ import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
-import { getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { getActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
@@ -916,7 +916,7 @@ export default function RegistrationPage() {
     // ── Deepgram (الأولوية) — تفريغ لحظي مستمر أدق بالمصري، بيحفظ اللوحات
     // (لوحة/نوع/ملاحظة) فوراً أثناء الكلام عبر applySessionText. نفس مفتاح
     // تشييك صوت. لو البدء فشل بنكمّل بالمسارات التانية.
-    const dgKey = getDeepgramKey();
+    const dgKey = getActiveDeepgramKey();
     if (dgKey) {
       if (stoppingRef.current) {
         setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية.");
