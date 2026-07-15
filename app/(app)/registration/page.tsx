@@ -1415,6 +1415,7 @@ export default function RegistrationPage() {
         interim_results: "true", // نتائج حيّة أثناء الكلام (للعرض)
         smart_format: "false",
         punctuate: "false",
+        numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       // المتصفح مايقدرش يبعت هيدر Authorization على WebSocket — Deepgram بيدعم

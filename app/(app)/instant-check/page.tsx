@@ -1585,6 +1585,7 @@ export default function InstantCheckPage() {
         interim_results: "true", // نتائج حيّة أثناء الكلام
         smart_format: "false",
         punctuate: "false",
+        numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
