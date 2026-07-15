@@ -1597,20 +1597,11 @@ export default function InstantCheckPage() {
         if (!isListeningRef.current) { try { ws.close(); } catch {} return; }
         const rec = new MediaRecorder(stream, { mimeType: mime });
         dgRecorderRef.current = rec;
-        let prevChunk: Blob | null = null; // preroll: آخر جزء صمت قبل الكلام
-        let sentLast = false;
+        // إرسال متصل — صوت WebM تيار مترابط، فمنعش نرمي أجزاء (كان بيكسر التيار
+        // ويخلّي Deepgram يفرّغ غلط). البوابة (VAD) بقت للمؤشّر بس. توفير التكلفة
+        // هيترجّع بطريقة صحيحة (PCM خام) لاحقاً.
         rec.ondataavailable = (e) => {
-          if (e.data.size === 0 || ws.readyState !== WebSocket.OPEN) return;
-          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
-          if (speaking) {
-            // أول ما الكلام يبدأ، ابعت الجزء السابق كمان عشان بداية الكلمة ماتتقصّش.
-            if (!sentLast && prevChunk) { try { ws.send(prevChunk); } catch {} }
-            ws.send(e.data);
-            sentLast = true;
-          } else {
-            sentLast = false;
-          }
-          prevChunk = e.data;
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
         };
         rec.start(250); // يبعت جزء صوت كل 250ms
         // أثناء الصمت مانبعتش صوت — بس نبعت KeepAlive عشان Deepgram مايقفلش الاتصال.
@@ -2402,7 +2393,7 @@ export default function InstantCheckPage() {
                   {pttEngine === "deepgram" && (
                     <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
                       <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
-                      {pttMicActive ? "بيسمع الآن" : "صمت — مش بيتبعت"}
+                      {pttMicActive ? "بيسمع صوتك" : "هدوء"}
                     </span>
                   )}
                 </div>

@@ -1431,19 +1431,10 @@ export default function RegistrationPage() {
         if (!isRecordingRef.current) { try { ws.close(); } catch { /* closed */ } return; }
         const rec = new MediaRecorder(stream, { mimeType: mime });
         dgRecorderRef.current = rec;
-        let prevChunk: Blob | null = null; // preroll: آخر جزء صمت قبل الكلام
-        let sentLast = false;
+        // إرسال متصل — صوت WebM تيار مترابط، فمنعش نرمي أجزاء (كان بيكسر التيار
+        // ويخلّي Deepgram يفرّغ غلط). توفير التكلفة هيترجّع بطريقة صحيحة لاحقاً.
         rec.ondataavailable = (e) => {
-          if (e.data.size === 0 || ws.readyState !== WebSocket.OPEN) return;
-          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
-          if (speaking) {
-            if (!sentLast && prevChunk) { try { ws.send(prevChunk); } catch { /* closed */ } }
-            ws.send(e.data);
-            sentLast = true;
-          } else {
-            sentLast = false;
-          }
-          prevChunk = e.data;
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
         };
         rec.start(250); // يبعت جزء صوت كل 250ms
         // أثناء الصمت مانبعتش صوت — بس KeepAlive عشان Deepgram مايقفلش الاتصال.
