@@ -32,7 +32,7 @@ import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
-import { getActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
@@ -444,6 +444,11 @@ export default function RegistrationPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
+  // أي محرك تفريغ شغّال + هل بيسمع (VAD) — نفس مؤشّر تشييك صوت.
+  const [regEngine, setRegEngine] = useState<null | "deepgram" | "whisper" | "local">(null);
+  const [regMicActive, setRegMicActive] = useState(false);
+  // فيه مفتاح Deepgram محفوظ؟ (عشان التسجيل يشتغل حتى من غير مفتاح Groq).
+  const [hasDgKey, setHasDgKey] = useState(false);
 
   // Transcript captured from the last recording session, held until the user
   // presses "احفظ وصدّر الإكسيل" to extract + save plates from it.
@@ -561,6 +566,7 @@ export default function RegistrationPage() {
   const dgActiveRef = useRef(false); // الجلسة الحالية بتستخدم Deepgram؟ (للإيقاف)
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
@@ -588,6 +594,9 @@ export default function RegistrationPage() {
         setPinPrompt({ mode: "setup", onSuccess: () => {} });
       }
     } catch { /* storage unavailable */ }
+
+    // فيه مفتاح Deepgram؟ لو آه، التسجيل يشتغل حتى من غير مفتاح Groq.
+    try { setHasDgKey(getDeepgramKey().trim() !== ""); } catch { /* ignore */ }
 
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
@@ -957,6 +966,7 @@ export default function RegistrationPage() {
         isRecordingRef.current = true;
         setIsRecording(true);
         setDebugStatus("✅ STARTED (Groq Cloud)");
+        setRegEngine("whisper");
         groqChunksRef.current = [];
         groqChunkBusyRef.current = false;
 
@@ -1025,6 +1035,7 @@ export default function RegistrationPage() {
         isRecordingRef.current = true;
         gpsAtRecordRef.current = gpsService.getLastCoords();
         setDebugStatus("✅ STARTED (Native)");
+        setRegEngine("local");
 
         await SpeechRecognition.requestPermissions();
 
@@ -1082,7 +1093,7 @@ export default function RegistrationPage() {
     recognition.interimResults = true;
     recognition.maxAlternatives = 5;   // get several hypotheses, keep the most plate-like
 
-    recognition.onstart = () => { setDebugStatus("✅ STARTED"); };
+    recognition.onstart = () => { setDebugStatus("✅ STARTED"); setRegEngine("local"); };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
@@ -1134,6 +1145,8 @@ export default function RegistrationPage() {
     if (!isRecording) return;
     isRecordingRef.current = false;
     setIsRecording(false);
+    setRegEngine(null);
+    setRegMicActive(false);
 
     // ── Deepgram: أوقف البث، استنى آخر النتايج، اعمل flush نهائي واحفظ ──
     if (dgActiveRef.current) {
@@ -1141,6 +1154,7 @@ export default function RegistrationPage() {
       setIsTranscribing(true);
       try {
         if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+        if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
         try { dgGateRef.current?.close(); } catch { /* closed */ }
         dgGateRef.current = null;
         try { dgRecorderRef.current?.stop(); } catch { /* already stopped */ }
@@ -1427,6 +1441,7 @@ export default function RegistrationPage() {
       setIsRecording(true);
       gpsAtRecordRef.current = gpsService.getLastCoords();
       setDebugStatus("✅ STARTED (Deepgram)");
+      setRegEngine("deepgram");
 
       // ابدأ التسجيل فوراً (قبل ما الاتصال يفتح) عشان مانفقدش أول حرف أثناء فتح
       // الاتصال. الأجزاء قبل الفتح تتخزّن وتتبعت بالترتيب. تيار WebM مترابط
@@ -1456,6 +1471,10 @@ export default function RegistrationPage() {
             try { s.send(JSON.stringify({ type: "KeepAlive" })); } catch { /* closed */ }
           }
         }, 7000);
+        // مؤشّر "بيسمع" — بيعكس حالة بوابة الكلام (VAD) للعرض.
+        dgMicPollRef.current = setInterval(() => {
+          setRegMicActive(dgGateRef.current ? dgGateRef.current.isSpeaking() : true);
+        }, 150);
       };
       ws.onmessage = (ev) => {
         try {
@@ -2301,19 +2320,19 @@ export default function RegistrationPage() {
 
       {/* Main record button */}
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface py-6">
-        {!groqApiKey.trim() ? (
-          // إجبار: مايقدرش يسجّل صوت من غير مفتاح Groq الخاص بيه.
+        {!groqApiKey.trim() && !hasDgKey ? (
+          // إجبار: مايقدرش يسجّل صوت من غير مفتاح خاص بيه (Deepgram أو Groq).
           <div className="flex w-full flex-col items-center gap-3 px-4">
             <div className="flex h-24 w-24 items-center justify-center rounded-full bg-surface-2 opacity-60">
               <Mic size={36} className="text-muted" />
             </div>
             <div className="flex items-start gap-2 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2.5 text-center text-sm text-danger">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
-              <span dir="rtl">لازم تدخل <b>مفتاح Groq الخاص بيك</b> عشان تسجّل بالصوت — منعتمدش كلنا على مفتاح واحد.</span>
+              <span dir="rtl">لازم تدخل <b>مفتاح خاص بيك</b> عشان تسجّل بالصوت — <b>Deepgram</b> (الأدق، من صفحة المفاتيح) أو Groq. منعتمدش كلنا على مفتاح واحد.</span>
             </div>
-            <Link href="/groq"
+            <Link href="/keys/deepgram"
               className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-night transition active:scale-95">
-              <KeyRound size={16} /> أدخل مفتاح Groq
+              <KeyRound size={16} /> أدخل مفتاح Deepgram
             </Link>
           </div>
         ) : (
@@ -2340,6 +2359,27 @@ export default function RegistrationPage() {
                 <span className="absolute top-1 right-1 h-3 w-3 rounded-full bg-danger animate-pulse" />
               )}
             </button>
+
+            {/* مؤشّر المحرك النشط — نفس تشييك صوت */}
+            {isRecording && regEngine && (
+              <div className="flex flex-col items-center gap-1">
+                <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                  regEngine === "deepgram" ? "bg-brand/15 text-brand"
+                  : regEngine === "whisper" ? "bg-primary/15 text-primary"
+                  : "bg-alert/15 text-alert"
+                }`}>
+                  {regEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
+                   : regEngine === "whisper" ? "☁️ Whisper سحابي"
+                   : "⚠️ المحرك العادي — دقة أقل"}
+                </span>
+                {regEngine === "deepgram" && (
+                  <span className={`flex items-center gap-1 text-[11px] font-bold ${regMicActive ? "text-brand" : "text-muted"}`}>
+                    <span className={`h-2 w-2 rounded-full ${regMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
+                    {regMicActive ? "بيسمع صوتك" : "هدوء"}
+                  </span>
+                )}
+              </div>
+            )}
 
             {(isRecording || isTranscribing) && liveTranscript && (
               <div className="mx-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
