@@ -32,6 +32,7 @@ import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
+import { getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -552,6 +553,12 @@ export default function RegistrationPage() {
   const liveTranscriptRef  = useRef<string>("");
   const isRecordingRef     = useRef<boolean>(false); // ref so onend auto-restart sees current state
 
+  // ── Deepgram (تفريغ لحظي streaming — نفس مسار تشييك صوت) ──
+  const dgStreamRef = useRef<MediaStream | null>(null);
+  const dgSocketRef = useRef<WebSocket | null>(null);
+  const dgRecorderRef = useRef<MediaRecorder | null>(null);
+  const dgActiveRef = useRef(false); // الجلسة الحالية بتستخدم Deepgram؟ (للإيقاف)
+
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
 
@@ -903,6 +910,23 @@ export default function RegistrationPage() {
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
 
+    // ── Deepgram (الأولوية) — تفريغ لحظي مستمر أدق بالمصري، بيحفظ اللوحات
+    // (لوحة/نوع/ملاحظة) فوراً أثناء الكلام عبر applySessionText. نفس مفتاح
+    // تشييك صوت. لو البدء فشل بنكمّل بالمسارات التانية.
+    const dgKey = getDeepgramKey();
+    if (dgKey) {
+      if (stoppingRef.current) {
+        setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية.");
+        return;
+      }
+      if (!agentIdRef.current) {
+        setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك.");
+        return;
+      }
+      const ok = await startDeepgramRecording(dgKey);
+      if (ok) return;
+    }
+
     // ── Cloud transcription (Groq Whisper) — used when the agent configured
     // their own key. Captures raw audio instead of running the on-device
     // recognizer; the audio is sent to Groq in chunks (see GROQ_CHUNK_MS)
@@ -1108,6 +1132,48 @@ export default function RegistrationPage() {
     isRecordingRef.current = false;
     setIsRecording(false);
 
+    // ── Deepgram: أوقف البث، استنى آخر النتايج، اعمل flush نهائي واحفظ ──
+    if (dgActiveRef.current) {
+      dgActiveRef.current = false;
+      setIsTranscribing(true);
+      try {
+        try { dgRecorderRef.current?.stop(); } catch { /* already stopped */ }
+        try { dgSocketRef.current?.send(JSON.stringify({ type: "CloseStream" })); } catch { /* closed */ }
+        // استنى شوية عشان آخر نتايج نهائية توصل قبل ما نقفل السوكِت.
+        await new Promise((r) => setTimeout(r, 600));
+        try { dgSocketRef.current?.close(); } catch { /* closed */ }
+        try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* stopped */ }
+        dgRecorderRef.current = null; dgSocketRef.current = null; dgStreamRef.current = null;
+
+        // اللوحات اتحفظت أولاً بأول؛ استنى الطابور يخلّص، وبعدين flush نهائي
+        // للوحة اتقطعت في آخر جملة.
+        await sessionQueueRef.current;
+        const lastCoords = gpsService.getLastCoords() ?? gpsAtRecordRef.current;
+        await applySessionText("", lastCoords, null, true);
+        await sessionQueueRef.current;
+
+        const saved = sessionSavedCountRef.current;
+        if (saved > 0) {
+          setDebugStatus(`✅ اتحفظ ${saved} لوحة تلقائياً`);
+        } else if (sessionTranscriptRef.current.trim()) {
+          setPendingTranscript(sessionTranscriptRef.current.trim());
+          setDebugFinal(sessionTranscriptRef.current.trim());
+          setDebugStatus("✅ تم التفريغ — مفيش لوحات مكتملة، راجع النص تحت");
+        } else {
+          setRecordingError("مفيش كلام اتسجّل.");
+          setDebugStatus("❌ مفيش نتيجة");
+        }
+      } catch (err: any) {
+        setRecordingError(`تعذّر التفريغ اللحظي: ${err?.message ?? err}`);
+        setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
+      } finally {
+        setIsTranscribing(false);
+        setLiveTranscript("");
+        liveTranscriptRef.current = "";
+      }
+      return;
+    }
+
     // ── Cloud transcription (Groq Whisper) ──────────────────────────────
     if (groqApiKey.trim()) {
       // امنع بدء جلسة جديدة لحد ما القديمة تقفل بالكامل (الاتنين بيتصارعوا
@@ -1304,6 +1370,92 @@ export default function RegistrationPage() {
       } catch (err: unknown) {
         sessionFailedChunksRef.current++;
         setRecordingError(`جزء من التسجيل فشل تفريغه: ${(err as { message?: string })?.message ?? err}`);
+      }
+    });
+  }
+
+  // ── Deepgram: بث صوت لحظي (WebSocket) بموديل nova-3 لهجة مصرية مع تعزيز
+  // حروف اللوحة — بيحفظ اللوحات (لوحة/نوع/ملاحظة) فوراً عبر applySessionText
+  // (زي مسار Groq). يرجّع true لو بدأ بنجاح. ──
+  async function startDeepgramRecording(apiKey: string): Promise<boolean> {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      return false;
+    }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]
+      .find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+    if (!mime) return false;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      dgStreamRef.current = stream;
+
+      // تهيئة جلسة التحليل الحدثي (نفس مسار Groq) — سياق جديد، طابور فاضي.
+      sessionStateRef.current = newSessionState();
+      sessionQueueRef.current = Promise.resolve();
+      sessionCoordsRef.current = [gpsService.getLastCoords()];
+      sessionChunkIndexRef.current = 0;
+      sessionIdRef.current = uid();
+      sessionStartedAtRef.current = new Date().toISOString();
+      sessionTranscriptRef.current = "";
+      sessionEventsRef.current = [];
+      sessionSavedCountRef.current = 0;
+      sessionFailedChunksRef.current = 0;
+
+      const params = new URLSearchParams({
+        model: "nova-3",
+        language: "ar-EG",       // لهجة مصرية
+        interim_results: "true", // نتائج حيّة أثناء الكلام (للعرض)
+        smart_format: "false",
+        punctuate: "false",
+      });
+      for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
+      // المتصفح مايقدرش يبعت هيدر Authorization على WebSocket — Deepgram بيدعم
+      // تمرير المفتاح عبر الـ subprotocol: ["token", KEY].
+      const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`, ["token", apiKey]);
+      dgSocketRef.current = ws;
+      dgActiveRef.current = true;
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      gpsAtRecordRef.current = gpsService.getLastCoords();
+      setDebugStatus("✅ STARTED (Deepgram)");
+
+      ws.onopen = () => {
+        if (!isRecordingRef.current) { try { ws.close(); } catch { /* closed */ } return; }
+        const rec = new MediaRecorder(stream, { mimeType: mime });
+        dgRecorderRef.current = rec;
+        rec.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+        };
+        rec.start(250); // يبعت جزء صوت كل 250ms
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
+          if (!text) return;
+          setLiveTranscript(text);
+          setDebugRaw(text);
+          if (msg.is_final) enqueueDeepgramText(text);
+        } catch { /* رسالة مش JSON — تجاهل */ }
+      };
+      ws.onerror = () => setRecordingError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
+      return true;
+    } catch (err) {
+      dgActiveRef.current = false;
+      try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* stopped */ }
+      dgStreamRef.current = null;
+      setRecordingError(`تعذّر بدء التفريغ اللحظي: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  // كل نتيجة نهائية من Deepgram بتتحفظ بالترتيب عبر نفس طابور الجلسة عشان
+  // مايحصلش تعارض في الحفظ (نفس ضمان enqueueGroqChunk).
+  function enqueueDeepgramText(text: string) {
+    sessionQueueRef.current = sessionQueueRef.current.then(async () => {
+      try {
+        await applySessionText(text, gpsService.getLastCoords(), null, false);
+      } catch (err: unknown) {
+        setRecordingError(`تعذّر حفظ جزء من التفريغ: ${(err as { message?: string })?.message ?? err}`);
       }
     });
   }
