@@ -362,6 +362,9 @@ export default function InstantCheckPage() {
   // PTT
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
+  // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
+  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "whisper" | "local">(null);
+  const [pttMicActive, setPttMicActive] = useState(false);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
   // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
@@ -393,6 +396,7 @@ export default function InstantCheckPage() {
   const dgStreamRef = useRef<MediaStream | null>(null);
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1617,6 +1621,10 @@ export default function InstantCheckPage() {
             try { s.send(JSON.stringify({ type: "KeepAlive" })); } catch {}
           }
         }, 7000);
+        // مؤشّر "بيسمع" — بيعكس حالة بوابة الكلام (VAD) للعرض للمستخدم.
+        dgMicPollRef.current = setInterval(() => {
+          setPttMicActive(dgGateRef.current ? dgGateRef.current.isSpeaking() : true);
+        }, 150);
       };
       ws.onmessage = (ev) => {
         try {
@@ -1685,7 +1693,7 @@ export default function InstantCheckPage() {
     const dgKey = getActiveDeepgramKey();
     if (dgKey) {
       const ok = await startDeepgramPtt(dgKey);
-      if (ok) return;
+      if (ok) { setPttEngine("deepgram"); return; }
       // فشل البدء → نكمّل بالمسارات التانية.
     }
 
@@ -1698,7 +1706,7 @@ export default function InstantCheckPage() {
         const groqKey = getGroqKey();
         if (groqKey) {
           const ok = await startWhisperPtt(groqKey);
-          if (ok) return;
+          if (ok) { setPttEngine("whisper"); return; }
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { SpeechRecognition } = (await import("@capacitor-community/speech-recognition")) as any;
@@ -1723,6 +1731,7 @@ export default function InstantCheckPage() {
         // But a run of NOTHING-but-errors isn't transient anymore (broken plugin,
         // unsupported locale, permission revoked mid-session) — that must surface
         // an error instead of spinning the mic forever with no feedback.
+        setPttEngine("local");
         let consecutiveFailures = 0;
         const MAX_CONSECUTIVE_FAILURES = 10;
         while (isListeningRef.current) {
@@ -1775,6 +1784,7 @@ export default function InstantCheckPage() {
     recognition.interimResults = true;
     recognition.maxAlternatives = 5;   // get several hypotheses, keep the most plate-like
     recognitionRef.current = recognition;
+    setPttEngine("local");
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
@@ -1826,11 +1836,14 @@ export default function InstantCheckPage() {
     isListeningRef.current = false;
     setPttListening(false);
     setPttLiveText("");
+    setPttEngine(null);
+    setPttMicActive(false);
     stopPttTimer();
 
     // مسار Deepgram شغّال؟ وقّف المسجّل، اقفل السوكيت، وفلّش المحلّل.
     if (dgSocketRef.current || dgRecorderRef.current || dgStreamRef.current) {
       if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+      if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
       try { dgGateRef.current?.close(); } catch {}
       dgGateRef.current = null;
       try { dgRecorderRef.current?.stop(); } catch {}
@@ -2371,6 +2384,27 @@ export default function InstantCheckPage() {
                   <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
                   {String(Math.floor(pttSeconds / 60)).padStart(2, "0")}:
                   {String(pttSeconds % 60).padStart(2, "0")}
+                </div>
+              )}
+
+              {/* مؤشّر المحرك النشط — يبيّن للمستخدم أي محرك شغّال + هل بيسمعه دلوقتي */}
+              {pttListening && pttEngine && (
+                <div className="flex flex-col items-center gap-1">
+                  <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
+                    pttEngine === "deepgram" ? "bg-brand/15 text-brand"
+                    : pttEngine === "whisper" ? "bg-primary/15 text-primary"
+                    : "bg-alert/15 text-alert"
+                  }`}>
+                    {pttEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
+                     : pttEngine === "whisper" ? "☁️ Whisper سحابي"
+                     : "⚠️ المحرك العادي — دقة أقل"}
+                  </span>
+                  {pttEngine === "deepgram" && (
+                    <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
+                      <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
+                      {pttMicActive ? "بيسمع الآن" : "صمت — مش بيتبعت"}
+                    </span>
+                  )}
                 </div>
               )}
 
