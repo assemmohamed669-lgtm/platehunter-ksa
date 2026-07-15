@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, X, AlertTriangle, Power, Zap, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Eye, EyeOff, X, AlertTriangle, Power, Zap, Loader2, CheckCircle2, XCircle, Wallet, ExternalLink } from "lucide-react";
 import { getDeepgramKey, setDeepgramKey, isDeepgramEnabled, setDeepgramEnabled } from "@/lib/deepgramKey";
 
 /**
@@ -128,6 +128,15 @@ export default function DeepgramKeyEditor() {
             اضغط «تشغيل» عشان ترجع للدقة العالية. <span className="text-muted">— المفتاح لسه محفوظ، مش محتاج تكتبه تاني.</span>
           </span>
         </div>
+      )}
+
+      {/* زر يفتح رصيد Deepgram في الكونسول — المفتاح مايخرجش من الجهاز */}
+      {hasKey && (
+        <a href="https://console.deepgram.com/" target="_blank" rel="noopener noreferrer" dir="rtl"
+          className="mt-1 flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2 text-xs font-bold text-muted transition hover:border-primary hover:text-primary">
+          <Wallet size={15} /> شوف رصيدك المتبقّي في Deepgram
+          <ExternalLink size={12} className="opacity-70" />
+        </a>
       )}
 
       <div className="mt-1 rounded-lg bg-surface-2 p-2.5 text-[11px] leading-relaxed text-muted" dir="rtl">
