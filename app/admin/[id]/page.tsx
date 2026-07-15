@@ -9,12 +9,15 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
+import AgentVoiceKeys from "@/components/AgentVoiceKeys";
+import { normalizeServiceKeys, type ServiceKeys } from "@/lib/voiceKeys";
 
 interface Profile {
   id: string; username: string; email: string | null; phone: string | null;
   role: "admin" | "agent"; is_super: boolean; is_active: boolean; device_fingerprint: string | null;
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
+  service_keys: ServiceKeys | null;
 }
 interface SubEvent { id: string; new_end: string | null; months: number | null; amount: number | null; note: string | null; created_at: string; }
 
@@ -277,6 +280,17 @@ export default function AgentDetail() {
         </div>
 
         {msg && <div className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink">{msg}</div>}
+
+        {/* ── مفاتيح الصوت (الأدمن يوزّعها للمندوب) ── */}
+        <AgentVoiceKeys
+          initial={normalizeServiceKeys(p.service_keys)}
+          busy={busy}
+          onSave={async (sk) => {
+            const ok = await call("setKeys", { serviceKeys: sk });
+            if (ok) { setMsg("✅ اتحفظت مفاتيح الصوت للمندوب."); load(); }
+            return ok;
+          }}
+        />
 
         {/* Subscription */}
         {isAgent && (

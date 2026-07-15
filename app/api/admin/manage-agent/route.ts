@@ -147,6 +147,20 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
+      case "setKeys": {
+        // مفاتيح الصوت للمندوب (Deepgram/Speechmatics) + المحرك النشط الحصري.
+        const sk = (body.serviceKeys ?? {}) as Record<string, unknown>;
+        const clean = {
+          deepgram: typeof sk.deepgram === "string" ? sk.deepgram.trim() : "",
+          speechmatics: typeof sk.speechmatics === "string" ? sk.speechmatics.trim() : "",
+          engine: sk.engine === "speechmatics" ? "speechmatics" : "deepgram",
+        };
+        const { error } = await supabaseAdmin.from("profiles")
+          .update({ service_keys: clean }).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
       case "delete": {
         await supabaseAdmin.from("subscription_events").delete().eq("agent_id", agentId);
         await supabaseAdmin.from("profiles").delete().eq("id", agentId);

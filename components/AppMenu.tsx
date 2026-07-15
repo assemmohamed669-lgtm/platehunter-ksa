@@ -47,6 +47,7 @@ export default function AppMenu({
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false); // صفحة المفاتيح للأدمن بس
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -161,6 +162,7 @@ export default function AppMenu({
           const { data: prof } = await supabase.from("profiles")
             .select("role, subscription_end").eq("id", data.user.id).single();
           if (prof?.role === "agent") setSubEnd(prof.subscription_end ?? null);
+          setIsAdmin(prof?.role === "admin");
         }
       } catch { /* offline */ }
       setStats({ field: fieldEntries.length, wanted, rec });
@@ -316,10 +318,12 @@ export default function AppMenu({
 
           {/* ── أدوات ── */}
           <section className="flex flex-col gap-2 border-t border-border pt-3">
-            <Link href="/keys" onClick={() => onOpenChange(false)}
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
-              <KeyRound size={16} className="text-alert" /> المفاتيح
-            </Link>
+            {isAdmin && (
+              <Link href="/keys" onClick={() => onOpenChange(false)}
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+                <KeyRound size={16} className="text-alert" /> المفاتيح
+              </Link>
+            )}
             <button onClick={fullSync} disabled={syncing}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
               <CloudDownload size={16} className="text-primary" /> {syncing ? "جارٍ المزامنة..." : "مزامنة واسترجاع بياناتي"}

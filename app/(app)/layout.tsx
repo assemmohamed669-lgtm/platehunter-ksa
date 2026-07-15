@@ -11,6 +11,7 @@ import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import AppMenu from "@/components/AppMenu";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
+import { applyServiceKeys } from "@/lib/voiceKeys";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, isCutOff, GRACE_DAYS, type SubInfo } from "@/lib/subscription";
 
@@ -39,10 +40,14 @@ export default function AppShellLayout({
       if (!data.user) return;
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, is_active, subscription_end, is_trial")
+        .select("role, is_active, subscription_end, is_trial, service_keys")
         .eq("id", data.user.id)
         .single();
       setIsAdmin(profile?.role === "admin");
+      // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).
+      if (profile && (profile as { service_keys?: unknown }).service_keys != null) {
+        applyServiceKeys((profile as { service_keys?: unknown }).service_keys);
+      }
       if (profile && profile.role === "agent") {
         // حساب التجربة يتقطع فوراً بعد نهايته (بدون فترة سماح).
         const grace = profile.is_trial ? 0 : GRACE_DAYS;

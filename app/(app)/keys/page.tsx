@@ -2,16 +2,31 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { KeyRound, Mic, Navigation, ChevronLeft, AudioLines } from "lucide-react";
 import { getOrsKey } from "@/lib/orsKey";
 import { getDeepgramKey } from "@/lib/deepgramKey";
+import { supabase } from "@/lib/supabaseClient";
 
 const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
 
 export default function KeysPage() {
+  const router = useRouter();
   const [groqSet, setGroqSet] = useState(false);
   const [orsSet, setOrsSet] = useState(false);
   const [deepgramSet, setDeepgramSet] = useState(false);
+
+  // صفحة المفاتيح للأدمن بس — المندوب مفاتيحه بيديرها الأدمن، فمايوصلهاش.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+        if (prof?.role !== "admin") router.replace("/sorting");
+      } catch { /* offline — سيبها */ }
+    })();
+  }, [router]);
 
   useEffect(() => {
     try { setGroqSet(!!localStorage.getItem(LS_GROQ_API_KEY)); } catch { /* ignore */ }
