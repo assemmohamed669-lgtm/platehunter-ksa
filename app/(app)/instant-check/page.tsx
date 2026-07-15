@@ -10,6 +10,7 @@ import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
+import { getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
@@ -385,6 +386,10 @@ export default function InstantCheckPage() {
   const pttChunkBusyRef = useRef(false);            // جزء بيتبدّل/بيترفع دلوقتي؟
   const pttSessionStateRef = useRef<SessionState>(newSessionState()); // carry-over للمحلّل
   const pttRowIdxRef = useRef(0);                    // ترقيم فريد لصفوف نفس الملّي ثانية
+  // ── Deepgram streaming (لو فيه مفتاح Deepgram — أدق تفريغ بالمصري) ──
+  const dgSocketRef = useRef<WebSocket | null>(null);
+  const dgRecorderRef = useRef<MediaRecorder | null>(null);
+  const dgStreamRef = useRef<MediaStream | null>(null);
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1514,6 +1519,10 @@ export default function InstantCheckPage() {
   useEffect(() => () => {
     if (pttTimerRef.current) clearInterval(pttTimerRef.current);
     if (pttChunkTimerRef.current) clearInterval(pttChunkTimerRef.current);
+    // نظّف بث Deepgram لو الصفحة اتقفلت والمايك شغّال.
+    try { dgRecorderRef.current?.stop(); } catch {}
+    try { dgSocketRef.current?.close(); } catch {}
+    try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
   }, []);
 
   // مفتاح Groq المحفوظ (نفس بتاع التسجيل/الكاميرا) — لو موجود بنستخدم Whisper.
@@ -1541,6 +1550,64 @@ export default function InstantCheckPage() {
     const res = parseSessionChunk(text, pttSessionStateRef.current, { final });
     pttSessionStateRef.current = res.state;
     res.records.forEach((r) => addOnePttRow(r.plate, r.vehicleType, pttRowIdxRef.current++));
+  }
+
+  // مسار Deepgram: بث صوت مباشر (WebSocket) لـ Deepgram nova-3 بلهجة مصرية
+  // (ar-EG) مع تعزيز حروف اللوحة (keyterm) — تفريغ لحظي مستمر بدون تقطيع/فجوات.
+  // النتائج النهائية بتتغذّى على نفس محلّل الجلسة (متعدد اللوحات + carry-over).
+  async function startDeepgramPtt(apiKey: string): Promise<boolean> {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      return false;
+    }
+    // اختار صيغة تسجيل مدعومة (WebView أندرويد يدعم webm/opus).
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]
+      .find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+    if (!mime) return false;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      dgStreamRef.current = stream;
+      pttSessionStateRef.current = newSessionState();
+      pttRowIdxRef.current = 0;
+
+      const params = new URLSearchParams({
+        model: "nova-3",
+        language: "ar-EG",       // لهجة مصرية
+        interim_results: "true", // نتائج حيّة أثناء الكلام
+        smart_format: "false",
+        punctuate: "false",
+      });
+      for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
+      const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+      // المتصفح مايقدرش يبعت هيدر Authorization على WebSocket — Deepgram بيدعم
+      // تمرير المفتاح عبر الـ subprotocol: ["token", KEY].
+      const ws = new WebSocket(url, ["token", apiKey]);
+      dgSocketRef.current = ws;
+
+      ws.onopen = () => {
+        if (!isListeningRef.current) { try { ws.close(); } catch {} return; }
+        const rec = new MediaRecorder(stream, { mimeType: mime });
+        dgRecorderRef.current = rec;
+        rec.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+        };
+        rec.start(250); // يبعت جزء صوت كل 250ms
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
+          if (!text) return;
+          setPttLiveText(text);
+          // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
+          if (msg.is_final) processWhisperText(text, false);
+        } catch { /* رسالة مش JSON — تجاهل */ }
+      };
+      ws.onerror = () => setPttError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
+      return true;
+    } catch (err) {
+      setPttError(`تعذّر بدء التفريغ اللحظي: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
   }
 
   // مسار Whisper المتواصل: تسجيل متواصل، وكل ~7 ثواني نوقف المقطع الحالي ونشغّل
@@ -1585,6 +1652,15 @@ export default function InstantCheckPage() {
     isListeningRef.current = true;
     setPttListening(true);
     startPttTimer();
+
+    // (١) الأولوية لـ Deepgram لو مفعّل — أدق تفريغ لحظي بالمصري (يشتغل على
+    // الويب والموبايل عبر getUserMedia، مش محتاج plugin native).
+    const dgKey = getDeepgramKey();
+    if (dgKey) {
+      const ok = await startDeepgramPtt(dgKey);
+      if (ok) return;
+      // فشل البدء → نكمّل بالمسارات التانية.
+    }
 
     // Native (Capacitor)
     try {
@@ -1724,6 +1800,17 @@ export default function InstantCheckPage() {
     setPttListening(false);
     setPttLiveText("");
     stopPttTimer();
+
+    // مسار Deepgram شغّال؟ وقّف المسجّل، اقفل السوكيت، وفلّش المحلّل.
+    if (dgSocketRef.current || dgRecorderRef.current || dgStreamRef.current) {
+      try { dgRecorderRef.current?.stop(); } catch {}
+      try { dgSocketRef.current?.send(JSON.stringify({ type: "CloseStream" })); } catch {}
+      try { dgSocketRef.current?.close(); } catch {}
+      try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+      dgRecorderRef.current = null; dgSocketRef.current = null; dgStreamRef.current = null;
+      processWhisperText("", true); // flush أي لوحة مقطوعة في المحلّل
+      return;
+    }
 
     // مسار Whisper المتواصل شغّال؟ وقّف المؤقّت والمسجّل وفرّغ آخر مقطع (final).
     if (pttChunkTimerRef.current) {

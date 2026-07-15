@@ -2,21 +2,31 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { KeyRound, Mic, Navigation, ChevronLeft } from "lucide-react";
+import { KeyRound, Mic, Navigation, ChevronLeft, AudioLines } from "lucide-react";
 import { getOrsKey } from "@/lib/orsKey";
+import { getDeepgramKey } from "@/lib/deepgramKey";
 
 const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
 
 export default function KeysPage() {
   const [groqSet, setGroqSet] = useState(false);
   const [orsSet, setOrsSet] = useState(false);
+  const [deepgramSet, setDeepgramSet] = useState(false);
 
   useEffect(() => {
     try { setGroqSet(!!localStorage.getItem(LS_GROQ_API_KEY)); } catch { /* ignore */ }
     setOrsSet(!!getOrsKey());
+    setDeepgramSet(!!getDeepgramKey());
   }, []);
 
   const cards = [
+    {
+      href: "/keys/deepgram",
+      icon: AudioLines,
+      title: "مفتاح Deepgram",
+      desc: "تفريغ صوتي لحظي دقيق بالمصري (تشييك صوت)",
+      set: deepgramSet,
+    },
     {
       href: "/keys/groq",
       icon: Mic,
