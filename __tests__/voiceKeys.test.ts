@@ -8,7 +8,12 @@ describe("normalizeServiceKeys — تطبيع مفاتيح البروفايل", 
   });
   it("بيطبّع المفاتيح ويشيل الفراغات والافتراضي deepgram", () => {
     expect(normalizeServiceKeys({ deepgram: "  ab ", speechmatics: "cd " }))
-      .toEqual({ deepgram: "ab", speechmatics: "cd", engine: "deepgram" });
+      .toEqual({ deepgram: "ab", speechmatics: "cd", engine: "deepgram", email: "", password: "" });
+  });
+  it("بيمرّر إيميل وباسوورد حساب الخدمة", () => {
+    const n = normalizeServiceKeys({ email: "x@y.com", password: "p@ss" });
+    expect(n.email).toBe("x@y.com");
+    expect(n.password).toBe("p@ss");
   });
   it("engine=speechmatics بيتحفظ", () => {
     expect(normalizeServiceKeys({ deepgram: "x", engine: "speechmatics" }).engine).toBe("speechmatics");

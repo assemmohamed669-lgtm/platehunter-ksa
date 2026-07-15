@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink } from "lucide-react";
+import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink, Copy, Check, Mail, KeyRound } from "lucide-react";
 import type { ServiceKeys, VoiceEngine } from "@/lib/voiceKeys";
 
 /**
  * إدارة مفاتيح الصوت لمندوب — للأدمن فقط (جوه صفحة المندوب). محرّكين: Deepgram
- * و Speechmatics، واحد نشط بس (حصري). اختبار كل مفتاح من غير تسجيل. الحفظ بيمرّ
- * عبر onSave (API الأدمن) → بروفايل المندوب في Supabase → جهاز المندوب.
+ * و Speechmatics، واحد نشط بس (حصري). اختبار كل مفتاح + لينك للرصيد/الخطة تحته.
+ * + بيانات حساب الخدمة (إيميل/باسوورد) ظاهرة وقابلة للنسخ — سجل للأدمن.
  */
 type TestState = null | "ok" | "bad";
 
@@ -23,6 +23,8 @@ export default function AgentVoiceKeys({
   const [deepgram, setDeepgram] = useState(initial.deepgram ?? "");
   const [speechmatics, setSpeechmatics] = useState(initial.speechmatics ?? "");
   const [engine, setEngine] = useState<VoiceEngine>(initial.engine ?? "deepgram");
+  const [email, setEmail] = useState(initial.email ?? "");
+  const [password, setPassword] = useState(initial.password ?? "");
   const [showDg, setShowDg] = useState(false);
   const [showSm, setShowSm] = useState(false);
   const [testDg, setTestDg] = useState<TestState>(null);
@@ -30,6 +32,14 @@ export default function AgentVoiceKeys({
   const [testingDg, setTestingDg] = useState(false);
   const [testingSm, setTestingSm] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  function copy(field: string, value: string) {
+    if (!value.trim()) return;
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(field); setTimeout(() => setCopied(null), 1200);
+    }, () => { /* ignore */ });
+  }
 
   // اختبار Deepgram: نفتح نفس اتصال البث (WebSocket) — يفتح = المفتاح صح.
   function testDeepgram() {
@@ -67,7 +77,10 @@ export default function AgentVoiceKeys({
   }
 
   async function save() {
-    const ok = await onSave({ deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), engine });
+    const ok = await onSave({
+      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), engine,
+      email: email.trim(), password,
+    });
     if (ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
   }
 
@@ -82,12 +95,12 @@ export default function AgentVoiceKeys({
 
   const keyRow = (
     value: string, setValue: (v: string) => void, show: boolean, setShow: (b: boolean) => void,
-    onTest: () => void, testing: boolean, result: TestState, placeholder: string,
+    onTest: () => void, testing: boolean, result: TestState, placeholder: string, balanceUrl: string,
   ) => (
     <>
       <div className="flex items-center gap-1.5">
         <input type={show ? "text" : "password"} value={value}
-          onChange={(e) => { setValue(e.target.value); }} placeholder={placeholder} dir="ltr"
+          onChange={(e) => setValue(e.target.value)} placeholder={placeholder} dir="ltr"
           className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
         <button type="button" onClick={() => setShow(!show)}
           className="shrink-0 rounded-lg border border-border bg-surface-2 p-2 text-muted hover:text-primary transition">
@@ -103,7 +116,30 @@ export default function AgentVoiceKeys({
         {result === "ok" && <span className="flex items-center gap-1 text-xs font-bold text-brand"><CheckCircle2 size={13} /> شغّال ✓</span>}
         {result === "bad" && <span className="flex items-center gap-1 text-xs font-bold text-danger"><XCircle size={13} /> مرفوض</span>}
       </div>
+      {/* لينك للرصيد/الخطة المتبقّية تحت المفتاح */}
+      <a href={balanceUrl} target="_blank" rel="noopener noreferrer"
+        className="flex items-center gap-1 text-[11px] font-bold text-primary hover:underline">
+        <ExternalLink size={11} /> شوف الخطة والرصيد المتبقّي
+      </a>
     </>
+  );
+
+  // خانة إيميل/باسوورد الحساب — ظاهرة (نص عادي) + زر نسخ.
+  const credRow = (
+    label: string, icon: React.ReactNode, value: string, setValue: (v: string) => void,
+    field: string, placeholder: string,
+  ) => (
+    <div>
+      <label className="mb-1 flex items-center gap-1 text-[11px] text-muted">{icon} {label}</label>
+      <div className="flex items-center gap-1.5">
+        <input type="text" value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} dir="ltr"
+          className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+        <button type="button" onClick={() => copy(field, value)}
+          className="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs font-bold text-muted hover:text-primary hover:border-primary transition">
+          {copied === field ? <Check size={13} className="text-brand" /> : <Copy size={13} />} نسخ
+        </button>
+      </div>
+    </div>
   );
 
   return (
@@ -127,22 +163,21 @@ export default function AgentVoiceKeys({
 
       {/* Deepgram */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "deepgram" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-ink">مفتاح Deepgram</span>
-          <a href="https://console.deepgram.com/" target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[11px] text-primary"><ExternalLink size={11} /> الحساب/الرصيد</a>
-        </div>
-        {keyRow(deepgram, setDeepgram, showDg, setShowDg, testDeepgram, testingDg, testDg, "مفتاح Deepgram")}
+        <span className="text-xs font-bold text-ink">مفتاح Deepgram</span>
+        {keyRow(deepgram, setDeepgram, showDg, setShowDg, testDeepgram, testingDg, testDg, "مفتاح Deepgram", "https://console.deepgram.com/")}
       </div>
 
       {/* Speechmatics */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "speechmatics" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-ink">مفتاح Speechmatics</span>
-          <a href="https://portal.speechmatics.com/" target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[11px] text-primary"><ExternalLink size={11} /> الحساب/الرصيد</a>
-        </div>
-        {keyRow(speechmatics, setSpeechmatics, showSm, setShowSm, testSpeechmatics, testingSm, testSm, "مفتاح Speechmatics")}
+        <span className="text-xs font-bold text-ink">مفتاح Speechmatics</span>
+        {keyRow(speechmatics, setSpeechmatics, showSm, setShowSm, testSpeechmatics, testingSm, testSm, "مفتاح Speechmatics", "https://portal.speechmatics.com/")}
+      </div>
+
+      {/* بيانات حساب الخدمة (سجل للأدمن — ظاهرة وقابلة للنسخ) */}
+      <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-surface-2/40 p-2.5">
+        <span className="text-xs font-bold text-ink">بيانات حساب الخدمة (سجل للأدمن)</span>
+        {credRow("إيميل الحساب المسجّل بيه", <Mail size={12} />, email, setEmail, "email", "email@example.com")}
+        {credRow("باسوورد الحساب", <KeyRound size={12} />, password, setPassword, "password", "الباسوورد")}
       </div>
 
       <button onClick={save} disabled={busy}

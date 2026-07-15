@@ -16,6 +16,9 @@ export interface ServiceKeys {
   deepgram?: string;
   speechmatics?: string;
   engine?: VoiceEngine;
+  // بيانات حساب الخدمة للمندوب (سجل للأدمن بس — مش بتنزل لجهاز المندوب).
+  email?: string;
+  password?: string;
 }
 
 export function getSpeechmaticsKey(): string {
@@ -46,6 +49,8 @@ export function normalizeServiceKeys(sk: unknown): ServiceKeys {
     deepgram: typeof o.deepgram === "string" ? o.deepgram.trim() : "",
     speechmatics: typeof o.speechmatics === "string" ? o.speechmatics.trim() : "",
     engine: o.engine === "speechmatics" ? "speechmatics" : "deepgram",
+    email: typeof o.email === "string" ? o.email : "",
+    password: typeof o.password === "string" ? o.password : "",
   };
 }
 

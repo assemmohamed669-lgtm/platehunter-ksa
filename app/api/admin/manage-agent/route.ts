@@ -154,6 +154,8 @@ export async function POST(req: NextRequest) {
           deepgram: typeof sk.deepgram === "string" ? sk.deepgram.trim() : "",
           speechmatics: typeof sk.speechmatics === "string" ? sk.speechmatics.trim() : "",
           engine: sk.engine === "speechmatics" ? "speechmatics" : "deepgram",
+          email: typeof sk.email === "string" ? sk.email.trim() : "",
+          password: typeof sk.password === "string" ? sk.password : "",
         };
         const { error } = await supabaseAdmin.from("profiles")
           .update({ service_keys: clean }).eq("id", agentId);
