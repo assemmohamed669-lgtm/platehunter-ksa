@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, X, AlertTriangle, Power } from "lucide-react";
+import { Eye, EyeOff, X, AlertTriangle, Power, Zap, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { getDeepgramKey, setDeepgramKey, isDeepgramEnabled, setDeepgramEnabled } from "@/lib/deepgramKey";
 
 /**
@@ -12,12 +12,44 @@ export default function DeepgramKeyEditor() {
   const [key, setKey] = useState("");
   const [show, setShow] = useState(false);
   const [enabled, setEnabled] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<null | "ok" | "bad">(null);
 
   useEffect(() => { setKey(getDeepgramKey()); setEnabled(isDeepgramEnabled()); }, []);
 
   function change(v: string) {
     setKey(v);
     setDeepgramKey(v);
+    setTestResult(null); // أي تعديل يلغي نتيجة الاختبار القديمة
+  }
+
+  // اختبار المفتاح: بنفتح نفس اتصال البث اللي بيستخدمه التسجيل. لو المفتاح صحيح
+  // الاتصال بيفتح (onopen) → شغّال؛ لو غلط بيتقفل قبل ما يفتح → مرفوض. مفيش صوت
+  // بيتبعت فمفيش أي تكلفة. WebSocket بيعدّي CORS (على عكس REST) وبيختبر نفس المسار.
+  function testKey() {
+    const k = key.trim();
+    if (!k || testing) return;
+    setTesting(true);
+    setTestResult(null);
+    let settled = false;
+    let ws: WebSocket | null = null;
+    const finish = (r: "ok" | "bad") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      setTesting(false);
+      setTestResult(r);
+      try { ws?.close(); } catch { /* ignore */ }
+    };
+    const timer = setTimeout(() => finish("bad"), 8000);
+    try {
+      ws = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-3&language=ar", ["token", k]);
+      ws.onopen = () => finish("ok");
+      ws.onerror = () => finish("bad");
+      ws.onclose = () => finish("bad"); // قفل قبل onopen = فشل مصادقة
+    } catch {
+      finish("bad");
+    }
   }
 
   function toggleEnabled() {
@@ -56,6 +88,23 @@ export default function DeepgramKeyEditor() {
           <X size={14} />
         </button>
       </div>
+
+      {/* اختبار المفتاح — يأكّد إنه صحيح من غير ما تسجّل */}
+      {hasKey && (
+        <div className="mt-1 flex items-center gap-2" dir="rtl">
+          <button type="button" onClick={testKey} disabled={testing}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-muted transition hover:border-primary hover:text-primary disabled:opacity-50">
+            {testing ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+            {testing ? "جارٍ الاختبار..." : "اختبر المفتاح"}
+          </button>
+          {testResult === "ok" && (
+            <span className="flex items-center gap-1 text-xs font-bold text-brand"><CheckCircle2 size={14} /> المفتاح شغّال ✓</span>
+          )}
+          {testResult === "bad" && (
+            <span className="flex items-center gap-1 text-xs font-bold text-danger"><XCircle size={14} /> مرفوض — راجع المفتاح أو الإنترنت</span>
+          )}
+        </div>
+      )}
 
       {/* زر إيقاف/تشغيل مؤقت — يظهر بس لما فيه مفتاح محفوظ */}
       {hasKey && (
