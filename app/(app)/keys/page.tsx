@@ -2,35 +2,19 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { KeyRound, Mic, Navigation, ChevronLeft, AudioLines } from "lucide-react";
-import { getOrsKey } from "@/lib/orsKey";
+import { KeyRound, Mic, ChevronLeft, AudioLines } from "lucide-react";
 import { getDeepgramKey } from "@/lib/deepgramKey";
-import { supabase } from "@/lib/supabaseClient";
 
 const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
 
+// صفحة المفاتيح للكل — Deepgram و Groq بس (المفاتيح اللي المندوب بيدخلها بنفسه).
+// باقي محركات الصوت (Speechmatics/Soniox/OpenAI) بيديرها الأدمن من صفحة المندوب.
 export default function KeysPage() {
-  const router = useRouter();
   const [groqSet, setGroqSet] = useState(false);
-  const [orsSet, setOrsSet] = useState(false);
   const [deepgramSet, setDeepgramSet] = useState(false);
-
-  // صفحة المفاتيح للأدمن بس — المندوب مفاتيحه بيديرها الأدمن، فمايوصلهاش.
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getUser();
-        if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
-        if (prof?.role !== "admin") router.replace("/sorting");
-      } catch { /* offline — سيبها */ }
-    })();
-  }, [router]);
 
   useEffect(() => {
     try { setGroqSet(!!localStorage.getItem(LS_GROQ_API_KEY)); } catch { /* ignore */ }
-    setOrsSet(!!getOrsKey());
     setDeepgramSet(!!getDeepgramKey());
   }, []);
 
@@ -39,7 +23,7 @@ export default function KeysPage() {
       href: "/keys/deepgram",
       icon: AudioLines,
       title: "مفتاح Deepgram",
-      desc: "تفريغ صوتي لحظي دقيق بالمصري (تشييك صوت)",
+      desc: "تفريغ صوتي لحظي دقيق (تشييك صوت والتسجيل)",
       set: deepgramSet,
     },
     {
@@ -48,13 +32,6 @@ export default function KeysPage() {
       title: "مفتاح Groq",
       desc: "لدقّة التفريغ الصوتي وقراءة الكاميرا",
       set: groqSet,
-    },
-    {
-      href: "/keys/ors",
-      icon: Navigation,
-      title: "مفتاح OpenRouteService",
-      desc: "لوقت الوصول الدقيق بالطرق (اختياري)",
-      set: orsSet,
     },
   ];
 
