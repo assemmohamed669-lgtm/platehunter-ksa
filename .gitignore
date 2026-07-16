@@ -8,3 +8,8 @@ out/
 .env.local
 *.webm
 *.mp3
+
+# أسرار توقيع أندرويد — لازم تفضل محليّة، ما تترفعش على git
+android/keystore.properties
+*.keystore
+*.jks
