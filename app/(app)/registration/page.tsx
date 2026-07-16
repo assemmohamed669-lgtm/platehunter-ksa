@@ -59,6 +59,7 @@ import {
 } from "@/lib/idb";
 import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { fetchSharedCorrections, pushCorrection, flushPendingCorrections } from "@/lib/plateCorrectionsSync";
+import { type StructuredRow } from "@/lib/structuredPlates";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -468,6 +469,10 @@ export default function RegistrationPage() {
 
   // Audio playback
   const [playingId, setPlayingId] = useState<string | null>(null);
+  // ── تحليل ذكي (إعادة تفريغ الصوت المحفوظ بدقة أعلى + ترتيب لخانات) ──
+  const [reAnalyzing, setReAnalyzing] = useState(false);
+  const [reError, setReError] = useState<string | null>(null);
+  const [reResult, setReResult] = useState<null | { transcript: string; rows: StructuredRow[]; engineUsed: string; srcId: string }>(null);
   const [playSpeed, setPlaySpeed] = useState<Record<string, number>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -2225,6 +2230,71 @@ export default function RegistrationPage() {
   // whichever learner fits the kind of mistake this was, persists the
   // learned map, updates storage, and re-checks the corrected plate against
   // the check file in case the fix reveals a match.
+  // إعادة تحليل ذكي: بياخد صوت آخر جلسة محفوظ، يعيد تفريغه بالأداة المختارة
+  // (على السيرفر — مفيش قيود CORS) بدقة أعلى، ويرتّبه لصفوف {لوحة، نوع، ملاحظات}
+  // بالسياق الكامل. مش بيمسح حاجة — بيعرض النتيجة والمندوب يضيفها لو عجبته.
+  async function runReanalyze() {
+    if (reAnalyzing) return;
+    const withAudio = recordings.filter((r) => !r.isManual && r.audioBlobBase64);
+    const src = withAudio[withAudio.length - 1];
+    if (!src?.audioBlobBase64) { setReError("مفيش صوت محفوظ للتحليل — سجّل بالصوت الأول."); return; }
+    setReAnalyzing(true); setReError(null); setReResult(null);
+    try {
+      const eng = getVoiceEngine();
+      let transcribeKey = "";
+      if (eng === "openai") transcribeKey = getOpenaiKey();
+      else if (eng === "deepgram") transcribeKey = getDeepgramKey();
+      const res = await fetch("/api/reanalyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({
+          audio: src.audioBlobBase64,
+          mimeType: src.audioMimeType || "audio/mp4",
+          engine: eng,
+          transcribeKey,
+          groqKey: groqApiKey,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || (data.error && !Array.isArray(data.rows))) {
+        setReError(data.detail || data.error || "فشل التحليل — راجع المفتاح والإنترنت.");
+        return;
+      }
+      setReResult({ transcript: data.transcript || "", rows: data.rows || [], engineUsed: data.engineUsed || eng, srcId: src.localId });
+    } catch {
+      setReError("تعذّر الاتصال بالسيرفر.");
+    } finally {
+      setReAnalyzing(false);
+    }
+  }
+
+  // يحفظ صفوف التحليل الذكي كتسجيلات جديدة (يورّث الشارع/الحي/GPS من مصدر الصوت).
+  async function saveReanalyzed() {
+    if (!reResult || !agentIdRef.current) return;
+    const src = recordings.find((r) => r.localId === reResult.srcId);
+    for (const row of reResult.rows) {
+      const entry: RecordingEntry = {
+        localId: uid(),
+        agentId: agentIdRef.current,
+        plate: row.plate,
+        uncertain: row.needsReview || undefined,
+        vehicleType: row.vehicleType || undefined,
+        notes: row.notes || undefined,
+        lat: src?.lat,
+        lng: src?.lng,
+        street: src?.street,
+        district: src?.district,
+        recordedAt: new Date().toISOString(),
+        mapsLink: src?.mapsLink,
+        recorderName: recorderNameRef.current,
+        synced: false,
+      };
+      await saveRecording(entry);
+    }
+    setReResult(null);
+    await loadRecordings(agentIdRef.current);
+  }
+
   async function handlePlateEdit(localId: string, newPlate: string) {
     const entry = recordings.find((r) => r.localId === localId);
     if (!entry) return;
@@ -2649,7 +2719,59 @@ export default function RegistrationPage() {
         if (voiceRecs.length === 0 && !isTranscribing) return null;
         return (
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-bold text-ink" dir="rtl">التسجيلات الصوتية ({voiceRecs.length})</p>
+            <div className="flex flex-wrap items-center justify-between gap-2" dir="rtl">
+              <p className="text-sm font-bold text-ink">التسجيلات الصوتية ({voiceRecs.length})</p>
+              <button onClick={runReanalyze} disabled={reAnalyzing}
+                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
+                {reAnalyzing ? <RefreshCw size={13} className="animate-spin" /> : <span>🧠</span>}
+                {reAnalyzing ? "قيد التحليل الذكي..." : "تحليل ذكي (أدق)"}
+              </button>
+            </div>
+            {reError && <p className="text-xs text-danger" dir="rtl">{reError}</p>}
+            {reResult && (
+              <div className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3" dir="rtl">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-ink">
+                    نتيجة التحليل الذكي — {reResult.rows.length} لوحة{" "}
+                    <span className="font-normal text-muted">(محرك: {reResult.engineUsed})</span>
+                  </span>
+                  <button onClick={() => setReResult(null)} className="px-1 text-sm text-muted hover:text-danger">✕</button>
+                </div>
+                {reResult.rows.length > 0 ? (
+                  <>
+                    <div className="overflow-auto rounded-lg border border-border" style={{ maxHeight: "40vh" }}>
+                      <table className="w-full border-collapse text-xs" style={{ direction: "rtl" }}>
+                        <thead className="sticky top-0 bg-surface-2 text-muted">
+                          <tr>
+                            <th className="border-b border-l border-border px-2 py-1.5 text-right">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-2 py-1.5 text-right">النوع</th>
+                            <th className="border-b border-border px-2 py-1.5 text-right">ملاحظات</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reResult.rows.map((row, i) => (
+                            <tr key={i} className={i % 2 ? "bg-surface-2/40" : "bg-surface"}>
+                              <td className="border-b border-l border-border px-2 py-1.5 font-bold text-ink whitespace-nowrap">
+                                {row.plate}
+                                {row.needsReview && <span className="mr-1 rounded bg-alert/20 px-1 text-[9px] font-bold text-alert">راجع</span>}
+                              </td>
+                              <td className="border-b border-l border-border px-2 py-1.5 text-ink">{row.vehicleType || "—"}</td>
+                              <td className="border-b border-border px-2 py-1.5 text-ink">{row.notes || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button onClick={saveReanalyzed}
+                      className="rounded-lg bg-primary py-2 text-sm font-bold text-night transition hover:bg-primary/90">
+                      أضِف الـ {reResult.rows.length} صف للتسجيلات
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted">مطلعش لوحات من التحليل — جرّب محرك تاني، أو تأكد إن التسجيل فيه كلام واضح.</p>
+                )}
+              </div>
+            )}
             {isTranscribing && (
               <div className="flex items-center gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3" dir="rtl">
                 <RefreshCw size={15} className="animate-spin shrink-0 text-brand" />
