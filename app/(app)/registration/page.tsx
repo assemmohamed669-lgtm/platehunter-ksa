@@ -60,6 +60,7 @@ import {
 import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
 import { fetchSharedCorrections, pushCorrection, flushPendingCorrections } from "@/lib/plateCorrectionsSync";
 import { type StructuredRow } from "@/lib/structuredPlates";
+import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -477,6 +478,7 @@ export default function RegistrationPage() {
   const [sessionAudioTick, setSessionAudioTick] = useState(0); // يزيد لما صوت الجلسة يجهز
   const [reError, setReError] = useState<string | null>(null);
   const [reResult, setReResult] = useState<null | { transcript: string; rows: StructuredRow[]; engineUsed: string; srcId: string }>(null);
+  const [reZoom, setReZoom] = useState(3);
   // وضع التفريغ: «لحظي» (يفرّغ وإنت بتتكلم) أو «تسجيل ثم تحليل» (يسجّل وبعدين يحلّل تلقائي — أدق).
   const [analysisMode, setAnalysisMode] = useState<"live" | "afterRecord">("live");
   const prevRecordingRef = useRef(false);
@@ -2863,12 +2865,15 @@ export default function RegistrationPage() {
                     نتيجة التحليل الذكي — {reResult.rows.length} لوحة{" "}
                     <span className="font-normal text-muted">(محرك: {reResult.engineUsed})</span>
                   </span>
-                  <button onClick={() => setReResult(null)} className="px-1 text-sm text-muted hover:text-danger">✕</button>
+                  <div className="flex items-center gap-2">
+                    <ZoomControl zoom={reZoom} setZoom={setReZoom} />
+                    <button onClick={() => setReResult(null)} className="px-1 text-sm text-muted hover:text-danger">✕</button>
+                  </div>
                 </div>
                 {reResult.rows.length > 0 ? (
                   <>
                     <div className="overflow-auto rounded-lg border border-border" style={{ maxHeight: "40vh" }}>
-                      <table className="w-full border-collapse text-xs" style={{ direction: "rtl" }}>
+                      <table className="w-full border-collapse" style={{ direction: "rtl", fontSize: `${zoomFontPx(reZoom)}px` }}>
                         <thead className="sticky top-0 bg-surface-2 text-muted">
                           <tr>
                             <th className="border-b border-l border-border px-2 py-1.5 text-right">رقم اللوحة</th>

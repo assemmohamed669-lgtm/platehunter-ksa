@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ListFilter, Mic, MapPin, ScanLine } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine, Crosshair } from "lucide-react";
 
 const TABS = [
   { href: "/sorting", label: "الفرز", icon: ListFilter },
   { href: "/instant-check", label: "التشييك", icon: ScanLine },
   { href: "/registration", label: "التسجيل", icon: Mic },
   { href: "/maps", label: "الخرائط", icon: MapPin },
+  { href: "/wanted", label: "المطلوب", icon: Crosshair },
 ] as const;
 
 export default function BottomNav() {

@@ -17,6 +17,7 @@ import { startSoniox, type SonioxHandle } from "@/lib/sonioxRT";
 import { startOpenAI, type OpenAIHandle } from "@/lib/openaiRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
+import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
@@ -321,6 +322,7 @@ export default function InstantCheckPage() {
   const [manualSel, setManualSel] = useState<Set<string>>(new Set());
   const [manualCopiedId, setManualCopiedId] = useState<string | null>(null);
   const [manualExporting, setManualExporting] = useState(false);
+  const [manualZoom, setManualZoom] = useState(3);
 
   // Camera
   const [cameraImage, setCameraImage] = useState<string | null>(null);
@@ -868,6 +870,12 @@ export default function InstantCheckPage() {
   }
   function deleteManualSelected() {
     setManualDraft((prev) => prev.filter((e) => !manualSel.has(e.id)));
+    setManualSel(new Set());
+  }
+  function clearAllManualDraft() {
+    if (manualDraft.length === 0) return;
+    if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${manualDraft.length} لوحة من القائمة؟`)) return;
+    setManualDraft([]);
     setManualSel(new Set());
   }
 
@@ -2178,13 +2186,7 @@ export default function InstantCheckPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
                       <div className="flex items-center gap-1.5">
-                        <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
-                          className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
-                          <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
-                        </button>
-                        <PlateImagesButton title="لوحات التشييك (يدوي)"
-                          build={() => fieldEntryImgRows(sortNear(manualDraft))}
-                          className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
+                        <ZoomControl zoom={manualZoom} setZoom={setManualZoom} />
                         <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                           {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
                           {allSel ? "إلغاء الكل" : "تحديد الكل"}
@@ -2192,7 +2194,7 @@ export default function InstantCheckPage() {
                       </div>
                     </div>
                     <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
-                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
+                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${zoomFontPx(manualZoom)}px` }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
@@ -2264,6 +2266,12 @@ export default function InstantCheckPage() {
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-40 active:scale-95"
                     >
                       <Download size={16} /> {manualExporting ? "جاري التصدير..." : `تصدير ${manualDraft.length} لوحة للسجلات`}
+                    </button>
+                    <button
+                      onClick={clearAllManualDraft}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-2.5 text-sm font-bold text-danger transition active:scale-95"
+                    >
+                      <Trash2 size={16} /> مسح الكل
                     </button>
                   </div>
                 );
