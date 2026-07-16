@@ -73,6 +73,7 @@ const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض",
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
 const LS_ANALYSIS_MODE = "ph:registration:analysisMode";
+const LS_PACER = "ph:registration:pacer";
 
 // Vercel rejects any serverless function request over 4.5MB — at this
 // recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio, so 180s
@@ -480,6 +481,10 @@ export default function RegistrationPage() {
   const [analysisMode, setAnalysisMode] = useState<"live" | "afterRecord">("live");
   const prevRecordingRef = useRef(false);
   const pendingAutoAnalyzeRef = useRef(false);
+  // منظّم الإيقاع: اهتزاز + نبضة بصرية بين اللوحات (بدون صوت — مايأثّرش على التفريغ).
+  const [pacerOn, setPacerOn] = useState(false);
+  const [pacerSec, setPacerSec] = useState(3);
+  const [pacerPulse, setPacerPulse] = useState(false);
   function changeAnalysisMode(m: "live" | "afterRecord") {
     setAnalysisMode(m);
     try { localStorage.setItem(LS_ANALYSIS_MODE, m); } catch { /* ignore */ }
@@ -499,6 +504,23 @@ export default function RegistrationPage() {
     const t = setTimeout(() => { void runReanalyze(); }, 300);
     return () => clearTimeout(t);
   }, [recordings, sessionAudioTick]);
+
+  function savePacer(on: boolean, sec: number) {
+    setPacerOn(on); setPacerSec(sec);
+    try { localStorage.setItem(LS_PACER, JSON.stringify({ on, sec })); } catch { /* ignore */ }
+  }
+  // نبضة الإيقاع: اهتزاز + وميض بصري كل X ثانية أثناء التسجيل — بدون أي صوت، فمايدخلش
+  // على الميكروفون ولا يأثّر على التفريغ. بس بينظّم المندوب: قول لوحة كل نبضة.
+  useEffect(() => {
+    if (!isRecording || !pacerOn) { setPacerPulse(false); return; }
+    const ms = Math.max(1500, pacerSec * 1000);
+    const id = setInterval(() => {
+      try { navigator.vibrate?.(90); } catch { /* مايدعمش الاهتزاز */ }
+      setPacerPulse(true);
+      window.setTimeout(() => setPacerPulse(false), 500);
+    }, ms);
+    return () => clearInterval(id);
+  }, [isRecording, pacerOn, pacerSec]);
   const [playSpeed, setPlaySpeed] = useState<Record<string, number>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -637,6 +659,14 @@ export default function RegistrationPage() {
     try {
       const m = localStorage.getItem(LS_ANALYSIS_MODE);
       if (m === "afterRecord" || m === "live") setAnalysisMode(m);
+    } catch { /* ignore */ }
+
+    try {
+      const p = JSON.parse(localStorage.getItem(LS_PACER) || "null");
+      if (p && typeof p === "object") {
+        if (typeof p.on === "boolean") setPacerOn(p.on);
+        if (typeof p.sec === "number" && p.sec >= 2 && p.sec <= 6) setPacerSec(p.sec);
+      }
     } catch { /* ignore */ }
 
     // التعلّم المشترك: ابعت أي تصحيحات متعلّقة (أوفلاين)، وحمّل تعلّم الفريق من السيرفر.
@@ -2643,6 +2673,28 @@ export default function RegistrationPage() {
               </p>
             </div>
 
+            {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
+            <div className="flex w-full max-w-xs flex-col items-center gap-1">
+              <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2" dir="rtl">
+                <span className="text-xs font-bold text-ink">منظّم الإيقاع (اهتزاز)</span>
+                <button type="button" onClick={() => savePacer(!pacerOn, pacerSec)}
+                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${pacerOn ? "bg-primary text-night" : "border border-border text-muted"}`}>
+                  {pacerOn ? "شغّال" : "مطفي"}
+                </button>
+              </div>
+              {pacerOn && (
+                <div className="flex items-center gap-1" dir="rtl">
+                  <span className="text-[10px] text-muted">نبضة كل:</span>
+                  {[2, 3, 4, 5].map((s) => (
+                    <button key={s} type="button" onClick={() => savePacer(true, s)}
+                      className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${pacerSec === s ? "bg-primary text-night" : "border border-border text-muted"}`}>
+                      {s}ث
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => isRecording ? stopRecording() : startRecording()}
               disabled={isTranscribing}
@@ -2665,6 +2717,13 @@ export default function RegistrationPage() {
                 <span className="absolute top-1 right-1 h-3 w-3 rounded-full bg-danger animate-pulse" />
               )}
             </button>
+
+            {/* نبضة منظّم الإيقاع — "قول اللوحة دلوقتي" (اهتزاز + وميض، بدون صوت) */}
+            {isRecording && pacerOn && (
+              <div className={`rounded-full px-5 py-2 text-sm font-black transition-all duration-150 ${pacerPulse ? "scale-110 bg-brand text-night shadow-brand-glow" : "bg-surface-2 text-muted"}`} dir="rtl">
+                {pacerPulse ? "🔵 قول اللوحة" : "…"}
+              </div>
+            )}
 
             {/* مؤشّر المحرك النشط — نفس تشييك صوت */}
             {isRecording && regEngine && (
