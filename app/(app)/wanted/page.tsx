@@ -68,8 +68,10 @@ export default function WantedPage() {
       if (!checkCol) { setError("مش لاقي عمود اللوحة في ملف التشييك."); setSorting(false); return; }
 
       // أعمدة الماركة والبنك/الشركة من شيت التشييك.
-      const brandCol = findHeader(checkRec.headers, ["ماركة", "الماركه", "طراز", "صانع", "vehicle name"]);
-      const bankCol = findHeader(checkRec.headers, ["بنك", "البنك", "شرك", "جهة", "تمويل", "bank", "agency"]);
+      const brandCol = findHeader(checkRec.headers, ["ماركة", "الماركه", "صانع", "vehicle name"]);
+      const bankCol = findHeader(checkRec.headers, ["بنك", "البنك", "شرك", "جهة", "تمويل", "bank", "agency", "f-account"]);
+      // نوع السيارة (النوع/نوع السيارة/الطراز/الموديل...) — بأي اسم عمود قريب.
+      const checkTypeCol = findHeader(checkRec.headers, ["نوع", "طراز", "موديل", "model"]);
 
       // قائمة المطلوبين المطبّعة + صف كل لوحة (لجلب الماركة/البنك).
       const wanted = new Set<string>();
@@ -82,6 +84,7 @@ export default function WantedPage() {
       }
       const brandOf = (norm: string) => (brandCol ? String(checkRowByNorm.get(norm)?.[brandCol] ?? "").trim() : "");
       const bankOf = (norm: string) => (bankCol ? String(checkRowByNorm.get(norm)?.[bankCol] ?? "").trim() : "");
+      const typeOf = (norm: string) => (checkTypeCol ? String(checkRowByNorm.get(norm)?.[checkTypeCol] ?? "").trim() : "");
 
       // (١) مطابقة على شيت الداتا — بترتيب الداتا (مناطق تحت بعضها).
       const dRows: WantedRow[] = [];
@@ -102,7 +105,7 @@ export default function WantedPage() {
               id: `d${i++}`,
               plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
               norm,
-              type: (typeCol ? String(row[typeCol] ?? "").trim() : "") || "",
+              type: (typeCol ? String(row[typeCol] ?? "").trim() : "") || typeOf(norm),
               brand: brandOf(norm) || (brandColD ? String(row[brandColD] ?? "").trim() : ""),
               bank: bankOf(norm),
               street: streetCol ? String(row[streetCol] ?? "").trim() : "",
@@ -126,7 +129,7 @@ export default function WantedPage() {
           id: `r${j++}`,
           plate: bankPlateToArabic(e.plate).trim() || e.plate,
           norm,
-          type: (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim(),
+          type: (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim() || typeOf(norm),
           brand: brandOf(norm),
           bank: bankOf(norm),
           street: (e.row?.["الشارع"] || "").trim(),
