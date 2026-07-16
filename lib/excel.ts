@@ -436,6 +436,8 @@ export function buildExcelBlob(
   watermark?: WatermarkInfo
 ): Blob {
   const ws = XLSX.utils.json_to_sheet(rows);
+  // المحتوى عربي واللوحات عربية → افتح الورقة من اليمين لليسار (RTL).
+  ws["!views"] = [{ RTL: true }];
 
   // Make URL cells proper hyperlinks
   const ref = ws["!ref"];

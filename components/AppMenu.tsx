@@ -16,8 +16,8 @@ import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { subStatus } from "@/lib/subscription";
 import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
+import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 
-const APP_VERSION = "0.3.0";
 const DEFAULT_BG = "#F3F5F7";
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
@@ -167,24 +167,6 @@ export default function AppMenu({
     })().catch(() => {});
   }, [open]);
 
-  // Clear caches + fetch the latest bundle from the server.
-  async function refreshApp() {
-    try {
-      if (typeof caches !== "undefined") {
-        const keys = await caches.keys();
-        await Promise.all(keys.map((k) => caches.delete(k)));
-      }
-    } catch { /* caches unavailable */ }
-    try {
-      const regs = await navigator.serviceWorker?.getRegistrations?.();
-      if (regs) await Promise.all(regs.map((r) => r.unregister()));
-    } catch { /* no SW */ }
-    // Cache-busting reload so the WebView pulls the freshest bundle.
-    const u = new URL(window.location.href);
-    u.searchParams.set("_r", String(Date.now()));
-    window.location.replace(u.toString());
-  }
-
   // مزامنة كاملة في الاتجاهين: يرفع اللي على الجهاز للسيرفر، ويسحب اللي على
   // السيرفر للجهاز (استرجاع). بيشتغل من أي مكان — مفيد بعد تغيير التليفون.
   async function fullSync() {
@@ -299,9 +281,9 @@ export default function AppMenu({
           <section className="border-t border-border pt-3">
             <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-muted"><BarChart3 size={14} /> إحصائيات</div>
             <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface-2 p-2 text-center">
-              <div><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></div>
-              <div><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></div>
-              <div><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></div>
+              <Link href="/list?type=records" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></Link>
+              <Link href="/list?type=wanted" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></Link>
+              <Link href="/list?type=voice" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></Link>
             </div>
             {subEnd && (() => {
               const s = subStatus(subEnd);
@@ -328,7 +310,7 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Download size={16} className="text-brand" /> نسخة احتياطية
             </Link>
-            <button onClick={refreshApp}
+            <button onClick={() => refreshAppNow()}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <RefreshCw size={16} className="text-primary" /> تحديث التطبيق (آخر نسخة)
             </button>
