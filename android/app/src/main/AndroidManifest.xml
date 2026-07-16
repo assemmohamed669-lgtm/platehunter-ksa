@@ -62,4 +62,6 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- منظّم الإيقاع: الاهتزاز أثناء التسجيل. محتاج بناء APK جديد عشان يتفعّل. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>
