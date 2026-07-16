@@ -8,9 +8,14 @@ export const metadata: Metadata = {
   title: "قناص اللوحات | PlateHunter KSA",
   description: "تطبيق ميداني لفرق استرداد المركبات في السعودية",
   manifest: "/manifest.json",
+  // فتح ملء الشاشة على iOS عند «إضافة إلى الشاشة الرئيسية» (زي تطبيق فعلي).
+  appleWebApp: {
+    capable: true,
+    title: "قناص اللوحات",
+    statusBarStyle: "black-translucent",
+  },
   icons: [
     { rel: "icon", url: "/icon.svg", type: "image/svg+xml" },
-    { rel: "apple-touch-icon", url: "/icon-192.png" },
   ],
 };
 
