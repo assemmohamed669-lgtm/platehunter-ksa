@@ -472,6 +472,8 @@ export default function RegistrationPage() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   // ── تحليل ذكي (إعادة تفريغ الصوت المحفوظ بدقة أعلى + ترتيب لخانات) ──
   const [reAnalyzing, setReAnalyzing] = useState(false);
+  const [regLevel, setRegLevel] = useState(0);          // مستوى الصوت (٠..١) للمؤشّر
+  const [sessionAudioTick, setSessionAudioTick] = useState(0); // يزيد لما صوت الجلسة يجهز
   const [reError, setReError] = useState<string | null>(null);
   const [reResult, setReResult] = useState<null | { transcript: string; rows: StructuredRow[]; engineUsed: string; srcId: string }>(null);
   // وضع التفريغ: «لحظي» (يفرّغ وإنت بتتكلم) أو «تسجيل ثم تحليل» (يسجّل وبعدين يحلّل تلقائي — أدق).
@@ -491,11 +493,12 @@ export default function RegistrationPage() {
   // أول ما التسجيلات تستقر بعد التوقّف (الصوت اتحفظ) → شغّل التحليل الذكي مرة واحدة.
   useEffect(() => {
     if (!pendingAutoAnalyzeRef.current) return;
-    if (!recordings.some((r) => !r.isManual && r.audioBlobBase64)) return;
+    const hasAudio = !!lastSessionAudioRef.current || recordings.some((r) => !r.isManual && r.audioBlobBase64);
+    if (!hasAudio) return;
     pendingAutoAnalyzeRef.current = false;
     const t = setTimeout(() => { void runReanalyze(); }, 300);
     return () => clearTimeout(t);
-  }, [recordings]);
+  }, [recordings, sessionAudioTick]);
   const [playSpeed, setPlaySpeed] = useState<Record<string, number>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -605,6 +608,8 @@ export default function RegistrationPage() {
   const dgRecorderRef = useRef<MediaRecorder | null>(null);
   const dgActiveRef = useRef(false); // الجلسة الحالية بتستخدم Deepgram؟ (للإيقاف)
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
+  const dgChunksRef = useRef<Blob[]>([]);              // نسخة كاملة من صوت Deepgram لـ«تحليل ذكي»
+  const lastSessionAudioRef = useRef<{ base64: string; mimeType: string } | null>(null);
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
@@ -982,6 +987,7 @@ export default function RegistrationPage() {
     setDebugStatus("");
     finalTranscriptRef.current = "";
     liveTranscriptRef.current  = "";
+    lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
     // ── Speechmatics (لو هو المحرك المختار) — نفس مسار الحفظ الحدثي.
     if (getVoiceEngine() === "speechmatics" && getSpeechmaticsKey()) {
@@ -1636,15 +1642,29 @@ export default function RegistrationPage() {
       // فمنعش نرمي أجزاء.
       const rec = new MediaRecorder(stream, { mimeType: mime });
       dgRecorderRef.current = rec;
+      dgChunksRef.current = [];             // نجمّع الصوت كامل عشان «تحليل ذكي» يعيد تفريغه بدقة
+      lastSessionAudioRef.current = null;
       const pending: Blob[] = [];
       rec.ondataavailable = (e) => {
         if (e.data.size === 0) return;
+        dgChunksRef.current.push(e.data);   // نسخة للتحليل الذكي (بره البث اللحظي)
         if (ws.readyState === WebSocket.OPEN) {
           while (pending.length) { try { ws.send(pending.shift()!); } catch { /* closed */ } }
           ws.send(e.data);
         } else {
           pending.push(e.data);
         }
+      };
+      // أول ما التسجيل يقف، نجمّع الصوت الكامل ونحوّله base64 عشان «تحليل ذكي».
+      rec.onstop = () => {
+        if (dgChunksRef.current.length === 0) return;
+        const blob = new Blob(dgChunksRef.current, { type: mime });
+        blob.arrayBuffer()
+          .then((ab) => {
+            lastSessionAudioRef.current = { base64: uint8ToBase64(new Uint8Array(ab)), mimeType: mime };
+            setSessionAudioTick((t) => t + 1);
+          })
+          .catch(() => { /* تعذّر التجميع — تحليل ذكي هيرجع لصوت محفوظ لو موجود */ });
       };
       rec.start(250); // يبعت جزء صوت كل 250ms
 
@@ -1662,6 +1682,7 @@ export default function RegistrationPage() {
         // مؤشّر "بيسمع" — بيعكس حالة بوابة الكلام (VAD) للعرض.
         dgMicPollRef.current = setInterval(() => {
           setRegMicActive(dgGateRef.current ? dgGateRef.current.isSpeaking() : true);
+          setRegLevel(dgGateRef.current ? dgGateRef.current.level() : 0);
         }, 150);
       };
       ws.onmessage = (ev) => {
@@ -2263,9 +2284,17 @@ export default function RegistrationPage() {
   // بالسياق الكامل. مش بيمسح حاجة — بيعرض النتيجة والمندوب يضيفها لو عجبته.
   async function runReanalyze() {
     if (reAnalyzing) return;
-    const withAudio = recordings.filter((r) => !r.isManual && r.audioBlobBase64);
-    const src = withAudio[withAudio.length - 1];
-    if (!src?.audioBlobBase64) { setReError("مفيش صوت محفوظ للتحليل — سجّل بالصوت الأول."); return; }
+    // مصدر الصوت: الأفضل صوت آخر جلسة اتسجّلت للتو؛ وإلا صوت محفوظ في تسجيل.
+    let audioB64 = lastSessionAudioRef.current?.base64;
+    let audioMime = lastSessionAudioRef.current?.mimeType || "audio/mp4";
+    if (!audioB64) {
+      const saved = recordings.filter((r) => !r.isManual && r.audioBlobBase64);
+      const s = saved[saved.length - 1];
+      audioB64 = s?.audioBlobBase64;
+      audioMime = s?.audioMimeType || "audio/mp4";
+    }
+    if (!audioB64) { setReError("مفيش صوت محفوظ للتحليل — سجّل بالصوت الأول."); return; }
+    const geoSrc = recordings.filter((r) => !r.isManual).slice(-1)[0]; // موقع الصفوف الجديدة
     setReAnalyzing(true); setReError(null); setReResult(null);
     try {
       const eng = getVoiceEngine();
@@ -2275,20 +2304,14 @@ export default function RegistrationPage() {
       const res = await fetch("/api/reanalyze", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(await authHeader()) },
-        body: JSON.stringify({
-          audio: src.audioBlobBase64,
-          mimeType: src.audioMimeType || "audio/mp4",
-          engine: eng,
-          transcribeKey,
-          groqKey: groqApiKey,
-        }),
+        body: JSON.stringify({ audio: audioB64, mimeType: audioMime, engine: eng, transcribeKey, groqKey: groqApiKey }),
       });
       const data = await res.json();
       if (!res.ok || (data.error && !Array.isArray(data.rows))) {
         setReError(data.detail || data.error || "فشل التحليل — راجع المفتاح والإنترنت.");
         return;
       }
-      setReResult({ transcript: data.transcript || "", rows: data.rows || [], engineUsed: data.engineUsed || eng, srcId: src.localId });
+      setReResult({ transcript: data.transcript || "", rows: data.rows || [], engineUsed: data.engineUsed || eng, srcId: geoSrc?.localId || "" });
     } catch {
       setReError("تعذّر الاتصال بالسيرفر.");
     } finally {
@@ -2659,19 +2682,20 @@ export default function RegistrationPage() {
                    : "⚠️ المحرك العادي — دقة أقل"}
                 </span>
                 {regEngine === "deepgram" && (
-                  <span className={`flex items-center gap-1 text-[11px] font-bold ${regMicActive ? "text-brand" : "text-muted"}`}>
-                    <span className={`h-2 w-2 rounded-full ${regMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
-                    {regMicActive ? "بيسمع صوتك" : "هدوء"}
-                  </span>
+                  <div className="flex w-44 items-center gap-2">
+                    <span className={`shrink-0 text-[10px] font-bold ${regMicActive ? "text-brand" : "text-muted"}`}>
+                      {regMicActive ? "بيسمعك" : "الصوت"}
+                    </span>
+                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+                      <div className="h-full rounded-full bg-brand transition-[width] duration-100"
+                        style={{ width: `${Math.round(regLevel * 100)}%` }} />
+                    </div>
+                  </div>
                 )}
               </div>
             )}
 
-            {(isRecording || isTranscribing) && liveTranscript && (
-              <div className="mx-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-2 text-center text-sm text-ink" dir="rtl">
-                {liveTranscript}
-              </div>
-            )}
+            {/* النص اللحظي اتشال — بقى مؤشّر مستوى الصوت فوق بس (أنضف وأقل تشويش للمندوب) */}
 
             <p className="text-sm text-muted">
               {isRecording

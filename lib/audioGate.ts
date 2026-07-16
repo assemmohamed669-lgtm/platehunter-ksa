@@ -64,6 +64,8 @@ export function updateSpeechState(
 export interface SpeechGate {
   /** بنبعت الصوت دلوقتي؟ (كلام أو داخل hangover). */
   isSpeaking(): boolean;
+  /** مستوى الصوت الحالي منعّم (٠..١) — لمؤشّر مستوى الصوت. */
+  level(): number;
   /** يقفل الـ AudioContext ويوقف حلقة المراقبة. */
   close(): void;
 }
@@ -91,6 +93,7 @@ export function createSpeechGate(
 
   const buf = new Float32Array(analyser.fftSize);
   let state = newSpeechGateState();
+  let smoothed = 0; // مستوى منعّم للعرض
   let raf = 0;
   let closed = false;
 
@@ -100,6 +103,7 @@ export function createSpeechGate(
     let sum = 0;
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     const rms = Math.sqrt(sum / buf.length);
+    smoothed = smoothed * 0.8 + rms * 0.2;
     state = updateSpeechState(state, rms, performance.now(), opts);
     raf = requestAnimationFrame(tick);
   };
@@ -107,6 +111,7 @@ export function createSpeechGate(
 
   return {
     isSpeaking: () => state.speaking,
+    level: () => Math.min(1, smoothed * 8), // rms كلام ~0.02-0.12 → 0..1
     close: () => {
       closed = true;
       cancelAnimationFrame(raf);
