@@ -1273,6 +1273,26 @@ export function deserializeWordBlend(
   return map;
 }
 
+/**
+ * يدمج خريطتي عدّات (heard → corrected → count) في خريطة جديدة بجمع العدّات —
+ * للجمع بين تعلّم الجهاز المحلي والتعلّم المشترك من السيرفر. دالة نقية، مابتعدّلش
+ * المدخلات. تشتغل على LetterConfusionMap و WordBlendMap (نفس الشكل).
+ */
+export function mergeCountMaps(
+  a: Map<string, Map<string, number>>,
+  b: Map<string, Map<string, number>>,
+): Map<string, Map<string, number>> {
+  const out: Map<string, Map<string, number>> = new Map();
+  for (const src of [a, b]) {
+    for (const [key, inner] of src) {
+      if (!out.has(key)) out.set(key, new Map());
+      const o = out.get(key)!;
+      for (const [corrected, n] of inner) o.set(corrected, (o.get(corrected) ?? 0) + n);
+    }
+  }
+  return out;
+}
+
 export function findDuplicates(plates: string[]): Set<string> {
   const counts = new Map<string, number>();
   for (const p of plates) {

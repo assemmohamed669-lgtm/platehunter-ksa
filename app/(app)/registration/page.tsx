@@ -57,7 +57,8 @@ import {
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { fetchSharedCorrections, pushCorrection, flushPendingCorrections } from "@/lib/plateCorrectionsSync";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -531,6 +532,10 @@ export default function RegistrationPage() {
   // letters) — the complement of letterConfusionsRef for guesses where the
   // whole letter group was wrong, not one letter drifting. See handlePlateEdit.
   const wordBlendRef = useRef<WordBlendMap>(new Map());
+  // التعلّم المشترك من السيرفر (تصحيحات كل الفريق) — بيتحمّل على المونت، ومابيتحفظش
+  // في localStorage (عشان مايتكررش الجمع). بيتدمج مع المحلي وقت التطبيق بس.
+  const sharedLetterConfusionsRef = useRef<LetterConfusionMap>(new Map());
+  const sharedWordBlendRef = useRef<WordBlendMap>(new Map());
 
   // Groq cloud transcription: chunk timer + in-flight/finished chunk uploads
   // (ordered — must be stitched back together in this order, not arrival order).
@@ -595,6 +600,16 @@ export default function RegistrationPage() {
       const raw = localStorage.getItem(LS_WORD_BLENDS);
       if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
     } catch { /* corrupt/missing — start fresh */ }
+
+    // التعلّم المشترك: ابعت أي تصحيحات متعلّقة (أوفلاين)، وحمّل تعلّم الفريق من السيرفر.
+    (async () => {
+      try { await flushPendingCorrections(); } catch { /* ignore */ }
+      const shared = await fetchSharedCorrections();
+      if (shared) {
+        sharedLetterConfusionsRef.current = shared.letters;
+        sharedWordBlendRef.current = shared.blends;
+      }
+    })();
 
     try {
       const savedKey = localStorage.getItem(LS_GROQ_API_KEY) || "";
@@ -1455,10 +1470,10 @@ export default function RegistrationPage() {
       // نفس تصحيح التعلّم المستخدم في مسار «فرّغ واحفظ»
       let working = r.plate;
       if (r.rawLetterSource) {
-        const learned = applyWordBlend(r.rawLetterSource, wordBlendRef.current);
+        const learned = applyWordBlend(r.rawLetterSource, mergeCountMaps(wordBlendRef.current, sharedWordBlendRef.current));
         if (learned) working = learned + r.plate.replace(/^\D+/, "");
       }
-      const corrected = applyLetterConfusions(working, letterConfusionsRef.current);
+      const corrected = applyLetterConfusions(working, mergeCountMaps(letterConfusionsRef.current, sharedLetterConfusionsRef.current));
       if (!liveAgentId) continue;
       const localId = uid();
       const entry: RecordingEntry = {
@@ -1681,10 +1696,10 @@ export default function RegistrationPage() {
       // the two learners never fight over the same input.
       let working = p.plate;
       if (p.rawLetterSource) {
-        const learnedLetters = applyWordBlend(p.rawLetterSource, wordBlendRef.current);
+        const learnedLetters = applyWordBlend(p.rawLetterSource, mergeCountMaps(wordBlendRef.current, sharedWordBlendRef.current));
         if (learnedLetters) working = learnedLetters + p.plate.replace(/^\D+/, "");
       }
-      const corrected = applyLetterConfusions(working, letterConfusionsRef.current);
+      const corrected = applyLetterConfusions(working, mergeCountMaps(letterConfusionsRef.current, sharedLetterConfusionsRef.current));
       return {
         plate: corrected,
         originalPlate: p.plate,
@@ -2241,6 +2256,7 @@ export default function RegistrationPage() {
         try {
           localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current)));
         } catch { /* storage full */ }
+        void pushCorrection("blend", entry.rawLetterSource, correctedLetters); // شارك التعلّم مع الفريق
       }
     } else if (!entry.isManual) {
       // A confident extraction that still needed a fix: one letter drifted
@@ -2250,6 +2266,10 @@ export default function RegistrationPage() {
       try {
         localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current)));
       } catch { /* storage full */ }
+      // شارك نفس التصحيحات مع الفريق على السيرفر
+      for (const d of diffLetterCorrections(entry.originalPlate ?? entry.plate, trimmed)) {
+        void pushCorrection("letter", d.heard, d.corrected);
+      }
     }
 
     await updatePlate(localId, trimmed);
