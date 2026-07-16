@@ -14,17 +14,11 @@ import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { parseLatLngCell, toMapsLink } from "@/lib/gps";
 import { buildSpreadsheetBlob, shareExcelBlob } from "@/lib/excel";
+import { resolveCheckColumns, inferVehicleType, findHeader } from "@/lib/wantedColumns";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
 
-function findHeader(headers: string[], keywords: string[]): string | null {
-  for (const h of headers) {
-    const hl = h.toLowerCase();
-    if (keywords.some((k) => h.includes(k) || hl.includes(k.toLowerCase()))) return h;
-  }
-  return null;
-}
 function findGps(row: Record<string, string>): { lat: number; lng: number } | null {
   for (const v of Object.values(row)) {
     const g = parseLatLngCell(String(v ?? ""));
@@ -67,11 +61,10 @@ export default function WantedPage() {
       const checkCol = detectPlateColumn(checkRec.headers, checkRec.rows);
       if (!checkCol) { setError("مش لاقي عمود اللوحة في ملف التشييك."); setSorting(false); return; }
 
-      // أعمدة الماركة والبنك/الشركة من شيت التشييك.
-      const brandCol = findHeader(checkRec.headers, ["ماركة", "الماركه", "صانع", "vehicle name"]);
-      const bankCol = findHeader(checkRec.headers, ["بنك", "البنك", "شرك", "جهة", "تمويل", "bank", "agency", "f-account"]);
-      // نوع السيارة (النوع/نوع السيارة/الطراز/الموديل...) — بأي اسم عمود قريب.
-      const checkTypeCol = findHeader(checkRec.headers, ["نوع", "طراز", "موديل", "model"]);
+      // أعمدة الماركة / نوع السيارة / البنك من شيت التشييك.
+      // ملاحظة: الموديل (النترا/بيكانتو...) بيتحسب «ماركة» حتى لو مكتوب في عمود «النوع»؛
+      // و«نوع السيارة» بيتاخد من عمود نوع مستقل بس، وإلا بيتّستنتج من نص الماركة.
+      const { brandCol, typeCol: checkTypeCol, bankCol } = resolveCheckColumns(checkRec.headers);
 
       // قائمة المطلوبين المطبّعة + صف كل لوحة (لجلب الماركة/البنك).
       const wanted = new Set<string>();
@@ -84,14 +77,14 @@ export default function WantedPage() {
       }
       const brandOf = (norm: string) => (brandCol ? String(checkRowByNorm.get(norm)?.[brandCol] ?? "").trim() : "");
       const bankOf = (norm: string) => (bankCol ? String(checkRowByNorm.get(norm)?.[bankCol] ?? "").trim() : "");
-      const typeOf = (norm: string) => (checkTypeCol ? String(checkRowByNorm.get(norm)?.[checkTypeCol] ?? "").trim() : "");
+      const typeOfCheck = (norm: string) => (checkTypeCol ? String(checkRowByNorm.get(norm)?.[checkTypeCol] ?? "").trim() : "");
 
       // (١) مطابقة على شيت الداتا — بترتيب الداتا (مناطق تحت بعضها).
       const dRows: WantedRow[] = [];
       if (dataRec) {
         const dataCol = detectPlateColumn(dataRec.headers, dataRec.rows);
         if (dataCol) {
-          const typeCol = findHeader(dataRec.headers, ["نوع"]);
+          const dataTypeCol = findHeader(dataRec.headers, ["نوع"]);
           const brandColD = findHeader(dataRec.headers, ["ماركة", "طراز", "صانع"]);
           const streetCol = findHeader(dataRec.headers, ["شارع"]);
           const districtCol = findHeader(dataRec.headers, ["حي", "الحى", "منطقة"]);
@@ -101,12 +94,14 @@ export default function WantedPage() {
             const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
             if (!norm || !wanted.has(norm)) continue;
             const gps = findGps(row);
+            const brand = brandOf(norm) || (brandColD ? String(row[brandColD] ?? "").trim() : "");
+            const dataType = dataTypeCol ? String(row[dataTypeCol] ?? "").trim() : "";
             dRows.push({
               id: `d${i++}`,
               plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
               norm,
-              type: (typeCol ? String(row[typeCol] ?? "").trim() : "") || typeOf(norm),
-              brand: brandOf(norm) || (brandColD ? String(row[brandColD] ?? "").trim() : ""),
+              type: dataType || typeOfCheck(norm) || inferVehicleType(brand),
+              brand,
               bank: bankOf(norm),
               street: streetCol ? String(row[streetCol] ?? "").trim() : "",
               district: districtCol ? String(row[districtCol] ?? "").trim() : "",
@@ -125,12 +120,14 @@ export default function WantedPage() {
       for (const e of fieldEntries) {
         const norm = normalizePlate(bankPlateToArabic(e.plate));
         if (!norm || !wanted.has(norm)) continue;
+        const brand = brandOf(norm);
+        const recType = (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim();
         rRows.push({
           id: `r${j++}`,
           plate: bankPlateToArabic(e.plate).trim() || e.plate,
           norm,
-          type: (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim() || typeOf(norm),
-          brand: brandOf(norm),
+          type: recType || typeOfCheck(norm) || inferVehicleType(brand),
+          brand,
           bank: bankOf(norm),
           street: (e.row?.["الشارع"] || "").trim(),
           district: (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim(),
