@@ -24,6 +24,26 @@ export interface SpeechmaticsHandle {
   stop: () => Promise<void>;
 }
 
+/**
+ * يستخرج نص الجملة من رسالة AddTranscript/AddPartialTranscript.
+ * مهم: في بروتوكول Speechmatics v2 النص موجود في **metadata.transcript**،
+ * مش في جذر الرسالة. (الباجّ القديم كان بيقرا msg.transcript = undefined دايماً
+ * → المسجّل يشتغل بس مفيش لوحات بتطلع.) fallback: بناء من results.
+ * دالة نقية — قابلة للاختبار.
+ */
+export function speechmaticsTranscript(msg: any): string {
+  const t = msg?.metadata?.transcript ?? msg?.transcript;
+  if (typeof t === "string" && t.trim()) return t.trim();
+  if (Array.isArray(msg?.results)) {
+    return msg.results
+      .map((r: any) => r?.alternatives?.[0]?.content ?? "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return "";
+}
+
 /** يبدأ جلسة تفريغ فوري بـ Speechmatics. بيرجّع handle أو null لو فشل البدء. */
 export async function startSpeechmatics(
   apiKey: string,
@@ -120,12 +140,16 @@ export async function startSpeechmatics(
       case "AudioAdded":
         if (typeof msg.seq_no === "number") seqNo = msg.seq_no;
         break;
-      case "AddPartialTranscript":
-        if (typeof msg.transcript === "string" && msg.transcript.trim()) cb.onPartial?.(msg.transcript.trim());
+      case "AddPartialTranscript": {
+        const t = speechmaticsTranscript(msg); // النص في metadata.transcript
+        if (t) cb.onPartial?.(t);
         break;
-      case "AddTranscript":
-        if (typeof msg.transcript === "string" && msg.transcript.trim()) cb.onFinal?.(msg.transcript.trim());
+      }
+      case "AddTranscript": {
+        const t = speechmaticsTranscript(msg); // النص في metadata.transcript
+        if (t) cb.onFinal?.(t);
         break;
+      }
       case "Error":
         cb.onError?.(`Speechmatics: ${msg.reason || msg.type || "خطأ"}`);
         break;
