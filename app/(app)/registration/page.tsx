@@ -72,6 +72,7 @@ const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض",
 
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
+const LS_ANALYSIS_MODE = "ph:registration:analysisMode";
 
 // Vercel rejects any serverless function request over 4.5MB — at this
 // recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio, so 180s
@@ -473,6 +474,28 @@ export default function RegistrationPage() {
   const [reAnalyzing, setReAnalyzing] = useState(false);
   const [reError, setReError] = useState<string | null>(null);
   const [reResult, setReResult] = useState<null | { transcript: string; rows: StructuredRow[]; engineUsed: string; srcId: string }>(null);
+  // وضع التفريغ: «لحظي» (يفرّغ وإنت بتتكلم) أو «تسجيل ثم تحليل» (يسجّل وبعدين يحلّل تلقائي — أدق).
+  const [analysisMode, setAnalysisMode] = useState<"live" | "afterRecord">("live");
+  const prevRecordingRef = useRef(false);
+  const pendingAutoAnalyzeRef = useRef(false);
+  function changeAnalysisMode(m: "live" | "afterRecord") {
+    setAnalysisMode(m);
+    try { localStorage.setItem(LS_ANALYSIS_MODE, m); } catch { /* ignore */ }
+  }
+  // لما التسجيل يقف في وضع «تسجيل ثم تحليل» → علّم إننا محتاجين تحليل تلقائي.
+  useEffect(() => {
+    const was = prevRecordingRef.current;
+    prevRecordingRef.current = isRecording;
+    if (was && !isRecording && analysisMode === "afterRecord") pendingAutoAnalyzeRef.current = true;
+  }, [isRecording, analysisMode]);
+  // أول ما التسجيلات تستقر بعد التوقّف (الصوت اتحفظ) → شغّل التحليل الذكي مرة واحدة.
+  useEffect(() => {
+    if (!pendingAutoAnalyzeRef.current) return;
+    if (!recordings.some((r) => !r.isManual && r.audioBlobBase64)) return;
+    pendingAutoAnalyzeRef.current = false;
+    const t = setTimeout(() => { void runReanalyze(); }, 300);
+    return () => clearTimeout(t);
+  }, [recordings]);
   const [playSpeed, setPlaySpeed] = useState<Record<string, number>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -605,6 +628,11 @@ export default function RegistrationPage() {
       const raw = localStorage.getItem(LS_WORD_BLENDS);
       if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
     } catch { /* corrupt/missing — start fresh */ }
+
+    try {
+      const m = localStorage.getItem(LS_ANALYSIS_MODE);
+      if (m === "afterRecord" || m === "live") setAnalysisMode(m);
+    } catch { /* ignore */ }
 
     // التعلّم المشترك: ابعت أي تصحيحات متعلّقة (أوفلاين)، وحمّل تعلّم الفريق من السيرفر.
     (async () => {
@@ -2575,6 +2603,23 @@ export default function RegistrationPage() {
           </div>
         ) : (
           <>
+            {/* وضع التفريغ — يختار المندوب: لحظي ولا تسجيل ثم تحليل */}
+            <div className="flex w-full max-w-xs flex-col items-center gap-1">
+              <div className="flex w-full gap-1 rounded-xl border border-border bg-surface-2 p-1" dir="rtl">
+                <button type="button" onClick={() => changeAnalysisMode("live")}
+                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${analysisMode === "live" ? "bg-primary text-night" : "text-muted"}`}>
+                  لحظي
+                </button>
+                <button type="button" onClick={() => changeAnalysisMode("afterRecord")}
+                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${analysisMode === "afterRecord" ? "bg-primary text-night" : "text-muted"}`}>
+                  تسجيل ثم تحليل
+                </button>
+              </div>
+              <p className="text-center text-[10px] text-muted" dir="rtl">
+                {analysisMode === "live" ? "يفرّغ وإنت بتتكلم ويحفظ فوراً" : "سجّل بس — التحليل الذكي هيشتغل تلقائي بعد ما توقف"}
+              </p>
+            </div>
+
             <button
               onClick={() => isRecording ? stopRecording() : startRecording()}
               disabled={isTranscribing}
