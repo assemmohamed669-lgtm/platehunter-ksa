@@ -7,6 +7,37 @@ export interface GpsCoords {
 
 type GpsCallback = (coords: GpsCoords | null) => void;
 
+// فوق الزمن ده الفيكس القديم يُعتبر "بايت" (المندوب على الأرجح اتحرك مكانه).
+export const GPS_STALE_MS = 10000;
+// فيكس بالدقة دي أو أحسن = كفاية للشارع؛ الحداثة ساعتها أهم من فرق دقة بسيط.
+export const GPS_GOOD_ACCURACY_M = 20;
+
+/**
+ * يقرّر أي فيكس نحتفظ بيه: الأحدث **مش** دايماً الأفضل. فيكس شبكة/واي-فاي خشن
+ * (±٤٠م) ممكن يوصل بعد قفلة GPS دقيقة (±٨م) ويمسحها → الموقع يقع في الشارع
+ * الموازي. الحل: نسيب الفيكس الخشن يمسح الكويس بس لو (أ) القديم بقى بايت، أو
+ * (ب) الجديد دقته كويسة أصلاً. دالة نقية — قابلة للاختبار. مبنية على منطق
+ * Android isBetterLocation الكلاسيكي.
+ */
+export function pickBetterFix(prev: GpsCoords | null, next: GpsCoords | null): GpsCoords | null {
+  if (!next) return prev;
+  if (!prev) return next;
+  const newer = next.timestamp - prev.timestamp; // موجب = الجديد أحدث
+  if (newer > GPS_STALE_MS) return next;   // القديم بايت → المندوب اتحرك → خُد الجديد
+  if (newer < -GPS_STALE_MS) return prev;  // الجديد أقدم بكتير (خارج الترتيب) → سيب القديم
+  if (next.accuracy <= prev.accuracy) return next; // أدق أو مساوي → خده
+  if (newer >= 0 && next.accuracy <= GPS_GOOD_ACCURACY_M) return next; // أحدث ودقته كويسة → الحداثة أهم
+  return prev; // الجديد أقل دقة وأحدث بشوية بس → سيب الفيكس الكويس القريب
+}
+
+/** تصنيف جودة الدقة لعرضها للمندوب: ممتاز / متوسط / ضعيف. */
+export function gpsAccuracyLevel(accuracy: number): "good" | "ok" | "poor" {
+  if (!isFinite(accuracy) || accuracy <= 0) return "poor";
+  if (accuracy <= 15) return "good";
+  if (accuracy <= 35) return "ok";
+  return "poor";
+}
+
 class GpsService {
   private watchId: number | null = null;
   private capWatchId: string | null = null;
@@ -30,12 +61,12 @@ class GpsService {
         Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 8000 })
           .then((pos) => {
             if (!pos) return;
-            this.lastCoords = {
+            this.lastCoords = pickBetterFix(this.lastCoords, {
               lat: pos.coords.latitude,
               lng: pos.coords.longitude,
               accuracy: pos.coords.accuracy,
               timestamp: pos.timestamp,
-            };
+            });
             this.notifyListeners(this.lastCoords);
           })
           .catch(() => {});
@@ -46,12 +77,12 @@ class GpsService {
           (pos, err) => {
             // A transient watch error must NOT wipe an already-good fix.
             if (err || !pos) { if (!this.lastCoords) this.notifyListeners(null); return; }
-            this.lastCoords = {
+            this.lastCoords = pickBetterFix(this.lastCoords, {
               lat: pos.coords.latitude,
               lng: pos.coords.longitude,
               accuracy: pos.coords.accuracy,
               timestamp: pos.timestamp,
-            };
+            });
             this.notifyListeners(this.lastCoords);
           }
         );
@@ -71,12 +102,12 @@ class GpsService {
     // Phase 1 — fast, coarse fix (cached up to 60s is fine) shown immediately.
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        this.lastCoords = {
+        this.lastCoords = pickBetterFix(this.lastCoords, {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: pos.coords.accuracy,
           timestamp: pos.timestamp,
-        };
+        });
         this.notifyListeners(this.lastCoords);
       },
       () => {},
@@ -86,12 +117,12 @@ class GpsService {
     // Phase 2 — high-accuracy watch refines it in the background.
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        this.lastCoords = {
+        this.lastCoords = pickBetterFix(this.lastCoords, {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: pos.coords.accuracy,
           timestamp: pos.timestamp,
-        };
+        });
         this.notifyListeners(this.lastCoords);
       },
       (err) => {
@@ -137,8 +168,9 @@ class GpsService {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
         const { Geolocation } = await import("@capacitor/geolocation");
-        // Accept a fix up to 10s old so a good recent lock returns instantly.
-        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 });
+        // «تحديث» = المندوب عايز موقعه الحالي بالظبط → اقرا فيكس جديد تماماً
+        // (maximumAge:0) عشان مايرجعش نفس الفيكس الغلط المخزّن.
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
         const coords: GpsCoords = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -177,7 +209,7 @@ class GpsService {
           if (this.lastCoords) resolve(this.lastCoords);
           else reject(new Error(err.message));
         },
-        { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
     });
   }

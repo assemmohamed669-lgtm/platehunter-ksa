@@ -31,7 +31,7 @@ import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
-import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
+import { gpsService, toMapsLink, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { getVoiceEngine, getSpeechmaticsKey, getSonioxKey, getOpenaiKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
@@ -2369,11 +2369,19 @@ export default function RegistrationPage() {
               <p className={`truncate text-sm ${gps ? "text-ink" : "text-danger font-bold"}`}>
                 {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
               </p>
-              {gps && (
-                <p className="text-xs text-muted">
-                  {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • ±{Math.round(gps.accuracy)}م
-                </p>
-              )}
+              {gps && (() => {
+                const lvl = gpsAccuracyLevel(gps.accuracy);
+                const cls = lvl === "good" ? "text-brand" : lvl === "ok" ? "text-alert" : "text-danger";
+                const hint = lvl === "good" ? "دقة ممتازة"
+                  : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
+                  : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
+                return (
+                  <p className="text-xs text-muted">
+                    {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className={`font-bold ${cls}`}>±{Math.round(gps.accuracy)}م</span>
+                    <span className={`block ${cls}`}>{hint}</span>
+                  </p>
+                );
+              })()}
             </div>
             <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
               className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
