@@ -92,6 +92,13 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
   function renderMarkers() {
     const L = LRef.current, map = mapRef.current, layer = markersLayerRef.current;
     if (!L || !map || !layer) return;
+
+    // التحديث الدوري (صفحة مواقع المناديب كل ٣٠ث) بيعيد بناء كل النقط — احفظ
+    // النقطة اللي البوب-أب مفتوح عليها ورجّع فتحه بعد الرسم، وإلا يتقفل في وش
+    // الأدمن وهو بيقرا كل تحديث.
+    let openKey: string | null = null;
+    layer.eachLayer((m: any) => { if (m._phKey && m.isPopupOpen?.()) openKey = m._phKey; });
+
     layer.clearLayers();
 
     points.forEach((p) => {
@@ -110,7 +117,10 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
           ${p.when ? `<span style="color:#999;font-size:11px">${esc(p.when)}</span><br/>` : ""}
           ${link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
         </div>`;
-      L.marker([p.lat, p.lng], { icon }).addTo(layer).bindPopup(popup, { maxWidth: 220 });
+      const marker = L.marker([p.lat, p.lng], { icon }).addTo(layer).bindPopup(popup, { maxWidth: 220 });
+      const key = `${p.lat},${p.lng}|${p.plate}`;
+      (marker as any)._phKey = key;
+      if (openKey && key === openKey) marker.openPopup();
     });
 
     // أول مرة بس نعمل fit على كل النقاط (وبعدها نسيب التتبّع/تحريك المستخدم).

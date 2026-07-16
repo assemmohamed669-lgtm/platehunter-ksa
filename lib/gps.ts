@@ -44,9 +44,16 @@ class GpsService {
   private lastCoords: GpsCoords | null = null;
   private listeners: Set<GpsCallback> = new Set();
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  private startCount = 0;
 
   async startTracking() {
     if (typeof window === "undefined") return;
+
+    // مستخدمين كُثُر بيشاركوا نفس المتتبّع (المكوّن الدائم للحضور + صفحات التشييك/
+    // التسجيل/الخرائط). نعدّهم عشان مانفتحش أكتر من watch (بطارية) ومانوقفش
+    // التتبّع طالما لسه فيه مستخدم واحد محتاجه. النداء الزائد = زيادة العدّاد بس.
+    this.startCount++;
+    if (this.startCount > 1) return;
 
     // Native Android: use Capacitor Geolocation plugin
     try {
@@ -135,6 +142,10 @@ class GpsService {
   }
 
   stopTracking() {
+    // مستخدم واحد ساب المتتبّع — لسه فيه غيره؟ سيبه شغّال. أوقفه بس لما مايبقاش
+    // فيه ولا مستخدم (العدّاد وصل صفر).
+    if (this.startCount > 0) this.startCount--;
+    if (this.startCount > 0) return;
     if (this.capWatchId !== null) {
       const id = this.capWatchId;
       this.capWatchId = null;

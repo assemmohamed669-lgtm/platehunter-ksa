@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -60,6 +60,7 @@ const FILTERS: { key: string; label: string }[] = [
 export default function AdminDashboard() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [isSuper, setIsSuper] = useState(false);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -89,8 +90,9 @@ export default function AdminDashboard() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
+      setIsSuper(!!prof?.is_super);
       setAuthorized(true);
       loadAgents();
     })();
@@ -190,6 +192,14 @@ export default function AdminDashboard() {
             </div>
           ))}
         </div>
+
+        {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
+        {isSuper && (
+          <button onClick={() => router.push("/admin/locations")}
+            className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
+            <MapPin size={16} /> مواقع المناديب على الخريطة
+          </button>
+        )}
 
         {/* Expiring soon */}
         {expiringSoon.length > 0 && (

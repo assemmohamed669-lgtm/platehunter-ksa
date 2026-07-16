@@ -10,6 +10,7 @@ import BackButton from "@/components/BackButton";
 import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import AppMenu from "@/components/AppMenu";
 import UpdateBanner from "@/components/UpdateBanner";
+import AgentPresenceReporter from "@/components/AgentPresenceReporter";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
 import { applyServiceKeys } from "@/lib/voiceKeys";
@@ -131,6 +132,7 @@ export default function AppShellLayout({
         </header>
 
         <UpdateBanner />
+        <AgentPresenceReporter />
 
         {sub && (sub.status === "expiring" || sub.status === "grace") && !bannerDismissed && (
           <div className="flex items-center gap-2 border-b border-alert/30 bg-alert/10 px-4 py-2 text-xs text-alert">
