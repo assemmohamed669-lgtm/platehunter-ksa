@@ -19,6 +19,7 @@
 // القواميس اتّنقلت لـ lib/dictionaries/ كبيانات نقية (مصدر واحد يستهلكه البارسر
 // والإنجن الجديد سوا). القيم IDENTICAL للي كانت هنا — اتأكّد بمقارنة برمجية.
 import { ZERO_WORD_RE } from "./dictionaries/zeroForms";
+import { VEHICLE_TYPES } from "./dictionaries/vehicleTypes";
 
 // ─── Egyptian dialect → Saudi plate letter/digit mapping ─────────────────
 // المأمور يقول كل حرف كلمة لوحدها: "دال حه ره واحد اتنين تلاتة أربعة"
@@ -510,14 +511,9 @@ export const VALID_AR_LETTERS = new Set([
 ]);
 
 // ─── Vehicle types ─────────────────────────────────────────────────────────
-// Includes car-status words (مصدومة/مركونة/معطلة) alongside actual vehicle
-// types — field agents dictate them the same way (right after the plate)
-// and want them landing in the same "نوع السيارة" field, not notes.
-const VEHICLE_TYPES = [
-  "ونيت", "فان", "دباب", "شاحنة", "باص",
-  "صالون", "بيكاب", "تاكسي", "كروزر", "باترول", "نقليات", "مفحوطة",
-  "مصدومة", "مصدومه", "مركونة", "مركونه", "معطلة", "معطله",
-];
+// اتّنقلت لـ dictionaries/vehicleTypes.ts (نفس القيمة IDENTICAL). بتضم كلمات
+// حالة السيارة (مصدومة/مركونة/معطلة) جنب الأنواع الفعلية لأن المندوب بيمليها
+// بنفس الطريقة (بعد اللوحة) وعايزها في خانة «نوع السيارة» مش الملاحظات.
 
 /**
  * Pull a vehicle-type keyword (ونيت / مصدومة / فان / دباب / مركونة …) out of a
