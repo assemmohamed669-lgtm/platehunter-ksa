@@ -654,6 +654,7 @@ export default function RegistrationPage() {
   const groqLiveSawSpeechRef = useRef(false);
   const groqLiveSegStartRef = useRef(0);
   const groqLiveMimeRef = useRef("audio/webm");
+  const groqLiveStopResolveRef = useRef<(() => void) | null>(null); // يتحلّ لما آخر مقطع يتعلّق على الطابور عند الإيقاف
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
@@ -769,10 +770,7 @@ export default function RegistrationPage() {
       window.removeEventListener("offline", onOffline);
       if (groqChunkTimerRef.current) clearInterval(groqChunkTimerRef.current);
       // Groq لايف: أقفل الحلقة والبوابة والمايك لو الصفحة اتقفلت أثناء التسجيل.
-      groqLiveActiveRef.current = false;
-      if (groqLivePollRef.current) clearInterval(groqLivePollRef.current);
-      try { groqLiveGateRef.current?.close(); } catch { /* closed */ }
-      try { groqLiveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      teardownGroqLive();
     };
   }, []);
 
@@ -1328,20 +1326,28 @@ export default function RegistrationPage() {
       return;
     }
 
-    // ── Groq لايف: أوقف الـ VAD والمسجّل، استنى آخر مقطع + الطابور، flush نهائي. ──
+    // ── Groq لايف: أوقف الـ VAD، خُد آخر مقطع (بـ resolver مش انتظار أعمى)،
+    // اقفل الموارد، استنى الطابور، flush نهائي واحفظ. ──
     if (groqLiveActiveRef.current) {
-      groqLiveActiveRef.current = false;
+      groqLiveActiveRef.current = false; // onstop هيشوفها false → مش هيفتح مقطع جديد
       setIsTranscribing(true);
       try {
         if (groqLivePollRef.current) { clearInterval(groqLivePollRef.current); groqLivePollRef.current = null; }
-        // أوقف المقطع الحالي — onstop هيرفع آخر نطقة (مش هيفتح مقطع جديد: active=false).
-        try { groqLiveRecorderRef.current?.stop(); } catch { /* stopped */ }
+        // استنى آخر مقطع يتعلّق على الطابور: onstop بيحلّ الـ resolver بعد الـ enqueue
+        // (أو فوراً لو المقطع صامت). timeout أمان 2ث لو حصل حاجة غير متوقعة.
+        const rec = groqLiveRecorderRef.current;
+        const lastSegAttached = new Promise<void>((resolve) => { groqLiveStopResolveRef.current = resolve; });
+        if (rec && rec.state === "recording") {
+          try { rec.stop(); } catch { const r = groqLiveStopResolveRef.current; groqLiveStopResolveRef.current = null; r?.(); }
+        } else {
+          const r = groqLiveStopResolveRef.current; groqLiveStopResolveRef.current = null; r?.();
+        }
+        await Promise.race([lastSegAttached, new Promise((r) => setTimeout(r, 2000))]);
+        groqLiveStopResolveRef.current = null;
         try { groqLiveGateRef.current?.close(); } catch { /* closed */ }
         groqLiveGateRef.current = null;
         try { groqLiveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* stopped */ }
         groqLiveRecorderRef.current = null; groqLiveStreamRef.current = null;
-        // استنى آخر مقطع يترفع (onstop async) ويتعلّق على الطابور، وبعدين الطابور.
-        await new Promise((r) => setTimeout(r, 500));
         await sessionQueueRef.current;
         const lastCoords = gpsService.getLastCoords() ?? gpsAtRecordRef.current;
         await applySessionText("", lastCoords, null, true);
@@ -1685,16 +1691,25 @@ export default function RegistrationPage() {
     sessionFailedChunksRef.current = 0;
 
     groqLiveActiveRef.current = true;
+    // لازم أول مقطع يبدأ فعلاً. لو الـ MediaRecorder فشل الإنشاء (isTypeSupported=true
+    // بس الـ constructor بيرمي — شائع على WebView أندرويد) نظّف كل حاجة وارجع false
+    // عشان startRecordingInner يجرّب محرك بديل بدل «نجاح كذّاب» بمايك شغّال بلا تسجيل.
+    if (!startGroqLiveSegment()) {
+      teardownGroqLive();
+      setRecordingError("تعذّر تشغيل مسجّل الصوت على جهازك — جرّب Deepgram أو حدّث التطبيق.");
+      return false;
+    }
     isRecordingRef.current = true;
     setIsRecording(true);
     gpsAtRecordRef.current = gpsService.getLastCoords();
     setRegEngine("whisper");
     setDebugStatus("✅ STARTED (Groq لايف)");
 
-    startGroqLiveSegment();
-
     // حلقة الـ VAD: تقطّع المقطع عند السكوت (نهاية النطقة، بعد hangover البوابة)
     // أو عند الحد الأقصى للطول. المقاطع الصامتة (بلا كلام) مابتتبعتش.
+    // ⚠️ معلومة معروفة (خطورة منخفضة): القطع عند الحد الأقصى أثناء كلام متواصل
+    // (وقفات < hangover) بيسيب فجوة ~100-300ms فممكن تبلع حرف على حد الـ7ث؛ القطع
+    // عند السكوت (الغالب في الإملاء بوقفات) آمن. لو ظهرت في التجربة → مسجّلين متداخلين.
     groqLivePollRef.current = setInterval(() => {
       if (!groqLiveActiveRef.current) return;
       const gate = groqLiveGateRef.current;
@@ -1714,14 +1729,44 @@ export default function RegistrationPage() {
     return true;
   }
 
-  // يبدأ مقطع تسجيل جديد. onstop بيجمّع الصوت، يبعته لـ Groq لو فيه كلام، ويفتح
-  // المقطع اللي بعده فوراً (طالما لسه بنسجّل) — المايك مايتقفلش بين النطقات.
-  function startGroqLiveSegment() {
+  // أقفل كل موارد Groq لايف (الحلقة + البوابة + المايك + المسجّل). آمنة للتكرار.
+  // بتُستخدم عند فشل البدء/الاستئناف والـ unmount عشان مايفضلش المايك شغّال.
+  function teardownGroqLive() {
+    groqLiveActiveRef.current = false;
+    if (groqLivePollRef.current) { clearInterval(groqLivePollRef.current); groqLivePollRef.current = null; }
+    try { groqLiveGateRef.current?.close(); } catch { /* closed */ }
+    groqLiveGateRef.current = null;
+    try { groqLiveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+    groqLiveStreamRef.current = null;
+    groqLiveRecorderRef.current = null;
+  }
+
+  // تفريغ مقطع لحظي: نص فاضي (صمت/ضوضاء عابرة فتحت البوابة، أو نطقة اترفضت بفلتر
+  // no_speech) = «مفيش لوحة» مش فشل — نرجّع "" بدل ما نرمي فيظهر بانر خطأ كاذب مع
+  // كل ضوضاء شارع. بنرمي بس على خطأ HTTP حقيقي (مفتاح/صيغة/سيرفر) أو فشل شبكة.
+  async function transcribeSegmentLive(b64: string, mimeType: string, apiKey: string): Promise<GroqChunkResult> {
+    const res = await fetch("/api/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ audio: b64, mimeType, apiKey }),
+    });
+    const data = await res.json().catch(() => ({} as { text?: string; error?: string; hint?: string; detail?: string }));
+    if (!res.ok) {
+      const err = new Error(data.hint || data.detail || data.error || `HTTP ${res.status}`) as Error & { code?: string };
+      err.code = data.error;
+      throw err;
+    }
+    return { text: typeof data.text === "string" ? data.text.trim() : "", audioBase64: b64, mimeType };
+  }
+
+  // يبدأ مقطع تسجيل جديد. بيرجّع false لو فشل إنشاء/تشغيل المسجّل. onstop بيجمّع
+  // الصوت، يفتح المقطع اللي بعده فوراً (طالما لسه بنسجّل)، ويبعت الحالي لو فيه كلام.
+  function startGroqLiveSegment(): boolean {
     const stream = groqLiveStreamRef.current;
-    if (!stream || !groqLiveActiveRef.current) return;
+    if (!stream || !groqLiveActiveRef.current) return false;
     const mime = groqLiveMimeRef.current;
     let rec: MediaRecorder;
-    try { rec = new MediaRecorder(stream, { mimeType: mime }); } catch { return; }
+    try { rec = new MediaRecorder(stream, { mimeType: mime }); } catch { return false; }
     groqLiveRecorderRef.current = rec;
     groqLiveSegChunksRef.current = [];
     groqLiveSawSpeechRef.current = false;
@@ -1731,23 +1776,37 @@ export default function RegistrationPage() {
       const hadSpeech = groqLiveSawSpeechRef.current;
       const parts = groqLiveSegChunksRef.current;
       groqLiveSegChunksRef.current = [];
-      // افتح المقطع الجاي فوراً قبل رفع الحالي — مايفوتش كلام النطقة الجاية.
-      if (groqLiveActiveRef.current) startGroqLiveSegment();
-      if (!hadSpeech || parts.length === 0) return; // سكوت — مانبعتش (توفير + دقة)
+      const wasActive = groqLiveActiveRef.current;
+      // افتح المقطع الجاي فوراً قبل رفع الحالي — مايفوتش كلام النطقة الجاية. لو فشل
+      // الاستئناف وسط الجلسة (constructor رمى) → أوقف بأمان مش موت صامت بمايك مفتوح.
+      if (wasActive && !startGroqLiveSegment()) {
+        teardownGroqLive();
+        isRecordingRef.current = false;
+        setIsRecording(false);
+        setRegEngine(null);
+        setRegMicActive(false);
+        setRecordingError("تعذّر متابعة التسجيل الصوتي — جرّب تاني.");
+      }
+      // لو ده آخر مقطع (الإيقاف اليدوي)، حُلّ الـ resolver بعد ما الـ enqueue يتعلّق
+      // على الطابور (أو فوراً لو صامت) عشان stopRecording يستنى بدقة مش انتظار أعمى.
+      const done = () => {
+        if (!wasActive && groqLiveStopResolveRef.current) {
+          const r = groqLiveStopResolveRef.current; groqLiveStopResolveRef.current = null; r();
+        }
+      };
+      if (!hadSpeech || parts.length === 0) { done(); return; } // سكوت — مانبعتش
       const blob = new Blob(parts, { type: mime });
       const idx = sessionChunkIndexRef.current++;
       sessionCoordsRef.current[idx] = gpsService.getLastCoords();
       blob.arrayBuffer()
         .then((ab) => {
-          const b64 = uint8ToBase64(new Uint8Array(ab));
-          enqueueGroqChunk(
-            uploadGroqChunk({ value: { recordDataBase64: b64, mimeType: mime } }, groqApiKey.trim()),
-            idx
-          );
+          enqueueGroqChunk(transcribeSegmentLive(uint8ToBase64(new Uint8Array(ab)), mime, groqApiKey.trim()), idx);
         })
-        .catch(() => { sessionFailedChunksRef.current++; });
+        .catch(() => { sessionFailedChunksRef.current++; })
+        .finally(done);
     };
-    try { rec.start(); } catch { /* ignore */ }
+    try { rec.start(); } catch { return false; }
+    return true;
   }
 
   // ── تسجيل خام للمحركات «تسجيل ثم تحليل» (ElevenLabs / Groq Whisper) ──
