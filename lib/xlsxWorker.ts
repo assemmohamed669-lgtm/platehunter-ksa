@@ -5,6 +5,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
+import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
@@ -227,8 +228,22 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     // Map each non-empty header to its ACTUAL column position so that empty
     // header columns (merged cells, gaps) don't cause value misalignment.
     const rawHeaderCells = (raw2d[headerRowIdx] as any[]).map((h: any) => String(h ?? "").trim());
-    const headerCols: Array<{ name: string; col: number }> = [];
-    rawHeaderCells.forEach((name, col) => { if (name) headerCols.push({ name, col }); });
+
+    // شيت بدون صف عناوين (الصف المرشّح داتا مش عناوين): نسمّي الأعمدة بالمحتوى
+    // (لوحة/تاريخ/حي/GPS) ونعتبر الصف ده داتا — نفس منطق excel.ts (مصدر واحد).
+    let headerCols: Array<{ name: string; col: number }>;
+    let dataStartRow: number;
+    if (detectHeaderless(rawHeaderCells)) {
+      const SAMPLE = Math.min(raw2d.length - headerRowIdx, 200);
+      const sample = raw2d.slice(headerRowIdx, headerRowIdx + SAMPLE).map((r: any) => (r as any[]).map(cellToStr));
+      const maxCols = sample.reduce((m: number, r: string[]) => Math.max(m, r.length), rawHeaderCells.length);
+      headerCols = buildHeaderlessColumns(sample, maxCols);
+      dataStartRow = headerRowIdx; // الصف ده داتا مش عناوين
+    } else {
+      headerCols = [];
+      rawHeaderCells.forEach((name, col) => { if (name) headerCols.push({ name, col }); });
+      dataStartRow = headerRowIdx + 1;
+    }
     const headers = headerCols.map((hc) => hc.name);
 
     if (headers.length === 0) {
@@ -236,22 +251,9 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
       return;
     }
 
-    // If the "header" row itself looks like plate data (headerless file), include
-    // it as the first data row so the first plate isn't silently dropped.
-    const nonEmptyHdr = headers.filter((h) => h);
-    const headerIsData =
-      nonEmptyHdr.length > 0 &&
-      nonEmptyHdr.filter((h) => cellLooksLikePlate(h)).length / nonEmptyHdr.length >= 0.5;
-
     // Build objects from the 2-D array using actual column positions
     const rows: Record<string, string>[] = [];
-    if (headerIsData) {
-      const firstRow: Record<string, string> = {};
-      const hdrCells = raw2d[headerRowIdx] as any[];
-      for (const { name, col } of headerCols) firstRow[name] = cellToStr(hdrCells[col]);
-      rows.push(firstRow);
-    }
-    for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
+    for (let i = dataStartRow; i < raw2d.length; i++) {
       const r = raw2d[i] as any[];
       const obj: Record<string, string> = {};
       for (const { name, col } of headerCols) {

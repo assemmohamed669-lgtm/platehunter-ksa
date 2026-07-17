@@ -123,7 +123,8 @@ describe("matchesPreferred — data file columns", () => {
   it("matches GPS", () => expect(matchesPreferred("GPS")).toBe(true));
   it("matches الحي", () => expect(matchesPreferred("الحي")).toBe(true));
   it("matches نوع السيارة", () => expect(matchesPreferred("نوع السيارة")).toBe(true));
-  it("does NOT match تاريخ التسجيل", () => expect(matchesPreferred("تاريخ التسجيل")).toBe(false));
+  // التاريخ بقى preferred (بطلب المستخدم — مفيد في نتيجة الفرز، وضروري للشيتات بدون عناوين)
+  it("matches تاريخ التسجيل", () => expect(matchesPreferred("تاريخ التسجيل")).toBe(true));
   it("does NOT match اسم المسجّل", () => expect(matchesPreferred("اسم المسجّل")).toBe(false));
   it("does NOT match الشارع", () => expect(matchesPreferred("الشارع")).toBe(false));
 });
@@ -152,12 +153,12 @@ describe("matchesPreferred — English bank referral columns", () => {
 // ─── guessDefaultColumns ──────────────────────────────────────────────────────
 
 describe("guessDefaultColumns — data file", () => {
-  it("auto-selects only GPS, الحي, نوع السيارة (not dates/names/streets)", () => {
+  it("auto-selects GPS, الحي, نوع السيارة, تاريخ التسجيل (not names/streets)", () => {
     const result = guessDefaultColumns(DATA_FILE_HEADERS, "رقم اللوحة");
     expect(result).toContain("GPS");
     expect(result).toContain("الحي");
     expect(result).toContain("نوع السيارة");
-    expect(result).not.toContain("تاريخ التسجيل");
+    expect(result).toContain("تاريخ التسجيل"); // التاريخ بقى بيظهر (بطلب المستخدم)
     expect(result).not.toContain("الشارع");
     expect(result).not.toContain("اسم المسجّل");
     expect(result).not.toContain("ملاحظات");
