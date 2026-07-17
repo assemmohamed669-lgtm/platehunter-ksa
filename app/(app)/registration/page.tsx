@@ -643,6 +643,18 @@ export default function RegistrationPage() {
   const rawStreamRef = useRef<MediaStream | null>(null);
   const rawChunksRef = useRef<Blob[]>([]);
 
+  // مسار Groq لايف (شبه-لحظي): مايك مفتوح + VAD يقطّع عند السكوت (نهاية كل لوحة)
+  // + كل مقطع يتبعت لـ Groq ويظهر فوراً عبر نفس طابور applySessionText المتسلسل.
+  const groqLiveActiveRef = useRef(false);
+  const groqLiveRecorderRef = useRef<MediaRecorder | null>(null);
+  const groqLiveStreamRef = useRef<MediaStream | null>(null);
+  const groqLiveGateRef = useRef<SpeechGate | null>(null);
+  const groqLivePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const groqLiveSegChunksRef = useRef<Blob[]>([]);
+  const groqLiveSawSpeechRef = useRef(false);
+  const groqLiveSegStartRef = useRef(0);
+  const groqLiveMimeRef = useRef("audio/webm");
+
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
 
@@ -756,6 +768,11 @@ export default function RegistrationPage() {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       if (groqChunkTimerRef.current) clearInterval(groqChunkTimerRef.current);
+      // Groq لايف: أقفل الحلقة والبوابة والمايك لو الصفحة اتقفلت أثناء التسجيل.
+      groqLiveActiveRef.current = false;
+      if (groqLivePollRef.current) clearInterval(groqLivePollRef.current);
+      try { groqLiveGateRef.current?.close(); } catch { /* closed */ }
+      try { groqLiveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
     };
   }, []);
 
@@ -1021,14 +1038,24 @@ export default function RegistrationPage() {
     liveTranscriptRef.current  = "";
     lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
-    // ── ElevenLabs / Groq Whisper (تسجيل ثم تحليل) — أي محرك مش لحظي: سجّل الصوت
-    // وحلّله بالمحرك المختار أول ما توقف. المحرك اللي الأدمن اختاره هو اللي بيشتغل.
-    const recordThenAnalyze = getVoiceEngine();
-    if (recordThenAnalyze === "elevenlabs" || recordThenAnalyze === "groq") {
+    const selectedEngine = getVoiceEngine();
+    // ── Groq Whisper لايف (شبه-لحظي): مايك مفتوح + VAD يقطّع عند السكوت + كل مقطع
+    // يتبعت لـ Groq ويظهر فوراً. ده المحرك اللي بيوصل لدقة المنافس (Whisper أدق
+    // بكتير من Deepgram على لوحات السعودية) مع إحساس اللايف.
+    if (selectedEngine === "groq") {
       if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
       if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
-      if (!groqApiKey.trim()) { setRecordingError("محرك ElevenLabs/Groq محتاج مفتاح Groq (للترتيب) — حطّه من القائمة ← «مفتاح Groq»."); return; }
-      const ok = await startRawRecording(recordThenAnalyze);
+      if (!groqApiKey.trim()) { setRecordingError("محرك Groq محتاج مفتاح Groq — حطّه من القائمة ← «مفتاح Groq»."); return; }
+      const ok = await startGroqLiveRecording();
+      if (ok) return;
+      // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
+    }
+    // ── ElevenLabs (تسجيل ثم تحليل — batch فقط): سجّل الصوت وحلّله أول ما توقف. ──
+    if (selectedEngine === "elevenlabs") {
+      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
+      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
+      if (!groqApiKey.trim()) { setRecordingError("محرك ElevenLabs محتاج مفتاح Groq (للترتيب) — حطّه من القائمة ← «مفتاح Groq»."); return; }
+      const ok = await startRawRecording("elevenlabs");
       if (ok) return;
       // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
     }
@@ -1298,6 +1325,44 @@ export default function RegistrationPage() {
       rawRecorderRef.current = null;
       rawStreamRef.current = null;
       setDebugStatus("⏳ بيحلّل الصوت بالمحرك المختار…");
+      return;
+    }
+
+    // ── Groq لايف: أوقف الـ VAD والمسجّل، استنى آخر مقطع + الطابور، flush نهائي. ──
+    if (groqLiveActiveRef.current) {
+      groqLiveActiveRef.current = false;
+      setIsTranscribing(true);
+      try {
+        if (groqLivePollRef.current) { clearInterval(groqLivePollRef.current); groqLivePollRef.current = null; }
+        // أوقف المقطع الحالي — onstop هيرفع آخر نطقة (مش هيفتح مقطع جديد: active=false).
+        try { groqLiveRecorderRef.current?.stop(); } catch { /* stopped */ }
+        try { groqLiveGateRef.current?.close(); } catch { /* closed */ }
+        groqLiveGateRef.current = null;
+        try { groqLiveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* stopped */ }
+        groqLiveRecorderRef.current = null; groqLiveStreamRef.current = null;
+        // استنى آخر مقطع يترفع (onstop async) ويتعلّق على الطابور، وبعدين الطابور.
+        await new Promise((r) => setTimeout(r, 500));
+        await sessionQueueRef.current;
+        const lastCoords = gpsService.getLastCoords() ?? gpsAtRecordRef.current;
+        await applySessionText("", lastCoords, null, true);
+        await sessionQueueRef.current;
+        const saved = sessionSavedCountRef.current;
+        if (saved > 0) {
+          setDebugStatus(`✅ اتحفظ ${saved} لوحة تلقائياً`);
+        } else if (sessionTranscriptRef.current.trim()) {
+          setPendingTranscript(sessionTranscriptRef.current.trim());
+          setDebugFinal(sessionTranscriptRef.current.trim());
+          setDebugStatus("✅ تم التفريغ — مفيش لوحات مكتملة، راجع النص تحت");
+        } else {
+          setRecordingError("مفيش كلام اتسجّل.");
+          setDebugStatus("❌ مفيش نتيجة");
+        }
+      } catch (err: any) {
+        setRecordingError(`تعذّر التفريغ: ${err?.message ?? err}`);
+        setDebugStatus(`❌ ERROR: ${err?.message ?? err}`);
+      } finally {
+        setIsTranscribing(false);
+      }
       return;
     }
 
@@ -1577,6 +1642,112 @@ export default function RegistrationPage() {
         setRecordingError(`جزء من التسجيل فشل تفريغه: ${(err as { message?: string })?.message ?? err}`);
       }
     });
+  }
+
+  // ── Groq Whisper لايف (شبه-لحظي) ─────────────────────────────────────────
+  // مايك مفتوح + بوابة كلام (VAD). المسجّل بيشتغل لكل «نطقة»؛ أول ما الـ VAD
+  // يحس سكوت (نهاية اللوحة) بيقفل المقطع ويبعته لـ Groq (كل مقطع ملف مستقل
+  // قابل للفك), ويفتح مقطع جديد فوراً — صفر فقد على الحدود تقريباً. النتيجة
+  // بتغذّي enqueueGroqChunk/applySessionText (نفس الحفظ الحي التسلسلي +
+  // carry-over اللي بيصحّح اللوحة المقطوعة على حدود المقاطع = تصحيح ذاتي).
+  // بيقطّع بالـ VAD مش بالوقت الثابت عشان مايقطعش نص اللوحة.
+  const GROQ_LIVE_MAX_SEG_MS = 7000; // أمان: أقصى طول مقطع لو المندوب بيقرا بلا وقفات
+  async function startGroqLiveRecording(): Promise<boolean> {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setRecordingError("جهازك مايدعمش تسجيل الصوت — استخدم Deepgram أو حدّث التطبيق.");
+      return false;
+    }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+      .find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+    if (!mime) { setRecordingError("متصفحك مايدعمش صيغة التسجيل المطلوبة."); return false; }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setRecordingError("تعذّر فتح الميكروفون — اسمح بالإذن وجرّب تاني.");
+      return false;
+    }
+    groqLiveStreamRef.current = stream;
+    groqLiveMimeRef.current = mime;
+    // لو فشلت تهيئة الـ VAD بنسيبها null → بنقطّع بالحد الأقصى فقط (مايضيّعش لوحات).
+    try { groqLiveGateRef.current = createSpeechGate(stream); } catch { groqLiveGateRef.current = null; }
+
+    // تهيئة جلسة التحليل الحدثي (نفس مسار Deepgram) — سياق جديد، طابور فاضي.
+    sessionStateRef.current = newSessionState();
+    sessionQueueRef.current = Promise.resolve();
+    sessionCoordsRef.current = [gpsService.getLastCoords()];
+    sessionChunkIndexRef.current = 0;
+    sessionIdRef.current = uid();
+    sessionStartedAtRef.current = new Date().toISOString();
+    sessionTranscriptRef.current = "";
+    sessionEventsRef.current = [];
+    sessionSavedCountRef.current = 0;
+    sessionFailedChunksRef.current = 0;
+
+    groqLiveActiveRef.current = true;
+    isRecordingRef.current = true;
+    setIsRecording(true);
+    gpsAtRecordRef.current = gpsService.getLastCoords();
+    setRegEngine("whisper");
+    setDebugStatus("✅ STARTED (Groq لايف)");
+
+    startGroqLiveSegment();
+
+    // حلقة الـ VAD: تقطّع المقطع عند السكوت (نهاية النطقة، بعد hangover البوابة)
+    // أو عند الحد الأقصى للطول. المقاطع الصامتة (بلا كلام) مابتتبعتش.
+    groqLivePollRef.current = setInterval(() => {
+      if (!groqLiveActiveRef.current) return;
+      const gate = groqLiveGateRef.current;
+      const speaking = gate ? gate.isSpeaking() : true;
+      setRegMicActive(speaking);
+      setRegLevel(gate ? gate.level() : 0);
+      if (speaking) groqLiveSawSpeechRef.current = true;
+      const segMs = performance.now() - groqLiveSegStartRef.current;
+      const shouldCut =
+        groqLiveSawSpeechRef.current &&
+        (!speaking || segMs > GROQ_LIVE_MAX_SEG_MS);
+      if (shouldCut) {
+        const rec = groqLiveRecorderRef.current;
+        if (rec && rec.state === "recording") { try { rec.stop(); } catch { /* ignore */ } }
+      }
+    }, 150);
+    return true;
+  }
+
+  // يبدأ مقطع تسجيل جديد. onstop بيجمّع الصوت، يبعته لـ Groq لو فيه كلام، ويفتح
+  // المقطع اللي بعده فوراً (طالما لسه بنسجّل) — المايك مايتقفلش بين النطقات.
+  function startGroqLiveSegment() {
+    const stream = groqLiveStreamRef.current;
+    if (!stream || !groqLiveActiveRef.current) return;
+    const mime = groqLiveMimeRef.current;
+    let rec: MediaRecorder;
+    try { rec = new MediaRecorder(stream, { mimeType: mime }); } catch { return; }
+    groqLiveRecorderRef.current = rec;
+    groqLiveSegChunksRef.current = [];
+    groqLiveSawSpeechRef.current = false;
+    groqLiveSegStartRef.current = performance.now();
+    rec.ondataavailable = (e) => { if (e.data.size > 0) groqLiveSegChunksRef.current.push(e.data); };
+    rec.onstop = () => {
+      const hadSpeech = groqLiveSawSpeechRef.current;
+      const parts = groqLiveSegChunksRef.current;
+      groqLiveSegChunksRef.current = [];
+      // افتح المقطع الجاي فوراً قبل رفع الحالي — مايفوتش كلام النطقة الجاية.
+      if (groqLiveActiveRef.current) startGroqLiveSegment();
+      if (!hadSpeech || parts.length === 0) return; // سكوت — مانبعتش (توفير + دقة)
+      const blob = new Blob(parts, { type: mime });
+      const idx = sessionChunkIndexRef.current++;
+      sessionCoordsRef.current[idx] = gpsService.getLastCoords();
+      blob.arrayBuffer()
+        .then((ab) => {
+          const b64 = uint8ToBase64(new Uint8Array(ab));
+          enqueueGroqChunk(
+            uploadGroqChunk({ value: { recordDataBase64: b64, mimeType: mime } }, groqApiKey.trim()),
+            idx
+          );
+        })
+        .catch(() => { sessionFailedChunksRef.current++; });
+    };
+    try { rec.start(); } catch { /* ignore */ }
   }
 
   // ── تسجيل خام للمحركات «تسجيل ثم تحليل» (ElevenLabs / Groq Whisper) ──
