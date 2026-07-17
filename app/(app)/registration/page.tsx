@@ -636,6 +636,12 @@ export default function RegistrationPage() {
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
   const smActiveRef = useRef(false); // الجلسة الحالية بتستخدم Speechmatics؟
+  // مسار «تسجيل ثم تحليل» للمحركات اللي مش لحظية (ElevenLabs / Groq Whisper):
+  // يسجّل الصوت الخام بس، وأول ما يقف يحفظه ويشغّل التحليل بالمحرك المختار.
+  const rawActiveRef = useRef(false);
+  const rawRecorderRef = useRef<MediaRecorder | null>(null);
+  const rawStreamRef = useRef<MediaStream | null>(null);
+  const rawChunksRef = useRef<Blob[]>([]);
 
   // SR status for debug
   const [debugStatus, setDebugStatus] = useState("");
@@ -1015,6 +1021,18 @@ export default function RegistrationPage() {
     liveTranscriptRef.current  = "";
     lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
+    // ── ElevenLabs / Groq Whisper (تسجيل ثم تحليل) — أي محرك مش لحظي: سجّل الصوت
+    // وحلّله بالمحرك المختار أول ما توقف. المحرك اللي الأدمن اختاره هو اللي بيشتغل.
+    const recordThenAnalyze = getVoiceEngine();
+    if (recordThenAnalyze === "elevenlabs" || recordThenAnalyze === "groq") {
+      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
+      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
+      if (!groqApiKey.trim()) { setRecordingError("محرك ElevenLabs/Groq محتاج مفتاح Groq (للترتيب) — حطّه من القائمة ← «مفتاح Groq»."); return; }
+      const ok = await startRawRecording(recordThenAnalyze);
+      if (ok) return;
+      // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
+    }
+
     // ── Speechmatics (لو هو المحرك المختار) — نفس مسار الحفظ الحدثي.
     if (getVoiceEngine() === "speechmatics" && getSpeechmaticsKey()) {
       if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
@@ -1270,6 +1288,18 @@ export default function RegistrationPage() {
     setIsRecording(false);
     setRegEngine(null);
     setRegMicActive(false);
+
+    // ── ElevenLabs / Groq (تسجيل ثم تحليل): أوقف التسجيل → onstop بيحفظ الصوت ويحلّل. ──
+    if (rawActiveRef.current) {
+      rawActiveRef.current = false;
+      setIsTranscribing(true); // نقفل زر التسجيل لحد ما التحليل يخلص (runReanalyze بيصفّيها)
+      try { rawRecorderRef.current?.stop(); } catch { /* stopped */ }
+      try { rawStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      rawRecorderRef.current = null;
+      rawStreamRef.current = null;
+      setDebugStatus("⏳ بيحلّل الصوت بالمحرك المختار…");
+      return;
+    }
 
     // ── Speechmatics: أوقف البث، استنى الطابور، flush نهائي واحفظ. ──
     if (smActiveRef.current) {
@@ -1547,6 +1577,65 @@ export default function RegistrationPage() {
         setRecordingError(`جزء من التسجيل فشل تفريغه: ${(err as { message?: string })?.message ?? err}`);
       }
     });
+  }
+
+  // ── تسجيل خام للمحركات «تسجيل ثم تحليل» (ElevenLabs / Groq Whisper) ──
+  // بيلتقط الصوت بس (من غير بث لحظي)، وأول ما يقف بيحفظه في lastSessionAudioRef
+  // ويشغّل التحليل بالمحرك المختار عبر runReanalyze (نتيجته في جدول «تحليل ذكي»).
+  // مبدأ «ممنوع الإسقاط الصامت»: لو مفيش صوت → رسالة واضحة مش سكوت.
+  async function startRawRecording(engineLabel: "groq" | "elevenlabs"): Promise<boolean> {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setRecordingError("جهازك مايدعمش تسجيل الصوت — استخدم Deepgram أو حدّث التطبيق.");
+      return false;
+    }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]
+      .find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+    if (!mime) { setRecordingError("متصفحك مايدعمش صيغة التسجيل المطلوبة."); return false; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      rawStreamRef.current = stream;
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      rawRecorderRef.current = rec;
+      rawChunksRef.current = [];
+      lastSessionAudioRef.current = null;
+      rec.ondataavailable = (e) => { if (e.data.size > 0) rawChunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        if (rawChunksRef.current.length === 0) {
+          pendingAutoAnalyzeRef.current = false; // مايفضلش تحليل تلقائي مسلّح على صوت قديم
+          setIsTranscribing(false);
+          setRecordingError("مااتسجّلش صوت — تأكد إن الميكروفون شغّال وجرّب تاني.");
+          return;
+        }
+        const blob = new Blob(rawChunksRef.current, { type: mime });
+        blob.arrayBuffer()
+          .then((ab) => {
+            lastSessionAudioRef.current = { base64: uint8ToBase64(new Uint8Array(ab)), mimeType: mime };
+            setSessionAudioTick((t) => t + 1);
+            pendingAutoAnalyzeRef.current = false; // نمنع تحليل مزدوج مع وضع «تسجيل ثم تحليل»
+            void runReanalyze();                   // حلّل بالمحرك المختار — بيصفّي isTranscribing في finally
+          })
+          .catch(() => {
+            pendingAutoAnalyzeRef.current = false;
+            setIsTranscribing(false);
+            setRecordingError("تعذّر تجهيز الصوت للتحليل — جرّب تاني.");
+          });
+      };
+      rec.start(250);
+      rawActiveRef.current = true;
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      gpsAtRecordRef.current = gpsService.getLastCoords();
+      setRegEngine(engineLabel);
+      setDebugStatus(`✅ STARTED (${engineLabel} — تسجيل ثم تحليل)`);
+      return true;
+    } catch {
+      // اقفل أي ستريم اتفتح قبل ما الـ MediaRecorder يرمي — عشان مايفضلش المايك شغّال.
+      try { rawStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      rawStreamRef.current = null;
+      rawRecorderRef.current = null;
+      setRecordingError("تعذّر فتح الميكروفون — اسمح بالإذن وجرّب تاني.");
+      return false;
+    }
   }
 
   // ── Deepgram: بث صوت لحظي (WebSocket) بموديل nova-3 لهجة مصرية مع تعزيز
@@ -2279,6 +2368,7 @@ export default function RegistrationPage() {
       setReError("تعذّر الاتصال بالسيرفر.");
     } finally {
       setReAnalyzing(false);
+      setIsTranscribing(false); // يصفّي قفل زر التسجيل بتاع مسار «تسجيل ثم تحليل» (ElevenLabs/Groq)
     }
   }
 
