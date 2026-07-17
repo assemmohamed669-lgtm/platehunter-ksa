@@ -20,6 +20,7 @@
 // والإنجن الجديد سوا). القيم IDENTICAL للي كانت هنا — اتأكّد بمقارنة برمجية.
 import { ZERO_WORD_RE } from "./dictionaries/zeroForms";
 import { VEHICLE_TYPES } from "./dictionaries/vehicleTypes";
+import { NOTE_KEYWORDS } from "./dictionaries/noiseWords";
 
 // ─── Egyptian dialect → Saudi plate letter/digit mapping ─────────────────
 // المأمور يقول كل حرف كلمة لوحدها: "دال حه ره واحد اتنين تلاتة أربعة"
@@ -530,21 +531,10 @@ export function extractVehicleType(text: string): { vehicleType?: string; rest: 
 }
 
 // ─── Location / directional note keywords ────────────────────────────────────
-// Spoken location/direction words that must ALWAYS land in `notes` and never be
-// mistaken for plate letters. Several of these are made entirely of valid plate
-// letters (يمين = ي م ي ن، يسار = ي س ا ر) so they'd otherwise get salvaged into
-// an adjacent plate. Compared against the tatweel-stripped token (`clean`).
-const NOTE_KEYWORDS = new Set([
-  // اتجاهات
-  "يمين", "اليمين", "يسار", "اليسار", "شمال", "الشمال",
-  "امام", "أمام", "قدام", "خلف", "ورا", "وراء", "جنب", "بجانب",
-  "فوق", "تحت", "داخل", "جوه", "برا", "خارج",
-  // أماكن / مواقف
-  "جراج", "الجراج", "كراج", "الكراج", "موقف", "الموقف", "باركن", "باركنج",
-  "برحة", "بارحة", "البرحة", "البارحة", "حارة", "الحارة", "طريق", "الطريق",
-  "شارع", "الشارع", "دوار", "الدوار", "كوبري", "الكوبري",
-  "عمارة", "العمارة", "فيلا", "الفيلا", "محل", "المحل", "مدخل", "مخرج",
-]);
+// اتّنقلت لـ dictionaries/noiseWords.ts (نفس القيمة IDENTICAL). كلمات موقع/اتجاه
+// لازم دايماً تروح `notes` وميتحسبوش حروف لوحة — كتير منها متكوّن كله من حروف
+// صالحة (يمين = ي م ي ن) فكانوا هيتسحبوا للوحة مجاورة. بتتقارن بالتوكن بعد شيل
+// التطويل (`clean`).
 
 // ─── Fixed note phrases (dictionary + fuzzy guess) ──────────────────────────
 // عبارات الملاحظات الثابتة اللي المندوب بيقولها في الميدان. البرنامج يتعرّف
