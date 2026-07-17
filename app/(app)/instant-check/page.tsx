@@ -11,10 +11,8 @@ import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
 import { getActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
-import { getVoiceEngine, getSpeechmaticsKey, getSonioxKey, getOpenaiKey } from "@/lib/voiceKeys";
+import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
-import { startSoniox, type SonioxHandle } from "@/lib/sonioxRT";
-import { startOpenAI, type OpenAIHandle } from "@/lib/openaiRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
@@ -375,7 +373,7 @@ export default function InstantCheckPage() {
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
   // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
-  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "soniox" | "openai" | "whisper" | "local">(null);
+  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
@@ -410,8 +408,6 @@ export default function InstantCheckPage() {
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
-  const snHandleRef = useRef<SonioxHandle | null>(null); // جلسة Soniox
-  const oaHandleRef = useRef<OpenAIHandle | null>(null); // جلسة OpenAI
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1726,32 +1722,6 @@ export default function InstantCheckPage() {
       // فشل البدء → نكمّل بالمسارات التانية.
     }
 
-    // (٠') Soniox لو هو المحرك المختار وفيه مفتاح.
-    if (getVoiceEngine() === "soniox" && getSonioxKey()) {
-      pttSessionStateRef.current = newSessionState();
-      pttRowIdxRef.current = 0;
-      const h = await startSoniox(getSonioxKey(), {
-        onPartial: (t) => setPttLiveText(t),
-        onFinal: (t) => processWhisperText(t, false),
-        onError: (m) => setPttError(m),
-      });
-      if (h) { snHandleRef.current = h; setPttEngine("soniox"); return; }
-      // فشل البدء → نكمّل بالمسارات التانية.
-    }
-
-    // (٠'') OpenAI لو هو المحرك المختار وفيه مفتاح — نفس أداة ChatGPT الصوتية.
-    if (getVoiceEngine() === "openai" && getOpenaiKey()) {
-      pttSessionStateRef.current = newSessionState();
-      pttRowIdxRef.current = 0;
-      const h = await startOpenAI(getOpenaiKey(), {
-        onPartial: (t) => setPttLiveText(t),
-        onFinal: (t) => processWhisperText(t, false),
-        onError: (m) => setPttError(m),
-      });
-      if (h) { oaHandleRef.current = h; setPttEngine("openai"); return; }
-      // فشل البدء → نكمّل بالمسارات التانية.
-    }
-
     // (١) الأولوية لـ Deepgram لو مفعّل وشغّال — أدق تفريغ لحظي (يشتغل على
     // الويب والموبايل عبر getUserMedia، مش محتاج plugin native). getActiveDeepgramKey
     // بترجّع فاضي لو المستخدم موقفه مؤقتاً → بيرجع للمحرك التاني.
@@ -1905,10 +1875,10 @@ export default function InstantCheckPage() {
     setPttMicActive(false);
     stopPttTimer();
 
-    // مسار Speechmatics/Soniox/OpenAI شغّال؟ وقّفه وفلّش المحلّل.
-    if (smHandleRef.current || snHandleRef.current || oaHandleRef.current) {
-      const h = smHandleRef.current || snHandleRef.current || oaHandleRef.current;
-      smHandleRef.current = null; snHandleRef.current = null; oaHandleRef.current = null;
+    // مسار Speechmatics شغّال؟ وقّفه وفلّش المحلّل.
+    if (smHandleRef.current) {
+      const h = smHandleRef.current;
+      smHandleRef.current = null;
       try { await h!.stop(); } catch {}
       processWhisperText("", true);
       return;

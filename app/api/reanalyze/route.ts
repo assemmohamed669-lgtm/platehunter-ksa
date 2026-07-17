@@ -5,7 +5,7 @@
  *
  * إعادة تحليل تسجيل محفوظ بدقة أعلى (مش مستعجل زي اللحظي):
  *  (١) يعيد تفريغ الصوت بالأداة المختارة **على السيرفر** (مفيش قيود CORS) —
- *      OpenAI gpt-4o-transcribe / Deepgram pre-recorded / Groq Whisper.
+ *      ElevenLabs Scribe / Deepgram pre-recorded / Groq Whisper.
  *  (٢) يبعت النص لـ Groq llama يرتّبه لصفوف {plate, vehicleType, notes} بالسياق
  *      الكامل ويتحقّق (٣ حروف + ٤ أرقام).
  * بيرجّع { transcript, rows, engineUsed }.
@@ -56,16 +56,16 @@ async function cleanToM4a(input: Buffer, inputExt: string): Promise<{ buf: Buffe
 const PLATE_PROMPT =
   "إملاء لوحات سيارات سعودية، كل حرف كلمة منفصلة وكل رقم منفصل، بدون تعليق أو تلخيص. الحروف المتشابهة متمايزة: حه غير هه، سين غير صاد، قاف غير كاف، دال غير طاء، عين غير ألف.";
 
-async function transcribeOpenAI(buf: Buffer, ext: string, key: string): Promise<string> {
+async function transcribeElevenLabs(buf: Buffer, ext: string, key: string): Promise<string> {
+  const { buf: clean, ext: cleanExt } = await cleanToM4a(buf, ext);
   const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(buf)]), `audio.${ext || "m4a"}`);
-  form.append("model", "gpt-4o-transcribe");
-  form.append("language", "ar");
-  form.append("prompt", PLATE_PROMPT);
-  const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form,
+  form.append("file", new Blob([new Uint8Array(clean)], { type: "audio/mp4" }), `audio.${cleanExt}`);
+  form.append("model_id", "scribe_v1");
+  form.append("language_code", "ar");
+  const r = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+    method: "POST", headers: { "xi-api-key": key }, body: form,
   });
-  if (!r.ok) throw new Error(`openai ${r.status}: ${(await r.text().catch(() => "")).slice(0, 160)}`);
+  if (!r.ok) throw new Error(`elevenlabs ${r.status}: ${(await r.text().catch(() => "")).slice(0, 160)}`);
   const j = await r.json();
   return (j.text ?? "").trim();
 }
@@ -141,7 +141,7 @@ export async function POST(req: NextRequest) {
     let transcript = "";
     let engineUsed = engine;
     try {
-      if (engine === "openai" && tk) transcript = await transcribeOpenAI(buf, ext, tk);
+      if (engine === "elevenlabs" && tk) transcript = await transcribeElevenLabs(buf, ext, tk);
       else if (engine === "deepgram" && tk) transcript = await transcribeDeepgram(buf, mimeType, tk);
       else { engineUsed = "groq"; transcript = await transcribeGroq(buf, ext, tk || gk); }
     } catch (e) {

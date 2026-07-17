@@ -8,21 +8,22 @@ describe("normalizeServiceKeys — تطبيع مفاتيح البروفايل", 
   });
   it("بيطبّع المفاتيح ويشيل الفراغات والافتراضي deepgram", () => {
     expect(normalizeServiceKeys({ deepgram: "  ab ", speechmatics: "cd " }))
-      .toEqual({ deepgram: "ab", speechmatics: "cd", soniox: "", openai: "", engine: "deepgram", email: "", password: "" });
+      .toEqual({ deepgram: "ab", speechmatics: "cd", elevenlabs: "", engine: "deepgram", email: "", password: "" });
   });
   it("بيمرّر إيميل وباسوورد حساب الخدمة", () => {
     const n = normalizeServiceKeys({ email: "x@y.com", password: "p@ss" });
     expect(n.email).toBe("x@y.com");
     expect(n.password).toBe("p@ss");
   });
-  it("engine=speechmatics/soniox/openai بيتحفظ", () => {
+  it("engine=speechmatics/groq/elevenlabs بيتحفظ", () => {
     expect(normalizeServiceKeys({ deepgram: "x", engine: "speechmatics" }).engine).toBe("speechmatics");
-    expect(normalizeServiceKeys({ soniox: "s", engine: "soniox" }).engine).toBe("soniox");
-    expect(normalizeServiceKeys({ soniox: "  s " }).soniox).toBe("s");
-    expect(normalizeServiceKeys({ openai: "o", engine: "openai" }).engine).toBe("openai");
-    expect(normalizeServiceKeys({ openai: "  o " }).openai).toBe("o");
+    expect(normalizeServiceKeys({ engine: "groq" }).engine).toBe("groq");
+    expect(normalizeServiceKeys({ elevenlabs: "e", engine: "elevenlabs" }).engine).toBe("elevenlabs");
+    expect(normalizeServiceKeys({ elevenlabs: "  e " }).elevenlabs).toBe("e");
   });
-  it("engine غير معروف → deepgram", () => {
+  it("engine غير معروف (أو المحذوف soniox/openai) → deepgram", () => {
     expect(normalizeServiceKeys({ engine: "whatever" }).engine).toBe("deepgram");
+    expect(normalizeServiceKeys({ engine: "soniox" }).engine).toBe("deepgram");
+    expect(normalizeServiceKeys({ engine: "openai" }).engine).toBe("deepgram");
   });
 });

@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink, Copy, Check, Mail, KeyRound } from "lucide-react";
+import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink, Copy, Check, Mail, KeyRound, Info } from "lucide-react";
 import type { ServiceKeys, VoiceEngine } from "@/lib/voiceKeys";
 
 /**
  * إدارة مفاتيح الصوت لمندوب — للأدمن فقط (جوه صفحة المندوب). أربع محرّكات:
- * Deepgram / Speechmatics / Soniox / OpenAI، واحد نشط بس (حصري). اختبار كل مفتاح
- * + لينك للتسجيل والرصيد تحته. + بيانات حساب الخدمة (إيميل/باسوورد) ظاهرة وقابلة
- * للنسخ — سجل للأدمن.
+ * Deepgram / Speechmatics (لحظي) و Groq Whisper / ElevenLabs (تسجيل ثم تحليل)،
+ * واحد نشط بس (حصري). اختبار كل مفتاح + لينك للتسجيل والرصيد تحته.
+ * ملاحظة: Groq بيستخدم مفتاح Groq اللي المندوب حاطه من صفحة المفاتيح (مش هنا).
  */
 type TestState = null | "ok" | "bad";
 
@@ -23,23 +23,19 @@ export default function AgentVoiceKeys({
 }) {
   const [deepgram, setDeepgram] = useState(initial.deepgram ?? "");
   const [speechmatics, setSpeechmatics] = useState(initial.speechmatics ?? "");
-  const [soniox, setSoniox] = useState(initial.soniox ?? "");
-  const [openai, setOpenai] = useState(initial.openai ?? "");
+  const [elevenlabs, setElevenlabs] = useState(initial.elevenlabs ?? "");
   const [engine, setEngine] = useState<VoiceEngine>(initial.engine ?? "deepgram");
   const [email, setEmail] = useState(initial.email ?? "");
   const [password, setPassword] = useState(initial.password ?? "");
   const [showDg, setShowDg] = useState(false);
   const [showSm, setShowSm] = useState(false);
-  const [showSn, setShowSn] = useState(false);
-  const [showOa, setShowOa] = useState(false);
+  const [showEl, setShowEl] = useState(false);
   const [testDg, setTestDg] = useState<TestState>(null);
   const [testSm, setTestSm] = useState<TestState>(null);
-  const [testSn, setTestSn] = useState<TestState>(null);
-  const [testOa, setTestOa] = useState<TestState>(null);
+  const [testEl, setTestEl] = useState<TestState>(null);
   const [testingDg, setTestingDg] = useState(false);
   const [testingSm, setTestingSm] = useState(false);
-  const [testingSn, setTestingSn] = useState(false);
-  const [testingOa, setTestingOa] = useState(false);
+  const [testingEl, setTestingEl] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -85,50 +81,30 @@ export default function AgentVoiceKeys({
     finally { setTestingSm(false); }
   }
 
-  // اختبار Soniox: نفتح WS ونبعت config بالمفتاح — خطأ سريع = مرفوض، ومن غير
-  // خطأ خلال ٣ث = مقبول (المفتاح بيتحقّق في أول رسالة).
-  function testSoniox() {
-    const k = soniox.trim();
-    if (!k || testingSn) return;
-    setTestingSn(true); setTestSn(null);
-    let settled = false; let ws: WebSocket | null = null;
-    const finish = (r: TestState) => {
-      if (settled) return; settled = true; clearTimeout(t);
-      setTestingSn(false); setTestSn(r); try { ws?.close(); } catch { /* ignore */ }
-    };
-    const t = setTimeout(() => finish("ok"), 3000);
+  // اختبار ElevenLabs: نستدعي GET /v1/user بالمفتاح — 200 = المفتاح صح، غير كده مرفوض.
+  async function testElevenlabs() {
+    const k = elevenlabs.trim();
+    if (!k || testingEl) return;
+    setTestingEl(true); setTestEl(null);
     try {
-      ws = new WebSocket("wss://stt-rt.soniox.com/transcribe-websocket");
-      ws.onopen = () => { try { ws!.send(JSON.stringify({ api_key: k, model: "stt-rt-v5", audio_format: "s16le", sample_rate: 16000, num_channels: 1, language_hints: ["ar"] })); } catch { /* ignore */ } };
-      ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.error_code || m.error_message) finish("bad"); } catch { /* ignore */ } };
-      ws.onerror = () => finish("bad");
-      ws.onclose = (e) => { if (!settled && e.code !== 1000) finish("bad"); };
-    } catch { finish("bad"); }
-  }
-
-  // اختبار OpenAI: نستدعي GET /v1/models بالمفتاح — 200 = المفتاح صح، 401 = مرفوض.
-  // (api.openai.com بيسمح بالاستدعاء من المتصفح — CORS مفعّل.)
-  async function testOpenai() {
-    const k = openai.trim();
-    if (!k || testingOa) return;
-    setTestingOa(true); setTestOa(null);
-    try {
-      const r = await fetch("https://api.openai.com/v1/models", {
-        headers: { Authorization: `Bearer ${k}` },
-      });
-      setTestOa(r.ok ? "ok" : "bad");
-    } catch { setTestOa("bad"); }
-    finally { setTestingOa(false); }
+      const r = await fetch("https://api.elevenlabs.io/v1/user", { headers: { "xi-api-key": k } });
+      setTestEl(r.ok ? "ok" : "bad");
+    } catch { setTestEl("bad"); }
+    finally { setTestingEl(false); }
   }
 
   async function save() {
     const ok = await onSave({
-      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), soniox: soniox.trim(),
-      openai: openai.trim(), engine,
+      deepgram: deepgram.trim(), speechmatics: speechmatics.trim(), elevenlabs: elevenlabs.trim(),
+      engine,
       email: email.trim(), password,
     });
     if (ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
   }
+
+  const ENGINE_LABEL: Record<VoiceEngine, string> = {
+    deepgram: "Deepgram", speechmatics: "Speechmatics", groq: "Groq Whisper", elevenlabs: "ElevenLabs",
+  };
 
   const engineBtn = (val: VoiceEngine, label: string) => (
     <button type="button" onClick={() => setEngine(val)}
@@ -207,37 +183,44 @@ export default function AgentVoiceKeys({
         <div className="grid grid-cols-2 gap-2">
           {engineBtn("deepgram", "Deepgram")}
           {engineBtn("speechmatics", "Speechmatics")}
-          {engineBtn("soniox", "Soniox")}
-          {engineBtn("openai", "OpenAI")}
+          {engineBtn("groq", "Groq Whisper")}
+          {engineBtn("elevenlabs", "ElevenLabs")}
         </div>
         <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-brand">
-          <CheckCircle2 size={12} /> المندوب هيستخدم: {engine === "deepgram" ? "Deepgram" : engine === "speechmatics" ? "Speechmatics" : engine === "soniox" ? "Soniox" : "OpenAI"}
+          <CheckCircle2 size={12} /> المندوب هيستخدم: {ENGINE_LABEL[engine]}
           <span className="font-normal text-muted">— بعد ما تدوس حفظ</span>
         </p>
       </div>
 
       {/* Deepgram */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "deepgram" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <span className="text-xs font-bold text-ink">مفتاح Deepgram</span>
+        <span className="text-xs font-bold text-ink">مفتاح Deepgram <span className="font-normal text-muted">(لحظي — أدق للحروف)</span></span>
         {keyRow(deepgram, setDeepgram, showDg, setShowDg, testDeepgram, testingDg, testDg, "مفتاح Deepgram", "https://console.deepgram.com/", "https://console.deepgram.com/signup")}
       </div>
 
       {/* Speechmatics */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "speechmatics" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <span className="text-xs font-bold text-ink">مفتاح Speechmatics</span>
+        <span className="text-xs font-bold text-ink">مفتاح Speechmatics <span className="font-normal text-muted">(لحظي)</span></span>
         {keyRow(speechmatics, setSpeechmatics, showSm, setShowSm, testSpeechmatics, testingSm, testSm, "مفتاح Speechmatics", "https://portal.speechmatics.com/", "https://portal.speechmatics.com/signup")}
       </div>
 
-      {/* Soniox */}
-      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "soniox" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <span className="text-xs font-bold text-ink">مفتاح Soniox</span>
-        {keyRow(soniox, setSoniox, showSn, setShowSn, testSoniox, testingSn, testSn, "مفتاح Soniox", "https://console.soniox.com/", "https://soniox.com/")}
+      {/* Groq Whisper — بيستخدم مفتاح Groq اللي المندوب حاطه من صفحة المفاتيح */}
+      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "groq" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+        <span className="text-xs font-bold text-ink">Groq Whisper <span className="font-normal text-muted">(تسجيل ثم تحليل)</span></span>
+        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
+          <Info size={13} className="mt-0.5 shrink-0 text-primary" />
+          مافيش مفتاح هنا — بيستخدم <b>مفتاح Groq</b> اللي المندوب حاطه من القائمة ← «مفتاح Groq». اختَر Groq Whisper واحفظ عشان التسجيل يفرّغ بيه (مش لحظي).
+        </p>
       </div>
 
-      {/* OpenAI (نفس أداة تفريغ الصوت في ChatGPT) */}
-      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "openai" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <span className="text-xs font-bold text-ink">مفتاح OpenAI <span className="font-normal text-muted">(نفس أداة ChatGPT الصوتية)</span></span>
-        {keyRow(openai, setOpenai, showOa, setShowOa, testOpenai, testingOa, testOa, "sk-...", "https://platform.openai.com/usage", "https://platform.openai.com/signup")}
+      {/* ElevenLabs (Scribe) */}
+      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "elevenlabs" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+        <span className="text-xs font-bold text-ink">مفتاح ElevenLabs <span className="font-normal text-muted">(Scribe — تسجيل ثم تحليل)</span></span>
+        {keyRow(elevenlabs, setElevenlabs, showEl, setShowEl, testElevenlabs, testingEl, testEl, "مفتاح ElevenLabs", "https://elevenlabs.io/app/subscription", "https://elevenlabs.io/app/sign-up")}
+        <p className="flex items-start gap-1.5 text-[10px] leading-relaxed text-muted">
+          <Info size={12} className="mt-0.5 shrink-0 text-primary" />
+          محتاج كمان <b>مفتاح Groq</b> عند المندوب (للتسجيل والترتيب) — يُجرَّب عبر «تحليل ذكي» في صفحة التسجيل. ولو المفتاح مقيّد على Speech-to-Text بس، زر «اختبر» ممكن يقول «مرفوض» رغم إنه شغّال فعلياً.
+        </p>
       </div>
 
       {/* بيانات حساب الخدمة (سجل للأدمن — ظاهرة وقابلة للنسخ) */}

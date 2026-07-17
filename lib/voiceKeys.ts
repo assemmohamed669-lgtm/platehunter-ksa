@@ -1,24 +1,30 @@
 /**
- * مفاتيح محرك الصوت (Deepgram / Speechmatics) + المحرك النشط.
+ * مفاتيح محرك الصوت + المحرك النشط.
  * المصدر الأساسي = بروفايل المندوب في Supabase (بيحطّه الأدمن)؛ بيتزامن للجهاز
  * (localStorage) أول ما التطبيق يفتح عبر applyServiceKeys، فكل كود الصوت الحالي
  * (اللي بيقرا من localStorage) يشتغل من غير تغيير. المحرك النشط حصري: تشغيل
  * واحد بيوقف التاني.
+ *
+ * المحركات:
+ *  - deepgram / speechmatics: تفريغ لحظي (streaming).
+ *  - groq: Whisper large-v3 — تسجيل ثم تحليل (بيستخدم مفتاح Groq اللي المندوب
+ *    حاطه من صفحة المفاتيح — مش بيتدار من هنا).
+ *  - elevenlabs: Scribe — تسجيل ثم تحليل (مفتاح خاص بيحطّه الأدمن).
  */
 import { setDeepgramKey, setDeepgramEnabled, getDeepgramKey } from "./deepgramKey";
 
 export const LS_SPEECHMATICS_API_KEY = "ph:speechmatics:apiKey";
-export const LS_SONIOX_API_KEY = "ph:soniox:apiKey";
-export const LS_OPENAI_API_KEY = "ph:openai:apiKey";
+export const LS_ELEVENLABS_API_KEY = "ph:elevenlabs:apiKey";
 export const LS_VOICE_ENGINE = "ph:voice:engine";
+// مفتاح Groq بيتدار من صفحة المفاتيح (GroqKeyEditor) — بنقراه بس هنا.
+const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
 
-export type VoiceEngine = "deepgram" | "speechmatics" | "soniox" | "openai";
+export type VoiceEngine = "deepgram" | "speechmatics" | "groq" | "elevenlabs";
 
 export interface ServiceKeys {
   deepgram?: string;
   speechmatics?: string;
-  soniox?: string;
-  openai?: string;
+  elevenlabs?: string;
   engine?: VoiceEngine;
   // بيانات حساب الخدمة للمندوب (سجل للأدمن بس — مش بتنزل لجهاز المندوب).
   email?: string;
@@ -36,29 +42,24 @@ export function setSpeechmaticsKey(v: string): void {
   } catch { /* storage unavailable */ }
 }
 
-export function getSonioxKey(): string {
+export function getElevenlabsKey(): string {
   if (typeof window === "undefined") return "";
-  try { return (window.localStorage.getItem(LS_SONIOX_API_KEY) || "").trim(); } catch { return ""; }
+  try { return (window.localStorage.getItem(LS_ELEVENLABS_API_KEY) || "").trim(); } catch { return ""; }
 }
-export function setSonioxKey(v: string): void {
+export function setElevenlabsKey(v: string): void {
   try {
-    if (v.trim()) window.localStorage.setItem(LS_SONIOX_API_KEY, v.trim());
-    else window.localStorage.removeItem(LS_SONIOX_API_KEY);
+    if (v.trim()) window.localStorage.setItem(LS_ELEVENLABS_API_KEY, v.trim());
+    else window.localStorage.removeItem(LS_ELEVENLABS_API_KEY);
   } catch { /* storage unavailable */ }
 }
 
-export function getOpenaiKey(): string {
+/** مفتاح Groq المحفوظ على الجهاز (اللي المندوب حاطه من صفحة المفاتيح). */
+export function getGroqKey(): string {
   if (typeof window === "undefined") return "";
-  try { return (window.localStorage.getItem(LS_OPENAI_API_KEY) || "").trim(); } catch { return ""; }
-}
-export function setOpenaiKey(v: string): void {
-  try {
-    if (v.trim()) window.localStorage.setItem(LS_OPENAI_API_KEY, v.trim());
-    else window.localStorage.removeItem(LS_OPENAI_API_KEY);
-  } catch { /* storage unavailable */ }
+  try { return (window.localStorage.getItem(LS_GROQ_API_KEY) || "").trim(); } catch { return ""; }
 }
 
-const VOICE_ENGINES: VoiceEngine[] = ["deepgram", "speechmatics", "soniox", "openai"];
+const VOICE_ENGINES: VoiceEngine[] = ["deepgram", "speechmatics", "groq", "elevenlabs"];
 export function getVoiceEngine(): VoiceEngine {
   if (typeof window === "undefined") return "deepgram";
   try {
@@ -74,13 +75,13 @@ export function setVoiceEngine(e: VoiceEngine): void {
 export function normalizeServiceKeys(sk: unknown): ServiceKeys {
   if (!sk || typeof sk !== "object") return {};
   const o = sk as Record<string, unknown>;
-  const engine: VoiceEngine =
-    o.engine === "speechmatics" ? "speechmatics" : o.engine === "soniox" ? "soniox" : o.engine === "openai" ? "openai" : "deepgram";
+  const engine: VoiceEngine = VOICE_ENGINES.includes(o.engine as VoiceEngine)
+    ? (o.engine as VoiceEngine)
+    : "deepgram";
   return {
     deepgram: typeof o.deepgram === "string" ? o.deepgram.trim() : "",
     speechmatics: typeof o.speechmatics === "string" ? o.speechmatics.trim() : "",
-    soniox: typeof o.soniox === "string" ? o.soniox.trim() : "",
-    openai: typeof o.openai === "string" ? o.openai.trim() : "",
+    elevenlabs: typeof o.elevenlabs === "string" ? o.elevenlabs.trim() : "",
     engine,
     email: typeof o.email === "string" ? o.email : "",
     password: typeof o.password === "string" ? o.password : "",
@@ -91,24 +92,24 @@ export function normalizeServiceKeys(sk: unknown): ServiceKeys {
  * يطبّق مفاتيح البروفايل (اللي حطّها الأدمن) على الجهاز — البروفايل مصدر الحقيقة.
  * لو service_keys فاضية/null بنسيب المحلي زي ما هو (فترة انتقالية / الأدمن نفسه).
  * المحرك الحصري: Deepgram مفعّل بس لو هو المحرك المختار.
+ * ملاحظة: مفتاح Groq مش بيتلمس هنا — بيتدار من صفحة المفاتيح بتاعة المندوب.
  */
 export function applyServiceKeys(sk: unknown): void {
   if (sk == null) return;
   const n = normalizeServiceKeys(sk);
   setDeepgramKey(n.deepgram || "");
   setSpeechmaticsKey(n.speechmatics || "");
-  setSonioxKey(n.soniox || "");
-  setOpenaiKey(n.openai || "");
+  setElevenlabsKey(n.elevenlabs || "");
   setVoiceEngine(n.engine || "deepgram");
   setDeepgramEnabled(n.engine === "deepgram"); // Deepgram شغّال بس لو هو المختار (حصري)
 }
 
-/** المفتاح النشط للمحرك المختار (للاستخدام في مسار الصوت لاحقاً). */
+/** المفتاح النشط للمحرك المختار. */
 export function getActiveVoiceKey(): { engine: VoiceEngine; key: string } {
   const engine = getVoiceEngine();
   const key = engine === "speechmatics" ? getSpeechmaticsKey()
-    : engine === "soniox" ? getSonioxKey()
-    : engine === "openai" ? getOpenaiKey()
+    : engine === "elevenlabs" ? getElevenlabsKey()
+    : engine === "groq" ? getGroqKey()
     : getDeepgramKey();
   return { engine, key };
 }

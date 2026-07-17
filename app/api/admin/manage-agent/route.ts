@@ -148,14 +148,14 @@ export async function POST(req: NextRequest) {
       }
 
       case "setKeys": {
-        // مفاتيح الصوت للمندوب (Deepgram/Speechmatics) + المحرك النشط الحصري.
+        // مفاتيح الصوت للمندوب (Deepgram/Speechmatics/ElevenLabs) + المحرك النشط الحصري.
         const sk = (body.serviceKeys ?? {}) as Record<string, unknown>;
+        const ENGINES = ["deepgram", "speechmatics", "groq", "elevenlabs"];
         const clean = {
           deepgram: typeof sk.deepgram === "string" ? sk.deepgram.trim() : "",
           speechmatics: typeof sk.speechmatics === "string" ? sk.speechmatics.trim() : "",
-          soniox: typeof sk.soniox === "string" ? sk.soniox.trim() : "",
-          openai: typeof sk.openai === "string" ? sk.openai.trim() : "",
-          engine: sk.engine === "speechmatics" ? "speechmatics" : sk.engine === "soniox" ? "soniox" : sk.engine === "openai" ? "openai" : "deepgram",
+          elevenlabs: typeof sk.elevenlabs === "string" ? sk.elevenlabs.trim() : "",
+          engine: ENGINES.includes(sk.engine as string) ? (sk.engine as string) : "deepgram",
           email: typeof sk.email === "string" ? sk.email.trim() : "",
           password: typeof sk.password === "string" ? sk.password : "",
         };

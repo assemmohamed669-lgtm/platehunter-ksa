@@ -8,7 +8,7 @@ import { getDeepgramKey } from "@/lib/deepgramKey";
 const LS_GROQ_API_KEY = "ph:registration:groqApiKey";
 
 // صفحة المفاتيح للكل — Deepgram و Groq بس (المفاتيح اللي المندوب بيدخلها بنفسه).
-// باقي محركات الصوت (Speechmatics/Soniox/OpenAI) بيديرها الأدمن من صفحة المندوب.
+// باقي محركات الصوت (Speechmatics/ElevenLabs) بيديرها الأدمن من صفحة المندوب.
 export default function KeysPage() {
   const [groqSet, setGroqSet] = useState(false);
   const [deepgramSet, setDeepgramSet] = useState(false);
