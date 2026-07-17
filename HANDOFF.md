@@ -47,11 +47,13 @@
    - **ستَب passthrough (ذكاء مؤجّل للمرحلة ٢):** plateContextStateMachine / fuzzy / phonetic — موجودين في مكانهم بالـ pipeline وبيسجّلوا trace، بس بدون تحويل.
    - **قيدين رسميين متطبّقين:** ترتيب صفر/زير مقفول باختبار بيبوظ لو اتعكس؛ و noise removal (بيتشال) مفصول عن note routing (NOTE_KEYWORDS → ملاحظات).
    - **No Silent Drops في التصميم:** `dropToken` بيسجّل في dropped **و** trace؛ والتوكن غير المعروف بيتحفظ بثقة منخفضة (مش بيختفي).
-4. ⏳ **refactor `plateParser.ts` → thin consumer** للإنجن (آخر وأخطر خطوة — **محتاجة إذن صريح منفصل**). صفر تغيير سلوك — الأقفال والاختبارات القديمة هي الحكم. `parsePlateFromTranscript`/`extractMultiplePlates` يبقوا واجهة رفيعة بتنادي `normalizeTranscript`.
+4. ⏳ **refactor `plateParser.ts` → thin consumer** — **اتقسم بعد بوابة التكافؤ**:
+   - ✅ **٤أ — توحيد الداتا (اتعمل):** البارسر بقى يستورد القواميس الخمسة (ZERO_WORD_RE / VEHICLE_TYPES / NOTE_KEYWORDS / PHONETIC_MERGES / SPOKEN_NUMBERS) من `lib/dictionaries/` بدل نسخته الخاصة. صفر تغيير سلوك (القيم IDENTICAL) — كل الاختبارات القديمة خضرا بدون تعديل توقّعات. ٥ commits صغيرة (واحد لكل قاموس).
+   - ⛔ **٤ب — توصيل المنطق (متأجّل للمرحلة ٢):** خلّي `parsePlateFromTranscript`/`extractMultiplePlates` ينادوا `normalizeTranscript`. **ممنوع دلوقتي** — بوابة التكافؤ بتوضّح إن الإنجن (scaffold بذكاء مؤجّل) بيختلف عن البارسر في ٦١/١٤٤ لوحة (تقطيع متعدد + حشو/جمع الأرقام + salvage الحروف + anchoring) + ٧/١٤٤ نوع + ثغرات اشتقاق البذرة (`ءاف→ق`, `كي→ك`). لازم المرحلة ٢ تبني الذكاء ده وتسدّ الثغرات، وبعدها بوابة التكافؤ تخضرّ (شيل `.skip`)، وبعدها بس يُسمح بالتوصيل.
 
-**نصيحة:** الخطوة ٤ هي الأخطر — اعملها بأصغر خطوات ممكنة مع تشغيل `npx vitest run` بعد كل نقلة.
+**بوابة التكافؤ:** `__tests__/equivalence.harness.test.ts` + `tests/equivalence-corpus.json` (١٤٤ نص). حارس عدم-تراجع نشط (الاختلاف ماينزادش عن ٦١/٧) + بوابتين صارمتين `.skip` (٠ اختلاف) تتفعّلوا لمّا الإنجن يوصل للتطابق.
 
-**⚠️ لبس معروف قبل خطوة ٤ (للمراجعة):** ترتيب المنسّق الحالي `normalizeNumbers` قبل `normalizeLetters` (زي خريطة HANDOFF) بيخلي «الف/ألف» تتحوّل ١٠٠٠ لو جت لوحدها — بينما `plateAtoms` في البارسر بيحوّلها الحرف ا (LETTER_NAMES قبل SPOKEN_NUMBERS). ده لبس البذرة flag-تُه في riskyOverlaps ومكانه الطبيعي `plateContextStateMachine` (المرحلة ٢). لازم يتحسم كجزء من مراجعة خطوة ٤.
+**⚠️ لبس «ألف» (اتحسم):** القرار المعتمد = الحروف قبل الأرقام (الف = الحرف ا) زي `plateAtoms`. المنسّق اتظبط (`normalizeLetters` قبل `normalizeNumbers`) واختبار صريح: «الف باء دال واحد اتنين تلاته اربعه» → ابد1234. أي إعادة نظر مكانها `plateContextStateMachine` في المرحلة ٢.
 
 ---
 
@@ -76,6 +78,8 @@
 
 **إثبات (٢٠٢٦-٠٧-١٧):** اتعمل worktree مؤقت على commit `fdfeff8` (parent لـ `b08acc4`، أي **قبل** بداية شغل السيشنات كلها) و`npx vitest run __tests__/excel.test.ts` طلع **نفس الفشل بالظبط**. يبقى موجود من الأصل.
 
+**نفس المشكلة في `npx next build` جوّه الـ worktree:** بيفشل بـ `Module not found: Can't resolve '@/lib/idb'` (و`@/lib/excel`, `@/components/...`) — الـ `@/*` alias مابيتحلّش في build الـ worktree رغم إنه متظبّط في tsconfig والملفات موجودة. **اتأكّد إنه قديم:** build على `fdfeff8` طلع **نفس أخطاء `@/` بالظبط**. الـ build الحقيقي بيتم على الريبو الأصلي / Vercel (مش من worktree) فمايتأثرش. لا يتحسب regression.
+
 **للتغلب عليها:** شغّل `tsc` من جذر الريبو مباشرةً:
 ```bash
 # من جذر الريبو (مش من جوّه الـ worktree)
@@ -92,4 +96,4 @@ npx tsc --noEmit                     # فحص الأنواع
 git push origin HEAD:main            # ينشر على Vercel تلقائياً
 ```
 
-**ابدأ من:** المرحلة ١-ب **خطوة ٤** (refactor البارسر لـ thin consumer) — **بعد إذن صريح ومراجعة مشتركة**. خطوات ١-٢-٣ خلصت واتنشرت. راجع البرومبت الكامل + `docs/speech-normalizer-notes.md` + «اللبس المعروف قبل خطوة ٤» فوق.
+**ابدأ من:** **المرحلة ٢** — بناء ذكاء الإنجن (تقطيع لوحات متعددة + حشو/جمع الأرقام + salvage الحروف + anchoring + سدّ ثغرات البذرة) لحد ما بوابة التكافؤ تخضرّ، وبعدها خطوة ٤ب (توصيل المنطق) **بإذن صريح**. خطوات ١-٢-٣ + ٤أ (توحيد الداتا) خلصت. راجع البرومبت الكامل + `docs/speech-normalizer-notes.md` + بوابة التكافؤ فوق.
