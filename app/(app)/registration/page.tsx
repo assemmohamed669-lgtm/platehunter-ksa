@@ -2727,32 +2727,16 @@ export default function RegistrationPage() {
               </div>
             )}
 
-            {/* مؤشّر المحرك النشط — نفس تشييك صوت */}
-            {isRecording && regEngine && (
-              <div className="flex flex-col items-center gap-1">
-                <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
-                  regEngine === "deepgram" || regEngine === "speechmatics" || regEngine === "soniox" || regEngine === "openai" ? "bg-brand/15 text-brand"
-                  : regEngine === "whisper" ? "bg-primary/15 text-primary"
-                  : "bg-alert/15 text-alert"
-                }`}>
-                  {regEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
-                   : regEngine === "speechmatics" ? "🎙️ Speechmatics — دقة عالية"
-                   : regEngine === "soniox" ? "🎙️ Soniox — دقة عالية"
-                   : regEngine === "openai" ? "🎙️ OpenAI — دقة عالية"
-                   : regEngine === "whisper" ? "☁️ Whisper سحابي"
-                   : "⚠️ المحرك العادي — دقة أقل"}
+            {/* مؤشّر مستوى الصوت — اسم أداة التفريغ متخفي (بناءً على طلب العميل) */}
+            {isRecording && regEngine === "deepgram" && (
+              <div className="flex w-44 items-center gap-2">
+                <span className={`shrink-0 text-[10px] font-bold ${regMicActive ? "text-brand" : "text-muted"}`}>
+                  {regMicActive ? "بيسمعك" : "الصوت"}
                 </span>
-                {regEngine === "deepgram" && (
-                  <div className="flex w-44 items-center gap-2">
-                    <span className={`shrink-0 text-[10px] font-bold ${regMicActive ? "text-brand" : "text-muted"}`}>
-                      {regMicActive ? "بيسمعك" : "الصوت"}
-                    </span>
-                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-                      <div className="h-full rounded-full bg-brand transition-[width] duration-100"
-                        style={{ width: `${Math.round(regLevel * 100)}%` }} />
-                    </div>
-                  </div>
-                )}
+                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+                  <div className="h-full rounded-full bg-brand transition-[width] duration-100"
+                    style={{ width: `${Math.round(regLevel * 100)}%` }} />
+                </div>
               </div>
             )}
 

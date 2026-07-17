@@ -2456,28 +2456,12 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* مؤشّر المحرك النشط — يبيّن للمستخدم أي محرك شغّال + هل بيسمعه دلوقتي */}
-              {pttListening && pttEngine && (
-                <div className="flex flex-col items-center gap-1">
-                  <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${
-                    pttEngine === "deepgram" || pttEngine === "speechmatics" || pttEngine === "soniox" || pttEngine === "openai" ? "bg-brand/15 text-brand"
-                    : pttEngine === "whisper" ? "bg-primary/15 text-primary"
-                    : "bg-alert/15 text-alert"
-                  }`}>
-                    {pttEngine === "deepgram" ? "🎙️ Deepgram — دقة عالية"
-                     : pttEngine === "speechmatics" ? "🎙️ Speechmatics — دقة عالية"
-                     : pttEngine === "soniox" ? "🎙️ Soniox — دقة عالية"
-                     : pttEngine === "openai" ? "🎙️ OpenAI — دقة عالية"
-                     : pttEngine === "whisper" ? "☁️ Whisper سحابي"
-                     : "⚠️ المحرك العادي — دقة أقل"}
-                  </span>
-                  {pttEngine === "deepgram" && (
-                    <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
-                      <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
-                      {pttMicActive ? "بيسمع صوتك" : "هدوء"}
-                    </span>
-                  )}
-                </div>
+              {/* مؤشّر السماع — اسم أداة التفريغ متخفي (بناءً على طلب العميل) */}
+              {pttListening && pttEngine === "deepgram" && (
+                <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
+                  <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
+                  {pttMicActive ? "بيسمع صوتك" : "هدوء"}
+                </span>
               )}
 
               {pttListening && (
