@@ -78,7 +78,20 @@
 
 **إثبات (٢٠٢٦-٠٧-١٧):** اتعمل worktree مؤقت على commit `fdfeff8` (parent لـ `b08acc4`، أي **قبل** بداية شغل السيشنات كلها) و`npx vitest run __tests__/excel.test.ts` طلع **نفس الفشل بالظبط**. يبقى موجود من الأصل.
 
-**نفس المشكلة في `npx next build` جوّه الـ worktree:** بيفشل بـ `Module not found: Can't resolve '@/lib/idb'` (و`@/lib/excel`, `@/components/...`) — الـ `@/*` alias مابيتحلّش في build الـ worktree رغم إنه متظبّط في tsconfig والملفات موجودة. **اتأكّد إنه قديم:** build على `fdfeff8` طلع **نفس أخطاء `@/` بالظبط**. الـ build الحقيقي بيتم على الريبو الأصلي / Vercel (مش من worktree) فمايتأثرش. لا يتحسب regression.
+**`npx next build` المحلي مكسور على الجهاز ده (مش worktree-only):** بيفشل بـ
+`Module not found: Can't resolve '@/lib/idb'` (و`@/lib/excel`, `@/lib/supabaseClient`,
+`@/components/...`) — الـ `@/*` alias مابيتحلّش محلياً رغم إنه متظبّط في tsconfig
+والملفات موجودة. **اتأكّد إنه بيئة قديمة مش من أي شغل:** الفشل بنفس الأخطاء بالظبط على
+(أ) build جذر الريبو على **`main` النضيف** بدون أي تغييرات، (ب) `fdfeff8` قبل السيشنات،
+(ج) الـ worktree. السبب غالباً مسار OneDrive / إعداد node محلي.
+
+> **⚙️ سير التحقق من الـ build:** التحقق يتم عبر **Vercel preview builds من خلال PRs**
+> (مش build محلي). مثال: PR #7 — Vercel preview طلع **أخضر (Ready)**. أي فرع تعمله PR
+> وتشوف Vercel check.
+>
+> **مهمة مستقلة مؤجّلة:** إصلاح بيئة الـ build المحلي (`@/` alias) على الجهاز ده.
+
+نفس السبب بيخلي `tsc` مايشتغلش من جوّه الـ worktree — استخدم الالتفاف اللي تحت (tsc من جذر الريبو).
 
 **للتغلب عليها:** شغّل `tsc` من جذر الريبو مباشرةً:
 ```bash
