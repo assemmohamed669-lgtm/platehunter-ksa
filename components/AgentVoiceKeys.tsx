@@ -1,8 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink, Copy, Check, Mail, KeyRound, Info } from "lucide-react";
+import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink, Copy, Check, Mail, KeyRound, Info, ChevronDown } from "lucide-react";
 import type { ServiceKeys, VoiceEngine } from "@/lib/voiceKeys";
+import { supabase } from "@/lib/supabaseClient";
+
+// نتيجة تشخيص مفتاح ElevenLabs الكاملة (من /api/elevenlabs-test).
+interface ElDetails {
+  ok: boolean;
+  status: number | null;
+  statusText?: string;
+  endpoint: string;
+  method: string;
+  category: string;
+  reason: string;
+  errorCode?: string;
+  message?: string;
+  body?: string;
+}
 
 /**
  * إدارة مفاتيح الصوت لمندوب — للأدمن فقط (جوه صفحة المندوب). أربع محرّكات:
@@ -36,6 +51,8 @@ export default function AgentVoiceKeys({
   const [testingDg, setTestingDg] = useState(false);
   const [testingSm, setTestingSm] = useState(false);
   const [testingEl, setTestingEl] = useState(false);
+  const [elDetails, setElDetails] = useState<ElDetails | null>(null); // تشخيص ElevenLabs الكامل
+  const [elDetailsOpen, setElDetailsOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -81,16 +98,30 @@ export default function AgentVoiceKeys({
     finally { setTestingSm(false); }
   }
 
-  // اختبار ElevenLabs: نستدعي GET /v1/user بالمفتاح — 200 = المفتاح صح، غير كده مرفوض.
+  // اختبار ElevenLabs: على السيرفر (مفيش CORS) — بيرجّع تشخيص كامل ومابيخفيش
+  // الخطأ الأصلي، وبيفرّق بين كل الأنواع (401/403/429/5xx/network/timeout...).
   async function testElevenlabs() {
     const k = elevenlabs.trim();
     if (!k || testingEl) return;
-    setTestingEl(true); setTestEl(null);
+    setTestingEl(true); setTestEl(null); setElDetails(null); setElDetailsOpen(false);
     try {
-      const r = await fetch("https://api.elevenlabs.io/v1/user", { headers: { "xi-api-key": k } });
-      setTestEl(r.ok ? "ok" : "bad");
-    } catch { setTestEl("bad"); }
-    finally { setTestingEl(false); }
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const r = await fetch("/api/elevenlabs-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ apiKey: k }),
+      });
+      const d = (await r.json()) as ElDetails;
+      setElDetails(d);
+      setTestEl(d.ok ? "ok" : "bad");
+      if (!d.ok) setElDetailsOpen(true); // افتح التفاصيل تلقائياً لما يفشل
+    } catch (e) {
+      // فشل الاتصال بالسيرفر نفسه (مش ElevenLabs) — برضه نعرضه مش نخفيه.
+      setElDetails({ ok: false, status: null, endpoint: "/api/elevenlabs-test", method: "POST", category: "network_error", reason: "تعذّر الاتصال بسيرفر التطبيق نفسه", message: e instanceof Error ? e.message : String(e) });
+      setTestEl("bad");
+      setElDetailsOpen(true);
+    } finally { setTestingEl(false); }
   }
 
   async function save() {
@@ -221,6 +252,39 @@ export default function AgentVoiceKeys({
           <Info size={12} className="mt-0.5 shrink-0 text-primary" />
           محتاج كمان <b>مفتاح Groq</b> عند المندوب (للتسجيل والترتيب) — يُجرَّب عبر «تحليل ذكي» في صفحة التسجيل. ولو المفتاح مقيّد على Speech-to-Text بس، زر «اختبر» ممكن يقول «مرفوض» رغم إنه شغّال فعلياً.
         </p>
+
+        {/* تشخيص كامل لنتيجة الاختبار — الواجهة القديمة (شغّال ✓/مرفوض) فوق، والتفاصيل هنا قابلة للطي */}
+        {elDetails && (
+          <div className={`rounded-lg border p-2 ${elDetails.ok ? "border-brand/40 bg-brand/5" : "border-danger/40 bg-danger/5"}`} dir="rtl">
+            <button type="button" onClick={() => setElDetailsOpen((v) => !v)}
+              className="flex w-full items-center justify-between text-[11px] font-bold text-ink">
+              <span className="flex items-center gap-1.5">
+                {elDetails.ok ? <CheckCircle2 size={13} className="text-brand" /> : <XCircle size={13} className="text-danger" />}
+                عرض التفاصيل (Show Details)
+              </span>
+              <ChevronDown size={14} className={`text-muted transition-transform ${elDetailsOpen ? "rotate-180" : ""}`} />
+            </button>
+            {elDetailsOpen && (
+              <div className="mt-2 flex flex-col gap-1 text-[11px]">
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-ink">
+                  <span><b>Status:</b> {elDetails.status ?? "—"}{elDetails.statusText ? ` (${elDetails.statusText})` : ""}</span>
+                  <span><b>Method:</b> {elDetails.method}</span>
+                  <span><b>Category:</b> {elDetails.category}</span>
+                </div>
+                <div className="text-ink"><b>السبب / Reason:</b> {elDetails.reason}</div>
+                {elDetails.errorCode ? <div className="text-ink"><b>Error Code:</b> {elDetails.errorCode}</div> : null}
+                {elDetails.message ? <div className="break-all text-ink"><b>Message:</b> {elDetails.message}</div> : null}
+                <div className="break-all text-muted" dir="ltr"><b>Endpoint:</b> {elDetails.endpoint}</div>
+                {elDetails.body ? (
+                  <div>
+                    <b className="text-ink">Response Body:</b>
+                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-night/40 p-2 text-[10px] leading-relaxed text-muted" dir="ltr">{elDetails.body}</pre>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* بيانات حساب الخدمة (سجل للأدمن — ظاهرة وقابلة للنسخ) */}
