@@ -392,7 +392,9 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
 
     // Map each non-empty header to its ACTUAL column position so that empty
     // header columns (merged cells, gaps) don't cause value misalignment.
-    const rawHeaderCells = (raw2d[headerRowIdx] as unknown[]).map((h) => String(h ?? "").trim());
+    // cellToStr (مش String) عشان خلايا التاريخ (Date من cellDates) تتنسّق dd/mm/yyyy
+    // فالكاشف detectHeaderless يشوفها زي البنّاء بالظبط (اتساق كاشف/بنّاء).
+    const rawHeaderCells = (raw2d[headerRowIdx] as unknown[]).map((h) => cellToStr(h).trim());
 
     // شيت بدون صف عناوين (الصف المرشّح داتا مش عناوين): نسمّي الأعمدة بالمحتوى
     // (لوحة/تاريخ/حي/GPS) ونعتبر الصف ده داتا — عشان أول لوحة ماتضيعش والتاريخ/
@@ -400,10 +402,7 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     let headerCols: Array<{ name: string; col: number }>;
     let dataStartRow: number;
     if (detectHeaderless(rawHeaderCells)) {
-      const SAMPLE = Math.min(raw2d.length - headerRowIdx, 200);
-      const sample = raw2d.slice(headerRowIdx, headerRowIdx + SAMPLE).map((r) => (r as unknown[]).map(cellToStr));
-      const maxCols = sample.reduce((m, r) => Math.max(m, r.length), rawHeaderCells.length);
-      headerCols = buildHeaderlessColumns(sample, maxCols);
+      headerCols = buildHeaderlessColumns(raw2d as unknown[][], headerRowIdx, cellToStr);
       dataStartRow = headerRowIdx; // الصف ده داتا مش عناوين
     } else {
       headerCols = [];

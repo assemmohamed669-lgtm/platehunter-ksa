@@ -42,9 +42,9 @@ export function looksLikeHeaderKeyword(v: string): boolean {
   return s.length > 0 && HEADER_KEYWORDS.has(s);
 }
 
-/** تاريخ منطوق كنص: 15/5/2024، 5-15-2024، 2024-05-15 … */
+/** تاريخ منطوق كنص: 15/5/2024، 5-15-2024، 2024-05-15 … (يقبل أرقام عربية-هندية). */
 export function looksLikeDate(v: string): boolean {
-  const s = v.trim();
+  const s = v.trim().replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
   if (!s) return false;
   return /^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$/.test(s) || /^\d{4}-\d{1,2}-\d{1,2}/.test(s);
 }
@@ -57,9 +57,15 @@ export function looksLikeGps(v: string): boolean {
   return /(maps\.|google\.[^ ]*\/maps|goo\.gl\/maps|geo:|@-?\d)/i.test(s);
 }
 
-/** لوحة سعودية ملزوقة: ٢-٣ حروف + ٣-٤ أرقام (أي ترتيب). «دطط2804» / «2804دطط». */
+/**
+ * لوحة سعودية ملزوقة: ٢-٣ حروف + ٣-٤ أرقام (أي ترتيب). «دطط2804» / «2804دطط».
+ * بنطبّع الأرقام العربية-الهندية (٠-٩) ونشيل الفواصل (- _ . / ـ) الأول — زي باقي
+ * الكود (cellLooksLikePlate/normalizePlate) — عشان «دطط٢٨٠٤» و«دطط-2804» يتعرفوا.
+ */
 export function looksLikePlate(v: string): boolean {
-  const s = v.replace(/\s+/g, "");
+  const s = v
+    .replace(/[\s\-_.ـ/]/g, "")
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
   return /^[ء-ي]{2,3}\d{3,4}$/.test(s) || /^\d{3,4}[ء-ي]{2,3}$/.test(s);
 }
 
@@ -118,20 +124,42 @@ function nameColumn(colValues: string[], col: number, used: Set<string>): string
 
 /**
  * يبني أعمدة مسمّاة بالمحتوى لشيت بدون عناوين.
- * @param sample صفوف الداتا كـ string[][] (بعد التحويل لنص — التواريخ متنسّقة).
- * @param maxCols أقصى عدد أعمدة عبر الصفوف.
- * الأعمدة الفاضية تماماً بتتشال. الأسماء المكرّرة بتاخد لاحقة رقمية.
+ * @param rawRows كل صفوف الشيت (خام — قيم Excel زي ما هي، ممكن تكون Date/رقم/نص).
+ * @param startRow صف بداية الداتا (= صف العناوين المرشّح، لأنه داتا مش عناوين).
+ * @param toStr محوّل الخلية لنص (بينسّق التواريخ dd/mm/yyyy) — للتسمية بالمحتوى.
+ * @param nameSampleSize عدد الصفوف المستخدمة للتسمية (للأداء على الملفات الكبيرة).
+ *
+ * **مهم:** وجود العمود و`maxCols` بيتحسبوا من **كل** الصفوف (مش عيّنة) عشان عمود
+ * متفرّق (فاضي في البداية زي GPS) مايتشالش وتضيع داتاه. التسمية بس اللي بتستخدم
+ * عيّنة. الأعمدة الفاضية تماماً بتتشال. الأسماء المكرّرة بتاخد لاحقة رقمية.
  */
 export function buildHeaderlessColumns(
-  sample: string[][],
-  maxCols: number,
+  rawRows: unknown[][],
+  startRow: number,
+  toStr: (v: unknown) => string,
+  nameSampleSize = 200,
 ): Array<{ name: string; col: number }> {
+  const end = rawRows.length;
+  let maxCols = 0;
+  for (let i = startRow; i < end; i++) {
+    const len = rawRows[i]?.length ?? 0;
+    if (len > maxCols) maxCols = len;
+  }
+  const sampleEnd = Math.min(end, startRow + nameSampleSize);
   const used = new Set<string>();
   const cols: Array<{ name: string; col: number }> = [];
   for (let c = 0; c < maxCols; c++) {
-    const colValues = sample.map((r) => String(r[c] ?? ""));
-    if (!colValues.some((v) => v.trim())) continue; // عمود فاضي → تجاهل
-    cols.push({ name: nameColumn(colValues, c, used), col: c });
+    // وجود العمود: أي خلية غير فاضية عبر كل الصفوف (مع short-circuit) — عمود
+    // متفرّق يبدأ بعد الصف 200 لازم يتحسب. String خفيف (مش محتاج تنسيق تاريخ هنا).
+    let present = false;
+    for (let i = startRow; i < end; i++) {
+      const cell = rawRows[i]?.[c];
+      if (cell != null && String(cell).trim() !== "") { present = true; break; }
+    }
+    if (!present) continue;
+    const sampleVals: string[] = [];
+    for (let i = startRow; i < sampleEnd; i++) sampleVals.push(toStr(rawRows[i]?.[c]));
+    cols.push({ name: nameColumn(sampleVals, c, used), col: c });
   }
   return cols;
 }

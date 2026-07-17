@@ -38,6 +38,10 @@ describe("headerlessColumns — كاشفات المحتوى", () => {
     expect(looksLikePlate("حوص7941")).toBe(true);
     expect(looksLikePlate("82ع")).toBe(false);
     expect(looksLikePlate("حي العليا")).toBe(false);
+    // أرقام عربية-هندية + فواصل (مراجعة عدائية — كانت بتضيّع أول لوحة)
+    expect(looksLikePlate("دطط٢٨٠٤")).toBe(true);
+    expect(looksLikePlate("دطط-2804")).toBe(true);
+    expect(looksLikePlate("رقص ٥٠٢٦")).toBe(true);
   });
   it("looksLikeDate", () => {
     expect(looksLikeDate("5/15/2024")).toBe(true);
@@ -72,7 +76,7 @@ describe("headerlessColumns — تسمية الأعمدة بالمحتوى", () 
       ["بهل2959", "ن", "82ع", "حي العليا", "15/05/2024", ""],
       ["حوص7941", "", "83ع", "حي العليا", "15/05/2024", ""],
     ];
-    const cols = buildHeaderlessColumns(sample, 6);
+    const cols = buildHeaderlessColumns(sample, 0, (v) => String(v ?? ""));
     const byCol = Object.fromEntries(cols.map((c) => [c.col, c.name]));
     expect(byCol[0]).toBe("رقم اللوحة");
     expect(byCol[3]).toBe("الحي");
@@ -87,8 +91,32 @@ describe("headerlessColumns — تسمية الأعمدة بالمحتوى", () 
       ["15/05/2024", "1/1/2023"],
       ["16/05/2024", "2/1/2023"],
     ];
-    const cols = buildHeaderlessColumns(sample, 2);
+    const cols = buildHeaderlessColumns(sample, 0, (v) => String(v ?? ""));
     expect(cols.map((c) => c.name)).toEqual(["التاريخ", "التاريخ 2"]);
+  });
+
+  // مراجعة عدائية: عمود متفرّق (فاضي في أول العيّنة، داتا بعدين) مايتشالش
+  it("عمود متفرّق (فاضي في عيّنة التسمية) بيتحسب من كل الصفوف مش بيتشال", () => {
+    const rows = [
+      ["دطط2804", ""],
+      ["رقص5026", ""],
+      ["بهل2959", "24.7,46.6"], // عمود GPS بيبدأ متأخّر
+    ];
+    // nameSampleSize=2 → التسمية بتشوف أول صفّين بس، بس الوجود بيتحسب من الكل
+    const cols = buildHeaderlessColumns(rows, 0, (v) => String(v ?? ""), 2);
+    expect(cols.find((c) => c.col === 1)).toBeDefined(); // العمود المتفرّق موجود
+  });
+
+  // مراجعة عدائية (إصلاح ٢): خلية تاريخ Date object بتتنسّق عبر toStr وتتكشف تاريخ
+  it("عمود تواريخ مخزّنة كـ Date object بياخد اسم «التاريخ»", () => {
+    const fmt = (v: unknown) =>
+      v instanceof Date ? `${String(v.getDate()).padStart(2, "0")}/${String(v.getMonth() + 1).padStart(2, "0")}/${v.getFullYear()}` : String(v ?? "");
+    const rows: unknown[][] = [
+      ["دطط2804", new Date(2024, 4, 15)],
+      ["رقص5026", new Date(2024, 4, 16)],
+    ];
+    const cols = buildHeaderlessColumns(rows, 0, fmt);
+    expect(cols.find((c) => c.col === 1)?.name).toBe("التاريخ");
   });
 });
 
