@@ -18,6 +18,7 @@ import { startOpenAI, type OpenAIHandle } from "@/lib/openaiRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
+import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
@@ -323,6 +324,10 @@ export default function InstantCheckPage() {
   const [manualCopiedId, setManualCopiedId] = useState<string | null>(null);
   const [manualExporting, setManualExporting] = useState(false);
   const [manualZoom, setManualZoom] = useState(3);
+  const manualPinchRef = usePinchZoom(manualZoom, setManualZoom);
+  // زوم نافذة نتيجة التشييك الصوتي (+ زوم بإصبعين).
+  const [pttZoom, setPttZoom] = useState(3);
+  const pttPinchRef = usePinchZoom(pttZoom, setPttZoom);
 
   // Camera
   const [cameraImage, setCameraImage] = useState<string | null>(null);
@@ -2193,7 +2198,7 @@ export default function InstantCheckPage() {
                         </button>
                       </div>
                     </div>
-                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh" }}>
+                    <div ref={manualPinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh", touchAction: "pan-x pan-y" }}>
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${zoomFontPx(manualZoom)}px` }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
@@ -2506,6 +2511,7 @@ export default function InstantCheckPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{pttResults.length} لوحة</span>
                       <div className="flex items-center gap-1.5">
+                        <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />
                         <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
                           className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
                           <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
@@ -2526,8 +2532,8 @@ export default function InstantCheckPage() {
                         </button>
                       </div>
                     </div>
-                    <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
-                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: "12px" }}>
+                    <div ref={pttPinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
+                      <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${zoomFontPx(pttZoom)}px` }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>

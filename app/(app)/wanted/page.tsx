@@ -12,7 +12,7 @@ import { Crosshair, Share2, FileSpreadsheet, Trash2, RefreshCw } from "lucide-re
 import WantedResultsTable, { type WantedRow } from "@/components/WantedResultsTable";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
-import { parseLatLngCell, toMapsLink } from "@/lib/gps";
+import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
 import { buildSpreadsheetBlob, shareExcelBlob } from "@/lib/excel";
 import { resolveCheckColumns, inferVehicleType, findHeader } from "@/lib/wantedColumns";
 
@@ -21,7 +21,7 @@ let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boole
 
 function findGps(row: Record<string, string>): { lat: number; lng: number } | null {
   for (const v of Object.values(row)) {
-    const g = parseLatLngCell(String(v ?? ""));
+    const g = gpsCellCoords(String(v ?? ""));
     if (g) return g;
   }
   return null;
@@ -89,11 +89,20 @@ export default function WantedPage() {
           const streetCol = findHeader(dataRec.headers, ["شارع"]);
           const districtCol = findHeader(dataRec.headers, ["حي", "الحى", "منطقة"]);
           const notesCol = findHeader(dataRec.headers, ["ملاحظ"]);
+          // عمود GPS في الداتا — بأي اسم قريب (GPS/موقع/خريطة/رابط/إحداثيات...).
+          const gpsColD = findHeader(dataRec.headers, ["gps", "GPS", "موقع", "الموقع", "خريطة", "خرائط", "location", "رابط", "احداثيات", "إحداثيات", "جي بي اس"]);
           let i = 0;
           for (const row of dataRec.rows) {
             const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
             if (!norm || !wanted.has(norm)) continue;
-            const gps = findGps(row);
+            // ناخد GPS من عمود الداتا زي ما هو (رابط/إحداثيات بأي صيغة)، وإلا نمسح باقي الأعمدة.
+            const rawGps = gpsColD ? String(row[gpsColD] ?? "") : "";
+            let mapsLink = gpsCellToLink(rawGps);
+            let coords = gpsCellCoords(rawGps);
+            if (!mapsLink) {
+              const g = findGps(row);
+              if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
+            }
             const brand = brandOf(norm) || (brandColD ? String(row[brandColD] ?? "").trim() : "");
             const dataType = dataTypeCol ? String(row[dataTypeCol] ?? "").trim() : "";
             dRows.push({
@@ -106,9 +115,9 @@ export default function WantedPage() {
               street: streetCol ? String(row[streetCol] ?? "").trim() : "",
               district: districtCol ? String(row[districtCol] ?? "").trim() : "",
               notes: notesCol ? String(row[notesCol] ?? "").trim() : "",
-              mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : "",
-              lat: gps?.lat,
-              lng: gps?.lng,
+              mapsLink,
+              lat: coords?.lat,
+              lng: coords?.lng,
             });
           }
         }

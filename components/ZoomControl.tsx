@@ -1,14 +1,10 @@
 "use client";
 
 import { ZoomIn, ZoomOut } from "lucide-react";
+import { ZOOM_LEVELS, zoomFontPx } from "@/lib/zoom";
 
-// نفس مستويات الزوم المستخدمة في صفحة الفرز وجدول السجلات — مؤشّر index في المصفوفة.
-export const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
-
-/** حجم الخط بالبكسل حسب مستوى الزوم (الأساس 12px). */
-export function zoomFontPx(zoom: number): number {
-  return (ZOOM_LEVELS[zoom] ?? 1) * 12;
-}
+// نعيد التصدير عشان الاستيرادات القديمة من "@/components/ZoomControl" تفضل شغّالة.
+export { ZOOM_LEVELS, zoomFontPx };
 
 /** زرّا تكبير/تصغير + نسبة مئوية — مشترك لكل نوافذ اللوحات. */
 export default function ZoomControl({

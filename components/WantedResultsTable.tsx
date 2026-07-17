@@ -9,6 +9,7 @@
 import { useMemo, useState } from "react";
 import { Copy, Check, Share2, Trash2, MapPin, Navigation, CheckSquare, Square } from "lucide-react";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
+import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm } from "@/lib/gps";
 
 export interface WantedRow {
@@ -53,6 +54,7 @@ export default function WantedResultsTable({
   onDelete: (ids: string[]) => void;
 }) {
   const [zoom, setZoom] = useState(3);
+  const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [nearest, setNearest] = useState(false);
@@ -127,7 +129,7 @@ export default function WantedResultsTable({
         </div>
       </div>
 
-      <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+      <div ref={pinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
         <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${px}px`, minWidth: "max-content" }}>
           <thead className="sticky top-0 z-10">
             <tr className="bg-surface-2 text-muted">

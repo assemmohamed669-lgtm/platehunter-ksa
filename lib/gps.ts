@@ -256,6 +256,37 @@ export function parseLatLngCell(raw: string): { lat: number; lng: number } | nul
   return null;
 }
 
+/**
+ * إحداثيات من خلية GPS بأي صيغة شائعة: رابط q=lat,lng، رابط فيه /@lat,lng،
+ * "lat,lng" أو "lat lng"، أو إحداثيات مضمّنة جوّه نص. يرجّع null لو مفيش.
+ * أوسع من parseLatLngCell عشان الداتا القديمة بروابط/صيغ مختلفة.
+ */
+export function gpsCellCoords(raw: string): { lat: number; lng: number } | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const basic = parseLatLngCell(s);
+  if (basic) return basic;
+  const at = s.match(/@(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)/); // روابط .../@lat,lng
+  if (at) return { lat: parseFloat(at[1]), lng: parseFloat(at[2]) };
+  const emb = s.match(/(-?\d{1,3}\.\d{3,})[,\s]+(-?\d{1,3}\.\d{3,})/);   // إحداثيات مضمّنة في نص
+  if (emb) return { lat: parseFloat(emb[1]), lng: parseFloat(emb[2]) };
+  return null;
+}
+
+/**
+ * رابط قابل للفتح من خلية GPS: لو فيه إحداثيات → رابط خرائط نظيف؛ لو رابط http
+ * بدون إحداثيات ظاهرة (رابط مختصر مثلاً) → نفتحه زي ما هو؛ وإلا "".
+ * ده اللي بيخلّي عمود GPS اللي في الداتا يظهر كـ لينك مهما كانت صيغته.
+ */
+export function gpsCellToLink(raw: string): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const c = gpsCellCoords(s);
+  if (c) return toMapsLink(c.lat, c.lng);
+  if (/^https?:\/\//i.test(s)) return s;
+  return "";
+}
+
 // تقدير زمن الوصول بالسيارة (أوفلاين) من المسافة المستقيمة:
 // نضرب في معامل الطرق (الطرق أطول من الخط المستقيم) ونقسم على سرعة مدينة متوسطة.
 const ROAD_FACTOR = 1.3;      // الطريق الفعلي ≈ 1.3× المسافة المستقيمة

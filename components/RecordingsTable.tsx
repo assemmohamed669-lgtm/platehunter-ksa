@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { usePinchZoom } from "@/components/usePinchZoom";
 import {
   Trash2,
   Share2,
@@ -59,6 +60,7 @@ const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
 export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
+  const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -252,8 +254,9 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
 
       {/* Table container — fixed height, scrollable both axes */}
       <div
+        ref={pinchRef}
         className="overflow-auto rounded-xl border border-border"
-        style={{ maxHeight: "55vh" }}
+        style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}
       >
         <div style={{ fontSize: `${scale * 12}px`, minWidth: "max-content" }}>
           <table className="border-collapse w-full" style={{ direction: "rtl" }}>

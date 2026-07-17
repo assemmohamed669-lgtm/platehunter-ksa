@@ -91,6 +91,11 @@ export default function HelpPage() {
         تحت شرح بسيط لكل خدمة:
       </p>
 
+      {/* تنبيه مهم عن دقة الـ GPS — بولد وأحمر */}
+      <p className="rounded-2xl border border-danger/50 bg-danger/10 px-4 py-3 text-sm font-bold leading-relaxed text-danger" dir="rtl">
+        ⚠️ لازم تتأكد إن خانة الـ GPS في صفحة التسجيل شغّالة كويس وبدقّة عالية — الموقع الدقيق مهم جداً في التشييك الصوتي واليدوي وفي التسجيل.
+      </p>
+
       {SERVICES.map((s) => {
         const Icon = s.icon;
         return (

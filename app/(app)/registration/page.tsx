@@ -61,6 +61,7 @@ import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, p
 import { fetchSharedCorrections, pushCorrection, flushPendingCorrections } from "@/lib/plateCorrectionsSync";
 import { type StructuredRow } from "@/lib/structuredPlates";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
+import { usePinchZoom } from "@/components/usePinchZoom";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
@@ -479,6 +480,7 @@ export default function RegistrationPage() {
   const [reError, setReError] = useState<string | null>(null);
   const [reResult, setReResult] = useState<null | { transcript: string; rows: StructuredRow[]; engineUsed: string; srcId: string }>(null);
   const [reZoom, setReZoom] = useState(3);
+  const rePinchRef = usePinchZoom(reZoom, setReZoom);
   // وضع التفريغ: «لحظي» (يفرّغ وإنت بتتكلم) أو «تسجيل ثم تحليل» (يسجّل وبعدين يحلّل تلقائي — أدق).
   const [analysisMode, setAnalysisMode] = useState<"live" | "afterRecord">("live");
   const prevRecordingRef = useRef(false);
@@ -2536,6 +2538,7 @@ export default function RegistrationPage() {
           <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
         </button>
         {gpsBoxOpen && (
+          <>
           <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
             <MapPin size={16} className={gps ? "text-primary" : "text-danger"} />
             <div className="flex-1 min-w-0">
@@ -2561,6 +2564,10 @@ export default function RegistrationPage() {
               <RefreshCw size={15} className={gpsRefreshing ? "animate-spin" : ""} />
             </button>
           </div>
+          <p className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-danger" dir="rtl">
+            ⚠️ اتأكد إن خانة الـ GPS شغّالة كويس وبدقّة عالية قبل ما تبدأ — الموقع الدقيق مهم جداً في التشييك الصوتي واليدوي وفي التسجيل.
+          </p>
+          </>
         )}
       </div>
 
@@ -2856,7 +2863,7 @@ export default function RegistrationPage() {
                 </div>
                 {reResult.rows.length > 0 ? (
                   <>
-                    <div className="overflow-auto rounded-lg border border-border" style={{ maxHeight: "40vh" }}>
+                    <div ref={rePinchRef} className="overflow-auto rounded-lg border border-border" style={{ maxHeight: "40vh", touchAction: "pan-x pan-y" }}>
                       <table className="w-full border-collapse" style={{ direction: "rtl", fontSize: `${zoomFontPx(reZoom)}px` }}>
                         <thead className="sticky top-0 bg-surface-2 text-muted">
                           <tr>

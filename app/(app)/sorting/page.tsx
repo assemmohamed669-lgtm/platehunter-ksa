@@ -16,7 +16,8 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory, detectMakeModelColumn } from "@/lib/sortingCols";
-import { haversineKm, extractLatLngFromMapsLink, toMapsLink, parseLatLngCell, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
+import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
+import { usePinchZoom } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
@@ -146,6 +147,11 @@ export default function SortingPage() {
   const [sorted, setSorted] = useState(false);
   const [sorting, setSorting] = useState(false);
   const [zoom, setZoom] = useState(3);
+  // زوم بإصبعين لنوافذ نتائج الفرز (كلها بتشارك نفس مؤشّر الزوم).
+  const resPinch = usePinchZoom(zoom, setZoom);
+  const tashPinch = usePinchZoom(zoom, setZoom);
+  const pastePinch = usePinchZoom(zoom, setZoom);
+  const pastePinch2 = usePinchZoom(zoom, setZoom);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -393,7 +399,7 @@ export default function SortingPage() {
     if (!nearestActive || !userLoc || !gpsCol) return matchedResults;
     return [...matchedResults]
       .map((r) => {
-        const coords = parseLatLngCell(r.dataRow?.[gpsCol] ?? "");
+        const coords = gpsCellCoords(r.dataRow?.[gpsCol] ?? "");
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...r, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
@@ -409,7 +415,7 @@ export default function SortingPage() {
     if (!nearestActive || !userLoc || !tashyeekGpsCol) return base;
     return base
       .map((x) => {
-        const coords = parseLatLngCell(x.r.tashyeekRow?.[tashyeekGpsCol] ?? x.r.referralRow?.[tashyeekGpsCol] ?? "");
+        const coords = gpsCellCoords(x.r.tashyeekRow?.[tashyeekGpsCol] ?? x.r.referralRow?.[tashyeekGpsCol] ?? "");
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...x, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
@@ -422,7 +428,7 @@ export default function SortingPage() {
     if (!nearestActive || !userLoc || !gpsCol) return pasteResults;
     return [...pasteResults]
       .map((p) => {
-        const coords = parseLatLngCell(String(p.row?.[gpsCol] ?? ""));
+        const coords = gpsCellCoords(String(p.row?.[gpsCol] ?? ""));
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...p, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
@@ -1178,7 +1184,7 @@ export default function SortingPage() {
             </button>
           </div>
 
-          <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+          <div ref={resPinch} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
             <div style={{ fontSize: `${ZOOM_LEVELS[zoom] * 12}px`, minWidth: "max-content" }}>
               <table className="border-collapse w-full" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
@@ -1217,9 +1223,8 @@ export default function SortingPage() {
                             <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {
                                 const v = String(val).trim();
-                                if (/^https?:\/\//i.test(v)) return <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
-                                const m = v.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
-                                if (m) return <a href={toMapsLink(parseFloat(m[1]), parseFloat(m[2]))} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                const link = gpsCellToLink(v);
+                                if (link) return <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
                                 return <>{v || "—"}</>;
                               })()}
                             </td>
@@ -1365,7 +1370,7 @@ export default function SortingPage() {
                 </button>
               </div>
             </div>
-            <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh" }}>
+            <div ref={tashPinch} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "40vh", touchAction: "pan-x pan-y" }}>
               <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-surface-2 text-muted">
@@ -1395,13 +1400,11 @@ export default function SortingPage() {
                           const val = r.tashyeekRow[h] || r.referralRow[h] || "";
                           return (
                             <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                              {/^https?:\/\//i.test(val) ? (
-                                <a href={val} target="_blank" rel="noopener noreferrer" className="text-primary">📍 خريطة</a>
-                              ) : (() => {
-                                const m = val.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
-                                return m
-                                  ? <a href={toMapsLink(parseFloat(m[1]), parseFloat(m[2]))} target="_blank" rel="noopener noreferrer" className="text-primary">📍 خريطة</a>
-                                  : <>{val || "—"}</>;
+                              {(() => {
+                                const link = gpsCellToLink(String(val));
+                                return link
+                                  ? <a href={link} target="_blank" rel="noopener noreferrer" className="text-primary">📍 خريطة</a>
+                                  : <>{String(val).trim() || "—"}</>;
                               })()}
                             </td>
                           );
@@ -1546,7 +1549,7 @@ export default function SortingPage() {
               </div>
             </div>
 
-            <div className="overflow-auto" style={{ maxHeight: "60vh", direction: "rtl" }}>
+            <div ref={pastePinch} className="overflow-auto" style={{ maxHeight: "60vh", direction: "rtl", touchAction: "pan-x pan-y" }}>
               <div style={{ fontSize: `${ZOOM_LEVELS[pasteZoom] * 12}px`, minWidth: "max-content", width: "100%" }}>
                 <table className="border-collapse w-full">
                   <thead className="sticky top-0 z-10">
@@ -1602,16 +1605,12 @@ export default function SortingPage() {
                         )}
                         {pasteAllCols.map((col) => {
                           const v = String(p.row[col] ?? "");
-                          const isUrl = !!v && /^https?:\/\//i.test(v);
-                          const isCoords = !!v && /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/.test(v.trim());
+                          const link = gpsCellToLink(v);
                           return (
                             <td key={col} className="border-l border-border px-3 py-1.5 whitespace-nowrap">
-                              {isUrl ? (
-                                <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
-                              ) : isCoords ? (() => {
-                                const [lat, lng] = v.split(",").map(Number);
-                                return <a href={toMapsLink(lat, lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>;
-                              })() : v ? (
+                              {link ? (
+                                <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
+                              ) : v.trim() ? (
                                 <span className="text-ink">{v}</span>
                               ) : (
                                 <span className="text-muted">—</span>
@@ -1671,7 +1670,7 @@ export default function SortingPage() {
                     {pasteRecordResults.length} لوحة سبق تشييكها (شيت السجلات)
                   </span>
                 </div>
-                <div className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl" }}>
+                <div ref={pastePinch2} className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl", touchAction: "pan-x pan-y" }}>
                   <table className="border-collapse w-full text-xs">
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-surface-2 text-muted">
