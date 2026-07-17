@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
-  Type as TypeIcon, Palette, RotateCcw, ChevronDown, KeyRound,
+  Type as TypeIcon, Palette, RotateCcw, KeyRound, ChevronLeft,
   RefreshCw, Download, MessageCircle, BarChart3, CloudDownload,
 } from "lucide-react";
 import Link from "next/link";
@@ -42,7 +42,6 @@ export default function AppMenu({
   const [frac, setFrac] = useState(1);
   const [dragging, setDragging] = useState(false);
   const [appr, setAppr] = useState<Appearance>(DEFAULT_APPEARANCE);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
@@ -322,21 +321,13 @@ export default function AppMenu({
             )}
           </section>
 
-          {/* ── شرح ومساعدة ── */}
+          {/* ── شرح ومساعدة — بيفتح صفحة شرح كاملة لكل الخدمات ── */}
           <section className="border-t border-border pt-3">
-            <button onClick={() => setHelpOpen((v) => !v)}
+            <Link href="/help" onClick={() => onOpenChange(false)}
               className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <span className="flex items-center gap-2"><HelpCircle size={16} className="text-alert" /> شرح ومساعدة</span>
-              <ChevronDown size={14} className={`text-muted transition-transform ${helpOpen ? "rotate-180" : ""}`} />
-            </button>
-            {helpOpen && (
-              <div className="px-3 pb-2 pt-1 text-[11px] leading-relaxed text-muted" dir="rtl">
-                • <b>التسجيل الصوتي:</b> قول اللوحة حرف حرف وبعدها وقفة صغيرة، والنوع (ونيت/فان...) بعد الرقم.<br />
-                • <b>التشييك بالكاميرا:</b> وجّه اللوحة داخل الإطار والتقط.<br />
-                • <b>التشييك بالصوت:</b> قول لوحة ← استنى النتيجة ← قول اللي بعدها.<br />
-                • <b>مفتاح Groq:</b> من القائمة ← مفتاح Groq، يزوّد دقة التفريغ.
-              </div>
-            )}
+              <ChevronLeft size={16} className="text-muted" />
+            </Link>
           </section>
 
           {/* ── الحساب ── */}
