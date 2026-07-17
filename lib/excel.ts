@@ -276,6 +276,18 @@ function _sheetHasPlateCol(data: Uint8Array, sheetName: string, password?: strin
   } catch { return false; }
 }
 
+// خلية → نص. خلايا التاريخ (مع cellDates:true) بتيجي Date → نفرمتها dd/mm/yyyy
+// بدل الرقم التسلسلي بتاع Excel (45877). أي قيمة تانية بتفضل زي ما هي.
+function cellToStr(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    const dd = String(v.getDate()).padStart(2, "0");
+    const mm = String(v.getMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}/${v.getFullYear()}`;
+  }
+  return String(v);
+}
+
 function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
   let sheetName: string | undefined;
   let allSheetNames: string[] = [];
@@ -307,6 +319,7 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
   const opts: XLSX.ParsingOptions = {
     type: "array",
     raw: true,
+    cellDates: true, // خلايا التاريخ تيجي Date (مش رقم تسلسلي) — نفرمتها في cellToStr
     cellStyles: false,
     sheetStubs: false,
   };
@@ -403,14 +416,14 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     if (headerIsData) {
       const firstRow: Record<string, string> = {};
       const hdrCells = raw2d[headerRowIdx] as unknown[];
-      for (const { name, col } of headerCols) firstRow[name] = String(hdrCells[col] ?? "");
+      for (const { name, col } of headerCols) firstRow[name] = cellToStr(hdrCells[col]);
       rows.push(firstRow);
     }
     for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as unknown[];
       const obj: Record<string, string> = {};
       for (const { name, col } of headerCols) {
-        obj[name] = String(r[col] ?? "");
+        obj[name] = cellToStr(r[col]);
       }
       rows.push(obj);
     }

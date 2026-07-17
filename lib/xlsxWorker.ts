@@ -8,6 +8,19 @@ import * as XLSX from "xlsx";
 
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
+// خلية → نص. خلايا التاريخ (لما نقرا بـ cellDates:true) بتيجي كائن Date —
+// نحوّلها لتاريخ منسّق dd/mm/yyyy بدل الرقم التسلسلي بتاع Excel (زي 45877).
+// أي قيمة تانية (أرقام/لوحات/نصوص) بتفضل زي ما هي — صفر أثر عليها.
+function cellToStr(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    const dd = String(v.getDate()).padStart(2, "0");
+    const mm = String(v.getMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}/${v.getFullYear()}`;
+  }
+  return String(v);
+}
+
 function cellLooksLikePlate(raw: string): boolean {
   const cleaned = raw.replace(/[\s\-_.ـ/]/g, ""); // strip tatweel too
   if (cleaned.length < 2 || cleaned.length > 10) return false;
@@ -131,6 +144,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     const opts: XLSX.ParsingOptions = {
       type: "array",
       raw: true,          // skip cell formatting (~30-50% faster)
+      cellDates: true,    // خلايا التاريخ تيجي Date (مش رقم تسلسلي) — نفرمتها في cellToStr
       cellStyles: false,  // skip style parsing
       sheetStubs: false,  // no stubs for empty cells
     };
@@ -234,14 +248,14 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     if (headerIsData) {
       const firstRow: Record<string, string> = {};
       const hdrCells = raw2d[headerRowIdx] as any[];
-      for (const { name, col } of headerCols) firstRow[name] = String(hdrCells[col] ?? "");
+      for (const { name, col } of headerCols) firstRow[name] = cellToStr(hdrCells[col]);
       rows.push(firstRow);
     }
     for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as any[];
       const obj: Record<string, string> = {};
       for (const { name, col } of headerCols) {
-        obj[name] = String(r[col] ?? "");
+        obj[name] = cellToStr(r[col]);
       }
       rows.push(obj);
     }
