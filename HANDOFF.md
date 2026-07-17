@@ -40,12 +40,20 @@
 
 > القاعدة: كل خطوة تخلص + كل الاختبارات خضرا + ملخص، قبل الانتقال للي بعدها.
 
-1. **اشتقاق القواميس من البذرة** (`lib/dictionaries/`): `letters.ts` و `phoneticAliases.ts` و قسم الحروف في `commonMistakes.ts` — **مشتقّة من** `saudiPlateLetters.ts` (import/transform — **مش** إعادة كتابة أو اختراع). احترم `riskyOverlaps` (ممنوع تحويلها بالقاموس المباشر — آلة الحالة بس).
-2. **استخراج باقي القواميس كبيانات نقية** من `plateParser.ts` الحالي: `numbers.ts` (SPOKEN_NUMBERS بعد الـ hotfix)، `zeroForms.ts` (ZERO_WORD_RE)، `noiseWords.ts`، `mergedWords.ts` (PHONETIC_MERGES)، `vehicleTypes.ts` (VEHICLE_TYPES). نقل بدون تغيير قيم.
-3. **وحدات الـ pipeline** (`lib/speech-normalizer/`): unicodeCleanup → removeNoise → learnedCorrections → normalizeNumbers → normalizeLetters → normalizeWords → splitMergedLetters → plateContextStateMachine → fuzzy → phonetic → platePatternDetector + validators (تستخدم قواعد `structuredPlates.ts` — مش تكرارها) → confidenceScore → trace.
-4. **refactor `plateParser.ts` → thin consumer** للإنجن (آخر وأخطر خطوة). صفر تغيير سلوك — الأقفال والـ٥٢٢ اختبار هي الحكم. `parsePlateFromTranscript`/`extractMultiplePlates` يبقوا واجهة رفيعة بتنادي `normalizeTranscript`.
+1. ✅ **اشتقاق القواميس من البذرة** (`lib/dictionaries/`): `letters.ts` (CANONICAL_PLATE_LETTERS + LETTER_VARIANT_MAP + buildLetterVariantMap اللي بيرمي عند التعارض) و `phoneticAliases.ts` (phoneticNeighborsOf) و `commonMistakes.ts` (LETTER_MISTAKE_MAP) — كلها مشتقّة من `saudiPlateLetters.ts`. اختبارات: `__tests__/derivedDictionaries.test.ts` (١٤).
+2. ✅ **استخراج باقي القواميس كبيانات نقية** من `plateParser.ts`: `numbers.ts` (SPOKEN_NUMBERS) / `zeroForms.ts` (ZERO_WORD_RE) / `noiseWords.ts` (NOTE_KEYWORDS) / `mergedWords.ts` (PHONETIC_MERGES) / `vehicleTypes.ts` (VEHICLE_TYPES). نقل حرفي مؤكّد IDENTICAL بمقارنة برمجية. اختبارات: `__tests__/extractedDictionaries.test.ts` (١٥).
+3. ✅ **وحدات الـ pipeline** (`lib/speech-normalizer/`): كل الوحدات مبنية ومختبرة **ومستقلة (البارسر لسه مش بيستهلكها)**. المنسّق `normalizeTranscript` في `index.ts`. اختبارات: `speechNormalizer.core|letters|assembly.test.ts` (٤٠).
+   - **مبني كامل (سلوك حالي حتمي):** unicodeCleanup / removeNoise[قائمة فاضية] / learnedCorrections[حقن] / normalizeNumbers[زير قبل الأرقام — مقفول باختبار] / normalizeLetters[variants high + mistakes medium/low] / splitMergedLetters / normalizeWords[تقطيع + note routing + سحب نوع] / platePatternDetector / validators[بيستخدم isStrictPlate] / confidenceScore / trace + سجلّ dropped.
+   - **ستَب passthrough (ذكاء مؤجّل للمرحلة ٢):** plateContextStateMachine / fuzzy / phonetic — موجودين في مكانهم بالـ pipeline وبيسجّلوا trace، بس بدون تحويل.
+   - **قيدين رسميين متطبّقين:** ترتيب صفر/زير مقفول باختبار بيبوظ لو اتعكس؛ و noise removal (بيتشال) مفصول عن note routing (NOTE_KEYWORDS → ملاحظات).
+   - **No Silent Drops في التصميم:** `dropToken` بيسجّل في dropped **و** trace؛ والتوكن غير المعروف بيتحفظ بثقة منخفضة (مش بيختفي).
+4. ⏳ **refactor `plateParser.ts` → thin consumer** — **اتقسم بعد بوابة التكافؤ**:
+   - ✅ **٤أ — توحيد الداتا (اتعمل):** البارسر بقى يستورد القواميس الخمسة (ZERO_WORD_RE / VEHICLE_TYPES / NOTE_KEYWORDS / PHONETIC_MERGES / SPOKEN_NUMBERS) من `lib/dictionaries/` بدل نسخته الخاصة. صفر تغيير سلوك (القيم IDENTICAL) — كل الاختبارات القديمة خضرا بدون تعديل توقّعات. ٥ commits صغيرة (واحد لكل قاموس).
+   - ⛔ **٤ب — توصيل المنطق (متأجّل للمرحلة ٢):** خلّي `parsePlateFromTranscript`/`extractMultiplePlates` ينادوا `normalizeTranscript`. **ممنوع دلوقتي** — بوابة التكافؤ بتوضّح إن الإنجن (scaffold بذكاء مؤجّل) بيختلف عن البارسر في ٦١/١٤٤ لوحة (تقطيع متعدد + حشو/جمع الأرقام + salvage الحروف + anchoring) + ٧/١٤٤ نوع + ثغرات اشتقاق البذرة (`ءاف→ق`, `كي→ك`). لازم المرحلة ٢ تبني الذكاء ده وتسدّ الثغرات، وبعدها بوابة التكافؤ تخضرّ (شيل `.skip`)، وبعدها بس يُسمح بالتوصيل.
 
-**نصيحة:** الخطوة ٤ هي الأخطر — اعملها بأصغر خطوات ممكنة مع تشغيل `npx vitest run` بعد كل نقلة.
+**بوابة التكافؤ:** `__tests__/equivalence.harness.test.ts` + `tests/equivalence-corpus.json` (١٤٤ نص). حارس عدم-تراجع نشط (الاختلاف ماينزادش عن ٦١/٧) + بوابتين صارمتين `.skip` (٠ اختلاف) تتفعّلوا لمّا الإنجن يوصل للتطابق.
+
+**⚠️ لبس «ألف» (اتحسم):** القرار المعتمد = الحروف قبل الأرقام (الف = الحرف ا) زي `plateAtoms`. المنسّق اتظبط (`normalizeLetters` قبل `normalizeNumbers`) واختبار صريح: «الف باء دال واحد اتنين تلاته اربعه» → ابد1234. أي إعادة نظر مكانها `plateContextStateMachine` في المرحلة ٢.
 
 ---
 
@@ -64,6 +72,34 @@
 
 ---
 
+## ⚠️ ملاحظة بيئة معروفة — `excel.test.ts` بيفشل في الـ worktrees
+
+`__tests__/excel.test.ts` بيفشل في الـ transform برسالة `Failed to resolve import "xlsx" from "lib/excel.ts"`، و`npx tsc` نفسه مابيشتغلش من جوّه الـ worktree (`MODULE_NOT_FOUND` جوّه `tsc.js`). **دي مشكلة بيئة قديمة مالهاش أي علاقة بشغل تطبيع الكلام** — `xlsx`/`typescript` مش قابلين للحل في node_modules المشترك من مسار الـ worktree.
+
+**إثبات (٢٠٢٦-٠٧-١٧):** اتعمل worktree مؤقت على commit `fdfeff8` (parent لـ `b08acc4`، أي **قبل** بداية شغل السيشنات كلها) و`npx vitest run __tests__/excel.test.ts` طلع **نفس الفشل بالظبط**. يبقى موجود من الأصل.
+
+**`npx next build` المحلي مكسور على الجهاز ده (مش worktree-only):** بيفشل بـ
+`Module not found: Can't resolve '@/lib/idb'` (و`@/lib/excel`, `@/lib/supabaseClient`,
+`@/components/...`) — الـ `@/*` alias مابيتحلّش محلياً رغم إنه متظبّط في tsconfig
+والملفات موجودة. **اتأكّد إنه بيئة قديمة مش من أي شغل:** الفشل بنفس الأخطاء بالظبط على
+(أ) build جذر الريبو على **`main` النضيف** بدون أي تغييرات، (ب) `fdfeff8` قبل السيشنات،
+(ج) الـ worktree. السبب غالباً مسار OneDrive / إعداد node محلي.
+
+> **⚙️ سير التحقق من الـ build:** التحقق يتم عبر **Vercel preview builds من خلال PRs**
+> (مش build محلي). مثال: PR #7 — Vercel preview طلع **أخضر (Ready)**. أي فرع تعمله PR
+> وتشوف Vercel check.
+>
+> **مهمة مستقلة مؤجّلة:** إصلاح بيئة الـ build المحلي (`@/` alias) على الجهاز ده.
+
+نفس السبب بيخلي `tsc` مايشتغلش من جوّه الـ worktree — استخدم الالتفاف اللي تحت (tsc من جذر الريبو).
+
+**للتغلب عليها:** شغّل `tsc` من جذر الريبو مباشرةً:
+```bash
+# من جذر الريبو (مش من جوّه الـ worktree)
+node node_modules/typescript/bin/tsc --noEmit -p ".claude/worktrees/<worktree>/tsconfig.json"
+```
+لتشغيل الاختبارات من غير ملف excel: السويت بيعدّي (٥٠٧ + الجديد)، والملف الفاشل الوحيد هو excel.test.ts للسبب ده. مايتحسبش regression.
+
 ## ٥) أوامر مفيدة
 ```bash
 npx vitest run                       # كل الاختبارات (٥٢٢، لازم كلها خضرا)
@@ -73,4 +109,4 @@ npx tsc --noEmit                     # فحص الأنواع
 git push origin HEAD:main            # ينشر على Vercel تلقائياً
 ```
 
-**ابدأ من:** المرحلة ١-ب خطوة ١ (اشتقاق القواميس من البذرة). راجع البرومبت الكامل + `docs/speech-normalizer-notes.md` الأول.
+**ابدأ من:** **المرحلة ٢** — بناء ذكاء الإنجن (تقطيع لوحات متعددة + حشو/جمع الأرقام + salvage الحروف + anchoring + سدّ ثغرات البذرة) لحد ما بوابة التكافؤ تخضرّ، وبعدها خطوة ٤ب (توصيل المنطق) **بإذن صريح**. خطوات ١-٢-٣ + ٤أ (توحيد الداتا) خلصت. راجع البرومبت الكامل + `docs/speech-normalizer-notes.md` + بوابة التكافؤ فوق.
