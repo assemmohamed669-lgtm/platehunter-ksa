@@ -16,11 +16,9 @@
  *  12. Notes = tokens not consumed by the plate
  */
 
-// The arabized English "zero" — the recognizer clips/spells it a different
-// way almost every take (زير, زيرو, زيرة, زيره, زيرا, زيرى). Match the whole
-// family as one standalone word instead of chasing each variant. The
-// lookbehind/lookahead keep it whole-word, so "وزير" (minister) is untouched.
-const ZERO_WORD_RE = /(?<![؀-ۿ])زير[وةهاى]?(?![؀-ۿ])/g;
+// القواميس اتّنقلت لـ lib/dictionaries/ كبيانات نقية (مصدر واحد يستهلكه البارسر
+// والإنجن الجديد سوا). القيم IDENTICAL للي كانت هنا — اتأكّد بمقارنة برمجية.
+import { ZERO_WORD_RE } from "./dictionaries/zeroForms";
 
 // ─── Egyptian dialect → Saudi plate letter/digit mapping ─────────────────
 // المأمور يقول كل حرف كلمة لوحدها: "دال حه ره واحد اتنين تلاتة أربعة"
