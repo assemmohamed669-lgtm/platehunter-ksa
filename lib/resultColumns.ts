@@ -93,7 +93,9 @@ export const RESULT_TARGETS: TargetColumn[] = [
   },
   {
     key: "year", label: "سنة الصنع",
-    aliases: ["سنة الصنع", "السنة", "سنة", "سنه", "موديل", "الموديل", "year model", "year", "model year"],
+    // «موديل/الموديل» مقصودة الغياب — ملتبسة (ممكن تكون اسم موديل مش سنة). المحتوى
+    // بيفرّق: عمود أرقام سنين → year؛ عمود أسماء موديلات → brand (looksLikeCarName).
+    aliases: ["سنة الصنع", "السنة", "سنة", "سنه", "year model", "model year", "year"],
     content: looksLikeYear,
   },
   {

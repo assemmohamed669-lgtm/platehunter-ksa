@@ -1201,7 +1201,10 @@ export default function SortingPage() {
                   {displayResults.slice(0, visibleCount).map((r, i) => {
                     const plate = plateForRow(r);
                     const isSel = selectedResults.has(i);
-                    const plateKey = normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+                    // refPlateNorm محسوبة وقت الفرز بعمود لوحة الشيت الصح (شامل الإحالات
+                    // الإضافية)؛ نستخدمها للتلوين زي ما plateColorMap/التصدير بيعملوا —
+                    // إعادة الحساب من effectiveReferralPlateCol بتفشل لصفوف الشيتات الإضافية.
+                    const plateKey = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
                     const colorIdx = plateColorMap.get(plateKey);
                     const rowBg = isSel ? "bg-primary/15" : colorIdx !== undefined ? DUPE_COLORS[colorIdx].tw : "bg-brand/5 hover:bg-brand/15";
                     return (
