@@ -1657,7 +1657,10 @@ export default function RegistrationPage() {
   // بتغذّي enqueueGroqChunk/applySessionText (نفس الحفظ الحي التسلسلي +
   // carry-over اللي بيصحّح اللوحة المقطوعة على حدود المقاطع = تصحيح ذاتي).
   // بيقطّع بالـ VAD مش بالوقت الثابت عشان مايقطعش نص اللوحة.
-  const GROQ_LIVE_MAX_SEG_MS = 7000; // أمان: أقصى طول مقطع لو المندوب بيقرا بلا وقفات
+  // أمان: أقصى طول مقطع لو المندوب بيقرا **بلا** وقفات. رفعناه من 7ث لـ 20ث عشان
+  // مايقطعش نص لوحة (يفصل الحروف عن الأرقام) — التقطيع الطبيعي بيحصل عند السكوت
+  // بين اللوحات (VAD)؛ ده مجرد شبكة أمان للقراءة المتواصلة الطويلة.
+  const GROQ_LIVE_MAX_SEG_MS = 20000;
   async function startGroqLiveRecording(): Promise<boolean> {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setRecordingError("جهازك مايدعمش تسجيل الصوت — استخدم Deepgram أو حدّث التطبيق.");
