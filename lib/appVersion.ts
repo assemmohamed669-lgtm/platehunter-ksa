@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.4.0";
+export const APP_VERSION = "0.5.0";
 export const UPDATE_NOTE =
-  "صفحة «المطلوب»، مؤشّر مستوى الصوت، منظّم الإيقاع، وتحسينات في التشييك والتصدير.";
+  "قراءة محافظ البنوك بأي تنسيق (حتى لو فيها صفوف فوق الجدول)، ونتيجة الفرز بتعرض أعمدة الداتا والمحفظة جنب بعض.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
