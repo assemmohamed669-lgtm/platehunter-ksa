@@ -1837,7 +1837,7 @@ export default function RegistrationPage() {
             lastSessionAudioRef.current = { base64: uint8ToBase64(new Uint8Array(ab)), mimeType: mime };
             setSessionAudioTick((t) => t + 1);
             pendingAutoAnalyzeRef.current = false; // نمنع تحليل مزدوج مع وضع «تسجيل ثم تحليل»
-            void runReanalyze();                   // حلّل بالمحرك المختار — بيصفّي isTranscribing في finally
+            void runReanalyze(true);               // حلّل بالمحرك المختار **ويحفظ تلقائي** (حفظ فوري بدون مراجعة)
           })
           .catch(() => {
             pendingAutoAnalyzeRef.current = false;
@@ -2558,7 +2558,7 @@ export default function RegistrationPage() {
   // إعادة تحليل ذكي: بياخد صوت آخر جلسة محفوظ، يعيد تفريغه بالأداة المختارة
   // (على السيرفر — مفيش قيود CORS) بدقة أعلى، ويرتّبه لصفوف {لوحة، نوع، ملاحظات}
   // بالسياق الكامل. مش بيمسح حاجة — بيعرض النتيجة والمندوب يضيفها لو عجبته.
-  async function runReanalyze() {
+  async function runReanalyze(autoSave = false) {
     if (reAnalyzing) return;
     // مصدر الصوت: الأفضل صوت آخر جلسة اتسجّلت للتو؛ وإلا صوت محفوظ في تسجيل.
     let audioB64 = lastSessionAudioRef.current?.base64;
@@ -2588,7 +2588,23 @@ export default function RegistrationPage() {
         setReError(data.detail || data.error || "فشل التحليل — راجع المفتاح والإنترنت.");
         return;
       }
-      setReResult({ transcript: data.transcript || "", rows: data.rows || [], engineUsed: data.engineUsed || eng, srcId: geoSrc?.localId || "" });
+      const rows: StructuredRow[] = data.rows || [];
+      const srcId = geoSrc?.localId || "";
+      if (autoSave) {
+        // مسار «سجّل ثم حلّل» التلقائي — حفظ فوري بدون مراجعة (تفضيل الميدان).
+        if (rows.length > 0) {
+          await persistReanalyzedRows(rows, srcId);
+          setDebugStatus(`✅ اتحفظ ${rows.length} لوحة تلقائياً`);
+        } else if ((data.transcript || "").trim()) {
+          // اتفرّغ بس مفيش لوحات مكتملة — اعرض النص للمراجعة بدل الحفظ الصامت.
+          setReResult({ transcript: data.transcript, rows: [], engineUsed: data.engineUsed || eng, srcId });
+          setDebugStatus("تم التفريغ — مفيش لوحات مكتملة، راجع النص تحت");
+        } else {
+          setReError("مفيش كلام اتسجّل — تأكد إن المايك شغّال وجرّب تاني.");
+        }
+      } else {
+        setReResult({ transcript: data.transcript || "", rows, engineUsed: data.engineUsed || eng, srcId });
+      }
     } catch {
       setReError("تعذّر الاتصال بالسيرفر.");
     } finally {
@@ -2598,13 +2614,14 @@ export default function RegistrationPage() {
   }
 
   // يحفظ صفوف التحليل الذكي كتسجيلات جديدة (يورّث الشارع/الحي/GPS من مصدر الصوت).
-  async function saveReanalyzed() {
-    if (!reResult || !agentIdRef.current) return;
-    const src = recordings.find((r) => r.localId === reResult.srcId);
-    for (const row of reResult.rows) {
+  async function persistReanalyzedRows(rows: StructuredRow[], srcId: string) {
+    const agentId = agentIdRef.current;
+    if (!agentId) return;
+    const src = recordings.find((r) => r.localId === srcId);
+    for (const row of rows) {
       const entry: RecordingEntry = {
         localId: uid(),
-        agentId: agentIdRef.current,
+        agentId,
         plate: row.plate,
         uncertain: row.needsReview || undefined,
         vehicleType: row.vehicleType || undefined,
@@ -2620,8 +2637,15 @@ export default function RegistrationPage() {
       };
       await saveRecording(entry);
     }
+    await loadRecordings(agentId);
+    if (typeof navigator === "undefined" || navigator.onLine) syncPending(agentId);
+  }
+
+  // زر «أضِف» في لوحة التحليل الذكي اليدوي.
+  async function saveReanalyzed() {
+    if (!reResult || !agentIdRef.current) return;
+    await persistReanalyzedRows(reResult.rows, reResult.srcId);
     setReResult(null);
-    await loadRecordings(agentIdRef.current);
   }
 
   async function handlePlateEdit(localId: string, newPlate: string) {
@@ -3083,12 +3107,14 @@ export default function RegistrationPage() {
       {/* ── جدول التسجيلات الصوتية ── */}
       {(() => {
         const voiceRecs = recordings.filter((r) => !r.isManual);
-        if (voiceRecs.length === 0 && !isTranscribing) return null;
+        // نعرض الجزء كمان لو فيه نتيجة/خطأ تحليل ذكي (عشان مسار «سجّل ثم حلّل»
+        // اللي مفيش قبله تسجيلات محفوظة — النتيجة/النص كانت بتتخفى قبل كده).
+        if (voiceRecs.length === 0 && !isTranscribing && !reResult && !reError) return null;
         return (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-2" dir="rtl">
               <p className="text-sm font-bold text-ink">التسجيلات الصوتية ({voiceRecs.length})</p>
-              <button onClick={runReanalyze} disabled={reAnalyzing}
+              <button onClick={() => runReanalyze()} disabled={reAnalyzing}
                 className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
                 {reAnalyzing ? <RefreshCw size={13} className="animate-spin" /> : <span>🧠</span>}
                 {reAnalyzing ? "قيد التحليل الذكي..." : "تحليل ذكي (أدق)"}
