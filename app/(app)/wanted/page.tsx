@@ -14,7 +14,8 @@ import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
 import { buildSpreadsheetBlob, shareExcelBlob } from "@/lib/excel";
-import { resolveCheckColumns, inferVehicleType, findHeader } from "@/lib/wantedColumns";
+import { resolveCheckColumns, inferVehicleType } from "@/lib/wantedColumns";
+import { resolveResultColumns } from "@/lib/resultColumns";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
@@ -64,7 +65,12 @@ export default function WantedPage() {
       // أعمدة الماركة / نوع السيارة / البنك من شيت التشييك.
       // ملاحظة: الموديل (النترا/بيكانتو...) بيتحسب «ماركة» حتى لو مكتوب في عمود «النوع»؛
       // و«نوع السيارة» بيتاخد من عمود نوع مستقل بس، وإلا بيتّستنتج من نص الماركة.
-      const { brandCol, typeCol: checkTypeCol, bankCol } = resolveCheckColumns(checkRec.headers);
+      const { brandCol, typeCol: checkTypeCol } = resolveCheckColumns(checkRec.headers);
+      // اللون/سنة الصنع من شيت التشييك (بالاسم أو بالمحتوى — resolveResultColumns).
+      const checkResolved = resolveResultColumns(checkRec.headers, checkRec.rows, checkCol);
+      const checkSrc = (key: string) => checkResolved.find((c) => c.key === key)?.sourceCol ?? null;
+      const colorCheckCol = checkSrc("color");
+      const yearCheckCol = checkSrc("year");
 
       // قائمة المطلوبين المطبّعة + صف كل لوحة (لجلب الماركة/البنك).
       const wanted = new Set<string>();
@@ -76,45 +82,44 @@ export default function WantedPage() {
         if (!checkRowByNorm.has(norm)) checkRowByNorm.set(norm, r);
       }
       const brandOf = (norm: string) => (brandCol ? String(checkRowByNorm.get(norm)?.[brandCol] ?? "").trim() : "");
-      const bankOf = (norm: string) => (bankCol ? String(checkRowByNorm.get(norm)?.[bankCol] ?? "").trim() : "");
       const typeOfCheck = (norm: string) => (checkTypeCol ? String(checkRowByNorm.get(norm)?.[checkTypeCol] ?? "").trim() : "");
+      const colorOf = (norm: string) => (colorCheckCol ? String(checkRowByNorm.get(norm)?.[colorCheckCol] ?? "").trim() : "");
+      const yearOf = (norm: string) => (yearCheckCol ? String(checkRowByNorm.get(norm)?.[yearCheckCol] ?? "").trim() : "");
 
       // (١) مطابقة على شيت الداتا — بترتيب الداتا (مناطق تحت بعضها).
       const dRows: WantedRow[] = [];
       if (dataRec) {
         const dataCol = detectPlateColumn(dataRec.headers, dataRec.rows);
         if (dataCol) {
-          const dataTypeCol = findHeader(dataRec.headers, ["نوع"]);
-          const brandColD = findHeader(dataRec.headers, ["ماركة", "طراز", "صانع"]);
-          const streetCol = findHeader(dataRec.headers, ["شارع"]);
-          const districtCol = findHeader(dataRec.headers, ["حي", "الحى", "منطقة"]);
-          const notesCol = findHeader(dataRec.headers, ["ملاحظ"]);
-          // عمود GPS في الداتا — بأي اسم قريب (GPS/موقع/خريطة/رابط/إحداثيات...).
-          const gpsColD = findHeader(dataRec.headers, ["gps", "GPS", "موقع", "الموقع", "خريطة", "خرائط", "location", "رابط", "احداثيات", "إحداثيات", "جي بي اس"]);
+          // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/GPS/لون/سنة/تاريخ).
+          const resolved = resolveResultColumns(dataRec.headers, dataRec.rows, dataCol);
+          const srcOf = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
+          const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address");
+          const gpsSrc = srcOf("gps"), colorSrc = srcOf("color"), yearSrc = srcOf("year"), dateSrc = srcOf("date");
           let i = 0;
           for (const row of dataRec.rows) {
             const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
             if (!norm || !wanted.has(norm)) continue;
-            // ناخد GPS من عمود الداتا زي ما هو (رابط/إحداثيات بأي صيغة)، وإلا نمسح باقي الأعمدة.
-            const rawGps = gpsColD ? String(row[gpsColD] ?? "") : "";
+            const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
+            // GPS من عمود الداتا زي ما هو (رابط/إحداثيات بأي صيغة)، وإلا نمسح باقي الأعمدة.
+            const rawGps = val(gpsSrc);
             let mapsLink = gpsCellToLink(rawGps);
             let coords = gpsCellCoords(rawGps);
             if (!mapsLink) {
               const g = findGps(row);
               if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
             }
-            const brand = brandOf(norm) || (brandColD ? String(row[brandColD] ?? "").trim() : "");
-            const dataType = dataTypeCol ? String(row[dataTypeCol] ?? "").trim() : "";
+            const brand = brandOf(norm) || val(brandSrc);
             dRows.push({
               id: `d${i++}`,
               plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
               norm,
-              type: dataType || typeOfCheck(norm) || inferVehicleType(brand),
+              type: val(typeSrc) || typeOfCheck(norm) || inferVehicleType(brand),
               brand,
-              bank: bankOf(norm),
-              street: streetCol ? String(row[streetCol] ?? "").trim() : "",
-              district: districtCol ? String(row[districtCol] ?? "").trim() : "",
-              notes: notesCol ? String(row[notesCol] ?? "").trim() : "",
+              address: val(addrSrc),
+              color: colorOf(norm) || val(colorSrc),
+              year: yearOf(norm) || val(yearSrc),
+              date: val(dateSrc),
               mapsLink,
               lat: coords?.lat,
               lng: coords?.lng,
@@ -131,16 +136,17 @@ export default function WantedPage() {
         if (!norm || !wanted.has(norm)) continue;
         const brand = brandOf(norm);
         const recType = (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim();
+        const address = [(e.row?.["الشارع"] || "").trim(), (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim()].filter(Boolean).join(" - ");
         rRows.push({
           id: `r${j++}`,
           plate: bankPlateToArabic(e.plate).trim() || e.plate,
           norm,
           type: recType || typeOfCheck(norm) || inferVehicleType(brand),
           brand,
-          bank: bankOf(norm),
-          street: (e.row?.["الشارع"] || "").trim(),
-          district: (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim(),
-          notes: (e.method || e.row?.["ملاحظات"] || "").trim(),
+          address,
+          color: colorOf(norm),
+          year: yearOf(norm),
+          date: (e.row?.["التاريخ"] || e.row?.["تاريخ التسجيل"] || "").trim(),
           mapsLink: e.mapsLink || "",
           lat: e.lat,
           lng: e.lng,
@@ -168,15 +174,15 @@ export default function WantedPage() {
   function shareAll(rows: WantedRow[], label: string) {
     if (rows.length === 0) return;
     const text = `*${label} (${rows.length})*\n\n` + rows.map((r, i) =>
-      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.district ? ` — ${r.district}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
+      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.address ? ` — ${r.address}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
   async function exportExcel(rows: WantedRow[], name: string) {
     if (rows.length === 0) return;
     const out = rows.map((r) => ({
       "رقم اللوحة": r.plate, "نوع السيارة": r.type, "الماركة": r.brand,
-      "البنك/الشركة": r.bank, "الشارع": r.street, "الحي": r.district,
-      "ملاحظات": r.notes, "GPS": r.mapsLink,
+      "العنوان": r.address, "GPS": r.mapsLink, "اللون": r.color,
+      "سنة الصنع": r.year, "تاريخ التسجيل": r.date,
     }));
     const { blob, ext } = buildSpreadsheetBlob(out, name);
     try { await shareExcelBlob(blob, `${name}.${ext}`, name); } catch (e) { alert(e instanceof Error ? e.message : "تعذّر التصدير"); }

@@ -12,17 +12,19 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm } from "@/lib/gps";
 
+// الأعمدة الثابتة المطلوبة: رقم اللوحة › نوع السيارة › الماركة › العنوان › GPS ›
+// اللون › سنة الصنع › تاريخ التسجيل. تتحدّد بالاسم أو بالمحتوى في wanted/page.tsx.
 export interface WantedRow {
   id: string;
   plate: string;
   norm: string;      // مطبّعة — للتجميع/التلوين
   type: string;      // نوع السيارة
-  brand: string;     // الماركة (من التشييك)
-  bank: string;      // البنك/الشركة (من التشييك)
-  street: string;
-  district: string;
-  notes: string;
-  mapsLink: string;
+  brand: string;     // الماركة
+  address: string;   // العنوان (شارع/حي)
+  color: string;     // اللون
+  year: string;      // سنة الصنع
+  date: string;      // تاريخ التسجيل
+  mapsLink: string;  // GPS
   lat?: number;
   lng?: number;
 }
@@ -36,12 +38,12 @@ const DUP_COLORS = [
 
 function rowText(r: WantedRow): string {
   const lines = [`🚗 ${r.plate}`];
-  if (r.type) lines.push(`النوع: ${r.type}`);
+  if (r.type) lines.push(`نوع السيارة: ${r.type}`);
   if (r.brand) lines.push(`الماركة: ${r.brand}`);
-  if (r.bank) lines.push(`البنك/الشركة: ${r.bank}`);
-  if (r.street) lines.push(`الشارع: ${r.street}`);
-  if (r.district) lines.push(`الحي: ${r.district}`);
-  if (r.notes) lines.push(`ملاحظات: ${r.notes}`);
+  if (r.address) lines.push(`العنوان: ${r.address}`);
+  if (r.color) lines.push(`اللون: ${r.color}`);
+  if (r.year) lines.push(`سنة الصنع: ${r.year}`);
+  if (r.date) lines.push(`تاريخ التسجيل: ${r.date}`);
   if (r.mapsLink) lines.push(`📍 ${r.mapsLink}`);
   return lines.join("\n");
 }
@@ -137,11 +139,11 @@ export default function WantedResultsTable({
               <th className={TH}>رقم اللوحة</th>
               <th className={TH}>نوع السيارة</th>
               <th className={TH}>الماركة</th>
-              <th className={TH}>البنك/الشركة</th>
-              <th className={TH}>الشارع</th>
-              <th className={TH}>الحي</th>
-              <th className={TH}>ملاحظات</th>
+              <th className={TH}>العنوان</th>
               <th className={TH}>GPS</th>
+              <th className={TH}>اللون</th>
+              <th className={TH}>سنة الصنع</th>
+              <th className={TH}>تاريخ التسجيل</th>
               <th className="border-b border-border px-2 py-2 text-center font-bold">إجراءات</th>
             </tr>
           </thead>
@@ -160,15 +162,15 @@ export default function WantedResultsTable({
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
                   <td className={TD}>{r.type || "—"}</td>
                   <td className={TD}>{r.brand || "—"}</td>
-                  <td className={TD}>{r.bank || "—"}</td>
-                  <td className={TD}>{r.street || "—"}</td>
-                  <td className={TD}>{r.district || "—"}</td>
-                  <td className={TD}>{r.notes || "—"}</td>
+                  <td className={TD}>{r.address || "—"}</td>
                   <td className="border-l border-border px-3 py-2">
                     {r.mapsLink ? (
                       <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
                     ) : "—"}
                   </td>
+                  <td className={TD}>{r.color || "—"}</td>
+                  <td className={TD}>{r.year || "—"}</td>
+                  <td className={TD}>{r.date || "—"}</td>
                   <td className="px-2 py-2">
                     <div className="flex items-center justify-center gap-2">
                       <button onClick={() => copyRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
