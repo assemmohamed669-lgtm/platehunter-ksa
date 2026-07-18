@@ -1037,23 +1037,15 @@ export default function RegistrationPage() {
     lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
     const selectedEngine = getVoiceEngine();
-    // ── Groq Whisper لايف (شبه-لحظي): مايك مفتوح + VAD يقطّع عند السكوت + كل مقطع
-    // يتبعت لـ Groq ويظهر فوراً. ده المحرك اللي بيوصل لدقة المنافس (Whisper أدق
-    // بكتير من Deepgram على لوحات السعودية) مع إحساس اللايف.
-    if (selectedEngine === "groq") {
+    // ── Groq Whisper / ElevenLabs — «سجّل ثم حلّل» (batch): سجّل الصوت كامل، وأول
+    // ما توقف حلّل التسجيل **مرة واحدة** بالمحرك المختار (Whisper/Scribe) — دقة
+    // شبه مثالية وثابتة (زي فيديو المنافس). التقطيع اللحظي اتشال: تجربة ميدانية
+    // أثبتت إنه هش بيلخبط حروف اللوحة على حدود المقاطع بشكل غير ثابت.
+    if (selectedEngine === "groq" || selectedEngine === "elevenlabs") {
       if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
       if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
-      if (!groqApiKey.trim()) { setRecordingError("محرك Groq محتاج مفتاح Groq — حطّه من القائمة ← «مفتاح Groq»."); return; }
-      const ok = await startGroqLiveRecording();
-      if (ok) return;
-      // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
-    }
-    // ── ElevenLabs (تسجيل ثم تحليل — batch فقط): سجّل الصوت وحلّله أول ما توقف. ──
-    if (selectedEngine === "elevenlabs") {
-      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
-      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
-      if (!groqApiKey.trim()) { setRecordingError("محرك ElevenLabs محتاج مفتاح Groq (للترتيب) — حطّه من القائمة ← «مفتاح Groq»."); return; }
-      const ok = await startRawRecording("elevenlabs");
+      if (!groqApiKey.trim()) { setRecordingError("المحرك ده محتاج مفتاح Groq — حطّه من القائمة ← «مفتاح Groq»."); return; }
+      const ok = await startRawRecording(selectedEngine);
       if (ok) return;
       // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
     }
