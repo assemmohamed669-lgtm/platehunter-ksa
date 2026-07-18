@@ -1037,15 +1037,17 @@ export default function RegistrationPage() {
     lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
     const selectedEngine = getVoiceEngine();
-    // ── Groq Whisper / ElevenLabs — «سجّل ثم حلّل» (batch): سجّل الصوت كامل، وأول
-    // ما توقف حلّل التسجيل **مرة واحدة** بالمحرك المختار (Whisper/Scribe) — دقة
-    // شبه مثالية وثابتة (زي فيديو المنافس). التقطيع اللحظي اتشال: تجربة ميدانية
-    // أثبتت إنه هش بيلخبط حروف اللوحة على حدود المقاطع بشكل غير ثابت.
-    if (selectedEngine === "groq" || selectedEngine === "elevenlabs") {
+    // ── التسجيل الصوتي = «سجّل ثم حلّل» (batch) بمفتاح Groq — دقيق وثابت (زي فيديو
+    // المنافس). قرار المستخدم: **مفتاح Groq بيربط تلقائياً بالتسجيل** (مستقل عن المحرك
+    // العام — التشييك الصوتي بياخد Deepgram اللحظي بمفتاحه). فطول ما فيه مفتاح Groq
+    // نستخدمه للتسجيل؛ ElevenLabs يفضل بس لو مختار صراحةً. التقطيع اللحظي اتشال
+    // (تجربة ميدانية أثبتت إنه هش بيلخبط الحروف على حدود المقاطع).
+    if (groqApiKey.trim() || selectedEngine === "elevenlabs") {
       if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
       if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
       if (!groqApiKey.trim()) { setRecordingError("المحرك ده محتاج مفتاح Groq — حطّه من القائمة ← «مفتاح Groq»."); return; }
-      const ok = await startRawRecording(selectedEngine);
+      const engineLabel = selectedEngine === "elevenlabs" ? "elevenlabs" : "groq";
+      const ok = await startRawRecording(engineLabel);
       if (ok) return;
       // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
     }

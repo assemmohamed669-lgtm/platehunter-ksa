@@ -16,6 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory, detectMakeModelColumn } from "@/lib/sortingCols";
+import { resolveResultColumns, RESULT_TARGETS } from "@/lib/resultColumns";
 import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -334,46 +335,26 @@ export default function SortingPage() {
   const effectiveCheckPlateCol = checkPlateColOverride ?? checkPlateCol;
   const tashyeekPlateCol = tashyeekTable ? detectPlateColumn(tashyeekTable.headers, tashyeekTable.rows) : null;
 
-  // كشف ذكي لعمود اسم/موديل المركبة (كورولا/يارس/أزيرا...) — باسم العمود أو
-  // بمحتواه لو الاسم غير متوقّع. بيتحط في مكان «صانع المركبة» بالترتيب، وبيتضاف
-  // للعرض حتى لو المستخدم ماختارهوش صراحةً (لأنه أهم عمود بعد اللوحة).
-  const makeModelCol = useMemo(
-    () => (dataTable ? detectMakeModelColumn(dataTable.headers, dataTable.rows, effectiveDataPlateCol) : null),
-    [dataTable, effectiveDataPlateCol],
-  );
-
-  const displayCols = useMemo(() => {
-    const mandatory = dataTable?.headers.filter((h) => h !== effectiveDataPlateCol && isMandatory(h)) ?? [];
-    const rest = [...outputCols].filter((h) => !isMandatory(h));
-    // نضمن ظهور عمود اسم/موديل المركبة المكتشف حتى لو مش متحدد.
-    const forced = makeModelCol && makeModelCol !== effectiveDataPlateCol ? [makeModelCol] : [];
-    const cols = [...new Set([...mandatory, ...rest, ...forced])];
-    // ترتيب ثابت مطلوب من المستخدم (بعد رقم اللوحة اللي بيتعرض أول عمود لوحده):
-    // نوع السيارة → صانع/موديل المركبة → العنوان → GPS → باقي الأعمدة المحددة.
-    // المطابقة بالاسم عشان تشتغل مهما كان اسم العمود الفعلي في الملف.
-    const ORDER_GROUPS = [
-      ["نوع", "type of car", "car type", "vehicle type"], // 0 — نوع السيارة
-      ["صانع", "manufacturer", "make"],                    // 1 — صانع المركبة
-      ["الشارع", "شارع", "العنوان", "عنوان", "الحي", "حي"], // 2 — العنوان
-      ["gps", "الموقع", "جي بي اس"],                        // 3 — GPS
-    ];
-    const rank = (h: string) => {
-      // العمود المكتشف كاسم/موديل مركبة بياخد مكان «صانع المركبة» (رتبة ١)
-      // مهما كان اسمه الفعلي — بس من غير ما يسبق «نوع السيارة».
-      if (h === makeModelCol) return 1;
-      const x = h.trim().toLowerCase();
-      for (let i = 0; i < ORDER_GROUPS.length; i++) {
-        if (ORDER_GROUPS[i].some((k) => x.includes(k.toLowerCase()))) return i;
+  // أعمدة نتيجة الفرز — **٨ أعمدة ثابتة بترتيب محدد**: رقم اللوحة (أول عمود لوحده)
+  // ثم نوع السيارة › الماركة › العنوان › GPS › اللون › سنة الصنع › تاريخ التسجيل.
+  // كل عمود بيتكتشف بالاسم أو بالمحتوى (resolveResultColumns) — فيشتغل مهما كان
+  // اسم العمود، وحتى لو الشيت بدون أسماء أعمدة. بندمج مصدرين: الداتا (نوع/عنوان/
+  // GPS/تاريخ غالباً) + الإحالة (ماركة/لون/سنة غالباً)، والداتا لها الأولوية.
+  const resultCols = useMemo(() => {
+    type RC = { key: string; label: string; sourceCol: string; source: "data" | "referral" };
+    const byKey = new Map<string, RC>();
+    if (dataTable) {
+      for (const c of resolveResultColumns(dataTable.headers, dataTable.rows, effectiveDataPlateCol)) {
+        if (!byKey.has(c.key)) byKey.set(c.key, { ...c, source: "data" });
       }
-      return ORDER_GROUPS.length; // الباقي
-    };
-    // ترتيب ثابت (stable) — العناصر بنفس الرتبة تحافظ على ترتيبها الأصلي.
-    return cols
-      .map((h, i) => ({ h, i, r: rank(h) }))
-      .sort((a, b) => a.r - b.r || a.i - b.i)
-      .map((x) => x.h);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataTable, effectiveDataPlateCol, outputCols, makeModelCol]);
+    }
+    if (referralTable) {
+      for (const c of resolveResultColumns(referralTable.headers, referralTable.rows, effectiveReferralPlateCol)) {
+        if (!byKey.has(c.key)) byKey.set(c.key, { ...c, source: "referral" });
+      }
+    }
+    return RESULT_TARGETS.map((t) => byKey.get(t.key)).filter((c): c is RC => !!c);
+  }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol]);
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
@@ -773,13 +754,12 @@ export default function SortingPage() {
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
+    // نفس الـ٨ أعمدة الثابتة اللي في العرض (resultCols) — عشان الإكسيل/واتساب
+    // يطلّعوا بنفس الترتيب والمحتوى بالظبط.
     const row: Record<string, unknown> = { "رقم اللوحة": plateForRow(r) };
-    const cols = [
-      ...(dataTable?.headers.filter((h) => h !== dataPlateCol && isMandatory(h)) ?? []),
-      ...[...outputCols].filter((h) => !isMandatory(h)),
-    ];
-    for (const col of cols) row[col] = r.dataRow?.[col] ?? "";
-    for (const col of referralExtraCols) row[col] = r.referralRow[col] ?? "";
+    for (const rc of resultCols) {
+      row[rc.label] = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
+    }
     row["الحالة"] = "مطلوبة";
     return row;
   }
@@ -1191,11 +1171,8 @@ export default function SortingPage() {
                   <tr className="bg-surface-2 text-muted">
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {displayCols.map((col) => (
-                      <th key={col} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
-                    ))}
-                    {[...referralExtraCols].map((col) => (
-                      <th key={`ref-${col}`} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{col}</th>
+                    {resultCols.map((rc) => (
+                      <th key={rc.key} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
@@ -1217,10 +1194,10 @@ export default function SortingPage() {
                           </button>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        {displayCols.map((col) => {
-                          const val = r.dataRow?.[col] ?? "";
+                        {resultCols.map((rc) => {
+                          const val = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
                           return (
-                            <td key={col} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                            <td key={rc.key} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {
                                 const v = String(val).trim();
                                 const link = gpsCellToLink(v);
@@ -1230,9 +1207,6 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
-                        {[...referralExtraCols].map((col) => (
-                          <td key={`ref-${col}`} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.referralRow[col] || "—"}</td>
-                        ))}
                         {nearestActive && "_dist" in r && (
                           <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">
                             {formatDistanceKm((r as { _dist: number })._dist)}
