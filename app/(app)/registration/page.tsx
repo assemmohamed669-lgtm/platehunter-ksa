@@ -2591,10 +2591,13 @@ export default function RegistrationPage() {
       const rows: StructuredRow[] = data.rows || [];
       const srcId = geoSrc?.localId || "";
       if (autoSave) {
-        // مسار «سجّل ثم حلّل» التلقائي — حفظ فوري بدون مراجعة (تفضيل الميدان).
-        if (rows.length > 0) {
-          await persistReanalyzedRows(rows, srcId);
-          setDebugStatus(`✅ اتحفظ ${rows.length} لوحة تلقائياً`);
+        // مسار «سجّل ثم حلّل» التلقائي: نمرّر **النص الكامل** من Whisper على البارسر
+        // بتاعنا (extractPlates: قاموس الحروف + إصلاحات المرحلة ١أ + التعلّم) بدل ترتيب
+        // llama — النص الكامل مفيهوش أخطاء تقطيع، والبارسر أدق على الحروف. حفظ فوري.
+        const extracted = extractPlates(data.transcript || "");
+        if (extracted.length > 0) {
+          const saved = await savePlateList(extracted);
+          setDebugStatus(`✅ اتحفظ ${saved.length} لوحة تلقائياً`);
         } else if ((data.transcript || "").trim()) {
           // اتفرّغ بس مفيش لوحات مكتملة — اعرض النص للمراجعة بدل الحفظ الصامت.
           setReResult({ transcript: data.transcript, rows: [], engineUsed: data.engineUsed || eng, srcId });
