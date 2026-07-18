@@ -16,7 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, type ResultColumnSource } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, resultCellValue, type ResultColumnSource } from "@/lib/resultColumns";
 import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -778,7 +778,7 @@ export default function SortingPage() {
     // يطلّعوا بنفس الترتيب والمحتوى بالظبط.
     const row: Record<string, unknown> = { "رقم اللوحة": plateForRow(r) };
     for (const rc of resultCols) {
-      row[rc.label] = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
+      row[rc.label] = resultCellValue(rc, r.dataRow, r.referralRow);
     }
     row["الحالة"] = "مطلوبة";
     return row;
@@ -1218,7 +1218,7 @@ export default function SortingPage() {
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
                         {resultCols.map((rc) => {
-                          const val = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
+                          const val = resultCellValue(rc, r.dataRow, r.referralRow);
                           return (
                             <td key={rc.key} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {

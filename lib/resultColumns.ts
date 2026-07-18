@@ -137,15 +137,21 @@ export interface ResultColumnSource {
   plateCol?: string | null; // عمود اللوحة (يُستبعد من الأعمدة الناتجة)
 }
 
-export interface MergedResultColumn extends ResolvedColumn {
-  source: "data" | "referral"; // منين تُقرأ القيمة (صف الداتا ولا صف الإحالة)
+export interface MergedResultColumn {
+  key: string;
+  label: string;
+  // مصادر العمود مرتّبة بالأولوية (الداتا الأول عادةً ثم الإحالات). القيمة تُقرأ
+  // من **أول مصدر قيمته غير فاضية** — فلو عمود الداتا فاضي (مثلاً «نوع السيارة»
+  // مش متعبّى) نرجع لعمود الإحالة (Type of car) اللي فيه قيمة.
+  sources: Array<{ source: "data" | "referral"; sourceCol: string }>;
 }
 
 /**
  * يدمج أعمدة النتيجة من عدة مصادر (الداتا + كل شيتات الإحالة الأساسية والإضافية)
- * في القائمة الثابتة بالترتيب. لكل هدف: **أول مصدر** يحلّه يكسبه (فالداتا لها
- * الأولوية لو اتحطّت أول). كده أعمدة الإحالة الإضافية (لون/سنة/ماركة) تظهر في
- * النتيجة حتى لو مش موجودة في الداتا ولا الإحالة الأساسية.
+ * في القائمة الثابتة بالترتيب. لكل هدف: بنجمّع **كل** الأعمدة اللي حلّته من كل
+ * المصادر (مرتّبة بأولوية المصادر) عشان القراءة تقدر ترجع لمصدر تاني لو الأول فاضي.
+ * كده أعمدة الإحالة الإضافية (لون/سنة/ماركة) تظهر، ولو عمود الداتا فاضي القيمة
+ * بتتاخد من الإحالة.
  */
 export function resolveMergedResultColumns(
   sources: ResultColumnSource[],
@@ -154,10 +160,28 @@ export function resolveMergedResultColumns(
   const byKey = new Map<string, MergedResultColumn>();
   for (const src of sources) {
     for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
-      if (!byKey.has(c.key)) byKey.set(c.key, { ...c, source: src.kind });
+      const existing = byKey.get(c.key);
+      if (existing) existing.sources.push({ source: src.kind, sourceCol: c.sourceCol });
+      else byKey.set(c.key, { key: c.key, label: c.label, sources: [{ source: src.kind, sourceCol: c.sourceCol }] });
     }
   }
   return RESULT_TARGETS.map((t) => byKey.get(t.key)).filter((c): c is MergedResultColumn => !!c);
+}
+
+/**
+ * قيمة خلية نتيجة الفرز لعمود مدموج: أول قيمة **غير فاضية** عبر مصادر العمود
+ * (الداتا ثم الإحالات). لو كلهم فاضيين بترجّع "".
+ */
+export function resultCellValue(
+  col: { sources: Array<{ source: "data" | "referral"; sourceCol: string }> },
+  dataRow: Record<string, string> | undefined | null,
+  referralRow: Record<string, string> | undefined | null,
+): string {
+  for (const s of col.sources) {
+    const v = (s.source === "data" ? dataRow?.[s.sourceCol] : referralRow?.[s.sourceCol]) ?? "";
+    if (String(v).trim() !== "") return String(v);
+  }
+  return "";
 }
 
 /**
