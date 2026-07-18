@@ -288,6 +288,24 @@ export default function SortingPage() {
           setResults(null); setSorted(false);
           setOutputCols(new Set(guessDefaultColumns(rec.headers, detectPlateColumn(rec.headers, rec.rows))));
         });
+      } else if (slot.startsWith("referral-")) {
+        // إحالة إضافية اتضافت من مربع «فتح الإكسيل» — أعد قراءة كل الإحالات الإضافية
+        // (لو الصفحة مفتوحة أصلاً؛ فتح جديد بيقراهم في الـ bootstrap).
+        (async () => {
+          const extras: ExtraReferral[] = [];
+          for (let n = 2; n < 100; n++) {
+            const rec = await getUploadedFile("local", `referral-${n}`);
+            if (!rec) break;
+            extras.push({
+              id: `ref-b${n}`,
+              table: { headers: rec.headers, rows: rec.rows },
+              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+            });
+            extraHighWaterRef.current = n;
+          }
+          setExtraReferrals(extras);
+          setResults(null); setSorted(false);
+        })();
       }
     };
     window.addEventListener("idbFileUpdated", handler);

@@ -14,14 +14,21 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, FileSpreadsheet, ListFilter, CheckCircle2, Lock } from "lucide-react";
 import { parseExcelFile } from "@/lib/excel";
-import { saveUploadedFile, type UploadedFileRecord } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 
 interface PendingFile {
   name: string;
   base64: string;
 }
 
-type Slot = "referral" | "data" | "check";
+// referral-${number} = ملف إحالة إضافي (٢، ٣، ...) تحت الإحالة الأساسية.
+type Slot = "referral" | "data" | "check" | `referral-${number}`;
+
+// ترتيب مؤنث للعرض («ثانية/ثالثة/...») — رقم اللي أكبر من ١٠ يظهر رقمياً.
+const ORDINAL_FEM = ["", "الأولى", "ثانية", "ثالثة", "رابعة", "خامسة", "سادسة", "سابعة", "ثامنة", "تاسعة", "عاشرة"];
+function ordinalFem(n: number): string {
+  return ORDINAL_FEM[n] ?? `رقم ${n}`;
+}
 
 export default function IncomingExcelHandler() {
   const router = useRouter();
@@ -32,6 +39,9 @@ export default function IncomingExcelHandler() {
   const [password, setPassword] = useState("");
   // الوجهة المختارة محفوظة عشان نكمّل بعد ما يدخل كلمة المرور.
   const [pendingSlot, setPendingSlot] = useState<Slot | null>(null);
+  // رقم ملف الإحالة الإضافي التالي (٢، ٣، ...) — null يعني مفيش إحالة أساسية بعد
+  // فمانعرضش خيار «إضافة إحالة إضافية». بيتحسب أول ما ييجي ملف.
+  const [nextReferralNum, setNextReferralNum] = useState<number | null>(null);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -41,6 +51,17 @@ export default function IncomingExcelHandler() {
       setNeedsPassword(false);
       setPassword("");
       setPendingSlot(null);
+      // احسب رقم الإحالة الإضافية التالية: لو فيه إحالة أساسية (local:referral)
+      // نعدّ referral-2, referral-3... لحد أول slot فاضي (نفس منطق صفحة الفرز).
+      (async () => {
+        try {
+          const base = await getUploadedFile("local", "referral");
+          if (!base) { setNextReferralNum(null); return; }
+          let n = 2;
+          while (await getUploadedFile("local", `referral-${n}`)) n++;
+          setNextReferralNum(n);
+        } catch { setNextReferralNum(null); }
+      })();
     };
     window.addEventListener("excelFileOpened", handler);
     return () => window.removeEventListener("excelFileOpened", handler);
@@ -209,6 +230,21 @@ export default function IncomingExcelHandler() {
                   <p className="text-xs text-muted">خانة الإحالة في صفحة الفرز</p>
                 </div>
               </button>
+
+              {/* Referral إضافي ديناميكي (٢/٣/...) — بيظهر بس لو فيه إحالة أساسية */}
+              {nextReferralNum !== null && (
+                <button
+                  disabled={loading}
+                  onClick={() => openAs(`referral-${nextReferralNum}`)}
+                  className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-right transition hover:border-primary/50 hover:bg-primary/10 disabled:opacity-50"
+                >
+                  <ListFilter size={20} className="shrink-0 text-primary" />
+                  <div>
+                    <p className="text-sm font-bold text-ink">إضافة ملف إحالة {ordinalFem(nextReferralNum)}</p>
+                    <p className="text-xs text-muted">إحالة إضافية تحت الأساسية في صفحة الفرز</p>
+                  </div>
+                </button>
+              )}
 
               {/* Check file */}
               <button
