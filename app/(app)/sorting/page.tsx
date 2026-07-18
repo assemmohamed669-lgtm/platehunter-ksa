@@ -16,7 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveResultColumns, RESULT_TARGETS } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, type ResultColumnSource } from "@/lib/resultColumns";
 import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -359,20 +359,22 @@ export default function SortingPage() {
   // اسم العمود، وحتى لو الشيت بدون أسماء أعمدة. بندمج مصدرين: الداتا (نوع/عنوان/
   // GPS/تاريخ غالباً) + الإحالة (ماركة/لون/سنة غالباً)، والداتا لها الأولوية.
   const resultCols = useMemo(() => {
-    type RC = { key: string; label: string; sourceCol: string; source: "data" | "referral" };
-    const byKey = new Map<string, RC>();
+    const sources: ResultColumnSource[] = [];
     if (dataTable) {
-      for (const c of resolveResultColumns(dataTable.headers, dataTable.rows, effectiveDataPlateCol)) {
-        if (!byKey.has(c.key)) byKey.set(c.key, { ...c, source: "data" });
-      }
+      sources.push({ kind: "data", headers: dataTable.headers, rows: dataTable.rows, plateCol: effectiveDataPlateCol });
     }
     if (referralTable) {
-      for (const c of resolveResultColumns(referralTable.headers, referralTable.rows, effectiveReferralPlateCol)) {
-        if (!byKey.has(c.key)) byKey.set(c.key, { ...c, source: "referral" });
-      }
+      sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
     }
-    return RESULT_TARGETS.map((t) => byKey.get(t.key)).filter((c): c is RC => !!c);
-  }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol]);
+    // شيتات الإحالة الإضافية (زر +) — أعمدتها (لون/سنة/ماركة) لازم تظهر في النتيجة
+    // زي الأساسية بالظبط، وإلا المحفظة المرفوعة كإحالة إضافية تطلع بلا أعمدة.
+    for (const er of extraReferrals) {
+      if (!er.table) continue;
+      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectPlateColumn(er.table.headers, er.table.rows);
+      sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
+    }
+    return resolveMergedResultColumns(sources);
+  }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals]);
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 

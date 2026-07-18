@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveResultColumns,
+  resolveMergedResultColumns,
   looksLikeColor,
   looksLikeYear,
   looksLikeVehicleType,
@@ -90,5 +91,55 @@ describe("resultColumns — تحليل بالمحتوى (أسماء مختلفة
     const res = resolveResultColumns(headers, rows, null);
     const srcs = res.map((c) => c.sourceCol);
     expect(new Set(srcs).size).toBe(srcs.length); // مفيش تكرار
+  });
+});
+
+describe("resolveMergedResultColumns — دمج مصادر متعددة (إحالة إضافية)", () => {
+  it("أعمدة الإحالة الإضافية تظهر لو مش موجودة في الداتا/الأساسية", () => {
+    // الداتا فيها العنوان بس؛ الإحالة الإضافية فيها اللون والسنة
+    const data = {
+      kind: "data" as const,
+      headers: ["رقم اللوحة", "الحي"],
+      rows: [{ "رقم اللوحة": "دحر1234", "الحي": "العليا" }],
+      plateCol: "رقم اللوحة",
+    };
+    const extra = {
+      kind: "referral" as const,
+      headers: ["رقم اللوحة", "اللون", "سنة الصنع"],
+      rows: [
+        { "رقم اللوحة": "دحر1234", "اللون": "أبيض", "سنة الصنع": "2022" },
+        { "رقم اللوحة": "دحر5678", "اللون": "أسود", "سنة الصنع": "2020" },
+        { "رقم اللوحة": "دحر9012", "اللون": "فضي", "سنة الصنع": "2019" },
+      ],
+      plateCol: "رقم اللوحة",
+    };
+    const res = resolveMergedResultColumns([data, extra]);
+    const byKey = Object.fromEntries(res.map((c) => [c.key, c]));
+    // العنوان من الداتا
+    expect(byKey["address"]?.source).toBe("data");
+    // اللون والسنة من الإحالة الإضافية — كانوا بيضيعوا قبل الإصلاح
+    expect(byKey["color"]?.sourceCol).toBe("اللون");
+    expect(byKey["color"]?.source).toBe("referral");
+    expect(byKey["year"]?.sourceCol).toBe("سنة الصنع");
+    expect(byKey["year"]?.source).toBe("referral");
+  });
+
+  it("الأولوية للمصدر الأول: الداتا تكسب على الإحالة لنفس الهدف", () => {
+    const data = {
+      kind: "data" as const,
+      headers: ["رقم اللوحة", "اللون"],
+      rows: [{ "رقم اللوحة": "دحر1234", "اللون": "أبيض" }, { "رقم اللوحة": "دحر5", "اللون": "أسود" }, { "رقم اللوحة": "دحر6", "اللون": "فضي" }],
+      plateCol: "رقم اللوحة",
+    };
+    const extra = {
+      kind: "referral" as const,
+      headers: ["رقم اللوحة", "لون المركبة"],
+      rows: [{ "رقم اللوحة": "دحر1234", "لون المركبة": "بني" }, { "رقم اللوحة": "دحر5", "لون المركبة": "أخضر" }, { "رقم اللوحة": "دحر6", "لون المركبة": "أزرق" }],
+      plateCol: "رقم اللوحة",
+    };
+    const res = resolveMergedResultColumns([data, extra]);
+    const color = res.find((c) => c.key === "color");
+    expect(color?.sourceCol).toBe("اللون"); // الداتا (أول مصدر) كسبت
+    expect(color?.source).toBe("data");
   });
 });

@@ -129,6 +129,37 @@ export interface ResolvedColumn {
   sourceCol: string; // اسم العمود الأصلي في الملف
 }
 
+// مصدر أعمدة لدمج نتيجة الفرز: الداتا أو أي شيت إحالة (أساسي/إضافي).
+export interface ResultColumnSource {
+  kind: "data" | "referral";
+  headers: string[];
+  rows: Record<string, string>[];
+  plateCol?: string | null; // عمود اللوحة (يُستبعد من الأعمدة الناتجة)
+}
+
+export interface MergedResultColumn extends ResolvedColumn {
+  source: "data" | "referral"; // منين تُقرأ القيمة (صف الداتا ولا صف الإحالة)
+}
+
+/**
+ * يدمج أعمدة النتيجة من عدة مصادر (الداتا + كل شيتات الإحالة الأساسية والإضافية)
+ * في القائمة الثابتة بالترتيب. لكل هدف: **أول مصدر** يحلّه يكسبه (فالداتا لها
+ * الأولوية لو اتحطّت أول). كده أعمدة الإحالة الإضافية (لون/سنة/ماركة) تظهر في
+ * النتيجة حتى لو مش موجودة في الداتا ولا الإحالة الأساسية.
+ */
+export function resolveMergedResultColumns(
+  sources: ResultColumnSource[],
+  contentThreshold = 0.4,
+): MergedResultColumn[] {
+  const byKey = new Map<string, MergedResultColumn>();
+  for (const src of sources) {
+    for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
+      if (!byKey.has(c.key)) byKey.set(c.key, { ...c, source: src.kind });
+    }
+  }
+  return RESULT_TARGETS.map((t) => byKey.get(t.key)).filter((c): c is MergedResultColumn => !!c);
+}
+
 /**
  * يحلّ الأعمدة المستهدفة (غير اللوحة) لأعمدة المصدر في الملف، **بالترتيب الثابت**.
  * لكل هدف: مطابقة بالاسم أولاً، وإلا بالمحتوى (نسبة ≥ contentThreshold). كل عمود
