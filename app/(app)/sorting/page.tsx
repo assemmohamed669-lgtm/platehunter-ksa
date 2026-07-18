@@ -16,7 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, resultCellValue, type ResultColumnSource } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, type ResultColumnSource } from "@/lib/resultColumns";
 import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -778,7 +778,7 @@ export default function SortingPage() {
     // يطلّعوا بنفس الترتيب والمحتوى بالظبط.
     const row: Record<string, unknown> = { "رقم اللوحة": plateForRow(r) };
     for (const rc of resultCols) {
-      row[rc.label] = resultCellValue(rc, r.dataRow, r.referralRow);
+      row[rc.label] = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
     }
     row["الحالة"] = "مطلوبة";
     return row;
@@ -1192,7 +1192,7 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                     {resultCols.map((rc) => (
-                      <th key={rc.key} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
+                      <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
@@ -1218,9 +1218,9 @@ export default function SortingPage() {
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
                         {resultCols.map((rc) => {
-                          const val = resultCellValue(rc, r.dataRow, r.referralRow);
+                          const val = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
                           return (
-                            <td key={rc.key} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                            <td key={rc.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {
                                 const v = String(val).trim();
                                 const link = gpsCellToLink(v);

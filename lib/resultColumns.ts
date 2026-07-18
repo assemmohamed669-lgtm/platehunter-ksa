@@ -138,50 +138,41 @@ export interface ResultColumnSource {
 }
 
 export interface MergedResultColumn {
-  key: string;
-  label: string;
-  // مصادر العمود مرتّبة بالأولوية (الداتا الأول عادةً ثم الإحالات). القيمة تُقرأ
-  // من **أول مصدر قيمته غير فاضية** — فلو عمود الداتا فاضي (مثلاً «نوع السيارة»
-  // مش متعبّى) نرجع لعمود الإحالة (Type of car) اللي فيه قيمة.
-  sources: Array<{ source: "data" | "referral"; sourceCol: string }>;
+  id: string;                  // مُعرّف فريد للعمود (للـ React key) — الهدف ممكن يتكرر
+  key: string;                 // مفتاح الهدف (type/brand/color...) — ممكن يتكرر عبر المصادر
+  label: string;               // الاسم المعروض (متسمّى بوضوح لو اتكرر: «... (المحفظة)»)
+  source: "data" | "referral"; // منين تُقرأ القيمة (صف الداتا ولا صف الإحالة)
+  sourceCol: string;           // اسم العمود الأصلي في المصدر
 }
 
 /**
  * يدمج أعمدة النتيجة من عدة مصادر (الداتا + كل شيتات الإحالة الأساسية والإضافية)
- * في القائمة الثابتة بالترتيب. لكل هدف: بنجمّع **كل** الأعمدة اللي حلّته من كل
- * المصادر (مرتّبة بأولوية المصادر) عشان القراءة تقدر ترجع لمصدر تاني لو الأول فاضي.
- * كده أعمدة الإحالة الإضافية (لون/سنة/ماركة) تظهر، ولو عمود الداتا فاضي القيمة
- * بتتاخد من الإحالة.
+ * في القائمة الثابتة بالترتيب. **مابيدمجش المصادر في عمود واحد** — لو نفس الهدف
+ * (مثلاً «نوع السيارة») موجود في الداتا وفي المحفظة، بيطلّع **عمودين منفصلين**:
+ * واحد من الداتا (حتى لو فاضي) وواحد من المحفظة جنبه. الأول بياخد الاسم الثابت،
+ * والباقي بيتسمّى «... (المحفظة)» عشان يتميّزوا. الترتيب: أعمدة كل هدف مع بعض،
+ * والداتا الأول جوه الهدف الواحد.
  */
 export function resolveMergedResultColumns(
   sources: ResultColumnSource[],
   contentThreshold = 0.4,
 ): MergedResultColumn[] {
-  const byKey = new Map<string, MergedResultColumn>();
+  const perTarget = new Map<string, Array<{ label: string; source: "data" | "referral"; sourceCol: string }>>();
   for (const src of sources) {
     for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
-      const existing = byKey.get(c.key);
-      if (existing) existing.sources.push({ source: src.kind, sourceCol: c.sourceCol });
-      else byKey.set(c.key, { key: c.key, label: c.label, sources: [{ source: src.kind, sourceCol: c.sourceCol }] });
+      const arr = perTarget.get(c.key) ?? [];
+      const label = arr.length === 0 ? c.label : `${c.label} (${src.kind === "referral" ? "المحفظة" : "الداتا"})`;
+      arr.push({ label, source: src.kind, sourceCol: c.sourceCol });
+      perTarget.set(c.key, arr);
     }
   }
-  return RESULT_TARGETS.map((t) => byKey.get(t.key)).filter((c): c is MergedResultColumn => !!c);
-}
-
-/**
- * قيمة خلية نتيجة الفرز لعمود مدموج: أول قيمة **غير فاضية** عبر مصادر العمود
- * (الداتا ثم الإحالات). لو كلهم فاضيين بترجّع "".
- */
-export function resultCellValue(
-  col: { sources: Array<{ source: "data" | "referral"; sourceCol: string }> },
-  dataRow: Record<string, string> | undefined | null,
-  referralRow: Record<string, string> | undefined | null,
-): string {
-  for (const s of col.sources) {
-    const v = (s.source === "data" ? dataRow?.[s.sourceCol] : referralRow?.[s.sourceCol]) ?? "";
-    if (String(v).trim() !== "") return String(v);
+  const out: MergedResultColumn[] = [];
+  for (const t of RESULT_TARGETS) {
+    const arr = perTarget.get(t.key);
+    if (!arr) continue;
+    arr.forEach((a, i) => out.push({ id: `${t.key}-${i}`, key: t.key, label: a.label, source: a.source, sourceCol: a.sourceCol }));
   }
-  return "";
+  return out;
 }
 
 /**
