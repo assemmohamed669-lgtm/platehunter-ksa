@@ -110,7 +110,14 @@ export async function startSpeechmatics(
         language: cb.language || "ar",
         operating_point: "enhanced",
         enable_partials: true,
-        max_delay: 2,
+        // اللوحة بتتقال حرف-بحرف على مدى ٣-٤ث؛ max_delay قصير (٢) كان بيقفل
+        // الجملة في نصّها فتتفتّت لكذا نتيجة نهائية (واحد. / دال / هي.) والحروف
+        // تتفصل عن أرقامها فتضيع. ٤ (الأقصى) + flexible = يجمّع اللوحة كلها في
+        // نتيجة واحدة ومايقطعش مجموعة الأرقام في نصّها.
+        max_delay: 4,
+        max_delay_mode: "flexible",
+        // إيقاف الترقيم — النقط بتفتّت النص وتزوّد حدود النتائج النهائية بلا داعي.
+        punctuation_overrides: { permitted_marks: [] },
       },
     }));
   };

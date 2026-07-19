@@ -496,7 +496,7 @@ export default function InstantCheckPage() {
   function logRawTranscript(text: string) {
     const t = text.trim();
     if (!t) return;
-    const next = [...pttRawLogRef.current, t].slice(-15);
+    const next = [...pttRawLogRef.current, t].slice(-40);
     pttRawLogRef.current = next;
     setPttRawLog(next);
   }
