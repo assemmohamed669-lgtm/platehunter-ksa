@@ -1181,49 +1181,6 @@ export function anchorPlateToWanted(candidate: string, index: Map<string, string
   return base;
 }
 
-export interface DigitAnchorResult {
-  plate: string;        // اللوحة المطلوبة المطابقة (مطبّعة) أو "" لو مفيش
-  matched: boolean;     // لقى مطلوب وحيد قريب
-  letterEdits: number;  // مسافة تحرير الحروف (0 = مطابقة تامة)
-  ambiguous: boolean;   // أكتر من مرشّح بنفس أقل مسافة → مايختارش
-}
-
-/**
- * يطابق لوحة على المطلوبين بالارتكاز على الأرقام: نفس آخر ٤ أرقام + أقرب حروف.
- * الأرقام مرساة قوية (دقة تفريغها عالية جداً)؛ الحروف هي اللي بتغلط (سقوط «هاء»،
- * تبديل حرف). فلو مطلوب **وحيد** بنفس الأرقام وحروفه ضمن مسافة تحرير ≤ maxLetterEdits
- * (تبديل/سقوط/زيادة حرف واحد) → هو اللي المندوب بيدوّر عليه. لو أكتر من مرشّح بنفس
- * أقل مسافة → غموض (مايختارش، يستاهل مراجعة). عمره ما يخترع لوحة مش في القائمة.
- *
- * أوسع من anchorPlateToWanted (اللي بيصحّح أزواج حلق بنفس عدد الحروف فقط): ده
- * بيمسك كمان سقوط/زيادة حرف — أهم مشكلة عندنا (المحرك بيسقط «هاء»). دالة نقية.
- */
-export function matchPlateByDigits(
-  candidate: string,
-  index: Map<string, string[]>,
-  maxLetterEdits = 1,
-): DigitAnchorResult {
-  const base: DigitAnchorResult = { plate: "", matched: false, letterEdits: Infinity, ambiguous: false };
-  const { letters, digits } = splitPlateUnits(normalizePlate(candidate));
-  if (digits.length !== 4 || letters.length === 0) return base;
-  const bucket = index.get(digits);
-  if (!bucket || bucket.length === 0) return base;
-
-  const heard = letters.join("");
-  let best: string | null = null, bestEdits = Infinity, tie = false;
-  for (const w of bucket) {
-    const edits = levenshtein(heard, splitPlateUnits(w).letters.join(""));
-    if (edits < bestEdits) { bestEdits = edits; best = w; tie = false; }
-    else if (edits === bestEdits) { tie = true; }
-  }
-  if (best && bestEdits <= maxLetterEdits) {
-    return tie
-      ? { plate: "", matched: false, letterEdits: bestEdits, ambiguous: true }
-      : { plate: best, matched: true, letterEdits: bestEdits, ambiguous: false };
-  }
-  return base;
-}
-
 export interface LetterCorrectionDiff { heard: string; corrected: string }
 
 /**

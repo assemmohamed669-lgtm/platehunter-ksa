@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, buildWantedIndex, anchorPlateToWanted, matchPlateByDigits, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
@@ -661,10 +661,6 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
-  // فهرس المطلوبين بآخر 4 أرقام — لتثبيت اللوحة على أقرب مطلوب لو المحرك لخبط
-  // حرف حلق واحد (ح↔ه، س↔ص، ق↔ك، د↔ط) والأرقام صح (anchorPlateToWanted).
-  const checkWantedIndex = useMemo(() => buildWantedIndex(checkIndex.keys()), [checkIndex]);
-
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -694,33 +690,6 @@ export default function InstantCheckPage() {
     if (exactRow) {
       fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
-    }
-
-    // تثبيت على قائمة المطلوبين: لو الأرقام مطابقة لمطلوب وفيه لبس حرف حلق واحد
-    // بالظبط (ح↔ه، س↔ص، ق↔ك، د↔ط) → نعتبرها هي (المندوب بيدوّر عليها أصلاً)
-    // بدل ما تفوت. بيلقط السيارة المطلوبة حتى لو المحرك لخبط حرف واحد — الأرقام
-    // دقيقة عادةً. عمره ما يخترع لوحة مش في القائمة (شرط: مرشّح وحيد).
-    const anchor = anchorPlateToWanted(normalized, checkWantedIndex);
-    if (anchor.corrected) {
-      const anchoredRow = checkIndex.get(anchor.plate);
-      if (anchoredRow) {
-        const sim = Math.round(similarityPercent(normalized, anchor.plate));
-        fireWantedAlert({ plate: anchor.plate, matchType: "fuzzy", similarity: sim, info: rowToAlertInfo(anchoredRow) });
-        return { plate: anchor.plate, normalized, found: true, matchType: "fuzzy", similarity: sim, row: anchoredRow };
-      }
-    }
-
-    // تطابق مرتكز على الأرقام: نفس آخر ٤ أرقام (دقتها ~100%) + مطلوب وحيد حروفه
-    // ضمن فرق حرف واحد (تبديل/سقوط/زيادة) → هو. بيمسك سقوط «هاء» اللي المحرك
-    // بيعمله كتير، مش بس أزواج الحلق. الغموض (مرشّحين) بيتخطّى للـ fuzzy.
-    const byDigits = matchPlateByDigits(normalized, checkWantedIndex, 1);
-    if (byDigits.matched) {
-      const digitRow = checkIndex.get(byDigits.plate);
-      if (digitRow) {
-        const sim = Math.round(similarityPercent(normalized, byDigits.plate));
-        fireWantedAlert({ plate: byDigits.plate, matchType: "fuzzy", similarity: sim, info: rowToAlertInfo(digitRow) });
-        return { plate: byDigits.plate, normalized, found: true, matchType: "fuzzy", similarity: sim, row: digitRow };
-      }
     }
 
     // Fuzzy fallback (88% threshold, first-char optimization)
