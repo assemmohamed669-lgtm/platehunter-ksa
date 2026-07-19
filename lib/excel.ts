@@ -11,6 +11,9 @@ import { detectPlateColumnByContent } from "./plateParser";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
 
+// روابط خرائط جوجل — بتتعرض في التصدير ككلمة «خريطة» بدل الرابط الطويل.
+const MAP_URL_RE = /maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google/i;
+
 function formatDate(iso: string): string {
   const d = new Date(iso);
   const dd = String(d.getDate()).padStart(2, "0");
@@ -450,7 +453,7 @@ export function buildExcelBlob(
   // المحتوى عربي واللوحات عربية → افتح الورقة من اليمين لليسار (RTL).
   ws["!views"] = [{ RTL: true }];
 
-  // Make URL cells proper hyperlinks
+  // Make URL cells proper hyperlinks — روابط الخرائط تظهر ككلمة «خريطة»
   const ref = ws["!ref"];
   if (ref) {
     const range = XLSX.utils.decode_range(ref);
@@ -459,7 +462,9 @@ export function buildExcelBlob(
         const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
         const cell = ws[cellRef];
         if (cell && typeof cell.v === "string" && /^https?:\/\//i.test(cell.v)) {
-          cell.l = { Target: cell.v };
+          const url = cell.v;
+          cell.l = { Target: url };
+          if (MAP_URL_RE.test(url)) { cell.v = "خريطة"; cell.w = "خريطة"; }
         }
       }
     }
@@ -698,12 +703,13 @@ export async function buildColoredSortExcel(
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
       });
     }
-    // Hyperlinks for URL cells
+    // Hyperlinks for URL cells — روابط الخرائط تظهر ككلمة «خريطة»
     headers.forEach((h, ci) => {
       const v = row[h];
       if (typeof v === "string" && /^https?:\/\//i.test(v)) {
         const cell = excelRow.getCell(ci + 1);
-        cell.value = { text: v, hyperlink: v } as ExcelJS.CellHyperlinkValue;
+        const text = MAP_URL_RE.test(v) ? "خريطة" : v;
+        cell.value = { text, hyperlink: v } as ExcelJS.CellHyperlinkValue;
         cell.font = { color: { argb: "FF0563C1" }, underline: true };
       }
     });
