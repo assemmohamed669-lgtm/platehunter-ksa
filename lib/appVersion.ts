@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.5.1";
+export const APP_VERSION = "0.5.2";
 export const UPDATE_NOTE =
-  "نتيجة الفرز بتطلّع من محافظ البنوك تلقائياً: النوع/الطراز (كرولا/بكب غمارتين)، الماركة، اللون، وسنة الصنع — كل شكل محفظة.";
+  "دعم أشكال محافظ بنوك أكتر (عناوين وطُرُز جديدة) — النوع/الطراز والماركة واللون وسنة الصنع بيطلعوا من محافظ أكتر تلقائياً.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
