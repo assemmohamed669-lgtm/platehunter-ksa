@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildWantedIndex, anchorPlateToWanted } from "../lib/plateParser";
+import { buildWantedIndex, anchorPlateToWanted, matchPlateByDigits } from "../lib/plateParser";
 
 describe("buildWantedIndex — فهرسة المطلوبين بآخر 4 أرقام", () => {
   it("يجمّع اللوحات في دلاء حسب الأرقام", () => {
@@ -82,5 +82,53 @@ describe("anchorPlateToWanted — تصحيح حرف الحلق بقائمة ال
   it("فهرس فاضي → لا يفعل شيئاً", () => {
     const r = anchorPlateToWanted("رهع3345", buildWantedIndex(new Set()));
     expect(r).toMatchObject({ plate: "رهع3345", matched: false, corrected: false });
+  });
+});
+
+describe("matchPlateByDigits — تطابق مرتكز على الأرقام (يمسك سقوط حرف كمان)", () => {
+  const idx = buildWantedIndex(new Set(["حهق7891", "ابح1234", "منع5678", "دبر9012"]));
+
+  it("مطابقة تامة → matched بمسافة 0", () => {
+    const r = matchPlateByDigits("منع5678", idx);
+    expect(r).toMatchObject({ plate: "منع5678", matched: true, letterEdits: 0 });
+  });
+
+  it("سقوط «هاء» (المشكلة الأساسية): حق7891 → حهق7891 بمسافة 1 (زيادة حرف)", () => {
+    const r = matchPlateByDigits("حق7891", idx);
+    expect(r.plate).toBe("حهق7891");
+    expect(r.matched).toBe(true);
+    expect(r.letterEdits).toBe(1);
+  });
+
+  it("تبديل حرف واحد (أي حرف، مش زوج حلق بس): ادح1234 → ابح1234", () => {
+    const r = matchPlateByDigits("ادح1234", idx);
+    expect(r).toMatchObject({ plate: "ابح1234", matched: true, letterEdits: 1 });
+  });
+
+  it("تلخبط كبير (حرفين+): بيع1234 → مايطابقش (المسافة 3)", () => {
+    const r = matchPlateByDigits("بيع1234", idx);
+    expect(r.matched).toBe(false);
+  });
+
+  it("أرقام مختلفة → مايطابقش أبداً", () => {
+    const r = matchPlateByDigits("منع5679", idx);
+    expect(r.matched).toBe(false);
+  });
+
+  it("غموض: مرشحان بنفس الأرقام وكلاهما بمسافة 1 → مايختارش + ambiguous", () => {
+    const amb = buildWantedIndex(new Set(["ابح1234", "ادح1234"]));
+    const r = matchPlateByDigits("امح1234", amb); // مسافة 1 من الاتنين
+    expect(r.matched).toBe(false);
+    expect(r.ambiguous).toBe(true);
+  });
+
+  it("يحترم maxLetterEdits=0 (تطابق تام فقط)", () => {
+    expect(matchPlateByDigits("حق7891", idx, 0).matched).toBe(false);
+    expect(matchPlateByDigits("حهق7891", idx, 0).matched).toBe(true);
+  });
+
+  it("فهرس فاضي / أرقام مش موجودة → مايطابقش", () => {
+    expect(matchPlateByDigits("ابح1234", buildWantedIndex(new Set())).matched).toBe(false);
+    expect(matchPlateByDigits("خخخ0000", idx).matched).toBe(false);
   });
 });
