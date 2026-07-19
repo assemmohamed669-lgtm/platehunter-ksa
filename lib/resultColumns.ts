@@ -65,14 +65,23 @@ export interface TargetColumn {
 export const RESULT_TARGETS: TargetColumn[] = [
   {
     key: "type", label: "نوع السيارة",
-    aliases: ["نوع السيارة", "نوع المركبة", "النوع", "نوع", "type of car", "car type", "vehicle type"],
+    // «النوع» عند المستخدم = الطراز/الموديل (كورولا/يارس/بكب غمارتين/شارجر سيدان) —
+    // مش نوع الهيكل بس. فبنجمّع هنا أعمدة الطراز/الموديل + نوع الهيكل. «الماركة»
+    // (الصانع) بقت هدف منفصل تحت عشان الاتنين يظهروا مش يتلغبطوا في عمود واحد.
+    // ملاحظة: «موديل/موديل السيارة» مقصود مش هنا — «الموديل» في محافظ كتير = سنة
+    // الصنع (٢٠٢٢) مش اسم موديل، والمطابقة العكسية بتخلطها. الطراز الحقيقي بيتلقط
+    // بـ«طراز/الطراز/طراز المركبة/Car Type/Car model/النوع/Original Description».
+    aliases: ["نوع السيارة", "نوع المركبة", "النوع", "طراز المركبة", "طراز", "الطراز", "طرازالمركبة",
+      "اسم المركبة", "اسم السيارة",
+      "type of car", "car type", "vehicle type", "vehicle name", "car model", "car",
+      "original description"],
     content: looksLikeVehicleType,
   },
   {
     key: "brand", label: "الماركة",
-    aliases: ["الماركة", "ماركة", "ماركه", "الماركه", "طراز المركبة", "طراز", "الطراز",
-      "صانع المركبة", "صانع", "الصانع", "اسم المركبة", "اسم السيارة",
-      "vehicle name", "make", "manufacturer", "brand", "model", "car model"],
+    // الماركة = الصانع بس (تويوتا/دودج/شيفورلية) — منفصلة عن الطراز فوق.
+    aliases: ["الماركة", "ماركة", "ماركه", "الماركه", "صانع المركبة", "صانع", "الصانع",
+      "الشركة", "شركة", "make", "manufacturer", "brand"],
     content: looksLikeCarName,
   },
   {
@@ -108,7 +117,9 @@ export const RESULT_TARGETS: TargetColumn[] = [
 function nameMatches(header: string, aliases: string[]): boolean {
   const h = header.trim().toLowerCase();
   if (!h) return false;
-  return aliases.some((a) => h === a || h.includes(a) || a.includes(h));
+  // المطابقة العكسية (اسم العمود جوه المرادف) بس للأسماء ٣ حروف فأكتر — عشان أعمدة
+  // قصيرة زي «م» و«#» و«##» و«*» ماتطابقش «ماركة»/«اسم المركبة» بالغلط.
+  return aliases.some((a) => h === a || h.includes(a) || (h.length >= 3 && a.includes(h)));
 }
 
 function contentMatches(rows: Record<string, string>[], header: string, pred: (v: string) => boolean): number {
@@ -188,26 +199,32 @@ export function resolveResultColumns(
 ): ResolvedColumn[] {
   const available = headers.filter((h) => h && h !== excludeCol);
   const used = new Set<string>();
-  const out: ResolvedColumn[] = [];
+  const resolved = new Map<string, string>(); // key الهدف → اسم عمود المصدر
 
+  // مرحلتين عشان الاسم الصريح يكسب دايماً على تخمين المحتوى: مثلاً «صانع المركبة»
+  // (اسم صريح للماركة) مايتسرقش لهدف «الطراز» بالمحتوى قبل ما الماركة تاخده.
+  // (١) كل الأهداف بالاسم الأول
   for (const target of RESULT_TARGETS) {
-    // (١) مطابقة بالاسم
-    let src = available.find((h) => !used.has(h) && nameMatches(h, target.aliases));
-    // (٢) مطابقة بالمحتوى (لو مفيش اسم مطابق وفيه كاشف محتوى)
-    if (!src && target.content && rows.length > 0) {
-      let best: string | null = null;
-      let bestRatio = 0;
-      for (const h of available) {
-        if (used.has(h)) continue;
-        const ratio = contentMatches(rows, h, target.content);
-        if (ratio > bestRatio) { bestRatio = ratio; best = h; }
-      }
-      if (bestRatio >= contentThreshold) src = best!;
+    const src = available.find((h) => !used.has(h) && nameMatches(h, target.aliases));
+    if (src) { used.add(src); resolved.set(target.key, src); }
+  }
+  // (٢) الأهداف اللي لسه مالهاش عمود → بالمحتوى
+  for (const target of RESULT_TARGETS) {
+    if (resolved.has(target.key) || !target.content || rows.length === 0) continue;
+    let best: string | null = null;
+    let bestRatio = 0;
+    for (const h of available) {
+      if (used.has(h)) continue;
+      const ratio = contentMatches(rows, h, target.content);
+      if (ratio > bestRatio) { bestRatio = ratio; best = h; }
     }
-    if (src) {
-      used.add(src);
-      out.push({ key: target.key, label: target.label, sourceCol: src });
-    }
+    if (bestRatio >= contentThreshold) { used.add(best!); resolved.set(target.key, best!); }
+  }
+
+  const out: ResolvedColumn[] = [];
+  for (const target of RESULT_TARGETS) {
+    const src = resolved.get(target.key);
+    if (src) out.push({ key: target.key, label: target.label, sourceCol: src });
   }
   return out;
 }
