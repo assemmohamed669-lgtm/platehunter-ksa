@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.5.2";
+export const APP_VERSION = "0.5.3";
 export const UPDATE_NOTE =
-  "دعم أشكال محافظ بنوك أكتر (عناوين وطُرُز جديدة) — النوع/الطراز والماركة واللون وسنة الصنع بيطلعوا من محافظ أكتر تلقائياً.";
+  "الموقع في نتيجة الفرز بيظهر «خريطة» وكليك يفتح الخريطة (حتى لو الملف متعمله HYPERLINK)، ودعم أشكال محافظ أكتر.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
