@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
@@ -20,7 +20,7 @@ import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
-import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -512,6 +512,8 @@ export default function InstantCheckPage() {
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [fieldZoom, setFieldZoom] = useState(3);
   const [fieldSearch, setFieldSearch] = useState("");
+  // فلتر عدادات شيت السجلات: الكل / صوتي / يدوي / مطلوب.
+  const [fieldFilter, setFieldFilter] = useState<"all" | "voice" | "manual" | "wanted">("all");
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [editFieldValue, setEditFieldValue] = useState("");
   // «إظهار اللوحات»: نافذة تعديل/حذف على نسخة draft — التغييرات ماتتحفظش في
@@ -535,6 +537,25 @@ export default function InstantCheckPage() {
 
   // Owner of new field-check rows — so a shared device doesn't mix two agents.
   const agentIdRef = useRef<string | null>(null);
+  const [syncingRecords, setSyncingRecords] = useState(false);
+
+  // «مزامنة» — يرفع سجلات التشييك (شيت السجلات) للسيرفر تدريجياً: أول ضغطة كله،
+  // وبعدين الجديد فقط (سريع). بيعرض نتيجة قصيرة.
+  async function handleSyncRecords() {
+    const uid = agentIdRef.current;
+    if (!uid) { alert("مفيش جلسة مسجّلة — سجّل دخول الأول."); return; }
+    setSyncingRecords(true);
+    try {
+      const res = await pushPendingFieldChecks(uid);
+      if (res.error) alert(`❌ فشل المزامنة:\n${res.error}`);
+      else if (res.pending === 0) alert("مفيش سجلات جديدة — الكل متزامن ✅");
+      else alert(`✅ اترفع ${res.synced} من ${res.pending} سجل للسيرفر.`);
+    } catch (err) {
+      alert(`❌ خطأ: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSyncingRecords(false);
+    }
+  }
 
   // Load the field-check sheet from IDB on mount (scoped to this agent), then
   // sync with the server: restore what the agent saved elsewhere, push local up.
@@ -547,7 +568,7 @@ export default function InstantCheckPage() {
       if (!uid) return;
       try {
         await restoreFieldChecks(uid);
-        pushFieldChecks(uid).catch(() => {});
+        pushPendingFieldChecks(uid).catch(() => {}); // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع
         setFieldEntries(await getAllFieldCheckEntries(uid));
       } catch { /* offline / no session */ }
     })();
@@ -616,6 +637,13 @@ export default function InstantCheckPage() {
     video.play().catch(() => {});
     return () => { liveStream.getTracks().forEach((t) => t.stop()); };
   }, [liveStream]);
+
+  // أول ما المندوب يدخل وضع «كاميرا» تفتح الكاميرا الخلفية على طول (من غير شاشة
+  // اختيار كاميرا/معرض). لو قفلها بيرجع لشاشة الاختيار عادي.
+  useEffect(() => {
+    if (mode === "camera" && !liveStream && !cameraImage) openLiveCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Load check file from IDB on mount — AND whenever it changes underneath us.
   useEffect(() => {
@@ -1120,7 +1148,7 @@ export default function InstantCheckPage() {
       try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
     }
 
-    const updated: FieldCheckEntry = { ...entry, plate: trimmed };
+    const updated: FieldCheckEntry = { ...entry, plate: trimmed, synced: false }; // اتعدّل → يترفع تاني في المزامنة
     setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
     await saveFieldCheckEntry(updated);
   }
@@ -1162,12 +1190,16 @@ export default function InstantCheckPage() {
   async function savePlatesEditor() {
     const draftIds = new Set(draftFieldEntries.map((e) => e.id));
     const removed = fieldEntries.filter((e) => !draftIds.has(e.id));
+    // تأكيد قبل تطبيق التعديل على شيت السجلات (بما فيه الحذف).
+    const delMsg = removed.length > 0 ? ` (هيتمسح ${removed.length} لوحة)` : "";
+    if (!window.confirm(`هيتم تطبيق التعديلات على شيت السجلات${delMsg}. موافق؟`)) return;
     for (const r of removed) await deleteFieldCheckEntry(r.id);
     const byId = new Map(fieldEntries.map((e) => [e.id, e]));
     for (const d of draftFieldEntries) {
       const o = byId.get(d.id);
       const changed = !o || d.plate !== o.plate || JSON.stringify(d.row) !== JSON.stringify(o.row);
-      if (changed && d.plate.trim()) await saveFieldCheckEntry(d);
+      // synced=false على المعدّل عشان المزامنة التدريجية ترفعه تاني.
+      if (changed && d.plate.trim()) await saveFieldCheckEntry({ ...d, synced: false });
     }
     setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined).catch(() => []));
     setPlatesEditorOpen(false);
@@ -1225,19 +1257,30 @@ export default function InstantCheckPage() {
     });
   }
 
-  // Open live camera viewfinder; fall back to file input if getUserMedia unavailable
+  // Open live camera viewfinder; fall back to file input if getUserMedia unavailable.
+  // نفرض الكاميرا الخلفية: {exact:"environment"} بيلزم الجهاز يفتح الخلفية (بعض
+  // الأجهزة بتتجاهل النص العادي "environment" وبتفتح الأمامية). لو الجهاز مافيهوش
+  // كاميرا خلفية (زي الديسكتوب) بنرجّع للتفضيل العادي ثم لمُدخل الملف.
   async function openLiveCamera() {
     if (!navigator.mediaDevices?.getUserMedia) {
       cameraInputRef.current?.click();
       return;
     }
+    const dims = { width: { ideal: 1280 }, height: { ideal: 720 } };
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: { exact: "environment" }, ...dims },
       });
-      setLiveStream(stream); // useEffect handles attaching to <video>
+      setLiveStream(stream);
     } catch {
-      cameraInputRef.current?.click();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", ...dims },
+        });
+        setLiveStream(stream);
+      } catch {
+        cameraInputRef.current?.click();
+      }
     }
   }
 
@@ -2116,7 +2159,15 @@ export default function InstantCheckPage() {
       {/* ── Mode tabs + content (only shown when file is loaded) ── */}
       {checkTable && (
         <>
-          <h2 className="text-sm font-bold text-ink">التشييك</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-ink">التشييك</h2>
+            {/* زر المزامنة — يرفع سجلات التشييك للسيرفر (تدريجي: الجديد بس) */}
+            <button onClick={handleSyncRecords} disabled={syncingRecords}
+              className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
+              <RefreshCw size={13} className={syncingRecords ? "animate-spin" : ""} />
+              {syncingRecords ? "جارٍ..." : "مزامنة"}
+            </button>
+          </div>
           {/* Tabs */}
           <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-2 p-1">
             {(
@@ -2614,12 +2665,6 @@ export default function InstantCheckPage() {
                           {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
                           {pttSel.size === pttResults.length && pttResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
                         </button>
-                        <button
-                          onClick={() => { setPttResults([]); setPttAlert(null); setPttSel(new Set()); }}
-                          className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted"
-                        >
-                          <Trash2 size={12} /> مسح
-                        </button>
                       </div>
                     </div>
                     <div ref={pttPinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
@@ -2745,6 +2790,16 @@ export default function InstantCheckPage() {
                     <button onClick={exportAllPttToField}
                       className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
                       <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
+                    </button>
+
+                    {/* مسح النتائج — أحمر، بتأكيد */}
+                    <button
+                      onClick={() => {
+                        if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${pttResults.length} نتيجة؟ مش هترجع تاني.`)) return;
+                        setPttResults([]); setPttAlert(null); setPttSel(new Set());
+                      }}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-danger bg-danger/10 py-2.5 text-sm font-bold text-danger transition active:scale-95 hover:bg-danger/20">
+                      <Trash2 size={15} /> مسح النتائج
                     </button>
                   </div>
                 );
@@ -2905,7 +2960,17 @@ export default function InstantCheckPage() {
       {mode === "sheet" && fieldEntries.length > 0 && (() => {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
         const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
-        const visible = filterFieldEntries(fieldEntries, fieldSearch);
+        // عدادات الفئات (على كل السجلات، مش المفلترة)
+        const cVoice = fieldEntries.filter((e) => /صوت/.test(e.method)).length;
+        const cManual = fieldEntries.filter((e) => /يدوي/.test(e.method)).length;
+        const cWanted = fieldEntries.filter(isDraftMatched).length;
+        const matchCat = (e: FieldCheckEntry) =>
+          fieldFilter === "voice" ? /صوت/.test(e.method)
+          : fieldFilter === "manual" ? /يدوي/.test(e.method)
+          : fieldFilter === "wanted" ? isDraftMatched(e)
+          : true;
+        const visible = filterFieldEntries(fieldEntries, fieldSearch).filter(matchCat);
+        const catName = fieldFilter === "voice" ? "المسجّل صوتياً" : fieldFilter === "manual" ? "المسجّل يدوياً" : fieldFilter === "wanted" ? "المطلوب" : "كل السجلات";
         return (
           <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -2923,6 +2988,26 @@ export default function InstantCheckPage() {
             <p className="text-[11px] text-muted" dir="rtl">
               سجل محفوظ على الجهاز — للتحميل والمشاركة، والتعديل/الحذف من زر «إظهار وتعديل اللوحات»
             </p>
+
+            {/* عدادات قابلة للضغط — الكل / صوتي / يدوي / مطلوب. الضغط يفلتر العرض للفئة. */}
+            <div className="flex flex-wrap gap-2" dir="rtl">
+              {([
+                { key: "all", label: "الكل", n: fieldEntries.length },
+                { key: "voice", label: "صوتي", n: cVoice },
+                { key: "manual", label: "يدوي", n: cManual },
+                { key: "wanted", label: "مطلوب", n: cWanted },
+              ] as const).map(({ key, label, n }) => (
+                <button key={key} onClick={() => setFieldFilter(key)}
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
+                    fieldFilter === key ? "border-primary bg-primary text-night" : "border-border bg-surface-2 text-muted hover:text-primary"
+                  }`}>
+                  {label} <span className={`rounded-full px-1.5 ${fieldFilter === key ? "bg-night/20 text-night" : "bg-border/60 text-ink"}`}>{n}</span>
+                </button>
+              ))}
+            </div>
+            {fieldFilter !== "all" && (
+              <p className="text-[11px] font-bold text-primary" dir="rtl">عرض: {catName} ({visible.length})</p>
+            )}
 
             {/* Search */}
             <div className="relative">

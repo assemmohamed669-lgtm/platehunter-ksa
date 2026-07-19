@@ -26,6 +26,7 @@ import {
   Upload,
   Check,
   KeyRound,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
@@ -55,20 +56,18 @@ import {
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap, EN_TO_AR } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { fetchSharedCorrections, pushCorrection, flushPendingCorrections } from "@/lib/plateCorrectionsSync";
 import { type StructuredRow } from "@/lib/structuredPlates";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { syncPending, forceSyncAll, restoreRecordings, registerOnlineSync } from "@/lib/sync";
+import { syncPending, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
-
-const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
@@ -525,9 +524,7 @@ export default function RegistrationPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Manual plate entry
-  const [manualInput, setManualInput] = useState("");
-  const [manualError, setManualError] = useState<string | null>(null);
-  const [manualPlatePreview, setManualPlatePreview] = useState("");
+  // (حالة الإدخال اليدوي اتشالت — الإدخال اليدوي بقى في صفحة التشييك بس)
 
   // Pin counter
   const [pinCount, setPinCount] = useState(0);
@@ -2115,81 +2112,8 @@ export default function RegistrationPage() {
   }
 
   // ── Manual plate entry ──────────────────────────────────────────────
-  function handleManualChange(val: string) {
-    // Convert English letters to Arabic plate equivalents
-    const converted = val.toUpperCase().split("").map((ch) => EN_TO_AR[ch] ?? ch).join("");
-    setManualInput(converted);
-
-    // Detect invalid Arabic letters (ت ث ج خ ذ ز ش ض ظ غ ف)
-    const invalid: string[] = [];
-    for (const ch of converted) {
-      if (INVALID_AR_LETTERS_SET.has(ch) && !invalid.includes(ch)) invalid.push(ch);
-    }
-
-    if (invalid.length > 0) {
-      setManualError(`حروف غير موجودة في اللوحات السعودية: ${invalid.join(" ")}`);
-      setManualPlatePreview("");
-    } else {
-      setManualError(null);
-      setManualPlatePreview(converted.replace(/\s+/g, ""));
-    }
-  }
-
-  function dismissManualError() {
-    setManualError(null);
-    setManualInput("");
-    setManualPlatePreview("");
-  }
-
-  async function handleManualSave() {
-    if (!agentId) return;
-    const raw = manualInput.trim();
-    if (!raw || manualError) return;
-
-    const finalPlate = raw.replace(/\s+/g, "");
-    if (!finalPlate) { setManualError("أدخل رقم اللوحة"); return; }
-
-    setManualInput("");
-    setManualPlatePreview("");
-    setManualError(null);
-
-    const coords = gps ?? gpsService.getLastCoords();
-    const localId = uid();
-    const entry: RecordingEntry = {
-      localId,
-      agentId,
-      plate: finalPlate,
-      vehicleType: "ملاكي", // same default as voice: a typed plate with no type is a private car
-      lat: coords?.lat,
-      lng: coords?.lng,
-      recordedAt: new Date().toISOString(),
-      mapsLink: coords ? toMapsLink(coords.lat, coords.lng) : undefined,
-      recorderName,
-      district: manualDistrict.trim() || undefined,
-      isManual: true,
-      synced: false,
-    };
-
-    await saveRecording(entry);
-
-    if (coords) {
-      reverseGeocode(coords.lat, coords.lng).then(async (addr) => {
-        await updateGeodata(localId, addr.street, manualDistrict.trim() || addr.district);
-        if (agentId) {
-          const updated = await getAllRecordings(agentId);
-          const updatedEntry = updated.find((r) => r.localId === localId);
-          if (updatedEntry) checkPlateMatch(finalPlate, updatedEntry);
-          setRecordings(updated);
-          setDuplicates(findDuplicates(updated.map((r) => r.plate)));
-        }
-      }).catch(() => { checkPlateMatch(finalPlate, entry); });
-    } else {
-      checkPlateMatch(finalPlate, entry);
-    }
-
-    await loadRecordings(agentId);
-    if (isOnline) syncPending(agentId);
-  }
+  // handleManualSave/handleManualChange اتشالوا — الإدخال اليدوي في التسجيل بقى
+  // مكرر مع «يدوي» في التشييك، فاتشال. (الإدخال الصوتي هو اللي فاضل هنا.)
 
   // Force a fresh high-accuracy GPS read (the «تحديث» button on the GPS box).
   async function refreshGps() {
@@ -2206,29 +2130,8 @@ export default function RegistrationPage() {
     }
   }
 
-  // «زامن دلوقتي» — يشغّل المزامنة ويعرض النتيجة/الخطأ الحقيقي (تشخيص).
-  const [syncing, setSyncing] = useState(false);
-  async function handleManualSync() {
-    if (!agentId) { alert("مفيش جلسة."); return; }
-    setSyncing(true);
-    try {
-      // Force re-upload EVERYTHING (ignores the local synced flag) so rows
-      // falsely marked synced actually reach the server — and any real error surfaces.
-      const res = await forceSyncAll(agentId);
-      if (res.error) {
-        alert(`❌ فشل المزامنة:\n${res.error}\n\n(الإجمالي: ${res.total})`);
-      } else if (res.total === 0) {
-        alert("مفيش تسجيلات على الجهاز أصلاً.");
-      } else {
-        alert(`✅ اترفع ${res.synced} من ${res.total} لوحة للسيرفر.`);
-      }
-      await loadRecordings(agentId);
-    } catch (err: any) {
-      alert(`❌ خطأ: ${err?.message ?? err}`);
-    } finally {
-      setSyncing(false);
-    }
-  }
+  // زر «زامن دلوقتي» اتنقل لصفحة التشييك (مزامنة السجلات تدريجياً). التسجيلات
+  // الصوتية بتتزامن تلقائياً via syncPending + بتتصدّر للتشييك.
 
   // ── Manual GPS pin ──────────────────────────────────────────────────
   async function handlePin() {
@@ -2844,11 +2747,8 @@ export default function RegistrationPage() {
         )}
       </div>
 
-      {/* مزامنة يدوية — تعرض النتيجة/الخطأ */}
-      <button onClick={handleManualSync} disabled={syncing}
-        className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-50">
-        <RefreshCw size={15} className={syncing ? "animate-spin" : ""} /> {syncing ? "جارٍ المزامنة..." : "زامن دلوقتي"}
-      </button>
+      {/* زر «زامن دلوقتي» اتنقل لصفحة التشييك (مزامنة السجلات تدريجياً). التسجيلات
+          الصوتية بتتزامن تلقائياً + بتتصدّر للتشييك فتترفع من هناك. */}
 
       {/* Session fields: recorder name / district / excel export name */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -3192,6 +3092,16 @@ export default function RegistrationPage() {
                 checkPlates={checkPlates}
               />
             )}
+            {voiceRecs.length > 0 && (
+              <button
+                onClick={async () => {
+                  if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${voiceRecs.length} نتيجة؟ مش هترجع تاني.`)) return;
+                  for (const r of voiceRecs) await handleDelete(r.localId);
+                }}
+                className="flex items-center justify-center gap-2 rounded-xl border border-danger bg-danger/10 py-2.5 text-sm font-bold text-danger transition active:scale-95 hover:bg-danger/20">
+                <Trash2 size={15} /> مسح الكل
+              </button>
+            )}
           </div>
         );
       })()}
@@ -3292,48 +3202,10 @@ export default function RegistrationPage() {
       {/* نافذة «اللوحات المطلوبة» المشتركة اتشالت — اللوحة المطلوبة بتفضل في
           نافذة مصدرها (صوتي/يدوي) متعلّم عليها بالأخضر + شارة «مطلوبة». */}
 
-      {/* Manual plate entry */}
-      <div className="rounded-2xl border border-border bg-surface px-4 py-4">
-        <p className="mb-3 text-sm font-bold text-ink" dir="rtl">إدخال يدوي للوحة</p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            inputMode="text"
-            placeholder="مثال: ق ن ص 1 2 3 4"
-            value={manualInput}
-            onChange={(e) => handleManualChange(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleManualSave()}
-            className={`flex-1 rounded-xl border bg-surface-2 px-3 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none ${
-              manualError ? "border-danger focus:border-danger" : "border-border focus:border-primary"
-            }`}
-            dir="rtl"
-          />
-          <button
-            onClick={handleManualSave}
-            disabled={!manualInput.trim() || !!manualError}
-            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
-          >
-            حفظ
-          </button>
-        </div>
+      {/* الإدخال اليدوي للوحة اتشال من هنا — بقى مكرر مع «يدوي» في صفحة التشييك
+          (نفس الوظيفة: كتابة لوحة تتشيّك وتروح للسجلات). المندوب يستخدم تشييك. */}
 
-
-        {/* Error with dismiss button */}
-        {manualError && (
-          <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-danger/10 px-3 py-2">
-            <p className="text-xs text-danger">{manualError}</p>
-            <button onClick={dismissManualError} className="shrink-0 text-danger hover:text-danger/70 transition">
-              <X size={14} />
-            </button>
-          </div>
-        )}
-
-        <p className="mt-2 text-xs text-muted" dir="rtl">
-          يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...)
-        </p>
-      </div>
-
-      {/* ── جدول الإدخال اليدوي ── */}
+      {/* ── جدول الإدخال اليدوي (يعرض أي إدخالات يدوية قديمة موجودة) ── */}
       {(() => {
         const manualRecs = recordings.filter((r) => r.isManual);
         return manualRecs.length > 0 ? (

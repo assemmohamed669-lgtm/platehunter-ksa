@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.5.4";
+export const APP_VERSION = "0.6.0";
 export const UPDATE_NOTE =
-  "إصلاح: الموقع بيظهر «خريطة» وكليك يفتح الخريطة فعلاً — في الفرز وفي الإكسيل المُصدَّر.";
+  "زر مزامنة سريع في التشييك (يرفع الجديد بس)، عدادات السجلات (صوتي/يدوي/مطلوب)، الكاميرا الخلفية تلقائياً، وأزرار مسح أوضح.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

@@ -84,6 +84,7 @@ export interface FieldCheckEntry {
   lng?: number;
   mapsLink?: string;
   checkedAt: string;                 // ISO timestamp
+  synced?: boolean;                  // اترفع للسيرفر؟ (للمزامنة التدريجية — الجديد بس)
 }
 
 /**
@@ -372,6 +373,31 @@ export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCh
       resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
     };
     req.onerror = () => reject(req.error);
+  });
+}
+
+/** Field-check entries اللي لسه مترفعتش للسيرفر (للمزامنة التدريجية). */
+export async function getPendingFieldChecks(agentId?: string): Promise<FieldCheckEntry[]> {
+  const all = await getAllFieldCheckEntries(agentId);
+  return all.filter((e) => !e.synced);
+}
+
+/** يعلّم مجموعة field-check entries إنها اترفعت (synced=true). */
+export async function markFieldChecksSynced(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await openDB();
+  const idSet = new Set(ids);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    const store = tx.objectStore(FIELD_CHECK_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => {
+      for (const e of req.result as FieldCheckEntry[]) {
+        if (idSet.has(e.id) && !e.synced) store.put({ ...e, synced: true });
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 
