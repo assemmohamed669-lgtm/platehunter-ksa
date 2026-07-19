@@ -10,7 +10,7 @@ import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
-import { getActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
@@ -40,6 +40,8 @@ const FIELD_DUPE_COLORS = [
 // the other — same device, same voice, same mishearings.
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
+// منظّم الإيقاع في التشييك الصوتي — اهتزاز + وميض بين اللوحات (نفس فكرة التسجيل).
+const LS_CHECK_PACER = "ph:check:pacer";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -375,6 +377,16 @@ export default function InstantCheckPage() {
   // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
   const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
+  // التشخيص التقني (اسم المحرك + النص الخام) يظهر للأدمن فقط — مش للمشتركين.
+  const [isAdmin, setIsAdmin] = useState(false);
+  // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للأدمن لتشخيص الدقة.
+  const [pttRawLog, setPttRawLog] = useState<string[]>([]);
+  const pttRawLogRef = useRef<string[]>([]);
+  // منظّم الإيقاع: اهتزاز + وميض بصري كل X ثانية أثناء الاستماع (بدون صوت،
+  // فمايدخلش على الميكروفون ولا يأثّر على التفريغ) — بينظّم المندوب: لوحة كل نبضة.
+  const [pacerOn, setPacerOn] = useState(false);
+  const [pacerSec, setPacerSec] = useState(3);
+  const [pacerPulse, setPacerPulse] = useState(false);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
   // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
@@ -439,6 +451,55 @@ export default function InstantCheckPage() {
     gpsService.startTracking();
     return () => gpsService.stopTracking();
   }, []);
+
+  // هل المستخدم الحالي أدمن؟ (التشخيص التقني — اسم المحرك + النص الخام — للأدمن فقط).
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+        setIsAdmin(prof?.role === "admin");
+      } catch { /* غير متاح — يفضل مخفي */ }
+    })();
+  }, []);
+
+  // استرجاع إعداد منظّم الإيقاع المحفوظ.
+  useEffect(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem(LS_CHECK_PACER) || "null");
+      if (p && typeof p === "object") {
+        if (typeof p.on === "boolean") setPacerOn(p.on);
+        if (typeof p.sec === "number" && p.sec >= 2 && p.sec <= 6) setPacerSec(p.sec);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // نبضة الإيقاع: اهتزاز + وميض كل X ثانية أثناء الاستماع — بدون أي صوت.
+  useEffect(() => {
+    if (!pttListening || !pacerOn) { setPacerPulse(false); return; }
+    const ms = Math.max(1500, pacerSec * 1000);
+    const id = setInterval(() => {
+      try { navigator.vibrate?.(90); } catch { /* مايدعمش الاهتزاز */ }
+      setPacerPulse(true);
+      window.setTimeout(() => setPacerPulse(false), 500);
+    }, ms);
+    return () => clearInterval(id);
+  }, [pttListening, pacerOn, pacerSec]);
+
+  function savePacer(on: boolean, sec: number) {
+    setPacerOn(on); setPacerSec(sec);
+    try { localStorage.setItem(LS_CHECK_PACER, JSON.stringify({ on, sec })); } catch { /* ignore */ }
+  }
+
+  // يسجّل النص الخام (اللي المحرك سمعه قبل التحليل) في لوحة ديبج الأدمن — آخر ١٥.
+  function logRawTranscript(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const next = [...pttRawLogRef.current, t].slice(-15);
+    pttRawLogRef.current = next;
+    setPttRawLog(next);
+  }
 
   // Check hits history (session-only)
   const [manualHits, setManualHits] = useState<CheckHit[]>([]);
@@ -1313,6 +1374,7 @@ export default function InstantCheckPage() {
   // ── PTT ───────────────────────────────────────────────────────────────────
   // addResult: parse one utterance and append to results list
   function addPttResult(utterance: string) {
+    logRawTranscript(utterance); // ديبج الأدمن — النص الخام قبل أي تحليل
     // Pull the vehicle type (ونيت/فان/مصدومة/…) out FIRST so it lands in its
     // own column and isn't misread as plate letters.
     const { vehicleType, rest } = extractVehicleType(utterance);
@@ -1571,7 +1633,7 @@ export default function InstantCheckPage() {
   // يعالج نص مقطع مفرَّغ: parseSessionChunk (نفس محلّل التسجيل — carry-over
   // ومتعدد اللوحات) ثم يضيف صف لكل لوحة مكتملة + تشييك + تنبيه لو مطلوبة.
   function processWhisperText(text: string, final: boolean) {
-    if (text.trim()) setPttLiveText(text.trim());
+    if (text.trim()) { setPttLiveText(text.trim()); logRawTranscript(text); }
     const res = parseSessionChunk(text, pttSessionStateRef.current, { final });
     pttSessionStateRef.current = res.state;
     res.records.forEach((r) => addOnePttRow(r.plate, r.vehicleType, pttRowIdxRef.current++));
@@ -1705,6 +1767,7 @@ export default function InstantCheckPage() {
   async function startPtt() {
     setPttError(null);
     setPttLiveText("");
+    pttRawLogRef.current = []; setPttRawLog([]); // ابدأ ديبج نظيف لكل جلسة
     isListeningRef.current = true;
     setPttListening(true);
     startPttTimer();
@@ -1722,10 +1785,11 @@ export default function InstantCheckPage() {
       // فشل البدء → نكمّل بالمسارات التانية.
     }
 
-    // (١) الأولوية لـ Deepgram لو مفعّل وشغّال — أدق تفريغ لحظي (يشتغل على
-    // الويب والموبايل عبر getUserMedia، مش محتاج plugin native). getActiveDeepgramKey
-    // بترجّع فاضي لو المستخدم موقفه مؤقتاً → بيرجع للمحرك التاني.
-    const dgKey = getActiveDeepgramKey();
+    // (١) الأولوية لـ Deepgram طول ما فيه مفتاح — أدق تفريغ لحظي (streaming) وأسرع
+    // ظهور. صفحة التشييك «لايف» بطبيعتها، فبتفضّل Deepgram *بغضّ النظر عن المحرك
+    // العام* (اللي بيخدم التسجيل — مثلاً Groq batch للدقة). ده يمنع رجوعها لمسار
+    // Whisper اللي بيقطّع كل ٧ث فتتأخّر اللوحة. (نيّة #23: Deepgram → التشييك لحظي.)
+    const dgKey = getDeepgramKey() || getActiveDeepgramKey();
     if (dgKey) {
       const ok = await startDeepgramPtt(dgKey);
       if (ok) { setPttEngine("deepgram"); return; }
@@ -2404,6 +2468,28 @@ export default function InstantCheckPage() {
                 </div>
               </div>
 
+              {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
+              <div className="flex w-full max-w-xs flex-col items-center gap-1">
+                <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2" dir="rtl">
+                  <span className="text-xs font-bold text-ink">منظّم الإيقاع (اهتزاز)</span>
+                  <button type="button" onClick={() => savePacer(!pacerOn, pacerSec)}
+                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${pacerOn ? "bg-primary text-night" : "border border-border text-muted"}`}>
+                    {pacerOn ? "شغّال" : "مطفي"}
+                  </button>
+                </div>
+                {pacerOn && (
+                  <div className="flex items-center gap-1" dir="rtl">
+                    <span className="text-[10px] text-muted">نبضة كل:</span>
+                    {[2, 3, 4, 5].map((s) => (
+                      <button key={s} type="button" onClick={() => savePacer(true, s)}
+                        className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${pacerSec === s ? "bg-primary text-night" : "border border-border text-muted"}`}>
+                        {s}ث
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع */}
               <button
                 onClick={pttListening ? stopPtt : startPtt}
@@ -2419,6 +2505,13 @@ export default function InstantCheckPage() {
                 </span>
               </button>
 
+              {/* نبضة منظّم الإيقاع — "قول اللوحة دلوقتي" (اهتزاز + وميض، بدون صوت) */}
+              {pttListening && pacerOn && (
+                <div className={`rounded-full px-5 py-2 text-sm font-black transition-all duration-150 ${pacerPulse ? "scale-110 bg-brand text-night shadow-brand-glow" : "bg-surface-2 text-muted"}`} dir="rtl">
+                  {pacerPulse ? "🔵 قول اللوحة" : "…"}
+                </div>
+              )}
+
               {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع */}
               {pttListening && (
                 <div
@@ -2431,11 +2524,22 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* مؤشّر السماع — اسم أداة التفريغ متخفي (بناءً على طلب العميل) */}
+              {/* مؤشّر السماع (VAD) — لـ Deepgram فقط (هو اللي فيه بوابة كلام) */}
               {pttListening && pttEngine === "deepgram" && (
                 <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
                   <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
                   {pttMicActive ? "بيسمع صوتك" : "هدوء"}
+                </span>
+              )}
+
+              {/* اسم المحرك النشط — للأدمن فقط (تشخيص، مخفي عن المشتركين) */}
+              {pttListening && isAdmin && (
+                <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[10px] font-bold text-primary" dir="ltr">
+                  🎙 {pttEngine === "deepgram" ? "Deepgram (لحظي)"
+                    : pttEngine === "speechmatics" ? "Speechmatics (لحظي)"
+                    : pttEngine === "whisper" ? "Whisper/Groq (تقطيع ٧ث)"
+                    : pttEngine === "local" ? "المحرك المحلي"
+                    : "..."}
                 </span>
               )}
 
@@ -2447,6 +2551,22 @@ export default function InstantCheckPage() {
 
               {pttError && (
                 <p className="text-center text-xs text-danger">{pttError}</p>
+              )}
+
+              {/* لوحة ديبج النص الخام — للأدمن فقط (اللي المحرك سمعه قبل التحليل) */}
+              {isAdmin && pttRawLog.length > 0 && (
+                <div className="w-full max-w-xs rounded-xl border border-dashed border-primary/40 bg-surface-2 p-2" dir="rtl">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-primary">🐞 النص الخام (أدمن)</span>
+                    <button type="button" onClick={() => { pttRawLogRef.current = []; setPttRawLog([]); }}
+                      className="text-[10px] text-muted underline">مسح</button>
+                  </div>
+                  <div className="flex max-h-32 flex-col gap-0.5 overflow-y-auto">
+                    {[...pttRawLog].reverse().map((t, i) => (
+                      <span key={i} className="text-[11px] text-ink" dir="auto">• {t}</span>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {/* ── تنبيه كبير: يظهر فقط لما اللوحة تطلع مطلوبة (تطابق تام أو مشتبه) ── */}
