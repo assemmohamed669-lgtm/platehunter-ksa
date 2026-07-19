@@ -6,6 +6,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
+import { resolveHyperlinkCells } from "./hyperlink";
 
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
@@ -159,6 +160,9 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     const wb = XLSX.read(data, opts);
     const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
+
+    // خلايا =HYPERLINK("url","خريطة") → قيمتها تبقى الرابط عشان يتعرض كـ«خريطة» لينك
+    resolveHyperlinkCells(ws);
 
     // 2-D array mode is faster than auto-object mode in sheet_to_json
     const raw2d = XLSX.utils.sheet_to_json<any[]>(ws, {

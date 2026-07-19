@@ -9,6 +9,7 @@ import type ExcelJS from "exceljs";
 import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
+import { resolveHyperlinkCells } from "./hyperlink";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -333,6 +334,9 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     const wb = XLSX.read(data, opts);
     const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
+
+    // خلايا =HYPERLINK("url","خريطة") → قيمتها تبقى الرابط عشان يتعرض كـ«خريطة» لينك
+    resolveHyperlinkCells(ws);
 
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, {
       header: 1,
