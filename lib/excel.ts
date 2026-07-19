@@ -349,7 +349,7 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
       "رقم اللوحة",
       "رقم اللوحة عربي",
     ];
-    const PLATE_KWS = ["لوحة", "اللوحة", "plate"];
+    const PLATE_KWS = ["لوحة", "اللوحة", "لوحه", "plate"];
     const SCAN = Math.min(raw2d.length, 600);
 
     let headerRowIdx = -1;

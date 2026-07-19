@@ -72,9 +72,9 @@ export const RESULT_TARGETS: TargetColumn[] = [
     // الصنع (٢٠٢٢) مش اسم موديل، والمطابقة العكسية بتخلطها. الطراز الحقيقي بيتلقط
     // بـ«طراز/الطراز/طراز المركبة/Car Type/Car model/النوع/Original Description».
     aliases: ["نوع السيارة", "نوع المركبة", "النوع", "طراز المركبة", "طراز", "الطراز", "طرازالمركبة",
-      "اسم المركبة", "اسم السيارة",
-      "type of car", "car type", "vehicle type", "vehicle name", "car model", "car",
-      "original description"],
+      "موديل السيارة", "موديل المركبة", "اسم المركبة", "اسم السيارة",
+      "type of car", "car type", "vehicle type", "vehicle name", "car model", "car name",
+      "model en", "variant", "original description"],
     content: looksLikeVehicleType,
   },
   {
