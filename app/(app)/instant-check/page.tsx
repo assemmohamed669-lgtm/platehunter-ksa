@@ -2907,8 +2907,10 @@ export default function InstantCheckPage() {
             </div>
           )}
 
-          {/* ── Hits history table — hidden on the السجلات tab ── */}
-          {mode !== "sheet" && manualHits.length > 0 && (() => {
+          {/* ── قائمة الكاميرا (اللوحات المتصوّرة) — تظهر في وضع الكاميرا فقط ── */}
+          {/* manualHits بتتملّى من saveHitWithGps (مسارات الكاميرا بس)، فماينفعش
+              تظهر في اليدوي/الصوتي — كل وضع ليه قائمته. */}
+          {mode === "camera" && manualHits.length > 0 && (() => {
             const scale = HIT_ZOOM_LEVELS[hitsZoom];
             const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
             const allSel = hitsSelected.size === manualHits.length;
