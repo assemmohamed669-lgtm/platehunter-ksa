@@ -1746,7 +1746,12 @@ export default function InstantCheckPage() {
         smart_format: "false",
         punctuate: "false",
         numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
-        endpointing: "300",      // يستنى وقفة 300ms قبل ما يقفل الجملة — يمنع قطع اللوحة نصّين
+        // endpointing أقصر (100ms بدل 300): لما المندوب يقول اللوحات بسرعة ورا بعض،
+        // Deepgram بيقفل كل لوحة في مقطع أقصر لوحدها بدل ما يلزقهم في مقطع طويل
+        // واحد (اللزق ده كان بيخلّيه يرمي/يخلط أرقام). لو لوحة اتقطعت نصّين
+        // (حروف / أرقام) الـ carry-over في sessionParser بيلحمها تاني — متأكّدين
+        // بالاختبار ( end-to-end: ["قلم","2470"] → قلم2470).
+        endpointing: "100",
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;

@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.6.3";
+export const APP_VERSION = "0.6.4";
 export const UPDATE_NOTE =
-  "قائمة الكاميرا بقت تظهر في تبويب الكاميرا بس (مش بتتسرّب لليدوي والصوتي). + إصلاح قراءة اللوحة بالكاميرا (موديل رؤية شغّال).";
+  "تحسين التشييك الصوتي مع اللوحات السريعة — كل لوحة بتتقفل في مقطع أقصر عشان الأرقام ماتختلطش لما تتقال ورا بعض بسرعة.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
