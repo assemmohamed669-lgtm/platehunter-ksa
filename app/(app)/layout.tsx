@@ -14,6 +14,8 @@ import AgentPresenceReporter from "@/components/AgentPresenceReporter";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
 import { applyServiceKeys } from "@/lib/voiceKeys";
+import { fetchSharedDeepgramKey } from "@/lib/sharedVoiceKey";
+import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, isCutOff, GRACE_DAYS, type SubInfo } from "@/lib/subscription";
 
@@ -50,6 +52,11 @@ export default function AppShellLayout({
       if (profile && (profile as { service_keys?: unknown }).service_keys != null) {
         applyServiceKeys((profile as { service_keys?: unknown }).service_keys);
       }
+      // مفتاح Deepgram المشترك (اللي حطّه السوبر أدمن مرة واحدة) — يُطبَّق لو الجهاز
+      // مفيهوش مفتاح خاص، فكل المناديب ياخدوه تلقائياً بدون ما كل واحد يدخّله.
+      fetchSharedDeepgramKey().then((shared) => {
+        if (shared && !getDeepgramKey()) setDeepgramKey(shared);
+      });
       if (profile && profile.role === "agent") {
         // حساب التجربة يتقطع فوراً بعد نهايته (بدون فترة سماح).
         const grace = profile.is_trial ? 0 : GRACE_DAYS;
