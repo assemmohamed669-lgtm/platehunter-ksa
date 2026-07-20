@@ -69,8 +69,13 @@ export async function POST(req: NextRequest) {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        max_tokens: 20,
+        // موديل الرؤية الحالي على Groq. (llama-4-scout القديم اتوقف من Groq في
+        // ٢٠٢٦/٦/١٧ فكان بيرجّع "model does not exist"). qwen3.6-27b متعدد الوسائط
+        // بياخد صور بنفس شكل image_url. reasoning_effort:"none" بيطفّي وضع التفكير
+        // فيطلع اللوحة مباشرة (من غير ما التوكنز تتاكل في التفكير).
+        model: "qwen/qwen3.6-27b",
+        reasoning_effort: "none",
+        max_tokens: 40,
         temperature: 0,
         messages: [{
           role: "user",

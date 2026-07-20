@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.6.1";
+export const APP_VERSION = "0.6.2";
 export const UPDATE_NOTE =
-  "صوت التشييك بقى يركّز على اللوحات بس (٣ حروف + ٤ أرقام) ويتجاهل أي كلام تاني، والمايك بيعيد الاتصال تلقائياً لو فصل.";
+  "إصلاح قراءة اللوحة بالكاميرا (كان بيطلع خطأ موديل متوقّف) — بقى على موديل رؤية شغّال. + صوت التشييك يلتقط اللوحات بس والمايك ميفصلش.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

@@ -65,7 +65,7 @@ app/(app)/
   registration/page.tsx   # تسجيل اللوحات بالصوت — يقرأ ملف التشييك للمقارنة
 
 app/api/
-  read-plate/route.ts     # OCR الكاميرا — claude-sonnet-4-6
+  read-plate/route.ts     # OCR الكاميرا — Groq qwen/qwen3.6-27b (بمفتاح المندوب)
 
 components/
   PlateBadge.tsx      # عرض اللوحة (أرقام يسار / حروف يمين)، sizes: xs/sm/md/lg
@@ -114,7 +114,8 @@ deleteUploadedFile("local", "check")
 5. `ResultCard`: يعرض `PlateBadge` + CheckCircle2 (exact) أو AlertTriangle (fuzzy %) أو XCircle (غير موجود)
 
 ### OCR الكاميرا: `app/api/read-plate/route.ts`
-- Model: **`claude-sonnet-4-6`**
+- Model: **`qwen/qwen3.6-27b`** (رؤية على Groq، بمفتاح المندوب نفسه بتاع الصوت) مع `reasoning_effort: "none"`
+  - **ملاحظة:** موديل `meta-llama/llama-4-scout-17b-16e-instruct` القديم اتوقف من Groq (٢٠٢٦/٦/١٧). أي موديل رؤية جديد لازم يبقى من كتالوج Groq الحالي.
 - البرومبت: يشجّع على best-guess حتى لو الصورة غير واضحة، لا يرجع NONE إلا لو مافيش لوحة خالص
 
 ---
@@ -177,7 +178,7 @@ bankPlateToArabic("NKD 5678") // → "نكد5678"
 - [x] إصلاح التجمد مع ملفات الداتا الكبيرة (464K صف) → ~1 ثانية
 - [x] صفحة التشييك `/instant-check` — يدوي + كاميرا + صوت مع PlateBadge result card
 - [x] Map index O(1) + fuzzy (88%) + playMatchAlert في instant-check
-- [x] Camera OCR بـ claude-sonnet-4-6 مع prompt محسّن
+- [x] Camera OCR بـ Groq qwen/qwen3.6-27b مع prompt محسّن
 - [x] ملف التشييك مشترك بين كل الصفحات عبر `local:check` IDB slot
 - [x] GPS links في sorting و instant-check (URL و lat,lng)
 - [x] `matchesPreferred` لاختيار الأعمدة تلقائياً في كل الصفحات
