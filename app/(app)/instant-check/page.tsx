@@ -426,6 +426,7 @@ export default function InstantCheckPage() {
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
+  const dgReconnectsRef = useRef(0); // عدّاد إعادة اتصال Deepgram (محدود عشان مايعملش لوب)
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
 
   // Self-learning maps (shared with the registration page). A voice-check edit
@@ -1479,6 +1480,14 @@ export default function InstantCheckPage() {
     const blended = applyWordBlend(letters, wordBlendRef.current) || letters;
     const corrected = applyLetterConfusions(blended + digits, letterConfusionsRef.current);
 
+    // فلتر صارم — لوحات بس (٣ حروف + ٤ أرقام). أي كلام بعيد عن شكل اللوحة يتسمع
+    // ويتجاهل (ما يتفرّغش). شبكة أمان: القريب جداً من اللوحة (٢-٣ حروف + ٣-٤ أرقام)
+    // بيظهر بعلامة «راجع» عشان لوحة حقيقية اتسمعت ناقصة ما تفوتش.
+    const cLetters = corrected.replace(/[0-9٠-٩]/g, "");
+    const cDigits = corrected.replace(/[^0-9٠-٩]/g, "");
+    if (cLetters.length < 2 || cLetters.length > 3 || cDigits.length < 3 || cDigits.length > 4) return;
+    const isComplete = cLetters.length === 3 && cDigits.length === 4 && !plateNeedsReview(corrected);
+
     const result = searchInCheck(corrected);
     if (!result) return; // no check file loaded
 
@@ -1495,7 +1504,7 @@ export default function InstantCheckPage() {
       similarity: result.similarity,
       row: result.row,
       vehicleType,
-      needsReview: plateNeedsReview(corrected),
+      needsReview: !isComplete, // مش لوحة كاملة (٣+٤) → علامة «راجع»
       locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
     };
@@ -1766,6 +1775,7 @@ export default function InstantCheckPage() {
 
       ws.onopen = () => {
         if (!isListeningRef.current) { try { ws.close(); } catch {} try { rec.stop(); } catch {} return; }
+        dgReconnectsRef.current = 0; // اتصال ناجح → صفّر عدّاد إعادة الاتصال
         // فضّي أي أجزاء اتسجّلت قبل ما الاتصال يفتح.
         while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch {} }
         // KeepAlive عشان Deepgram مايقفلش الاتصال في فترات الصمت.
@@ -1792,6 +1802,25 @@ export default function InstantCheckPage() {
         } catch { /* رسالة مش JSON — تجاهل */ }
       };
       ws.onerror = () => setPttError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
+      // لو الاتصال قفل فجأة والمندوب لسه فاتح المايك → أعِد الاتصال تلقائياً (المفروض
+      // ميفصلش). محدود بـ 5 محاولات عشان مايعملش لوب لانهائي لو المفتاح غلط أو النت
+      // مقطوع؛ العدّاد بيتصفّر مع كل اتصال ناجح (في onopen).
+      ws.onclose = () => {
+        if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+        if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
+        if (!isListeningRef.current) return; // المندوب أوقف بنفسه — مفيش إعادة اتصال
+        // نضّف تيار/مسجّل/بوابة القديمة قبل ما نبدأ واحدة جديدة (منعاً للتسريب).
+        try { rec.stop(); } catch {}
+        try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+        try { dgGateRef.current?.close(); } catch {}
+        dgGateRef.current = null;
+        if (dgReconnectsRef.current < 5) {
+          dgReconnectsRef.current += 1;
+          setTimeout(() => { if (isListeningRef.current) void startDeepgramPtt(apiKey); }, 1200);
+        } else {
+          setPttError("انقطع الاتصال بـ Deepgram كذا مرة — أوقف المايك وشغّله تاني.");
+        }
+      };
       return true;
     } catch (err) {
       setPttError(`تعذّر بدء التفريغ اللحظي: ${err instanceof Error ? err.message : String(err)}`);
