@@ -4,6 +4,14 @@
 -- (الصف المفرد id=true) المُعرَّف في schema_phase4_settings.sql.
 -- =====================================================================
 
+-- جدول الإعدادات المفرد — يُنشأ لو مش موجود (لو schema_phase4_settings.sql
+-- ماتشغّلش على السيرفر ده). آمن للتشغيل المتكرر (if not exists).
+create table if not exists public.app_settings (
+  id boolean primary key default true check (id = true),
+  secondary_password_hash text
+);
+alter table public.app_settings enable row level security;
+
 -- عمود المفتاح المشترك على صف الإعدادات المفرد.
 alter table public.app_settings
   add column if not exists deepgram_key text;
