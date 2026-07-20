@@ -18,7 +18,6 @@ import {
   X,
   AlertTriangle,
   Share2,
-  ChevronDown,
   Eye,
   EyeOff,
   CheckCircle2,
@@ -32,7 +31,8 @@ import Link from "next/link";
 import PlateBadge from "@/components/PlateBadge";
 import RecordingsTable from "@/components/RecordingsTable";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
-import { gpsService, toMapsLink, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
+import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
+import { useRouter } from "next/navigation";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
 import { getVoiceEngine, getSpeechmaticsKey, getElevenlabsKey, getGroqKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
@@ -441,10 +441,20 @@ export default function RegistrationPage() {
   const [pinFlowBusy, setPinFlowBusy] = useState(false);
   const [showPinInput, setShowPinInput] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
-  const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
-  const [gpsBoxOpen, setGpsBoxOpen] = useState(true);
-  const [gpsRefreshing, setGpsRefreshing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+
+  // حارس: صفحة التسجيل للسوبر أدمن فقط — أي مستخدم تاني يترجّع للتشييك.
+  const router = useRouter();
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
+        if (!prof?.is_super) router.replace("/instant-check");
+      } catch { /* غير متاح — نسيبها */ }
+    })();
+  }, [router]);
 
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -747,11 +757,6 @@ export default function RegistrationPage() {
     gpsService.startTracking().catch(() => {});
     const unsub = gpsService.subscribe((coords) => {
       setGps(coords);
-      if (coords) {
-        reverseGeocode(coords.lat, coords.lng).then((addr) => {
-          setGpsAddress(`${addr.street} • ${addr.district}`);
-        });
-      }
     });
 
     const onOnline = () => setIsOnline(true);
@@ -2115,20 +2120,6 @@ export default function RegistrationPage() {
   // handleManualSave/handleManualChange اتشالوا — الإدخال اليدوي في التسجيل بقى
   // مكرر مع «يدوي» في التشييك، فاتشال. (الإدخال الصوتي هو اللي فاضل هنا.)
 
-  // Force a fresh high-accuracy GPS read (the «تحديث» button on the GPS box).
-  async function refreshGps() {
-    setGpsRefreshing(true);
-    try {
-      const coords = await gpsService.pinCurrentLocation();
-      setGps(coords);
-      const addr = await reverseGeocode(coords.lat, coords.lng);
-      setGpsAddress(`${addr.street} • ${addr.district}`);
-    } catch {
-      /* still no fix — box stays red */
-    } finally {
-      setGpsRefreshing(false);
-    }
-  }
 
   // زر «زامن دلوقتي» اتنقل لصفحة التشييك (مزامنة السجلات تدريجياً). التسجيلات
   // الصوتية بتتزامن تلقائياً via syncPending + بتتصدّر للتشييك.
@@ -2704,48 +2695,6 @@ export default function RegistrationPage() {
       {/* ملف التشييك المشترك (local:check) — يُقرأ عند التحميل للمقارنة فقط.
           الرفع/التغيير/الحذف من صفحة «تشييك» — مفيش مربع رفع هنا. */}
 
-      {/* GPS status */}
-      <div className="flex flex-col gap-1.5">
-        <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
-          حالة الـ GPS
-          <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
-            {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
-          </span>
-          <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
-        </button>
-        {gpsBoxOpen && (
-          <>
-          <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
-            <MapPin size={16} className={gps ? "text-primary" : "text-danger"} />
-            <div className="flex-1 min-w-0">
-              <p className={`truncate text-sm ${gps ? "text-ink" : "text-danger font-bold"}`}>
-                {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
-              </p>
-              {gps && (() => {
-                const lvl = gpsAccuracyLevel(gps.accuracy);
-                const cls = lvl === "good" ? "text-brand" : lvl === "ok" ? "text-alert" : "text-danger";
-                const hint = lvl === "good" ? "دقة ممتازة"
-                  : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
-                  : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
-                return (
-                  <p className="text-xs text-muted">
-                    {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className={`font-bold ${cls}`}>±{Math.round(gps.accuracy)}م</span>
-                    <span className={`block ${cls}`}>{hint}</span>
-                  </p>
-                );
-              })()}
-            </div>
-            <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
-              className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
-              <RefreshCw size={15} className={gpsRefreshing ? "animate-spin" : ""} />
-            </button>
-          </div>
-          <p className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-danger" dir="rtl">
-            ⚠️ اتأكد إن خانة الـ GPS شغّالة كويس وبدقّة عالية قبل ما تبدأ — الموقع الدقيق مهم جداً في التشييك الصوتي واليدوي وفي التسجيل.
-          </p>
-          </>
-        )}
-      </div>
 
       {/* زر «زامن دلوقتي» اتنقل لصفحة التشييك (مزامنة السجلات تدريجياً). التسجيلات
           الصوتية بتتزامن تلقائياً + بتتصدّر للتشييك فتترفع من هناك. */}

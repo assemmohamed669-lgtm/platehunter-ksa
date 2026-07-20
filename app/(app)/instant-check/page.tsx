@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { toMapsLink, gpsService, haversineKm } from "@/lib/gps";
+import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
+import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
@@ -300,6 +301,12 @@ export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [checkColsOpen, setCheckColsOpen] = useState(false);
+  // حالة الـ GPS (منقولة من صفحة التسجيل) — تظهر فوق مربع ملف التشييك عشان
+  // المندوب يتأكد إن الموقع شغّال بدقّة قبل التشييك (الموقع مهم لكل صف).
+  const [gps, setGps] = useState<GpsCoords | null>(null);
+  const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
+  const [gpsBoxOpen, setGpsBoxOpen] = useState(true);
+  const [gpsRefreshing, setGpsRefreshing] = useState(false);
   const [mode, setMode] = useState<CheckMode>(() => {
     if (typeof window === "undefined") return "manual";
     const saved = window.localStorage.getItem("ph:check:mode");
@@ -447,10 +454,31 @@ export default function InstantCheckPage() {
 
   // Keep a live GPS watch running the whole time the page is open, so stamping
   // a plate reads an already-fresh coordinate instantly (see getCurrentGps).
+  // Also feed the GPS-status box (coords + reverse-geocoded address).
   useEffect(() => {
-    gpsService.startTracking();
-    return () => gpsService.stopTracking();
+    gpsService.startTracking().catch(() => {});
+    const unsub = gpsService.subscribe((coords) => {
+      setGps(coords);
+      if (coords) {
+        reverseGeocode(coords.lat, coords.lng)
+          .then((addr) => setGpsAddress(`${addr.street} • ${addr.district}`))
+          .catch(() => {});
+      }
+    });
+    return () => { unsub(); gpsService.stopTracking(); };
   }, []);
+
+  // زر «تحديث» في خانة الـ GPS — قراءة موقع جديدة بدقّة عالية.
+  async function refreshGps() {
+    setGpsRefreshing(true);
+    try {
+      const coords = await gpsService.pinCurrentLocation();
+      setGps(coords);
+      const addr = await reverseGeocode(coords.lat, coords.lng);
+      setGpsAddress(`${addr.street} • ${addr.district}`);
+    } catch { /* لسه مفيش fix — الخانة تفضل حمرا */ }
+    finally { setGpsRefreshing(false); }
+  }
 
   // هل المستخدم الحالي أدمن؟ (التشخيص التقني — اسم المحرك + النص الخام — للأدمن فقط).
   useEffect(() => {
@@ -2084,6 +2112,49 @@ export default function InstantCheckPage() {
       <div>
         <h1 className="text-lg font-bold text-ink">التشييك</h1>
         <p className="text-xs text-muted">فحص لوحات السيارات مقابل ملف الإحالة</p>
+      </div>
+
+      {/* ── حالة الـ GPS (فوق مربع ملف التشييك) ── */}
+      <div className="flex flex-col gap-1.5">
+        <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
+          حالة الـ GPS
+          <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
+            {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
+          </span>
+          <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
+        </button>
+        {gpsBoxOpen && (
+          <>
+          <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
+            <MapPin size={16} className={gps ? "text-primary" : "text-danger"} />
+            <div className="flex-1 min-w-0">
+              <p className={`truncate text-sm ${gps ? "text-ink" : "text-danger font-bold"}`}>
+                {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
+              </p>
+              {gps && (() => {
+                const lvl = gpsAccuracyLevel(gps.accuracy);
+                const cls = lvl === "good" ? "text-brand" : lvl === "ok" ? "text-alert" : "text-danger";
+                const hint = lvl === "good" ? "دقة ممتازة"
+                  : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
+                  : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
+                return (
+                  <p className="text-xs text-muted">
+                    {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className={`font-bold ${cls}`}>±{Math.round(gps.accuracy)}م</span>
+                    <span className={`block ${cls}`}>{hint}</span>
+                  </p>
+                );
+              })()}
+            </div>
+            <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
+              className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
+              <RefreshCw size={15} className={gpsRefreshing ? "animate-spin" : ""} />
+            </button>
+          </div>
+          <p className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-danger" dir="rtl">
+            ⚠️ اتأكد إن خانة الـ GPS شغّالة كويس وبدقّة عالية قبل ما تبدأ — الموقع الدقيق مهم جداً في التشييك الصوتي واليدوي.
+          </p>
+          </>
+        )}
       </div>
 
       {/* ── ملف التشييك ── */}
