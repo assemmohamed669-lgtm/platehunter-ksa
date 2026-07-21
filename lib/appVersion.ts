@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.7.1";
+export const APP_VERSION = "0.8.0";
 export const UPDATE_NOTE =
-  "صفحة «المطلوب»: عمود «الحي» بقى يظهر في النتيجة (من شيت الداتا) جنب العنوان — في العرض والتصدير والمشاركة.";
+  "صفحة الفرز: زر «+ إضافة ملف داتا» — ترفع أكتر من ملف داتا وكل الفرز (جديد/كلي/مطلوب/لصق) بيشتغل عليهم كلهم مع بعض.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

@@ -57,6 +57,14 @@ export default function WantedPage() {
         getUploadedFile("local", "data"),
         getAllFieldCheckEntries().catch(() => [] as FieldCheckEntry[]),
       ]);
+      // ملفات الداتا الإضافية (data-2, data-3...) — بتتدمج مع الأساسي في الفرز.
+      const extraDataRecs: NonNullable<typeof dataRec>[] = [];
+      for (let n = 2; n < 100; n++) {
+        const rec = await getUploadedFile("local", `data-${n}`);
+        if (!rec) break;
+        extraDataRecs.push(rec);
+      }
+      const allDataRecs = [dataRec, ...extraDataRecs].filter(Boolean) as NonNullable<typeof dataRec>[];
 
       if (!checkRec) { setError("مفيش ملف تشييك (المطلوبين). ارفعه من صفحة التشييك الأول."); setSorting(false); return; }
       const checkCol = detectPlateColumn(checkRec.headers, checkRec.rows);
@@ -87,47 +95,47 @@ export default function WantedPage() {
       const colorOf = (norm: string) => (colorCheckCol ? String(checkRowByNorm.get(norm)?.[colorCheckCol] ?? "").trim() : "");
       const yearOf = (norm: string) => (yearCheckCol ? String(checkRowByNorm.get(norm)?.[yearCheckCol] ?? "").trim() : "");
 
-      // (١) مطابقة على شيت الداتا — بترتيب الداتا (مناطق تحت بعضها).
+      // (١) مطابقة على كل ملفات الداتا (الأساسي + الإضافية) — بترتيب الملفات ثم
+      // الداتا (مناطق تحت بعضها).
       const dRows: WantedRow[] = [];
-      if (dataRec) {
-        const dataCol = detectPlateColumn(dataRec.headers, dataRec.rows);
-        if (dataCol) {
-          // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/GPS/لون/سنة/تاريخ).
-          const resolved = resolveResultColumns(dataRec.headers, dataRec.rows, dataCol);
-          const srcOf = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
-          const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address"), distSrc = srcOf("district");
-          const gpsSrc = srcOf("gps"), colorSrc = srcOf("color"), yearSrc = srcOf("year"), dateSrc = srcOf("date");
-          let i = 0;
-          for (const row of dataRec.rows) {
-            const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
-            if (!norm || !wanted.has(norm)) continue;
-            const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
-            // GPS من عمود الداتا زي ما هو (رابط/إحداثيات بأي صيغة)، وإلا نمسح باقي الأعمدة.
-            const rawGps = val(gpsSrc);
-            let mapsLink = gpsCellToLink(rawGps);
-            let coords = gpsCellCoords(rawGps);
-            if (!mapsLink) {
-              const g = findGps(row);
-              if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
-            }
-            const brand = brandOf(norm) || val(brandSrc);
-            dRows.push({
-              id: `d${i++}`,
-              plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
-              norm,
-              type: val(typeSrc) || typeOfCheck(norm) || inferVehicleType(brand),
-              brand,
-              bank: bankOf(norm),
-              address: val(addrSrc),
-              district: val(distSrc),
-              color: colorOf(norm) || val(colorSrc),
-              year: yearOf(norm) || val(yearSrc),
-              date: val(dateSrc),
-              mapsLink,
-              lat: coords?.lat,
-              lng: coords?.lng,
-            });
+      let di = 0;
+      for (const rec of allDataRecs) {
+        const dataCol = detectPlateColumn(rec.headers, rec.rows);
+        if (!dataCol) continue;
+        // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/حي/GPS/لون/سنة/تاريخ) — لكل ملف.
+        const resolved = resolveResultColumns(rec.headers, rec.rows, dataCol);
+        const srcOf = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
+        const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address"), distSrc = srcOf("district");
+        const gpsSrc = srcOf("gps"), colorSrc = srcOf("color"), yearSrc = srcOf("year"), dateSrc = srcOf("date");
+        for (const row of rec.rows) {
+          const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
+          if (!norm || !wanted.has(norm)) continue;
+          const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
+          // GPS من عمود الداتا زي ما هو (رابط/إحداثيات بأي صيغة)، وإلا نمسح باقي الأعمدة.
+          const rawGps = val(gpsSrc);
+          let mapsLink = gpsCellToLink(rawGps);
+          let coords = gpsCellCoords(rawGps);
+          if (!mapsLink) {
+            const g = findGps(row);
+            if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
           }
+          const brand = brandOf(norm) || val(brandSrc);
+          dRows.push({
+            id: `d${di++}`,
+            plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
+            norm,
+            type: val(typeSrc) || typeOfCheck(norm) || inferVehicleType(brand),
+            brand,
+            bank: bankOf(norm),
+            address: val(addrSrc),
+            district: val(distSrc),
+            color: colorOf(norm) || val(colorSrc),
+            year: yearOf(norm) || val(yearSrc),
+            date: val(dateSrc),
+            mapsLink,
+            lat: coords?.lat,
+            lng: coords?.lng,
+          });
         }
       }
 

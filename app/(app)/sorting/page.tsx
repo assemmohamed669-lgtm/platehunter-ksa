@@ -128,6 +128,14 @@ export default function SortingPage() {
   const extraIdRef = useRef(1);                 // عدّاد لمفاتيح React ثابتة
   const extraHighWaterRef = useRef(1);          // أعلى رقم slot اتكتب (للتنظيف)
 
+  // ── ملفات داتا إضافية (زر "+ إضافة ملف داتا") — كل ملف بيشتغل زي الأول، وكل
+  // الفرز (جديد/كلي/مطلوب/لصق) بيتم على كل ملفات الداتا مدموجة. تتخزّن في slots
+  // data-2, data-3... فتفضل بعد إعادة فتح التطبيق. صندوق فاضي عادي — بيتخطّى.
+  type ExtraDataFile = { id: string; table: ExcelTable | null; file: File | null };
+  const [extraData, setExtraData] = useState<ExtraDataFile[]>([]);
+  const extraDataIdRef = useRef(1);
+  const extraDataHighWaterRef = useRef(1);
+
   // ── Check file (read from IDB, uploaded in صفحة التشييك) ──
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
@@ -211,6 +219,21 @@ export default function SortingPage() {
           }
           if (extras.length > 0) setExtraReferrals(extras);
         } catch { /* no extra referrals */ }
+        // ملفات الداتا الإضافية: slots متتابعة (data-2, data-3, ...).
+        try {
+          const extras: ExtraDataFile[] = [];
+          for (let n = 2; n < 100; n++) {
+            const rec = await getUploadedFile("local", `data-${n}`);
+            if (!rec) break;
+            extras.push({
+              id: `data-b${n}`,
+              table: { headers: rec.headers, rows: rec.rows },
+              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+            });
+            extraDataHighWaterRef.current = n;
+          }
+          if (extras.length > 0) setExtraData(extras);
+        } catch { /* no extra data files */ }
         // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
         try {
@@ -304,6 +327,23 @@ export default function SortingPage() {
             extraHighWaterRef.current = n;
           }
           setExtraReferrals(extras);
+          setResults(null); setSorted(false);
+        })();
+      } else if (slot.startsWith("data-")) {
+        // ملف داتا إضافي اتضاف — أعد قراءة كل ملفات الداتا الإضافية.
+        (async () => {
+          const extras: ExtraDataFile[] = [];
+          for (let n = 2; n < 100; n++) {
+            const rec = await getUploadedFile("local", `data-${n}`);
+            if (!rec) break;
+            extras.push({
+              id: `data-b${n}`,
+              table: { headers: rec.headers, rows: rec.rows },
+              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+            });
+            extraDataHighWaterRef.current = n;
+          }
+          setExtraData(extras);
           setResults(null); setSorted(false);
         })();
       }
@@ -572,6 +612,74 @@ export default function SortingPage() {
     setReferralBoxOpen(true);
   }
 
+  // ── ملفات الداتا الإضافية (نفس منطق الإحالات الإضافية، بس slots data-2, ...) ──
+  async function persistExtraDataSlots(arr: ExtraDataFile[]) {
+    const filled = arr.filter((e) => e.table && e.file);
+    for (let i = 0; i < filled.length; i++) {
+      const slot = `data-${i + 2}`;
+      const e = filled[i];
+      await saveUploadedFile({
+        key: `local:${slot}`, agentId: "local", slot,
+        fileName: e.file!.name, headers: e.table!.headers, rows: e.table!.rows,
+        uploadedAt: new Date().toISOString(), fileBlob: e.file!,
+      });
+    }
+    const lastWritten = filled.length + 1;
+    for (let n = lastWritten + 1; n <= extraDataHighWaterRef.current; n++) {
+      await deleteUploadedFile("local", `data-${n}`);
+    }
+    extraDataHighWaterRef.current = Math.max(lastWritten, 1);
+  }
+
+  function onExtraDataParsed(i: number, table: ExcelTable, file: File) {
+    setExtraData((prev) => {
+      const next = prev.map((e, idx) => (idx === i ? { ...e, table, file } : e));
+      void persistExtraDataSlots(next);
+      return next;
+    });
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
+  function clearExtraDataFile(i: number) {
+    setExtraData((prev) => {
+      const next = prev.map((e, idx) => (idx === i ? { ...e, table: null, file: null } : e));
+      void persistExtraDataSlots(next);
+      return next;
+    });
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
+  function clearExtraDataBox(i: number) {
+    setExtraData((prev) => {
+      const next = prev.filter((_, idx) => idx !== i);
+      void persistExtraDataSlots(next);
+      return next;
+    });
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
+  function addDataBox() {
+    setExtraData((prev) => [...prev, { id: `data-a${extraDataIdRef.current++}`, table: null, file: null }]);
+    setDataBoxOpen(true);
+  }
+
+  // كل مصادر الداتا (الأساسية + الإضافية) — كل مصدر بعمود لوحته. تُستخدم في كل
+  // مسارات الفرز عشان الفرز يتم على كل ملفات الداتا مدموجة.
+  function collectDataSources(): Array<{ rows: Record<string, string>[]; plateCol: string }> {
+    const srcs: Array<{ rows: Record<string, string>[]; plateCol: string }> = [];
+    if (dataTable && effectiveDataPlateCol) {
+      srcs.push({ rows: dataTable.rows, plateCol: effectiveDataPlateCol });
+    }
+    for (const ed of extraData) {
+      if (!ed.table) continue;
+      const arabicCol = detectArabicPlateColumn(ed.table.headers);
+      const plateCol = arabicCol ?? detectPlateColumn(ed.table.headers, ed.table.rows);
+      if (!plateCol) continue;
+      srcs.push({ rows: ed.table.rows, plateCol });
+    }
+    return srcs;
+  }
+
   // كل مصادر الإحالة (الأساسية + الإضافية) كـ ReferralSource للفرز الموحّد.
   function collectRefSources(): ReferralSource[] {
     const srcs: ReferralSource[] = [];
@@ -655,18 +763,22 @@ export default function SortingPage() {
         }
       }
       const matches: MatchResult[] = [];
-      const rows = dataTable.rows;
       const CHUNK = 16000;
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const end = Math.min(i + CHUNK, rows.length);
-        for (let j = i; j < end; j++) {
-          const dataRow = rows[j];
-          const n = normalizePlate(bankPlateToArabic(String(dataRow[effectiveDataPlateCol] ?? "")));
-          if (!n) continue;
-          const hit = refIndex.get(n);
-          if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm });
+      // نلف على كل ملفات الداتا (الأساسي + الإضافية) — كل واحد بعمود لوحته.
+      for (const src of collectDataSources()) {
+        const rows = src.rows;
+        const pc = src.plateCol;
+        for (let i = 0; i < rows.length; i += CHUNK) {
+          const end = Math.min(i + CHUNK, rows.length);
+          for (let j = i; j < end; j++) {
+            const dataRow = rows[j];
+            const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
+            if (!n) continue;
+            const hit = refIndex.get(n);
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm });
+          }
+          if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
-        if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
       }
       let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
@@ -707,12 +819,18 @@ export default function SortingPage() {
       // same way as the data file (not the referral file) — cars at the same
       // location sit adjacent in the data file, so this keeps them grouped.
       const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
-      for (let i = 0; i < dataTable.rows.length; i++) {
-        const row = dataTable.rows[i];
-        const n = normalizePlate(bankPlateToArabic(String(row[effectiveDataPlateCol] ?? "")));
-        if (!n) continue;
-        const arr = dataIndex.get(n);
-        if (arr) arr.push({ row, dataIdx: i }); else dataIndex.set(n, [{ row, dataIdx: i }]);
+      // كل ملفات الداتا (الأساسي + الإضافية) — عدّاد ترتيب عام يحافظ على ترتيب
+      // الملفات ورا بعض ثم الصفوف جوه كل ملف.
+      let gIdx = 0;
+      for (const src of collectDataSources()) {
+        const pc = src.plateCol;
+        for (const row of src.rows) {
+          const idx = gIdx++;
+          const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
+          if (!n) continue;
+          const arr = dataIndex.get(n);
+          if (arr) arr.push({ row, dataIdx: idx }); else dataIndex.set(n, [{ row, dataIdx: idx }]);
+        }
       }
       const matches: (MatchResult & { dataIdx: number })[] = [];
       for (const e of newEntries) {
@@ -908,7 +1026,16 @@ export default function SortingPage() {
   function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
     const tokens = tokenizePastedPlates(pasteText);
-    const matches = matchTokensAgainstRows(tokens, dataTable.rows, effectiveDataPlateCol);
+    // نطابق على كل ملفات الداتا (الأساسي + الإضافية) — كل واحد بعمود لوحته، مع
+    // إزاحة dataIdx عشان الترتيب يفضل ملف ورا ملف.
+    const matches: TokenMatch[] = [];
+    let base = 0;
+    for (const src of collectDataSources()) {
+      for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol)) {
+        matches.push({ ...m, dataIdx: m.dataIdx + base });
+      }
+      base += src.rows.length;
+    }
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
 
     // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
@@ -1008,7 +1135,7 @@ export default function SortingPage() {
       </button>
       {dataBoxOpen && (<>
       <FileUploadBox
-        title="ملف الداتا"
+        title={extraData.length > 0 ? "ملف الداتا 1" : "ملف الداتا"}
         hint="بيانات التفريغ الميداني"
         parsedFile={dataFile}
         parsedRowCount={dataTable?.rows.length ?? null}
@@ -1049,6 +1176,35 @@ export default function SortingPage() {
           )}
         </div>
       )}
+
+      {/* ملفات داتا إضافية (داتا ٢، ٣...) — بتتدمج كلها في نفس الفرز (جديد/كلي/
+          مطلوب/لصق). كل مربع مُضاف ليه زر «مسح المربع» يلغيه (الأول ثابت). */}
+      {extraData.map((ed, i) => (
+        <div key={ed.id} className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-xs font-bold text-muted">داتا إضافية {i + 2}</span>
+            <button onClick={() => clearExtraDataBox(i)} title="مسح هذا المربع"
+              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger">
+              <X size={13} /> مسح المربع
+            </button>
+          </div>
+          <FileUploadBox
+            title={`ملف الداتا ${i + 2}`}
+            hint="داتا إضافية تُدمج مع الأولى في نفس الفرز"
+            parsedFile={ed.file}
+            parsedRowCount={ed.table?.rows.length ?? null}
+            onParsed={(table, file) => onExtraDataParsed(i, table, file)}
+            onClear={() => clearExtraDataFile(i)}
+            showReplaceButtons
+          />
+        </div>
+      ))}
+
+      {/* زر إضافة ملف داتا جديد */}
+      <button onClick={addDataBox}
+        className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-primary/50 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10">
+        <Plus size={16} /> إضافة ملف داتا
+      </button>
       </>)}
 
       {/* ③ SORT MODE TABS */}
