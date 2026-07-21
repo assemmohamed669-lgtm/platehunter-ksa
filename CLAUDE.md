@@ -159,9 +159,9 @@ bankPlateToArabic("NKD 5678") // → "نكد5678"
 - threshold 88% مع first-char optimization (لوحات 7 أحرف)
 
 ### اختيار الأعمدة التلقائي — `matchesPreferred(h)`
-يختار: الماركة / طراز / صانع / Vehicle Name / GPS / النوع / الحي / اللون / سنة الصنع / Year Model
+يختار: الماركة / طراز / صانع / Vehicle Name / GPS / النوع / الحي / اللون / سنة الصنع / Year Model / **البنك** (بطلب المستخدم — بيجمّع محافظ من بنوك مختلفة)
 
-**لا يختار:** رقم الهيكل / Chassis Number / البنك / Agency / F-Account number
+**لا يختار:** رقم الهيكل / Chassis Number / Agency / F-Account number
 
 ### قراءة Excel — `parseExcelFile`
 - يفضّل الورقة المسماة **"تشييك"** على أول ورقة في الملف
