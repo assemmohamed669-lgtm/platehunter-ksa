@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, buildWantedIndex, anchorPlateToWanted, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -15,8 +15,6 @@ import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/l
 import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
-import { buildDeepgramQuery, pcm16FromFloat32 } from "@/lib/deepgramStream";
-import { segmentByGap, readDeepgramWords } from "@/lib/deepgramWords";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
@@ -424,8 +422,6 @@ export default function InstantCheckPage() {
   // ── Deepgram streaming (لو فيه مفتاح Deepgram — أدق تفريغ بالمصري) ──
   const dgSocketRef = useRef<WebSocket | null>(null);
   const dgRecorderRef = useRef<MediaRecorder | null>(null);
-  const dgCtxRef = useRef<AudioContext | null>(null);            // AudioContext لالتقاط PCM
-  const dgProcRef = useRef<ScriptProcessorNode | null>(null);    // ScriptProcessor لتحويل الصوت لـ PCM16
   const dgStreamRef = useRef<MediaStream | null>(null);
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -722,12 +718,6 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
-  // فهرس المطلوبين بالأرقام (٤ أرقام → لوحات ليها نفس الأرقام) — للتصحيح التلقائي
-  // الآمن: لو اللوحة اتسمعت غلط بحرف التباس واحد (ح↔ه، س↔ص، ق↔ك، د↔ط) لكن الأرقام
-  // صح ومرشّح وحيد → نثبّتها على لوحة القائمة. من غيره العربية المطلوبة بتفوت
-  // (فرق حرف على ٧ خانات = 85.7% < عتبة الـ fuzzy 88%).
-  const wantedIndex = useMemo(() => buildWantedIndex(checkIndex.keys()), [checkIndex]);
-
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -757,17 +747,6 @@ export default function InstantCheckPage() {
     if (exactRow) {
       fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
-    }
-
-    // تصحيح تلقائي آمن على القائمة: نفس الأرقام + فرق حرف التباس واحد + مرشّح
-    // وحيد → نثبّت على لوحة المطلوبين. عمره ما يخترع لوحة ولا يعمل «أقرب لوحة» أعمى.
-    const anchor = anchorPlateToWanted(normalized, wantedIndex);
-    if (anchor.corrected) {
-      const row = checkIndex.get(anchor.plate);
-      if (row) {
-        fireWantedAlert({ plate: anchor.plate, matchType: "exact", info: rowToAlertInfo(row) });
-        return { plate: anchor.plate, normalized: anchor.plate, found: true, matchType: "exact", row };
-      }
     }
 
     // Fuzzy fallback (88% threshold, first-char optimization)
@@ -1708,8 +1687,7 @@ export default function InstantCheckPage() {
     if (pttTimerRef.current) clearInterval(pttTimerRef.current);
     if (pttChunkTimerRef.current) clearInterval(pttChunkTimerRef.current);
     // نظّف بث Deepgram لو الصفحة اتقفلت والمايك شغّال.
-    try { if (dgProcRef.current) dgProcRef.current.onaudioprocess = null; dgProcRef.current?.disconnect(); } catch {}
-    try { void dgCtxRef.current?.close(); } catch {}
+    try { dgRecorderRef.current?.stop(); } catch {}
     try { dgSocketRef.current?.close(); } catch {}
     try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
   }, []);
@@ -1745,55 +1723,66 @@ export default function InstantCheckPage() {
   // (ar-EG) مع تعزيز حروف اللوحة (keyterm) — تفريغ لحظي مستمر بدون تقطيع/فجوات.
   // النتائج النهائية بتتغذّى على نفس محلّل الجلسة (متعدد اللوحات + carry-over).
   async function startDeepgramPtt(apiKey: string): Promise<boolean> {
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return false;
-    const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
-      .AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AC) return false;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      return false;
+    }
+    // اختار صيغة تسجيل مدعومة (WebView أندرويد يدعم webm/opus).
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]
+      .find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+    if (!mime) return false;
     try {
-      // صوت PCM خام (linear16) بدل Opus المضغوط: بيحافظ على تفاصيل الترددات العالية
-      // اللي بتفرّق الاحتكاكيات (س/ص/ش) — وهي أكتر مكان بيغلط فيه التفريغ (القياس:
-      // دقة الحروف ٢٧٪ مقابل الأرقام ٥٣٪). noiseSuppression مقفول عشان مايمسحش
-      // نفس التفاصيل دي؛ autoGainControl مفتوح يساعد المتكلّم البعيد في الشارع.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true },
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dgStreamRef.current = stream;
-      // بوابة الكلام (VAD): بتغذّي KeepAlive ومؤشّر "بيسمع" فقط.
+      // بوابة الكلام: نبعت الصوت وقت الكلام بس (الصمت مايتبعتش فمايتحسّبش). لو
+      // فشلت التهيئة بنسيبها null → بنبعت كل حاجة زي الأول (مايضيّعش لوحات).
       try { dgGateRef.current = createSpeechGate(stream); } catch { dgGateRef.current = null; }
       pttSessionStateRef.current = newSessionState();
       pttRowIdxRef.current = 0;
 
-      let ctx: AudioContext;
-      try { ctx = new AC(); } catch { try { stream.getTracks().forEach((t) => t.stop()); } catch {} return false; }
-      dgCtxRef.current = ctx;
-      const sampleRate = Math.round(ctx.sampleRate); // نبعت المعدّل الفعلي للسيرفر
-      const source = ctx.createMediaStreamSource(stream);
-      const proc = ctx.createScriptProcessor(4096, 1, 1);
-      dgProcRef.current = proc;
-      const mute = ctx.createGain(); // gain=0 عشان الرسم يشتغل من غير صدى مسموع
-      mute.gain.value = 0;
-
-      // إعدادات nova-3 المضبوطة للّوحات: PCM linear16 مونو + endpointing 1200 +
-      // utterance_end_ms + vad_events (بدل endpointing 100 اللي كان بيفتّت اللوحة
-      // لحروف/أرقام منفصلة). القرار مبني على قياس ٧٠ تسجيل حقيقي.
-      const url = `wss://api.deepgram.com/v1/listen?${buildDeepgramQuery({ sampleRate, keyterms: PLATE_LETTER_KEYTERMS })}`;
+      const params = new URLSearchParams({
+        model: "nova-3",
+        language: "ar",          // عربي عام — بيغطّي المصري والسعودي والعامية
+        interim_results: "true", // نتائج حيّة أثناء الكلام
+        smart_format: "false",
+        punctuate: "false",
+        numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
+        // endpointing أقصر (100ms بدل 300): لما المندوب يقول اللوحات بسرعة ورا بعض،
+        // Deepgram بيقفل كل لوحة في مقطع أقصر لوحدها بدل ما يلزقهم في مقطع طويل
+        // واحد (اللزق ده كان بيخلّيه يرمي/يخلط أرقام). لو لوحة اتقطعت نصّين
+        // (حروف / أرقام) الـ carry-over في sessionParser بيلحمها تاني — متأكّدين
+        // بالاختبار ( end-to-end: ["قلم","2470"] → قلم2470).
+        endpointing: "100",
+      });
+      for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
+      const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+      // المتصفح مايقدرش يبعت هيدر Authorization على WebSocket — Deepgram بيدعم
+      // تمرير المفتاح عبر الـ subprotocol: ["token", KEY].
       const ws = new WebSocket(url, ["token", apiKey]);
-      ws.binaryType = "arraybuffer";
       dgSocketRef.current = ws;
 
-      // كل فريم صوت → PCM16 → إرسال. proc مش موصّل غير بعد onopen، فمفيش
-      // فريمات تتبعت قبل ما الاتصال يفتح (بدل طابور pending بتاع Opus القديم).
-      proc.onaudioprocess = (e: AudioProcessingEvent) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        try { ws.send(pcm16FromFloat32(e.inputBuffer.getChannelData(0)).buffer); } catch { /* closed */ }
+      // ابدأ التسجيل فوراً (قبل ما الاتصال يفتح) عشان مانفقدش أول حرف أثناء فتح
+      // الاتصال (كان بيبدأ في onopen فيضيع أول ~نص ثانية). الأجزاء اللي تتسجّل
+      // قبل الفتح تتخزّن وتتبعت بالترتيب أول ما يفتح. إرسال متصل — تيار WebM
+      // مترابط فمنعش نرمي أجزاء.
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      dgRecorderRef.current = rec;
+      const pending: Blob[] = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size === 0) return;
+        if (ws.readyState === WebSocket.OPEN) {
+          while (pending.length) { try { ws.send(pending.shift()!); } catch {} }
+          ws.send(e.data);
+        } else {
+          pending.push(e.data); // الاتصال لسه بيفتح — خزّن بالترتيب
+        }
       };
+      rec.start(250); // يبعت جزء صوت كل 250ms
 
       ws.onopen = () => {
-        if (!isListeningRef.current) { try { ws.close(); } catch {} return; }
+        if (!isListeningRef.current) { try { ws.close(); } catch {} try { rec.stop(); } catch {} return; }
         dgReconnectsRef.current = 0; // اتصال ناجح → صفّر عدّاد إعادة الاتصال
-        source.connect(proc);
-        proc.connect(mute);
-        mute.connect(ctx.destination);
+        // فضّي أي أجزاء اتسجّلت قبل ما الاتصال يفتح.
+        while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch {} }
         // KeepAlive عشان Deepgram مايقفلش الاتصال في فترات الصمت.
         dgKeepAliveRef.current = setInterval(() => {
           const s = dgSocketRef.current;
@@ -1809,37 +1798,24 @@ export default function InstantCheckPage() {
       };
       ws.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(typeof ev.data === "string" ? ev.data : "");
-          if (!msg) return;
-          // UtteranceEnd (من utterance_end_ms): نهاية نطقة → فلّش اللوحة نهائياً
-          // في المحلّل (بدل ما تفضل معلّقة كـ carry).
-          if (msg.type === "UtteranceEnd") { processWhisperText("", true); return; }
+          const msg = JSON.parse(ev.data);
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
           setPttLiveText(text);
-          // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط). نستخدم
-          // توقيتات الكلمات لفصل اللوحات اللي اتقالت ورا بعض في نفس النتيجة (الفجوة
-          // بين لوحتين أطول من الفجوة بين حروف/أرقام نفس اللوحة) — بيمنع تلخبط أرقام
-          // لوحة مع حروف اللي بعدها. لو مفيش words نرجع للنص الكامل زي الأول.
-          if (msg.is_final) {
-            const words = readDeepgramWords(msg);
-            const segments = words.length > 0 ? segmentByGap(words) : [text];
-            for (const seg of segments) if (seg.trim()) processWhisperText(seg, false);
-          }
+          // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
+          if (msg.is_final) processWhisperText(text, false);
         } catch { /* رسالة مش JSON — تجاهل */ }
       };
       ws.onerror = () => setPttError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
-      // لو الاتصال قفل فجأة والمندوب لسه فاتح المايك → أعِد الاتصال تلقائياً.
-      // محدود بـ 5 محاولات؛ العدّاد بيتصفّر مع كل اتصال ناجح (في onopen).
+      // لو الاتصال قفل فجأة والمندوب لسه فاتح المايك → أعِد الاتصال تلقائياً (المفروض
+      // ميفصلش). محدود بـ 5 محاولات عشان مايعملش لوب لانهائي لو المفتاح غلط أو النت
+      // مقطوع؛ العدّاد بيتصفّر مع كل اتصال ناجح (في onopen).
       ws.onclose = () => {
         if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
         if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
-        // نضّف نودات الصوت الحالية (منعاً للتسريب) قبل أي إعادة اتصال.
-        try { proc.onaudioprocess = null; source.disconnect(); proc.disconnect(); mute.disconnect(); } catch {}
-        try { void ctx.close(); } catch {}
-        if (dgCtxRef.current === ctx) dgCtxRef.current = null;
-        if (dgProcRef.current === proc) dgProcRef.current = null;
         if (!isListeningRef.current) return; // المندوب أوقف بنفسه — مفيش إعادة اتصال
+        // نضّف تيار/مسجّل/بوابة القديمة قبل ما نبدأ واحدة جديدة (منعاً للتسريب).
+        try { rec.stop(); } catch {}
         try { stream.getTracks().forEach((t) => t.stop()); } catch {}
         try { dgGateRef.current?.close(); } catch {}
         dgGateRef.current = null;
@@ -2077,28 +2053,18 @@ export default function InstantCheckPage() {
       return;
     }
 
-    // مسار Deepgram شغّال؟ وقّف الالتقاط، ابعت Finalize، وفلّش المحلّل.
-    if (dgSocketRef.current || dgProcRef.current || dgStreamRef.current) {
+    // مسار Deepgram شغّال؟ وقّف المسجّل، اقفل السوكيت، وفلّش المحلّل.
+    if (dgSocketRef.current || dgRecorderRef.current || dgStreamRef.current) {
       if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
       if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
       try { dgGateRef.current?.close(); } catch {}
       dgGateRef.current = null;
-      // وقّف إرسال الصوت (نودات Web Audio) فوراً — مفيش صوت جديد بعد كده.
-      try { if (dgProcRef.current) dgProcRef.current.onaudioprocess = null; dgProcRef.current?.disconnect(); } catch {}
-      const sock = dgSocketRef.current;
-      const strm = dgStreamRef.current;
-      const actx = dgCtxRef.current;
-      dgProcRef.current = null; dgSocketRef.current = null; dgStreamRef.current = null; dgCtxRef.current = null; dgRecorderRef.current = null;
-      // Finalize: يجبر Deepgram يفرّغ آخر صوت متبقّي فمانفقدش آخر لوحة. نستنى شوية
-      // عشان النتيجة النهائية توصل وتتحلّل (onmessage لسه شغّال على sock) قبل القفل.
-      try { sock?.send(JSON.stringify({ type: "Finalize" })); } catch {}
-      setTimeout(() => {
-        try { sock?.send(JSON.stringify({ type: "CloseStream" })); } catch {}
-        try { sock?.close(); } catch {}
-        try { strm?.getTracks().forEach((t) => t.stop()); } catch {}
-        try { void actx?.close(); } catch {}
-        processWhisperText("", true); // flush أي لوحة مقطوعة بعد وصول النتيجة النهائية
-      }, 350);
+      try { dgRecorderRef.current?.stop(); } catch {}
+      try { dgSocketRef.current?.send(JSON.stringify({ type: "CloseStream" })); } catch {}
+      try { dgSocketRef.current?.close(); } catch {}
+      try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+      dgRecorderRef.current = null; dgSocketRef.current = null; dgStreamRef.current = null;
+      processWhisperText("", true); // flush أي لوحة مقطوعة في المحلّل
       return;
     }
 
