@@ -8,7 +8,7 @@ import { describe, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parsePlateFromTranscript, normalizePlate } from "@/lib/plateParser";
-import { comparePlate, scoreWithWantedCorrection, type Prediction } from "@/lib/deepgramBenchmark";
+import { comparePlate, scoreWithWantedCorrection, splitLettersDigits, type Prediction } from "@/lib/deepgramBenchmark";
 
 const BENCH_DIR = process.env.BENCH_DIR || "./bench";
 const P = join(BENCH_DIR, "format_transcripts.json");
@@ -17,7 +17,7 @@ const RUN = process.env.RUN_FMT_EVAL === "1" && existsSync(P);
 describe("Audio format comparison (m4a / opus / pcm)", () => {
   it.skipIf(!RUN)("letters/digits/exact لكل صيغة", () => {
     const data = JSON.parse(readFileSync(P, "utf8")) as Record<string, Record<string, string>>;
-    const formats = ["m4a", "opus", "pcm", "kw", "kw2", "kw3"];
+    const formats = ["m4a", "opus", "pcm", "kw", "kw2", "kw3", "aai"];
     const score: Record<string, { L: number; D: number; X: number; n: number; err: number }> = {};
     for (const f of formats) score[f] = { L: 0, D: 0, X: 0, n: 0, err: 0 };
 
@@ -55,5 +55,31 @@ describe("Audio format comparison (m4a / opus / pcm)", () => {
     out += `\n=== kw2 + تصحيح آمن بقائمة المطلوبين (مسار التشييك) ===\n`;
     out += `exact قبل التصحيح: ${p(im.before)}%   بعد التصحيح: ${p(im.after)}%   (اتصحّح ${im.corrected})\n`;
     process.stdout.write(out);
+
+    // اكتب حالات غلط kw2 (truth / raw / pred) لملف عشان نحلّل الأخطاء القابلة للإصلاح
+    const miss: string[] = [];
+    for (const [fn, row] of Object.entries(data)) {
+      const raw = row.kw2 ?? "";
+      const pred = raw.startsWith("__ERR__") ? "" : normalizePlate(parsePlateFromTranscript(raw).plate || "");
+      if (normalizePlate(pred) !== normalizePlate(row.truth)) {
+        miss.push(`${fn} | صح=${row.truth} | طلّع=${pred || "∅"} | خام='${raw}'`);
+      }
+    }
+    require("node:fs").writeFileSync(join(BENCH_DIR, "kw2_misses.txt"), miss.join("\n"), "utf8");
+
+    // هجين: الحروف من Deepgram (kw) + الأرقام من AssemblyAI (aai)
+    const plate = (raw: string) => raw && !raw.startsWith("__ERR__")
+      ? normalizePlate(parsePlateFromTranscript(raw).plate || "") : "";
+    let hEx = 0, hN = 0;
+    let out2 = "\n=== HYBRID (letters=Deepgram-kw, digits=AssemblyAI) ===\n";
+    for (const row of Object.values(data)) {
+      hN++;
+      const L = splitLettersDigits(plate(row.kw ?? "")).letters;
+      const D = splitLettersDigits(plate(row.aai ?? "")).digits;
+      const hybrid = L + D;
+      if (normalizePlate(hybrid) === normalizePlate(row.truth)) hEx++;
+    }
+    out2 += `exact: ${Math.round((hEx / hN) * 100)}%  (letters ceiling ~51%, digits ~89%)\n`;
+    process.stdout.write(out2);
   });
 });
