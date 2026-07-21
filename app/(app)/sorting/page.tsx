@@ -136,6 +136,11 @@ export default function SortingPage() {
   const extraDataIdRef = useRef(1);
   const extraDataHighWaterRef = useRef(1);
 
+  // اختيار أعمدة النتائج لكل مربع إضافي (داتا أو إحالة) — مفهرس بمعرّف المربع.
+  // كل مربع إضافي بقى ليه قسم «الأعمدة» بتاعه زي المربعات الأساسية.
+  const [extraColsSel, setExtraColsSel] = useState<Record<string, Set<string>>>({});
+  const [extraColsOpen, setExtraColsOpen] = useState<Set<string>>(new Set());
+
   // ── Check file (read from IDB, uploaded in صفحة التشييك) ──
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkPlateColOverride, setCheckPlateColOverride] = useState<string | null>(null);
@@ -217,7 +222,12 @@ export default function SortingPage() {
             });
             extraHighWaterRef.current = n;
           }
-          if (extras.length > 0) setExtraReferrals(extras);
+          if (extras.length > 0) {
+            setExtraReferrals(extras);
+            const sel: Record<string, Set<string>> = {};
+            for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("referral", e.table);
+            setExtraColsSel((cs) => ({ ...cs, ...sel }));
+          }
         } catch { /* no extra referrals */ }
         // ملفات الداتا الإضافية: slots متتابعة (data-2, data-3, ...).
         try {
@@ -232,7 +242,12 @@ export default function SortingPage() {
             });
             extraDataHighWaterRef.current = n;
           }
-          if (extras.length > 0) setExtraData(extras);
+          if (extras.length > 0) {
+            setExtraData(extras);
+            const sel: Record<string, Set<string>> = {};
+            for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("data", e.table);
+            setExtraColsSel((cs) => ({ ...cs, ...sel }));
+          }
         } catch { /* no extra data files */ }
         // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
@@ -327,6 +342,9 @@ export default function SortingPage() {
             extraHighWaterRef.current = n;
           }
           setExtraReferrals(extras);
+          const sel: Record<string, Set<string>> = {};
+          for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("referral", e.table);
+          setExtraColsSel((cs) => ({ ...cs, ...sel }));
           setResults(null); setSorted(false);
         })();
       } else if (slot.startsWith("data-")) {
@@ -344,6 +362,9 @@ export default function SortingPage() {
             extraDataHighWaterRef.current = n;
           }
           setExtraData(extras);
+          const sel: Record<string, Set<string>> = {};
+          for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("data", e.table);
+          setExtraColsSel((cs) => ({ ...cs, ...sel }));
           setResults(null); setSorted(false);
         })();
       }
@@ -416,26 +437,40 @@ export default function SortingPage() {
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals]);
 
-  // أعمدة الإحالة الإضافية اللي اختارها المستخدم من «أعمدة إضافية في النتائج».
-  // بتتقري من صف الإحالة وبتتلحق بأعمدة النتيجة الثابتة. كده «عنوان المحفظة»
-  // وأي عمود إحالة تاني OFF افتراضياً (مش في الـ٨ الثابتة) وقابلين للإظهار من هنا.
-  const extraReferralResultCols = useMemo<MergedResultColumn[]>(() =>
-    Array.from(referralExtraCols).map((col, i) => ({
-      id: `xref-${i}`, key: `xref-${col}`, label: col, source: "referral" as const, sourceCol: col,
-    })),
-  [referralExtraCols]);
+  // أعمدة الإحالة الإضافية المختارة — من المربع الأساسي (referralExtraCols) +
+  // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
+  // بأعمدة النتيجة. بنستبعد اللي ظاهر أصلاً في الأعمدة الثابتة (نفس المصدر).
+  const extraReferralResultCols = useMemo<MergedResultColumn[]>(() => {
+    const usedRef = new Set(resultCols.filter((c) => c.source === "referral").map((c) => c.sourceCol));
+    const picked = new Set<string>();
+    for (const h of referralExtraCols) picked.add(h);
+    for (const er of extraReferrals) {
+      if (!er.table) continue;
+      for (const h of extraColsSel[er.id] ?? []) picked.add(h);
+    }
+    return [...picked].filter((h) => !usedRef.has(h))
+      .map((col, i) => ({ id: `xref-${i}`, key: `xref-${col}`, label: col, source: "referral" as const, sourceCol: col }));
+  }, [referralExtraCols, extraReferrals, extraColsSel, resultCols]);
 
-  // أعمدة داتا إضافية اللي المندوب علّم عليها في «أعمدة النتائج» (زي «الملاحظة»)
-  // أو اللي إجبارية (isMandatory) — بتظهر في النتيجة. بنستبعد اللي ظاهر أصلاً في
-  // الأعمدة الثابتة (نفس عمود المصدر) عشان مايتكررش. كده أي عمود في الشيت يقدر
-  // المندوب يخليه يظهر بمجرد ما يعلّم عليه.
+  // أعمدة الداتا الإضافية المختارة — من المربع الأساسي (outputCols/الإجبارية) +
+  // كل مربع داتا إضافي (extraColsSel[ed.id]). بنستبعد اللي ظاهر أصلاً في الأعمدة
+  // الثابتة (نفس المصدر). كده أي عمود المندوب يعلّم عليه بيظهر في النتيجة.
   const extraDataResultCols = useMemo<MergedResultColumn[]>(() => {
-    if (!dataTable) return [];
     const usedData = new Set(resultCols.filter((c) => c.source === "data").map((c) => c.sourceCol));
-    return dataTable.headers
-      .filter((h) => h && h !== effectiveDataPlateCol && !usedData.has(h) && (isMandatory(h) || outputCols.has(h)))
+    const picked = new Set<string>();
+    if (dataTable) {
+      for (const h of dataTable.headers) {
+        if (h && h !== effectiveDataPlateCol && (isMandatory(h) || outputCols.has(h))) picked.add(h);
+      }
+    }
+    for (const ed of extraData) {
+      if (!ed.table) continue;
+      for (const h of ed.table.headers) if (isMandatory(h)) picked.add(h); // إجبارية من الملف الإضافي
+      for (const h of extraColsSel[ed.id] ?? []) picked.add(h);
+    }
+    return [...picked].filter((h) => !usedData.has(h))
       .map((col, i) => ({ id: `xdata-${i}`, key: `xdata-${col}`, label: col, source: "data" as const, sourceCol: col }));
-  }, [dataTable, resultCols, effectiveDataPlateCol, outputCols]);
+  }, [dataTable, resultCols, effectiveDataPlateCol, outputCols, extraData, extraColsSel]);
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
   // (عرض + تصدير + واتساب).
@@ -579,11 +614,13 @@ export default function SortingPage() {
   }
 
   function onExtraReferralParsed(i: number, table: ExcelTable, file: File) {
+    const id = extraReferrals[i]?.id;
     setExtraReferrals((prev) => {
       const next = prev.map((e, idx) => (idx === i ? { ...e, table, file } : e));
       void persistExtraSlots(next);
       return next;
     });
+    if (id) setExtraColsSel((cs) => ({ ...cs, [id]: defaultExtraCols("referral", table) }));
     setResults(null); setSorted(false); wipeSortResults();
   }
 
@@ -632,11 +669,13 @@ export default function SortingPage() {
   }
 
   function onExtraDataParsed(i: number, table: ExcelTable, file: File) {
+    const id = extraData[i]?.id;
     setExtraData((prev) => {
       const next = prev.map((e, idx) => (idx === i ? { ...e, table, file } : e));
       void persistExtraDataSlots(next);
       return next;
     });
+    if (id) setExtraColsSel((cs) => ({ ...cs, [id]: defaultExtraCols("data", table) }));
     setResults(null); setSorted(false); wipeSortResults();
   }
 
@@ -678,6 +717,27 @@ export default function SortingPage() {
       srcs.push({ rows: ed.table.rows, plateCol });
     }
     return srcs;
+  }
+
+  // الأعمدة المختارة افتراضياً لمربع إضافي (نفس منطق المربع الأساسي): للداتا =
+  // guessDefaultColumns، وللإحالة = الأعمدة المفضّلة (matchesPreferred).
+  function defaultExtraCols(kind: "data" | "referral", table: ExcelTable): Set<string> {
+    const arabicCol = detectArabicPlateColumn(table.headers);
+    const plateCol = arabicCol ?? detectPlateColumn(table.headers, table.rows);
+    if (kind === "data") return new Set(guessDefaultColumns(table.headers, plateCol));
+    return new Set(table.headers.filter((h) => h !== plateCol && matchesPreferred(h)));
+  }
+  // تعليم/إلغاء عمود في مربع إضافي — بيحدّث العرض فوراً (النتيجة زي ما هي، بس
+  // الأعمدة المعروضة بتتغير) زي المربع الأساسي بالظبط.
+  function toggleExtraCol(id: string, h: string) {
+    setExtraColsSel((prev) => {
+      const cur = new Set(prev[id] ?? []);
+      if (cur.has(h)) cur.delete(h); else cur.add(h);
+      return { ...prev, [id]: cur };
+    });
+  }
+  function toggleExtraColsOpen(id: string) {
+    setExtraColsOpen((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
 
   // كل مصادر الإحالة (الأساسية + الإضافية) كـ ReferralSource للفرز الموحّد.
@@ -1116,6 +1176,43 @@ export default function SortingPage() {
     setTimeout(() => setPasteRecordCopiedIdx(null), 1200);
   }
 
+  // قسم «الأعمدة» لأي مربع إضافي (داتا أو إحالة) — نفس شكل ومنطق المربع الأساسي.
+  function extraColsPicker(id: string, table: ExcelTable, kind: "data" | "referral") {
+    const arabicCol = detectArabicPlateColumn(table.headers);
+    const plateCol = arabicCol ?? detectPlateColumn(table.headers, table.rows);
+    const sel = extraColsSel[id] ?? new Set<string>();
+    const open = extraColsOpen.has(id);
+    const label = kind === "data" ? "الأعمدة" : "أعمدة إضافية في النتائج";
+    return (
+      <div className="rounded-xl border border-border bg-surface">
+        <button onClick={() => toggleExtraColsOpen(id)}
+          className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
+          <span>{label} — محدد: {sel.size}</span>
+          <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        </button>
+        {open && (
+          <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+            <p className="text-[11px] text-muted">
+              عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{plateCol ?? "—"}</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {table.headers.filter((h) => h !== plateCol).map((h) => {
+                const mandatory = kind === "data" && isMandatory(h);
+                const active = mandatory || sel.has(h);
+                return (
+                  <button key={h} onClick={() => { if (!mandatory) toggleExtraCol(id, h); }} disabled={mandatory}
+                    className={`rounded-full px-3 py-1 text-xs transition ${active ? (mandatory ? "bg-primary text-night font-bold opacity-80 cursor-default" : "bg-primary text-night font-bold") : "border border-border text-muted"}`}>
+                    {h}{mandatory ? " 🔒" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (!hydrated) return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
 
   return (
@@ -1197,6 +1294,7 @@ export default function SortingPage() {
             onClear={() => clearExtraDataFile(i)}
             showReplaceButtons
           />
+          {ed.table && extraColsPicker(ed.id, ed.table, "data")}
         </div>
       ))}
 
@@ -1292,6 +1390,7 @@ export default function SortingPage() {
             onClear={() => clearExtraReferralFile(i)}
             showReplaceButtons
           />
+          {er.table && extraColsPicker(er.id, er.table, "referral")}
         </div>
       ))}
 
