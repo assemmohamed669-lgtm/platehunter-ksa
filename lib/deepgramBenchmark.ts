@@ -8,7 +8,7 @@
  * (ح↔ه، س↔ص…) مش الأرقام، فبنقيس دقة الحروف والأرقام منفصلين عشان القرار يكون
  * مبني على المكان الحقيقي للخطأ.
  */
-import { normalizePlate, levenshtein } from "./plateParser";
+import { normalizePlate, levenshtein, buildWantedIndex, anchorPlateToWanted } from "./plateParser";
 
 export interface Prediction {
   file: string;
@@ -116,6 +116,35 @@ export function summarizeBenchmark(byModel: Record<string, Prediction[]>): Bench
     labeled,
     unlabeled: Math.max(0, maxFiles - labeled),
   };
+}
+
+export interface CorrectionImpact {
+  total: number;     // ملفات فيها truth
+  before: number;    // صح قبل التصحيح
+  after: number;     // صح بعد التصحيح الآمن
+  corrected: number; // عدد اللوحات اللي اتصحّحت فعلاً
+}
+
+/**
+ * يقيس مكسب التصحيح الآمن (anchorPlateToWanted) على مجموعة تنبؤات، باستخدام قائمة
+ * لوحات معروفة (المطلوبين). بيصحّح فقط: أرقام مطابقة تماماً + فرق حرف التباس واحد
+ * + مرشّح وحيد. دالة نقية — بتحاكي بالظبط اللي بيحصل في التشييك.
+ */
+export function scoreWithWantedCorrection(preds: Prediction[], wantedPlates: string[]): CorrectionImpact {
+  const index = buildWantedIndex(wantedPlates);
+  let total = 0, before = 0, after = 0, corrected = 0;
+  for (const p of preds) {
+    const truth = normalizePlate(p.truth ?? "");
+    if (!truth) continue;
+    total++;
+    const pred = normalizePlate(p.predicted || "");
+    if (pred === truth) before++;
+    const a = anchorPlateToWanted(pred, index);
+    const finalPlate = a.corrected ? a.plate : pred;
+    if (a.corrected && finalPlate !== pred) corrected++;
+    if (finalPlate === truth) after++;
+  }
+  return { total, before, after, corrected };
 }
 
 export interface AgreementPair {

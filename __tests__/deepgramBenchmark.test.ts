@@ -5,6 +5,7 @@ import {
   summarizeBenchmark,
   pairwiseAgreement,
   splitLettersDigits,
+  scoreWithWantedCorrection,
   type Prediction,
 } from "@/lib/deepgramBenchmark";
 
@@ -116,6 +117,31 @@ describe("summarizeBenchmark — يرتّب الموديلات ويختار ال
     expect(sum.best).toBeNull();
     expect(sum.labeled).toBe(0);
     expect(sum.scores.length).toBe(2);
+  });
+});
+
+describe("scoreWithWantedCorrection — تأثير التصحيح الآمن بقائمة المطلوبين", () => {
+  it("يصحّح فرق حرف التباس واحد (أرقام صح) ويرفع الدقة، ومايلمسش غلط الأرقام", () => {
+    const preds: Prediction[] = [
+      { file: "a", predicted: "دهق1234", truth: "دحق1234" }, // ه↔ح + أرقام صح → يتصحّح
+      { file: "b", predicted: "سصط5678", truth: "سصط5678" }, // صح أصلاً
+      { file: "c", predicted: "دحق9999", truth: "دحق1234" }, // أرقام غلط → مايتصحّحش
+    ];
+    const r = scoreWithWantedCorrection(preds, ["دحق1234", "سصط5678"]);
+    expect(r.total).toBe(3);
+    expect(r.before).toBe(1);     // b بس
+    expect(r.after).toBe(2);      // a اتصحّح + b
+    expect(r.corrected).toBe(1);  // a
+  });
+
+  it("مايصحّحش لو الحرف مش زوج التباس (تجنّب تطابق كاذب)", () => {
+    // ب vs د مش زوج التباس صوتي → مايتصحّحش رغم إن الأرقام مطابقة
+    const r = scoreWithWantedCorrection(
+      [{ file: "a", predicted: "بحق1234", truth: "دحق1234" }],
+      ["دحق1234"],
+    );
+    expect(r.after).toBe(0);
+    expect(r.corrected).toBe(0);
   });
 });
 

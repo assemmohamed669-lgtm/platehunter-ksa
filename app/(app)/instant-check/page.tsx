@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, buildWantedIndex, anchorPlateToWanted, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -16,6 +16,7 @@ import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { buildDeepgramQuery, pcm16FromFloat32 } from "@/lib/deepgramStream";
+import { segmentByGap, readDeepgramWords } from "@/lib/deepgramWords";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
@@ -721,6 +722,12 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
+  // فهرس المطلوبين بالأرقام (٤ أرقام → لوحات ليها نفس الأرقام) — للتصحيح التلقائي
+  // الآمن: لو اللوحة اتسمعت غلط بحرف التباس واحد (ح↔ه، س↔ص، ق↔ك، د↔ط) لكن الأرقام
+  // صح ومرشّح وحيد → نثبّتها على لوحة القائمة. من غيره العربية المطلوبة بتفوت
+  // (فرق حرف على ٧ خانات = 85.7% < عتبة الـ fuzzy 88%).
+  const wantedIndex = useMemo(() => buildWantedIndex(checkIndex.keys()), [checkIndex]);
+
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -750,6 +757,17 @@ export default function InstantCheckPage() {
     if (exactRow) {
       fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
+    }
+
+    // تصحيح تلقائي آمن على القائمة: نفس الأرقام + فرق حرف التباس واحد + مرشّح
+    // وحيد → نثبّت على لوحة المطلوبين. عمره ما يخترع لوحة ولا يعمل «أقرب لوحة» أعمى.
+    const anchor = anchorPlateToWanted(normalized, wantedIndex);
+    if (anchor.corrected) {
+      const row = checkIndex.get(anchor.plate);
+      if (row) {
+        fireWantedAlert({ plate: anchor.plate, matchType: "exact", info: rowToAlertInfo(row) });
+        return { plate: anchor.plate, normalized: anchor.plate, found: true, matchType: "exact", row };
+      }
     }
 
     // Fuzzy fallback (88% threshold, first-char optimization)
@@ -1799,8 +1817,15 @@ export default function InstantCheckPage() {
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
           setPttLiveText(text);
-          // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
-          if (msg.is_final) processWhisperText(text, false);
+          // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط). نستخدم
+          // توقيتات الكلمات لفصل اللوحات اللي اتقالت ورا بعض في نفس النتيجة (الفجوة
+          // بين لوحتين أطول من الفجوة بين حروف/أرقام نفس اللوحة) — بيمنع تلخبط أرقام
+          // لوحة مع حروف اللي بعدها. لو مفيش words نرجع للنص الكامل زي الأول.
+          if (msg.is_final) {
+            const words = readDeepgramWords(msg);
+            const segments = words.length > 0 ? segmentByGap(words) : [text];
+            for (const seg of segments) if (seg.trim()) processWhisperText(seg, false);
+          }
         } catch { /* رسالة مش JSON — تجاهل */ }
       };
       ws.onerror = () => setPttError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
