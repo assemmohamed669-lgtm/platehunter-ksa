@@ -21,7 +21,8 @@ export interface WantedRow {
   type: string;      // نوع السيارة
   brand: string;     // الماركة
   bank?: string;     // البنك/الجهة المالكة (من شيت التشييك) — يظهر لو موجود
-  address: string;   // العنوان (شارع/حي)
+  address: string;   // العنوان (شارع)
+  district?: string; // الحي (من شيت الداتا/السجلات) — يظهر لو موجود
   color: string;     // اللون
   year: string;      // سنة الصنع
   date: string;      // تاريخ التسجيل
@@ -43,6 +44,7 @@ function rowText(r: WantedRow): string {
   if (r.brand) lines.push(`الماركة: ${r.brand}`);
   if (r.bank) lines.push(`البنك: ${r.bank}`);
   if (r.address) lines.push(`العنوان: ${r.address}`);
+  if (r.district) lines.push(`الحي: ${r.district}`);
   if (r.color) lines.push(`اللون: ${r.color}`);
   if (r.year) lines.push(`سنة الصنع: ${r.year}`);
   if (r.date) lines.push(`تاريخ التسجيل: ${r.date}`);
@@ -115,6 +117,7 @@ export default function WantedResultsTable({
 
   const allSel = selected.size === rows.length;
   const showBank = rows.some((r) => r.bank && r.bank.trim()); // عمود البنك يظهر لو الشيت فيه بنك
+  const showDistrict = rows.some((r) => r.district && r.district.trim()); // عمود الحي يظهر لو موجود
   const px = zoomFontPx(zoom);
   const TH = "border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap";
   const TD = "border-l border-border px-3 py-2 whitespace-nowrap text-ink";
@@ -144,6 +147,7 @@ export default function WantedResultsTable({
               <th className={TH}>الماركة</th>
               {showBank && <th className={TH}>البنك</th>}
               <th className={TH}>العنوان</th>
+              {showDistrict && <th className={TH}>الحي</th>}
               <th className={TH}>GPS</th>
               <th className={TH}>اللون</th>
               <th className={TH}>سنة الصنع</th>
@@ -168,6 +172,7 @@ export default function WantedResultsTable({
                   <td className={TD}>{r.brand || "—"}</td>
                   {showBank && <td className={TD}>{r.bank || "—"}</td>}
                   <td className={TD}>{r.address || "—"}</td>
+                  {showDistrict && <td className={TD}>{r.district || "—"}</td>}
                   <td className="border-l border-border px-3 py-2">
                     {r.mapsLink ? (
                       <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>

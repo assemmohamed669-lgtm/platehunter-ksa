@@ -95,7 +95,7 @@ export default function WantedPage() {
           // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/GPS/لون/سنة/تاريخ).
           const resolved = resolveResultColumns(dataRec.headers, dataRec.rows, dataCol);
           const srcOf = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
-          const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address");
+          const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address"), distSrc = srcOf("district");
           const gpsSrc = srcOf("gps"), colorSrc = srcOf("color"), yearSrc = srcOf("year"), dateSrc = srcOf("date");
           let i = 0;
           for (const row of dataRec.rows) {
@@ -119,6 +119,7 @@ export default function WantedPage() {
               brand,
               bank: bankOf(norm),
               address: val(addrSrc),
+              district: val(distSrc),
               color: colorOf(norm) || val(colorSrc),
               year: yearOf(norm) || val(yearSrc),
               date: val(dateSrc),
@@ -138,7 +139,9 @@ export default function WantedPage() {
         if (!norm || !wanted.has(norm)) continue;
         const brand = brandOf(norm);
         const recType = (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim();
-        const address = [(e.row?.["الشارع"] || "").trim(), (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim()].filter(Boolean).join(" - ");
+        // العنوان (الشارع) والحي عمودين منفصلين — زي نافذة الداتا بالظبط.
+        const address = (e.row?.["الشارع"] || e.row?.["العنوان"] || "").trim();
+        const district = (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim();
         rRows.push({
           id: `r${j++}`,
           plate: bankPlateToArabic(e.plate).trim() || e.plate,
@@ -147,6 +150,7 @@ export default function WantedPage() {
           brand,
           bank: bankOf(norm),
           address,
+          district,
           color: colorOf(norm),
           year: yearOf(norm),
           date: (e.row?.["التاريخ"] || e.row?.["تاريخ التسجيل"] || "").trim(),
@@ -177,16 +181,19 @@ export default function WantedPage() {
   function shareAll(rows: WantedRow[], label: string) {
     if (rows.length === 0) return;
     const text = `*${label} (${rows.length})*\n\n` + rows.map((r, i) =>
-      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.bank ? ` — ${r.bank}` : ""}${r.address ? ` — ${r.address}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
+      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.bank ? ` — ${r.bank}` : ""}${r.address ? ` — ${r.address}` : ""}${r.district ? ` — ${r.district}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
   async function exportExcel(rows: WantedRow[], name: string) {
     if (rows.length === 0) return;
     const hasBank = rows.some((r) => r.bank && r.bank.trim());
+    const hasDistrict = rows.some((r) => r.district && r.district.trim());
     const out = rows.map((r) => ({
       "رقم اللوحة": r.plate, "نوع السيارة": r.type, "الماركة": r.brand,
       ...(hasBank ? { "البنك": r.bank ?? "" } : {}),
-      "العنوان": r.address, "GPS": r.mapsLink, "اللون": r.color,
+      "العنوان": r.address,
+      ...(hasDistrict ? { "الحي": r.district ?? "" } : {}),
+      "GPS": r.mapsLink, "اللون": r.color,
       "سنة الصنع": r.year, "تاريخ التسجيل": r.date,
     }));
     const { blob, ext } = buildSpreadsheetBlob(out, name);
