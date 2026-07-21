@@ -20,6 +20,7 @@ export interface WantedRow {
   norm: string;      // مطبّعة — للتجميع/التلوين
   type: string;      // نوع السيارة
   brand: string;     // الماركة
+  bank?: string;     // البنك/الجهة المالكة (من شيت التشييك) — يظهر لو موجود
   address: string;   // العنوان (شارع/حي)
   color: string;     // اللون
   year: string;      // سنة الصنع
@@ -40,6 +41,7 @@ function rowText(r: WantedRow): string {
   const lines = [`🚗 ${r.plate}`];
   if (r.type) lines.push(`نوع السيارة: ${r.type}`);
   if (r.brand) lines.push(`الماركة: ${r.brand}`);
+  if (r.bank) lines.push(`البنك: ${r.bank}`);
   if (r.address) lines.push(`العنوان: ${r.address}`);
   if (r.color) lines.push(`اللون: ${r.color}`);
   if (r.year) lines.push(`سنة الصنع: ${r.year}`);
@@ -112,6 +114,7 @@ export default function WantedResultsTable({
   if (rows.length === 0) return <p className="py-4 text-center text-xs text-muted">مفيش نتايج.</p>;
 
   const allSel = selected.size === rows.length;
+  const showBank = rows.some((r) => r.bank && r.bank.trim()); // عمود البنك يظهر لو الشيت فيه بنك
   const px = zoomFontPx(zoom);
   const TH = "border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap";
   const TD = "border-l border-border px-3 py-2 whitespace-nowrap text-ink";
@@ -139,6 +142,7 @@ export default function WantedResultsTable({
               <th className={TH}>رقم اللوحة</th>
               <th className={TH}>نوع السيارة</th>
               <th className={TH}>الماركة</th>
+              {showBank && <th className={TH}>البنك</th>}
               <th className={TH}>العنوان</th>
               <th className={TH}>GPS</th>
               <th className={TH}>اللون</th>
@@ -162,6 +166,7 @@ export default function WantedResultsTable({
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
                   <td className={TD}>{r.type || "—"}</td>
                   <td className={TD}>{r.brand || "—"}</td>
+                  {showBank && <td className={TD}>{r.bank || "—"}</td>}
                   <td className={TD}>{r.address || "—"}</td>
                   <td className="border-l border-border px-3 py-2">
                     {r.mapsLink ? (

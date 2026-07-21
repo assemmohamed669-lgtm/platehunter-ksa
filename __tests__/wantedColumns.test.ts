@@ -31,6 +31,13 @@ describe("resolveCheckColumns", () => {
     expect(resolveCheckColumns(["اللوحة", "البنك"]).bankCol).toBe("البنك");
     expect(resolveCheckColumns(["Plate", "Agency"]).bankCol).toBe("Agency");
     expect(resolveCheckColumns(["اللوحة", "جهة التمويل"]).bankCol).toBe("جهة التمويل");
+    expect(resolveCheckColumns(["اللوحة", "نوع البنك"]).bankCol).toBe("نوع البنك");
+  });
+
+  it("«الشركة المصنعة» = ماركة مش بنك (مايتعدّش عمود ماركة كبنك)", () => {
+    const { brandCol, bankCol } = resolveCheckColumns(["اللوحة", "الشركة المصنعة"]);
+    expect(brandCol).toBe("الشركة المصنعة");
+    expect(bankCol).toBeNull();
   });
 
   it("مفيش أعمدة → كله null", () => {

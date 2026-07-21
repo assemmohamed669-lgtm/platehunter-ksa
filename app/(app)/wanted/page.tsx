@@ -65,7 +65,7 @@ export default function WantedPage() {
       // أعمدة الماركة / نوع السيارة / البنك من شيت التشييك.
       // ملاحظة: الموديل (النترا/بيكانتو...) بيتحسب «ماركة» حتى لو مكتوب في عمود «النوع»؛
       // و«نوع السيارة» بيتاخد من عمود نوع مستقل بس، وإلا بيتّستنتج من نص الماركة.
-      const { brandCol, typeCol: checkTypeCol } = resolveCheckColumns(checkRec.headers);
+      const { brandCol, typeCol: checkTypeCol, bankCol } = resolveCheckColumns(checkRec.headers);
       // اللون/سنة الصنع من شيت التشييك (بالاسم أو بالمحتوى — resolveResultColumns).
       const checkResolved = resolveResultColumns(checkRec.headers, checkRec.rows, checkCol);
       const checkSrc = (key: string) => checkResolved.find((c) => c.key === key)?.sourceCol ?? null;
@@ -82,6 +82,7 @@ export default function WantedPage() {
         if (!checkRowByNorm.has(norm)) checkRowByNorm.set(norm, r);
       }
       const brandOf = (norm: string) => (brandCol ? String(checkRowByNorm.get(norm)?.[brandCol] ?? "").trim() : "");
+      const bankOf = (norm: string) => (bankCol ? String(checkRowByNorm.get(norm)?.[bankCol] ?? "").trim() : "");
       const typeOfCheck = (norm: string) => (checkTypeCol ? String(checkRowByNorm.get(norm)?.[checkTypeCol] ?? "").trim() : "");
       const colorOf = (norm: string) => (colorCheckCol ? String(checkRowByNorm.get(norm)?.[colorCheckCol] ?? "").trim() : "");
       const yearOf = (norm: string) => (yearCheckCol ? String(checkRowByNorm.get(norm)?.[yearCheckCol] ?? "").trim() : "");
@@ -116,6 +117,7 @@ export default function WantedPage() {
               norm,
               type: val(typeSrc) || typeOfCheck(norm) || inferVehicleType(brand),
               brand,
+              bank: bankOf(norm),
               address: val(addrSrc),
               color: colorOf(norm) || val(colorSrc),
               year: yearOf(norm) || val(yearSrc),
@@ -143,6 +145,7 @@ export default function WantedPage() {
           norm,
           type: recType || typeOfCheck(norm) || inferVehicleType(brand),
           brand,
+          bank: bankOf(norm),
           address,
           color: colorOf(norm),
           year: yearOf(norm),
@@ -174,13 +177,15 @@ export default function WantedPage() {
   function shareAll(rows: WantedRow[], label: string) {
     if (rows.length === 0) return;
     const text = `*${label} (${rows.length})*\n\n` + rows.map((r, i) =>
-      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.address ? ` — ${r.address}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
+      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.bank ? ` — ${r.bank}` : ""}${r.address ? ` — ${r.address}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
   async function exportExcel(rows: WantedRow[], name: string) {
     if (rows.length === 0) return;
+    const hasBank = rows.some((r) => r.bank && r.bank.trim());
     const out = rows.map((r) => ({
       "رقم اللوحة": r.plate, "نوع السيارة": r.type, "الماركة": r.brand,
+      ...(hasBank ? { "البنك": r.bank ?? "" } : {}),
       "العنوان": r.address, "GPS": r.mapsLink, "اللون": r.color,
       "سنة الصنع": r.year, "تاريخ التسجيل": r.date,
     }));

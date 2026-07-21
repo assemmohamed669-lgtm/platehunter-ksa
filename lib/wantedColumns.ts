@@ -33,10 +33,14 @@ export interface CheckColumns {
  * - عمود نوع السيارة = عمود «نوع/فئة» — بشرط ما يكونش هو نفسه اللي اتاخد كماركة.
  */
 export function resolveCheckColumns(headers: string[]): CheckColumns {
-  const brandReal = findHeader(headers, ["ماركة", "الماركه", "صانع", "المصنّعة", "المصنعة", "vehicle name"]);
-  const modelCol = findHeader(headers, ["طراز", "موديل", "model"]);
-  const typeRaw = findHeader(headers, ["نوع", "فئة"]);
-  const bankCol = findHeader(headers, ["بنك", "البنك", "شرك", "جهة", "تمويل", "bank", "agency", "f-account"]);
+  // البنك الأول — «شرك» مقصود مش موجود (بيمسك «الشركة المصنعة» ماركة بالغلط).
+  const bankCol = findHeader(headers, ["البنك", "بنك", "جهة", "تمويل", "bank", "agency", "f-account"]);
+  // نستبعد عمود البنك من ترشيحات الماركة/النوع — عشان «نوع البنك» مايتحسبش «نوع
+  // سيارة» (بيطابق «نوع») ويتسرق من عمود البنك.
+  const pool = headers.filter((h) => h !== bankCol);
+  const brandReal = findHeader(pool, ["ماركة", "الماركه", "صانع", "المصنّعة", "المصنعة", "vehicle name"]);
+  const modelCol = findHeader(pool, ["طراز", "موديل", "model"]);
+  const typeRaw = findHeader(pool, ["نوع", "فئة"]);
 
   const brandCol = brandReal || modelCol || typeRaw;
   const typeCol = typeRaw && typeRaw !== brandCol ? typeRaw : null;
