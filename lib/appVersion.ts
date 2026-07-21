@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.6.6";
+export const APP_VERSION = "0.6.7";
 export const UPDATE_NOTE =
-  "الفرز: «عنوان المحفظة» مابقاش يظهر تلقائياً (تقدر تضيفه من «أعمدة إضافية في النتائج»)، والإكسيل بقى متحاذي لليمين (RTL) بالكامل.";
+  "الفرز: عمود «الحي» بقى يظهر في النتيجة مع «العنوان» (كانوا بيتلغبطوا في عمود واحد فالحي كان بيضيع).";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
