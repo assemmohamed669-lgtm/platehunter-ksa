@@ -171,6 +171,11 @@ export function resolveMergedResultColumns(
   const perTarget = new Map<string, Array<{ label: string; source: "data" | "referral"; sourceCol: string }>>();
   for (const src of sources) {
     for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
+      // «عنوان المحفظة» (عمود العنوان جاي من شيت الإحالة) = عنوان البنك/المدينة،
+      // مش موقع المندوب الميداني — فمش مفيد في نتيجة الفرز ومايظهرش تلقائياً.
+      // العنوان المفيد هو بتاع الداتا (موقع التفريغ). المندوب يقدر يضيف عنوان
+      // الإحالة يدوياً من «أعمدة الإحالة» لو حابب.
+      if (c.key === "address" && src.kind === "referral") continue;
       const arr = perTarget.get(c.key) ?? [];
       const label = arr.length === 0 ? c.label : `${c.label} (${src.kind === "referral" ? "المحفظة" : "الداتا"})`;
       arr.push({ label, source: src.kind, sourceCol: c.sourceCol });

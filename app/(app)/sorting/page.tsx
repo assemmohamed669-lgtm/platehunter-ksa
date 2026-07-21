@@ -16,7 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, type ResultColumnSource } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -375,6 +375,21 @@ export default function SortingPage() {
     }
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals]);
+
+  // أعمدة الإحالة الإضافية اللي اختارها المستخدم من «أعمدة إضافية في النتائج».
+  // بتتقري من صف الإحالة وبتتلحق بأعمدة النتيجة الثابتة. كده «عنوان المحفظة»
+  // وأي عمود إحالة تاني OFF افتراضياً (مش في الـ٨ الثابتة) وقابلين للإظهار من هنا.
+  const extraReferralResultCols = useMemo<MergedResultColumn[]>(() =>
+    Array.from(referralExtraCols).map((col, i) => ({
+      id: `xref-${i}`, key: `xref-${col}`, label: col, source: "referral" as const, sourceCol: col,
+    })),
+  [referralExtraCols]);
+
+  // كل أعمدة النتيجة = الثابتة + الإحالة الإضافية المختارة (عرض + تصدير + واتساب).
+  const allResultCols = useMemo(
+    () => [...resultCols, ...extraReferralResultCols],
+    [resultCols, extraReferralResultCols]
+  );
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
@@ -777,7 +792,7 @@ export default function SortingPage() {
     // نفس الـ٨ أعمدة الثابتة اللي في العرض (resultCols) — عشان الإكسيل/واتساب
     // يطلّعوا بنفس الترتيب والمحتوى بالظبط.
     const row: Record<string, unknown> = { "رقم اللوحة": plateForRow(r) };
-    for (const rc of resultCols) {
+    for (const rc of allResultCols) {
       row[rc.label] = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
     }
     row["الحالة"] = "مطلوبة";
@@ -1191,7 +1206,7 @@ export default function SortingPage() {
                   <tr className="bg-surface-2 text-muted">
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {resultCols.map((rc) => (
+                    {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
@@ -1217,7 +1232,7 @@ export default function SortingPage() {
                           </button>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        {resultCols.map((rc) => {
+                        {allResultCols.map((rc) => {
                           const val = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
                           return (
                             <td key={rc.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">

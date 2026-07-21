@@ -722,6 +722,15 @@ export async function buildColoredSortExcel(
     ws.getColumn(ci + 1).width = Math.min(Math.max(maxLen + 2, 10), 55);
   });
 
+  // محاذاة كل الخلايا لليمين + ترتيب قراءة عربي (RTL) — المحتوى عربي فالنص لازم
+  // يتحاذى يمين والعمود يُقرأ من اليمين. (views: rightToLeft بيقلب ترتيب الأعمدة،
+  // وده بيحاذي نص الخلايا نفسها.)
+  ws.eachRow((row) => {
+    row.eachCell((cell) => {
+      cell.alignment = { ...(cell.alignment ?? {}), horizontal: "right", vertical: "middle", readingOrder: "rtl" };
+    });
+  });
+
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
