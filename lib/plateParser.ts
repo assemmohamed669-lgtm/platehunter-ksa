@@ -1565,22 +1565,41 @@ export function detectPlateColumnByContent(
   let bestCol: string | null = null;
   let bestRatio = 0;
   let bestNonEmpty = 0;
+  let bestIsArabic = false;
 
   for (const header of headers) {
     let plateLike = 0;
     let nonEmpty = 0;
+    let arabicLetters = 0;
+    let latinLetters = 0;
     for (const row of sample) {
       const raw = String(row[header] ?? "").trim();
       if (!raw) continue;
       nonEmpty++;
-      if (cellLooksLikePlate(raw)) plateLike++;
+      if (cellLooksLikePlate(raw)) {
+        plateLike++;
+        for (let k = 0; k < raw.length; k++) {
+          const c = raw.charCodeAt(k);
+          if (c >= 0x0600 && c <= 0x06ff) arabicLetters++;
+          else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) latinLetters++;
+        }
+      }
     }
     if (nonEmpty === 0) continue;
     const ratio = plateLike / nonEmpty;
-    if (ratio > bestRatio || (ratio === bestRatio && nonEmpty > bestNonEmpty)) {
+    // عمود لوحاته بالحروف العربية — ده شكل العرض الصحيح للّوحة السعودية. العمود
+    // الإنجليزي البنكي (LUD, GHD…) بيبقى ترتيب حروفه معكوس عن العربي، ولو اتحوّل
+    // حرف‑بحرف بيطلع مقلوب (GHD→قهد بدل دهق). فعند تعادل النسبة نفضّل العربي.
+    const isArabic = arabicLetters > latinLetters;
+    if (
+      ratio > bestRatio ||
+      (ratio === bestRatio && isArabic && !bestIsArabic) ||
+      (ratio === bestRatio && isArabic === bestIsArabic && nonEmpty > bestNonEmpty)
+    ) {
       bestRatio = ratio;
       bestCol = header;
       bestNonEmpty = nonEmpty;
+      bestIsArabic = isArabic;
     }
   }
 
