@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.6.7";
+export const APP_VERSION = "0.6.8";
 export const UPDATE_NOTE =
-  "الفرز: عمود «الحي» بقى يظهر في النتيجة مع «العنوان» (كانوا بيتلغبطوا في عمود واحد فالحي كان بيضيع).";
+  "الفرز: أي عمود في الشيت (زي «الملاحظة») بقى يظهر في النتيجة لما تعلّم عليه من «أعمدة النتائج» — الاختيار بقى شغّال فعلاً.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

@@ -385,10 +385,23 @@ export default function SortingPage() {
     })),
   [referralExtraCols]);
 
-  // كل أعمدة النتيجة = الثابتة + الإحالة الإضافية المختارة (عرض + تصدير + واتساب).
+  // أعمدة داتا إضافية اللي المندوب علّم عليها في «أعمدة النتائج» (زي «الملاحظة»)
+  // أو اللي إجبارية (isMandatory) — بتظهر في النتيجة. بنستبعد اللي ظاهر أصلاً في
+  // الأعمدة الثابتة (نفس عمود المصدر) عشان مايتكررش. كده أي عمود في الشيت يقدر
+  // المندوب يخليه يظهر بمجرد ما يعلّم عليه.
+  const extraDataResultCols = useMemo<MergedResultColumn[]>(() => {
+    if (!dataTable) return [];
+    const usedData = new Set(resultCols.filter((c) => c.source === "data").map((c) => c.sourceCol));
+    return dataTable.headers
+      .filter((h) => h && h !== effectiveDataPlateCol && !usedData.has(h) && (isMandatory(h) || outputCols.has(h)))
+      .map((col, i) => ({ id: `xdata-${i}`, key: `xdata-${col}`, label: col, source: "data" as const, sourceCol: col }));
+  }, [dataTable, resultCols, effectiveDataPlateCol, outputCols]);
+
+  // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
+  // (عرض + تصدير + واتساب).
   const allResultCols = useMemo(
-    () => [...resultCols, ...extraReferralResultCols],
-    [resultCols, extraReferralResultCols]
+    () => [...resultCols, ...extraDataResultCols, ...extraReferralResultCols],
+    [resultCols, extraDataResultCols, extraReferralResultCols]
   );
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
