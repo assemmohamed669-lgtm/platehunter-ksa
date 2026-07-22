@@ -979,47 +979,63 @@ export default function SortingPage() {
     return ref || data;
   }
 
-  // صورة نتيجة الفرز كجدول (زي شيت إكسيل) — رؤوس أعمدة ثابتة + خانة لكل قيمة،
-  // وفوق الصفحة تاريخ ووقت الإنشاء. الترتيب اللي طلبه المستخدم:
-  // المطلوب (اللوحة) › نوع السيارة (داتا) › الماركة (موديل الإحالة) › الحي ›
-  // العنوان › اللون (المحفظة) › الملاحظات (الداتا).
-  function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string } {
+  // يحلّ حقول المشاركة (صورة + إكسيل) لكل صف نتيجة، بالترتيب اللي طلبه المستخدم:
+  // المطلوب (اللوحة) › نوع السيارة (داتا) › الماركة (موديل الإحالة) › البنك (لو
+  // موجود في الإحالة) › الحي › العنوان › GPS › اللون (المحفظة) › الملاحظات (الداتا).
+  function buildSortShareData() {
     const find = (key: string, source?: "data" | "referral") =>
       resultCols.find((c) => c.key === key && (source ? c.source === source : true));
     const dataType = find("type", "data");
-    // موديل/ماركة السيارة من الإحالة — ممكن يكون في عمود «الماركة» (→ brand) أو
-    // «نوع السيارة/type of car» (→ type). بنسحب الاتنين ونجمّعهم.
+    // موديل/ماركة السيارة من الإحالة — ممكن يكون في «الماركة» (→ brand) أو «نوع
+    // السيارة/type of car» (→ type). بنسحب الاتنين ونجمّعهم.
     const refBrand = find("brand", "referral") ?? find("brand");
     const refType = find("type", "referral");
     const dist = find("district");
     const addr = find("address");
     const color = find("color", "referral") ?? find("color");
+    const gps = find("gps");
     const notesCol = dataTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
+    // عمود البنك من شيت الإحالة (بنك/البنك/اسم البنك) — لو الشيت فيه بنك.
+    const bankCol = referralTable?.headers.find((h) => /بنك/.test(h)) ?? null;
     const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
       c ? String((c.source === "data" ? r.dataRow : r.referralRow)?.[c.sourceCol] ?? "").trim() : "";
 
-    const columns = ["المطلوب", "نوع السيارة", "الماركة", "الحي", "العنوان", "اللون", "الملاحظات"];
-    const rows = displayResults.map((r) => {
+    const rowsData = displayResults.map((r) => {
       const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i).join(" ");
-      return [
-        plateForRow(r),
-        valOf(r, dataType),
+      return {
+        plate: plateForRow(r),
+        type: valOf(r, dataType),
         model,
-        valOf(r, dist),
-        valOf(r, addr),
-        valOf(r, color),
-        notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
-      ];
+        bank: bankCol ? String(r.referralRow?.[bankCol] ?? "").trim() : "",
+        dist: valOf(r, dist),
+        addr: valOf(r, addr),
+        gps: valOf(r, gps),
+        color: valOf(r, color),
+        notes: notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
+      };
     });
+    const hasBank = rowsData.some((x) => x.bank);
+    return { rowsData, hasBank };
+  }
 
+  function shareSubtitle(): string {
     const now = new Date();
     const p2 = (n: number) => String(n).padStart(2, "0");
     let hh = now.getHours();
     const ampm = hh < 12 ? "ص" : "م";
     hh = hh % 12 || 12;
-    const subtitle = `تاريخ ووقت الإرسال: ${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} - ${p2(hh)}:${p2(now.getMinutes())} ${ampm}`;
-    return { columns, rows, subtitle };
+    return `تاريخ ووقت الإرسال: ${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} - ${p2(hh)}:${p2(now.getMinutes())} ${ampm}`;
+  }
+
+  // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك).
+  function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string } {
+    const { rowsData, hasBank } = buildSortShareData();
+    const columns = ["المطلوب", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "الحي", "العنوان", "اللون", "الملاحظات"];
+    const rows = rowsData.map((x) => [
+      x.plate, x.type, x.model, ...(hasBank ? [x.bank] : []), x.dist, x.addr, x.color, x.notes,
+    ]);
+    return { columns, rows, subtitle: shareSubtitle() };
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
@@ -1090,9 +1106,21 @@ export default function SortingPage() {
   // Colored xlsx, but falls back to a plain CSV if the xlsx build crashes on
   // the device WebView (loses the row colors, but the data always comes out).
   async function buildSortExcelBlob(): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
-    const rowObjects = matchedResults.map(buildRowObject);
+    // نفس ترتيب الصورة + عمود GPS (لينك الخريطة) + البنك لو موجود.
+    const { rowsData, hasBank } = buildSortShareData();
+    const rowObjects = rowsData.map((x) => ({
+      "المطلوب": x.plate,
+      "نوع السيارة": x.type,
+      "الماركة": x.model,
+      ...(hasBank ? { "البنك": x.bank } : {}),
+      "الحي": x.dist,
+      "العنوان": x.addr,
+      "GPS": x.gps,
+      "اللون": x.color,
+      "الملاحظات": x.notes,
+    }));
     try {
-      const rowColors = matchedResults.map((r) => {
+      const rowColors = displayResults.map((r) => {
         const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
         const idx = plateColorMap.get(k);
         return idx !== undefined ? DUPE_COLORS[idx].hex : null;
