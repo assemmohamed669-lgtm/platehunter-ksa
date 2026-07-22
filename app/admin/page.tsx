@@ -279,6 +279,8 @@ export default function AdminDashboard() {
                   <span className={act.online ? "font-bold text-green-500" : "text-muted"}>{act.label}</span>
                   <span className="text-muted"> · {a.phone || "بدون تليفون"}</span>
                 </p>
+                {/* إيميل المشترك تحت الاسم */}
+                {a.email && <p className="truncate text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.email}</p>}
               </div>
               {a.role === "agent" && (
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>

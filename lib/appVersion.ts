@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.9.2";
+export const APP_VERSION = "0.9.3";
 export const UPDATE_NOTE =
-  "لوحة الأدمن: علامة واتساب جنب كل مندوب ليه تليفون — دوس عليها تفتح شات الواتساب بتاعه على طول.";
+  "لوحة الأدمن: إيميل كل مشترك بقى ظاهر تحت اسمه في القائمة.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
