@@ -7,7 +7,7 @@
 import { describe, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { parsePlateFromTranscript, normalizePlate } from "@/lib/plateParser";
+import { parsePlateFromTranscript, extractMultiplePlates, normalizePlate } from "@/lib/plateParser";
 import { comparePlate, scoreWithWantedCorrection, splitLettersDigits, type Prediction } from "@/lib/deepgramBenchmark";
 
 const BENCH_DIR = process.env.BENCH_DIR || "./bench";
@@ -60,7 +60,9 @@ describe("Audio format comparison (m4a / opus / pcm)", () => {
     const miss: string[] = [];
     for (const [fn, row] of Object.entries(data)) {
       const raw = row.kw2 ?? "";
-      const pred = raw.startsWith("__ERR__") ? "" : normalizePlate(parsePlateFromTranscript(raw).plate || "");
+      if (raw.startsWith("__ERR__")) continue;
+      const plates = extractMultiplePlates(raw);
+      const pred = plates.length ? normalizePlate(plates[0].plate || "") : "";
       if (normalizePlate(pred) !== normalizePlate(row.truth)) {
         miss.push(`${fn} | صح=${row.truth} | طلّع=${pred || "∅"} | خام='${raw}'`);
       }
@@ -80,6 +82,23 @@ describe("Audio format comparison (m4a / opus / pcm)", () => {
       if (normalizePlate(hybrid) === normalizePlate(row.truth)) hEx++;
     }
     out2 += `exact: ${Math.round((hEx / hN) * 100)}%  (letters ceiling ~51%, digits ~89%)\n`;
+
+    // kw2 بمسار التطبيق الحي الحقيقي (extractMultiplePlates / atoms) بدل parsePlateFromTranscript
+    let aL = 0, aD = 0, aX = 0, aN = 0;
+    for (const row of Object.values(data)) {
+      const raw = row.kw2 ?? "";
+      if (raw.startsWith("__ERR__")) continue;
+      aN++;
+      const plates = extractMultiplePlates(raw);
+      const pred = plates.length ? normalizePlate(plates[0].plate || "") : "";
+      const c = comparePlate(pred, row.truth);
+      if (c.lettersCorrect) aL++;
+      if (c.digitsCorrect) aD++;
+      if (c.exact) aX++;
+    }
+    const ap = (x: number) => (aN ? Math.round((x / aN) * 100) : 0);
+    out2 += `\n=== kw2 بمسار التطبيق الحي (extractMultiplePlates) ===\n`;
+    out2 += `letters=${ap(aL)}%  digits=${ap(aD)}%  exact=${ap(aX)}%  (n=${aN})\n`;
     process.stdout.write(out2);
   });
 });

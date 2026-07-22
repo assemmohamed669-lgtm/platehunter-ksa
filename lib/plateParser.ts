@@ -20,7 +20,7 @@
 // way almost every take (زير, زيرو, زيرة, زيره, زيرا, زيرى). Match the whole
 // family as one standalone word instead of chasing each variant. The
 // lookbehind/lookahead keep it whole-word, so "وزير" (minister) is untouched.
-const ZERO_WORD_RE = /(?<![؀-ۿ])زير[وةهاى]?(?![؀-ۿ])/g;
+const ZERO_WORD_RE = /(?<![؀-ۿ])زير[وةهاىي]?(?![؀-ۿ])/g;
 
 // ─── Egyptian dialect → Saudi plate letter/digit mapping ─────────────────
 // المأمور يقول كل حرف كلمة لوحدها: "دال حه ره واحد اتنين تلاتة أربعة"

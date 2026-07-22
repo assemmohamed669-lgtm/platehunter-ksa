@@ -7,6 +7,15 @@
 import { describe, it, expect } from "vitest";
 import { extractMultiplePlates } from "@/lib/plateParser";
 
+describe("voiceAccuracy — نطق «زيري» للصفر (من قياس Deepgram الحقيقي)", () => {
+  it("«زيري» تُعامَل كصفر (Deepgram بيطلّعها بدل صفر أحياناً)", () => {
+    // حالة حقيقية: احد0250 اتفرّغت «الف حاء دال زيرو اتنين خمسة زيري»
+    const plates = extractMultiplePlates("الف حاء دال زيرو اتنين خمسة زيري");
+    expect(plates.length).toBeGreaterThan(0);
+    expect(plates[0].normalized).toBe("احد0250");
+  });
+});
+
 describe("voiceAccuracy — وقف الحشو الصامت بالأصفار", () => {
   it("لوحة بأقل من ٤ أرقام تتعلّم كـ«ناقصة» (uncertain) مش تتقدّم كأنها صح", () => {
     // المحرك سمع رقمين بس من الأربعة → مايصحّش نعرضها كلوحة مؤكّدة «دمك0056»
