@@ -1,5 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { parseEnabledFlag, resolveActiveDeepgramKey } from "@/lib/deepgramKey";
+import { parseEnabledFlag, resolveActiveDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
+
+describe("PLATE_LETTER_KEYTERMS — تحيّز Deepgram (رفع دقة اللوحة 21%→41% بالقياس)", () => {
+  it("فيه كل أسماء الحروف الـ17 الفصحى", () => {
+    for (const t of ["ألف","باء","حاء","دال","راء","سين","صاد","طاء","عين","قاف","كاف","لام","ميم","نون","هاء","واو","ياء"]) {
+      expect(PLATE_LETTER_KEYTERMS).toContain(t);
+    }
+  });
+  it("فيه كلمات الأرقام (اللي رفعت دقة الأرقام لـ76%)", () => {
+    for (const t of ["صفر","واحد","اتنين","تلاتة","اربعة","خمسة","ستة","سبعة","تمانية","تسعة"]) {
+      expect(PLATE_LETTER_KEYTERMS).toContain(t);
+    }
+  });
+  it("فيه النطق المصري للحروف (حه/به/ره/طه)", () => {
+    for (const t of ["حه","به","ره","طه","هه"]) {
+      expect(PLATE_LETTER_KEYTERMS).toContain(t);
+    }
+  });
+});
 
 describe("Deepgram enable flag — إيقاف/تشغيل مؤقت", () => {
   it("الافتراضي شغّال لما القيمة مش محدّدة (null)", () => {
