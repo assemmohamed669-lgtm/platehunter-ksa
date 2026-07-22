@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, Copy, Check,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -65,6 +65,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [emailsCopied, setEmailsCopied] = useState(false);
 
   // create form
   const [showCreate, setShowCreate] = useState(false);
@@ -129,6 +130,22 @@ export default function AdminDashboard() {
 
   const enriched = useMemo(() => agents.map((a) => ({ a, sub: subStatus(a.subscription_end) })), [agents]);
 
+  // كل إيميلات المشتركين (بدون تكرار). زر بينسخهم للكليپبورد دفعة واحدة.
+  const allEmails = useMemo(
+    () => [...new Set(agents.map((a) => (a.email ?? "").trim()).filter(Boolean))],
+    [agents]
+  );
+  async function copyAllEmails() {
+    if (allEmails.length === 0) { alert("مفيش إيميلات للنسخ."); return; }
+    try {
+      await navigator.clipboard.writeText(allEmails.join(", "));
+      setEmailsCopied(true);
+      setTimeout(() => setEmailsCopied(false), 2500);
+    } catch {
+      alert("تعذّر النسخ — انسخ يدوياً من قائمة المناديب.");
+    }
+  }
+
   // Super-admin first, then admins, then agents — alphabetical within each group.
   const rank = (a: AgentProfile) => (a.is_super ? 0 : a.role === "admin" ? 1 : 2);
 
@@ -192,6 +209,15 @@ export default function AdminDashboard() {
             </div>
           ))}
         </div>
+
+        {/* نسخ كل إيميلات المشتركين دفعة واحدة */}
+        <button onClick={copyAllEmails}
+          className={`flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold transition active:scale-[0.99] ${
+            emailsCopied ? "border-brand bg-brand/15 text-brand" : "border-border bg-surface text-ink hover:border-primary/50"
+          }`}>
+          {emailsCopied ? <Check size={16} /> : <Copy size={16} />}
+          {emailsCopied ? `اتنسخ ${allEmails.length} إيميل ✅` : `نسخ إيميلات المشتركين (${allEmails.length})`}
+        </button>
 
         {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
         {isSuper && (

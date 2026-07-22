@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.8.9";
+export const APP_VERSION = "0.9.0";
 export const UPDATE_NOTE =
-  "الفرز: «تاريخ التسجيل» بقى من الداتا بس — تاريخ المحفظة مابقاش يظهر في النتيجة/الصورة/الإكسيل.";
+  "لوحة الأدمن: زر «نسخ إيميلات المشتركين» بينسخ كل الإيميلات دفعة واحدة للكليپبورد.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
