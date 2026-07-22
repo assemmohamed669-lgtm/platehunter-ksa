@@ -988,6 +988,10 @@ export default function SortingPage() {
     const find = (key: string, source?: "data" | "referral") =>
       resultCols.find((c) => c.key === key && (source ? c.source === source : true));
     const dataType = find("type", "data");
+    // ماركة/موديل السيارة من الإحالة (كورولا/سوناتا/مرسيدس) — ممكن يكون العمود
+    // اسمه «الماركة» (→ brand) أو «نوع السيارة/type of car» (→ type)، فبنسحب
+    // الاتنين من الإحالة وبناخد اللي فيه قيمة.
+    const refBrand = find("brand", "referral") ?? find("brand");
     const refType = find("type", "referral");
     const dist = find("district");
     const addr = find("address");
@@ -996,9 +1000,12 @@ export default function SortingPage() {
     const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
       c ? String((c.source === "data" ? r.dataRow : r.referralRow)?.[c.sourceCol] ?? "").trim() : "";
     return displayResults.map((r) => {
+      // الماركة + النوع من الإحالة، بدون تكرار لو الاتنين بنفس القيمة.
+      const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i);
       const parts = [
         valOf(r, dataType),
-        valOf(r, refType),
+        ...model,
         valOf(r, dist),
         valOf(r, addr),
         valOf(r, color),
