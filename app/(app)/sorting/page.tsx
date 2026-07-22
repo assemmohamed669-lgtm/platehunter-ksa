@@ -1028,14 +1028,20 @@ export default function SortingPage() {
     return `تاريخ ووقت الإرسال: ${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} - ${p2(hh)}:${p2(now.getMinutes())} ${ampm}`;
   }
 
-  // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك).
-  function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string } {
+  // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك). اللوحات المكررة كل مجموعة
+  // بلون واحد (نفس ألوان الإكسيل) عشان تتميّز.
+  function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
     const { rowsData, hasBank } = buildSortShareData();
     const columns = ["المطلوب", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "الحي", "العنوان", "اللون", "الملاحظات"];
     const rows = rowsData.map((x) => [
       x.plate, x.type, x.model, ...(hasBank ? [x.bank] : []), x.dist, x.addr, x.color, x.notes,
     ]);
-    return { columns, rows, subtitle: shareSubtitle() };
+    const rowColors = displayResults.map((r) => {
+      const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+      const idx = plateColorMap.get(k);
+      return idx !== undefined ? DUPE_COLORS[idx].hex : null;
+    });
+    return { columns, rows, subtitle: shareSubtitle(), rowColors };
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {

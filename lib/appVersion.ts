@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.8.6";
+export const APP_VERSION = "0.8.7";
 export const UPDATE_NOTE =
-  "إكسيل الفرز المشترك بقى بنفس ترتيب الصورة (+GPS)، وعمود «البنك» بيظهر في الإكسيل والصورة لما شيت الإحالة فيه بنك — يبيّن كل سيارة تبع أي بنك.";
+  "صورة الفرز بقت تلوّن اللوحات المكررة بنفس اللون (كل مجموعة بنفس الأرقام لون واحد) — زي الإكسيل بالظبط.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

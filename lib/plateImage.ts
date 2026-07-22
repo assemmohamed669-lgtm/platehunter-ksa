@@ -184,6 +184,7 @@ export interface TableImageOptions {
   subtitle?: string;    // سطر تحت العنوان (تاريخ/وقت الإنشاء)
   columns: string[];    // رؤوس الأعمدة — RTL: الأول = أقصى اليمين
   rows: string[][];     // كل صف = قيم بترتيب columns
+  rowColors?: (string | null)[]; // لون خلفية كل صف (hex) — للوحات المكررة، محاذي لـ rows
   perImage?: number;    // أقصى عدد صفوف في الصورة قبل التقسيم
 }
 
@@ -199,6 +200,7 @@ const T_HEAD_FONT = "bold 15px system-ui, 'Segoe UI', Tahoma, sans-serif";
 
 function renderTableChunk(
   rows: string[][], opts: TableImageOptions, colW: number[], tableW: number, pageInfo: string,
+  rowColors?: (string | null)[],
 ): string {
   const totalW = tableW + T_PAD * 2;
   const innerW = colW.map((w) => w - T_CELL_PAD * 2);
@@ -261,7 +263,10 @@ function renderTableChunk(
   // الصفوف
   rows.forEach((row, i) => {
     const h = rowH[i];
-    if (i % 2 === 1) { ctx.fillStyle = COL.rowAlt; ctx.fillRect(T_PAD, y, tableW, h); }
+    // لون المكرر (لو موجود) بيغلب على التخطيط العادي — كل مجموعة لوحات مكررة لون.
+    const dup = rowColors?.[i];
+    if (dup) { ctx.fillStyle = dup; ctx.fillRect(T_PAD, y, tableW, h); }
+    else if (i % 2 === 1) { ctx.fillStyle = COL.rowAlt; ctx.fillRect(T_PAD, y, tableW, h); }
     row.forEach((_, ci) => {
       // العمود الأول (اللوحة/المطلوب) بولد وغامق للتمييز.
       ctx.font = ci === 0 ? "bold 16px system-ui, 'Segoe UI', Tahoma, sans-serif" : T_CELL_FONT;
@@ -308,14 +313,18 @@ export function renderTableImages(opts: TableImageOptions): string[] {
   const tableW = colW.reduce((a, b) => a + b, 0);
 
   const chunks: string[][][] = [];
-  for (let i = 0; i < opts.rows.length; i += perImage) chunks.push(opts.rows.slice(i, i + perImage));
-  if (chunks.length === 0) chunks.push([]);
+  const colorChunks: (string | null)[][] = [];
+  for (let i = 0; i < opts.rows.length; i += perImage) {
+    chunks.push(opts.rows.slice(i, i + perImage));
+    colorChunks.push((opts.rowColors ?? []).slice(i, i + perImage));
+  }
+  if (chunks.length === 0) { chunks.push([]); colorChunks.push([]); }
   const total = chunks.length;
   return chunks.map((chunk, idx) => {
     const pageInfo = total > 1
       ? `صفحة ${idx + 1} من ${total} · ${opts.rows.length} لوحة`
       : `${opts.rows.length} لوحة`;
-    return renderTableChunk(chunk, opts, colW, tableW, pageInfo);
+    return renderTableChunk(chunk, opts, colW, tableW, pageInfo, colorChunks[idx]);
   });
 }
 

@@ -30,7 +30,7 @@ interface Props {
   imageRows?: () => PlateImageRow[];
   /** بنّاء صورة جدول (زي شيت إكسيل) — رؤوس أعمدة + خانات. لو موجود بيتقدّم على
    *  imageRows وrows() في «إرسال كصورة». */
-  imageTable?: () => { columns: string[]; rows: string[][]; subtitle?: string };
+  imageTable?: () => { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] };
   className?: string;
 }
 
@@ -84,7 +84,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
       if (imageTable) {
         const t = imageTable();
         if (!t.rows.length) { alert("مفيش نتايج."); return; }
-        imgs = renderTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows });
+        imgs = renderTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows, rowColors: t.rowColors });
       } else {
         const imgRowData = imageRows ? imageRows() : (getRows() ?? []).map((x) => objToPlateRow(x));
         if (!imgRowData.length) { alert("مفيش نتايج."); return; }
