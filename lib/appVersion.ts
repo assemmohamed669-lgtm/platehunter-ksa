@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.8.8";
+export const APP_VERSION = "0.8.9";
 export const UPDATE_NOTE =
-  "الفرز: أضفنا «تاريخ التسجيل» (من الداتا) بعد العنوان في الصورة والإكسيل، واللوحات غير المكررة بقت خلفيتها بيضا (المكرر بس بيتلوّن).";
+  "الفرز: «تاريخ التسجيل» بقى من الداتا بس — تاريخ المحفظة مابقاش يظهر في النتيجة/الصورة/الإكسيل.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

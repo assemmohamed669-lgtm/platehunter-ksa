@@ -183,6 +183,9 @@ export function resolveMergedResultColumns(
       // العنوان المفيد هو بتاع الداتا (موقع التفريغ). المندوب يقدر يضيف عنوان
       // الإحالة يدوياً من «أعمدة الإحالة» لو حابب.
       if (c.key === "address" && src.kind === "referral") continue;
+      // «تاريخ التسجيل (المحفظة)» = تاريخ سجلّ البنك، مش تاريخ تفريغ المندوب —
+      // المفيد هو تاريخ الداتا. فمايظهرش تاريخ المحفظة في النتيجة (بطلب المستخدم).
+      if (c.key === "date" && src.kind === "referral") continue;
       const arr = perTarget.get(c.key) ?? [];
       const label = arr.length === 0 ? c.label : `${c.label} (${src.kind === "referral" ? "المحفظة" : "الداتا"})`;
       arr.push({ label, source: src.kind, sourceCol: c.sourceCol });
