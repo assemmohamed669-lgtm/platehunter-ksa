@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.9.3";
+export const APP_VERSION = "0.9.4";
 export const UPDATE_NOTE =
-  "لوحة الأدمن: إيميل كل مشترك بقى ظاهر تحت اسمه في القائمة.";
+  "لوحة الأدمن: رقم التليفون والإيميل بقوا كل واحد في سطر مستقل واضح تحت اسم المشترك.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

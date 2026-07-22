@@ -277,9 +277,9 @@ export default function AdminDashboard() {
                 </div>
                 <p className="truncate text-[11px]" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>
                   <span className={act.online ? "font-bold text-green-500" : "text-muted"}>{act.label}</span>
-                  <span className="text-muted"> · {a.phone || "بدون تليفون"}</span>
                 </p>
-                {/* إيميل المشترك تحت الاسم */}
+                {/* رقم التليفون + الإيميل — كل واحد في سطر مستقل تحت الاسم (واضحين) */}
+                <p className="truncate text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
                 {a.email && <p className="truncate text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.email}</p>}
               </div>
               {a.role === "agent" && (
