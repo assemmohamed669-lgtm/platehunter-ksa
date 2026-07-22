@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
+import { APP_VERSION } from "@/lib/appVersion";
 
 interface AgentProfile {
   id: string;
@@ -22,6 +23,7 @@ interface AgentProfile {
   last_seen: string | null;
   subscription_end: string | null;
   subscription_amount: number | null;
+  app_version: string | null;
   created_at: string;
 }
 
@@ -274,6 +276,12 @@ export default function AdminDashboard() {
                     <span className="flex items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand"><Clock size={10} /> تجربة</span>
                   )}
                   {!a.is_active && <span className="rounded-full bg-danger/10 px-1.5 py-0.5 text-[10px] text-danger">معطّل</span>}
+                  {/* نسخة البرنامج اللي المندوب شغّال بيها — أخضر=أحدث، برتقالي=قديمة، رمادي=غير معروفة */}
+                  {a.app_version
+                    ? (a.app_version === APP_VERSION
+                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-500">أحدث نسخة</span>
+                        : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-500" title={`المندوب على ${a.app_version} — الأحدث ${APP_VERSION}`}>نسخة قديمة {a.app_version}</span>)
+                    : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted">نسخة غير معروفة</span>}
                 </div>
                 <p className="truncate text-[11px]" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>
                   <span className={act.online ? "font-bold text-green-500" : "text-muted"}>{act.label}</span>
