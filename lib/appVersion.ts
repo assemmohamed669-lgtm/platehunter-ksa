@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.8.2";
+export const APP_VERSION = "0.8.3";
 export const UPDATE_NOTE =
-  "مشاركة كصورة: قبل ما تتعمل الصورة تقدر تحدد الحقول اللي تظهر فيها (تشيل الزيادة) — والاختيار بيتحفظ لكل الصور بعد كده.";
+  "صورة نتيجة الفرز: بقت بصيغة نظيفة بدون رؤوس عناوين — اللوحة ثم نوع الداتا ونوع الإحالة والحي والموقع واللون والملاحظات بس.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

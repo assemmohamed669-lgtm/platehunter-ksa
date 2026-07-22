@@ -24,6 +24,7 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import ShareSortButton from "@/components/ShareSortButton";
+import type { PlateImageRow } from "@/lib/plateImage";
 import { supabase } from "@/lib/supabaseClient";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -979,6 +980,34 @@ export default function SortingPage() {
     return ref || data;
   }
 
+  // صفوف صورة المشاركة لنتيجة الفرز — قيم بدون رؤوس عناوين بالترتيب اللي طلبه
+  // المستخدم: رقم اللوحة (كبير) ثم نوع الداتا • نوع الإحالة • الحي • العنوان •
+  // اللون • الملاحظات. الأعمدة بتتحل من resultCols (اللي بتظهر في النتيجة)، والقيم
+  // الفاضية بتتشال.
+  function buildSortImageRows(): PlateImageRow[] {
+    const find = (key: string, source?: "data" | "referral") =>
+      resultCols.find((c) => c.key === key && (source ? c.source === source : true));
+    const dataType = find("type", "data");
+    const refType = find("type", "referral");
+    const dist = find("district");
+    const addr = find("address");
+    const color = find("color", "referral") ?? find("color"); // اللون من المحفظة أولاً
+    const notesCol = dataTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
+    const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
+      c ? String((c.source === "data" ? r.dataRow : r.referralRow)?.[c.sourceCol] ?? "").trim() : "";
+    return displayResults.map((r) => {
+      const parts = [
+        valOf(r, dataType),
+        valOf(r, refType),
+        valOf(r, dist),
+        valOf(r, addr),
+        valOf(r, color),
+        notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
+      ].filter(Boolean);
+      return { plate: plateForRow(r), details: [], detailsText: parts.join("  •  ") };
+    });
+  }
+
   function buildRowObject(r: MatchResult): Record<string, unknown> {
     // نفس الـ٨ أعمدة الثابتة اللي في العرض (resultCols) — عشان الإكسيل/واتساب
     // يطلّعوا بنفس الترتيب والمحتوى بالظبط.
@@ -1561,6 +1590,7 @@ export default function SortingPage() {
               excelBlob = النسخة الملوّنة (تمييز المكرّرات) لملف الفرز. */}
           <ShareSortButton title="نتائج الفرز"
             rows={() => displayResults.map(buildRowObject)}
+            imageRows={buildSortImageRows}
             excelBlob={buildSortExcelBlob} />
           <button onClick={clearMainResults}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">

@@ -10,22 +10,12 @@
  * اللي كانت متفرّقة (فتح إكسيل + واتساب + صورة) في مكان واحد.
  */
 
-import { useState, useEffect, useMemo } from "react";
-import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2, CheckSquare, Square } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2 } from "lucide-react";
 import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { renderPlateImages, objToPlateRow, downloadDataUrl } from "@/lib/plateImage";
+import { renderPlateImages, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
 import { shareImageWithText } from "@/lib/share";
 import { pushBackHandler } from "@/lib/backStack";
-
-// الحقول المستبعَدة من صورة المشاركة — مخزّنة عشان تفضل عبر النوافذ والجلسات.
-const IMG_EXCLUDED_KEY = "ph:shareImageExcludedFields";
-function loadExcludedFields(): Set<string> {
-  try {
-    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(IMG_EXCLUDED_KEY) : null;
-    if (raw) return new Set(JSON.parse(raw) as string[]);
-  } catch { /* ignore */ }
-  return new Set();
-}
 
 interface Props {
   /** اسم الشيت + عنوان الصورة + أساس اسم الملف. */
@@ -35,6 +25,9 @@ interface Props {
   /** بنّاء ملف إكسيل مخصّص (اختياري) — عشان نحافظ على تلوين المكرّرات في نتائج
    *  الفرز الرئيسية. لو مش موجود بنبني شيت عادي من rows(). */
   excelBlob?: () => Promise<{ blob: Blob; ext: string }> | { blob: Blob; ext: string };
+  /** بنّاء صفوف الصورة المخصّصة (اختياري) — قيم جاهزة بدون رؤوس عناوين، بالترتيب
+   *  اللي يحدده المستخدم. لو مش موجود بنبني الصورة من rows() (كل الأعمدة). */
+  imageRows?: () => PlateImageRow[];
   className?: string;
 }
 
@@ -42,42 +35,15 @@ function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, rows, excelBlob, className }: Props) {
+export default function ShareSortButton({ title, rows, excelBlob, imageRows, className }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<string[] | null>(null);
-  // صفوف بانتظار اختيار الحقول قبل إنشاء الصورة (null = مفيش اختيار مفتوح).
-  const [pickRows, setPickRows] = useState<Record<string, unknown>[] | null>(null);
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
-  // زر الرجوع (الهاتف) يقفل الصور المعروضة الأول، ثم اختيار الحقول، ثم القائمة —
-  // بدل ما يطلّع من التطبيق أو ينقلك لصفحة تانية.
+  // زر الرجوع (الهاتف) يقفل الصور المعروضة الأول، ثم القائمة — بدل ما يطلّع من
+  // التطبيق أو ينقلك لصفحة تانية.
   useEffect(() => { if (images) return pushBackHandler(() => setImages(null)); }, [images]);
-  useEffect(() => { if (pickRows) return pushBackHandler(() => setPickRows(null)); }, [pickRows]);
   useEffect(() => { if (menuOpen) return pushBackHandler(() => setMenuOpen(false)); }, [menuOpen]);
-
-  // الحقول المتاحة في صورة المشاركة (كل الأعمدة ماعدا «رقم اللوحة» — دايماً بيظهر).
-  const availableFields = useMemo(() => {
-    if (!pickRows) return [] as string[];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const row of pickRows) {
-      for (const k of Object.keys(row)) {
-        if (k === "رقم اللوحة" || seen.has(k)) continue;
-        seen.add(k); out.push(k);
-      }
-    }
-    return out;
-  }, [pickRows]);
-
-  function toggleField(k: string) {
-    setExcluded((prev) => {
-      const n = new Set(prev);
-      if (n.has(k)) n.delete(k); else n.add(k);
-      try { localStorage.setItem(IMG_EXCLUDED_KEY, JSON.stringify([...n])); } catch { /* ignore */ }
-      return n;
-    });
-  }
 
   function getRows(): Record<string, unknown>[] | null {
     const r = rows();
@@ -106,32 +72,23 @@ export default function ShareSortButton({ title, rows, excelBlob, className }: P
     } catch { alert("تعذّرت المشاركة على واتساب."); } finally { setBusy(false); }
   }
 
-  // «إرسال كصورة» → يفتح اختيار الحقول الأول (المندوب يحدد اللي يظهر في الصورة).
-  function doImage() {
-    const r = getRows(); if (!r) return;
-    setMenuOpen(false);
-    setExcluded(loadExcludedFields()); // آخر اختيار محفوظ
-    setPickRows(r);
-  }
-
-  // ينشئ الصورة بالحقول المختارة فقط (بيشيل الحقول المستبعَدة من كل صف).
-  function generateImage() {
-    if (!pickRows) return;
-    const rowsFiltered = pickRows.map((row) => {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(row)) {
-        if (k === "رقم اللوحة" || !excluded.has(k)) out[k] = v;
+  async function doImage() {
+    setMenuOpen(false); setBusy(true);
+    try {
+      await new Promise((res) => setTimeout(res, 0)); // فسحة للـ spinner قبل الرسم المتزامن
+      // صفوف الصورة: المخصّصة (قيم بدون عناوين) لو موجودة، وإلا كل الأعمدة من rows().
+      let imgRowData: PlateImageRow[];
+      if (imageRows) {
+        imgRowData = imageRows();
+      } else {
+        const r = getRows(); if (!r) return;
+        imgRowData = r.map((x) => objToPlateRow(x));
       }
-      return out;
-    });
-    setPickRows(null); setBusy(true);
-    setTimeout(() => {
-      try {
-        const imgs = renderPlateImages({ title, rows: rowsFiltered.map((x) => objToPlateRow(x)) });
-        if (!imgs.length) { alert("مفيش نتايج."); return; }
-        setImages(imgs);
-      } catch { alert("تعذّر إنشاء الصورة."); } finally { setBusy(false); }
-    }, 0);
+      if (!imgRowData.length) { alert("مفيش نتايج."); return; }
+      const imgs = renderPlateImages({ title, rows: imgRowData });
+      if (!imgs.length) { alert("مفيش نتايج."); return; }
+      setImages(imgs);
+    } catch { alert("تعذّر إنشاء الصورة."); } finally { setBusy(false); }
   }
 
   function fileName(i: number, total: number): string {
@@ -172,44 +129,6 @@ export default function ShareSortButton({ title, rows, excelBlob, className }: P
                 className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5">
                 <ImageDown size={20} className="shrink-0 text-primary" />
                 <div><p className="text-sm font-bold text-ink">إرسال كصورة</p><p className="text-xs text-muted">حوّل النتائج لصورة وابعتها على واتساب</p></div>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* اختيار الحقول اللي تظهر في الصورة — قبل الإنشاء */}
-      {pickRows && (
-        <div className="fixed inset-0 z-[65] flex items-end justify-center bg-black/50 sm:items-center" onClick={() => setPickRows(null)}>
-          <div className="flex max-h-[85vh] w-full max-w-md flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <div>
-                <h3 className="text-sm font-bold text-ink">اختَر اللي يظهر في الصورة</h3>
-                <p className="text-[11px] text-muted mt-0.5">علّم على الحقول اللي عايزها تظهر. «رقم اللوحة» بيظهر دايماً.</p>
-              </div>
-              <button onClick={() => setPickRows(null)} className="shrink-0 text-muted hover:text-ink"><X size={18} /></button>
-            </div>
-            <div className="flex-1 overflow-auto px-4 py-3">
-              {availableFields.length === 0 ? (
-                <p className="text-xs text-muted">مفيش حقول إضافية — الصورة هتعرض رقم اللوحة بس.</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {availableFields.map((k) => {
-                    const on = !excluded.has(k);
-                    return (
-                      <button key={k} onClick={() => toggleField(k)}
-                        className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
-                        {on ? <CheckSquare size={13} /> : <Square size={13} />} {k}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <div className="border-t border-border p-3">
-              <button onClick={generateImage}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90">
-                <ImageDown size={16} /> إنشاء الصورة
               </button>
             </div>
           </div>

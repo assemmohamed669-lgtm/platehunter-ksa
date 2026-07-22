@@ -13,6 +13,8 @@ export interface PlateImageRow {
   plate: string;
   /** تفاصيل إضافية [العنوان، القيمة] — تظهر تحت اللوحة سطر صغير. */
   details: [string, string][];
+  /** سطر تفاصيل جاهز (قيم بدون رؤوس عناوين). لو موجود بيُستخدم بدل `details`. */
+  detailsText?: string;
 }
 
 export interface PlateImageOptions {
@@ -75,7 +77,7 @@ function renderChunk(rows: PlateImageRow[], title: string, pageInfo: string): st
   // مرحلة القياس: نحسب ارتفاع كل صف (سطر لوحة + سطور تفاصيل ملفوفة).
   measure.font = "16px system-ui, 'Segoe UI', Tahoma, sans-serif";
   const rowHeights = rows.map((r) => {
-    const dLines = wrapText(measure, detailText(r.details), detailMaxW);
+    const dLines = wrapText(measure, r.detailsText ?? detailText(r.details), detailMaxW);
     return ROW_PAD * 2 + PLATE_LH + dLines.length * DETAIL_LH;
   });
   const bodyH = rowHeights.reduce((a, b) => a + b, 0);
@@ -119,7 +121,7 @@ function renderChunk(rows: PlateImageRow[], title: string, pageInfo: string): st
     // التفاصيل
     ctx.fillStyle = COL.detail;
     ctx.font = "16px system-ui, 'Segoe UI', Tahoma, sans-serif";
-    const dLines = wrapText(ctx, detailText(r.details), WIDTH - PAD * 2);
+    const dLines = wrapText(ctx, r.detailsText ?? detailText(r.details), WIDTH - PAD * 2);
     let dy = y + ROW_PAD + PLATE_LH + DETAIL_LH / 2;
     for (const line of dLines) { ctx.fillText(line, rightX, dy); dy += DETAIL_LH; }
     // فاصل
