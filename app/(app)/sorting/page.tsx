@@ -992,6 +992,7 @@ export default function SortingPage() {
     const refType = find("type", "referral");
     const dist = find("district");
     const addr = find("address");
+    const dateCol = find("date", "data") ?? find("date"); // تاريخ التسجيل من الداتا
     const color = find("color", "referral") ?? find("color");
     const gps = find("gps");
     const notesCol = dataTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
@@ -1010,13 +1011,15 @@ export default function SortingPage() {
         bank: bankCol ? String(r.referralRow?.[bankCol] ?? "").trim() : "",
         dist: valOf(r, dist),
         addr: valOf(r, addr),
+        date: valOf(r, dateCol),
         gps: valOf(r, gps),
         color: valOf(r, color),
         notes: notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
       };
     });
     const hasBank = rowsData.some((x) => x.bank);
-    return { rowsData, hasBank };
+    const hasDate = rowsData.some((x) => x.date);
+    return { rowsData, hasBank, hasDate };
   }
 
   function shareSubtitle(): string {
@@ -1031,10 +1034,10 @@ export default function SortingPage() {
   // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك). اللوحات المكررة كل مجموعة
   // بلون واحد (نفس ألوان الإكسيل) عشان تتميّز.
   function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
-    const { rowsData, hasBank } = buildSortShareData();
-    const columns = ["المطلوب", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "الحي", "العنوان", "اللون", "الملاحظات"];
+    const { rowsData, hasBank, hasDate } = buildSortShareData();
+    const columns = ["المطلوب", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "الحي", "العنوان", ...(hasDate ? ["تاريخ التسجيل"] : []), "اللون", "الملاحظات"];
     const rows = rowsData.map((x) => [
-      x.plate, x.type, x.model, ...(hasBank ? [x.bank] : []), x.dist, x.addr, x.color, x.notes,
+      x.plate, x.type, x.model, ...(hasBank ? [x.bank] : []), x.dist, x.addr, ...(hasDate ? [x.date] : []), x.color, x.notes,
     ]);
     const rowColors = displayResults.map((r) => {
       const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
@@ -1113,7 +1116,7 @@ export default function SortingPage() {
   // the device WebView (loses the row colors, but the data always comes out).
   async function buildSortExcelBlob(): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
     // نفس ترتيب الصورة + عمود GPS (لينك الخريطة) + البنك لو موجود.
-    const { rowsData, hasBank } = buildSortShareData();
+    const { rowsData, hasBank, hasDate } = buildSortShareData();
     const rowObjects = rowsData.map((x) => ({
       "المطلوب": x.plate,
       "نوع السيارة": x.type,
@@ -1121,6 +1124,7 @@ export default function SortingPage() {
       ...(hasBank ? { "البنك": x.bank } : {}),
       "الحي": x.dist,
       "العنوان": x.addr,
+      ...(hasDate ? { "تاريخ التسجيل": x.date } : {}),
       "GPS": x.gps,
       "اللون": x.color,
       "الملاحظات": x.notes,
@@ -1568,7 +1572,8 @@ export default function SortingPage() {
                     // إعادة الحساب من effectiveReferralPlateCol بتفشل لصفوف الشيتات الإضافية.
                     const plateKey = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
                     const colorIdx = plateColorMap.get(plateKey);
-                    const rowBg = isSel ? "bg-primary/15" : colorIdx !== undefined ? DUPE_COLORS[colorIdx].tw : "bg-brand/5 hover:bg-brand/15";
+                    // المكرر بس بيتلوّن؛ اللي ملهاش شبيه تفضل بيضا (بدون أي لون) بطلب المستخدم.
+                    const rowBg = isSel ? "bg-primary/15" : colorIdx !== undefined ? DUPE_COLORS[colorIdx].tw : "hover:bg-brand/10";
                     return (
                       <tr key={i} className={`border-b border-border transition ${rowBg}`}>
                         <td className="border-l border-border px-2 py-2 text-center">

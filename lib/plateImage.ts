@@ -263,10 +263,10 @@ function renderTableChunk(
   // الصفوف
   rows.forEach((row, i) => {
     const h = rowH[i];
-    // لون المكرر (لو موجود) بيغلب على التخطيط العادي — كل مجموعة لوحات مكررة لون.
+    // اللوحة المكررة بس بتتلوّن (كل مجموعة لون). اللي ملهاش شبيه تفضل بيضا —
+    // بدون تخطيط ولا أي لون (بطلب المستخدم).
     const dup = rowColors?.[i];
     if (dup) { ctx.fillStyle = dup; ctx.fillRect(T_PAD, y, tableW, h); }
-    else if (i % 2 === 1) { ctx.fillStyle = COL.rowAlt; ctx.fillRect(T_PAD, y, tableW, h); }
     row.forEach((_, ci) => {
       // العمود الأول (اللوحة/المطلوب) بولد وغامق للتمييز.
       ctx.font = ci === 0 ? "bold 16px system-ui, 'Segoe UI', Tahoma, sans-serif" : T_CELL_FONT;

@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.8.7";
+export const APP_VERSION = "0.8.8";
 export const UPDATE_NOTE =
-  "صورة الفرز بقت تلوّن اللوحات المكررة بنفس اللون (كل مجموعة بنفس الأرقام لون واحد) — زي الإكسيل بالظبط.";
+  "الفرز: أضفنا «تاريخ التسجيل» (من الداتا) بعد العنوان في الصورة والإكسيل، واللوحات غير المكررة بقت خلفيتها بيضا (المكرر بس بيتلوّن).";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
