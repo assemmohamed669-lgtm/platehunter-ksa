@@ -13,7 +13,7 @@
 import { useState, useEffect } from "react";
 import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2 } from "lucide-react";
 import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { renderPlateImages, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
+import { renderPlateImages, renderTableImages, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
 import { shareImageWithText } from "@/lib/share";
 import { pushBackHandler } from "@/lib/backStack";
 
@@ -28,6 +28,9 @@ interface Props {
   /** بنّاء صفوف الصورة المخصّصة (اختياري) — قيم جاهزة بدون رؤوس عناوين، بالترتيب
    *  اللي يحدده المستخدم. لو مش موجود بنبني الصورة من rows() (كل الأعمدة). */
   imageRows?: () => PlateImageRow[];
+  /** بنّاء صورة جدول (زي شيت إكسيل) — رؤوس أعمدة + خانات. لو موجود بيتقدّم على
+   *  imageRows وrows() في «إرسال كصورة». */
+  imageTable?: () => { columns: string[]; rows: string[][]; subtitle?: string };
   className?: string;
 }
 
@@ -35,7 +38,7 @@ function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, rows, excelBlob, imageRows, className }: Props) {
+export default function ShareSortButton({ title, rows, excelBlob, imageRows, imageTable, className }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<string[] | null>(null);
@@ -76,16 +79,17 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, cla
     setMenuOpen(false); setBusy(true);
     try {
       await new Promise((res) => setTimeout(res, 0)); // فسحة للـ spinner قبل الرسم المتزامن
-      // صفوف الصورة: المخصّصة (قيم بدون عناوين) لو موجودة، وإلا كل الأعمدة من rows().
-      let imgRowData: PlateImageRow[];
-      if (imageRows) {
-        imgRowData = imageRows();
+      // الأولوية: جدول (زي إكسيل) → صفوف مخصّصة → كل الأعمدة من rows().
+      let imgs: string[];
+      if (imageTable) {
+        const t = imageTable();
+        if (!t.rows.length) { alert("مفيش نتايج."); return; }
+        imgs = renderTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows });
       } else {
-        const r = getRows(); if (!r) return;
-        imgRowData = r.map((x) => objToPlateRow(x));
+        const imgRowData = imageRows ? imageRows() : (getRows() ?? []).map((x) => objToPlateRow(x));
+        if (!imgRowData.length) { alert("مفيش نتايج."); return; }
+        imgs = renderPlateImages({ title, rows: imgRowData });
       }
-      if (!imgRowData.length) { alert("مفيش نتايج."); return; }
-      const imgs = renderPlateImages({ title, rows: imgRowData });
       if (!imgs.length) { alert("مفيش نتايج."); return; }
       setImages(imgs);
     } catch { alert("تعذّر إنشاء الصورة."); } finally { setBusy(false); }

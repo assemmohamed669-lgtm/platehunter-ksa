@@ -24,7 +24,6 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import ShareSortButton from "@/components/ShareSortButton";
-import type { PlateImageRow } from "@/lib/plateImage";
 import { supabase } from "@/lib/supabaseClient";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -980,39 +979,47 @@ export default function SortingPage() {
     return ref || data;
   }
 
-  // صفوف صورة المشاركة لنتيجة الفرز — قيم بدون رؤوس عناوين بالترتيب اللي طلبه
-  // المستخدم: رقم اللوحة (كبير) ثم نوع الداتا • نوع الإحالة • الحي • العنوان •
-  // اللون • الملاحظات. الأعمدة بتتحل من resultCols (اللي بتظهر في النتيجة)، والقيم
-  // الفاضية بتتشال.
-  function buildSortImageRows(): PlateImageRow[] {
+  // صورة نتيجة الفرز كجدول (زي شيت إكسيل) — رؤوس أعمدة ثابتة + خانة لكل قيمة،
+  // وفوق الصفحة تاريخ ووقت الإنشاء. الترتيب اللي طلبه المستخدم:
+  // المطلوب (اللوحة) › نوع السيارة (داتا) › الماركة (موديل الإحالة) › الحي ›
+  // العنوان › اللون (المحفظة) › الملاحظات (الداتا).
+  function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string } {
     const find = (key: string, source?: "data" | "referral") =>
       resultCols.find((c) => c.key === key && (source ? c.source === source : true));
     const dataType = find("type", "data");
-    // ماركة/موديل السيارة من الإحالة (كورولا/سوناتا/مرسيدس) — ممكن يكون العمود
-    // اسمه «الماركة» (→ brand) أو «نوع السيارة/type of car» (→ type)، فبنسحب
-    // الاتنين من الإحالة وبناخد اللي فيه قيمة.
+    // موديل/ماركة السيارة من الإحالة — ممكن يكون في عمود «الماركة» (→ brand) أو
+    // «نوع السيارة/type of car» (→ type). بنسحب الاتنين ونجمّعهم.
     const refBrand = find("brand", "referral") ?? find("brand");
     const refType = find("type", "referral");
     const dist = find("district");
     const addr = find("address");
-    const color = find("color", "referral") ?? find("color"); // اللون من المحفظة أولاً
+    const color = find("color", "referral") ?? find("color");
     const notesCol = dataTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
     const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
       c ? String((c.source === "data" ? r.dataRow : r.referralRow)?.[c.sourceCol] ?? "").trim() : "";
-    return displayResults.map((r) => {
-      // الماركة + النوع من الإحالة، بدون تكرار لو الاتنين بنفس القيمة.
+
+    const columns = ["المطلوب", "نوع السيارة", "الماركة", "الحي", "العنوان", "اللون", "الملاحظات"];
+    const rows = displayResults.map((r) => {
       const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i);
-      const parts = [
+        .filter((v, i, a) => a.indexOf(v) === i).join(" ");
+      return [
+        plateForRow(r),
         valOf(r, dataType),
-        ...model,
+        model,
         valOf(r, dist),
         valOf(r, addr),
         valOf(r, color),
         notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
-      ].filter(Boolean);
-      return { plate: plateForRow(r), details: [], detailsText: parts.join("  •  ") };
+      ];
     });
+
+    const now = new Date();
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    let hh = now.getHours();
+    const ampm = hh < 12 ? "ص" : "م";
+    hh = hh % 12 || 12;
+    const subtitle = `تاريخ ووقت الإرسال: ${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} - ${p2(hh)}:${p2(now.getMinutes())} ${ampm}`;
+    return { columns, rows, subtitle };
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
@@ -1597,7 +1604,7 @@ export default function SortingPage() {
               excelBlob = النسخة الملوّنة (تمييز المكرّرات) لملف الفرز. */}
           <ShareSortButton title="نتائج الفرز"
             rows={() => displayResults.map(buildRowObject)}
-            imageRows={buildSortImageRows}
+            imageTable={buildSortImageTable}
             excelBlob={buildSortExcelBlob} />
           <button onClick={clearMainResults}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
