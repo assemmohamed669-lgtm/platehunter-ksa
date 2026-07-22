@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -23,6 +23,15 @@ interface AgentProfile {
   subscription_end: string | null;
   subscription_amount: number | null;
   created_at: string;
+}
+
+// رابط واتساب من رقم المندوب — أرقام بس (بيشيل + والمسافات)، وبيشيل بادئة 00
+// الدولية. المفروض الرقم متسجّل بكود الدولة (مثلاً 9665… أو 20…).
+function waLink(phone: string | null): string | null {
+  if (!phone) return null;
+  let d = phone.replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  return d ? `https://wa.me/${d}` : null;
 }
 
 function addMonths(n: number): string {
@@ -240,8 +249,8 @@ export default function AdminDashboard() {
           {!loading && filtered.map(({ a, sub }) => {
             const act = activityStatus(a.last_seen);
             return (
-            <button key={a.id} onClick={() => router.push(`/admin/${a.id}`)}
-              className={`flex items-center gap-3 rounded-xl border p-3 text-right transition ${
+            <div key={a.id} role="button" tabIndex={0} onClick={() => router.push(`/admin/${a.id}`)}
+              className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-right transition ${
                 a.is_super ? "border-2 bg-black hover:opacity-90" : "border-border bg-surface hover:border-primary/50"
               }`}
               style={a.is_super ? { borderColor: "#D4AF37" } : undefined}>
@@ -276,8 +285,16 @@ export default function AdminDashboard() {
                   {sub.label}
                 </span>
               )}
+              {/* علامة واتساب — تفتح شات المندوب على رقمه (لو ليه تليفون). */}
+              {waLink(a.phone) && (
+                <a href={waLink(a.phone)!} target="_blank" rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()} title="مراسلة على واتساب"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-500/15 text-green-500 transition hover:bg-green-500/30">
+                  <MessageCircle size={16} />
+                </a>
+              )}
               <ArrowRight size={16} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
-            </button>
+            </div>
             );
           })}
           {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد نتائج.</p>}
