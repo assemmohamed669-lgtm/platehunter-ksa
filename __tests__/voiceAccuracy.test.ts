@@ -7,6 +7,15 @@
 import { describe, it, expect } from "vitest";
 import { extractMultiplePlates } from "@/lib/plateParser";
 
+describe("voiceAccuracy — أرقام بأداة الـ«ال» (من قياس Deepgram الحقيقي)", () => {
+  it("«الثلاثة» تُعامَل كرقم 3 (مش تلخبط الحروف)", () => {
+    // حالة حقيقية: دلم3572 اتفرّغت «دال لام ميم الثلاثة خمسة سبعة اثنين»
+    const plates = extractMultiplePlates("دال لام ميم الثلاثة خمسة سبعة اثنين");
+    expect(plates.length).toBeGreaterThan(0);
+    expect(plates[0].normalized).toBe("دلم3572");
+  });
+});
+
 describe("voiceAccuracy — نطق «زيري» للصفر (من قياس Deepgram الحقيقي)", () => {
   it("«زيري» تُعامَل كصفر (Deepgram بيطلّعها بدل صفر أحياناً)", () => {
     // حالة حقيقية: احد0250 اتفرّغت «الف حاء دال زيرو اتنين خمسة زيري»
