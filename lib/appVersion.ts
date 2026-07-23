@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.9.7";
+export const APP_VERSION = "0.9.8";
 export const UPDATE_NOTE =
-  "الفرز على كذا محفظة: نوع/ماركة السيارة بقى يظهر لكل اللوحات مهما اختلفت أسماء أعمدة المحافظ.";
+  "لوحة الأدمن: زر «السماح بالدخول من أي جهاز» لإعفاء حساب من قفل الجهاز (لمناديب سفاري/آيفون).";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

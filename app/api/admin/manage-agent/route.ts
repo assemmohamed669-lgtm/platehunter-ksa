@@ -122,6 +122,18 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
+      case "setDeviceExempt": {
+        // إعفاء الحساب من قفل الجهاز (يدخل من أي جهاز بإيميله) — مفيد لمناديب
+        // سفاري آيفون اللي بيمسح localStorage فبتتولّد بصمة جهاز جديدة كل مرة.
+        // تفعيل الإعفاء بيفكّ أي ربط جهاز حالي عشان الدخول ينجح فوراً.
+        const exempt = !!body.exempt;
+        const patch: Record<string, unknown> = { device_lock_exempt: exempt };
+        if (exempt) { patch.device_fingerprint = null; patch.session_token = null; }
+        const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
       case "setRole": {
         const role: "admin" | "agent" = body.role === "admin" ? "admin" : "agent";
         const patch: Record<string, unknown> = { role, is_active: true };

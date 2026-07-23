@@ -15,6 +15,7 @@ import { normalizeServiceKeys, type ServiceKeys } from "@/lib/voiceKeys";
 interface Profile {
   id: string; username: string; email: string | null; phone: string | null;
   role: "admin" | "agent"; is_super: boolean; is_active: boolean; device_fingerprint: string | null;
+  device_lock_exempt?: boolean; // معفي من قفل الجهاز (يدخل من أي جهاز)
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
   service_keys: ServiceKeys | null;
@@ -276,6 +277,24 @@ export default function AgentDetail() {
               className="flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted hover:text-primary disabled:opacity-40">
               <Smartphone size={13} /> إعادة ضبط الجهاز
             </button>
+
+            {/* إعفاء من قفل الجهاز — للمناديب اللي بيدخلوا من سفاري آيفون واللينك
+                بيتقالهم «الحساب مرتبط بجهاز» كل خروج (localStorage بيتمسح). */}
+            <button
+              onClick={async () => {
+                const on = !p.device_lock_exempt;
+                if (on && !confirm(`تسمح لـ«${p.username}» يدخل بإيميله من أي جهاز (بدون قفل جهاز)؟`)) return;
+                if (await call("setDeviceExempt", { exempt: on })) { setMsg(on ? "✅ الحساب بقى يدخل من أي جهاز بدون قفل." : "✅ رجع قفل الجهاز للحساب."); load(); }
+              }}
+              disabled={busy}
+              className={`flex items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-bold transition ${p.device_lock_exempt ? "border-primary/50 bg-primary/10 text-primary hover:bg-primary/15" : "border-border text-muted hover:text-primary"}`}>
+              <Smartphone size={13} /> {p.device_lock_exempt ? "إرجاع قفل الجهاز" : "السماح بالدخول من أي جهاز"}
+            </button>
+            <p className="text-[10px] text-muted text-center">
+              {p.device_lock_exempt
+                ? "الحساب معفي من قفل الجهاز — بيدخل بإيميله من أي جهاز."
+                : "الافتراضي: الحساب مربوط بأول جهاز يدخل منه. فعّل الإعفاء لمناديب آيفون/سفاري."}
+            </p>
           </div>
         </div>
 
