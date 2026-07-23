@@ -4,11 +4,12 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
+import { fetchLearningEnabled, setLearningEnabled } from "@/lib/learningSettings";
 
 interface AgentProfile {
   id: string;
@@ -72,6 +73,13 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [isSuper, setIsSuper] = useState(false);
+  const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
+  const [learningBusy, setLearningBusy] = useState(false);
+  const [trainingCount, setTrainingCount] = useState(0); // عيّنات متجمّعة على الجهاز
+  const [trainingBusy, setTrainingBusy] = useState(false);
+  const [pendingByAgent, setPendingByAgent] = useState<Array<{ agentId: string; count: number }>>([]); // معلّق مركزي
+  const [centralBusy, setCentralBusy] = useState(false);
+  const [centralLoaded, setCentralLoaded] = useState(false);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -104,10 +112,89 @@ export default function AdminDashboard() {
       const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setIsSuper(!!prof?.is_super);
+      if (prof?.is_super) {
+        fetchLearningEnabled().then(setLearningOn);  // حالة مفتاح التعلّم
+        import("@/lib/trainingStore").then((m) => m.countTrainingSamples().then(setTrainingCount).catch(() => {}));
+      }
       setAuthorized(true);
       loadAgents();
     })();
   }, [router, loadAgents]);
+
+  // ── تنزيل/مسح داتا التدريب المتجمّعة (سوبر أدمن) ──
+  function downloadBlob(blob: Blob, name: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function base64ToBytes(b64: string): Uint8Array {
+    const bin = atob(b64); const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  async function handleDownloadTraining() {
+    setTrainingBusy(true);
+    try {
+      const store = await import("@/lib/trainingStore");
+      const { buildTrainingManifest, mimeToExt } = await import("@/lib/trainingExport");
+      const [samples, sessions] = await Promise.all([store.getAllTrainingSamples(), store.getAllTrainingSessions()]);
+      if (samples.length === 0) { alert("مفيش داتا تدريب متجمّعة على الجهاز ده لسه. سجّل صوت وصدّر الأول."); return; }
+      const manifest = buildTrainingManifest(samples, sessions);
+      downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }), "training-labels.json");
+      for (const sess of sessions) {
+        const buf = base64ToBytes(sess.audioBase64).buffer as ArrayBuffer;
+        downloadBlob(new Blob([buf], { type: sess.mimeType }), `${sess.sessionId}.${mimeToExt(sess.mimeType)}`);
+      }
+      alert(`تم تنزيل ${manifest.count} لوحة في ${manifest.sessionCount} مقطع + ملف اللوحات (training-labels.json).`);
+    } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
+    finally { setTrainingBusy(false); }
+  }
+  async function handleClearTraining() {
+    if (!confirm("متأكد؟ ده هيمسح كل داتا التدريب المتجمّعة على الجهاز ده. نزّلها الأول لو محتاجها.")) return;
+    setTrainingBusy(true);
+    try { const store = await import("@/lib/trainingStore"); await store.clearTrainingData(); setTrainingCount(0); }
+    catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
+    finally { setTrainingBusy(false); }
+  }
+
+  // ── داتا المناديب المركزية (من Supabase) ──
+  const usernameOf = (agentId: string) => agents.find((a) => a.id === agentId)?.username || agentId;
+  async function loadPending() {
+    try { const c = await import("@/lib/trainingCentral"); setPendingByAgent(await c.listPendingByAgent()); setCentralLoaded(true); }
+    catch (e) { alert("تعذّر تحميل القائمة: " + ((e as Error)?.message ?? "")); }
+  }
+  async function downloadNew(agentId?: string) {
+    setCentralBusy(true);
+    try {
+      const c = await import("@/lib/trainingCentral");
+      const rows = await c.fetchPendingSamples(agentId);
+      if (rows.length === 0) { alert("مفيش لوحات جديدة."); return; }
+      const manifest = c.buildCentralManifest(rows);
+      for (const agent of manifest.agents) {
+        const sessions = [];
+        for (const s of agent.sessions) {
+          let audioBase64: string | null = null, mimeType: string | null = null;
+          if (s.audioPath) { const a = await c.fetchAudioBase64(s.audioPath); if (a) { audioBase64 = a.base64; mimeType = a.mimeType; } }
+          sessions.push({ sessionId: s.sessionId, audioBase64, mimeType, plates: s.plates });
+        }
+        const name = usernameOf(agent.agentId);
+        const out = { agentId: agent.agentId, username: name, sampleCount: agent.sampleCount, sessions };
+        downloadBlob(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }), `training-${name}-${Date.now()}.json`);
+      }
+      await c.markDownloaded(rows.map((r) => r.id));
+      await loadPending();
+      alert(`تم تنزيل ${rows.length} لوحة جديدة (${manifest.agents.length} مندوب) وتعليمها كمُنزَّلة — مش هتتكرر.`);
+    } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
+    finally { setCentralBusy(false); }
+  }
+  async function purgeDownloadedServer() {
+    if (!confirm("مسح كل المُنزَّل من السيرفر (اللي نزّلته قبل كده)؟ ده بيفضّي مساحة Supabase. الجديد اللي لسه ماتنزّلش مش هيتمسح.")) return;
+    setCentralBusy(true);
+    try { const c = await import("@/lib/trainingCentral"); const r = await c.purgeDownloaded(); alert(`تم مسح ${r.deleted} عيّنة مُنزَّلة من السيرفر.`); }
+    catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
+    finally { setCentralBusy(false); }
+  }
 
   async function handleCreate() {
     setCError(null);
@@ -210,6 +297,95 @@ export default function AdminDashboard() {
             className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
             <MapPin size={16} /> مواقع المناديب على الخريطة
           </button>
+        )}
+
+        {/* مفتاح جمع/تعلّم الصوت + تنزيل الداتا — سوبر أدمن فقط. الافتراضي متوقّف. */}
+        {isSuper && (
+          <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
+            <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
+              <Database size={14} /> جمع بيانات الصوت للتعلّم
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] leading-relaxed text-muted">
+                لما يكون شغّال، البرنامج بيجمّع (صوت اللوحة + اللوحة الصح) للتدريب لاحقاً. الافتراضي متوقّف — سوبر أدمن فقط.
+              </p>
+              <button
+                disabled={learningBusy}
+                onClick={async () => {
+                  setLearningBusy(true);
+                  const next = !learningOn;
+                  const r = await setLearningEnabled(next);
+                  if (r.ok) setLearningOn(next);
+                  else alert("تعذّر الحفظ: " + (r.error ?? ""));
+                  setLearningBusy(false);
+                }}
+                className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition ${
+                  learningOn ? "bg-green-600 text-white" : "border border-border bg-surface-2 text-muted"
+                } ${learningBusy ? "opacity-50" : ""}`}>
+                {learningBusy ? "..." : learningOn ? "شغّال ✓" : "متوقّف"}
+              </button>
+            </div>
+
+            {/* داتا التدريب المتجمّعة على الجهاز — تنزيل (صوت + لوحات صح) + مسح. */}
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-primary/20 pt-2.5">
+              <span className="text-[11px] text-muted">
+                المتجمّع على الجهاز ده: <b className="text-ink">{trainingCount}</b> لوحة
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  disabled={trainingBusy}
+                  onClick={handleDownloadTraining}
+                  className={`shrink-0 rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold text-night transition ${trainingBusy ? "opacity-50" : ""}`}>
+                  {trainingBusy ? "..." : "تنزيل الصوت + اللوحات"}
+                </button>
+                <button
+                  disabled={trainingBusy}
+                  onClick={handleClearTraining}
+                  className={`shrink-0 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-[11px] text-muted transition ${trainingBusy ? "opacity-50" : ""}`}>
+                  مسح
+                </button>
+              </div>
+            </div>
+
+            {/* داتا المناديب المركزية (من Supabase) — الجديد بس، مفصول بكل مندوب. */}
+            <div className="mt-3 border-t border-primary/20 pt-2.5">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-ink">داتا المناديب (مركزي)</span>
+                <div className="flex items-center gap-1.5">
+                  <button disabled={centralBusy} onClick={loadPending}
+                    className={`rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] text-muted transition ${centralBusy ? "opacity-50" : ""}`}>
+                    {centralBusy ? "..." : "تحديث القائمة"}
+                  </button>
+                  {pendingByAgent.length > 0 && (
+                    <button disabled={centralBusy} onClick={() => downloadNew()}
+                      className={`rounded-full bg-primary px-3 py-1 text-[11px] font-bold text-night transition ${centralBusy ? "opacity-50" : ""}`}>
+                      تنزيل الكل الجديد
+                    </button>
+                  )}
+                </div>
+              </div>
+              {centralLoaded && pendingByAgent.length === 0 && (
+                <p className="text-[11px] text-muted">مفيش لوحات جديدة عند أي مندوب دلوقتي.</p>
+              )}
+              {pendingByAgent.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  {pendingByAgent.map(({ agentId, count }) => (
+                    <div key={agentId} className="flex items-center justify-between rounded-lg bg-surface px-2 py-1">
+                      <span className="truncate text-[11px] text-ink">{usernameOf(agentId)} <b className="text-primary">({count})</b></span>
+                      <button disabled={centralBusy} onClick={() => downloadNew(agentId)}
+                        className={`shrink-0 rounded-full border border-primary/40 px-2.5 py-0.5 text-[10px] font-bold text-primary transition ${centralBusy ? "opacity-50" : ""}`}>
+                        تنزيل الجديد
+                      </button>
+                    </div>
+                  ))}
+                  <button disabled={centralBusy} onClick={purgeDownloadedServer}
+                    className="mt-1 self-start text-[10px] text-muted underline">
+                    مسح المُنزَّل من السيرفر (تفريغ مساحة)
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Expiring soon */}
