@@ -1791,7 +1791,7 @@ export default function InstantCheckPage() {
   // الكود + المفتاح + المعرّف + المحلي + نتيجة الرفع (بالخطأ) — عشان نعرف فين
   // المشكلة على جهاز المندوب من غير ما يكون سوبر أدمن.
   async function pttLearnDiag() {
-    const lines: string[] = ["نسخة الكود: collect-v3 ✓"];
+    const lines: string[] = ["نسخة الكود: collect-v4 ✓"];
     try { lines.push("المفتاح: " + ((await fetchLearningEnabled()) ? "شغّال ✓" : "متوقّف ✗")); }
     catch (e) { lines.push("المفتاح: خطأ — " + ((e as Error)?.message ?? "")); }
     lines.push("معرّفي (agent): " + (agentIdRef.current || "مفيش ✗ (سجّل دخول)"));
@@ -1799,6 +1799,9 @@ export default function InstantCheckPage() {
       const s = await import("@/lib/trainingStore");
       const [all, sess, un] = await Promise.all([s.getAllTrainingSamples(), s.getAllTrainingSessions(), s.getUnsyncedSamples()]);
       lines.push(`محلي على الجهاز: ${all.length} لوحة، ${sess.length} مقطع صوت، ${un.length} لسه ما اترفعتش`);
+      // إعادة رفع كاملة: نتجاهل العلامة المحلية ونرفع كل الصوت واللوحات تاني (إصلاح
+      // حالات اتعلّمت مرفوعة غلط بنسخة قديمة).
+      await s.forceResyncAll();
     } catch (e) { lines.push("محلي: خطأ — " + ((e as Error)?.message ?? "")); }
     try {
       const r = await syncTrainingData();
