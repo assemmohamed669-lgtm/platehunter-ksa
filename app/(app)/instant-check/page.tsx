@@ -1797,8 +1797,8 @@ export default function InstantCheckPage() {
     lines.push("معرّفي (agent): " + (agentIdRef.current || "مفيش ✗ (سجّل دخول)"));
     try {
       const s = await import("@/lib/trainingStore");
-      const [all, un] = await Promise.all([s.getAllTrainingSamples(), s.getUnsyncedSamples()]);
-      lines.push(`محلي على الجهاز: ${all.length} لوحة، ${un.length} لسه ما اترفعتش`);
+      const [all, sess, un] = await Promise.all([s.getAllTrainingSamples(), s.getAllTrainingSessions(), s.getUnsyncedSamples()]);
+      lines.push(`محلي على الجهاز: ${all.length} لوحة، ${sess.length} مقطع صوت، ${un.length} لسه ما اترفعتش`);
     } catch (e) { lines.push("محلي: خطأ — " + ((e as Error)?.message ?? "")); }
     try {
       const r = await syncTrainingData();
@@ -1930,8 +1930,10 @@ export default function InstantCheckPage() {
       const pending: Blob[] = [];
       rec.ondataavailable = (e) => {
         if (e.data.size === 0) return;
-        // جمّع صوت الجلسة للتدريب — بس لو المفتاح شغّال (غير كده مافيش استهلاك ذاكرة).
-        if (learningGateRef.current) pttAudioChunksRef.current.push(e.data);
+        // جمّع صوت الجلسة دايماً أثناء التسجيل — مش معتمد على توقيت تحميل المفتاح
+        // (كان لو المفتاح لسه ماتحمّلش وقت بداية التسجيل، الصوت يضيع). الحفظ نفسه
+        // مربوط بالمفتاح (persistPttAudio/collectTrainingFrom)، فمقفول = مايتحفظش.
+        pttAudioChunksRef.current.push(e.data);
         if (ws.readyState === WebSocket.OPEN) {
           while (pending.length) { try { ws.send(pending.shift()!); } catch {} }
           ws.send(e.data);
