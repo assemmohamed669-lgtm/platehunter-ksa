@@ -171,20 +171,34 @@ export default function AdminDashboard() {
       const rows = await c.fetchPendingSamples(agentId);
       if (rows.length === 0) { alert("مفيش لوحات جديدة."); return; }
       const manifest = c.buildCentralManifest(rows);
+      const { mimeToExt } = await import("@/lib/trainingExport");
+      let audioCount = 0;
       for (const agent of manifest.agents) {
-        const sessions = [];
-        for (const s of agent.sessions) {
-          let audioBase64: string | null = null, mimeType: string | null = null;
-          if (s.audioPath) { const a = await c.fetchAudioBase64(s.audioPath); if (a) { audioBase64 = a.base64; mimeType = a.mimeType; } }
-          sessions.push({ sessionId: s.sessionId, audioBase64, mimeType, plates: s.plates });
-        }
         const name = usernameOf(agent.agentId);
-        const out = { agentId: agent.agentId, username: name, sampleCount: agent.sampleCount, sessions };
-        downloadBlob(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }), `training-${name}-${Date.now()}.json`);
+        // (١) ملف اللوحات (labels) — لكل مقطع اسم ملف صوته.
+        const labels = {
+          agentId: agent.agentId, username: name, sampleCount: agent.sampleCount,
+          sessions: agent.sessions.map((s) => ({
+            sessionId: s.sessionId,
+            audioFile: s.audioPath ? `${s.sessionId}.${mimeToExt(s.audioPath.split(".").pop() || "webm")}` : null,
+            plates: s.plates,
+          })),
+        };
+        downloadBlob(new Blob([JSON.stringify(labels, null, 2)], { type: "application/json" }), `training-${name}-labels.json`);
+        // (٢) ملف صوت **منفصل** لكل مقطع (قابل للتشغيل) — مش base64 جوّه JSON.
+        for (const s of agent.sessions) {
+          if (!s.audioPath) continue;
+          const a = await c.fetchAudioBase64(s.audioPath);
+          if (!a) continue;
+          const buf = base64ToBytes(a.base64).buffer as ArrayBuffer;
+          const ext = mimeToExt(a.mimeType);
+          downloadBlob(new Blob([buf], { type: a.mimeType }), `${s.sessionId}.${ext}`);
+          audioCount++;
+        }
       }
       await c.markDownloaded(rows.map((r) => r.id));
       await loadPending();
-      alert(`تم تنزيل ${rows.length} لوحة جديدة (${manifest.agents.length} مندوب) وتعليمها كمُنزَّلة — مش هتتكرر.`);
+      alert(`تم تنزيل ${rows.length} لوحة (${manifest.agents.length} مندوب) + ${audioCount} مقطع صوت. اتعلّمت كمُنزَّلة — مش هتتكرر.`);
     } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
     finally { setCentralBusy(false); }
   }
