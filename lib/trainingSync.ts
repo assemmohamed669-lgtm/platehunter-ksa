@@ -36,10 +36,11 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
       if (!sess) { audioOk.add(sid); continue; }   // مفيش صوت محفوظ — نسمح باللوحة تترفع
       if (sess.synced) { audioOk.add(sid); continue; }
       try {
-        const { error } = await supabase.from("training_audio").upsert({
-          session_id: sid, agent_id: uid,
-          audio_base64: sess.audioBase64, mime_type: sess.mimeType, created_at: sess.createdAt,
-        }, { onConflict: "session_id" });
+        // دالة security definer — بتتخطّى RLS (زي set_learning_enabled الشغّالة).
+        const { error } = await supabase.rpc("save_training_audio", {
+          p_session_id: sid, p_agent_id: uid,
+          p_audio_base64: sess.audioBase64, p_mime_type: sess.mimeType, p_created_at: sess.createdAt,
+        });
         if (error) { audioError = error.message; continue; }
         await saveTrainingSession({ ...sess, synced: true });
         audioOk.add(sid);
@@ -54,13 +55,13 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
     let uploaded = 0;
     let sampleError: string | undefined;
     for (const s of samples) {
-      const row = {
-        id: s.id, session_id: s.sessionId, plate: s.plate, tier: s.tier, reason: s.reason,
-        start_ms: Math.round(s.startMs), end_ms: Math.round(s.endMs),
-        audio_path: audioOk.has(s.sessionId) ? s.sessionId : null, agent_id: uid, created_at: s.createdAt,
-      };
       try {
-        const { error } = await supabase.from("training_samples").upsert(row, { onConflict: "id" });
+        // دالة security definer — بتتخطّى RLS.
+        const { error } = await supabase.rpc("save_training_sample", {
+          p_id: s.id, p_session_id: s.sessionId, p_plate: s.plate, p_tier: s.tier, p_reason: s.reason,
+          p_start_ms: Math.round(s.startMs), p_end_ms: Math.round(s.endMs),
+          p_audio_path: audioOk.has(s.sessionId) ? s.sessionId : null, p_agent_id: uid, p_created_at: s.createdAt,
+        });
         if (error) { sampleError = error.message; continue; }
         // العيّنة تتعلّم «مرفوعة» بس لو صوتها اترفع كمان — عشان إعادة المزامنة تكمّل
         // ترفع الصوت لو لسه فاشل.
