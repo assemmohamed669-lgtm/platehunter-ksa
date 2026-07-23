@@ -20,8 +20,10 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
     // **مهم:** نستخدم معرّف اليوزر المسجّل **حالياً** لكل الصفوف — مش المخزّن مع
     // العيّنة (اللي ممكن يكون فاضي لو اتجمّعت قبل اكتمال تسجيل الدخول). سياسة RLS
     // بتشترط agent_id = auth.uid()، فأي معرّف قديم/فاضي كان بيتسبّب في الرفض.
-    const { data: u } = await supabase.auth.getUser();
-    const uid = u?.user?.id;
+    // getSession() بيقرا الجلسة **محلياً** بلا نداء شبكة (getUser بيعمل نداء لسيرفر
+    // المصادقة اللي بيفشل «Failed to fetch» على WebView الموبايل).
+    const { data: sessData } = await supabase.auth.getSession();
+    const uid = sessData?.session?.user?.id;
     if (!uid) return { uploaded: 0, error: "مفيش جلسة دخول — سجّل الدخول الأول" };
 
     // ارفع صوت كل جلسة في training_audio (base64) عبر REST. لو الصوت فشل، نكمّل
@@ -57,14 +59,18 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
         start_ms: Math.round(s.startMs), end_ms: Math.round(s.endMs),
         audio_path: audioOk.has(s.sessionId) ? s.sessionId : null, agent_id: uid, created_at: s.createdAt,
       };
-      const { error } = await supabase.from("training_samples").upsert(row, { onConflict: "id" });
-      if (error) { sampleError = error.message; continue; }
-      // العيّنة تتعلّم «مرفوعة» بس لو صوتها اترفع كمان — عشان إعادة المزامنة تكمّل
-      // ترفع الصوت لو لسه فاشل.
-      if (audioOk.has(s.sessionId) || !s.sessionId) {
-        await saveTrainingSample({ ...(s as TrainingSample), synced: true });
+      try {
+        const { error } = await supabase.from("training_samples").upsert(row, { onConflict: "id" });
+        if (error) { sampleError = error.message; continue; }
+        // العيّنة تتعلّم «مرفوعة» بس لو صوتها اترفع كمان — عشان إعادة المزامنة تكمّل
+        // ترفع الصوت لو لسه فاشل.
+        if (audioOk.has(s.sessionId) || !s.sessionId) {
+          await saveTrainingSample({ ...(s as TrainingSample), synced: true });
+        }
+        uploaded++;
+      } catch (e) {
+        sampleError = e instanceof Error ? e.message : String(e); // استثناء شبكة — تخطَّ الصف
       }
-      uploaded++;
     }
     return { uploaded, error: sampleError ?? audioError };
   } catch (e) {
