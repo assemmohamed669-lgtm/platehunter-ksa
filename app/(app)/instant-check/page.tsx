@@ -1791,7 +1791,7 @@ export default function InstantCheckPage() {
   // الكود + المفتاح + المعرّف + المحلي + نتيجة الرفع (بالخطأ) — عشان نعرف فين
   // المشكلة على جهاز المندوب من غير ما يكون سوبر أدمن.
   async function pttLearnDiag() {
-    const lines: string[] = ["نسخة الكود: collect-v2 ✓"];
+    const lines: string[] = ["نسخة الكود: collect-v3 ✓"];
     try { lines.push("المفتاح: " + ((await fetchLearningEnabled()) ? "شغّال ✓" : "متوقّف ✗")); }
     catch (e) { lines.push("المفتاح: خطأ — " + ((e as Error)?.message ?? "")); }
     lines.push("معرّفي (agent): " + (agentIdRef.current || "مفيش ✗ (سجّل دخول)"));
@@ -1802,7 +1802,7 @@ export default function InstantCheckPage() {
     } catch (e) { lines.push("محلي: خطأ — " + ((e as Error)?.message ?? "")); }
     try {
       const r = await syncTrainingData();
-      lines.push(`الرفع لـ Supabase: ${r.uploaded}${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
+      lines.push(`الرفع لـ Supabase: ${r.uploaded} لوحة + ${r.audioUploaded ?? 0} صوت${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
     } catch (e) { lines.push("الرفع: خطأ — " + ((e as Error)?.message ?? "")); }
     try { setTrainingToday(await countTrainingToday()); } catch { /* ignore */ }
     alert(lines.join("\n"));
