@@ -35,10 +35,11 @@ describe("classifyForCollection — قرار جمع اللوحة للتدريب"
     expect(d.collect).toBe(true);
   });
 
-  it("مُصدَّرة بدون تعديل + ثقة واطية + مش مطابقة → تُستبعد (غلط غير ملحوظ محتمل)", () => {
+  it("مُصدَّرة بدون تعديل + ثقة واطية + مش مطابقة → تُجمع بوسم عادي (نفلتر offline)", () => {
     const d = classifyForCollection({ ...base, action: "exported", wordConfidenceOk: false, listMatch: false });
-    expect(d.collect).toBe(false);
-    expect(d.reason).toBe("low-confidence");
+    expect(d.collect).toBe(true);
+    expect(d.tier).toBe("trusted");
+    expect(d.reason).toBe("export-weak");
   });
 
   it("مُصدَّرة + uncertain → تُستبعد", () => {

@@ -1,11 +1,11 @@
 /**
  * منطق قرار جمع اللوحة لداتا التدريب — دالة نقية قابلة للاختبار.
  * القاعدة (المتفق عليها مع المالك):
- *   • معدّلة يدوياً → ذهبية (أقوى ليبل، تُجمع دايماً لو شكلها صح).
+ *   • معدّلة يدوياً → ذهبية (أقوى ليبل).
  *   • ممسوحة → تُستبعد (المندوب مسحها = غالباً غلط).
  *   • متجاهلة/مش مُصدَّرة → تُستبعد (مش متأكدين).
- *   • مُصدَّرة بدون تعديل → تُجمع **بس** لو موثوقة (مش uncertain + شكل صح +
- *     (طابقت قائمة أو ثقة كلمات عالية)) — عشان مانتعلّمش غلط غير ملحوظ.
+ *   • مُصدَّرة (شكلها صح) → تُجمع دايماً، مع **وسم جودة** (مطابقة/ثقة عالية/عادية)
+ *     — بنجمع كتير ونفلتر بالجودة offline وقت التدريب بدل ما نرمي داتا وقت الجمع.
  *   • أي شكل غلط (مش ٣ حروف + ٤ أرقام) → تُستبعد دايماً.
  */
 
@@ -34,11 +34,12 @@ export function classifyForCollection(ctx: CollectContext): CollectDecision {
   // معدّلة يدوياً = صح مؤكّد.
   if (ctx.action === "edited") return { collect: true, tier: "gold", reason: "edited" };
 
-  // مُصدَّرة بدون تعديل — تحتاج ثقة.
+  // مُصدَّرة — تُجمع (المندوب صدّرها = قبلها). بنجمع الكل ونسم الجودة عشان نفلتر
+  // offline وقت التدريب، بدل ما نرمي داتا وقت الجمع. بس نستبعد المشكوك فيها شكلاً.
   if (ctx.action === "exported") {
     if (ctx.uncertain) return { collect: false, tier: "skip", reason: "uncertain" };
-    if (ctx.listMatch || ctx.wordConfidenceOk) return { collect: true, tier: "trusted", reason: "trusted-export" };
-    return { collect: false, tier: "skip", reason: "low-confidence" };
+    const reason = ctx.listMatch ? "export-matched" : ctx.wordConfidenceOk ? "export-highconf" : "export-weak";
+    return { collect: true, tier: "trusted", reason };
   }
 
   return { collect: false, tier: "skip", reason: "unknown" };
