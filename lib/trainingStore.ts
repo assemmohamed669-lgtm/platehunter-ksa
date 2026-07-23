@@ -76,6 +76,24 @@ export async function saveTrainingSession(session: TrainingSession): Promise<voi
   });
 }
 
+/** يعيد كل الجلسات + العيّنات لحالة «غير متزامنة» — عشان إعادة رفع كاملة (إصلاح
+ * حالات اتعلّمت مرفوعة غلط بنسخة قديمة). بيرجّع عدد اللي اترجّع. */
+export async function forceResyncAll(): Promise<{ sessions: number; samples: number }> {
+  const db = await openDB();
+  const [sessions, samples] = await Promise.all([
+    new Promise<TrainingSession[]>((res, rej) => { const r = db.transaction(SESSIONS, "readonly").objectStore(SESSIONS).getAll(); r.onsuccess = () => res(r.result as TrainingSession[]); r.onerror = () => rej(r.error); }),
+    new Promise<TrainingSample[]>((res, rej) => { const r = db.transaction(SAMPLES, "readonly").objectStore(SAMPLES).getAll(); r.onsuccess = () => res(r.result as TrainingSample[]); r.onerror = () => rej(r.error); }),
+  ]);
+  await new Promise<void>((res, rej) => {
+    const tx = db.transaction([SESSIONS, SAMPLES], "readwrite");
+    for (const s of sessions) tx.objectStore(SESSIONS).put({ ...s, synced: false });
+    for (const s of samples) tx.objectStore(SAMPLES).put({ ...s, synced: false });
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+  return { sessions: sessions.length, samples: samples.length };
+}
+
 export async function countTrainingSamples(): Promise<number> {
   const db = await openDB();
   return new Promise((res, rej) => {
