@@ -25,6 +25,11 @@ import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
+import { readDeepgramWords, type DgWord } from "@/lib/deepgramWords";
+import { fetchLearningEnabled } from "@/lib/learningSettings";
+import { classifyForCollection, type CollectAction } from "@/lib/trainingCollector";
+import { saveTrainingSample, saveTrainingSession, countTrainingToday } from "@/lib/trainingStore";
+import { syncTrainingData } from "@/lib/trainingSync";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 
@@ -92,6 +97,21 @@ interface PttRow {
   mapsLink?: string;
   gpsError?: boolean;
   checkedAt: string;
+  // توقيت اللوحة في صوت الجلسة (من كلمات Deepgram) + ثقة الكلمات — لجمع التدريب فقط.
+  sessionId?: string;
+  startMs?: number;
+  endMs?: number;
+  wordConfidenceOk?: boolean;
+}
+
+// Blob → base64 (بدون بادئة data:) — لحفظ صوت الجلسة في مخزن التدريب.
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onloadend = () => resolve(String(fr.result).split(",")[1] ?? "");
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
 }
 
 function extractPlateFromOcrText(rawText: string): string | null {
@@ -438,6 +458,18 @@ export default function InstantCheckPage() {
   const [editPttValue, setEditPttValue] = useState("");
   // Rows already pushed to the field-check sheet (shows a "تم" tick)
   const [pttExportedIds, setPttExportedIds] = useState<Set<string>>(new Set());
+
+  // ── جمع داتا التدريب (مربوط بمفتاح السوبر أدمن، افتراضي مقفول = آمن) ──
+  // كل ده معزول: لو المفتاح مقفول مافيش أي التقاط بيحصل خالص.
+  const learningGateRef = useRef(false);              // حالة المفتاح (تُقرأ عند التحميل)
+  const pttSessionIdRef = useRef<string>("");         // معرّف جلسة الصوت الحالية
+  const pttAudioChunksRef = useRef<Blob[]>([]);       // أجزاء صوت الجلسة (للحفظ مرة واحدة)
+  const pttAudioMimeRef = useRef<string>("audio/webm"); // صيغة صوت الجلسة
+  const curTimingRef = useRef<{ startMs: number; endMs: number; confOk: boolean } | null>(null); // توقيت آخر نتيجة نهائية
+  const pttEditedIdsRef = useRef<Set<string>>(new Set()); // صفوف عدّلها المندوب يدوياً (ليبل ذهبي)
+  const trainingSessionSavedRef = useRef<string>(""); // آخر جلسة اتحفظ صوتها (منعاً للتكرار)
+  const [trainingToday, setTrainingToday] = useState(0); // عدّاد المتجمّع النهاردة (يظهر لو المفتاح شغّال)
+  const [learningOn, setLearningOn] = useState(false);   // نسخة تفاعلية من المفتاح (لإظهار العدّاد)
   // صور الكاميرا اللي اتصدّرت خلاص — عشان «تصدير الكل» يبعت الجديد بس (مايكررش).
   const [hitsExportedIds, setHitsExportedIds] = useState<Set<string>>(new Set());
 
@@ -451,6 +483,20 @@ export default function InstantCheckPage() {
       const raw = localStorage.getItem(LS_WORD_BLENDS);
       if (raw) wordBlendRef.current = deserializeWordBlend(JSON.parse(raw));
     } catch { /* corrupt/missing — start fresh */ }
+  }, []);
+
+  // اقرأ حالة مفتاح جمع التدريب مرة عند التحميل (سوبر أدمن هو اللي بيتحكم فيه من
+  // صفحة الأدمن). مقفول افتراضياً = مافيش أي التقاط. آمن للفشل (أوفلاين → يفضل مقفول).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const on = await fetchLearningEnabled();
+        if (alive) { learningGateRef.current = on; setLearningOn(on); }
+        if (on) { try { if (alive) setTrainingToday(await countTrainingToday()); } catch { /* لسه فاضي */ } }
+      } catch { /* افتراضي مقفول */ }
+    })();
+    return () => { alive = false; };
   }, []);
 
   // Keep a live GPS watch running the whole time the page is open, so stamping
@@ -1507,6 +1553,11 @@ export default function InstantCheckPage() {
       needsReview: !isComplete, // مش لوحة كاملة (٣+٤) → علامة «راجع»
       locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
+      // توقيت + ثقة من آخر نتيجة نهائية (Deepgram) — لجمع التدريب فقط (لو المفتاح شغّال).
+      sessionId: pttSessionIdRef.current || undefined,
+      startMs: curTimingRef.current?.startMs,
+      endMs: curTimingRef.current?.endMs,
+      wordConfidenceOk: curTimingRef.current?.confOk ?? false,
     };
     setPttResults((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
@@ -1534,6 +1585,9 @@ export default function InstantCheckPage() {
       recordLetterCorrections(letterConfusionsRef.current, row.originalPlate, trimmed);
       try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
     }
+
+    // المندوب عدّلها يدوياً → ليبل ذهبي مؤكّد وقت جمع التدريب.
+    pttEditedIdsRef.current.add(rowId);
 
     const res = searchInCheck(trimmed);
     setPttResults((prev) => prev.map((r) => r.id === rowId
@@ -1669,9 +1723,61 @@ export default function InstantCheckPage() {
       // يفضل متعلّم إنه اتصدّر والجديد بس هو اللي يتصدّر المرة الجاية.
       setPttExportedIds((s) => { const n = new Set(s); freshRows.forEach((r) => n.add(r.id)); return n; });
       alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      // جمع داتا التدريب (خلفية، مربوط بالمفتاح) — بعد التصدير الناجح، مايعطّلش المندوب.
+      void collectTrainingFrom(freshRows);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر تصدير اللوحات.");
     }
+  }
+
+  // يجمع عيّنات تدريب من اللوحات المُصدَّرة — **بس لو مفتاح السوبر أدمن شغّال**.
+  // القرار عبر classifyForCollection (ذهبي=معدّلة، موثوق=مُصدَّرة بثقة). بيحفظ صوت
+  // الجلسة مرة واحدة + عيّنة لكل لوحة موثوقة، وبعدين يزامن للخلفية. أي فشل مايأثرش
+  // على التصدير نفسه (اتعمل خلاص). معزول تماماً: مقفول = مايتنفّذش أصلاً.
+  async function collectTrainingFrom(rows: PttRow[]) {
+    if (!learningGateRef.current) return;
+    const sid = pttSessionIdRef.current;
+    if (!sid) return;
+    // بس الصفوف اللي صوتها في الجلسة الحالية (منعاً لحفظ عيّنة بلا صوت مطابق).
+    const eligible = rows.filter((r) => r.sessionId === sid);
+    const decided = eligible
+      .map((r) => {
+        const norm = normalizePlate(bankPlateToArabic(r.plate));
+        const validShape = norm.replace(/[0-9]/g, "").length === 3 && norm.replace(/[^0-9]/g, "").length === 4;
+        const action: CollectAction = pttEditedIdsRef.current.has(r.id) ? "edited" : "exported";
+        const dec = classifyForCollection({
+          action,
+          uncertain: !!r.needsReview,
+          validShape,
+          listMatch: !!r.found && r.matchType === "exact",
+          wordConfidenceOk: !!r.wordConfidenceOk,
+        });
+        return { r, norm, dec };
+      })
+      .filter((x) => x.dec.collect);
+    if (decided.length === 0) return;
+    try {
+      // احفظ صوت الجلسة الكامل مرة واحدة (base64).
+      if (trainingSessionSavedRef.current !== sid && pttAudioChunksRef.current.length > 0) {
+        const blob = new Blob(pttAudioChunksRef.current, { type: pttAudioMimeRef.current });
+        const audioBase64 = await blobToBase64(blob);
+        await saveTrainingSession({
+          sessionId: sid, audioBase64, mimeType: pttAudioMimeRef.current,
+          agentId: agentIdRef.current ?? "", createdAt: new Date().toISOString(), synced: false,
+        });
+        trainingSessionSavedRef.current = sid;
+      }
+      for (const { r, norm, dec } of decided) {
+        await saveTrainingSample({
+          id: `${sid}-${r.id}`, sessionId: sid, plate: norm,
+          tier: dec.tier as "gold" | "trusted", reason: dec.reason,
+          startMs: r.startMs ?? 0, endMs: r.endMs ?? 0,
+          agentId: agentIdRef.current ?? "", createdAt: new Date().toISOString(), synced: false,
+        });
+      }
+      try { setTrainingToday(await countTrainingToday()); } catch { /* ignore */ }
+      void syncTrainingData(); // خلفية — يرفع لـ Supabase ويعلّم المتزامن
+    } catch { /* فشل الجمع مايوقفش الشغل */ }
   }
 
   function startPttTimer() {
@@ -1766,9 +1872,12 @@ export default function InstantCheckPage() {
       // مترابط فمنعش نرمي أجزاء.
       const rec = new MediaRecorder(stream, { mimeType: mime });
       dgRecorderRef.current = rec;
+      pttAudioMimeRef.current = mime;
       const pending: Blob[] = [];
       rec.ondataavailable = (e) => {
         if (e.data.size === 0) return;
+        // جمّع صوت الجلسة للتدريب — بس لو المفتاح شغّال (غير كده مافيش استهلاك ذاكرة).
+        if (learningGateRef.current) pttAudioChunksRef.current.push(e.data);
         if (ws.readyState === WebSocket.OPEN) {
           while (pending.length) { try { ws.send(pending.shift()!); } catch {} }
           ws.send(e.data);
@@ -1803,7 +1912,25 @@ export default function InstantCheckPage() {
           if (!text) return;
           setPttLiveText(text);
           // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
-          if (msg.is_final) processWhisperText(text, false);
+          if (msg.is_final) {
+            // اقرأ توقيت + ثقة الكلمات (لجمع التدريب) قبل التفريغ — addOnePttRow بيقراها.
+            if (learningGateRef.current) {
+              const words: DgWord[] = readDeepgramWords(msg);
+              if (words.length > 0) {
+                const starts = words.map((w) => w.start).filter((n): n is number => typeof n === "number");
+                const ends = words.map((w) => w.end).filter((n): n is number => typeof n === "number");
+                const confs = words.map((w) => w.confidence).filter((n): n is number => typeof n === "number");
+                curTimingRef.current = {
+                  startMs: starts.length ? Math.min(...starts) * 1000 : 0,
+                  endMs: ends.length ? Math.max(...ends) * 1000 : 0,
+                  confOk: confs.length > 0 && confs.every((c) => c >= 0.6),
+                };
+              } else {
+                curTimingRef.current = null;
+              }
+            }
+            processWhisperText(text, false);
+          }
         } catch { /* رسالة مش JSON — تجاهل */ }
       };
       ws.onerror = () => setPttError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
@@ -1873,6 +2000,11 @@ export default function InstantCheckPage() {
     setPttError(null);
     setPttLiveText("");
     pttRawLogRef.current = []; setPttRawLog([]); // ابدأ ديبج نظيف لكل جلسة
+    // جلسة تدريب جديدة: معرّف + بَفر صوت نظيف (بيتجمّع بس لو المفتاح شغّال).
+    pttSessionIdRef.current = `s-${Date.now()}-${Math.floor(performance.now())}`;
+    pttAudioChunksRef.current = [];
+    trainingSessionSavedRef.current = "";
+    curTimingRef.current = null;
     isListeningRef.current = true;
     setPttListening(true);
     startPttTimer();
@@ -2755,7 +2887,14 @@ export default function InstantCheckPage() {
                 return (
                   <div className="w-full flex flex-col gap-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted">{pttResults.length} لوحة</span>
+                      <span className="text-xs text-muted flex items-center gap-2">
+                        {pttResults.length} لوحة
+                        {learningOn && (
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary" title="عدد عيّنات الصوت اللي اتجمعت للتعلّم النهاردة">
+                            تعلّم: {trainingToday}
+                          </span>
+                        )}
+                      </span>
                       <div className="flex items-center gap-1.5">
                         <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />
                         <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
