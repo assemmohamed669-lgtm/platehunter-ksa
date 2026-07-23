@@ -4,10 +4,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, Database,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
+import { fetchLearningEnabled, setLearningEnabled } from "@/lib/learningSettings";
 
 interface AgentProfile {
   id: string;
@@ -61,6 +62,8 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [isSuper, setIsSuper] = useState(false);
+  const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
+  const [learningBusy, setLearningBusy] = useState(false);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -93,6 +96,7 @@ export default function AdminDashboard() {
       const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setIsSuper(!!prof?.is_super);
+      if (prof?.is_super) fetchLearningEnabled().then(setLearningOn);  // حالة مفتاح التعلّم
       setAuthorized(true);
       loadAgents();
     })();
@@ -199,6 +203,35 @@ export default function AdminDashboard() {
             className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
             <MapPin size={16} /> مواقع المناديب على الخريطة
           </button>
+        )}
+
+        {/* مفتاح جمع/تعلّم الصوت — سوبر أدمن فقط. الافتراضي متوقّف (آمن). */}
+        {isSuper && (
+          <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
+            <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
+              <Database size={14} /> جمع بيانات الصوت للتعلّم
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] leading-relaxed text-muted">
+                لما يكون شغّال، البرنامج بيجمّع (صوت اللوحة + اللوحة الصح) للتدريب لاحقاً. الافتراضي متوقّف — سوبر أدمن فقط.
+              </p>
+              <button
+                disabled={learningBusy}
+                onClick={async () => {
+                  setLearningBusy(true);
+                  const next = !learningOn;
+                  const r = await setLearningEnabled(next);
+                  if (r.ok) setLearningOn(next);
+                  else alert("تعذّر الحفظ: " + (r.error ?? ""));
+                  setLearningBusy(false);
+                }}
+                className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition ${
+                  learningOn ? "bg-green-600 text-white" : "border border-border bg-surface-2 text-muted"
+                } ${learningBusy ? "opacity-50" : ""}`}>
+                {learningBusy ? "..." : learningOn ? "شغّال ✓" : "متوقّف"}
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Expiring soon */}
