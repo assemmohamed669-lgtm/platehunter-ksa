@@ -36,11 +36,19 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
       const ext = (sess.mimeType.split("/")[1] || "webm").split(";")[0];
       const path = `${sess.agentId}/${sid}.${ext}`;
       if (!sess.synced) {
-        const bytes = base64ToBytes(sess.audioBase64);
-        const { error } = await supabase.storage.from("training-audio")
-          .upload(path, bytes, { contentType: sess.mimeType, upsert: true });
-        if (error) { audioError = error.message; continue; } // تخطَّ الصوت، كمّل اللوحات
-        await saveTrainingSession({ ...sess, synced: true });
+        // معزول بالكامل: أي فشل (خطأ API أو استثناء شبكة «Failed to fetch») يتخطّى
+        // الصوت بس ومايوقفش رفع اللوحات. الصوت يُعاد رفعه بعدين (الجلسة تفضل غير
+        // متزامنة).
+        try {
+          const bytes = base64ToBytes(sess.audioBase64);
+          const { error } = await supabase.storage.from("training-audio")
+            .upload(path, bytes, { contentType: sess.mimeType, upsert: true });
+          if (error) { audioError = error.message; continue; }
+          await saveTrainingSession({ ...sess, synced: true });
+        } catch (e) {
+          audioError = e instanceof Error ? e.message : String(e);
+          continue;
+        }
       }
       sessionPath.set(sid, path);
     }
