@@ -1787,6 +1787,27 @@ export default function InstantCheckPage() {
     } catch { /* فشل الجمع مايوقفش الشغل */ }
   }
 
+  // تشخيص جمع التعلّم — يظهر على جهاز أي مستخدم (اضغط شارة «تعلّم»). بيبيّن نسخة
+  // الكود + المفتاح + المعرّف + المحلي + نتيجة الرفع (بالخطأ) — عشان نعرف فين
+  // المشكلة على جهاز المندوب من غير ما يكون سوبر أدمن.
+  async function pttLearnDiag() {
+    const lines: string[] = ["نسخة الكود: collect-v2 ✓"];
+    try { lines.push("المفتاح: " + ((await fetchLearningEnabled()) ? "شغّال ✓" : "متوقّف ✗")); }
+    catch (e) { lines.push("المفتاح: خطأ — " + ((e as Error)?.message ?? "")); }
+    lines.push("معرّفي (agent): " + (agentIdRef.current || "مفيش ✗ (سجّل دخول)"));
+    try {
+      const s = await import("@/lib/trainingStore");
+      const [all, un] = await Promise.all([s.getAllTrainingSamples(), s.getUnsyncedSamples()]);
+      lines.push(`محلي على الجهاز: ${all.length} لوحة، ${un.length} لسه ما اترفعتش`);
+    } catch (e) { lines.push("محلي: خطأ — " + ((e as Error)?.message ?? "")); }
+    try {
+      const r = await syncTrainingData();
+      lines.push(`الرفع لـ Supabase: ${r.uploaded}${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
+    } catch (e) { lines.push("الرفع: خطأ — " + ((e as Error)?.message ?? "")); }
+    try { setTrainingToday(await countTrainingToday()); } catch { /* ignore */ }
+    alert(lines.join("\n"));
+  }
+
   // يحفظ صوت جلسة الصوت الحالية في مخزن التدريب فوراً (وقت الإيقاف) — عشان لو
   // المندوب خرج/قفل التطبيق قبل التصدير، الصوت مايضيعش (الذاكرة بتتصفّر لكن
   // IndexedDB بيفضل). العيّنات نفسها بتتجمّع وقت التصدير وبتربط بنفس معرّف الجلسة.
@@ -2926,9 +2947,9 @@ export default function InstantCheckPage() {
                       <span className="text-xs text-muted flex items-center gap-2">
                         {pttResults.length} لوحة
                         {learningOn && (
-                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary" title="عدد عيّنات الصوت اللي اتجمعت للتعلّم النهاردة">
+                          <button type="button" onClick={pttLearnDiag} className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary" title="اضغط لتشخيص جمع التعلّم">
                             تعلّم: {trainingToday}
-                          </span>
+                          </button>
                         )}
                       </span>
                       <div className="flex items-center gap-1.5">
