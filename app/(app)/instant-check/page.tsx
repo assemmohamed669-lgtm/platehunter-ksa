@@ -493,7 +493,12 @@ export default function InstantCheckPage() {
       try {
         const on = await fetchLearningEnabled();
         if (alive) { learningGateRef.current = on; setLearningOn(on); }
-        if (on) { try { if (alive) setTrainingToday(await countTrainingToday()); } catch { /* لسه فاضي */ } }
+        if (on) {
+          try { if (alive) setTrainingToday(await countTrainingToday()); } catch { /* لسه فاضي */ }
+          // فلَّش أي داتا متجمّعة محلياً لسه ماترفعتش (مثلاً فشلت وقت التصدير لأن
+          // SQL ماكانش اتشغّل بعد) — تحاول ترفع تاني كل ما الصفحة تفتح.
+          void syncTrainingData();
+        }
       } catch { /* افتراضي مقفول */ }
     })();
     return () => { alive = false; };
