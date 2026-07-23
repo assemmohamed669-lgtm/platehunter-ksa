@@ -174,15 +174,14 @@ export default function AdminDashboard() {
           agentId: agent.agentId, username: name, sampleCount: agent.sampleCount,
           sessions: agent.sessions.map((s) => ({
             sessionId: s.sessionId,
-            audioFile: s.audioPath ? `${s.sessionId}.${mimeToExt(s.audioPath.split(".").pop() || "webm")}` : null,
+            audioFile: `${s.sessionId}.webm`,
             plates: s.plates,
           })),
         };
         downloadBlob(new Blob([JSON.stringify(labels, null, 2)], { type: "application/json" }), `training-${name}-labels.json`);
-        // (٢) ملف صوت **منفصل** لكل مقطع (قابل للتشغيل) — مش base64 جوّه JSON.
+        // (٢) ملف صوت **منفصل** لكل مقطع (قابل للتشغيل) — من جدول training_audio.
         for (const s of agent.sessions) {
-          if (!s.audioPath) continue;
-          const a = await c.fetchAudioBase64(s.audioPath);
+          const a = await c.fetchAudioBase64(s.sessionId);
           if (!a) continue;
           const buf = base64ToBytes(a.base64).buffer as ArrayBuffer;
           const ext = mimeToExt(a.mimeType);
