@@ -1790,9 +1790,17 @@ export default function InstantCheckPage() {
   }
   // Clear the timer if the component unmounts mid-listen.
   useEffect(() => () => {
+    // مهم: علّم إن الاستماع خلص **قبل** ما نقفل السوكيت، عشان منطق إعادة الاتصال
+    // في onclose مايرجعش يفتح المايك في الخلفية بعد ما المندوب خرج من الصفحة
+    // (ده كان بيسيب علامة المايك شغّالة رغم إن التسجيل «مقفول»).
+    isListeningRef.current = false;
     if (pttTimerRef.current) clearInterval(pttTimerRef.current);
     if (pttChunkTimerRef.current) clearInterval(pttChunkTimerRef.current);
+    if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+    if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
     // نظّف بث Deepgram لو الصفحة اتقفلت والمايك شغّال.
+    try { dgGateRef.current?.close(); } catch {}
+    dgGateRef.current = null;
     try { dgRecorderRef.current?.stop(); } catch {}
     try { dgSocketRef.current?.close(); } catch {}
     try { dgStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
