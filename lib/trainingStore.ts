@@ -130,3 +130,37 @@ export async function getTrainingSession(sessionId: string): Promise<TrainingSes
     req.onerror = () => rej(req.error);
   });
 }
+
+/** كل العيّنات (لتنزيل الداتاسِت). */
+export async function getAllTrainingSamples(): Promise<TrainingSample[]> {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(SAMPLES, "readonly");
+    const req = tx.objectStore(SAMPLES).getAll();
+    req.onsuccess = () => res(req.result as TrainingSample[]);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+/** كل الجلسات بصوتها (لتنزيل الداتاسِت). */
+export async function getAllTrainingSessions(): Promise<TrainingSession[]> {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(SESSIONS, "readonly");
+    const req = tx.objectStore(SESSIONS).getAll();
+    req.onsuccess = () => res(req.result as TrainingSession[]);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+/** يمسح كل داتا التدريب المحلية (بعد التنزيل). */
+export async function clearTrainingData(): Promise<void> {
+  const db = await openDB();
+  await new Promise<void>((res, rej) => {
+    const tx = db.transaction([SAMPLES, SESSIONS], "readwrite");
+    tx.objectStore(SAMPLES).clear();
+    tx.objectStore(SESSIONS).clear();
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
