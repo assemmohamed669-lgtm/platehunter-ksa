@@ -189,6 +189,32 @@ export default function AdminDashboard() {
     catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
     finally { setCentralBusy(false); }
   }
+  // تشخيص كامل لمسار التعلّم على الجهاز ده — يبيّن فين المشكلة بالظبط.
+  async function handleLearningDiagnostics() {
+    setCentralBusy(true);
+    const lines: string[] = [];
+    try {
+      const on = await fetchLearningEnabled();
+      lines.push(`المفتاح (من السيرفر): ${on ? "شغّال ✓" : "متوقّف ✗"}`);
+    } catch (e) { lines.push("المفتاح: خطأ — " + ((e as Error)?.message ?? "")); }
+    try {
+      const s = await import("@/lib/trainingStore");
+      const [samples, sessions, unsynced] = await Promise.all([s.getAllTrainingSamples(), s.getAllTrainingSessions(), s.getUnsyncedSamples()]);
+      lines.push(`محلي على الجهاز ده: ${samples.length} لوحة، ${sessions.length} مقطع صوت، ${unsynced.length} لسه ما اترفعتش`);
+    } catch (e) { lines.push("المحلي: خطأ — " + ((e as Error)?.message ?? "")); }
+    try {
+      const { syncTrainingData } = await import("@/lib/trainingSync");
+      const r = await syncTrainingData();
+      lines.push(`الرفع لـ Supabase: ${r.uploaded} اترفعت${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
+    } catch (e) { lines.push("الرفع: خطأ — " + ((e as Error)?.message ?? "")); }
+    try {
+      const c = await import("@/lib/trainingCentral");
+      const pend = await c.listPendingByAgent();
+      lines.push(`على السيرفر (كل المناديب): ${pend.reduce((a, x) => a + x.count, 0)} لوحة معلّقة`);
+    } catch (e) { lines.push("السيرفر: خطأ — " + ((e as Error)?.message ?? "")); }
+    setCentralBusy(false);
+    alert(lines.join("\n"));
+  }
 
   async function handleCreate() {
     setCError(null);
@@ -346,6 +372,10 @@ export default function AdminDashboard() {
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <span className="text-[11px] font-bold text-ink">داتا المناديب (مركزي)</span>
                 <div className="flex items-center gap-1.5">
+                  <button disabled={centralBusy} onClick={handleLearningDiagnostics}
+                    className={`rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-600 transition ${centralBusy ? "opacity-50" : ""}`}>
+                    تشخيص
+                  </button>
                   <button disabled={centralBusy} onClick={loadPending}
                     className={`rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] text-muted transition ${centralBusy ? "opacity-50" : ""}`}>
                     {centralBusy ? "..." : "تحديث القائمة"}

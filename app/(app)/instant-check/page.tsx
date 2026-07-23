@@ -1741,11 +1741,10 @@ export default function InstantCheckPage() {
   // على التصدير نفسه (اتعمل خلاص). معزول تماماً: مقفول = مايتنفّذش أصلاً.
   async function collectTrainingFrom(rows: PttRow[]) {
     if (!learningGateRef.current) return;
-    const sid = pttSessionIdRef.current;
-    if (!sid) return;
-    // بس الصفوف اللي صوتها في الجلسة الحالية (منعاً لحفظ عيّنة بلا صوت مطابق).
-    const eligible = rows.filter((r) => r.sessionId === sid);
-    const decided = eligible
+    // نجمّع كل صف صالح الشكل — **بلا تقييد بالجلسة الحالية** (اللوحات بترجع من
+    // التخزين بعد إعادة الفتح لكن معرّف الجلسة في الذاكرة بيتصفّر، فالتقييد القديم
+    // كان بيلغي الجمع كله). كل صف بيتحفظ بمعرّف جلسته هو (المحفوظ معاه).
+    const decided = rows
       .map((r) => {
         const norm = normalizePlate(bankPlateToArabic(r.plate));
         const validShape = norm.replace(/[0-9]/g, "").length === 3 && norm.replace(/[^0-9]/g, "").length === 4;
@@ -1762,17 +1761,20 @@ export default function InstantCheckPage() {
       .filter((x) => x.dec.collect);
     if (decided.length === 0) return;
     try {
-      // احفظ صوت الجلسة الكامل مرة واحدة (base64).
-      if (trainingSessionSavedRef.current !== sid && pttAudioChunksRef.current.length > 0) {
+      // احفظ صوت الجلسة الحالية لو لسه في الذاكرة (حالة التصدير في نفس الجلسة).
+      // حالة إعادة الفتح متغطّية بحفظ الصوت وقت الإيقاف (persistPttAudio في stopPtt).
+      const curSid = pttSessionIdRef.current;
+      if (curSid && trainingSessionSavedRef.current !== curSid && pttAudioChunksRef.current.length > 0) {
         const blob = new Blob(pttAudioChunksRef.current, { type: pttAudioMimeRef.current });
         const audioBase64 = await blobToBase64(blob);
         await saveTrainingSession({
-          sessionId: sid, audioBase64, mimeType: pttAudioMimeRef.current,
+          sessionId: curSid, audioBase64, mimeType: pttAudioMimeRef.current,
           agentId: agentIdRef.current ?? "", createdAt: new Date().toISOString(), synced: false,
         });
-        trainingSessionSavedRef.current = sid;
+        trainingSessionSavedRef.current = curSid;
       }
       for (const { r, norm, dec } of decided) {
+        const sid = r.sessionId || curSid || "no-session";
         await saveTrainingSample({
           id: `${sid}-${r.id}`, sessionId: sid, plate: norm,
           tier: dec.tier as "gold" | "trusted", reason: dec.reason,
@@ -1783,6 +1785,24 @@ export default function InstantCheckPage() {
       try { setTrainingToday(await countTrainingToday()); } catch { /* ignore */ }
       void syncTrainingData(); // خلفية — يرفع لـ Supabase ويعلّم المتزامن
     } catch { /* فشل الجمع مايوقفش الشغل */ }
+  }
+
+  // يحفظ صوت جلسة الصوت الحالية في مخزن التدريب فوراً (وقت الإيقاف) — عشان لو
+  // المندوب خرج/قفل التطبيق قبل التصدير، الصوت مايضيعش (الذاكرة بتتصفّر لكن
+  // IndexedDB بيفضل). العيّنات نفسها بتتجمّع وقت التصدير وبتربط بنفس معرّف الجلسة.
+  async function persistPttAudio() {
+    try {
+      const sid = pttSessionIdRef.current;
+      if (!learningGateRef.current || !sid) return;
+      if (trainingSessionSavedRef.current === sid || pttAudioChunksRef.current.length === 0) return;
+      const blob = new Blob(pttAudioChunksRef.current, { type: pttAudioMimeRef.current });
+      const audioBase64 = await blobToBase64(blob);
+      await saveTrainingSession({
+        sessionId: sid, audioBase64, mimeType: pttAudioMimeRef.current,
+        agentId: agentIdRef.current ?? "", createdAt: new Date().toISOString(), synced: false,
+      });
+      trainingSessionSavedRef.current = sid;
+    } catch { /* مايأثرش على الإيقاف */ }
   }
 
   function startPttTimer() {
@@ -2200,6 +2220,9 @@ export default function InstantCheckPage() {
 
     // مسار Deepgram شغّال؟ وقّف المسجّل، اقفل السوكيت، وفلّش المحلّل.
     if (dgSocketRef.current || dgRecorderRef.current || dgStreamRef.current) {
+      // احفظ صوت الجلسة للتدريب دلوقتي (قبل ما ننضّف) — عشان يفضل موجود حتى لو
+      // المندوب خرج/قفل التطبيق قبل التصدير (المفتاح لو شغّال بس).
+      void persistPttAudio();
       if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
       if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
       try { dgGateRef.current?.close(); } catch {}
