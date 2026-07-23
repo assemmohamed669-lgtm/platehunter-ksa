@@ -441,7 +441,7 @@ export default function SortingPage() {
   // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
   // بأعمدة النتيجة. بنستبعد اللي ظاهر أصلاً في الأعمدة الثابتة (نفس المصدر).
   const extraReferralResultCols = useMemo<MergedResultColumn[]>(() => {
-    const usedRef = new Set(resultCols.filter((c) => c.source === "referral").map((c) => c.sourceCol));
+    const usedRef = new Set(resultCols.filter((c) => c.source === "referral").flatMap((c) => c.sourceCols));
     const picked = new Set<string>();
     for (const h of referralExtraCols) picked.add(h);
     for (const er of extraReferrals) {
@@ -449,14 +449,14 @@ export default function SortingPage() {
       for (const h of extraColsSel[er.id] ?? []) picked.add(h);
     }
     return [...picked].filter((h) => !usedRef.has(h))
-      .map((col, i) => ({ id: `xref-${i}`, key: `xref-${col}`, label: col, source: "referral" as const, sourceCol: col }));
+      .map((col, i) => ({ id: `xref-${i}`, key: `xref-${col}`, label: col, source: "referral" as const, sourceCol: col, sourceCols: [col] }));
   }, [referralExtraCols, extraReferrals, extraColsSel, resultCols]);
 
   // أعمدة الداتا الإضافية المختارة — من المربع الأساسي (outputCols/الإجبارية) +
   // كل مربع داتا إضافي (extraColsSel[ed.id]). بنستبعد اللي ظاهر أصلاً في الأعمدة
   // الثابتة (نفس المصدر). كده أي عمود المندوب يعلّم عليه بيظهر في النتيجة.
   const extraDataResultCols = useMemo<MergedResultColumn[]>(() => {
-    const usedData = new Set(resultCols.filter((c) => c.source === "data").map((c) => c.sourceCol));
+    const usedData = new Set(resultCols.filter((c) => c.source === "data").flatMap((c) => c.sourceCols));
     const picked = new Set<string>();
     if (dataTable) {
       for (const h of dataTable.headers) {
@@ -469,7 +469,7 @@ export default function SortingPage() {
       for (const h of extraColsSel[ed.id] ?? []) picked.add(h);
     }
     return [...picked].filter((h) => !usedData.has(h))
-      .map((col, i) => ({ id: `xdata-${i}`, key: `xdata-${col}`, label: col, source: "data" as const, sourceCol: col }));
+      .map((col, i) => ({ id: `xdata-${i}`, key: `xdata-${col}`, label: col, source: "data" as const, sourceCol: col, sourceCols: [col] }));
   }, [dataTable, resultCols, effectiveDataPlateCol, outputCols, extraData, extraColsSel]);
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
@@ -973,6 +973,21 @@ export default function SortingPage() {
   }
 
   // ── Row helpers ──
+  // يقرا قيمة عمود نتيجة من الصف — بيجرّب كل الأعمدة المرشّحة (sourceCols عبر كل
+  // المحافظ) بالتتابع ويرجّع أول قيمة موجودة. كده اللوحة الجاية من أي محفظة
+  // بتطلّع نوعها/ماركتها حتى لو المحافظ بأسماء أعمدة مختلفة.
+  function cellValue(
+    row: Record<string, string> | undefined,
+    col: { sourceCol: string; sourceCols?: string[] },
+  ): string {
+    const cols = col.sourceCols && col.sourceCols.length ? col.sourceCols : [col.sourceCol];
+    for (const c of cols) {
+      const v = String(row?.[c] ?? "").trim();
+      if (v) return v;
+    }
+    return "";
+  }
+
   function plateForRow(r: MatchResult): string {
     const ref = bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? ""));
     const data = bankPlateToArabic(String(r.dataRow?.[effectiveDataPlateCol ?? ""] ?? ""));
@@ -996,10 +1011,14 @@ export default function SortingPage() {
     const color = find("color", "referral") ?? find("color");
     const gps = find("gps");
     const notesCol = dataTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
-    // عمود البنك من شيت الإحالة (بنك/البنك/اسم البنك) — لو الشيت فيه بنك.
-    const bankCol = referralTable?.headers.find((h) => /بنك/.test(h)) ?? null;
+    // عمود البنك من كل شيتات الإحالة (الأساسية + الإضافية) — كل محفظة ممكن تكون بنك
+    // مختلف، فبنجمّع كل أعمدة «بنك» ونقرا من أي واحدة فيها قيمة للصف.
+    const bankCols = [
+      ...(referralTable ? referralTable.headers.filter((h) => /بنك/.test(h)) : []),
+      ...extraReferrals.flatMap((er) => (er.table ? er.table.headers.filter((h) => /بنك/.test(h)) : [])),
+    ].filter((h, i, a) => a.indexOf(h) === i);
     const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
-      c ? String((c.source === "data" ? r.dataRow : r.referralRow)?.[c.sourceCol] ?? "").trim() : "";
+      c ? cellValue(c.source === "data" ? r.dataRow : r.referralRow, c) : "";
 
     const rowsData = displayResults.map((r) => {
       const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
@@ -1008,7 +1027,7 @@ export default function SortingPage() {
         plate: plateForRow(r),
         type: valOf(r, dataType),
         model,
-        bank: bankCol ? String(r.referralRow?.[bankCol] ?? "").trim() : "",
+        bank: bankCols.length ? cellValue(r.referralRow, { sourceCol: bankCols[0], sourceCols: bankCols }) : "",
         dist: valOf(r, dist),
         addr: valOf(r, addr),
         date: valOf(r, dateCol),
@@ -1052,7 +1071,7 @@ export default function SortingPage() {
     // يطلّعوا بنفس الترتيب والمحتوى بالظبط.
     const row: Record<string, unknown> = { "رقم اللوحة": plateForRow(r) };
     for (const rc of allResultCols) {
-      row[rc.label] = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
+      row[rc.label] = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
     }
     row["الحالة"] = "مطلوبة";
     return row;
@@ -1583,7 +1602,7 @@ export default function SortingPage() {
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
                         {allResultCols.map((rc) => {
-                          const val = (rc.source === "data" ? r.dataRow?.[rc.sourceCol] : r.referralRow?.[rc.sourceCol]) ?? "";
+                          const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
                           return (
                             <td key={rc.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {

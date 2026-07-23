@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.9.6";
+export const APP_VERSION = "0.9.7";
 export const UPDATE_NOTE =
-  "لوحة الأدمن: اسم المندوب بقى يظهر كامل في القائمة (مش بيتقصّ).";
+  "الفرز على كذا محفظة: نوع/ماركة السيارة بقى يظهر لكل اللوحات مهما اختلفت أسماء أعمدة المحافظ.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

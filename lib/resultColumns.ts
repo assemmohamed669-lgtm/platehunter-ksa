@@ -160,43 +160,61 @@ export interface MergedResultColumn {
   key: string;                 // مفتاح الهدف (type/brand/color...) — ممكن يتكرر عبر المصادر
   label: string;               // الاسم المعروض (متسمّى بوضوح لو اتكرر: «... (المحفظة)»)
   source: "data" | "referral"; // منين تُقرأ القيمة (صف الداتا ولا صف الإحالة)
-  sourceCol: string;           // اسم العمود الأصلي في المصدر
+  sourceCol: string;           // اسم العمود الأساسي (أول مرشّح) — للتوافق/التصدير
+  sourceCols: string[];        // كل الأعمدة المرشّحة عبر المحافظ — تُقرأ بالتتابع لأول قيمة
 }
 
 /**
  * يدمج أعمدة النتيجة من عدة مصادر (الداتا + كل شيتات الإحالة الأساسية والإضافية)
- * في القائمة الثابتة بالترتيب. **مابيدمجش المصادر في عمود واحد** — لو نفس الهدف
- * (مثلاً «نوع السيارة») موجود في الداتا وفي المحفظة، بيطلّع **عمودين منفصلين**:
- * واحد من الداتا (حتى لو فاضي) وواحد من المحفظة جنبه. الأول بياخد الاسم الثابت،
- * والباقي بيتسمّى «... (المحفظة)» عشان يتميّزوا. الترتيب: أعمدة كل هدف مع بعض،
- * والداتا الأول جوه الهدف الواحد.
+ * في القائمة الثابتة بالترتيب. الداتا والإحالة **مايتدمجوش في عمود واحد** — لو نفس
+ * الهدف (مثلاً «نوع السيارة») موجود في الداتا وفي المحفظة، بيطلّع **عمودين منفصلين**:
+ * واحد من الداتا (حتى لو فاضي) وواحد من المحفظة جنبه.
+ *
+ * لكن **كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في عمود إحالة واحد** لكل هدف —
+ * حتى لو المحافظ بأسماء أعمدة مختلفة (عربي/إنجليزي). العمود بيقرا من كل أعمدة
+ * المحافظ بالتتابع لأول قيمة موجودة (sourceCols)، فاللوحة الجاية من أي محفظة
+ * بتطلّع نوعها/ماركتها في نفس العمود — بدل ما كل محفظة تعمل عمود منفصل ويفضل
+ * فاضي للوحات المحافظ التانية.
+ *
+ * الأول بياخد الاسم الثابت، والباقي بيتسمّى «... (المحفظة)» عشان يتميّزوا. الترتيب:
+ * أعمدة كل هدف مع بعض، والداتا الأول جوه الهدف الواحد.
  */
 export function resolveMergedResultColumns(
   sources: ResultColumnSource[],
   contentThreshold = 0.4,
 ): MergedResultColumn[] {
-  const perTarget = new Map<string, Array<{ label: string; source: "data" | "referral"; sourceCol: string }>>();
+  const dataCols = new Map<string, string[]>(); // key الهدف → أعمدة الداتا (كل واحد عمود مستقل)
+  const refCols = new Map<string, string[]>();  // key الهدف → أعمدة كل المحافظ (تتدمج في عمود واحد)
   for (const src of sources) {
     for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
-      // «عنوان المحفظة» (عمود العنوان جاي من شيت الإحالة) = عنوان البنك/المدينة،
-      // مش موقع المندوب الميداني — فمش مفيد في نتيجة الفرز ومايظهرش تلقائياً.
-      // العنوان المفيد هو بتاع الداتا (موقع التفريغ). المندوب يقدر يضيف عنوان
-      // الإحالة يدوياً من «أعمدة الإحالة» لو حابب.
-      if (c.key === "address" && src.kind === "referral") continue;
-      // «تاريخ التسجيل (المحفظة)» = تاريخ سجلّ البنك، مش تاريخ تفريغ المندوب —
-      // المفيد هو تاريخ الداتا. فمايظهرش تاريخ المحفظة في النتيجة (بطلب المستخدم).
-      if (c.key === "date" && src.kind === "referral") continue;
-      const arr = perTarget.get(c.key) ?? [];
-      const label = arr.length === 0 ? c.label : `${c.label} (${src.kind === "referral" ? "المحفظة" : "الداتا"})`;
-      arr.push({ label, source: src.kind, sourceCol: c.sourceCol });
-      perTarget.set(c.key, arr);
+      if (src.kind === "referral") {
+        // «عنوان/تاريخ المحفظة» = بيانات البنك (مدينة/تاريخ سجلّه) مش موقع/تاريخ
+        // تفريغ المندوب — فمش مفيدين في النتيجة ومايظهروش (المفيد بتاع الداتا).
+        if (c.key === "address" || c.key === "date") continue;
+        const arr = refCols.get(c.key) ?? [];
+        if (!arr.includes(c.sourceCol)) arr.push(c.sourceCol);
+        refCols.set(c.key, arr);
+      } else {
+        const arr = dataCols.get(c.key) ?? [];
+        if (!arr.includes(c.sourceCol)) arr.push(c.sourceCol);
+        dataCols.set(c.key, arr);
+      }
     }
   }
   const out: MergedResultColumn[] = [];
   for (const t of RESULT_TARGETS) {
-    const arr = perTarget.get(t.key);
-    if (!arr) continue;
-    arr.forEach((a, i) => out.push({ id: `${t.key}-${i}`, key: t.key, label: a.label, source: a.source, sourceCol: a.sourceCol }));
+    let idx = 0;
+    for (const col of dataCols.get(t.key) ?? []) {
+      const label = idx === 0 ? t.label : `${t.label} (الداتا)`;
+      out.push({ id: `${t.key}-${idx}`, key: t.key, label, source: "data", sourceCol: col, sourceCols: [col] });
+      idx++;
+    }
+    const rCols = refCols.get(t.key) ?? [];
+    if (rCols.length > 0) {
+      const label = idx === 0 ? t.label : `${t.label} (المحفظة)`;
+      out.push({ id: `${t.key}-${idx}`, key: t.key, label, source: "referral", sourceCol: rCols[0], sourceCols: rCols });
+      idx++;
+    }
   }
   return out;
 }
