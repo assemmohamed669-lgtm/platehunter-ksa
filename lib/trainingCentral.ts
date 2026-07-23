@@ -78,15 +78,13 @@ export async function listPendingByAgent(): Promise<Array<{ agentId: string; cou
   return [...m.entries()].map(([agentId, count]) => ({ agentId, count })).sort((a, b) => b.count - a.count);
 }
 
-/** ينزّل بايتات ملف صوت من الباكت (base64). null لو مش موجود. */
-export async function fetchAudioBase64(path: string): Promise<{ base64: string; mimeType: string } | null> {
+/** يجيب صوت جلسة (base64) من جدول training_audio بمعرّف الجلسة. null لو مش موجود. */
+export async function fetchAudioBase64(sessionId: string): Promise<{ base64: string; mimeType: string } | null> {
   const { supabase } = await import("./supabaseClient");
-  const { data, error } = await supabase.storage.from("training-audio").download(path);
-  if (error || !data) return null;
-  const buf = new Uint8Array(await data.arrayBuffer());
-  let bin = "";
-  for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
-  return { base64: btoa(bin), mimeType: data.type || "audio/webm" };
+  const { data, error } = await supabase.from("training_audio")
+    .select("audio_base64, mime_type").eq("session_id", sessionId).maybeSingle();
+  if (error || !data?.audio_base64) return null;
+  return { base64: data.audio_base64 as string, mimeType: (data.mime_type as string) || "audio/webm" };
 }
 
 /** يعلّم عيّنات إنها اتنزّلت (فمتيجيش في «الجديد» تاني). */
@@ -98,7 +96,7 @@ export async function markDownloaded(ids: string[]): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-/** يمسح المُنزَّل (downloaded_at NOT NULL) من الجدول + صوته من الباكت. اختيارياً لمندوب. */
+/** يمسح المُنزَّل (downloaded_at NOT NULL) من جدول العيّنات + صوته من training_audio. */
 export async function purgeDownloaded(agentId?: string): Promise<{ deleted: number }> {
   const { supabase } = await import("./supabaseClient");
   let q = supabase.from("training_samples").select("*").not("downloaded_at", "is", null);
@@ -107,8 +105,9 @@ export async function purgeDownloaded(agentId?: string): Promise<{ deleted: numb
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as CentralSampleRow[];
   if (rows.length === 0) return { deleted: 0 };
-  const paths = [...new Set(rows.map((r) => r.audio_path).filter((p): p is string => !!p))];
-  if (paths.length) { try { await supabase.storage.from("training-audio").remove(paths); } catch { /* الصوت ممكن يكون اتمسح قبل كده */ } }
+  // امسح صوت الجلسات المرتبطة من training_audio.
+  const sessionIds = [...new Set(rows.map((r) => r.session_id).filter(Boolean))];
+  if (sessionIds.length) { try { await supabase.from("training_audio").delete().in("session_id", sessionIds); } catch { /* ممكن يكون اتمسح */ } }
   const { error: delErr } = await supabase.from("training_samples").delete().in("id", rows.map((r) => r.id));
   if (delErr) throw new Error(delErr.message);
   return { deleted: rows.length };
