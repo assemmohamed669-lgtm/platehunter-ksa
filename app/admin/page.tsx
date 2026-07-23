@@ -66,6 +66,9 @@ export default function AdminDashboard() {
   const [learningBusy, setLearningBusy] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0); // عدد عيّنات التدريب المتجمّعة على الجهاز
   const [trainingBusy, setTrainingBusy] = useState(false);
+  const [pendingByAgent, setPendingByAgent] = useState<Array<{ agentId: string; count: number }>>([]); // معلّق مركزي لكل مندوب
+  const [centralBusy, setCentralBusy] = useState(false);
+  const [centralLoaded, setCentralLoaded] = useState(false);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -145,6 +148,46 @@ export default function AdminDashboard() {
     try { const store = await import("@/lib/trainingStore"); await store.clearTrainingData(); setTrainingCount(0); }
     catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
     finally { setTrainingBusy(false); }
+  }
+
+  // ── داتا المناديب المركزية (من Supabase) ──
+  const usernameOf = (agentId: string) => agents.find((a) => a.id === agentId)?.username || agentId;
+  async function loadPending() {
+    try { const c = await import("@/lib/trainingCentral"); setPendingByAgent(await c.listPendingByAgent()); setCentralLoaded(true); }
+    catch (e) { alert("تعذّر تحميل القائمة: " + ((e as Error)?.message ?? "")); }
+  }
+  // ينزّل «الجديد بس» (اللي ماتنزّلش قبل كده) — ملف JSON لكل مندوب فيه اللوحات الصح
+  // + صوت كل مقطع (base64)، وبعدها يعلّمهم كمُنزَّلين فمايتكرروش المرة الجاية.
+  async function downloadNew(agentId?: string) {
+    setCentralBusy(true);
+    try {
+      const c = await import("@/lib/trainingCentral");
+      const rows = await c.fetchPendingSamples(agentId);
+      if (rows.length === 0) { alert("مفيش لوحات جديدة."); return; }
+      const manifest = c.buildCentralManifest(rows);
+      for (const agent of manifest.agents) {
+        const sessions = [];
+        for (const s of agent.sessions) {
+          let audioBase64: string | null = null, mimeType: string | null = null;
+          if (s.audioPath) { const a = await c.fetchAudioBase64(s.audioPath); if (a) { audioBase64 = a.base64; mimeType = a.mimeType; } }
+          sessions.push({ sessionId: s.sessionId, audioBase64, mimeType, plates: s.plates });
+        }
+        const name = usernameOf(agent.agentId);
+        const out = { agentId: agent.agentId, username: name, sampleCount: agent.sampleCount, sessions };
+        downloadBlob(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }), `training-${name}-${Date.now()}.json`);
+      }
+      await c.markDownloaded(rows.map((r) => r.id));
+      await loadPending();
+      alert(`تم تنزيل ${rows.length} لوحة جديدة (${manifest.agents.length} مندوب) وتعليمها كمُنزَّلة — مش هتتكرر.`);
+    } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
+    finally { setCentralBusy(false); }
+  }
+  async function purgeDownloadedServer() {
+    if (!confirm("مسح كل المُنزَّل من السيرفر (اللي نزّلته قبل كده)؟ ده بيفضّي مساحة Supabase. الجديد اللي لسه ماتنزّلش مش هيتمسح.")) return;
+    setCentralBusy(true);
+    try { const c = await import("@/lib/trainingCentral"); const r = await c.purgeDownloaded(); alert(`تم مسح ${r.deleted} عيّنة مُنزَّلة من السيرفر.`); }
+    catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
+    finally { setCentralBusy(false); }
   }
 
   async function handleCreate() {
@@ -296,6 +339,45 @@ export default function AdminDashboard() {
                   مسح
                 </button>
               </div>
+            </div>
+
+            {/* داتا المناديب المركزية (من Supabase) — الجديد بس، مفصول بكل مندوب. */}
+            <div className="mt-3 border-t border-primary/20 pt-2.5">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-ink">داتا المناديب (مركزي)</span>
+                <div className="flex items-center gap-1.5">
+                  <button disabled={centralBusy} onClick={loadPending}
+                    className={`rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] text-muted transition ${centralBusy ? "opacity-50" : ""}`}>
+                    {centralBusy ? "..." : "تحديث القائمة"}
+                  </button>
+                  {pendingByAgent.length > 0 && (
+                    <button disabled={centralBusy} onClick={() => downloadNew()}
+                      className={`rounded-full bg-primary px-3 py-1 text-[11px] font-bold text-night transition ${centralBusy ? "opacity-50" : ""}`}>
+                      تنزيل الكل الجديد
+                    </button>
+                  )}
+                </div>
+              </div>
+              {centralLoaded && pendingByAgent.length === 0 && (
+                <p className="text-[11px] text-muted">مفيش لوحات جديدة عند أي مندوب دلوقتي.</p>
+              )}
+              {pendingByAgent.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  {pendingByAgent.map(({ agentId, count }) => (
+                    <div key={agentId} className="flex items-center justify-between rounded-lg bg-surface px-2 py-1">
+                      <span className="truncate text-[11px] text-ink">{usernameOf(agentId)} <b className="text-primary">({count})</b></span>
+                      <button disabled={centralBusy} onClick={() => downloadNew(agentId)}
+                        className={`shrink-0 rounded-full border border-primary/40 px-2.5 py-0.5 text-[10px] font-bold text-primary transition ${centralBusy ? "opacity-50" : ""}`}>
+                        تنزيل الجديد
+                      </button>
+                    </div>
+                  ))}
+                  <button disabled={centralBusy} onClick={purgeDownloadedServer}
+                    className="mt-1 self-start text-[10px] text-muted underline">
+                    مسح المُنزَّل من السيرفر (تفريغ مساحة)
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
