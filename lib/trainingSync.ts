@@ -23,8 +23,12 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
     if (samples.length === 0) return { uploaded: 0 };
     const { supabase } = await import("./supabaseClient");
 
-    // ارفع صوت كل جلسة مرة واحدة، واحفظ مسارها.
+    // ارفع صوت كل جلسة مرة واحدة، واحفظ مسارها. **مهم:** لو رفع الصوت فشل (مثلاً
+    // صلاحية Storage)، ماننهارش المزامنة كلها — نكمّل نرفع اللوحات (اللابيل) على
+    // الأقل (audio_path=null)، ونبلّغ الخطأ في الآخر. الصوت يُعاد رفعه لما تتظبط
+    // الصلاحية (لأن الجلسة تفضل synced=false).
     const sessionPath = new Map<string, string>();
+    let audioError: string | undefined;
     const uniqueSessions = [...new Set(samples.map((s) => s.sessionId))];
     for (const sid of uniqueSessions) {
       const sess = await getTrainingSession(sid);
@@ -35,13 +39,13 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
         const bytes = base64ToBytes(sess.audioBase64);
         const { error } = await supabase.storage.from("training-audio")
           .upload(path, bytes, { contentType: sess.mimeType, upsert: true });
-        if (error) return { uploaded: 0, error: error.message };
+        if (error) { audioError = error.message; continue; } // تخطَّ الصوت، كمّل اللوحات
         await saveTrainingSession({ ...sess, synced: true });
       }
       sessionPath.set(sid, path);
     }
 
-    // أدرج صفوف العيّنات.
+    // أدرج صفوف العيّنات (بتترفع حتى لو الصوت فشل — audio_path هيبقى null وقتها).
     let uploaded = 0;
     for (const s of samples) {
       const row = {
@@ -51,10 +55,14 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
       };
       const { error } = await supabase.from("training_samples").upsert(row, { onConflict: "id" });
       if (error) return { uploaded, error: error.message };
-      await saveTrainingSample({ ...(s as TrainingSample), synced: true });
+      // العيّنة اتعلّمت مرفوعة بس لو صوتها اترفع كمان (أو مفيش صوت) — عشان لو الصوت
+      // لسه فاشل، إعادة المزامنة بعدين تكمّل ترفع الصوت.
+      if (sessionPath.has(s.sessionId) || !s.sessionId) {
+        await saveTrainingSample({ ...(s as TrainingSample), synced: true });
+      }
       uploaded++;
     }
-    return { uploaded };
+    return { uploaded, error: audioError };
   } catch (e) {
     return { uploaded: 0, error: e instanceof Error ? e.message : String(e) };
   }
