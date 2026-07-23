@@ -258,11 +258,12 @@ export default function AdminDashboard() {
               style={a.is_super ? { borderColor: "#D4AF37" } : undefined}>
               <CircleUserRound size={30} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {/* نقطة حالة النشاط قدام الاسم — أخضر = نشط، رمادي = مش فاتح */}
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${act.online ? "bg-green-500 animate-pulse" : "bg-muted/40"}`}
                     title={act.label} />
-                  <span className="truncate text-sm font-bold text-ink" style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
+                  {/* الاسم كامل — يلتفّ لو طويل بدل ما يتقصّ */}
+                  <span className="text-sm font-bold text-ink break-words" style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
                   {a.role === "admin" && (
                     a.is_super ? (
                       <span className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>

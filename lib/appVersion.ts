@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.9.5";
+export const APP_VERSION = "0.9.6";
 export const UPDATE_NOTE =
-  "لوحة الأدمن: بقت تبيّن نسخة البرنامج اللي كل مندوب شغّال بيها (أحدث / قديمة) عشان تعرف مين محتاج يحدّث.";
+  "لوحة الأدمن: اسم المندوب بقى يظهر كامل في القائمة (مش بيتقصّ).";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
