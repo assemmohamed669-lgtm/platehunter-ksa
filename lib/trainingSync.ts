@@ -12,20 +12,20 @@ import {
   type TrainingSample,
 } from "./trainingStore";
 
-export async function syncTrainingData(): Promise<{ uploaded: number; error?: string }> {
+export async function syncTrainingData(): Promise<{ uploaded: number; audioUploaded: number; error?: string }> {
   try {
     const samples = await getUnsyncedSamples();
     const allSessions = await getAllTrainingSessions();
     const unsyncedSessions = allSessions.filter((s) => !s.synced);
     // مفيش لوحات ولا صوت جديد → خلاص.
-    if (samples.length === 0 && unsyncedSessions.length === 0) return { uploaded: 0 };
+    if (samples.length === 0 && unsyncedSessions.length === 0) return { uploaded: 0, audioUploaded: 0 };
     const { supabase } = await import("./supabaseClient");
 
     // **مهم:** نستخدم معرّف اليوزر المسجّل **حالياً** لكل الصفوف. getSession() بيقرا
     // الجلسة **محلياً** بلا نداء شبكة (getUser بيعمل نداء بيفشل «Failed to fetch»).
     const { data: sessData } = await supabase.auth.getSession();
     const uid = sessData?.session?.user?.id;
-    if (!uid) return { uploaded: 0, error: "مفيش جلسة دخول — سجّل الدخول الأول" };
+    if (!uid) return { uploaded: 0, audioUploaded: 0, error: "مفيش جلسة دخول — سجّل الدخول الأول" };
 
     // (١) ارفع صوت أي جلسة لسه مااترفعتش — **مستقلة عن اللوحات** (عشان صوت اتحفظ
     // بعد ما لوحاته اترفعت، يترفع برضه). audioOk = الجلسات اللي صوتها متاح على
@@ -33,6 +33,7 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
     const knownSessions = new Set(allSessions.map((s) => s.sessionId));
     const audioOk = new Set<string>(allSessions.filter((s) => s.synced).map((s) => s.sessionId));
     let audioError: string | undefined;
+    let audioUploaded = 0;
     for (const sess of unsyncedSessions) {
       try {
         const { error } = await supabase.rpc("save_training_audio", {
@@ -42,6 +43,7 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
         if (error) { audioError = error.message; continue; }
         await saveTrainingSession({ ...sess, synced: true });
         audioOk.add(sess.sessionId);
+        audioUploaded++;
       } catch (e) {
         audioError = e instanceof Error ? e.message : String(e);
         continue;
@@ -70,8 +72,8 @@ export async function syncTrainingData(): Promise<{ uploaded: number; error?: st
         sampleError = e instanceof Error ? e.message : String(e); // استثناء شبكة — تخطَّ الصف
       }
     }
-    return { uploaded, error: sampleError ?? audioError };
+    return { uploaded, audioUploaded, error: sampleError ?? audioError };
   } catch (e) {
-    return { uploaded: 0, error: e instanceof Error ? e.message : String(e) };
+    return { uploaded: 0, audioUploaded: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }

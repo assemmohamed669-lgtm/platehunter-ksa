@@ -224,7 +224,7 @@ export default function AdminDashboard() {
     try {
       const { syncTrainingData } = await import("@/lib/trainingSync");
       const r = await syncTrainingData();
-      lines.push(`الرفع لـ Supabase: ${r.uploaded} اترفعت${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
+      lines.push(`الرفع لـ Supabase: ${r.uploaded} لوحة + ${r.audioUploaded ?? 0} صوت${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
     } catch (e) { lines.push("الرفع: خطأ — " + ((e as Error)?.message ?? "")); }
     try {
       const c = await import("@/lib/trainingCentral");
