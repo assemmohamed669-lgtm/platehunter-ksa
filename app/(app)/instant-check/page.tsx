@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -1222,16 +1222,7 @@ export default function InstantCheckPage() {
     setEditingFieldId(null);
     if (!entry || !trimmed || trimmed === entry.plate) return;
 
-    const origLetters = normalizePlate(bankPlateToArabic(entry.plate)).replace(/[0-9]/g, "");
-    const corrLetters = normalizePlate(bankPlateToArabic(trimmed)).replace(/[0-9]/g, "");
-    if (origLetters && corrLetters && origLetters.length !== corrLetters.length) {
-      recordWordBlend(wordBlendRef.current, origLetters, corrLetters);
-      try { localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current))); } catch { /* full */ }
-    } else if (origLetters && corrLetters) {
-      recordLetterCorrections(letterConfusionsRef.current, entry.plate, trimmed);
-      try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
-    }
-
+    // التعلّم التلقائي الحي متوقّف — التعديل مابيغذّيش خرايط التصحيح المحلية تاني.
     const updated: FieldCheckEntry = { ...entry, plate: trimmed, synced: false }; // اتعدّل → يترفع تاني في المزامنة
     setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
     await saveFieldCheckEntry(updated);
@@ -1529,13 +1520,11 @@ export default function InstantCheckPage() {
   // في نفس الملّي ثانية.
   function addOnePttRow(rawPlate: string, vehicleType?: string, idx = 0) {
     if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي لوحة لحد ما يكمّل
-    // Apply what past edits taught: whole-fragment blend first, then per-letter
-    // confusion — so a mishearing corrected once auto-corrects next time.
+    // التعلّم التلقائي الحي (blend/confusions) **متوقّف** — كان بيلوّث النتايج
+    // بتصحيحات غير مُدقّقة (أخطاء غريبة زي «الا5121»). التفريغ دلوقتي = Deepgram +
+    // الكلمات المفتاحية بس؛ التحسين الحقيقي هيبقى من الموديل المدرّب على داتا موثوقة.
     const norm = normalizePlate(bankPlateToArabic(rawPlate));
-    const letters = norm.replace(/[0-9]/g, "");
-    const digits = norm.replace(/[^0-9]/g, "");
-    const blended = applyWordBlend(letters, wordBlendRef.current) || letters;
-    const corrected = applyLetterConfusions(blended + digits, letterConfusionsRef.current);
+    const corrected = norm;
 
     // فلتر صارم — لوحات بس (٣ حروف + ٤ أرقام). أي كلام بعيد عن شكل اللوحة يتسمع
     // ويتجاهل (ما يتفرّغش). شبكة أمان: القريب جداً من اللوحة (٢-٣ حروف + ٣-٤ أرقام)
@@ -1584,18 +1573,8 @@ export default function InstantCheckPage() {
     setEditingPttId(null);
     if (!row || !trimmed || trimmed === row.plate) return;
 
-    const origLetters = normalizePlate(bankPlateToArabic(row.originalPlate)).replace(/[0-9]/g, "");
-    const corrLetters = normalizePlate(bankPlateToArabic(trimmed)).replace(/[0-9]/g, "");
-
-    if (origLetters && corrLetters && origLetters.length !== corrLetters.length) {
-      // Whole letter group was wrong (length changed) → learn the fragment.
-      recordWordBlend(wordBlendRef.current, origLetters, corrLetters);
-      try { localStorage.setItem(LS_WORD_BLENDS, JSON.stringify(serializeWordBlend(wordBlendRef.current))); } catch { /* full */ }
-    } else if (origLetters && corrLetters) {
-      // One/few letters drifted → per-letter confusion learner.
-      recordLetterCorrections(letterConfusionsRef.current, row.originalPlate, trimmed);
-      try { localStorage.setItem(LS_LETTER_CONFUSIONS, JSON.stringify(serializeLetterConfusions(letterConfusionsRef.current))); } catch { /* full */ }
-    }
+    // التعلّم التلقائي الحي **متوقّف** — التعديل مابيغذّيش خرايط التصحيح المحلية تاني
+    // (كانت بتلوّث النتايج). التعديل بيتحفظ كليبل ذهبي في داتا التدريب فقط.
 
     // المندوب عدّلها يدوياً → ليبل ذهبي مؤكّد وقت جمع التدريب.
     pttEditedIdsRef.current.add(rowId);
@@ -1941,6 +1920,11 @@ export default function InstantCheckPage() {
         // (حروف / أرقام) الـ carry-over في sessionParser بيلحمها تاني — متأكّدين
         // بالاختبار ( end-to-end: ["قلم","2470"] → قلم2470).
         endpointing: "100",
+        // إشارة «نهاية النطق»: Deepgram يبعت UtteranceEnd بعد ١ث سكوت فعلي بعد
+        // الكلام. بنستخدمها نفرّغ أي لوحة متعلّقة في الـ carry-over فوراً (تطلع
+        // كاملة + إنذارها في وقته) بدل ما تستنى الكلام اللي بعدها. بيحل «مفيش
+        // نتيجة» و«لوحة مقصوصة».
+        utterance_end_ms: "1000",
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
@@ -1993,6 +1977,9 @@ export default function InstantCheckPage() {
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
+          // نهاية النطق (سكتة المندوب): فرّغ أي لوحة متعلّقة في الـ carry-over فوراً
+          // → تطلع كاملة + searchInCheck + الإنذار في وقته (من غير ما يعيد اللوحة).
+          if (msg.type === "UtteranceEnd") { processWhisperText("", true); return; }
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
           setPttLiveText(text);
