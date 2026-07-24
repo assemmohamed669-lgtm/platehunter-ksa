@@ -69,7 +69,9 @@ def slice_clip(src_audio, start_ms, end_ms, pad_ms, out_wav):
 # (عشان «عاصم تيست٩» = «عاصم تيست9»، و«ASSEM.MOHAMED669» = «assem.mohamed669»).
 _AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 def norm_name(s):
-    return (s or "").strip().lower().translate(_AR_DIGITS).replace(" ", "")
+    # تصغير + أرقام عربية→إنجليزية + إزالة المسافات والشرطة السفلية (اسم الملف
+    # بيستخدم _ والقائمة بتستخدم مسافة، فنوحّدهم).
+    return (s or "").strip().lower().translate(_AR_DIGITS).replace(" ", "").replace("_", "")
 
 
 def main():
@@ -113,7 +115,16 @@ def main():
             continue
         for sess in data.get("sessions", []):
             sid = sess.get("sessionId", "")
-            audio = find_audio(args.input, sid)
+            # الرابط الصح لملف الصوت = حقل audioFile في الـJSON (الأسماء الجديدة زي
+            # «assem.mohamed669-...-001.webm»). fallback: البحث بالـsessionId للملفات القديمة.
+            audio = None
+            audio_file = sess.get("audioFile") or ""
+            if audio_file:
+                p = os.path.join(args.input, audio_file)
+                if os.path.exists(p):
+                    audio = p
+            if not audio:
+                audio = find_audio(args.input, sid)
             plates = sess.get("plates", [])
             if not audio:
                 if plates:
