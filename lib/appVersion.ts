@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "0.9.9";
+export const APP_VERSION = "1.0.0";
 export const UPDATE_NOTE =
-  "لوحة الأدمن: خانة البحث بقت فوق القائمة وبتبحث بالاسم والإيميل والتليفون.";
+  "التشييك الصوتي: زر إيقاف مؤقت جنب زر التسجيل — أوقف عشان تعدّل لوحة غلط والعدّاد ميكبرش، وكمّل.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

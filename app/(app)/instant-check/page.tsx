@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
@@ -431,6 +431,10 @@ export default function InstantCheckPage() {
   // Elapsed listening time (seconds) shown under the mic button while recording.
   const [pttSeconds, setPttSeconds] = useState(0);
   const pttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // إيقاف مؤقت للتسجيل — المندوب يوقف عشان يعدّل لوحة غلط من غير ما يكبر وقت
+  // التسجيل، وبعدين يكمّل. الـref للقراءة الفورية جوه معالِجات التفريغ (البوابة).
+  const [pttPaused, setPttPaused] = useState(false);
+  const pttPausedRef = useRef(false);
   // Mirror of pttLocationName so the listening loop reads the latest value
   // (the loop's addPttResult closure would otherwise capture a stale one).
   const pttLocationNameRef = useRef("");
@@ -1497,6 +1501,7 @@ export default function InstantCheckPage() {
   // ── PTT ───────────────────────────────────────────────────────────────────
   // addResult: parse one utterance and append to results list
   function addPttResult(utterance: string) {
+    if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي كلام لحد ما يكمّل
     logRawTranscript(utterance); // ديبج الأدمن — النص الخام قبل أي تحليل
     // Pull the vehicle type (ونيت/فان/مصدومة/…) out FIRST so it lands in its
     // own column and isn't misread as plate letters.
@@ -1523,6 +1528,7 @@ export default function InstantCheckPage() {
   // بيطلّعها sessionParser من المقطع). idx بيميّز الـ id لو أكتر من لوحة اتضافت
   // في نفس الملّي ثانية.
   function addOnePttRow(rawPlate: string, vehicleType?: string, idx = 0) {
+    if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي لوحة لحد ما يكمّل
     // Apply what past edits taught: whole-fragment blend first, then per-letter
     // confusion — so a mishearing corrected once auto-corrects next time.
     const norm = normalizePlate(bankPlateToArabic(rawPlate));
@@ -1837,6 +1843,26 @@ export default function InstantCheckPage() {
   function stopPttTimer() {
     if (pttTimerRef.current) { clearInterval(pttTimerRef.current); pttTimerRef.current = null; }
   }
+  // يكمّل العدّاد من نفس النقطة (بعكس startPttTimer اللي بيصفّره) — للاستئناف.
+  function resumePttTimer() {
+    if (pttTimerRef.current) clearInterval(pttTimerRef.current);
+    pttTimerRef.current = setInterval(() => setPttSeconds((s) => s + 1), 1000);
+  }
+  // إيقاف مؤقت/استئناف التسجيل الصوتي. الإيقاف: يوقف العدّاد + يوقف المايك مؤقتاً +
+  // يتجاهل أي لوحة جاية (البوابة في addOnePttRow/addPttResult) عشان المندوب يعدّل
+  // بأمان. الاستئناف: يكمّل العدّاد والمايك من نفس النقطة، والصفوف تفضل زي ما هي.
+  function togglePttPause() {
+    const next = !pttPausedRef.current;
+    pttPausedRef.current = next;
+    setPttPaused(next);
+    if (next) {
+      stopPttTimer();
+      try { if (dgRecorderRef.current?.state === "recording") dgRecorderRef.current.pause(); } catch {}
+    } else {
+      resumePttTimer();
+      try { if (dgRecorderRef.current?.state === "paused") dgRecorderRef.current.resume(); } catch {}
+    }
+  }
   // Clear the timer if the component unmounts mid-listen.
   useEffect(() => () => {
     // مهم: علّم إن الاستماع خلص **قبل** ما نقفل السوكيت، عشان منطق إعادة الاتصال
@@ -2065,6 +2091,7 @@ export default function InstantCheckPage() {
     trainingSessionSavedRef.current = "";
     curTimingRef.current = null;
     isListeningRef.current = true;
+    pttPausedRef.current = false; setPttPaused(false); // جلسة جديدة — مش متوقّفة
     setPttListening(true);
     startPttTimer();
 
@@ -2229,6 +2256,7 @@ export default function InstantCheckPage() {
 
   async function stopPtt() {
     isListeningRef.current = false;
+    pttPausedRef.current = false; setPttPaused(false); // إيقاف كامل — صفّر الإيقاف المؤقت
     setPttListening(false);
     setPttLiveText("");
     setPttEngine(null);
@@ -2840,20 +2868,42 @@ export default function InstantCheckPage() {
                 )}
               </div>
 
-              {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع */}
-              <button
-                onClick={pttListening ? stopPtt : startPtt}
-                className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 text-white transition active:scale-95 ${
-                  pttListening
-                    ? "border-red-600 bg-red-500 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.55)]"
-                    : "border-emerald-600 bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"
-                }`}
-              >
-                <Mic size={28} />
-                <span className="text-xs font-bold">
-                  {pttListening ? "إيقاف" : "ابدأ"}
-                </span>
-              </button>
+              {/* زر الميكروفون الكبير + زر الإيقاف المؤقت الأصغر جنبه (أثناء التسجيل) */}
+              <div className="flex items-center justify-center gap-3">
+                {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع (مايومضش وقت الإيقاف المؤقت) */}
+                <button
+                  onClick={pttListening ? stopPtt : startPtt}
+                  className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 text-white transition active:scale-95 ${
+                    pttListening
+                      ? `border-red-600 bg-red-500 shadow-[0_0_22px_rgba(239,68,68,0.55)] ${pttPaused ? "" : "animate-pulse"}`
+                      : "border-emerald-600 bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"
+                  }`}
+                >
+                  <Mic size={28} />
+                  <span className="text-xs font-bold">
+                    {pttListening ? "إيقاف" : "ابدأ"}
+                  </span>
+                </button>
+
+                {/* إيقاف مؤقت/استئناف — أصغر، جنب زر التسجيل. يوقف العدّاد والمايك
+                    عشان المندوب يعدّل لوحة غلط من غير ما يكبر وقت التسجيل، وبعدين يكمّل. */}
+                {pttListening && (
+                  <button
+                    type="button"
+                    onClick={togglePttPause}
+                    title={pttPaused ? "استئناف التسجيل" : "إيقاف مؤقت (للتعديل)"}
+                    aria-label={pttPaused ? "استئناف التسجيل" : "إيقاف مؤقت"}
+                    className={`flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-full border-4 transition active:scale-95 ${
+                      pttPaused
+                        ? "border-emerald-600 bg-emerald-500 text-white shadow-[0_0_16px_rgba(16,185,129,0.5)]"
+                        : "border-amber-500 bg-amber-400 text-night shadow-[0_0_14px_rgba(245,158,11,0.5)]"
+                    }`}
+                  >
+                    {pttPaused ? <Play size={20} /> : <Pause size={20} />}
+                    <span className="text-[9px] font-bold leading-none">{pttPaused ? "كمّل" : "إيقاف مؤقت"}</span>
+                  </button>
+                )}
+              </div>
 
               {/* نبضة منظّم الإيقاع — "قول اللوحة دلوقتي" (اهتزاز + وميض، بدون صوت) */}
               {pttListening && pacerOn && (
@@ -2862,15 +2912,16 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع */}
+              {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع (بيتجمّد وقت الإيقاف المؤقت) */}
               {pttListening && (
                 <div
                   dir="ltr"
-                  className="flex items-center gap-1.5 font-mono text-lg font-black tabular-nums text-red-500"
+                  className={`flex items-center gap-1.5 font-mono text-lg font-black tabular-nums ${pttPaused ? "text-amber-500" : "text-red-500"}`}
                 >
-                  <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+                  <span className={`h-2.5 w-2.5 rounded-full ${pttPaused ? "bg-amber-500" : "animate-pulse bg-red-500"}`} />
                   {String(Math.floor(pttSeconds / 60)).padStart(2, "0")}:
                   {String(pttSeconds % 60).padStart(2, "0")}
+                  {pttPaused && <span dir="rtl" className="mr-1 text-[11px] font-bold text-amber-500">⏸ متوقّف مؤقتاً — عدّل وكمّل</span>}
                 </div>
               )}
 
