@@ -330,6 +330,21 @@ export default function AdminDashboard() {
           ))}
         </div>
 
+        {/* بحث + فلترة — فوق كل حاجة عشان توصل للمندوب بسرعة بالاسم/الإيميل/التليفون */}
+        <div className="relative">
+          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث باسم المندوب أو الإيميل أو التليفون..."
+            className="w-full rounded-lg border border-border bg-surface-2 py-2.5 pr-9 pl-4 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {FILTERS.map((f) => (
+            <button key={f.key} onClick={() => setFilter(f.key)}
+              className={`rounded-full border px-3 py-1 text-xs transition ${filter === f.key ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+
         {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
         {isSuper && (
           <button onClick={() => router.push("/admin/locations")}
@@ -448,21 +463,6 @@ export default function AdminDashboard() {
             </div>
           </div>
         )}
-
-        {/* Search + filter */}
-        <div className="relative">
-          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث بالإيميل/التليفون..."
-            className="w-full rounded-lg border border-border bg-surface-2 py-2.5 pr-9 pl-4 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary" />
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {FILTERS.map((f) => (
-            <button key={f.key} onClick={() => setFilter(f.key)}
-              className={`rounded-full border px-3 py-1 text-xs transition ${filter === f.key ? "border-primary bg-primary/15 text-primary font-bold" : "border-border text-muted"}`}>
-              {f.label}
-            </button>
-          ))}
-        </div>
 
         {/* List */}
         <div className="flex flex-col gap-2">
