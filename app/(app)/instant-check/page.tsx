@@ -1952,6 +1952,7 @@ export default function InstantCheckPage() {
       rec.start(250); // يبعت جزء صوت كل 250ms
 
       ws.onopen = () => {
+        if (dgSocketRef.current !== ws) { try { ws.close(); } catch {} try { rec.stop(); } catch {} return; } // سوكيت قديم اتبدل
         if (!isListeningRef.current) { try { ws.close(); } catch {} try { rec.stop(); } catch {} return; }
         dgReconnectsRef.current = 0; // اتصال ناجح → صفّر عدّاد إعادة الاتصال
         // فضّي أي أجزاء اتسجّلت قبل ما الاتصال يفتح.
@@ -1970,6 +1971,7 @@ export default function InstantCheckPage() {
         }, 150);
       };
       ws.onmessage = (ev) => {
+        if (dgSocketRef.current !== ws) return; // سوكيت قديم اتبدل — تجاهل رسايله
         try {
           const msg = JSON.parse(ev.data);
           // نهاية النطق (سكتة المندوب): فرّغ أي لوحة متعلّقة في الـ carry-over فوراً
@@ -2005,6 +2007,10 @@ export default function InstantCheckPage() {
       // ميفصلش). محدود بـ 5 محاولات عشان مايعملش لوب لانهائي لو المفتاح غلط أو النت
       // مقطوع؛ العدّاد بيتصفّر مع كل اتصال ناجح (في onopen).
       ws.onclose = () => {
+        // لو سوكيت جديد حلّ محل ده (المندوب أوقف واستأنف) → تجاهل إغلاق القديم
+        // تماماً؛ كان بيمسح مؤقتات/بوابة الجلسة الجديدة ويعمل reconnect وهمي فتضيع
+        // أول لوحة بعد الاستئناف. الجلسة القديمة مؤقتاتها اتمسحت خلاص في stopPtt.
+        if (dgSocketRef.current !== ws) return;
         if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
         if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
         if (!isListeningRef.current) return; // المندوب أوقف بنفسه — مفيش إعادة اتصال
