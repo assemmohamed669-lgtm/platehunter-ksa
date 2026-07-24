@@ -25,6 +25,12 @@ import sys
 
 
 def main():
+    # شاشة ويندوز (cp1252) بتفشل في طباعة العربي/الإيموجي — نجبر UTF-8.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="تدريب Whisper على داتا اللوحات")
     ap.add_argument("--data", required=True, help="فولدر الداتا (فيه metadata.csv + ملفات wav)")
     ap.add_argument("--output", default="whisper-plates", help="فولدر حفظ الموديل المدرّب")
@@ -37,7 +43,7 @@ def main():
     # استيراد المكتبات جوّه الدالة عشان رسالة الخطأ تبقى واضحة لو مش متثبّتة.
     try:
         import torch
-        from datasets import load_dataset, Audio
+        from datasets import Dataset, Audio
         from transformers import (
             WhisperProcessor, WhisperForConditionalGeneration,
             Seq2SeqTrainingArguments, Seq2SeqTrainer,
@@ -51,9 +57,20 @@ def main():
     from dataclasses import dataclass
     from typing import Any
 
-    # ── (١) تحميل الداتا ─────────────────────────────────────────────────────
+    # ── (١) تحميل الداتا يدوياً من metadata.csv ──────────────────────────────
+    # (بدل audiofolder — فيه باج مع الأعمدة الإضافية: «file_name key must be a string»)
+    import csv as _csv
     print(f"📂 بحمّل الداتا من: {args.data}")
-    ds = load_dataset("audiofolder", data_dir=args.data)["train"]
+    meta_path = os.path.join(args.data, "metadata.csv")
+    _rows = []
+    with open(meta_path, encoding="utf-8") as _f:
+        for r in _csv.DictReader(_f):
+            fn = (r.get("file_name") or "").strip()
+            tx = (r.get("transcription") or "").strip()
+            if not fn or not tx:
+                continue
+            _rows.append({"audio": os.path.join(args.data, fn), "transcription": tx})
+    ds = Dataset.from_list(_rows).cast_column("audio", Audio(sampling_rate=16000))
     n = len(ds)
     print(f"   عدد المقاطع: {n}")
     if n < 20:
