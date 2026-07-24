@@ -80,9 +80,10 @@ def main():
     data_dir = os.path.join(args.output, "data")
     os.makedirs(data_dir, exist_ok=True)
 
-    label_files = glob.glob(os.path.join(args.input, "training-*-labels.json"))
+    # نطابق كمان النسخ المكررة زي "training-...-labels (2).json"
+    label_files = glob.glob(os.path.join(args.input, "training-*labels*.json"))
     if not label_files:
-        print(f"❌ مفيش ملفات training-*-labels.json في: {args.input}")
+        print(f"❌ مفيش ملفات training-*labels*.json في: {args.input}")
         sys.exit(1)
 
     rows = []              # صفوف metadata
