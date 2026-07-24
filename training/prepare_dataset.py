@@ -65,13 +65,23 @@ def slice_clip(src_audio, start_ms, end_ms, pad_ms, out_wav):
         return False
 
 
+# تطبيع اسم المندوب للمطابقة: تصغير + إزالة مسافات + تحويل الأرقام العربية للإنجليزية
+# (عشان «عاصم تيست٩» = «عاصم تيست9»، و«ASSEM.MOHAMED669» = «assem.mohamed669»).
+_AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+def norm_name(s):
+    return (s or "").strip().lower().translate(_AR_DIGITS).replace(" ", "")
+
+
 def main():
     ap = argparse.ArgumentParser(description="تجهيز داتا تدريب Whisper من تنزيلات التشييك")
     ap.add_argument("--input", required=True, help="فولدر فيه ملفات labels JSON + ملفات الصوت")
     ap.add_argument("--output", required=True, help="فولدر المخرجات (هيتعمل لو مش موجود)")
     ap.add_argument("--pad-ms", type=int, default=200, help="هامش قبل/بعد كل لوحة بالملّي ثانية (افتراضي 200)")
     ap.add_argument("--exclude-weak", action="store_true", help="استبعاد اللوحات ضعيفة الثقة (export-weak)")
+    ap.add_argument("--agents", default="", help="أسماء المناديب الموثوقين مفصولة بفاصلة — يدرّب على دول بس. فاضي=الكل")
     args = ap.parse_args()
+
+    trusted = {norm_name(a) for a in args.agents.split(",") if a.strip()}
 
     if shutil.which("ffmpeg") is None:
         print("❌ ffmpeg مش موجود. ثبّته الأول وتأكد إنه في PATH (جرّب: ffmpeg -version).")
@@ -89,6 +99,7 @@ def main():
     rows = []              # صفوف metadata
     missing_audio = set()  # جلسات مالهاش صوت
     skipped_timing = 0     # لوحات توقيتها غير صالح
+    skipped_agents = set() # مناديب اتستبعدوا (مش في قائمة الموثوقين)
     counts = {}            # عدّاد بالجودة (reason)
     clip_idx = 0
 
@@ -96,6 +107,10 @@ def main():
         with open(lf, "r", encoding="utf-8") as f:
             data = json.load(f)
         agent = data.get("username") or data.get("agentId") or "unknown"
+        # فلتر الموثوقين: لو فيه قائمة، تخطَّ أي مندوب مش فيها.
+        if trusted and norm_name(agent) not in trusted:
+            skipped_agents.add(agent)
+            continue
         for sess in data.get("sessions", []):
             sid = sess.get("sessionId", "")
             audio = find_audio(args.input, sid)
@@ -148,6 +163,12 @@ def main():
         f"ملفات اللوحات المقروءة: {len(label_files)}",
         f"جلسات صوتها ناقص: {len(missing_audio)}",
         f"لوحات اتخطّت (توقيت غير صالح): {skipped_timing}",
+    ]
+    if trusted:
+        lines.append(f"فلتر الموثوقين شغّال ({len(trusted)} اسم) — مناديب اتستبعدوا: {len(skipped_agents)}")
+        if skipped_agents:
+            lines.append("  المستبعَدون: " + "، ".join(sorted(skipped_agents)))
+    lines += [
         "",
         "التوزيع بالجودة (reason):",
     ] + [f"  • {k}: {v}" for k, v in sorted(counts.items(), key=lambda x: -x[1])]
