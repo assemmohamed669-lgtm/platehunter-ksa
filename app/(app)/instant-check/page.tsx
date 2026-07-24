@@ -1915,6 +1915,11 @@ export default function InstantCheckPage() {
         // (حروف / أرقام) الـ carry-over في sessionParser بيلحمها تاني — متأكّدين
         // بالاختبار ( end-to-end: ["قلم","2470"] → قلم2470).
         endpointing: "100",
+        // إشارة «نهاية النطق»: Deepgram يبعت UtteranceEnd بعد ١ث سكوت فعلي بعد
+        // الكلام. بنستخدمها نفرّغ أي لوحة متعلّقة في الـ carry-over فوراً (تطلع
+        // كاملة + إنذارها في وقته) بدل ما تستنى الكلام اللي بعدها. بيحل «مفيش
+        // نتيجة» و«لوحة مقصوصة».
+        utterance_end_ms: "1000",
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
@@ -1967,6 +1972,9 @@ export default function InstantCheckPage() {
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
+          // نهاية النطق (سكتة المندوب): فرّغ أي لوحة متعلّقة في الـ carry-over فوراً
+          // → تطلع كاملة + searchInCheck + الإنذار في وقته (من غير ما يعيد اللوحة).
+          if (msg.type === "UtteranceEnd") { processWhisperText("", true); return; }
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
           setPttLiveText(text);
