@@ -5,9 +5,9 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.0.1";
 export const UPDATE_NOTE =
-  "التشييك الصوتي: زر إيقاف مؤقت جنب زر التسجيل — أوقف عشان تعدّل لوحة غلط والعدّاد ميكبرش، وكمّل.";
+  "تنزيل داتا التدريب: أسماء ملفات فريدة متسلسلة لكل مندوب (اسم + تاريخ/وقت + تسلسل) — مفيش تكرار في الأسماء.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

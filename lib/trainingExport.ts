@@ -6,6 +6,34 @@
  */
 import type { TrainingSample, TrainingSession } from "./trainingStore";
 
+/**
+ * اسم ملف آمن على ويندوز — يشيل المحارف الممنوعة (\ / : * ? " < > |) والمسافات،
+ * ويسيب الحروف العربية والإنجليزية والأرقام والنقط والشرطات. فاضي → "unknown".
+ */
+export function sanitizeFileName(s: string): string {
+  const cleaned = (s || "")
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || "unknown";
+}
+
+/** طابع زمني متسلسل YYYYMMDD-HHMMSS من تاريخ — يخلّي كل تنزيل اسمه فريد ومرتّب. */
+export function fileStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+/**
+ * بادئة اسم ملفات تدريب مندوب لتنزيل معيّن: «<اسم آمن>-<طابع زمني>».
+ * فريدة لكل تنزيل (الطابع الزمني) ومميّزة لكل مندوب (الاسم) — فأسماء الملفات
+ * (اللوحات + الصوت) ماتتكررش أبداً عبر التنزيلات ولا بين المناديب.
+ */
+export function trainingFilePrefix(username: string, d: Date): string {
+  return `${sanitizeFileName(username)}-${fileStamp(d)}`;
+}
+
 export function mimeToExt(mime: string): string {
   const m = (mime || "").toLowerCase();
   if (m.includes("webm")) return "webm";

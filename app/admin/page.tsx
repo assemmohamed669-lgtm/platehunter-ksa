@@ -137,11 +137,12 @@ export default function AdminDashboard() {
     setTrainingBusy(true);
     try {
       const store = await import("@/lib/trainingStore");
-      const { buildTrainingManifest, mimeToExt } = await import("@/lib/trainingExport");
+      const { buildTrainingManifest, mimeToExt, fileStamp } = await import("@/lib/trainingExport");
       const [samples, sessions] = await Promise.all([store.getAllTrainingSamples(), store.getAllTrainingSessions()]);
       if (samples.length === 0) { alert("مفيش داتا تدريب متجمّعة على الجهاز ده لسه. سجّل صوت وصدّر الأول."); return; }
       const manifest = buildTrainingManifest(samples, sessions);
-      downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }), "training-labels.json");
+      // اسم فريد بطابع زمني عشان تنزيلات الجهاز مايتكرروش (كانوا كلهم training-labels.json).
+      downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }), `training-${fileStamp(new Date())}-labels.json`);
       for (const sess of sessions) {
         const buf = base64ToBytes(sess.audioBase64).buffer as ArrayBuffer;
         downloadBlob(new Blob([buf], { type: sess.mimeType }), `${sess.sessionId}.${mimeToExt(sess.mimeType)}`);
@@ -171,27 +172,39 @@ export default function AdminDashboard() {
       const rows = await c.fetchPendingSamples(agentId);
       if (rows.length === 0) { alert("مفيش لوحات جديدة."); return; }
       const manifest = c.buildCentralManifest(rows);
-      const { mimeToExt } = await import("@/lib/trainingExport");
+      const { mimeToExt, trainingFilePrefix } = await import("@/lib/trainingExport");
+      // طابع زمني واحد للتنزيل ده — يخلّي كل الأسماء فريدة عن أي تنزيل سابق.
+      const stampDate = new Date();
       let audioCount = 0;
       for (const agent of manifest.agents) {
         const name = usernameOf(agent.agentId);
-        // (١) ملف اللوحات (labels) — لكل مقطع اسم ملف صوته.
+        // بادئة فريدة لكل مندوب لكل تنزيل: «<اسم>-<تاريخ ووقت>». الملفات تحتها
+        // بتترقّم بالتسلسل (001، 002...) فأسماء اللوحات والصوت ماتتكررش أبداً.
+        const prefix = trainingFilePrefix(name, stampDate);
+        // نجهّز الصوت الأول (عشان الامتداد الصح) ونسمّي كل مقطع بالتسلسل، وبعدين
+        // نبني ملف اللوحات بنفس الأسماء بالظبط عشان يطابق ملفات الصوت.
+        type CentralSession = (typeof manifest.agents)[number]["sessions"][number];
+        const built: { audioFile: string; blob: Blob | null; session: CentralSession }[] = [];
+        let seq = 0;
+        for (const s of agent.sessions) {
+          seq++;
+          const idx = String(seq).padStart(3, "0");
+          const a = await c.fetchAudioBase64(s.sessionId);
+          const ext = a ? mimeToExt(a.mimeType) : "webm";
+          const audioFile = `${prefix}-${idx}.${ext}`;
+          const blob = a ? new Blob([base64ToBytes(a.base64).buffer as ArrayBuffer], { type: a.mimeType }) : null;
+          built.push({ audioFile, blob, session: s });
+        }
+        // (١) ملف اللوحات (labels) — اسم فريد + بيشير لأسماء ملفات الصوت المتسلسلة.
         const labels = {
           agentId: agent.agentId, username: name, sampleCount: agent.sampleCount,
-          sessions: agent.sessions.map((s) => ({
-            sessionId: s.sessionId,
-            audioFile: `${s.sessionId}.webm`,
-            plates: s.plates,
-          })),
+          sessions: built.map((b) => ({ sessionId: b.session.sessionId, audioFile: b.audioFile, plates: b.session.plates })),
         };
-        downloadBlob(new Blob([JSON.stringify(labels, null, 2)], { type: "application/json" }), `training-${name}-labels.json`);
-        // (٢) ملف صوت **منفصل** لكل مقطع (قابل للتشغيل) — من جدول training_audio.
-        for (const s of agent.sessions) {
-          const a = await c.fetchAudioBase64(s.sessionId);
-          if (!a) continue;
-          const buf = base64ToBytes(a.base64).buffer as ArrayBuffer;
-          const ext = mimeToExt(a.mimeType);
-          downloadBlob(new Blob([buf], { type: a.mimeType }), `${s.sessionId}.${ext}`);
+        downloadBlob(new Blob([JSON.stringify(labels, null, 2)], { type: "application/json" }), `training-${prefix}-labels.json`);
+        // (٢) ملف صوت **منفصل** لكل مقطع (قابل للتشغيل) بنفس الاسم المتسلسل.
+        for (const b of built) {
+          if (!b.blob) continue;
+          downloadBlob(b.blob, b.audioFile);
           audioCount++;
         }
       }

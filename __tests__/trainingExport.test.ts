@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTrainingManifest, mimeToExt } from "@/lib/trainingExport";
+import { buildTrainingManifest, mimeToExt, sanitizeFileName, fileStamp, trainingFilePrefix } from "@/lib/trainingExport";
 import type { TrainingSample, TrainingSession } from "@/lib/trainingStore";
 
 function sample(over: Partial<TrainingSample>): TrainingSample {
@@ -16,6 +16,32 @@ describe("mimeToExt — امتداد الملف من نوع الصوت", () => {
   it("webm → webm", () => expect(mimeToExt("audio/webm;codecs=opus")).toBe("webm"));
   it("m4a/mp4 → m4a", () => { expect(mimeToExt("audio/mp4")).toBe("m4a"); expect(mimeToExt("audio/x-m4a")).toBe("m4a"); });
   it("فاضي → webm افتراضي", () => expect(mimeToExt("")).toBe("webm"));
+});
+
+describe("تسمية ملفات التدريب — فريدة ومتسلسلة لكل مندوب (بدون تكرار)", () => {
+  it("sanitizeFileName يشيل المحارف الممنوعة والمسافات ويسيب العربي", () => {
+    expect(sanitizeFileName("assem.mohamed669@arabnation.com")).toBe("assem.mohamed669@arabnation.com");
+    expect(sanitizeFileName("عاصم تجريبي")).toBe("عاصم_تجريبي");
+    expect(sanitizeFileName('a/b:c*d?e"f<g>h|i')).toBe("a_b_c_d_e_f_g_h_i");
+    expect(sanitizeFileName("  ")).toBe("unknown");
+    expect(sanitizeFileName("")).toBe("unknown");
+  });
+
+  it("fileStamp طابع زمني متسلسل YYYYMMDD-HHMMSS", () => {
+    // يوليو = الشهر 6 (صفري) → 07
+    expect(fileStamp(new Date(2026, 6, 24, 16, 2, 5))).toBe("20260724-160205");
+    expect(fileStamp(new Date(2026, 0, 1, 0, 0, 0))).toBe("20260101-000000");
+  });
+
+  it("trainingFilePrefix = اسم آمن + طابع زمني (بادئة فريدة لكل تنزيل)", () => {
+    const d = new Date(2026, 6, 24, 16, 2, 5);
+    expect(trainingFilePrefix("عاصم تجريبي", d)).toBe("عاصم_تجريبي-20260724-160205");
+    // تنزيلين في وقتين مختلفين لنفس المندوب → بادئتين مختلفتين (مفيش تكرار)
+    const d2 = new Date(2026, 6, 24, 16, 2, 6);
+    expect(trainingFilePrefix("عاصم تجريبي", d)).not.toBe(trainingFilePrefix("عاصم تجريبي", d2));
+    // نفس الوقت لمندوبين مختلفين → بادئتين مختلفتين (كل مندوب مميّز)
+    expect(trainingFilePrefix("ahmed", d)).not.toBe(trainingFilePrefix("mohamed", d));
+  });
 });
 
 describe("buildTrainingManifest — تجميع اللوحات تحت جلساتها", () => {
