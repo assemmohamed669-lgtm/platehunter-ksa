@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
-  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus,
+  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, Barcode,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -21,8 +21,10 @@ import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, format
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
-  getAllFieldCheckEntries, type FieldCheckEntry,
+  getAllFieldCheckEntries, type FieldCheckEntry, getAllChassisEntries,
 } from "@/lib/idb";
+import { sortChassisAgainstReferrals, type ChassisSortRow } from "@/lib/chassisRecords";
+import { type SheetTable } from "@/lib/chassis";
 import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -102,6 +104,11 @@ function findGpsColumn(headers: string[]): string | null {
 
 export default function SortingPage() {
   const [sortMode, setSortMode] = useState<"new" | "full">("new");
+
+  // ── فرز بالشاص (قسم منفصل) — يطابق شيت أرقام الشاص على عمود الشاص في الإحالات ──
+  const [chassisCount, setChassisCount] = useState(0);
+  const [chassisSorting, setChassisSorting] = useState(false);
+  const [chassisSortRows, setChassisSortRows] = useState<ChassisSortRow[] | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   // ── Data file ──
@@ -641,6 +648,33 @@ export default function SortingPage() {
   // ── Full sort ──
   // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
   // ملف الداتا → نتيجة واحدة مجمّعة.
+  // عدّاد أرقام الشاص المسجّلة — لتفعيل زر «فرز بالشاص» وتحديثه فور تسجيل شاص جديد.
+  useEffect(() => {
+    const load = () => getAllChassisEntries().then((es) => setChassisCount(es.length)).catch(() => {});
+    load();
+    window.addEventListener("chassisEntryAdded", load);
+    return () => window.removeEventListener("chassisEntryAdded", load);
+  }, []);
+
+  const canChassisSort = chassisCount > 0 && (!!referralTable || extraReferrals.some((er) => !!er.table));
+
+  // فرز أرقام الشاص المسجّلة على عمود الشاص في الإحالات (الأساسية + الإضافية).
+  async function runChassisSort() {
+    if (chassisSorting || !canChassisSort) return;
+    setChassisSorting(true);
+    try {
+      const entries = await getAllChassisEntries();
+      const chassisNumbers = entries.map((e) => e.chassis).filter(Boolean);
+      const sheets: SheetTable[] = [];
+      if (referralTable) sheets.push({ sheetName: "", headers: referralTable.headers, rows: referralTable.rows });
+      for (const er of extraReferrals) if (er.table) sheets.push({ sheetName: "", headers: er.table.headers, rows: er.table.rows });
+      const rows = sortChassisAgainstReferrals(chassisNumbers, sheets).filter((r) => r.found);
+      setChassisSortRows(rows);
+    } finally {
+      setChassisSorting(false);
+    }
+  }
+
   async function runFullSort() {
     if (!dataTable || !referralTable || !effectiveDataPlateCol || !effectiveReferralPlateCol) return;
     setSorting(true);
@@ -1152,6 +1186,58 @@ export default function SortingPage() {
         <ListFilter size={18} />
         {sorting ? "جارٍ الفرز..." : "فرز"}
       </button>
+
+      {/* ⑥ فرز بالشاص — قسم منفصل: يطابق شيت أرقام الشاص على عمود الشاص في الإحالات */}
+      <div className="rounded-2xl border border-border bg-surface p-3">
+        <div className="flex items-center gap-2">
+          <Barcode size={18} className="shrink-0 text-primary" />
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-ink">فرز بالشاص</h2>
+            <p className="text-[11px] text-muted">يطابق أرقام الشاص المسجّلة ({chassisCount}) على عمود الشاص في الإحالات.</p>
+          </div>
+        </div>
+
+        <button onClick={runChassisSort} disabled={chassisSorting || !canChassisSort}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-primary/50 bg-primary/10 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/15 disabled:opacity-50 active:scale-[0.99]">
+          <Barcode size={16} /> {chassisSorting ? "جارٍ الفرز..." : "فرز بالشاص"}
+        </button>
+
+        {chassisCount === 0 && (
+          <p className="mt-2 text-center text-[11px] text-muted">مفيش أرقام شاص متسجّلة — شيّك شاص من تبويب «شاص» الأول.</p>
+        )}
+        {chassisCount > 0 && !canChassisSort && (
+          <p className="mt-2 text-center text-[11px] text-muted">ارفع ملف إحالة الأول عشان تفرز بالشاص.</p>
+        )}
+
+        {chassisSortRows && (
+          <div className="mt-3">
+            <p className="mb-2 text-xs font-bold text-ink">مطلوبين بالشاص: {chassisSortRows.length}</p>
+            {chassisSortRows.length === 0 ? (
+              <p className="text-center text-[11px] text-muted">مفيش أرقام شاص طابقت الإحالات.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {chassisSortRows.map((r, i) => (
+                  <div key={i} className="rounded-xl border border-primary/40 bg-primary/5 p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span dir="ltr" className="truncate font-mono text-xs font-bold text-ink">{r.chassis}</span>
+                      {r.matchType === "fuzzy" && (
+                        <span className="shrink-0 rounded-full bg-alert/15 px-2 py-0.5 text-[10px] font-bold text-alert">مشتبه {r.similarity}%</span>
+                      )}
+                    </div>
+                    {r.referralRow && (
+                      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                        {Object.entries(r.referralRow).filter(([, v]) => String(v ?? "").trim()).slice(0, 6).map(([k, v]) => (
+                          <span key={k} className="text-[10px] text-muted">{k}: <span className="font-bold text-ink">{String(v)}</span></span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* زر «مسح نتايج الفرز» العام اتشال — بقى فيه زر مسح خاص جوه كل نافذة نتائج */}
 

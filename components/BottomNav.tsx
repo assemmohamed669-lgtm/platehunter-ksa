@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ListFilter, Mic, MapPin, ScanLine, Crosshair } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine, Crosshair, Barcode } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 const TABS = [
   { href: "/sorting", label: "الفرز", icon: ListFilter },
   { href: "/instant-check", label: "التشييك", icon: ScanLine },
+  { href: "/chassis", label: "شاص", icon: Barcode },
   // التسجيل للسوبر أدمن فقط (superOnly) — مخفي عن المناديب.
   { href: "/registration", label: "التسجيل", icon: Mic, superOnly: true },
   { href: "/maps", label: "الخرائط", icon: MapPin },

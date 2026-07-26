@@ -5,11 +5,12 @@
  */
 
 const DB_NAME = "platehunter";
-const DB_VERSION = 4; // v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions
+const DB_VERSION = 5; // v2 uploaded_files, v3 field_check, v4 voice_sessions, v5 chassis_entries
 const STORE = "recordings";
 const FILES_STORE = "uploaded_files";
 const FIELD_CHECK_STORE = "field_check";
 const SESSIONS_STORE = "voice_sessions";
+const CHASSIS_STORE = "chassis_entries";
 
 export interface RecordingEntry {
   localId: string;           // uuid generated locally
@@ -101,6 +102,29 @@ export interface VoiceSessionRecord {
   events: { type: string; value: string; seq: number }[];
 }
 
+/**
+ * تشييك بالشاص (رقم الهيكل) — كل رقم شاص المندوب دخّله (بصورة/رفع/كتابة) مع
+ * موقعه ووقته، وبيانات السيارة من ملف التشييك لو طابق. بيتصدّر لـ«شيت أرقام
+ * الشاص» ويتفرز على الإحالات بالشاص. مخزّن مستقل عن سجل اللوحات.
+ */
+export interface ChassisEntry {
+  id: string;                        // unique, generated locally
+  agentId?: string;                  // owner — device مشترك مايخلطش المناديب
+  chassis: string;                   // رقم الشاص المطبّع
+  found?: boolean;                   // مطابق لملف التشييك؟
+  matchType?: "exact" | "fuzzy";
+  similarity?: number;
+  plate?: string;                    // لوحة السيارة المطابقة (لو موجودة)
+  bank?: string;                     // البنك (لو موجود في الشيت)
+  vehicleType?: string;              // نوع السيارة (لو موجود)
+  details?: Record<string, string>;  // الصف المطابق كامل (أعمدة إضافية)
+  lat?: number;
+  lng?: number;
+  mapsLink?: string;
+  checkedAt: string;                 // ISO timestamp
+  synced?: boolean;
+}
+
 let _db: IDBDatabase | null = null;
 
 function openDB(): Promise<IDBDatabase> {
@@ -126,6 +150,9 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
         const sessionsStore = db.createObjectStore(SESSIONS_STORE, { keyPath: "id" });
         sessionsStore.createIndex("agentId", "agentId", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(CHASSIS_STORE)) {
+        db.createObjectStore(CHASSIS_STORE, { keyPath: "id" });
       }
     };
 
@@ -418,6 +445,58 @@ export async function clearFieldCheck(): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
     tx.objectStore(FIELD_CHECK_STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// =====================================================================
+// سجل تشييك الشاص (شيت أرقام الشاص) — مستقل عن سجل اللوحات.
+// =====================================================================
+
+/** يضيف/يحدّث عيّنة شاص (put بالـ id). */
+export async function saveChassisEntry(entry: ChassisEntry): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CHASSIS_STORE, "readwrite");
+    tx.objectStore(CHASSIS_STORE).put(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** كل عيّنات الشاص، الأحدث أولاً. agentId اختياري لفلترة صاحب الجهاز. */
+export async function getAllChassisEntries(agentId?: string): Promise<ChassisEntry[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CHASSIS_STORE, "readonly");
+    const req = tx.objectStore(CHASSIS_STORE).getAll();
+    req.onsuccess = () => {
+      let rows = req.result as ChassisEntry[];
+      if (agentId) rows = rows.filter((e) => !e.agentId || e.agentId === agentId);
+      resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** يمسح عيّنة شاص واحدة بالـ id. */
+export async function deleteChassisEntry(id: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CHASSIS_STORE, "readwrite");
+    tx.objectStore(CHASSIS_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** يمسح كل سجل الشاص. */
+export async function clearChassisEntries(): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CHASSIS_STORE, "readwrite");
+    tx.objectStore(CHASSIS_STORE).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

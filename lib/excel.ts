@@ -207,7 +207,7 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
   }
 
   // Synchronous fallback (main-thread; may briefly freeze UI on very large files)
-  return _parseExcelSync(new Uint8Array(buffer));
+  return _parseExcelSync(new Uint8Array(buffer), undefined, forcedSheet);
 }
 
 const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
@@ -293,7 +293,7 @@ function cellToStr(v: unknown): string {
   return String(v);
 }
 
-function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
+function _parseExcelSync(data: Uint8Array, password?: string, forcedSheet?: string): ExcelTable {
   let sheetName: string | undefined;
   let allSheetNames: string[] = [];
   try {
@@ -301,9 +301,12 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     allSheetNames = wbMeta.SheetNames;
   } catch { /* password-protected */ }
 
+  // لو المتصل جبر ورقة معيّنة (زي فحص الشاص لكل ورقة) — نستخدمها ونتخطّى الاكتشاف.
+  if (forcedSheet && allSheetNames.includes(forcedSheet)) sheetName = forcedSheet;
+
   // Multi-sheet detection: score every sheet by plate-like content and pick
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
-  if (allSheetNames.length > 1) {
+  if (!sheetName && allSheetNames.length > 1) {
     let bestCount = 0;
     let bestName: string | undefined;
     for (const name of allSheetNames) {
@@ -430,7 +433,7 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     }
 
     if (rows.length === 0) throw new Error("empty");
-    return { headers, rows };
+    return { headers, rows, sheetName: finalSheet, allSheetNames };
   } catch (err) {
     if (err instanceof Error && err.message === "empty") {
       throw new Error("الملف فارغ أو لا يحتوي على بيانات.");

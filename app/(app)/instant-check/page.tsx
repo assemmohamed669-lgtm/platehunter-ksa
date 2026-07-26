@@ -3,8 +3,10 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
-import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, saveChassisEntry, type ChassisEntry } from "@/lib/idb";
+import { pickBank, pickVehicleType } from "@/lib/chassisRecords";
+import { type ExcelTable, parseExcelFile, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
+import { normalizeChassis, pickBestChassisSource, buildChassisIndex, matchChassisInIndex, type ChassisSource, type ChassisMatch, type SheetTable } from "@/lib/chassis";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
@@ -176,6 +178,56 @@ function buildGpsLink(value: string): string | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
+// كارت نتيجة تشييك الشاص — مطابق (تام/مشتبه) أو غير موجود، مع لوحة السيارة
+// (لو موجودة في نفس الورقة) + تفاصيل الصف.
+function ChassisResultCard({ result, source }: { result: ChassisMatch; source: ChassisSource | null }) {
+  const found = result.found;
+  const fuzzy = result.matchType === "fuzzy";
+  const plateVal = found && result.row && source?.plateCol ? String(result.row[source.plateCol] ?? "").trim() : "";
+  const details: [string, string][] = found && result.row && source
+    ? source.headers
+        .filter((h) => h !== source.chassisCol && h !== source.plateCol && String(result.row![h] ?? "").trim())
+        .map((h) => [h, String(result.row![h])] as [string, string])
+        .slice(0, 8)
+    : [];
+
+  return (
+    <div className={`rounded-2xl border-2 p-4 ${found ? (fuzzy ? "border-alert bg-alert/10" : "border-brand bg-brand/10") : "border-border bg-surface-2"}`}>
+      <div className="flex items-center justify-center gap-2">
+        {found ? (
+          fuzzy ? <AlertTriangle size={20} className="text-alert" /> : <CheckCircle2 size={20} className="text-brand" />
+        ) : (
+          <XCircle size={20} className="text-muted" />
+        )}
+        <span className={`text-base font-black ${found ? (fuzzy ? "text-alert" : "text-brand") : "text-muted"}`}>
+          {found ? (fuzzy ? `تطابق مشتبه · ${result.similarity ?? ""}%` : "🚨 شاص مطلوب!") : "الشاص غير موجود"}
+        </span>
+      </div>
+
+      <div dir="ltr" className="mt-2 break-all text-center font-mono text-lg font-bold text-ink">
+        {result.chassis || "—"}
+      </div>
+
+      {found && plateVal && (
+        <div className="mt-2 flex justify-center">
+          <PlateBadge value={plateVal} size="md" />
+        </div>
+      )}
+
+      {details.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-2xl bg-surface-2 p-3">
+          {details.map(([k, v], i) => (
+            <div key={i} className="flex min-w-0 gap-1 text-xs">
+              <span className="shrink-0 text-muted">{k}:</span>
+              <span className="truncate font-bold text-ink">{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCheck }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void>; priorCheck?: FieldCheckEntry }) {
   const [exportState, setExportState] = useState<"idle" | "saving" | "done">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
@@ -367,6 +419,11 @@ export default function InstantCheckPage() {
   const [cameraGps, setCameraGps] = useState<{ lat: number; lng: number } | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  // موضوع الكاميرا: تشييك لوحة (الافتراضي) أو تشييك شاص (رقم الهيكل).
+  const [camSubject, setCamSubject] = useState<"plate" | "chassis">("plate");
+  const [chassisSource, setChassisSource] = useState<ChassisSource | null>(null);
+  const [chassisResult, setChassisResult] = useState<ChassisMatch | null>(null);
+  const [chassisInput, setChassisInput] = useState("");
 
   // تثبيت صورة الكاميرا: تفضل بعد الخروج من التطبيق، وتتمسح فقط لما المندوب
   // يدوس «مسح» (resetCamera). نخزّنها في localStorage ونرجّعها عند التحميل.
@@ -769,6 +826,50 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
+  // ── تشييك بالشاص: نختار من ملف التشييك أغنى ورقة فيها عمود شاص (رقم الهيكل) ──
+  // ملف التشييك ممكن يكون فيه أكتر من ورقة — بنفحص كل الأوراق ونختار اللي عمود
+  // الشاص فيها قيم أكتر. لو الملف الخام مش متاح نرجع للورقة المحمّلة حالياً.
+  useEffect(() => {
+    let cancelled = false;
+    const fromTable = (): ChassisSource | null =>
+      checkTable
+        ? pickBestChassisSource([{ sheetName: checkTable.sheetName ?? "", headers: checkTable.headers, rows: checkTable.rows }])
+        : null;
+    (async () => {
+      try {
+        if (checkFile && checkFile.size > 0) {
+          const base = await parseExcelFile(checkFile);
+          const names = base.allSheetNames && base.allSheetNames.length
+            ? base.allSheetNames
+            : (base.sheetName ? [base.sheetName] : []);
+          const sheets: SheetTable[] = [];
+          const seen = new Set<string>();
+          for (const name of names) {
+            if (seen.has(name)) continue;
+            seen.add(name);
+            try {
+              const t = name === base.sheetName ? base : await parseExcelFile(checkFile, undefined, name);
+              sheets.push({ sheetName: name, headers: t.headers, rows: t.rows });
+            } catch { /* ورقة مش قابلة للقراءة — نتخطّاها */ }
+          }
+          if (sheets.length === 0) sheets.push({ sheetName: base.sheetName ?? "", headers: base.headers, rows: base.rows });
+          const src = pickBestChassisSource(sheets);
+          if (!cancelled) setChassisSource(src ?? fromTable());
+        } else if (!cancelled) {
+          setChassisSource(fromTable());
+        }
+      } catch {
+        if (!cancelled) setChassisSource(fromTable());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [checkFile, checkTable]);
+
+  const chassisIndex = useMemo(
+    () => (chassisSource ? buildChassisIndex(chassisSource.rows, chassisSource.chassisCol) : new Map<string, Record<string, string>>()),
+    [chassisSource],
+  );
+
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -816,6 +917,68 @@ export default function InstantCheckPage() {
     }
 
     return { plate: rawPlate, normalized, found: false };
+  }
+
+  // ── تشييك بالشاص ────────────────────────────────────────────────────────────
+  // تفاصيل السيارة للتنبيه: رقم الهيكل الأول، وبعدين باقي أعمدة الورقة غير الفاضية.
+  function chassisAlertInfo(row: Record<string, string>, chassis: string): [string, string][] {
+    if (!chassisSource) return [["رقم الهيكل", chassis]];
+    const info: [string, string][] = [[chassisSource.chassisCol, chassis]];
+    for (const h of chassisSource.headers) {
+      if (h === chassisSource.chassisCol) continue;
+      const v = String(row[h] ?? "").trim();
+      if (v) info.push([h, v]);
+    }
+    return info.slice(0, 8);
+  }
+
+  // يطابق رقم الشاص مع عمود الشاص في ملف التشييك. عند التطابق يطلّع نفس تنبيه
+  // «سيارة مطلوبة» (بلوحة السيارة لو موجودة في نفس الورقة + رقم الهيكل في التفاصيل).
+  function searchByChassis(raw: string): ChassisMatch {
+    if (!chassisSource || chassisIndex.size === 0) return { found: false, chassis: normalizeChassis(raw) };
+    const m = matchChassisInIndex(chassisIndex, raw);
+    if (m.found && m.row) {
+      const plate = chassisSource.plateCol ? String(m.row[chassisSource.plateCol] ?? "").trim() : "";
+      fireWantedAlert({
+        plate: plate || m.chassis,
+        matchType: m.matchType,
+        similarity: m.similarity,
+        info: chassisAlertInfo(m.row, m.chassis),
+        source: "camera",
+      });
+    }
+    return m;
+  }
+
+  // يسجّل كل تشييك شاص في «سجل الشاص» تلقائياً (رقم + موقع GPS + وقت + بيانات
+  // السيارة لو طابق) — يظهر في تبويب الشاص ويتصدّر لشيت أرقام الشاص.
+  async function recordChassisEntry(m: ChassisMatch) {
+    if (!m.chassis) return;
+    const gps = await getCurrentGps().catch(() => null);
+    if (gps) setCameraGps(gps);
+    const row = m.found ? m.row : undefined;
+    const plate = row && chassisSource?.plateCol ? String(row[chassisSource.plateCol] ?? "").trim() : "";
+    const entry: ChassisEntry = {
+      id: `chassis-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      agentId: agentIdRef.current ?? undefined,
+      chassis: m.chassis,
+      found: m.found,
+      matchType: m.matchType,
+      similarity: m.similarity,
+      plate,
+      bank: pickBank(row),
+      vehicleType: pickVehicleType(row),
+      details: row,
+      lat: gps?.lat,
+      lng: gps?.lng,
+      mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
+      checkedAt: new Date().toISOString(),
+      synced: false,
+    };
+    try {
+      await saveChassisEntry(entry);
+      window.dispatchEvent(new CustomEvent("chassisEntryAdded"));
+    } catch { /* التخزين المحلي فشل — مايعطّلش التشييك */ }
   }
 
   // ── Manual ────────────────────────────────────────────────────────────────
@@ -1366,10 +1529,12 @@ export default function InstantCheckPage() {
     if (!video || !liveStream) return;
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    const sx = Math.round(0.05 * vw);
-    const sy = Math.round(0.29 * vh);
-    const sw = Math.round(0.90 * vw);
-    const sh = Math.round(0.42 * vh);
+    // اللوحة: نقصّ منطقتها (وسط 90%×42%). الشاص: نلتقط الفريم كامل (مكانه بيختلف).
+    const chassisShot = camSubject === "chassis";
+    const sx = chassisShot ? 0 : Math.round(0.05 * vw);
+    const sy = chassisShot ? 0 : Math.round(0.29 * vh);
+    const sw = chassisShot ? vw : Math.round(0.90 * vw);
+    const sh = chassisShot ? vh : Math.round(0.42 * vh);
     const canvas = document.createElement("canvas");
     canvas.width = sw; canvas.height = sh;
     canvas.getContext("2d")!.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -1389,6 +1554,7 @@ export default function InstantCheckPage() {
 
   // Run OCR on a dataUrl
   async function runOCR(dataUrl: string) {
+    if (camSubject === "chassis") { await runChassisOCR(dataUrl); return; }
     setCameraImage(dataUrl);
     setCameraLoading(true);
     setCameraError(null);
@@ -1483,6 +1649,68 @@ export default function InstantCheckPage() {
     setCameraRawText(null);
     setCameraInputPlate("");
     setCameraGps(null);
+    setChassisResult(null);
+    setChassisInput("");
+  }
+
+  // التبديل بين تشييك لوحة/شاص — بيصفّر الكاميرا عشان ما تختلطش النتايج.
+  function selectCamSubject(s: "plate" | "chassis") {
+    if (s === camSubject) return;
+    resetCamera();
+    setCamSubject(s);
+  }
+
+  // OCR للشاص: يقرأ الصورة عبر /api/read-chassis ويطابق على عمود الشاص في التشييك.
+  async function runChassisOCR(dataUrl: string) {
+    setCameraImage(dataUrl);
+    setCameraLoading(true);
+    setCameraError(null);
+    setChassisResult(null);
+    setCameraRawText(null);
+    setCameraGps(null);
+    try {
+      const resized = await resizeImageForOCR(dataUrl);
+      let chassis: string | null = null;
+      let debugLine = "";
+      try {
+        const base64 = resized.split(",")[1];
+        let groqKey = "";
+        try { groqKey = localStorage.getItem("ph:registration:groqApiKey") || ""; } catch { /* storage off */ }
+        const apiRes = await fetch("/api/read-chassis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(await authHeader()) },
+          body: JSON.stringify({ image: base64, mediaType: "image/jpeg", apiKey: groqKey.trim() }),
+        });
+        const json = await apiRes.json().catch(() => null);
+        if (apiRes.ok && json?.chassis) {
+          chassis = json.chassis as string;
+          debugLine = `[شاص] ${chassis}`;
+        } else {
+          const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`;
+          debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`;
+          console.warn("chassis OCR error:", hint);
+        }
+      } catch (err) {
+        debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
+      }
+
+      setCameraRawText(debugLine || null);
+      const disp = chassis ? normalizeChassis(chassis) : null;
+      setChassisInput(disp ?? "");
+      if (disp) {
+        const result = searchByChassis(disp);
+        setChassisResult(result);
+        void recordChassisEntry(result);
+      } else {
+        setCameraError("لم يُتعرَّف على رقم شاص — صحّح أدناه يدوياً");
+      }
+    } catch {
+      setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
+    } finally {
+      setCameraLoading(false);
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (galleryInputRef.current) galleryInputRef.current.value = "";
+    }
   }
 
   // ── PTT ───────────────────────────────────────────────────────────────────
@@ -2670,29 +2898,54 @@ export default function InstantCheckPage() {
               <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraCapture} />
               <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={handleCameraCapture} />
 
+              {/* موضوع التشييك: لوحة (الافتراضي) أو شاص (رقم الهيكل) — نفس الكاميرا/المعرض */}
+              <div className="flex gap-1 rounded-xl bg-surface-2 p-1">
+                {([["plate", "لوحة"], ["chassis", "شاص"]] as const).map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => selectCamSubject(val)}
+                    className={`flex-1 rounded-lg py-2 text-sm font-bold transition active:scale-95 ${camSubject === val ? "bg-brand text-night" : "text-muted"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {camSubject === "chassis" && !chassisSource && (
+                <p className="text-center text-[11px] text-alert">⚠️ ملف التشييك مافيهوش عمود شاص (رقم الهيكل)</p>
+              )}
+
               {/* ── Live viewfinder ── */}
               {liveStream && !cameraImage && (
                 <div className="relative overflow-hidden rounded-xl bg-black" style={{ aspectRatio: "4/3" }}>
                   <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
 
-                  {/* Dark mask outside the plate zone (29% top/bottom, 5% sides) */}
-                  <div className="absolute pointer-events-none bg-black/55" style={{ top: 0, left: 0, right: 0, height: "29%" }} />
-                  <div className="absolute pointer-events-none bg-black/55" style={{ bottom: 0, left: 0, right: 0, top: "71%" }} />
-                  <div className="absolute pointer-events-none bg-black/55" style={{ top: "29%", bottom: "29%", left: 0, width: "5%" }} />
-                  <div className="absolute pointer-events-none bg-black/55" style={{ top: "29%", bottom: "29%", right: 0, width: "5%" }} />
+                  {camSubject === "plate" ? (
+                    <>
+                      {/* Dark mask outside the plate zone (29% top/bottom, 5% sides) */}
+                      <div className="absolute pointer-events-none bg-black/55" style={{ top: 0, left: 0, right: 0, height: "29%" }} />
+                      <div className="absolute pointer-events-none bg-black/55" style={{ bottom: 0, left: 0, right: 0, top: "71%" }} />
+                      <div className="absolute pointer-events-none bg-black/55" style={{ top: "29%", bottom: "29%", left: 0, width: "5%" }} />
+                      <div className="absolute pointer-events-none bg-black/55" style={{ top: "29%", bottom: "29%", right: 0, width: "5%" }} />
 
-                  {/* Plate zone border */}
-                  <div className="absolute pointer-events-none border-2 border-white" style={{ top: "29%", left: "5%", right: "5%", bottom: "29%" }} />
+                      {/* Plate zone border */}
+                      <div className="absolute pointer-events-none border-2 border-white" style={{ top: "29%", left: "5%", right: "5%", bottom: "29%" }} />
 
-                  {/* Corner accents */}
-                  {[["top-[29%] left-[5%]","border-t-2 border-l-2"],["top-[29%] right-[5%]","border-t-2 border-r-2"],["bottom-[29%] left-[5%]","border-b-2 border-l-2"],["bottom-[29%] right-[5%]","border-b-2 border-r-2"]].map(([pos,border],i) => (
-                    <div key={i} className={`absolute pointer-events-none w-5 h-5 border-brand ${pos} ${border}`} />
-                  ))}
+                      {/* Corner accents */}
+                      {[["top-[29%] left-[5%]","border-t-2 border-l-2"],["top-[29%] right-[5%]","border-t-2 border-r-2"],["bottom-[29%] left-[5%]","border-b-2 border-l-2"],["bottom-[29%] right-[5%]","border-b-2 border-r-2"]].map(([pos,border],i) => (
+                        <div key={i} className={`absolute pointer-events-none w-5 h-5 border-brand ${pos} ${border}`} />
+                      ))}
 
-                  {/* Guide label */}
-                  <p className="absolute pointer-events-none text-white/80 text-[11px] font-bold w-full text-center" style={{ top: "22%" }}>
-                    وجّه اللوحة داخل الإطار
-                  </p>
+                      {/* Guide label */}
+                      <p className="absolute pointer-events-none text-white/80 text-[11px] font-bold w-full text-center" style={{ top: "22%" }}>
+                        وجّه اللوحة داخل الإطار
+                      </p>
+                    </>
+                  ) : (
+                    // الشاص: بنلتقط الفريم كامل (مكانه بيختلف) — بلا قناع/إطار قصّ
+                    <p className="absolute pointer-events-none text-white/90 text-[12px] font-bold w-full text-center" style={{ top: "8%" }}>
+                      صوّر رقم الشاص كامل وواضح
+                    </p>
+                  )}
 
                   {/* Capture button */}
                   <button onClick={captureFromLive}
@@ -2737,7 +2990,7 @@ export default function InstantCheckPage() {
                   {cameraLoading && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
                       <Loader2 size={28} className="animate-spin text-white" />
-                      <span className="text-sm text-white">جاري قراءة اللوحة...</span>
+                      <span className="text-sm text-white">{camSubject === "chassis" ? "جاري قراءة الشاص..." : "جاري قراءة اللوحة..."}</span>
                     </div>
                   )}
                   {!cameraLoading && (
@@ -2767,8 +3020,8 @@ export default function InstantCheckPage() {
 
               {cameraError && <p className="text-center text-xs text-danger">{cameraError}</p>}
 
-              {/* Editable plate + search */}
-              {!cameraLoading && cameraImage && (
+              {/* Editable plate + search (وضع اللوحة) */}
+              {!cameraLoading && cameraImage && camSubject === "plate" && (
                 <div className="flex gap-2 items-center">
                   <input dir="rtl" value={cameraInputPlate}
                     onChange={(e) => { const v = e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""); setCameraInputPlate(v); }}
@@ -2784,13 +3037,36 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
+              {/* Editable chassis + search (وضع الشاص) — يشتغل بصورة أو بكتابة الرقم مباشرة */}
+              {!cameraLoading && camSubject === "chassis" && (
+                <div className="flex gap-2 items-center">
+                  <input dir="ltr" value={chassisInput}
+                    onChange={(e) => setChassisInput(e.target.value.toUpperCase())}
+                    placeholder="اكتب أو صحّح رقم الشاص..."
+                    className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
+                  />
+                  <button
+                    onClick={() => { const v = chassisInput.trim(); if (!v) return; setCameraError(null); const r = searchByChassis(v); setChassisResult(r); void recordChassisEntry(r); }}
+                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
+                  >
+                    بحث
+                  </button>
+                </div>
+              )}
+
               {!cameraLoading && cameraRawText && (
                 <p className="text-center text-[10px] text-muted" dir="ltr">
                   <span className="font-mono">{cameraRawText.slice(0, 120)}</span>
                 </p>
               )}
 
-              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
+              {camSubject === "plate" && cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
+              {camSubject === "chassis" && chassisResult && (
+                <>
+                  <ChassisResultCard result={chassisResult} source={chassisSource} />
+                  <p className="text-center text-[11px] text-muted">✓ اتسجّل في سجل الشاص (مع الموقع والوقت) — شوفه في تبويب «شاص»</p>
+                </>
+              )}
             </div>
           )}
 
