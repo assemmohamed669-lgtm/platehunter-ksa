@@ -178,6 +178,33 @@ function buildGpsLink(value: string): string | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
+// صف بيانات قابل للتعديل بالقلم — لعرض/تعديل خانات نتيجة الشاصي (نوع السيارة/ملاحظات/المنطقة).
+function EditableField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+      <span className="shrink-0 text-[11px] font-medium text-muted">{label}</span>
+      {editing ? (
+        <input
+          dir="rtl"
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(e) => { if (e.key === "Enter") setEditing(false); }}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded-lg border border-brand bg-surface-2 px-2 py-1 text-sm text-ink outline-none"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm active:opacity-70">
+          <span className={`truncate ${value ? "text-ink" : "text-muted"}`}>{value || placeholder || "اضغط للتعديل"}</span>
+          <Pencil size={13} className="shrink-0 text-primary" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCheck }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void>; priorCheck?: FieldCheckEntry }) {
   const [exportState, setExportState] = useState<"idle" | "saving" | "done">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
@@ -3043,54 +3070,63 @@ export default function InstantCheckPage() {
               )}
 
               {cameraChassisResult && (
-                <div className={`rounded-xl border p-4 ${cameraChassisResult.match.found ? "border-danger/40 bg-danger/10" : "border-brand/40 bg-brand/10"}`}>
-                  <div className="flex items-center gap-2">
-                    {cameraChassisResult.match.found ? <AlertTriangle size={20} className="text-danger shrink-0" /> : <CheckCircle2 size={20} className="text-brand shrink-0" />}
+                <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+                  {/* رأس: رقم الشاص + الحالة */}
+                  <div className={`flex items-center justify-between gap-2 px-4 py-3 ${cameraChassisResult.match.found ? "bg-danger/10" : "bg-brand/10"}`}>
                     <span className="font-mono text-sm font-bold break-all" dir="ltr">{cameraChassisResult.vin}</span>
+                    <span className={`flex shrink-0 items-center gap-1 text-sm font-bold ${cameraChassisResult.match.found ? "text-danger" : "text-brand"}`}>
+                      {cameraChassisResult.match.found ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                      {cameraChassisResult.match.found
+                        ? (cameraChassisResult.match.matchType === "fuzzy" ? `مطلوب ${cameraChassisResult.match.similarity}%` : "مطلوب")
+                        : "غير مطلوب"}
+                    </span>
                   </div>
-                  <p className={`mt-1.5 text-sm font-bold ${cameraChassisResult.match.found ? "text-danger" : "text-brand"}`}>
-                    {cameraChassisResult.match.found
-                      ? (cameraChassisResult.match.matchType === "fuzzy" ? `مطلوب (تشابه ${cameraChassisResult.match.similarity}%)` : "مطلوب")
-                      : "غير مطلوب"}
-                  </p>
-                  {cameraChassisResult.match.found && cameraChassisResult.match.row && chassisRowToInfo(cameraChassisResult.match.row).length > 0 && (
-                    <div className="mt-2 flex flex-col gap-1 border-t border-border pt-2">
-                      {chassisRowToInfo(cameraChassisResult.match.row).map(([k, v]) => (
-                        <div key={k} className="flex justify-between gap-3 text-xs"><span className="text-muted">{k}</span><span className="text-ink text-left">{v}</span></div>
-                      ))}
-                    </div>
-                  )}
 
-                  {/* لوحة التسجيل — خانات يكتبها المندوب + GPS/تاريخ تلقائي */}
-                  <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
-                    <input dir="rtl" value={chVehicleType} onChange={(e) => setChVehicleType(e.target.value)} placeholder="نوع السيارة" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
-                    <input dir="rtl" value={chNotes} onChange={(e) => setChNotes(e.target.value)} placeholder="ملاحظات" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
-                    <input dir="rtl" value={chRegion} onChange={(e) => setChRegion(e.target.value)} placeholder="اسم المنطقة" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+                  {/* الخانات — بيانات السيارة (عرض) + خانات قابلة للتعديل بالقلم + الموقع/التاريخ */}
+                  <div className="flex flex-col divide-y divide-border">
+                    {cameraChassisResult.match.found && cameraChassisResult.match.row &&
+                      chassisRowToInfo(cameraChassisResult.match.row).map(([k, v]) => (
+                        <div key={k} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                          <span className="shrink-0 text-[11px] font-medium text-muted">{k}</span>
+                          <span className="min-w-0 flex-1 truncate text-left text-sm text-ink">{v}</span>
+                        </div>
+                      ))}
+
+                    <EditableField label="نوع السيارة" value={chVehicleType} onChange={setChVehicleType} placeholder="نوع السيارة" />
+                    <EditableField label="ملاحظات" value={chNotes} onChange={setChNotes} placeholder="ملاحظات" />
+                    <EditableField label="اسم المنطقة" value={chRegion} onChange={setChRegion} placeholder="اسم المنطقة" />
+
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="shrink-0 text-[11px] font-medium text-muted">الموقع</span>
                       {cameraGps ? (
-                        <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 font-bold text-primary">
-                          <MapPin size={13} /> الموقع (دبوس)
+                        <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-bold text-primary">
+                          <MapPin size={14} /> فتح الدبوس
                         </a>
                       ) : (
-                        <span className="flex items-center gap-1"><MapPin size={12} /> جاري تحديد الموقع...</span>
+                        <span className="text-sm text-muted">جاري تحديد الموقع...</span>
                       )}
-                      <span>{chDate ? new Date(chDate).toLocaleString("ar-EG") : ""}</span>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={saveChassisRecord} disabled={chSaved}
-                        className={`flex-1 rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
-                        {chSaved ? "✓ اتسجّل في شيت الشاص" : "تسجيل لشيت الشاص"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!window.confirm("متأكد إنك عايز تحذف نتيجة الشاصي دي؟")) return;
-                          if (chLastSavedId) setChassisRecords(deleteChassisRecord(chLastSavedId));
-                          resetCamera();
-                        }}
-                        className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm font-bold text-danger active:scale-95 transition">
-                        <Trash2 size={15} /> حذف
-                      </button>
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="shrink-0 text-[11px] font-medium text-muted">التاريخ</span>
+                      <span className="text-sm text-ink">{chDate ? new Date(chDate).toLocaleString("ar-EG") : ""}</span>
                     </div>
+                  </div>
+
+                  {/* زرين: تسجيل + حذف */}
+                  <div className="flex gap-2 border-t border-border p-3">
+                    <button onClick={saveChassisRecord} disabled={chSaved}
+                      className={`flex-1 rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
+                      {chSaved ? "✓ اتسجّل في شيت الشاص" : "تسجيل لشيت الشاص"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!window.confirm("متأكد إنك عايز تحذف نتيجة الشاصي دي؟")) return;
+                        if (chLastSavedId) setChassisRecords(deleteChassisRecord(chLastSavedId));
+                        resetCamera();
+                      }}
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm font-bold text-danger active:scale-95 transition">
+                      <Trash2 size={15} /> حذف
+                    </button>
                   </div>
                 </div>
               )}
