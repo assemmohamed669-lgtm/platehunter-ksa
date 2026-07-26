@@ -237,9 +237,12 @@ export function toMapsLink(lat: number, lng: number): string {
 }
 
 export function extractLatLngFromMapsLink(url: string): { lat: number; lng: number } | null {
-  const match = url.match(/q=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
-  if (!match) return null;
-  return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+  // فك ترميز HTML (&amp; المزدوج بيكسر روابط واتساب: dir/?api=1&amp;amp;destination=...)
+  const s = String(url ?? "").replace(/&(?:amp;)+/gi, "&");
+  // يدعم q= / destination= / daddr= / ll= (روابط الاتجاهات) و @lat,lng.
+  const m = s.match(/(?:[?&](?:q|destination|daddr|ll)=|@)(-?\d+\.\d+),\s*(-?\d+\.\d+)/i);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  return null;
 }
 
 /**
