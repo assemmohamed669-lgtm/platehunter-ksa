@@ -62,3 +62,16 @@ export function updateChassisRecord(id: string, patch: Partial<ChassisRecord>): 
 export function clearChassisRecords(): void {
   persist([]);
 }
+
+/**
+ * يدمج سجلات جاية من السيرفر مع المحلي — بالـid (الموجود محلياً مايتكررش، السيرفر
+ * بيكمّل الناقص). النتيجة مرتّبة بالأحدث. يُستخدم في استرجاع الشاص من Supabase.
+ */
+export function mergeChassisRecords(incoming: ChassisRecord[]): ChassisRecord[] {
+  const byId = new Map<string, ChassisRecord>();
+  for (const r of getChassisRecords()) byId.set(r.id, r);
+  for (const r of incoming) if (!byId.has(r.id)) byId.set(r.id, r);
+  const merged = [...byId.values()].sort((a, b) => (b.checkedAt || "").localeCompare(a.checkedAt || ""));
+  persist(merged);
+  return merged;
+}

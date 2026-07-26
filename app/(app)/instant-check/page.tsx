@@ -24,6 +24,7 @@ import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -719,6 +720,10 @@ export default function InstantCheckPage() {
         await restoreFieldChecks(uid);
         pushPendingFieldChecks(uid).catch(() => {}); // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع
         setFieldEntries(await getAllFieldCheckEntries(uid));
+        // سجلات الشاص: استرجاع من السيرفر + رفع المحلي (نفس فكرة اللوحات).
+        await restoreChassisRecords(uid);
+        pushChassisRecords(uid).catch(() => {});
+        setChassisRecords(getChassisRecords());
       } catch { /* offline / no session */ }
     })();
   }, []);
@@ -1560,6 +1565,7 @@ export default function InstantCheckPage() {
     setChassisRecords(addChassisRecord(rec));
     setChSaved(true);
     setChLastSavedId(rec.id);
+    void pushOneChassis(agentIdRef.current, rec); // رفع الجديد للسيرفر على طول
   }
 
   // تصدير كل سجلات الشاصي لشيت «شيت رقم الشاص».
