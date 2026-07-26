@@ -209,8 +209,13 @@ export default function AdminDashboard() {
         }
       }
       await c.markDownloaded(rows.map((r) => r.id));
+      // مسح تلقائي للمُنزَّل من السيرفر بعد كل تنزيل ناجح — يفضّي مساحة Supabase.
+      // بيمسح بس اللي اتنزّل (downloaded_at) — الجديد اللي لسه ماتنزّلش مايتمسّش.
+      let purgedMsg = "";
+      try { const p = await c.purgeDownloaded(); purgedMsg = `\nواتمسح ${p.deleted} من السيرفر (فُضّيت المساحة).`; }
+      catch { purgedMsg = "\n(تعذّر مسح السيرفر تلقائياً — استخدم زر «مسح المُنزَّل» يدوياً)."; }
       await loadPending();
-      alert(`تم تنزيل ${rows.length} لوحة (${manifest.agents.length} مندوب) + ${audioCount} مقطع صوت. اتعلّمت كمُنزَّلة — مش هتتكرر.`);
+      alert(`تم تنزيل ${rows.length} لوحة (${manifest.agents.length} مندوب) + ${audioCount} مقطع صوت.${purgedMsg}`);
     } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
     finally { setCentralBusy(false); }
   }
