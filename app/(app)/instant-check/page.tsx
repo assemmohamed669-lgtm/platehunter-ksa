@@ -1535,7 +1535,7 @@ export default function InstantCheckPage() {
       if (g) reverseGeocode(g.lat, g.lng).then((a) => setChRegion(a.district || a.street || "")).catch(() => {});
     });
     if (match.found) {
-      fireWantedAlert({ plate: vin, matchType: match.matchType === "fuzzy" ? "fuzzy" : "exact", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] });
+      fireWantedAlert({ plate: vin, matchType: match.matchType === "exact" ? "exact" : "fuzzy", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] });
     }
   }
 
@@ -3135,7 +3135,9 @@ export default function InstantCheckPage() {
                     <span className={`flex shrink-0 items-center gap-1 text-sm font-bold ${cameraChassisResult.match.found ? "text-danger" : "text-brand"}`}>
                       {cameraChassisResult.match.found ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
                       {cameraChassisResult.match.found
-                        ? (cameraChassisResult.match.matchType === "fuzzy" ? `مطلوب ${cameraChassisResult.match.similarity}%` : "مطلوب")
+                        ? (cameraChassisResult.match.matchType === "fuzzy" ? `مطلوب ${cameraChassisResult.match.similarity}%`
+                          : cameraChassisResult.match.matchType === "partial" ? "مطلوب (آخر الأرقام)"
+                          : "مطلوب")
                         : "غير مطلوب"}
                     </span>
                   </div>
