@@ -59,6 +59,18 @@ function dupeHexColors(rows: WantedRow[]): (string | null)[] {
   return rows.map((r) => colorByNorm.get(r.norm) ?? null);
 }
 
+// صورة جدول ملوّنة للنافذة (زي الفرز) — بدون عمود GPS (الرابط مالوش لازمة في صورة)،
+// وكل لوحة مكررة بلون (rowColors = dupeHexColors).
+function toImageTable(rows: WantedRow[]): { columns: string[]; rows: string[][]; rowColors?: (string | null)[] } {
+  const hasBank = rows.some((r) => r.bank && r.bank.trim());
+  const hasDistrict = rows.some((r) => r.district && r.district.trim());
+  const columns = ["رقم اللوحة", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "العنوان", ...(hasDistrict ? ["الحي"] : []), "اللون", "سنة الصنع", "تاريخ التسجيل"];
+  const tableRows = rows.map((r) => [
+    r.plate, r.type, r.brand, ...(hasBank ? [r.bank ?? ""] : []), r.address, ...(hasDistrict ? [r.district ?? ""] : []), r.color, r.year, r.date,
+  ]);
+  return { columns, rows: tableRows, rowColors: dupeHexColors(rows) };
+}
+
 export default function WantedPage() {
   const [sorting, setSorting] = useState(false);
   const [sorted, setSorted] = useState(false);
@@ -226,16 +238,18 @@ export default function WantedPage() {
         </div>
         <WantedResultsTable rows={rows} onDelete={onDelete} />
         {rows.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            {/* زر مشاركة الفرز — نفس صفحة الفرز: فتح / واتساب (إكسيل ملوّن RTL) / صورة.
-                الإكسيل ملوّن باللوحات المكررة (dupeHexColors) وبمحاذاة يمين (buildColoredSortExcel). */}
+          <div className="flex flex-col gap-2 pt-1">
+            {/* زرّين تحت بعض: مشاركة النتيجة (قائمة: فتح إكسيل / واتساب / صورة) + مسح.
+                الإكسيل ملوّن باللوحات المكررة (dupeHexColors) و RTL بمحاذاة يمين (buildColoredSortExcel). */}
             <ShareSortButton
               title={title}
+              label="مشاركة النتيجة"
               rows={() => toExportRows(rows)}
               excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows), title, dupeHexColors(rows)), ext: "xlsx" })}
-              className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
+              imageTable={() => toImageTable(rows)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
-            <button onClick={clearAll} className="flex items-center gap-1.5 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={14} /> مسح نتايج الفرز</button>
+            <button onClick={clearAll} className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-3 text-sm font-bold text-danger transition hover:bg-danger/20"><Trash2 size={15} /> مسح نتايج الفرز</button>
           </div>
         )}
       </div>
