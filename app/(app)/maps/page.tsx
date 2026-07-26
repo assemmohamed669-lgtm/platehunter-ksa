@@ -22,6 +22,7 @@ import {
 import PlateBadge from "@/components/PlateBadge";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow } from "@/lib/plateImage";
+import { shareTextViaChooser } from "@/lib/share";
 import type { MapPoint } from "@/components/MapView";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
@@ -218,7 +219,7 @@ export default function MapsPage() {
     setCopiedKey(m.key); setTimeout(() => setCopiedKey(null), 1200);
   }
   function shareMatch(m: Match) {
-    window.open(`https://wa.me/?text=${encodeURIComponent(matchText(m))}`, "_blank");
+    void shareTextViaChooser(matchText(m));
   }
   function toggleSel(k: string) {
     setSelected((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -230,7 +231,7 @@ export default function MapsPage() {
     const rows = filtered.filter((m) => selected.has(m.key));
     if (!rows.length) return;
     const text = `*سيارات مطلوبة (${rows.length})*\n\n` + rows.map((m, i) => `${i + 1}. ${matchText(m)}`).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
   // صف Excel لكل لوحة — يحوي كل التفاصيل.
   function matchToRow(m: Match): Record<string, unknown> {

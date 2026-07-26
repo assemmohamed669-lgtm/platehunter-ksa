@@ -23,6 +23,7 @@ import {
 import type { RecordingEntry } from "@/lib/idb";
 import { findDuplicates, normalizePlate } from "@/lib/plateParser";
 import { haversineKm, gpsService } from "@/lib/gps";
+import { shareTextViaChooser } from "@/lib/share";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import type { PlateImageRow } from "@/lib/plateImage";
 
@@ -146,9 +147,7 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
   }
 
   function shareRow(entry: RecordingEntry) {
-    const text = rowToText(entry);
-    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(url, "_blank");
+    void shareTextViaChooser(rowToText(entry));
   }
 
   function shareSelected() {
@@ -157,7 +156,7 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
       .map((r, i) => `${i + 1}. ${rowToText(r)}`)
       .join("\n\n──────────\n\n");
     const full = `*السجلات الميدانية (${rows.length})*\n\n${text}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(full)}`, "_blank");
+    void shareTextViaChooser(full);
   }
 
   function startEdit(entry: RecordingEntry) {

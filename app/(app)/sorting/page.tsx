@@ -19,6 +19,7 @@ import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortin
 import { resolveMergedResultColumns, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
+import { shareTextViaChooser } from "@/lib/share";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
@@ -1139,7 +1140,7 @@ export default function SortingPage() {
     setTashyeekSelected(new Set());
   }
   function shareTashyeekRow(r: TashyeekResultRow) {
-    window.open(`https://wa.me/?text=${encodeURIComponent(buildRowSummaryText(buildTashyeekRowObj(r)))}`, "_blank");
+    void shareTextViaChooser(buildRowSummaryText(buildTashyeekRowObj(r)));
   }
   async function copyTashyeekRow(r: TashyeekResultRow, i: number) {
     await navigator.clipboard.writeText(buildRowSummaryText(buildTashyeekRowObj(r)));
@@ -1161,7 +1162,7 @@ export default function SortingPage() {
     if (!rows.length) return;
     const text = `*سيارات مطلوبة (${rows.length})*\n\n` +
       rows.map((r, i) => `${i + 1}. ${buildRowSummaryText(buildTashyeekRowObj(r))}`).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
 
   // ── Export ──
@@ -1248,7 +1249,7 @@ export default function SortingPage() {
 
   // ── WhatsApp ──
   function shareRowToWhatsApp(rowObj: Record<string, unknown>) {
-    window.open(`https://wa.me/?text=${encodeURIComponent(buildRowSummaryText(rowObj))}`, "_blank");
+    void shareTextViaChooser(buildRowSummaryText(rowObj));
   }
   function shareSelectedToWhatsApp(indices: Set<number>) {
     const rows = displayResults.filter((_, i) => indices.has(i)).map(buildRowObject);
@@ -1257,7 +1258,7 @@ export default function SortingPage() {
         `${i + 1}. 🚗 ${r["رقم اللوحة"]}\n` +
         Object.entries(r).filter(([k]) => k !== "رقم اللوحة" && r[k]).map(([k, v]) => `${k}: ${v}`).join("\n")
       ).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
 
   function sharePasteToWhatsApp() {
@@ -1266,7 +1267,7 @@ export default function SortingPage() {
         `${i + 1}. 🚗 ${p.converted}\n` +
         Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")
       ).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
 
   // ── Selection ──
@@ -1298,7 +1299,7 @@ export default function SortingPage() {
       rows.map((p, i) => `${i + 1}. 🚗 ${p.converted}\n` +
         Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")
       ).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
   async function copyPasteRow(p: { converted: string; row: Record<string, string> }, i: number) {
     await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRowObject(p)));

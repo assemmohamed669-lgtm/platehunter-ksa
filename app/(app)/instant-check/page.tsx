@@ -26,7 +26,7 @@ import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
-import { shareImageWithText, buildPlateShareText } from "@/lib/share";
+import { shareImageWithText, buildPlateShareText, shareTextViaChooser } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { readDeepgramWords, type DgWord } from "@/lib/deepgramWords";
 import { fetchLearningEnabled } from "@/lib/learningSettings";
@@ -1141,7 +1141,7 @@ export default function InstantCheckPage() {
   }
 
   function shareDraftRow(e: FieldCheckEntry) {
-    window.open(`https://wa.me/?text=${encodeURIComponent(draftRowText(e))}`, "_blank");
+    void shareTextViaChooser(draftRowText(e));
   }
 
   async function copyDraftRow(e: FieldCheckEntry) {
@@ -1169,7 +1169,7 @@ export default function InstantCheckPage() {
     const rows = manualDraft.filter((e) => manualSel.has(e.id));
     if (!rows.length) return;
     const text = `*لوحات متشيّكة (${rows.length})*\n\n` + rows.map((e, i) => `${i + 1}. ${draftRowText(e)}`).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
   function deleteManualSelected() {
     setManualDraft((prev) => prev.filter((e) => !manualSel.has(e.id)));
@@ -1216,7 +1216,7 @@ export default function InstantCheckPage() {
   }
 
   function shareHitWhatsApp(hit: CheckHit) {
-    window.open(`https://wa.me/?text=${encodeURIComponent(formatHitText(hit))}`, "_blank");
+    void shareTextViaChooser(formatHitText(hit));
   }
 
   async function copyHit(hit: CheckHit) {
@@ -1244,7 +1244,7 @@ export default function InstantCheckPage() {
   function shareSelectedHits() {
     const hits = manualHits.filter((h) => hitsSelected.has(h.id));
     const text = hits.map((h, i) => `${i + 1}. ${formatHitText(h)}`).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(`*لوحات مطلوبة (${hits.length})*\n\n${text}`)}`, "_blank");
+    void shareTextViaChooser(`*لوحات مطلوبة (${hits.length})*\n\n${text}`);
   }
 
   // يصدّر صور الكاميرا لشيت التسجيلات — الجديد بس (اللي ما اتصدّرش قبل كده).
@@ -1614,7 +1614,7 @@ export default function InstantCheckPage() {
       if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
       return lines.join("\n");
     }).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
 
   // Read the VIN/chassis from a (resized) image and check it against the
@@ -1934,7 +1934,7 @@ export default function InstantCheckPage() {
     const rows = pttResults.filter((r) => pttSel.has(r.id));
     if (!rows.length) return;
     const text = `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` + rows.map((r, i) => `${i + 1}. ${pttRowText(r)}`).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
   function deletePttSelected() {
     const ids = pttSel;

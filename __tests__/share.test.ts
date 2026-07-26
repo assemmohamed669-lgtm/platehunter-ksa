@@ -1,5 +1,40 @@
-import { describe, it, expect } from "vitest";
-import { buildPlateShareText, dataUrlToBlob } from "@/lib/share";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser } from "@/lib/share";
+
+describe("shareTextViaChooser — قائمة النظام بدل واتساب المباشر", () => {
+  const hadShare = "share" in navigator;
+  const origShare = (navigator as unknown as { share?: unknown }).share;
+  const origOpen = window.open;
+  afterEach(() => {
+    if (hadShare) Object.defineProperty(navigator, "share", { value: origShare, configurable: true, writable: true });
+    else delete (navigator as unknown as { share?: unknown }).share;
+    window.open = origOpen;
+    vi.restoreAllMocks();
+  });
+
+  it("يستخدم Web Share API لو متاح (قائمة النظام تظهر)", async () => {
+    const shareMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "share", { value: shareMock, configurable: true, writable: true });
+    const openMock = vi.fn();
+    window.open = openMock as unknown as typeof window.open;
+    const outcome = await shareTextViaChooser("نتيجة اختبار");
+    expect(shareMock).toHaveBeenCalledWith({ text: "نتيجة اختبار" });
+    expect(openMock).not.toHaveBeenCalled();
+    expect(outcome).toBe("shared");
+  });
+
+  it("يرجع لرابط wa.me النصي لو مفيش مشاركة نظام", async () => {
+    Object.defineProperty(navigator, "share", { value: undefined, configurable: true, writable: true });
+    const openMock = vi.fn();
+    window.open = openMock as unknown as typeof window.open;
+    const outcome = await shareTextViaChooser("لوحة أبح1234");
+    expect(openMock).toHaveBeenCalledTimes(1);
+    const url = String((openMock.mock.calls[0] ?? [])[0] ?? "");
+    expect(url.startsWith("https://wa.me/?text=")).toBe(true);
+    expect(decodeURIComponent(url)).toContain("لوحة أبح1234");
+    expect(outcome).toBe("whatsapp-text");
+  });
+});
 
 describe("buildPlateShareText", () => {
   it("starts with the plate line", () => {
