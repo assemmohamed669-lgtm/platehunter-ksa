@@ -2163,11 +2163,11 @@ export default function SortingPage() {
                           </td>
                           {pasteRecordCols.map((col) => {
                             const v = String(p.row[col] ?? "");
-                            const isUrl = !!v && /^https?:\/\//i.test(v);
+                            const link = gpsCellToLink(v); // ينظّف روابط الاتجاهات/&amp; ويحوّل الإحداثيات
                             return (
                               <td key={col} className="border-l border-border px-3 py-1.5 whitespace-nowrap">
-                                {isUrl ? (
-                                  <a href={v} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
+                                {link ? (
+                                  <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
                                 ) : v ? (
                                   <span className="text-ink">{v}</span>
                                 ) : (
