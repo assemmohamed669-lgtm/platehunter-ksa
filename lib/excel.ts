@@ -10,6 +10,7 @@ import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
+import { gpsCellToLink } from "./gps";
 
 // روابط خرائط جوجل — بتتعرض في التصدير ككلمة «خريطة» بدل الرابط الطويل.
 const MAP_URL_RE = /maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google/i;
@@ -484,9 +485,12 @@ export function buildExcelBlob(
         const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
         const cell = ws[cellRef];
         if (cell && typeof cell.v === "string" && /^https?:\/\//i.test(cell.v)) {
-          const url = cell.v;
-          cell.l = { Target: url };
-          if (MAP_URL_RE.test(url)) { cell.v = "خريطة"; cell.w = "خريطة"; }
+          const raw = cell.v;
+          // رابط خرائط نظيف (q=lat,lng بدون & — ماينكسرش بترميز HTML)، وإلا نفكّ
+          // &amp; المزدوج/الثلاثي على الأقل عشان الرابط يفضل شغّال.
+          const clean = gpsCellToLink(raw) || raw.replace(/&(?:amp;)+/gi, "&");
+          cell.l = { Target: clean };
+          if (MAP_URL_RE.test(raw)) { cell.v = "خريطة"; cell.w = "خريطة"; }
         }
       }
     }
