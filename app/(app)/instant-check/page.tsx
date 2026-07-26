@@ -1546,6 +1546,16 @@ export default function InstantCheckPage() {
     }
   }
 
+  // تطبيق تعديل الموقع (زر «حفظ» أو Enter): يحوّل lat,lng لإحداثيات، أو يخزّن
+  // الرابط المختصر زي ما هو كموقع للسيارة، ويقفل وضع التعديل.
+  function applyChassisLocation() {
+    const v = chLocInput.trim();
+    const c = gpsCellCoords(v);
+    if (c) { setCameraGps({ lat: c.lat, lng: c.lng }); setChLocLink(null); }
+    else if (/^https?:\/\//i.test(v)) { setChLocLink(v); }
+    setChLocEditing(false);
+  }
+
   // حفظ سجل الشاصي في شيت رقم الشاص المنفصل (localStorage).
   async function saveChassisRecord() {
     const cr = cameraChassisResult;
@@ -3177,22 +3187,18 @@ export default function InstantCheckPage() {
                     <div className="flex items-center justify-between gap-3 px-4 py-2.5">
                       <span className="shrink-0 text-[11px] font-medium text-muted">الموقع</span>
                       {chLocEditing ? (
-                        <input
-                          dir="ltr"
-                          autoFocus
-                          value={chLocInput}
-                          onChange={(e) => setChLocInput(e.target.value)}
-                          onBlur={() => {
-                            const v = chLocInput.trim();
-                            const c = gpsCellCoords(v);
-                            if (c) { setCameraGps({ lat: c.lat, lng: c.lng }); setChLocLink(null); }
-                            else if (/^https?:\/\//i.test(v)) { setChLocLink(v); } // رابط مختصر مفهوش إحداثيات — نخزّنه زي ما هو
-                            setChLocEditing(false);
-                          }}
-                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                          placeholder="الصق رابط خرائط أو lat,lng"
-                          className="min-w-0 flex-1 rounded-lg border border-brand bg-surface-2 px-2 py-1 text-xs text-ink outline-none"
-                        />
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                          <input
+                            dir="ltr"
+                            autoFocus
+                            value={chLocInput}
+                            onChange={(e) => setChLocInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") applyChassisLocation(); }}
+                            placeholder="الصق رابط خرائط أو lat,lng"
+                            className="min-w-0 flex-1 rounded-lg border border-brand bg-surface-2 px-2 py-1 text-xs text-ink outline-none"
+                          />
+                          <button onClick={applyChassisLocation} className="shrink-0 rounded-lg bg-primary px-3 py-1 text-xs font-bold text-night active:scale-95 transition">حفظ</button>
+                        </div>
                       ) : (
                         <div className="flex min-w-0 items-center justify-end gap-2">
                           {(chLocLink || cameraGps) ? (
