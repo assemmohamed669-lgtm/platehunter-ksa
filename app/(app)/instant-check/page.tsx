@@ -4,10 +4,11 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
-import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
+import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
+import { getChassisRecords, addChassisRecord, deleteChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
@@ -368,6 +369,14 @@ export default function InstantCheckPage() {
   const [cameraGps, setCameraGps] = useState<{ lat: number; lng: number } | null>(null);
   // نتيجة تشييك الشاصي (VIN) — مود «شاص».
   const [cameraChassisResult, setCameraChassisResult] = useState<{ vin: string; match: ChassisMatch } | null>(null);
+  // لوحة تسجيل الشاصي: خانات يكتبها المندوب + GPS/تاريخ تلقائي.
+  const [chVehicleType, setChVehicleType] = useState("");
+  const [chNotes, setChNotes] = useState("");
+  const [chRegion, setChRegion] = useState("");
+  const [chDate, setChDate] = useState<string>("");
+  const [chSaved, setChSaved] = useState(false);
+  const [chassisRecords, setChassisRecords] = useState<ChassisRecord[]>([]);
+  useEffect(() => { setChassisRecords(getChassisRecords()); }, []);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chassisCamInputRef = useRef<HTMLInputElement>(null);
   const chassisGalInputRef = useRef<HTMLInputElement>(null);
@@ -778,23 +787,38 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
-  // عمود الشاصي/الهيكل + فهرسه (VIN مطبّع → صف) — لمود «شاص».
-  const checkChassisCol = useMemo(
-    () => (checkTable ? detectChassisColumn(checkTable.headers, checkTable.rows) : null),
-    [checkTable]
-  );
-  const chassisIndex = useMemo(() => {
-    if (!checkTable || !checkChassisCol) return new Map<string, Record<string, string>>();
-    return buildChassisIndex(checkTable.rows, checkChassisCol);
-  }, [checkTable, checkChassisCol]);
+  // فهرس الشاصي (VIN مطبّع → صف) مبني من *كل ورقات* ملف التشييك — لمود «شاص».
+  // بيدوّر على عمود الشاصي في كل ورقة (بالاسم أو بالمحتوى) ويجمّعهم في فهرس واحد.
+  const [chassisIndex, setChassisIndex] = useState<Map<string, Record<string, string>>>(new Map());
+  const [chassisSheetFound, setChassisSheetFound] = useState(false);
+  const [chassisColByRow, setChassisColByRow] = useState<Map<Record<string, string>, string>>(new Map());
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!checkFile) { setChassisIndex(new Map()); setChassisSheetFound(false); return; }
+      try {
+        const sheets = await readAllSheets(checkFile);
+        const combined = new Map<string, Record<string, string>>();
+        const colMap = new Map<Record<string, string>, string>();
+        let found = false;
+        for (const s of sheets) {
+          const col = detectChassisColumn(s.headers, s.rows);
+          if (!col) continue;
+          found = true;
+          for (const [k, row] of buildChassisIndex(s.rows, col)) { combined.set(k, row); colMap.set(row, col); }
+        }
+        if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
+      } catch { if (!cancelled) { setChassisIndex(new Map()); setChassisSheetFound(false); } }
+    })();
+    return () => { cancelled = true; };
+  }, [checkFile]);
+
+  // كل بيانات السيارة من الصف المطابق (كل الأعمدة غير الفاضية) — ماعدا عمود الشاصي نفسه.
   function chassisRowToInfo(row: Record<string, string>): [string, string][] {
+    const vinCol = chassisColByRow.get(row);
     return Object.entries(row)
-      .filter(([k, v]) =>
-        k !== checkChassisCol &&
-        String(v ?? "").trim() &&
-        (selectedCheckCols.size === 0 || selectedCheckCols.has(k))
-      )
+      .filter(([k, v]) => k !== vinCol && String(v ?? "").trim())
       .map(([k, v]) => [k, String(v)] as [string, string]);
   }
 
@@ -1425,6 +1449,63 @@ export default function InstantCheckPage() {
     reader.readAsDataURL(file);
   }
 
+  // كل ما نتيجة شاصي تظهر (كاميرا/رفع/يدوي): صفّر خانات اللوحة، خُد GPS + تاريخ
+  // تلقائي، واملأ اسم المنطقة من العنوان، وصفّر الإنذار لو مطلوب.
+  function onChassisResult(vin: string, match: ChassisMatch) {
+    setCameraChassisResult({ vin, match });
+    setChVehicleType("");
+    setChNotes("");
+    setChRegion("");
+    setChSaved(false);
+    setChDate(new Date().toISOString());
+    void getCurrentGps().then((g) => {
+      setCameraGps(g);
+      if (g) reverseGeocode(g.lat, g.lng).then((a) => setChRegion(a.district || a.street || "")).catch(() => {});
+    });
+    if (match.found) {
+      fireWantedAlert({ plate: vin, matchType: match.matchType === "fuzzy" ? "fuzzy" : "exact", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] });
+    }
+  }
+
+  // حفظ سجل الشاصي في شيت رقم الشاص المنفصل (localStorage).
+  async function saveChassisRecord() {
+    const cr = cameraChassisResult;
+    if (!cr) return;
+    const gps = cameraGps ?? (await getCurrentGps());
+    const rec: ChassisRecord = {
+      id: `ch-${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`,
+      chassis: cr.vin,
+      vehicleType: chVehicleType.trim() || undefined,
+      notes: chNotes.trim() || undefined,
+      region: chRegion.trim() || undefined,
+      row: cr.match.row,
+      found: cr.match.found,
+      lat: gps?.lat,
+      lng: gps?.lng,
+      mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
+      checkedAt: chDate || new Date().toISOString(),
+    };
+    setChassisRecords(addChassisRecord(rec));
+    setChSaved(true);
+  }
+
+  // تصدير كل سجلات الشاصي لشيت «شيت رقم الشاص».
+  async function exportChassisSheet() {
+    const recs = getChassisRecords();
+    if (!recs.length) { alert("مفيش سجلات شاصي بعد."); return; }
+    const rows = recs.map((r) => ({
+      "رقم الشاص": r.chassis,
+      "نوع السيارة": r.vehicleType ?? "",
+      "ملاحظات": r.notes ?? "",
+      "اسم المنطقة": r.region ?? "",
+      "GPS": r.mapsLink ?? (r.lat != null && r.lng != null ? `${r.lat},${r.lng}` : ""),
+      "تاريخ التقاط": new Date(r.checkedAt).toLocaleString("ar-EG"),
+      "الحالة": r.found ? "مطلوب" : "غير مطلوب",
+    }));
+    const blob = buildExcelBlob(rows, "شيت رقم الشاص");
+    await shareExcelBlob(blob, `شيت-رقم-الشاص-${Date.now()}.xlsx`, "شيت رقم الشاص");
+  }
+
   // Read the VIN/chassis from a (resized) image and check it against the
   // chassis column of the loaded check file — the شاص counterpart of the plate OCR.
   async function processChassis(resized: string) {
@@ -1448,12 +1529,7 @@ export default function InstantCheckPage() {
     setCameraRawText(debugLine || null);
     setCameraInputPlate(vin ?? "");
     if (vin) {
-      const match = matchChassis(vin, chassisIndex);
-      setCameraChassisResult({ vin, match });
-      if (match.found) {
-        fireWantedAlert({ plate: vin, matchType: match.matchType === "fuzzy" ? "fuzzy" : "exact", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] });
-        void getCurrentGps().then(setCameraGps);
-      }
+      onChassisResult(vin, matchChassis(vin, chassisIndex));
     } else {
       setCameraError("لم يُتعرَّف على رقم الشاصي — صحّح أدناه يدوياً");
     }
@@ -2897,8 +2973,8 @@ export default function InstantCheckPage() {
               <input ref={chassisCamInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleChassisCapture} />
               <input ref={chassisGalInputRef} type="file" accept="image/*" className="hidden" onChange={handleChassisCapture} />
 
-              <p className="text-center text-xs text-muted">صوّر رقم الشاصي (VIN) أو ارفع صورة أو اكتبه — ويتشيّك على عمود الهيكل في ملف التشييك.</p>
-              {checkTable && !checkChassisCol && (
+              <p className="text-center text-xs text-muted">صوّر رقم الشاصي (VIN) أو ارفع صورة أو اكتبه — ويتشيّك على عمود الهيكل في كل ورقات ملف التشييك.</p>
+              {checkTable && !chassisSheetFound && (
                 <p className="text-center text-xs text-alert">⚠️ مفيش عمود شاصي/هيكل في ملف التشييك — هيقرا الرقم بس من غير تشييك.</p>
               )}
 
@@ -2952,7 +3028,7 @@ export default function InstantCheckPage() {
                   className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
                 />
                 <button
-                  onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); const match = matchChassis(v, chassisIndex); setCameraChassisResult({ vin: v, match }); if (match.found) { fireWantedAlert({ plate: v, matchType: match.matchType === "fuzzy" ? "fuzzy" : "exact", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] }); void getCurrentGps().then(setCameraGps); } }}
+                  onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); onChassisResult(v, matchChassis(v, chassisIndex)); }}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                 >بحث</button>
               </div>
@@ -2979,7 +3055,30 @@ export default function InstantCheckPage() {
                       ))}
                     </div>
                   )}
+
+                  {/* لوحة التسجيل — خانات يكتبها المندوب + GPS/تاريخ تلقائي */}
+                  <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
+                    <input dir="rtl" value={chVehicleType} onChange={(e) => setChVehicleType(e.target.value)} placeholder="نوع السيارة" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    <input dir="rtl" value={chNotes} onChange={(e) => setChNotes(e.target.value)} placeholder="ملاحظات" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    <input dir="rtl" value={chRegion} onChange={(e) => setChRegion(e.target.value)} placeholder="اسم المنطقة" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+                      <span className="flex items-center gap-1"><MapPin size={12} /> {cameraGps ? `${cameraGps.lat.toFixed(5)}, ${cameraGps.lng.toFixed(5)}` : "جاري تحديد الموقع..."}</span>
+                      <span>{chDate ? new Date(chDate).toLocaleString("ar-EG") : ""}</span>
+                    </div>
+                    <button onClick={saveChassisRecord} disabled={chSaved}
+                      className={`rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
+                      {chSaved ? "✓ اتحفظ في شيت الشاص" : "حفظ في شيت الشاص"}
+                    </button>
+                  </div>
                 </div>
+              )}
+
+              {/* تصدير شيت رقم الشاص + العدد */}
+              {chassisRecords.length > 0 && (
+                <button onClick={exportChassisSheet}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink active:scale-95 transition">
+                  <Download size={15} /> تصدير شيت رقم الشاص ({chassisRecords.length})
+                </button>
               )}
             </div>
           )}
@@ -3466,8 +3565,29 @@ export default function InstantCheckPage() {
         </>
       )}
 
+      {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات */}
+      {mode === "sheet" && chassisRecords.length > 0 && (
+        <div className="mb-3 rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-sm font-bold text-ink"><Barcode size={16} /> شيت رقم الشاص ({chassisRecords.length})</span>
+            <button onClick={exportChassisSheet} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night active:scale-95 transition"><Download size={13} /> تصدير</button>
+          </div>
+          <div className="mt-2 flex flex-col divide-y divide-border">
+            {chassisRecords.slice(0, 50).map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-2 py-1.5">
+                <span className="font-mono text-xs break-all" dir="ltr">{r.chassis}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className={`text-[11px] font-bold ${r.found ? "text-danger" : "text-brand"}`}>{r.found ? "مطلوب" : "غير مطلوب"}</span>
+                  <button onClick={() => setChassisRecords(deleteChassisRecord(r.id))} className="text-muted" aria-label="حذف"><Trash2 size={13} /></button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
-      {mode === "sheet" && fieldEntries.length === 0 && (
+      {mode === "sheet" && fieldEntries.length === 0 && chassisRecords.length === 0 && (
         <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
           لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
         </div>
