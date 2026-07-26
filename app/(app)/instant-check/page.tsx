@@ -3116,7 +3116,7 @@ export default function InstantCheckPage() {
                   <div className="flex gap-2 border-t border-border p-3">
                     <button onClick={saveChassisRecord} disabled={chSaved}
                       className={`flex-1 rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
-                      {chSaved ? "✓ اتسجّل في شيت الشاص" : "تسجيل لشيت الشاص"}
+                      {chSaved ? "✓ اتصدّر لشيت الشاص" : "تصدير لشيت الشاص"}
                     </button>
                     <button
                       onClick={() => {
@@ -3131,13 +3131,6 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* تصدير شيت رقم الشاص + العدد */}
-              {chassisRecords.length > 0 && (
-                <button onClick={exportChassisSheet}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-bold text-ink active:scale-95 transition">
-                  <Download size={15} /> تصدير شيت رقم الشاص ({chassisRecords.length})
-                </button>
-              )}
             </div>
           )}
 
