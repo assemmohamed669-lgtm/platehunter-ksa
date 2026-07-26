@@ -18,7 +18,8 @@ import { saveUploadedFile, getUploadedFile, type UploadedFileRecord } from "@/li
 
 interface PendingFile {
   name: string;
-  base64: string;
+  base64?: string;    // القديم: base64 مباشر (ملفات صغيرة / نسخ APK قديمة)
+  cacheFile?: string; // الجديد: اسم الملف في كاش التطبيق — يُقرأ عبر Filesystem (أي حجم)
 }
 
 // referral-${number} = ملف إحالة إضافي (٢، ٣، ...) تحت الإحالة الأساسية.
@@ -45,8 +46,8 @@ export default function IncomingExcelHandler() {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const { name, base64 } = (e as CustomEvent<PendingFile>).detail;
-      setPending({ name, base64 });
+      const { name, base64, cacheFile } = (e as CustomEvent<PendingFile>).detail;
+      setPending({ name, base64, cacheFile });
       setError(null);
       setNeedsPassword(false);
       setPassword("");
@@ -67,8 +68,17 @@ export default function IncomingExcelHandler() {
     return () => window.removeEventListener("excelFileOpened", handler);
   }, []);
 
-  function buildFile(p: PendingFile): { file: File; blob: Blob } {
-    const binary = atob(p.base64);
+  async function buildFile(p: PendingFile): Promise<{ file: File; blob: Blob }> {
+    let b64 = p.base64 ?? "";
+    // النسخة الجديدة من الـAPK بتبعت اسم ملف في الكاش بدل الـbase64 المباشر —
+    // نقراه عبر Capacitor Filesystem (قناة بتتحمّل أي حجم، بلا حد سطر JS اللي كان
+    // بيقصّ الملفات الكبيرة). القديم (base64) لسه مدعوم للتوافق.
+    if (!b64 && p.cacheFile) {
+      const { Filesystem, Directory } = await import("@capacitor/filesystem");
+      const res = await Filesystem.readFile({ path: p.cacheFile, directory: Directory.Cache });
+      b64 = typeof res.data === "string" ? res.data : "";
+    }
+    const binary = atob(b64);
     const bytes  = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const blob = new Blob([bytes], {
@@ -82,7 +92,7 @@ export default function IncomingExcelHandler() {
     setLoading(true);
     setError(null);
     try {
-      const { file, blob } = buildFile(pending);
+      const { file, blob } = await buildFile(pending);
       const table = await parseExcelFile(file, pwd);
 
       const record: UploadedFileRecord = {
