@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { KeyRound, Mic, ChevronLeft, AudioLines } from "lucide-react";
-import { getDeepgramKey } from "@/lib/deepgramKey";
+import { KeyRound, Mic, ChevronLeft, AudioLines, RefreshCw, AlertTriangle, Loader2 } from "lucide-react";
+import { getDeepgramKey, testDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
 import { fetchSharedDeepgramKey, setSharedDeepgramKey } from "@/lib/sharedVoiceKey";
 
@@ -20,6 +20,16 @@ export default function KeysPage() {
   const [sharedSet, setSharedSet] = useState(false);
   const [savingShared, setSavingShared] = useState(false);
   const [sharedMsg, setSharedMsg] = useState<string | null>(null);
+  // فحص اتصال المفتاح المشترك: مفعّل (شغّال) / غير مفعّل (رصيد خلص أو مفتاح غلط).
+  const [sharedKeyVal, setSharedKeyVal] = useState("");
+  const [sharedStatus, setSharedStatus] = useState<"unknown" | "checking" | "ok" | "dead">("unknown");
+
+  async function checkShared(k: string) {
+    if (!k) { setSharedStatus("unknown"); return; }
+    setSharedStatus("checking");
+    const ok = await testDeepgramKey(k);
+    setSharedStatus(ok ? "ok" : "dead");
+  }
 
   useEffect(() => {
     try { setGroqSet(!!localStorage.getItem(LS_GROQ_API_KEY)); } catch { /* ignore */ }
@@ -34,7 +44,12 @@ export default function KeysPage() {
         const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
         const su = !!prof?.is_super;
         setIsSuper(su);
-        if (su) { const k = await fetchSharedDeepgramKey(); setSharedSet(!!k); }
+        if (su) {
+          const k = (await fetchSharedDeepgramKey()) || "";
+          setSharedKeyVal(k);
+          setSharedSet(!!k);
+          void checkShared(k); // افحص المفتاح فوراً عشان نعرف شغّال ولا وقف
+        }
       } catch { /* غير متاح */ }
     })();
   }, []);
@@ -44,9 +59,12 @@ export default function KeysPage() {
     const r = await setSharedDeepgramKey(sharedInput.trim());
     setSavingShared(false);
     if (r.ok) {
-      setSharedSet(!!sharedInput.trim());
+      const saved = sharedInput.trim();
+      setSharedKeyVal(saved);
+      setSharedSet(!!saved);
       setSharedMsg("تم الحفظ — كل المناديب هياخدوه تلقائياً أول ما يفتحوا التطبيق.");
       setSharedInput("");
+      void checkShared(saved); // افحص المفتاح الجديد فوراً
     } else {
       setSharedMsg(r.error === "NOT_ADMIN" ? "الصلاحية للأدمن فقط." : (r.error || "تعذّر الحفظ. تأكد إنك شغّلت خطوة SQL."));
     }
@@ -84,7 +102,13 @@ export default function KeysPage() {
           <div className="flex items-center gap-2">
             <AudioLines size={18} className="text-alert" />
             <span className="text-sm font-bold text-ink">مفتاح Deepgram مشترك (لكل المناديب)</span>
-            {sharedSet && <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand">مفعّل</span>}
+            {sharedSet && (
+              sharedStatus === "checking"
+                ? <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-muted">جارٍ الفحص...</span>
+                : sharedStatus === "dead"
+                ? <span className="rounded-full bg-danger/15 px-2 py-0.5 text-[10px] font-bold text-danger">غير مفعّل</span>
+                : <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand">مفعّل</span>
+            )}
           </div>
           <p className="text-[11px] leading-relaxed text-muted">
             سوبر أدمن فقط. تحطّه مرة واحدة ويتطبّق على كل المناديب تلقائياً أول ما يفتحوا التطبيق — من غير ما كل واحد يدخّله.
@@ -101,6 +125,27 @@ export default function KeysPage() {
             {savingShared ? "جارٍ الحفظ..." : "حفظ المفتاح المشترك"}
           </button>
           {sharedMsg && <p className="text-xs text-muted">{sharedMsg}</p>}
+
+          {/* فحص اتصال المفتاح المشترك — يظهر بس لما فيه مفتاح محفوظ */}
+          {sharedSet && (
+            <button
+              onClick={() => checkShared(sharedKeyVal)} disabled={sharedStatus === "checking"}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2 text-xs font-bold text-muted transition hover:border-primary hover:text-primary disabled:opacity-50"
+            >
+              {sharedStatus === "checking" ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {sharedStatus === "checking" ? "جارٍ فحص المفتاح..." : "افحص المفتاح"}
+            </button>
+          )}
+
+          {/* رسالة لما المفتاح يبقى «غير مفعّل» (رصيد خلص / مفتاح غلط) */}
+          {sharedSet && sharedStatus === "dead" && (
+            <div className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/5 p-2.5 text-[11px] leading-relaxed text-danger" dir="rtl">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+              <span>
+                <b>المفتاح المشترك مش شغّال.</b> تأكد من رصيد مفتاح ديبجرام (أو إنه مفتاح صحيح) — كل المناديب بيستخدموه، فالتفريغ الصوتي هيرجع للمحرك الأقل دقة.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
