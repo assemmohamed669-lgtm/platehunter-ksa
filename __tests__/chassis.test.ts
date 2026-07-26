@@ -28,6 +28,11 @@ describe("detectChassisColumn — by header name", () => {
     expect(detectChassisColumn(["اللوحة", "رقم الشاصي"])).toBe("رقم الشاصي");
     expect(detectChassisColumn(["اللوحة", "الشاسيه"])).toBe("الشاسيه");
   });
+  it("matches الشاص / رقم الشاص / شاص (without ي)", () => {
+    expect(detectChassisColumn(["اللوحة", "رقم الشاص"])).toBe("رقم الشاص");
+    expect(detectChassisColumn(["اللوحة", "الشاص"])).toBe("الشاص");
+    expect(detectChassisColumn(["اللوحة", "شاص"])).toBe("شاص");
+  });
   it("matches English Chassis / VIN", () => {
     expect(detectChassisColumn(["Plate", "Chassis Number", "Year"])).toBe("Chassis Number");
     expect(detectChassisColumn(["Plate", "VIN"])).toBe("VIN");

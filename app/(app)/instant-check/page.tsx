@@ -847,23 +847,27 @@ export default function InstantCheckPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!checkFile) { setChassisIndex(new Map()); setChassisSheetFound(false); return; }
-      try {
-        const sheets = await readAllSheets(checkFile);
-        const combined = new Map<string, Record<string, string>>();
-        const colMap = new Map<Record<string, string>, string>();
-        let found = false;
-        for (const s of sheets) {
-          const col = detectChassisColumn(s.headers, s.rows);
-          if (!col) continue;
-          found = true;
-          for (const [k, row] of buildChassisIndex(s.rows, col)) { combined.set(k, row); colMap.set(row, col); }
-        }
-        if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
-      } catch { if (!cancelled) { setChassisIndex(new Map()); setChassisSheetFound(false); } }
+      const combined = new Map<string, Record<string, string>>();
+      const colMap = new Map<Record<string, string>, string>();
+      let found = false;
+      const addSheet = (headers: string[], rows: Record<string, string>[]) => {
+        const col = detectChassisColumn(headers, rows);
+        if (!col) return;
+        found = true;
+        for (const [k, row] of buildChassisIndex(rows, col)) { combined.set(k, row); colMap.set(row, col); }
+      };
+      // 1) الورقة المحمّلة نفسها — ضمان لو الـ blob مش متاح (ملفات قديمة/مشفّرة).
+      if (checkTable) addSheet(checkTable.headers, checkTable.rows);
+      // 2) كل ورقات الملف من الـ blob (بيمسك عمود الشاص لو في الورقة التانية).
+      if (checkFile) {
+        try {
+          for (const s of await readAllSheets(checkFile)) addSheet(s.headers, s.rows);
+        } catch { /* blob غير قابل للقراءة — نكتفي بالورقة المحمّلة */ }
+      }
+      if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
     })();
     return () => { cancelled = true; };
-  }, [checkFile]);
+  }, [checkFile, checkTable]);
 
   // كل بيانات السيارة من الصف المطابق (كل الأعمدة غير الفاضية) — ماعدا عمود الشاصي نفسه.
   function chassisRowToInfo(row: Record<string, string>): [string, string][] {

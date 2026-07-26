@@ -17,7 +17,8 @@ export function normalizeChassis(raw: string): string {
   return String(raw ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-const CHASSIS_NAME_HINTS = ["هيكل", "شاصي", "شاسيه", "شاسي", "chassis", "vin"];
+// "شاص" (بدون ي) بيغطّي: رقم الشاص / الشاص / شاص / شاصي (كلها بتحتوي "شاص").
+const CHASSIS_NAME_HINTS = ["هيكل", "شاص", "شاسيه", "شاسي", "chassis", "vin", "serial"];
 
 /** True when a value looks like a VIN/chassis: 11–17 chars, letters AND digits. */
 function looksLikeVin(v: string): boolean {
