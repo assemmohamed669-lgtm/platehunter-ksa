@@ -9,7 +9,7 @@ import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTra
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
-import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
+import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -426,6 +426,8 @@ export default function InstantCheckPage() {
   const [chDate, setChDate] = useState<string>("");
   const [chSaved, setChSaved] = useState(false);
   const [chLastSavedId, setChLastSavedId] = useState<string | null>(null);
+  const [chLocEditing, setChLocEditing] = useState(false);
+  const [chLocInput, setChLocInput] = useState("");
   const [chassisRecords, setChassisRecords] = useState<ChassisRecord[]>([]);
   useEffect(() => { setChassisRecords(getChassisRecords()); }, []);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -1529,6 +1531,8 @@ export default function InstantCheckPage() {
     setChRegion("");
     setChSaved(false);
     setChLastSavedId(null);
+    setChLocEditing(false);
+    setChLocInput("");
     setChDate(new Date().toISOString());
     void getCurrentGps().then((g) => {
       setCameraGps(g);
@@ -1724,6 +1728,8 @@ export default function InstantCheckPage() {
     setCameraChassisResult(null);
     setChSaved(false);
     setChLastSavedId(null);
+    setChLocEditing(false);
+    setChLocInput("");
     setCameraError(null);
     setCameraRawText(null);
     setCameraInputPlate("");
@@ -3166,12 +3172,30 @@ export default function InstantCheckPage() {
 
                     <div className="flex items-center justify-between gap-3 px-4 py-2.5">
                       <span className="shrink-0 text-[11px] font-medium text-muted">الموقع</span>
-                      {cameraGps ? (
-                        <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-bold text-primary">
-                          <MapPin size={14} /> فتح الدبوس
-                        </a>
+                      {chLocEditing ? (
+                        <input
+                          dir="ltr"
+                          autoFocus
+                          value={chLocInput}
+                          onChange={(e) => setChLocInput(e.target.value)}
+                          onBlur={() => { const c = gpsCellCoords(chLocInput.trim()); if (c) setCameraGps({ lat: c.lat, lng: c.lng }); setChLocEditing(false); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          placeholder="الصق رابط خرائط أو lat,lng"
+                          className="min-w-0 flex-1 rounded-lg border border-brand bg-surface-2 px-2 py-1 text-xs text-ink outline-none"
+                        />
                       ) : (
-                        <span className="text-sm text-muted">جاري تحديد الموقع...</span>
+                        <div className="flex min-w-0 items-center justify-end gap-2">
+                          {cameraGps ? (
+                            <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-bold text-primary">
+                              <MapPin size={14} /> فتح الدبوس
+                            </a>
+                          ) : (
+                            <span className="text-sm text-muted">جاري تحديد الموقع...</span>
+                          )}
+                          <button onClick={() => { setChLocInput(cameraGps ? `${cameraGps.lat},${cameraGps.lng}` : ""); setChLocEditing(true); }} className="shrink-0" aria-label="تعديل الموقع لموقع السيارة الأصلي">
+                            <Pencil size={13} className="text-primary" />
+                          </button>
+                        </div>
                       )}
                     </div>
                     <div className="flex items-center justify-between gap-3 px-4 py-2.5">
