@@ -1,5 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, buildRowSummaryText } from "@/lib/excel";
+import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, buildRowSummaryText, buildColoredSortExcel } from "@/lib/excel";
+
+describe("buildColoredSortExcel — hyperlink الـGPS جوّه الملف قابل للفتح", () => {
+  it("يكتب Target نضيف (بدون &amp;) للرابط المشفّر مزدوجاً — round-trip", async () => {
+    const blob = await buildColoredSortExcel(
+      [{
+        "رقم اللوحة": "سبك2198",
+        "GPS": "https://www.google.com/maps/dir/?api=1&amp;amp;destination=21.594202,39.194509",
+      }],
+      "نتيجة",
+      [null],
+    );
+    const buf = await blob.arrayBuffer();
+    const { default: ExcelJS } = await import("exceljs");
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const ws = wb.worksheets[0];
+    // الصف 1 هيدر، الصف 2 الداتا؛ عمود GPS = التاني
+    const cell = ws.getRow(2).getCell(2);
+    const val = cell.value as { text?: string; hyperlink?: string } | null;
+    expect(val?.hyperlink).toBe("https://www.google.com/maps?q=21.594202,39.194509");
+    expect(val?.hyperlink ?? "").not.toContain("&amp;");
+  });
+});
 
 describe("buildRowSummaryText — تنظيف روابط GPS", () => {
   it("ينضّف GPS بـ& مشفّرة مزدوجة لرابط قابل للفتح", () => {
