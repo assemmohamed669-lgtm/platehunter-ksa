@@ -52,6 +52,13 @@ export function deleteChassisRecord(id: string): ChassisRecord[] {
   return all;
 }
 
+/** Patch one record's editable fields (نوع/ملاحظات/منطقة…) and persist. */
+export function updateChassisRecord(id: string, patch: Partial<ChassisRecord>): ChassisRecord[] {
+  const all = getChassisRecords().map((r) => (r.id === id ? { ...r, ...patch } : r));
+  persist(all);
+  return all;
+}
+
 export function clearChassisRecords(): void {
   persist([]);
 }

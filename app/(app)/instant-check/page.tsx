@@ -8,7 +8,7 @@ import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAll
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
-import { getChassisRecords, addChassisRecord, deleteChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
+import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
@@ -202,6 +202,29 @@ function EditableField({ label, value, onChange, placeholder }: { label: string;
         </button>
       )}
     </div>
+  );
+}
+
+// خانة جدول قابلة للتعديل — لتعديل بيانات سجل شاصي محفوظ (نوع/ملاحظات/منطقة) من جدول السجلات.
+function EditableCell({ value, onSave, placeholder }: { value: string; onSave: (v: string) => void; placeholder?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+  return editing ? (
+    <input
+      dir="rtl"
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { setEditing(false); if (draft !== value) onSave(draft.trim()); }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      className="w-full min-w-[70px] rounded border border-brand bg-surface-2 px-1 py-0.5 text-xs text-ink outline-none"
+    />
+  ) : (
+    <button onClick={() => setEditing(true)} className="flex w-full items-center justify-between gap-1 text-right active:opacity-70">
+      <span className={value ? "text-ink" : "text-muted"}>{value || placeholder || "—"}</span>
+      <Pencil size={11} className="shrink-0 text-primary/60" />
+    </button>
   );
 }
 
@@ -824,23 +847,27 @@ export default function InstantCheckPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!checkFile) { setChassisIndex(new Map()); setChassisSheetFound(false); return; }
-      try {
-        const sheets = await readAllSheets(checkFile);
-        const combined = new Map<string, Record<string, string>>();
-        const colMap = new Map<Record<string, string>, string>();
-        let found = false;
-        for (const s of sheets) {
-          const col = detectChassisColumn(s.headers, s.rows);
-          if (!col) continue;
-          found = true;
-          for (const [k, row] of buildChassisIndex(s.rows, col)) { combined.set(k, row); colMap.set(row, col); }
-        }
-        if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
-      } catch { if (!cancelled) { setChassisIndex(new Map()); setChassisSheetFound(false); } }
+      const combined = new Map<string, Record<string, string>>();
+      const colMap = new Map<Record<string, string>, string>();
+      let found = false;
+      const addSheet = (headers: string[], rows: Record<string, string>[]) => {
+        const col = detectChassisColumn(headers, rows);
+        if (!col) return;
+        found = true;
+        for (const [k, row] of buildChassisIndex(rows, col)) { combined.set(k, row); colMap.set(row, col); }
+      };
+      // 1) الورقة المحمّلة نفسها — ضمان لو الـ blob مش متاح (ملفات قديمة/مشفّرة).
+      if (checkTable) addSheet(checkTable.headers, checkTable.rows);
+      // 2) كل ورقات الملف من الـ blob (بيمسك عمود الشاص لو في الورقة التانية).
+      if (checkFile) {
+        try {
+          for (const s of await readAllSheets(checkFile)) addSheet(s.headers, s.rows);
+        } catch { /* blob غير قابل للقراءة — نكتفي بالورقة المحمّلة */ }
+      }
+      if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
     })();
     return () => { cancelled = true; };
-  }, [checkFile]);
+  }, [checkFile, checkTable]);
 
   // كل بيانات السيارة من الصف المطابق (كل الأعمدة غير الفاضية) — ماعدا عمود الشاصي نفسه.
   function chassisRowToInfo(row: Record<string, string>): [string, string][] {
@@ -1534,6 +1561,21 @@ export default function InstantCheckPage() {
     }));
     const blob = buildExcelBlob(rows, "شيت رقم الشاص");
     await shareExcelBlob(blob, `شيت-رقم-الشاص-${Date.now()}.xlsx`, "شيت رقم الشاص");
+  }
+
+  // مشاركة شيت رقم الشاص كنص على واتساب.
+  function shareChassisWhatsApp() {
+    const recs = getChassisRecords();
+    if (!recs.length) { alert("مفيش سجلات شاصي بعد."); return; }
+    const text = `*شيت رقم الشاص (${recs.length})*\n\n` + recs.map((r, i) => {
+      const lines = [`${i + 1}. الشاص: ${r.chassis}`, `الحالة: ${r.found ? "مطلوب" : "غير مطلوب"}`];
+      if (r.vehicleType) lines.push(`النوع: ${r.vehicleType}`);
+      if (r.notes) lines.push(`ملاحظات: ${r.notes}`);
+      if (r.region) lines.push(`المنطقة: ${r.region}`);
+      if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
+      return lines.join("\n");
+    }).join("\n\n──────────\n\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
 
   // Read the VIN/chassis from a (resized) image and check it against the
@@ -3616,13 +3658,15 @@ export default function InstantCheckPage() {
         </>
       )}
 
-      {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات */}
+      {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات (قابل للتعديل + مشاركة/تصدير) */}
       {mode === "sheet" && chassisRecords.length > 0 && (
         <div className="mb-3 rounded-xl border border-border bg-surface p-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-2 text-sm font-bold text-ink"><Barcode size={16} /> شيت رقم الشاص ({chassisRecords.length})</span>
-            <button onClick={exportChassisSheet} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night active:scale-95 transition"><Download size={13} /> تصدير</button>
+          <div className="flex items-center gap-2">
+            <Barcode size={16} className="text-brand shrink-0" />
+            <span className="text-sm font-bold text-ink">شيت رقم الشاص</span>
+            <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand">{chassisRecords.length}</span>
           </div>
+          <p className="mt-1 text-[11px] text-muted">اضغط على أي خانة (نوع/ملاحظات/منطقة) لتعديلها ✏️ — والتغيير بيتحفظ تلقائياً.</p>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full border-collapse text-xs" dir="rtl">
               <thead>
@@ -3637,23 +3681,30 @@ export default function InstantCheckPage() {
                 </tr>
               </thead>
               <tbody>
-                {chassisRecords.slice(0, 100).map((r) => (
+                {chassisRecords.slice(0, 200).map((r) => (
                   <tr key={r.id} className={`border-t border-border ${r.found ? "bg-danger/10" : ""}`}>
                     <td className="whitespace-nowrap px-2 py-1.5 font-mono" dir="ltr">{r.chassis}</td>
-                    <td className="px-2 py-1.5">{r.vehicleType || "—"}</td>
-                    <td className="px-2 py-1.5">{r.notes || "—"}</td>
-                    <td className="px-2 py-1.5">{r.region || "—"}</td>
+                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.vehicleType || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { vehicleType: v }))} /></td>
+                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.notes || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { notes: v }))} /></td>
+                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.region || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { region: v }))} /></td>
                     <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : "text-brand"}`}>{r.found ? "مطلوب" : "غير مطلوب"}</td>
                     <td className="px-2 py-1.5 text-center">
                       {(r.mapsLink || (r.lat != null && r.lng != null)) ? (
                         <a href={r.mapsLink || toMapsLink(r.lat as number, r.lng as number)} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><MapPin size={15} /></a>
                       ) : "—"}
                     </td>
-                    <td className="px-2 py-1.5 text-center"><button onClick={() => setChassisRecords(deleteChassisRecord(r.id))} className="text-muted" aria-label="حذف"><Trash2 size={13} /></button></td>
+                    <td className="px-2 py-1.5 text-center">
+                      <button onClick={() => { if (window.confirm("متأكد إنك عايز تحذف الشاصي ده؟")) setChassisRecords(deleteChassisRecord(r.id)); }} className="text-muted hover:text-danger transition" aria-label="حذف"><Trash2 size={13} /></button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* خيارات تحت الشيت: مشاركة واتساب + تصدير Excel */}
+          <div className="mt-3 flex gap-2">
+            <button onClick={shareChassisWhatsApp} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Share2 size={14} /> مشاركة واتساب</button>
+            <button onClick={exportChassisSheet} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><Download size={14} /> فتح في إكسيل</button>
           </div>
         </div>
       )}
