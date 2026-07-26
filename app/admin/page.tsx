@@ -449,11 +449,15 @@ export default function AdminDashboard() {
                       </button>
                     </div>
                   ))}
-                  <button disabled={centralBusy} onClick={purgeDownloadedServer}
-                    className="mt-1 self-start text-[10px] text-muted underline">
-                    مسح المُنزَّل من السيرفر (تفريغ مساحة)
-                  </button>
                 </div>
+              )}
+              {/* مسح المُنزَّل من السيرفر — يظهر دايماً بعد تحديث القائمة (مش مربوط
+                  بوجود داتا جديدة) عشان تقدر تفضّي مساحة بعد ما تكون نزّلت كل حاجة. */}
+              {centralLoaded && (
+                <button disabled={centralBusy} onClick={purgeDownloadedServer}
+                  className="mt-2 self-start text-[11px] text-danger underline">
+                  🗑️ مسح المُنزَّل من السيرفر (تفريغ مساحة)
+                </button>
               )}
             </div>
           </div>
