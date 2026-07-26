@@ -24,6 +24,7 @@ import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -723,6 +724,10 @@ export default function InstantCheckPage() {
         await restoreFieldChecks(uid);
         pushPendingFieldChecks(uid).catch(() => {}); // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع
         setFieldEntries(await getAllFieldCheckEntries(uid));
+        // سجلات الشاص: استرجاع من السيرفر + رفع المحلي (نفس فكرة اللوحات).
+        await restoreChassisRecords(uid);
+        pushChassisRecords(uid).catch(() => {});
+        setChassisRecords(getChassisRecords());
       } catch { /* offline / no session */ }
     })();
   }, []);
@@ -1577,6 +1582,7 @@ export default function InstantCheckPage() {
     setChassisRecords(addChassisRecord(rec));
     setChSaved(true);
     setChLastSavedId(rec.id);
+    void pushOneChassis(agentIdRef.current, rec); // رفع الجديد للسيرفر على طول
   }
 
   // تصدير كل سجلات الشاصي لشيت «شيت رقم الشاص».
@@ -1589,7 +1595,7 @@ export default function InstantCheckPage() {
       "ملاحظات": r.notes ?? "",
       "اسم المنطقة": r.region ?? "",
       "GPS": r.mapsLink ?? (r.lat != null && r.lng != null ? `${r.lat},${r.lng}` : ""),
-      "تاريخ التقاط": new Date(r.checkedAt).toLocaleString("ar-EG"),
+      "التاريخ": formatDate(r.checkedAt),
       "الحالة": r.found ? "مطلوب" : "غير مطلوب",
     }));
     const blob = buildExcelBlob(rows, "شيت رقم الشاص");
@@ -2869,6 +2875,7 @@ export default function InstantCheckPage() {
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                             <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                           </tr>
                         </thead>
@@ -2898,6 +2905,7 @@ export default function InstantCheckPage() {
                                   <a href={e.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
                                 ) : <span className="text-muted text-[10px] animate-pulse">جاري...</span>}
                               </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
                               <td className="px-2 py-2">
                                 <div className="flex items-center justify-center gap-2">
                                   <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
@@ -3451,6 +3459,7 @@ export default function InstantCheckPage() {
                             ))}
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                             <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                           </tr>
                         </thead>
@@ -3517,6 +3526,7 @@ export default function InstantCheckPage() {
                                   <span className="text-muted text-[10px] animate-pulse">جاري...</span>
                                 )}
                               </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(r.checkedAt)}</td>
                               <td className="px-2 py-2 text-center whitespace-nowrap">
                                 <div className="flex items-center justify-center gap-2">
                                   {r.found && (
@@ -3743,6 +3753,7 @@ export default function InstantCheckPage() {
                   <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">المنطقة</th>
                   <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الحالة</th>
                   <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الموقع</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">التاريخ</th>
                   <th></th>
                 </tr>
               </thead>
@@ -3759,6 +3770,7 @@ export default function InstantCheckPage() {
                         <a href={r.mapsLink || toMapsLink(r.lat as number, r.lng as number)} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><MapPin size={15} /></a>
                       ) : "—"}
                     </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-center text-muted">{formatDate(r.checkedAt)}</td>
                     <td className="px-2 py-1.5 text-center">
                       <button onClick={() => { if (window.confirm("متأكد إنك عايز تحذف الشاصي ده؟")) setChassisRecords(deleteChassisRecord(r.id)); }} className="text-muted hover:text-danger transition" aria-label="حذف"><Trash2 size={13} /></button>
                     </td>

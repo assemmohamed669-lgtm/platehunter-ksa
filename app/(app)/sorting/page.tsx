@@ -17,6 +17,7 @@ import {
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
+import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -55,6 +56,24 @@ type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: st
 const sortCacheByMode: { new: SortCache | null; full: SortCache | null } = { new: null, full: null };
 let sortActiveMode: "new" | "full" = "new";
 let pasteResultsCache: PasteCache | null = null;
+// نتيجة فرز أرقام الشاص على الإحالة — كاش يعيش عبر التنقّل (زي باقي نتايج الفرز).
+let chassisSortCache: ChassisSortMatch[] | null = null;
+
+// يجيب قيمة عمود من صف الإحالة بالكلمات المفتاحية (لوحة/نوع سيارة...).
+function pickReferralCol(row: Record<string, string>, keywords: string[]): string {
+  for (const k of Object.keys(row)) {
+    const low = k.toLowerCase();
+    if (keywords.some((kw) => low.includes(kw)) && String(row[k] ?? "").trim()) return String(row[k]).trim();
+  }
+  return "";
+}
+
+function fmtChassisDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`;
+}
 
 function persistSortCache() {
   try {
@@ -158,6 +177,8 @@ export default function SortingPage() {
 
   // ── Sort results ──
   const [results, setResults] = useState<MatchResult[] | null>(null);
+  // نتيجة فرز أرقام الشاص على الإحالة (نافذة «مطلوب من أرقام الشاص»).
+  const [chassisResults, setChassisResults] = useState<ChassisSortMatch[] | null>(null);
   const [sorted, setSorted] = useState(false);
   const [sorting, setSorting] = useState(false);
   const [zoom, setZoom] = useState(3);
@@ -291,6 +312,7 @@ export default function SortingPage() {
             setSorted(true);
             if (Array.isArray(s.tashyeekResults)) setTashyeekResults(s.tashyeekResults);
           }
+          if (chassisSortCache && chassisSortCache.length > 0) setChassisResults(chassisSortCache);
         } catch { /* corrupt storage */ }
         try {
           let s: PasteCache | null = pasteResultsCache;
@@ -942,6 +964,14 @@ export default function SortingPage() {
   function handleSort() {
     setResults(null); setSorted(false); setTashyeekResults(null);
     wipeSortResults(sortMode); // امسح كاش الوضع الحالي بس — الوضع التاني يفضل بنتايجه
+    // فرز أرقام الشاص المسجّلة (شيت الشاص) على عمود الشاص في الإحالة — نفس الزر
+    // (جديد/كلي). النتيجة تظهر في نافذة «مطلوب من أرقام الشاص».
+    const refSheets: { headers: string[]; rows: Record<string, string>[] }[] = [];
+    if (referralTable) refSheets.push({ headers: referralTable.headers, rows: referralTable.rows });
+    for (const er of extraReferrals) if (er.table) refSheets.push({ headers: er.table.headers, rows: er.table.rows });
+    const chMatches = matchChassisRecordsAgainstReferrals(getChassisRecords(), refSheets);
+    chassisSortCache = chMatches;
+    setChassisResults(chMatches);
     if (sortMode === "new") runNewSort(); else runFullSort();
   }
 
@@ -1849,6 +1879,51 @@ export default function SortingPage() {
             <p className="text-xs text-muted">لا يوجد تطابق بين ملف التشييك وقائمة الإحالة</p>
           </div>
         )
+      )}
+
+      {/* ⑥.٥ مطلوب من أرقام الشاص — فرز شيت الشاص على عمود الشاص في الإحالة */}
+      {chassisResults && chassisResults.length > 0 && (
+        <div className="rounded-2xl border border-danger/30 bg-surface p-3" dir="rtl">
+          <div className="mb-2 flex items-center gap-2">
+            <ScanLine size={18} className="shrink-0 text-danger" />
+            <h2 className="text-sm font-bold text-ink">مطلوب من أرقام الشاص</h2>
+            <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-bold text-danger">{chassisResults.length}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-xs" dir="rtl">
+              <thead>
+                <tr className="text-muted">
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم الشاص</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم اللوحة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">نوع السيارة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">التاريخ</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الموقع</th>
+                </tr>
+              </thead>
+              <tbody>
+                {chassisResults.map((m, i) => {
+                  const plate = pickReferralCol(m.referralRow, ["لوحة", "plate"]);
+                  const vtype = pickReferralCol(m.referralRow, ["نوع السيارة", "نوع المركبة", "vehicle name", "vehicle type", "طراز", "صانع", "موديل", "make", "model"]) || m.record.vehicleType || "";
+                  const link = m.record.mapsLink || (m.record.lat != null && m.record.lng != null ? `https://www.google.com/maps?q=${m.record.lat},${m.record.lng}` : "");
+                  return (
+                    <tr key={m.record.id || i} className="border-t border-border bg-danger/5">
+                      <td className="whitespace-nowrap px-2 py-1.5 font-mono font-bold text-ink" dir="ltr">{m.record.chassis}{m.matchType !== "exact" ? " ⚠️" : ""}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 font-bold text-ink">{plate || "—"}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-ink">{vtype || "—"}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">{fmtChassisDate(m.record.checkedAt)}</td>
+                      <td className="px-2 py-1.5 text-center">
+                        {link ? (
+                          <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><Navigation size={15} /></a>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">اللوحة والنوع من ملف الإحالة، والموقع والتاريخ من سجل الشاص المحفوظ. (⚠️ = تطابق تقريبي)</p>
+        </div>
       )}
 
       {/* ══════════════════════════════════════════════ */}

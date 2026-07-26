@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, X, AlertTriangle, Power, Zap, Loader2, CheckCircle2, XCircle, Wallet, ExternalLink } from "lucide-react";
-import { getDeepgramKey, setDeepgramKey, isDeepgramEnabled, setDeepgramEnabled } from "@/lib/deepgramKey";
+import { getDeepgramKey, setDeepgramKey, isDeepgramEnabled, setDeepgramEnabled, testDeepgramKey } from "@/lib/deepgramKey";
 
 /**
  * محرّر مفتاح Deepgram — إدخال / إظهار-إخفاء / مسح + زر إيقاف/تشغيل مؤقت.
@@ -31,25 +31,7 @@ export default function DeepgramKeyEditor() {
     if (!k || testing) return;
     setTesting(true);
     setTestResult(null);
-    let settled = false;
-    let ws: WebSocket | null = null;
-    const finish = (r: "ok" | "bad") => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      setTesting(false);
-      setTestResult(r);
-      try { ws?.close(); } catch { /* ignore */ }
-    };
-    const timer = setTimeout(() => finish("bad"), 8000);
-    try {
-      ws = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-3&language=ar", ["token", k]);
-      ws.onopen = () => finish("ok");
-      ws.onerror = () => finish("bad");
-      ws.onclose = () => finish("bad"); // قفل قبل onopen = فشل مصادقة
-    } catch {
-      finish("bad");
-    }
+    void testDeepgramKey(k).then((ok) => { setTesting(false); setTestResult(ok ? "ok" : "bad"); });
   }
 
   function toggleEnabled() {

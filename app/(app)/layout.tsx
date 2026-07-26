@@ -40,6 +40,21 @@ export default function AppShellLayout({
   // Apply the saved appearance (font size / colours) app-wide on every load.
   useEffect(() => { initAppearance(); }, []);
 
+  // اطلب «تخزين دائم» من المتصفّح/الـWebView — يمنع الأندرويد من مسح داتا التطبيق
+  // (جلسة الدخول في localStorage + سجلات التشييك في IndexedDB) تلقائياً وقت ضغط
+  // المساحة. ده بيعالج تسجيل الخروج المتكرر وفقدان السجلات معاً. آمن ومايطلبش إذن
+  // في أغلب الأجهزة؛ لو مش مدعوم بيتجاهل بهدوء.
+  useEffect(() => {
+    (async () => {
+      try {
+        if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+          const already = await navigator.storage.persisted?.();
+          if (!already) await navigator.storage.persist();
+        }
+      } catch { /* غير مدعوم — نتجاهل */ }
+    })();
+  }, []);
+
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) return;

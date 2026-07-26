@@ -84,31 +84,46 @@ export async function pushPendingFieldChecks(
   return { synced, pending: pending.length, error: firstError };
 }
 
-/** Restore this agent's field-check sheet FROM the server INTO IndexedDB. */
+/**
+ * Restore this agent's field-check sheet FROM the server INTO IndexedDB.
+ *
+ * يجيب كل الصفوف **على دفعات** (‎1000/دفعة) — Supabase بيحدّد أي استعلام بـ‎1000
+ * صف كحد أقصى، فاستعلام واحد كان بيرجّع أول ‎1000 بس (ده اللي خلّى مندوب عنده
+ * ‎4590 سجل يشوف ‎~1019). بنلف بالـ range لحد ما نجيب الكل.
+ */
 export async function restoreFieldChecks(
   agentId: string
 ): Promise<{ restored: number; error?: string }> {
-  const { data, error } = await supabase
-    .from("field_checks")
-    .select("*")
-    .eq("agent_id", agentId);
-  if (error) return { restored: 0, error: error.message };
-
+  const PAGE = 1000;
+  let from = 0;
   let restored = 0;
-  for (const r of data ?? []) {
-    const entry: FieldCheckEntry = {
-      id: r.local_id,
-      agentId,
-      plate: r.plate,
-      row: (r.extra as Record<string, string>) ?? {},
-      method: r.method ?? "",
-      lat: r.lat ?? undefined,
-      lng: r.lng ?? undefined,
-      mapsLink: r.maps_link ?? undefined,
-      checkedAt: r.checked_at,
-    };
-    await saveFieldCheckEntry(entry);
-    restored++;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("field_checks")
+      .select("*")
+      .eq("agent_id", agentId)
+      .order("checked_at", { ascending: true }) // ترتيب ثابت عشان الصفحات ماتتداخلش
+      .range(from, from + PAGE - 1);
+    if (error) return { restored, error: error.message };
+
+    const rows = data ?? [];
+    for (const r of rows) {
+      const entry: FieldCheckEntry = {
+        id: r.local_id,
+        agentId,
+        plate: r.plate,
+        row: (r.extra as Record<string, string>) ?? {},
+        method: r.method ?? "",
+        lat: r.lat ?? undefined,
+        lng: r.lng ?? undefined,
+        mapsLink: r.maps_link ?? undefined,
+        checkedAt: r.checked_at,
+      };
+      await saveFieldCheckEntry(entry);
+      restored++;
+    }
+    if (rows.length < PAGE) break; // آخر دفعة
+    from += PAGE;
   }
   return { restored };
 }
