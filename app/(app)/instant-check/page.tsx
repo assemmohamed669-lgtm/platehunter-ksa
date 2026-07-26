@@ -516,6 +516,7 @@ export default function InstantCheckPage() {
   // ── Deepgram streaming (لو فيه مفتاح Deepgram — أدق تفريغ بالمصري) ──
   const dgSocketRef = useRef<WebSocket | null>(null);
   const dgRecorderRef = useRef<MediaRecorder | null>(null);
+  const dgRecStartRef = useRef<number | null>(null); // لحظة بدء التسجيل (ساعة حقيقية) — لتوقيت التدريب المحكم
   const dgStreamRef = useRef<MediaStream | null>(null);
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -2221,6 +2222,7 @@ export default function InstantCheckPage() {
           pending.push(e.data); // الاتصال لسه بيفتح — خزّن بالترتيب
         }
       };
+      dgRecStartRef.current = performance.now(); // مرجع الساعة الحقيقية لتوقيت التدريب
       rec.start(250); // يبعت جزء صوت كل 250ms
 
       ws.onopen = () => {
@@ -2259,11 +2261,27 @@ export default function InstantCheckPage() {
                 const starts = words.map((w) => w.start).filter((n): n is number => typeof n === "number");
                 const ends = words.map((w) => w.end).filter((n): n is number => typeof n === "number");
                 const confs = words.map((w) => w.confidence).filter((n): n is number => typeof n === "number");
-                curTimingRef.current = {
-                  startMs: starts.length ? Math.min(...starts) * 1000 : 0,
-                  endMs: ends.length ? Math.max(...ends) * 1000 : 0,
-                  confOk: confs.length > 0 && confs.every((c) => c >= 0.6),
-                };
+                const confOk = confs.length > 0 && confs.every((c) => c >= 0.6);
+                // توقيت التدريب: بالساعة الحقيقية بالنسبة لبداية التسجيل — محكم ضد إعادة
+                // اتصال Deepgram (اللي بترجّع ساعته للصفر) وضد فرق بداية الـ stream.
+                // نافذة واسعة تضمن إن المقطع يحتوي اللوحة (التدريب مايحتاجش قصّة مضبوطة).
+                // ملاحظة: ده لجمع التدريب فقط — مالوش أي أثر على التفريغ/المطابقة/العرض.
+                if (dgRecStartRef.current != null && starts.length && ends.length) {
+                  const nowMs = performance.now() - dgRecStartRef.current;
+                  const durMs = (Math.max(...ends) - Math.min(...starts)) * 1000; // مدة النطق النسبية (محكمة)
+                  curTimingRef.current = {
+                    startMs: Math.max(0, nowMs - durMs - 3000),
+                    endMs: nowMs + 500,
+                    confOk,
+                  };
+                } else {
+                  // fallback للسلوك القديم (توقيت Deepgram) لو مرجع التسجيل مش متاح.
+                  curTimingRef.current = {
+                    startMs: starts.length ? Math.min(...starts) * 1000 : 0,
+                    endMs: ends.length ? Math.max(...ends) * 1000 : 0,
+                    confOk,
+                  };
+                }
               } else {
                 curTimingRef.current = null;
               }
