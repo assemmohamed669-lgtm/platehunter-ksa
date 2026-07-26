@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
-import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
+import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
+import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
+import { getChassisRecords, addChassisRecord, deleteChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
@@ -68,7 +70,7 @@ interface CheckHit {
   checkedAt: string;
 }
 
-type CheckMode = "manual" | "camera" | "ptt" | "sheet";
+type CheckMode = "manual" | "camera" | "ptt" | "sheet" | "chassis";
 
 interface PlateResult {
   plate: string;
@@ -176,6 +178,33 @@ function buildGpsLink(value: string): string | null {
 }
 
 // ── Result card ───────────────────────────────────────────────────────────────
+// صف بيانات قابل للتعديل بالقلم — لعرض/تعديل خانات نتيجة الشاصي (نوع السيارة/ملاحظات/المنطقة).
+function EditableField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+      <span className="shrink-0 text-[11px] font-medium text-muted">{label}</span>
+      {editing ? (
+        <input
+          dir="rtl"
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(e) => { if (e.key === "Enter") setEditing(false); }}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded-lg border border-brand bg-surface-2 px-2 py-1 text-sm text-ink outline-none"
+        />
+      ) : (
+        <button onClick={() => setEditing(true)} className="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm active:opacity-70">
+          <span className={`truncate ${value ? "text-ink" : "text-muted"}`}>{value || placeholder || "اضغط للتعديل"}</span>
+          <Pencil size={13} className="shrink-0 text-primary" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCheck }: { result: PlateResult; plateCol: string | null; selectedCols?: Set<string>; onExport?: (result: PlateResult) => void | Promise<void>; onShare?: (result: PlateResult) => void | Promise<void>; priorCheck?: FieldCheckEntry }) {
   const [exportState, setExportState] = useState<"idle" | "saving" | "done">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
@@ -365,7 +394,20 @@ export default function InstantCheckPage() {
   const [cameraInputPlate, setCameraInputPlate] = useState("");
   // GPS captured at the moment the photo was taken — reused by export + share
   const [cameraGps, setCameraGps] = useState<{ lat: number; lng: number } | null>(null);
+  // نتيجة تشييك الشاصي (VIN) — مود «شاص».
+  const [cameraChassisResult, setCameraChassisResult] = useState<{ vin: string; match: ChassisMatch } | null>(null);
+  // لوحة تسجيل الشاصي: خانات يكتبها المندوب + GPS/تاريخ تلقائي.
+  const [chVehicleType, setChVehicleType] = useState("");
+  const [chNotes, setChNotes] = useState("");
+  const [chRegion, setChRegion] = useState("");
+  const [chDate, setChDate] = useState<string>("");
+  const [chSaved, setChSaved] = useState(false);
+  const [chLastSavedId, setChLastSavedId] = useState<string | null>(null);
+  const [chassisRecords, setChassisRecords] = useState<ChassisRecord[]>([]);
+  useEffect(() => { setChassisRecords(getChassisRecords()); }, []);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const chassisCamInputRef = useRef<HTMLInputElement>(null);
+  const chassisGalInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // تثبيت صورة الكاميرا: تفضل بعد الخروج من التطبيق، وتتمسح فقط لما المندوب
@@ -773,6 +815,41 @@ export default function InstantCheckPage() {
     return map;
   }, [checkTable, checkPlateCol]);
 
+  // فهرس الشاصي (VIN مطبّع → صف) مبني من *كل ورقات* ملف التشييك — لمود «شاص».
+  // بيدوّر على عمود الشاصي في كل ورقة (بالاسم أو بالمحتوى) ويجمّعهم في فهرس واحد.
+  const [chassisIndex, setChassisIndex] = useState<Map<string, Record<string, string>>>(new Map());
+  const [chassisSheetFound, setChassisSheetFound] = useState(false);
+  const [chassisColByRow, setChassisColByRow] = useState<Map<Record<string, string>, string>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!checkFile) { setChassisIndex(new Map()); setChassisSheetFound(false); return; }
+      try {
+        const sheets = await readAllSheets(checkFile);
+        const combined = new Map<string, Record<string, string>>();
+        const colMap = new Map<Record<string, string>, string>();
+        let found = false;
+        for (const s of sheets) {
+          const col = detectChassisColumn(s.headers, s.rows);
+          if (!col) continue;
+          found = true;
+          for (const [k, row] of buildChassisIndex(s.rows, col)) { combined.set(k, row); colMap.set(row, col); }
+        }
+        if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
+      } catch { if (!cancelled) { setChassisIndex(new Map()); setChassisSheetFound(false); } }
+    })();
+    return () => { cancelled = true; };
+  }, [checkFile]);
+
+  // كل بيانات السيارة من الصف المطابق (كل الأعمدة غير الفاضية) — ماعدا عمود الشاصي نفسه.
+  function chassisRowToInfo(row: Record<string, string>): [string, string][] {
+    const vinCol = chassisColByRow.get(row);
+    return Object.entries(row)
+      .filter(([k, v]) => k !== vinCol && String(v ?? "").trim())
+      .map(([k, v]) => [k, String(v)] as [string, string]);
+  }
+
   function toggleCheckCol(col: string) {
     setSelectedCheckCols((prev) => {
       const next = new Set(prev);
@@ -1151,6 +1228,7 @@ export default function InstantCheckPage() {
     camera: "متشيكة بالكاميرا",
     ptt: "متشيكة بالصوت",
     manual: "متشيكة يدوي",
+    chassis: "متشيكة بالشاصي",
     sheet: "متشيكة يدوي", // unused (the sheet tab never exports)
   };
 
@@ -1391,16 +1469,114 @@ export default function InstantCheckPage() {
     reader.readAsDataURL(file);
   }
 
-  // Run OCR on a dataUrl
-  async function runOCR(dataUrl: string) {
+  function handleChassisCapture(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => runOCR(reader.result as string, "chassis");
+    reader.readAsDataURL(file);
+  }
+
+  // كل ما نتيجة شاصي تظهر (كاميرا/رفع/يدوي): صفّر خانات اللوحة، خُد GPS + تاريخ
+  // تلقائي، واملأ اسم المنطقة من العنوان، وصفّر الإنذار لو مطلوب.
+  function onChassisResult(vin: string, match: ChassisMatch) {
+    setCameraChassisResult({ vin, match });
+    setChVehicleType("");
+    setChNotes("");
+    setChRegion("");
+    setChSaved(false);
+    setChLastSavedId(null);
+    setChDate(new Date().toISOString());
+    void getCurrentGps().then((g) => {
+      setCameraGps(g);
+      if (g) reverseGeocode(g.lat, g.lng).then((a) => setChRegion(a.district || a.street || "")).catch(() => {});
+    });
+    if (match.found) {
+      fireWantedAlert({ plate: vin, matchType: match.matchType === "fuzzy" ? "fuzzy" : "exact", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] });
+    }
+  }
+
+  // حفظ سجل الشاصي في شيت رقم الشاص المنفصل (localStorage).
+  async function saveChassisRecord() {
+    const cr = cameraChassisResult;
+    if (!cr) return;
+    const gps = cameraGps ?? (await getCurrentGps());
+    const rec: ChassisRecord = {
+      id: `ch-${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`,
+      chassis: cr.vin,
+      vehicleType: chVehicleType.trim() || undefined,
+      notes: chNotes.trim() || undefined,
+      region: chRegion.trim() || undefined,
+      row: cr.match.row,
+      found: cr.match.found,
+      lat: gps?.lat,
+      lng: gps?.lng,
+      mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
+      checkedAt: chDate || new Date().toISOString(),
+    };
+    setChassisRecords(addChassisRecord(rec));
+    setChSaved(true);
+    setChLastSavedId(rec.id);
+  }
+
+  // تصدير كل سجلات الشاصي لشيت «شيت رقم الشاص».
+  async function exportChassisSheet() {
+    const recs = getChassisRecords();
+    if (!recs.length) { alert("مفيش سجلات شاصي بعد."); return; }
+    const rows = recs.map((r) => ({
+      "رقم الشاص": r.chassis,
+      "نوع السيارة": r.vehicleType ?? "",
+      "ملاحظات": r.notes ?? "",
+      "اسم المنطقة": r.region ?? "",
+      "GPS": r.mapsLink ?? (r.lat != null && r.lng != null ? `${r.lat},${r.lng}` : ""),
+      "تاريخ التقاط": new Date(r.checkedAt).toLocaleString("ar-EG"),
+      "الحالة": r.found ? "مطلوب" : "غير مطلوب",
+    }));
+    const blob = buildExcelBlob(rows, "شيت رقم الشاص");
+    await shareExcelBlob(blob, `شيت-رقم-الشاص-${Date.now()}.xlsx`, "شيت رقم الشاص");
+  }
+
+  // Read the VIN/chassis from a (resized) image and check it against the
+  // chassis column of the loaded check file — the شاص counterpart of the plate OCR.
+  async function processChassis(resized: string) {
+    let vin: string | null = null;
+    let debugLine = "";
+    try {
+      const base64 = resized.split(",")[1];
+      let groqKey = "";
+      try { groqKey = localStorage.getItem("ph:registration:groqApiKey") || ""; } catch { /* storage off */ }
+      const apiRes = await fetch("/api/read-plate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({ image: base64, mediaType: "image/jpeg", apiKey: groqKey.trim(), mode: "chassis" }),
+      });
+      const json = await apiRes.json().catch(() => null);
+      if (apiRes.ok && json?.chassis) { vin = String(json.chassis); debugLine = `[VIN] ${vin}`; }
+      else { const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`; debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`; }
+    } catch (err) {
+      debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
+    }
+    setCameraRawText(debugLine || null);
+    setCameraInputPlate(vin ?? "");
+    if (vin) {
+      onChassisResult(vin, matchChassis(vin, chassisIndex));
+    } else {
+      setCameraError("لم يُتعرَّف على رقم الشاصي — صحّح أدناه يدوياً");
+    }
+  }
+
+  // Run OCR on a dataUrl (plate by default, or VIN when kind==="chassis")
+  async function runOCR(dataUrl: string, kind: "plate" | "chassis" = "plate") {
     setCameraImage(dataUrl);
     setCameraLoading(true);
     setCameraError(null);
     setCameraResult(null);
+    setCameraChassisResult(null);
     setCameraRawText(null);
     setCameraGps(null);
     try {
       const resized = await resizeImageForOCR(dataUrl);
+      if (kind === "chassis") { await processChassis(resized); return; }
       let plate: string | null = null;
       let debugLine = "";
 
@@ -1471,9 +1647,11 @@ export default function InstantCheckPage() {
       setCameraError("خطأ في قراءة الصورة — جرّب مرة أخرى");
     } finally {
       setCameraLoading(false);
-      // تصفير قيمة الخانتين عشان اختيار نفس الصورة تاني (بعد المسح) يشتغل.
+      // تصفير قيمة الخانات عشان اختيار نفس الصورة تاني (بعد المسح) يشتغل.
       if (cameraInputRef.current) cameraInputRef.current.value = "";
       if (galleryInputRef.current) galleryInputRef.current.value = "";
+      if (chassisCamInputRef.current) chassisCamInputRef.current.value = "";
+      if (chassisGalInputRef.current) chassisGalInputRef.current.value = "";
     }
   }
 
@@ -1481,8 +1659,13 @@ export default function InstantCheckPage() {
     closeLiveCamera();
     if (cameraInputRef.current) cameraInputRef.current.value = "";
     if (galleryInputRef.current) galleryInputRef.current.value = "";
+    if (chassisCamInputRef.current) chassisCamInputRef.current.value = "";
+    if (chassisGalInputRef.current) chassisGalInputRef.current.value = "";
     setCameraImage(null);
     setCameraResult(null);
+    setCameraChassisResult(null);
+    setChSaved(false);
+    setChLastSavedId(null);
     setCameraError(null);
     setCameraRawText(null);
     setCameraInputPlate("");
@@ -2483,12 +2666,13 @@ export default function InstantCheckPage() {
             </button>
           </div>
           {/* Tabs */}
-          <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-2 p-1">
+          <div className="grid grid-cols-5 gap-1 rounded-xl border border-border bg-surface-2 p-1">
             {(
               [
                 { key: "manual", Icon: Type, label: "يدوي" },
                 { key: "camera", Icon: Camera, label: "كاميرا" },
                 { key: "ptt", Icon: Mic, label: "صوتي" },
+                { key: "chassis", Icon: Barcode, label: "شاص" },
                 { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
               ] as const
             ).map(({ key, Icon, label }) => (
@@ -2812,6 +2996,141 @@ export default function InstantCheckPage() {
               )}
 
               {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
+            </div>
+          )}
+
+          {/* ── Chassis (شاص) ── */}
+          {mode === "chassis" && (
+            <div className="flex flex-col gap-3">
+              <input ref={chassisCamInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleChassisCapture} />
+              <input ref={chassisGalInputRef} type="file" accept="image/*" className="hidden" onChange={handleChassisCapture} />
+
+              <p className="text-center text-xs text-muted">صوّر رقم الشاصي (VIN) أو ارفع صورة أو اكتبه — ويتشيّك على عمود الهيكل في كل ورقات ملف التشييك.</p>
+              {checkTable && !chassisSheetFound && (
+                <p className="text-center text-xs text-alert">⚠️ مفيش عمود شاصي/هيكل في ملف التشييك — هيقرا الرقم بس من غير تشييك.</p>
+              )}
+
+              {!cameraImage && (
+                <div className="flex gap-2">
+                  <button onClick={() => chassisCamInputRef.current?.click()} disabled={cameraLoading}
+                    className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 py-8 text-muted transition active:scale-95">
+                    <Camera size={26} />
+                    <span className="text-xs font-medium">صوّر الشاصي</span>
+                  </button>
+                  <button onClick={() => chassisGalInputRef.current?.click()} disabled={cameraLoading}
+                    className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-2 py-8 text-muted transition active:scale-95">
+                    <Images size={26} />
+                    <span className="text-xs font-medium">ارفع صورة</span>
+                  </button>
+                </div>
+              )}
+
+              {cameraImage && (
+                <div className="relative overflow-hidden rounded-xl border border-border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={cameraImage} alt="شاصي" className="w-full object-cover max-h-48" />
+                  {cameraLoading && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
+                      <Loader2 size={28} className="animate-spin text-white" />
+                      <span className="text-sm text-white">جاري قراءة الشاصي...</span>
+                    </div>
+                  )}
+                  {!cameraLoading && (
+                    <button onClick={resetCamera} className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5">
+                      <X size={14} className="text-white" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!cameraLoading && cameraImage && (
+                <div className="flex gap-2">
+                  <button onClick={() => chassisCamInputRef.current?.click()} className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted"><Camera size={14} /> كاميرا</button>
+                  <button onClick={() => chassisGalInputRef.current?.click()} className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted"><Images size={14} /> المعرض</button>
+                  <button onClick={resetCamera} className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-danger/40 bg-danger/10 py-2.5 text-sm font-bold text-danger active:scale-95 transition"><Trash2 size={14} /> مسح</button>
+                </div>
+              )}
+
+              {cameraError && <p className="text-center text-xs text-danger">{cameraError}</p>}
+
+              <div className="flex gap-2 items-center">
+                <input dir="ltr" value={cameraInputPlate}
+                  onChange={(e) => setCameraInputPlate(e.target.value.toUpperCase())}
+                  placeholder="أو اكتب رقم الشاصي (VIN) للبحث..."
+                  className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
+                />
+                <button
+                  onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); onChassisResult(v, matchChassis(v, chassisIndex)); }}
+                  className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
+                >بحث</button>
+              </div>
+
+              {!cameraLoading && cameraRawText && (
+                <p className="text-center text-[10px] text-muted" dir="ltr"><span className="font-mono">{cameraRawText.slice(0, 120)}</span></p>
+              )}
+
+              {cameraChassisResult && (
+                <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+                  {/* رأس: رقم الشاص + الحالة */}
+                  <div className={`flex items-center justify-between gap-2 px-4 py-3 ${cameraChassisResult.match.found ? "bg-danger/10" : "bg-brand/10"}`}>
+                    <span className="font-mono text-sm font-bold break-all" dir="ltr">{cameraChassisResult.vin}</span>
+                    <span className={`flex shrink-0 items-center gap-1 text-sm font-bold ${cameraChassisResult.match.found ? "text-danger" : "text-brand"}`}>
+                      {cameraChassisResult.match.found ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                      {cameraChassisResult.match.found
+                        ? (cameraChassisResult.match.matchType === "fuzzy" ? `مطلوب ${cameraChassisResult.match.similarity}%` : "مطلوب")
+                        : "غير مطلوب"}
+                    </span>
+                  </div>
+
+                  {/* الخانات — بيانات السيارة (عرض) + خانات قابلة للتعديل بالقلم + الموقع/التاريخ */}
+                  <div className="flex flex-col divide-y divide-border">
+                    {cameraChassisResult.match.found && cameraChassisResult.match.row &&
+                      chassisRowToInfo(cameraChassisResult.match.row).map(([k, v]) => (
+                        <div key={k} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                          <span className="shrink-0 text-[11px] font-medium text-muted">{k}</span>
+                          <span className="min-w-0 flex-1 truncate text-left text-sm text-ink">{v}</span>
+                        </div>
+                      ))}
+
+                    <EditableField label="نوع السيارة" value={chVehicleType} onChange={setChVehicleType} placeholder="نوع السيارة" />
+                    <EditableField label="ملاحظات" value={chNotes} onChange={setChNotes} placeholder="ملاحظات" />
+                    <EditableField label="اسم المنطقة" value={chRegion} onChange={setChRegion} placeholder="اسم المنطقة" />
+
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="shrink-0 text-[11px] font-medium text-muted">الموقع</span>
+                      {cameraGps ? (
+                        <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-bold text-primary">
+                          <MapPin size={14} /> فتح الدبوس
+                        </a>
+                      ) : (
+                        <span className="text-sm text-muted">جاري تحديد الموقع...</span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="shrink-0 text-[11px] font-medium text-muted">التاريخ</span>
+                      <span className="text-sm text-ink">{chDate ? new Date(chDate).toLocaleString("ar-EG") : ""}</span>
+                    </div>
+                  </div>
+
+                  {/* زرين: تسجيل + حذف */}
+                  <div className="flex gap-2 border-t border-border p-3">
+                    <button onClick={saveChassisRecord} disabled={chSaved}
+                      className={`flex-1 rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
+                      {chSaved ? "✓ اتصدّر لشيت الشاص" : "تصدير لشيت الشاص"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!window.confirm("متأكد إنك عايز تحذف نتيجة الشاصي دي؟")) return;
+                        if (chLastSavedId) setChassisRecords(deleteChassisRecord(chLastSavedId));
+                        resetCamera();
+                      }}
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm font-bold text-danger active:scale-95 transition">
+                      <Trash2 size={15} /> حذف
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -3297,8 +3616,50 @@ export default function InstantCheckPage() {
         </>
       )}
 
+      {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات */}
+      {mode === "sheet" && chassisRecords.length > 0 && (
+        <div className="mb-3 rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-sm font-bold text-ink"><Barcode size={16} /> شيت رقم الشاص ({chassisRecords.length})</span>
+            <button onClick={exportChassisSheet} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night active:scale-95 transition"><Download size={13} /> تصدير</button>
+          </div>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full border-collapse text-xs" dir="rtl">
+              <thead>
+                <tr className="text-muted">
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم الشاص</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">نوع السيارة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">ملاحظات</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">المنطقة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الحالة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الموقع</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {chassisRecords.slice(0, 100).map((r) => (
+                  <tr key={r.id} className={`border-t border-border ${r.found ? "bg-danger/10" : ""}`}>
+                    <td className="whitespace-nowrap px-2 py-1.5 font-mono" dir="ltr">{r.chassis}</td>
+                    <td className="px-2 py-1.5">{r.vehicleType || "—"}</td>
+                    <td className="px-2 py-1.5">{r.notes || "—"}</td>
+                    <td className="px-2 py-1.5">{r.region || "—"}</td>
+                    <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : "text-brand"}`}>{r.found ? "مطلوب" : "غير مطلوب"}</td>
+                    <td className="px-2 py-1.5 text-center">
+                      {(r.mapsLink || (r.lat != null && r.lng != null)) ? (
+                        <a href={r.mapsLink || toMapsLink(r.lat as number, r.lng as number)} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><MapPin size={15} /></a>
+                      ) : "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-center"><button onClick={() => setChassisRecords(deleteChassisRecord(r.id))} className="text-muted" aria-label="حذف"><Trash2 size={13} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
-      {mode === "sheet" && fieldEntries.length === 0 && (
+      {mode === "sheet" && fieldEntries.length === 0 && chassisRecords.length === 0 && (
         <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
           لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
         </div>

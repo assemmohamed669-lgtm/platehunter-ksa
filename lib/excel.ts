@@ -210,6 +210,28 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
   return _parseExcelSync(new Uint8Array(buffer));
 }
 
+/**
+ * قراءة *كل* ورقات ملف إكسل — للبحث عن عمود الشاصي في الورقتين (أو أكتر).
+ * بسيطة ومباشرة (الصف الأول = هيدر)؛ كشف عمود الشاصي بالمحتوى بيعوّض أي هيدر
+ * مزاح. بترجّع الورقات اللي فيها بيانات فقط.
+ */
+export async function readAllSheets(
+  file: File
+): Promise<{ sheetName: string; headers: string[]; rows: Record<string, string>[] }[]> {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: false, cellStyles: false });
+  const out: { sheetName: string; headers: string[]; rows: Record<string, string>[] }[] = [];
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    if (!ws) continue;
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { raw: false, defval: "" });
+    if (!rows.length) continue;
+    const headers = Object.keys(rows[0] ?? {});
+    out.push({ sheetName: name, headers, rows });
+  }
+  return out;
+}
+
 const PLATE_DETECT_KWS = ["لوحة", "اللوحة", "plate"];
 
 function _cellLooksLikePlate(raw: string): boolean {
