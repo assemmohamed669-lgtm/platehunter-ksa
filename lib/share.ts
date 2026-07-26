@@ -26,6 +26,53 @@ export function buildPlateShareText(opts: {
   return lines.join("\n");
 }
 
+/**
+ * يشارك نص (نتيجة/لوحات) عبر **قائمة تطبيقات النظام** بدل ما يفتح واتساب مباشرة.
+ *
+ * المشكلة: رابط `https://wa.me/?text=...` بيتفتح على أي واتساب مسجّل تلقائياً —
+ * فاللي عنده «واتساب أعمال» بيروحله على طول من غير ما يسأل. الحل: على الموبايل
+ * نستخدم Share plugin (بيطلّع قائمة اختيار النظام: واتساب / واتساب أعمال / أي
+ * تطبيق)؛ على الويب نستخدم Web Share API لو متاح؛ وإلا نرجع لرابط wa.me.
+ */
+export async function shareTextViaChooser(
+  text: string,
+  dialogTitle = "مشاركة عبر",
+): Promise<ShareOutcome> {
+  // ── Native (Capacitor): قائمة النظام ──────────────────────────────────────
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { Share } = await import("@capacitor/share");
+        await Share.share({ text, dialogTitle });
+        return "shared";
+      } catch (err: unknown) {
+        const e = err as { name?: string; message?: string };
+        if (e?.name === "AbortError" || /cancel/i.test(e?.message ?? "")) return "cancelled";
+        // فشل حقيقي — نكمّل للويب/wa.me
+      }
+    }
+  } catch {
+    /* @capacitor/core غير متاح — عامله كويب */
+  }
+
+  // ── Web Share API (بيطلّع قائمة النظام في المتصفح كمان) ────────────────────
+  try {
+    const nav = navigator as Navigator & { share?: (d: { text?: string; title?: string }) => Promise<void> };
+    if (typeof navigator !== "undefined" && typeof nav.share === "function") {
+      await nav.share({ text });
+      return "shared";
+    }
+  } catch (err: unknown) {
+    if ((err as { name?: string })?.name === "AbortError") return "cancelled";
+    /* fall through */
+  }
+
+  // ── Fallback: رابط واتساب النصي ────────────────────────────────────────────
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  return "whatsapp-text";
+}
+
 /** Decode a base64 data URL into a Blob. Defaults to image/jpeg. */
 export function dataUrlToBlob(dataUrl: string): Blob {
   const comma = dataUrl.indexOf(",");

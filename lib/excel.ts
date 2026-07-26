@@ -70,7 +70,8 @@ export function exportRecordingsToExcel(
   rows.forEach((row, i) => {
     const cellRef = `B${i + 2}`;
     if (ws[cellRef] && row["GPS"]) {
-      ws[cellRef].l = { Target: row["GPS"], Tooltip: "فتح في الخريطة" };
+      const target = gpsCellToLink(row["GPS"]) || row["GPS"].replace(/&(?:amp;)+/gi, "&");
+      ws[cellRef].l = { Target: target, Tooltip: "فتح في الخريطة" };
     }
   });
 
@@ -734,8 +735,11 @@ export async function buildColoredSortExcel(
       const v = row[h];
       if (typeof v === "string" && /^https?:\/\//i.test(v)) {
         const cell = excelRow.getCell(ci + 1);
-        const text = MAP_URL_RE.test(v) ? "خريطة" : v;
-        cell.value = { text, hyperlink: v } as ExcelJS.CellHyperlinkValue;
+        // رابط الوجهة لازم يكون نضيف — لو اتكتب بـ&amp;amp; (ترميز HTML مزدوج) Excel
+        // بيفتح رابط بلا destination فمايوديش لخرايط جوجل. ننضّفه زي buildExcelBlob.
+        const link = gpsCellToLink(v) || v.replace(/&(?:amp;)+/gi, "&");
+        const text = MAP_URL_RE.test(v) ? "خريطة" : link;
+        cell.value = { text, hyperlink: link } as ExcelJS.CellHyperlinkValue;
         cell.font = { color: { argb: "FF0563C1" }, underline: true };
       }
     });
@@ -764,7 +768,17 @@ export async function buildColoredSortExcel(
 export function buildRowSummaryText(row: Record<string, unknown>): string {
   return Object.entries(row)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([label, value]) => `${label}: ${value}`)
+    .map(([label, value]) => {
+      let v = String(value);
+      // خلايا GPS/الروابط: بعض ملفات الإكسيل بتخزّنها بـ & مشفّرة (&amp;amp;) —
+      // ننضّفها لرابط خرائط قابل للفتح (بإحداثيات لو موجودة، وإلا نفكّ الترميز).
+      if (/^https?:\/\//i.test(v.trim()) || /&amp;/i.test(v)) {
+        const clean = gpsCellToLink(v);
+        if (clean) v = clean;
+        else while (/&amp;/i.test(v)) v = v.replace(/&amp;/gi, "&");
+      }
+      return `${label}: ${v}`;
+    })
     .join("\n");
 }
 

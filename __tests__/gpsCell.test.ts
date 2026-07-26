@@ -36,6 +36,14 @@ describe("gpsCellToLink", () => {
   it("رابط مختصر بدون إحداثيات → يتفتح زي ما هو", () => {
     expect(gpsCellToLink("https://maps.app.goo.gl/AbCdEf123")).toBe("https://maps.app.goo.gl/AbCdEf123");
   });
+  it("رابط directions بـ& مشفّرة مزدوجة (&amp;amp;destination=) → رابط نظيف بالإحداثيات", () => {
+    expect(
+      gpsCellToLink("https://www.google.com/maps/dir/?api=1&amp;amp;destination=21.594202,39.194509"),
+    ).toBe("https://www.google.com/maps?q=21.594202,39.194509");
+  });
+  it("رابط مختصر بـ&amp; مشفّرة → يفكّ الترميز فيفتح صح", () => {
+    expect(gpsCellToLink("https://maps.app.goo.gl/x?a=1&amp;b=2")).toBe("https://maps.app.goo.gl/x?a=1&b=2");
+  });
   it("فاضي / نص عادي → لا رابط", () => {
     expect(gpsCellToLink("")).toBe("");
     expect(gpsCellToLink("مكان غير محدد")).toBe("");

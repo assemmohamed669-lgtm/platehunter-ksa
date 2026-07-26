@@ -11,6 +11,7 @@ import { Copy, Check, Share2, Trash2, MapPin, Navigation, CheckSquare, Square } 
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm } from "@/lib/gps";
+import { shareTextViaChooser } from "@/lib/share";
 
 // الأعمدة الثابتة المطلوبة: رقم اللوحة › نوع السيارة › الماركة › العنوان › GPS ›
 // اللون › سنة الصنع › تاريخ التسجيل. تتحدّد بالاسم أو بالمحتوى في wanted/page.tsx.
@@ -105,12 +106,12 @@ export default function WantedResultsTable({
   function toggleSel(id: string) { setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; }); }
   function toggleAll() { setSelected((p) => (p.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)))); }
   async function copyRow(r: WantedRow) { try { await navigator.clipboard.writeText(rowText(r)); setCopiedId(r.id); setTimeout(() => setCopiedId(null), 1200); } catch { /* no clipboard */ } }
-  function shareRow(r: WantedRow) { window.open(`https://wa.me/?text=${encodeURIComponent(rowText(r))}`, "_blank"); }
+  function shareRow(r: WantedRow) { void shareTextViaChooser(rowText(r)); }
   function shareSelected() {
     const rs = rows.filter((r) => selected.has(r.id));
     if (!rs.length) return;
     const text = `*لوحات (${rs.length})*\n\n` + rs.map((r, i) => `${i + 1}. ${rowText(r)}`).join("\n\n──────────\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+    void shareTextViaChooser(text);
   }
 
   if (rows.length === 0) return <p className="py-4 text-center text-xs text-muted">مفيش نتايج.</p>;

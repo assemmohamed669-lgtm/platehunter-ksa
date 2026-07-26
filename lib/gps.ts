@@ -282,8 +282,11 @@ export function gpsCellCoords(raw: string): { lat: number; lng: number } | null 
  * ده اللي بيخلّي عمود GPS اللي في الداتا يظهر كـ لينك مهما كانت صيغته.
  */
 export function gpsCellToLink(raw: string): string {
-  const s = String(raw ?? "").trim();
+  let s = String(raw ?? "").trim();
   if (!s) return "";
+  // بعض ملفات الإكسيل بتخزّن الروابط بـ & مشفّرة HTML (&amp; أو &amp;amp; المزدوجة) —
+  // نفكّها الأول عشان الرابط يفتح صح (وإلا Google Maps مايقراش destination).
+  while (/&amp;/i.test(s)) s = s.replace(/&amp;/gi, "&");
   const c = gpsCellCoords(s);
   if (c) return toMapsLink(c.lat, c.lng);
   if (/^https?:\/\//i.test(s)) return s;
