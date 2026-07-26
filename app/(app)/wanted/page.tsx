@@ -8,12 +8,13 @@
  * النتيجة بتتخزّن في الذاكرة فبتفضل ثابتة لو خرجت من الصفحة ورجعت.
  */
 import { useEffect, useState } from "react";
-import { Crosshair, Share2, FileSpreadsheet, Trash2, RefreshCw } from "lucide-react";
+import { Crosshair, Trash2, RefreshCw } from "lucide-react";
 import WantedResultsTable, { type WantedRow } from "@/components/WantedResultsTable";
+import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
-import { buildSpreadsheetBlob, shareExcelBlob } from "@/lib/excel";
+import { buildColoredSortExcel } from "@/lib/excel";
 import { resolveCheckColumns, inferVehicleType } from "@/lib/wantedColumns";
 import { resolveResultColumns } from "@/lib/resultColumns";
 
@@ -26,6 +27,36 @@ function findGps(row: Record<string, string>): { lat: number; lng: number } | nu
     if (g) return g;
   }
   return null;
+}
+
+// صفوف تصدير النافذة (نفس أعمدة النتيجة) — يُستخدم للإكسيل والصورة والمشاركة.
+function toExportRows(rows: WantedRow[]): Record<string, unknown>[] {
+  const hasBank = rows.some((r) => r.bank && r.bank.trim());
+  const hasDistrict = rows.some((r) => r.district && r.district.trim());
+  return rows.map((r) => ({
+    "رقم اللوحة": r.plate, "نوع السيارة": r.type, "الماركة": r.brand,
+    ...(hasBank ? { "البنك": r.bank ?? "" } : {}),
+    "العنوان": r.address,
+    ...(hasDistrict ? { "الحي": r.district ?? "" } : {}),
+    "GPS": r.mapsLink, "اللون": r.color,
+    "سنة الصنع": r.year, "تاريخ التسجيل": r.date,
+  }));
+}
+
+// لون هيكس لكل لوحة مكررة (>1) بترتيب أول ظهور — نفس بالِتة الفرز، عشان الإكسيل
+// الملوّن يطابق تلوين الجدول والصورة (اللوحات المتشابهة كل واحدة بلون).
+const DUPE_HEX = ["#FEF9C3", "#DBEAFE", "#DCFCE7", "#F3E8FF", "#FFEDD5", "#FCE7F3", "#CCFBF1", "#FEE2E2"];
+function dupeHexColors(rows: WantedRow[]): (string | null)[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.norm, (counts.get(r.norm) ?? 0) + 1);
+  const colorByNorm = new Map<string, string>();
+  let ci = 0;
+  for (const r of rows) {
+    if ((counts.get(r.norm) ?? 0) > 1 && !colorByNorm.has(r.norm)) {
+      colorByNorm.set(r.norm, DUPE_HEX[ci % DUPE_HEX.length]); ci++;
+    }
+  }
+  return rows.map((r) => colorByNorm.get(r.norm) ?? null);
 }
 
 export default function WantedPage() {
@@ -186,28 +217,6 @@ export default function WantedPage() {
     setRecordRows((prev) => { const next = prev.filter((r) => !s.has(r.id)); persist(dataRows, next, true); return next; });
   }
 
-  function shareAll(rows: WantedRow[], label: string) {
-    if (rows.length === 0) return;
-    const text = `*${label} (${rows.length})*\n\n` + rows.map((r, i) =>
-      `${i + 1}. 🚗 ${r.plate}${r.brand ? ` — ${r.brand}` : ""}${r.bank ? ` — ${r.bank}` : ""}${r.address ? ` — ${r.address}` : ""}${r.district ? ` — ${r.district}` : ""}${r.mapsLink ? `\n📍 ${r.mapsLink}` : ""}`).join("\n\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
-  }
-  async function exportExcel(rows: WantedRow[], name: string) {
-    if (rows.length === 0) return;
-    const hasBank = rows.some((r) => r.bank && r.bank.trim());
-    const hasDistrict = rows.some((r) => r.district && r.district.trim());
-    const out = rows.map((r) => ({
-      "رقم اللوحة": r.plate, "نوع السيارة": r.type, "الماركة": r.brand,
-      ...(hasBank ? { "البنك": r.bank ?? "" } : {}),
-      "العنوان": r.address,
-      ...(hasDistrict ? { "الحي": r.district ?? "" } : {}),
-      "GPS": r.mapsLink, "اللون": r.color,
-      "سنة الصنع": r.year, "تاريخ التسجيل": r.date,
-    }));
-    const { blob, ext } = buildSpreadsheetBlob(out, name);
-    try { await shareExcelBlob(blob, `${name}.${ext}`, name); } catch (e) { alert(e instanceof Error ? e.message : "تعذّر التصدير"); }
-  }
-
   function windowBlock(title: string, rows: WantedRow[], onDelete: (ids: string[]) => void, clearAll: () => void) {
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-3" dir="rtl">
@@ -218,9 +227,15 @@ export default function WantedPage() {
         <WantedResultsTable rows={rows} onDelete={onDelete} />
         {rows.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <button onClick={() => shareAll(rows, title)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={14} /> مشاركة الكل (واتساب)</button>
-            <button onClick={() => exportExcel(rows, title)} className="flex items-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted transition hover:border-primary hover:text-primary"><FileSpreadsheet size={14} /> فتح في إكسيل</button>
-            <button onClick={clearAll} className="flex items-center gap-1.5 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={14} /> مسح النافذة</button>
+            {/* زر مشاركة الفرز — نفس صفحة الفرز: فتح / واتساب (إكسيل ملوّن RTL) / صورة.
+                الإكسيل ملوّن باللوحات المكررة (dupeHexColors) وبمحاذاة يمين (buildColoredSortExcel). */}
+            <ShareSortButton
+              title={title}
+              rows={() => toExportRows(rows)}
+              excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows), title, dupeHexColors(rows)), ext: "xlsx" })}
+              className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
+            />
+            <button onClick={clearAll} className="flex items-center gap-1.5 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={14} /> مسح نتايج الفرز</button>
           </div>
         )}
       </div>
