@@ -76,3 +76,25 @@ describe("buildChassisIndex + matchChassis", () => {
     expect(m.found).toBe(false);
   });
 });
+
+describe("matchChassis — partial (trailing digits only)", () => {
+  it("matches when the sheet stored only the last digits", () => {
+    // Sheet has just "1061458"; camera reads the full VIN.
+    const idx = buildChassisIndex([{ "رقم الشاص": "1061458", "اللوحة": "حبك1234" }], "رقم الشاص");
+    const m = matchChassis("MHFBA8FS5N1061458", idx);
+    expect(m.found).toBe(true);
+    expect(m.matchType).toBe("partial");
+    expect(m.row?.["اللوحة"]).toBe("حبك1234");
+  });
+  it("matches full VIN stored, partial digits typed manually", () => {
+    const idx = buildChassisIndex([{ "رقم الهيكل": "MHFBA8FS5N1061458" }], "رقم الهيكل");
+    const m = matchChassis("1061458", idx);
+    expect(m.found).toBe(true);
+    expect(m.matchType).toBe("partial");
+  });
+  it("does not partial-match on a too-short/unrelated tail", () => {
+    const idx = buildChassisIndex([{ "رقم الشاص": "MHFBA8FS5N1061458" }], "رقم الشاص");
+    expect(matchChassis("999", idx).found).toBe(false);
+    expect(matchChassis("WAUZZZ8V0JA200324", idx).found).toBe(false);
+  });
+});

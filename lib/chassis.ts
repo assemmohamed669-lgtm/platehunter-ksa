@@ -72,10 +72,16 @@ export function buildChassisIndex(
 
 export interface ChassisMatch {
   found: boolean;
-  matchType?: "exact" | "fuzzy";
+  matchType?: "exact" | "fuzzy" | "partial";
   similarity?: number;
   normalized: string;
   row?: Record<string, string>;
+}
+
+/** آخر سلسلة أرقام متتالية في النص (الرقم التسلسلي في نهاية الـ VIN). */
+function trailingDigits(s: string): string {
+  const m = s.match(/[0-9]+$/);
+  return m ? m[0] : "";
 }
 
 export function matchChassis(
@@ -100,6 +106,19 @@ export function matchChassis(
   }
   if (bestRow) {
     return { found: true, matchType: "fuzzy", similarity: Math.round(bestSim * 100), normalized, row: bestRow };
+  }
+
+  // مطابقة بآخر الأرقام — بعض المدخلين بيكتبوا الرقم التسلسلي في آخر الشاص بس
+  // (زي "1061458" من "MHFBA8FS5N1061458"). نطابق لو آخر أرقام المصوّر = المخزّن
+  // (أو أحدهما لاحقة للتاني). حد أدنى ٥ أرقام عشان نتجنّب تطابق كاذب.
+  const sTail = trailingDigits(normalized);
+  if (sTail.length >= 5) {
+    for (const [key, row] of index) {
+      const kTail = /^[0-9]+$/.test(key) ? key : trailingDigits(key);
+      if (kTail.length >= 5 && (sTail === kTail || sTail.endsWith(kTail) || kTail.endsWith(sTail))) {
+        return { found: true, matchType: "partial", normalized, row };
+      }
+    }
   }
   return { found: false, normalized };
 }
