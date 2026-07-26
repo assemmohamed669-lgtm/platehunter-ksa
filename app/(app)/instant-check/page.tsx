@@ -3062,7 +3062,13 @@ export default function InstantCheckPage() {
                     <input dir="rtl" value={chNotes} onChange={(e) => setChNotes(e.target.value)} placeholder="ملاحظات" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
                     <input dir="rtl" value={chRegion} onChange={(e) => setChRegion(e.target.value)} placeholder="اسم المنطقة" className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand" />
                     <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
-                      <span className="flex items-center gap-1"><MapPin size={12} /> {cameraGps ? `${cameraGps.lat.toFixed(5)}, ${cameraGps.lng.toFixed(5)}` : "جاري تحديد الموقع..."}</span>
+                      {cameraGps ? (
+                        <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 font-bold text-primary">
+                          <MapPin size={13} /> الموقع (دبوس)
+                        </a>
+                      ) : (
+                        <span className="flex items-center gap-1"><MapPin size={12} /> جاري تحديد الموقع...</span>
+                      )}
                       <span>{chDate ? new Date(chDate).toLocaleString("ar-EG") : ""}</span>
                     </div>
                     <button onClick={saveChassisRecord} disabled={chSaved}
@@ -3572,16 +3578,37 @@ export default function InstantCheckPage() {
             <span className="flex items-center gap-2 text-sm font-bold text-ink"><Barcode size={16} /> شيت رقم الشاص ({chassisRecords.length})</span>
             <button onClick={exportChassisSheet} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night active:scale-95 transition"><Download size={13} /> تصدير</button>
           </div>
-          <div className="mt-2 flex flex-col divide-y divide-border">
-            {chassisRecords.slice(0, 50).map((r) => (
-              <div key={r.id} className="flex items-center justify-between gap-2 py-1.5">
-                <span className="font-mono text-xs break-all" dir="ltr">{r.chassis}</span>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className={`text-[11px] font-bold ${r.found ? "text-danger" : "text-brand"}`}>{r.found ? "مطلوب" : "غير مطلوب"}</span>
-                  <button onClick={() => setChassisRecords(deleteChassisRecord(r.id))} className="text-muted" aria-label="حذف"><Trash2 size={13} /></button>
-                </span>
-              </div>
-            ))}
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full border-collapse text-xs" dir="rtl">
+              <thead>
+                <tr className="text-muted">
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم الشاص</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">نوع السيارة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">ملاحظات</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">المنطقة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الحالة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الموقع</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {chassisRecords.slice(0, 100).map((r) => (
+                  <tr key={r.id} className={`border-t border-border ${r.found ? "bg-danger/10" : ""}`}>
+                    <td className="whitespace-nowrap px-2 py-1.5 font-mono" dir="ltr">{r.chassis}</td>
+                    <td className="px-2 py-1.5">{r.vehicleType || "—"}</td>
+                    <td className="px-2 py-1.5">{r.notes || "—"}</td>
+                    <td className="px-2 py-1.5">{r.region || "—"}</td>
+                    <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : "text-brand"}`}>{r.found ? "مطلوب" : "غير مطلوب"}</td>
+                    <td className="px-2 py-1.5 text-center">
+                      {(r.mapsLink || (r.lat != null && r.lng != null)) ? (
+                        <a href={r.mapsLink || toMapsLink(r.lat as number, r.lng as number)} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><MapPin size={15} /></a>
+                      ) : "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-center"><button onClick={() => setChassisRecords(deleteChassisRecord(r.id))} className="text-muted" aria-label="حذف"><Trash2 size={13} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
