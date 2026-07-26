@@ -764,7 +764,17 @@ export async function buildColoredSortExcel(
 export function buildRowSummaryText(row: Record<string, unknown>): string {
   return Object.entries(row)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([label, value]) => `${label}: ${value}`)
+    .map(([label, value]) => {
+      let v = String(value);
+      // خلايا GPS/الروابط: بعض ملفات الإكسيل بتخزّنها بـ & مشفّرة (&amp;amp;) —
+      // ننضّفها لرابط خرائط قابل للفتح (بإحداثيات لو موجودة، وإلا نفكّ الترميز).
+      if (/^https?:\/\//i.test(v.trim()) || /&amp;/i.test(v)) {
+        const clean = gpsCellToLink(v);
+        if (clean) v = clean;
+        else while (/&amp;/i.test(v)) v = v.replace(/&amp;/gi, "&");
+      }
+      return `${label}: ${v}`;
+    })
     .join("\n");
 }
 

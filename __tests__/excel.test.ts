@@ -1,5 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64 } from "@/lib/excel";
+import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, buildRowSummaryText } from "@/lib/excel";
+
+describe("buildRowSummaryText — تنظيف روابط GPS", () => {
+  it("ينضّف GPS بـ& مشفّرة مزدوجة لرابط قابل للفتح", () => {
+    const text = buildRowSummaryText({
+      "رقم اللوحة": "سبك2198",
+      "GPS": "https://www.google.com/maps/dir/?api=1&amp;amp;destination=21.594202,39.194509",
+      "الحالة": "مطلوبة",
+    });
+    expect(text).toContain("GPS: https://www.google.com/maps?q=21.594202,39.194509");
+    expect(text).not.toContain("&amp;");
+    expect(text).toContain("رقم اللوحة: سبك2198");
+    expect(text).toContain("الحالة: مطلوبة");
+  });
+  it("يسيب النص العادي زي ما هو", () => {
+    expect(buildRowSummaryText({ "اللون": "أبيض" })).toBe("اللون: أبيض");
+  });
+});
 
 describe("bytesToBase64", () => {
   it("encodes an empty array as an empty string", () => {
