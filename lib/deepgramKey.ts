@@ -50,6 +50,37 @@ export function getActiveDeepgramKey(): string {
   return resolveActiveDeepgramKey(getDeepgramKey(), isDeepgramEnabled());
 }
 
+/**
+ * يختبر مفتاح Deepgram بفتح نفس اتصال البث (من غير ما يبعت أي صوت = صفر تكلفة):
+ *   • الاتصال فتح (onopen)              → المفتاح شغّال (true).
+ *   • اتقفل قبل ما يفتح / خطأ / مهلة     → مش شغّال (false): مفتاح غلط، أو الرصيد
+ *     خلص، أو الحساب موقوف. WebSocket بيعدّي CORS (على عكس REST) ويختبر نفس المسار.
+ */
+export function testDeepgramKey(key: string, timeoutMs = 8000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const k = (key || "").trim();
+    if (!k || typeof WebSocket === "undefined") { resolve(false); return; }
+    let settled = false;
+    let ws: WebSocket | null = null;
+    const finish = (r: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws?.close(); } catch { /* ignore */ }
+      resolve(r);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    try {
+      ws = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-3&language=ar", ["token", k]);
+      ws.onopen = () => finish(true);
+      ws.onerror = () => finish(false);
+      ws.onclose = () => finish(false); // قفل قبل onopen = فشل (توثيق/رصيد)
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 // كلمات اللوحة بالنطق — نمرّرها كـ keyterms لـ Deepgram عشان الموديل يتحيّز ليها.
 // قياس على ٧٠ تسجيل حقيقي (nova-3): إضافة كلمات الأرقام + النطق المصري للحروف
 // رفعت اللوحة الكاملة من ٢١٪ لـ ٤١٪، والأرقام من ٥٣٪ لـ ٧٦٪، والحروف من ٢٧٪ لـ ٤٧٪.
