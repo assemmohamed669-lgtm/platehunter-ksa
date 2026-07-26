@@ -428,6 +428,8 @@ export default function InstantCheckPage() {
   const [chLastSavedId, setChLastSavedId] = useState<string | null>(null);
   const [chLocEditing, setChLocEditing] = useState(false);
   const [chLocInput, setChLocInput] = useState("");
+  // رابط موقع مخصّص (لو المندوب لصق رابط خرائط مختصر مفهوش إحداثيات) — يفوت على cameraGps.
+  const [chLocLink, setChLocLink] = useState<string | null>(null);
   const [chassisRecords, setChassisRecords] = useState<ChassisRecord[]>([]);
   useEffect(() => { setChassisRecords(getChassisRecords()); }, []);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -1533,6 +1535,7 @@ export default function InstantCheckPage() {
     setChLastSavedId(null);
     setChLocEditing(false);
     setChLocInput("");
+    setChLocLink(null);
     setChDate(new Date().toISOString());
     void getCurrentGps().then((g) => {
       setCameraGps(g);
@@ -1556,9 +1559,9 @@ export default function InstantCheckPage() {
       region: chRegion.trim() || undefined,
       row: cr.match.row,
       found: cr.match.found,
-      lat: gps?.lat,
-      lng: gps?.lng,
-      mapsLink: gps ? toMapsLink(gps.lat, gps.lng) : undefined,
+      lat: chLocLink ? undefined : gps?.lat,
+      lng: chLocLink ? undefined : gps?.lng,
+      mapsLink: chLocLink || (gps ? toMapsLink(gps.lat, gps.lng) : undefined),
       checkedAt: chDate || new Date().toISOString(),
     };
     setChassisRecords(addChassisRecord(rec));
@@ -1730,6 +1733,7 @@ export default function InstantCheckPage() {
     setChLastSavedId(null);
     setChLocEditing(false);
     setChLocInput("");
+    setChLocLink(null);
     setCameraError(null);
     setCameraRawText(null);
     setCameraInputPlate("");
@@ -3178,21 +3182,27 @@ export default function InstantCheckPage() {
                           autoFocus
                           value={chLocInput}
                           onChange={(e) => setChLocInput(e.target.value)}
-                          onBlur={() => { const c = gpsCellCoords(chLocInput.trim()); if (c) setCameraGps({ lat: c.lat, lng: c.lng }); setChLocEditing(false); }}
+                          onBlur={() => {
+                            const v = chLocInput.trim();
+                            const c = gpsCellCoords(v);
+                            if (c) { setCameraGps({ lat: c.lat, lng: c.lng }); setChLocLink(null); }
+                            else if (/^https?:\/\//i.test(v)) { setChLocLink(v); } // رابط مختصر مفهوش إحداثيات — نخزّنه زي ما هو
+                            setChLocEditing(false);
+                          }}
                           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                           placeholder="الصق رابط خرائط أو lat,lng"
                           className="min-w-0 flex-1 rounded-lg border border-brand bg-surface-2 px-2 py-1 text-xs text-ink outline-none"
                         />
                       ) : (
                         <div className="flex min-w-0 items-center justify-end gap-2">
-                          {cameraGps ? (
-                            <a href={toMapsLink(cameraGps.lat, cameraGps.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-bold text-primary">
-                              <MapPin size={14} /> فتح الدبوس
+                          {(chLocLink || cameraGps) ? (
+                            <a href={chLocLink || toMapsLink(cameraGps!.lat, cameraGps!.lng)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-bold text-primary">
+                              <MapPin size={14} /> فتح الدبوس {chLocLink ? "(موقع السيارة)" : ""}
                             </a>
                           ) : (
                             <span className="text-sm text-muted">جاري تحديد الموقع...</span>
                           )}
-                          <button onClick={() => { setChLocInput(cameraGps ? `${cameraGps.lat},${cameraGps.lng}` : ""); setChLocEditing(true); }} className="shrink-0" aria-label="تعديل الموقع لموقع السيارة الأصلي">
+                          <button onClick={() => { setChLocInput(chLocLink || (cameraGps ? `${cameraGps.lat},${cameraGps.lng}` : "")); setChLocEditing(true); }} className="shrink-0" aria-label="تعديل الموقع لموقع السيارة الأصلي">
                             <Pencil size={13} className="text-primary" />
                           </button>
                         </div>
