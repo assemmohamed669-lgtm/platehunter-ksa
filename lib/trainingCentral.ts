@@ -96,19 +96,33 @@ export async function markDownloaded(ids: string[]): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-/** يمسح المُنزَّل (downloaded_at NOT NULL) من جدول العيّنات + صوته من training_audio. */
+/** يمسح المُنزَّل (downloaded_at NOT NULL) من جدول العيّنات + صوته من training_audio.
+ *  المسح **على دفعات** — لو العيّنات كتير، قائمة IDs الطويلة بتكسر الطلب (Bad Request)،
+ *  فبنقسّمها لمجموعات صغيرة. وبنجيب id/session_id بس (مش select * التقيل). */
 export async function purgeDownloaded(agentId?: string): Promise<{ deleted: number }> {
   const { supabase } = await import("./supabaseClient");
-  let q = supabase.from("training_samples").select("*").not("downloaded_at", "is", null);
+  let q = supabase.from("training_samples").select("id, session_id").not("downloaded_at", "is", null);
   if (agentId) q = q.eq("agent_id", agentId);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as CentralSampleRow[];
+  const rows = (data ?? []) as { id: string; session_id: string | null }[];
   if (rows.length === 0) return { deleted: 0 };
-  // امسح صوت الجلسات المرتبطة من training_audio.
-  const sessionIds = [...new Set(rows.map((r) => r.session_id).filter(Boolean))];
-  if (sessionIds.length) { try { await supabase.from("training_audio").delete().in("session_id", sessionIds); } catch { /* ممكن يكون اتمسح */ } }
-  const { error: delErr } = await supabase.from("training_samples").delete().in("id", rows.map((r) => r.id));
-  if (delErr) throw new Error(delErr.message);
+
+  const chunk = <T,>(arr: T[], n: number): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  };
+
+  // (١) امسح صوت الجلسات المُنزَّلة من training_audio — على دفعات.
+  const sessionIds = [...new Set(rows.map((r) => r.session_id).filter((s): s is string => !!s))];
+  for (const batch of chunk(sessionIds, 80)) {
+    try { await supabase.from("training_audio").delete().in("session_id", batch); } catch { /* ممكن يكون اتمسح */ }
+  }
+  // (٢) امسح العيّنات المُنزَّلة — على دفعات.
+  for (const batch of chunk(rows.map((r) => r.id), 80)) {
+    const { error: delErr } = await supabase.from("training_samples").delete().in("id", batch);
+    if (delErr) throw new Error(delErr.message);
+  }
   return { deleted: rows.length };
 }
