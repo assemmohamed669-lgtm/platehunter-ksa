@@ -869,12 +869,28 @@ export default function InstantCheckPage() {
     return () => { cancelled = true; };
   }, [checkFile, checkTable]);
 
-  // كل بيانات السيارة من الصف المطابق (كل الأعمدة غير الفاضية) — ماعدا عمود الشاصي نفسه.
+  // اللوحة المرتبطة برقم الشاص (من الصف المطابق) — عشان تظهر بارزة قدّام الشاص.
+  function chassisPlate(row: Record<string, string>): string | null {
+    const col = detectPlateColumn(Object.keys(row), [row]);
+    const v = col ? String(row[col] ?? "").trim() : "";
+    return v || null;
+  }
+
+  // كل بيانات السيارة من الصف المطابق (كل الأعمدة غير الفاضية) — ماعدا عمود الشاصي.
+  // + لو فيه لوحة في الصف وموجودة في شيت التشييك بأعمدة زيادة (بنك/ماركة...)، نجمّعها
+  //   (join باللوحة) عشان كل البيانات تظهر حتى لو متوزّعة على الورقتين.
   function chassisRowToInfo(row: Record<string, string>): [string, string][] {
     const vinCol = chassisColByRow.get(row);
-    return Object.entries(row)
-      .filter(([k, v]) => k !== vinCol && String(v ?? "").trim())
-      .map(([k, v]) => [k, String(v)] as [string, string]);
+    const merged: Record<string, string> = {};
+    for (const [k, v] of Object.entries(row)) if (k !== vinCol && String(v ?? "").trim()) merged[k] = String(v);
+    const plate = chassisPlate(row);
+    if (plate) {
+      const prow = checkIndex.get(normalizePlate(bankPlateToArabic(plate)));
+      if (prow && prow !== row) {
+        for (const [k, v] of Object.entries(prow)) if (String(v ?? "").trim() && !(k in merged)) merged[k] = String(v);
+      }
+    }
+    return Object.entries(merged);
   }
 
   function toggleCheckCol(col: string) {
@@ -3123,6 +3139,14 @@ export default function InstantCheckPage() {
                         : "غير مطلوب"}
                     </span>
                   </div>
+
+                  {/* اللوحة المرتبطة بالشاصي — بارزة قدّام رقم الشاص */}
+                  {cameraChassisResult.match.found && cameraChassisResult.match.row && chassisPlate(cameraChassisResult.match.row) && (
+                    <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-4 py-2.5">
+                      <span className="shrink-0 text-[11px] font-medium text-muted">اللوحة</span>
+                      <span className="rounded-lg bg-danger/15 px-3 py-1 text-sm font-bold text-danger" dir="rtl">{chassisPlate(cameraChassisResult.match.row)}</span>
+                    </div>
+                  )}
 
                   {/* الخانات — بيانات السيارة (عرض) + خانات قابلة للتعديل بالقلم + الموقع/التاريخ */}
                   <div className="flex flex-col divide-y divide-border">
