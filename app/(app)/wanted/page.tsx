@@ -218,16 +218,17 @@ export default function WantedPage() {
         </div>
         <WantedResultsTable rows={rows} onDelete={onDelete} />
         {rows.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            {/* زر مشاركة الفرز — نفس صفحة الفرز: فتح / واتساب (إكسيل ملوّن RTL) / صورة.
-                الإكسيل ملوّن باللوحات المكررة (dupeHexColors) وبمحاذاة يمين (buildColoredSortExcel). */}
+          <div className="flex flex-col gap-2 pt-1">
+            {/* زرّين تحت بعض: مشاركة النتيجة (قائمة: فتح إكسيل / واتساب / صورة) + مسح.
+                الإكسيل ملوّن باللوحات المكررة (dupeHexColors) و RTL بمحاذاة يمين (buildColoredSortExcel). */}
             <ShareSortButton
               title={title}
+              label="مشاركة النتيجة"
               rows={() => toExportRows(rows)}
               excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows), title, dupeHexColors(rows)), ext: "xlsx" })}
-              className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
-            <button onClick={clearAll} className="flex items-center gap-1.5 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={14} /> مسح نتايج الفرز</button>
+            <button onClick={clearAll} className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-3 text-sm font-bold text-danger transition hover:bg-danger/20"><Trash2 size={15} /> مسح نتايج الفرز</button>
           </div>
         )}
       </div>

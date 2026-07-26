@@ -26,13 +26,16 @@ interface Props {
    *  الفرز الرئيسية. لو مش موجود بنبني شيت عادي من rows(). */
   excelBlob?: () => Promise<{ blob: Blob; ext: string }> | { blob: Blob; ext: string };
   className?: string;
+  /** نص الزر + عنوان القائمة (افتراضي «مشاركة الفرز»). */
+  label?: string;
 }
 
 function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, rows, excelBlob, className }: Props) {
+export default function ShareSortButton({ title, rows, excelBlob, className, label }: Props) {
+  const btnLabel = label ?? "مشاركة الفرز";
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<string[] | null>(null);
@@ -92,7 +95,7 @@ export default function ShareSortButton({ title, rows, excelBlob, className }: P
     <>
       <button onClick={() => setMenuOpen(true)} disabled={busy}
         className={className ?? "flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"}>
-        {busy ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />} مشاركة الفرز
+        {busy ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />} {btnLabel}
       </button>
 
       {/* قائمة الخيارات — bottom sheet */}
@@ -100,7 +103,7 @@ export default function ShareSortButton({ title, rows, excelBlob, className }: P
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 sm:items-center" onClick={() => setMenuOpen(false)}>
           <div className="w-full max-w-md rounded-t-2xl border-t border-border bg-surface p-4 sm:rounded-2xl" style={{ direction: "rtl" }} onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-ink">مشاركة الفرز</h3>
+              <h3 className="text-sm font-bold text-ink">{btnLabel}</h3>
               <button onClick={() => setMenuOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
             <div className="flex flex-col gap-2">
