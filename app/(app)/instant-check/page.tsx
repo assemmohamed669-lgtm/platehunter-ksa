@@ -3037,20 +3037,31 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* Editable chassis + search (وضع الشاص) — يشتغل بصورة أو بكتابة الرقم مباشرة */}
+              {/* Editable chassis + search (وضع الشاص) — يشتغل بصورة أو بكتابة الرقم مباشرة.
+                  رقم الهيكل إنجليزي وأرقام فقط — نحوّل الأرقام العربية ونرفض أي حروف عربية
+                  (لو كيبورد الموبايل عربي مايدخّلش عربي في الشاص بالغلط). */}
               {!cameraLoading && camSubject === "chassis" && (
-                <div className="flex gap-2 items-center">
-                  <input dir="ltr" value={chassisInput}
-                    onChange={(e) => setChassisInput(e.target.value.toUpperCase())}
-                    placeholder="اكتب أو صحّح رقم الشاص..."
-                    className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
-                  />
-                  <button
-                    onClick={() => { const v = chassisInput.trim(); if (!v) return; setCameraError(null); const r = searchByChassis(v); setChassisResult(r); void recordChassisEntry(r); }}
-                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
-                  >
-                    بحث
-                  </button>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <input dir="ltr" value={chassisInput}
+                      inputMode="text" autoCapitalize="characters" autoCorrect="off" spellCheck={false} lang="en"
+                      onChange={(e) => setChassisInput(
+                        e.target.value
+                          .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+                          .replace(/[^a-zA-Z0-9]/g, "")
+                          .toUpperCase()
+                      )}
+                      placeholder="اكتب رقم الشاص (إنجليزي)..."
+                      className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
+                    />
+                    <button
+                      onClick={() => { const v = chassisInput.trim(); if (!v) return; setCameraError(null); const r = searchByChassis(v); setChassisResult(r); void recordChassisEntry(r); }}
+                      className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
+                    >
+                      بحث
+                    </button>
+                  </div>
+                  <p className="text-center text-[10px] text-muted">رقم الهيكل بالإنجليزي والأرقام — لو ظهر عربي بدّل لوحة المفاتيح للإنجليزي.</p>
                 </div>
               )}
 
