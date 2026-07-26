@@ -375,6 +375,7 @@ export default function InstantCheckPage() {
   const [chRegion, setChRegion] = useState("");
   const [chDate, setChDate] = useState<string>("");
   const [chSaved, setChSaved] = useState(false);
+  const [chLastSavedId, setChLastSavedId] = useState<string | null>(null);
   const [chassisRecords, setChassisRecords] = useState<ChassisRecord[]>([]);
   useEffect(() => { setChassisRecords(getChassisRecords()); }, []);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -1457,6 +1458,7 @@ export default function InstantCheckPage() {
     setChNotes("");
     setChRegion("");
     setChSaved(false);
+    setChLastSavedId(null);
     setChDate(new Date().toISOString());
     void getCurrentGps().then((g) => {
       setCameraGps(g);
@@ -1487,6 +1489,7 @@ export default function InstantCheckPage() {
     };
     setChassisRecords(addChassisRecord(rec));
     setChSaved(true);
+    setChLastSavedId(rec.id);
   }
 
   // تصدير كل سجلات الشاصي لشيت «شيت رقم الشاص».
@@ -1634,6 +1637,8 @@ export default function InstantCheckPage() {
     setCameraImage(null);
     setCameraResult(null);
     setCameraChassisResult(null);
+    setChSaved(false);
+    setChLastSavedId(null);
     setCameraError(null);
     setCameraRawText(null);
     setCameraInputPlate("");
@@ -3071,10 +3076,21 @@ export default function InstantCheckPage() {
                       )}
                       <span>{chDate ? new Date(chDate).toLocaleString("ar-EG") : ""}</span>
                     </div>
-                    <button onClick={saveChassisRecord} disabled={chSaved}
-                      className={`rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
-                      {chSaved ? "✓ اتحفظ في شيت الشاص" : "حفظ في شيت الشاص"}
-                    </button>
+                    <div className="flex gap-2">
+                      <button onClick={saveChassisRecord} disabled={chSaved}
+                        className={`flex-1 rounded-lg py-2.5 text-sm font-bold transition active:scale-95 ${chSaved ? "bg-surface-2 text-muted" : "bg-primary text-night"}`}>
+                        {chSaved ? "✓ اتسجّل في شيت الشاص" : "تسجيل لشيت الشاص"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!window.confirm("متأكد إنك عايز تحذف نتيجة الشاصي دي؟")) return;
+                          if (chLastSavedId) setChassisRecords(deleteChassisRecord(chLastSavedId));
+                          resetCamera();
+                        }}
+                        className="flex items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm font-bold text-danger active:scale-95 transition">
+                        <Trash2 size={15} /> حذف
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
