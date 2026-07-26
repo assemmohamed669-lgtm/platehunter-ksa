@@ -17,7 +17,7 @@ import {
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
-import { haversineKm, gpsCellCoords, gpsCellToLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
+import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
@@ -258,7 +258,13 @@ export default function SortingPage() {
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
             keys.add("GPS");
             const headers = [...keys];
-            const rows = fieldEntries.map((e) => ({ "رقم اللوحة": e.plate, ...e.row, "GPS": e.mapsLink ?? "" } as Record<string, string>));
+            const rows = fieldEntries.map((e) => ({
+              "رقم اللوحة": e.plate,
+              ...e.row,
+              // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
+              // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
+              "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
+            } as Record<string, string>));
             setTashyeekTable({ headers, rows });
             setTashyeekFile(null);
           }
