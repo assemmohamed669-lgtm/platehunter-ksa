@@ -525,6 +525,9 @@ export default function InstantCheckPage() {
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
   const dgReconnectsRef = useRef(0); // عدّاد إعادة اتصال Deepgram (محدود عشان مايعملش لوب)
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
+  // حارس تكرار الصوت: آخر لوحة اتفرّغت + وقتها — عشان لو نفس النطق اتفرّغ مرتين
+  // (Deepgram بيبعت النتيجة النهائية مرتين: نهاية المقطع + نقطة الصمت) مايتكتبش مرتين.
+  const lastPttEmitRef = useRef<{ norm: string; at: number } | null>(null);
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -1828,6 +1831,13 @@ export default function InstantCheckPage() {
     const cLetters = corrected.replace(/[0-9٠-٩]/g, "");
     const cDigits = corrected.replace(/[^0-9٠-٩]/g, "");
     if (cLetters.length < 2 || cLetters.length > 3 || cDigits.length < 3 || cDigits.length > 4) return;
+    // حارس التكرار: نفس النطق أحياناً بيتفرّغ مرتين (Deepgram بيبعت النتيجة النهائية
+    // مرتين — نهاية المقطع + نقطة الصمت). لو نفس اللوحة اتضافت خلال ثانيتين (مستحيل
+    // المندوب ينطقها مرتين بالسرعة دي) نتجاهل التكرار.
+    const nowMs = Date.now();
+    const le = lastPttEmitRef.current;
+    if (le && le.norm === norm && nowMs - le.at < 2000) return;
+    lastPttEmitRef.current = { norm, at: nowMs };
     const isComplete = cLetters.length === 3 && cDigits.length === 4 && !plateNeedsReview(corrected);
 
     const result = searchInCheck(corrected);
