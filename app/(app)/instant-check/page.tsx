@@ -53,10 +53,6 @@ const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
 // منظّم الإيقاع في التشييك الصوتي — اهتزاز + وميض بين اللوحات (نفس فكرة التسجيل).
 const LS_CHECK_PACER = "ph:check:pacer";
-// الفجوة (ms) بين نتيجتين نهائيتين اللي بعدها نعتبر أي ذيل عالق في الـ carry-over
-// «قديم» ونفرّغه — شبكة أمان لما Deepgram مايبعتش UtteranceEnd (ضوضاء ميدانية).
-// أعلى من فجوات الكلام المتواصل (~100-400ms) فمايأثرش على التفريغ العادي.
-const CARRY_STALE_MS = 900;
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -523,7 +519,6 @@ export default function InstantCheckPage() {
   const dgSocketRef = useRef<WebSocket | null>(null);
   const dgRecorderRef = useRef<MediaRecorder | null>(null);
   const dgRecStartRef = useRef<number | null>(null); // لحظة بدء التسجيل (ساعة حقيقية) — لتوقيت التدريب المحكم
-  const dgLastFinalAtRef = useRef<number>(0); // لحظة آخر نتيجة نهائية (ساعة حقيقية) — لكشف الفجوة وتفريغ الـ carry العالق
   const dgStreamRef = useRef<MediaStream | null>(null);
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -2213,7 +2208,6 @@ export default function InstantCheckPage() {
       try { dgGateRef.current = createSpeechGate(stream); } catch { dgGateRef.current = null; }
       pttSessionStateRef.current = newSessionState();
       pttRowIdxRef.current = 0;
-      dgLastFinalAtRef.current = 0; // جلسة جديدة — مفيش نتيجة سابقة
 
       const params = new URLSearchParams({
         model: "nova-3",
@@ -2288,23 +2282,12 @@ export default function InstantCheckPage() {
           const msg = JSON.parse(ev.data);
           // نهاية النطق (سكتة المندوب): فرّغ أي لوحة متعلّقة في الـ carry-over فوراً
           // → تطلع كاملة + searchInCheck + الإنذار في وقته (من غير ما يعيد اللوحة).
-          if (msg.type === "UtteranceEnd") { processWhisperText("", true); dgLastFinalAtRef.current = 0; return; }
+          if (msg.type === "UtteranceEnd") { processWhisperText("", true); return; }
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
           setPttLiveText(text);
           // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
           if (msg.is_final) {
-            // شبكة أمان ضد الضوضاء الميدانية: في الميدان الضجيج بيمنع Deepgram من
-            // كشف السكوت فمابيبعتش UtteranceEnd، فذيل لوحة ناقصة بيفضل عالق في الـ
-            // carry-over ويلوّث كل لوحة جاية (المندوب بيضطر يعيد التسجيل). لو عدّت
-            // فجوة واضحة من غير UtteranceEnd، فرّغ الـ carry العالق (UtteranceEnd
-            // صناعي) قبل ما نضيف اللوحة الجديدة — من غير أي أثر على الكلام المتواصل
-            // (الفجوات بينه أقل بكتير من العتبة، فالتفريغ العادي مايتغيّرش).
-            const nowFinal = performance.now();
-            if (dgLastFinalAtRef.current && nowFinal - dgLastFinalAtRef.current >= CARRY_STALE_MS) {
-              processWhisperText("", true);
-            }
-            dgLastFinalAtRef.current = nowFinal;
             // اقرأ توقيت + ثقة الكلمات (لجمع التدريب) قبل التفريغ — addOnePttRow بيقراها.
             if (learningGateRef.current) {
               const words: DgWord[] = readDeepgramWords(msg);
