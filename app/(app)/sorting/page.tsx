@@ -773,7 +773,22 @@ export default function SortingPage() {
     // الداتا وترتيبه)، وإلا الـidentity (نفس مرجع الصف في نفس الجلسة).
     let idx = (r.dataIdx != null && r.dataIdx >= 0 && r.dataIdx < orderedRows.length) ? r.dataIdx : -1;
     if (idx < 0 && r.dataRow) idx = orderedRows.indexOf(r.dataRow);
-    if (idx < 0) { alert("تعذّر تحديد موقع السيارة في ملف الداتا."); return; }
+    // احتياطي: نتايج قديمة اتفرزت قبل ميزة «موقعها» (مفيش dataIdx ولا نفس المرجع)
+    // — ندوّر على أول صف داتا بنفس اللوحة المطبّعة.
+    if (idx < 0) {
+      const want = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.dataRow?.[bounds[0]?.plateCol ?? ""] ?? "")));
+      if (want) {
+        let gi = 0;
+        outer:
+        for (const s of sources) {
+          for (const row of s.rows) {
+            if (normalizePlate(bankPlateToArabic(String(row[s.plateCol] ?? ""))) === want) { idx = gi; break outer; }
+            gi++;
+          }
+        }
+      }
+    }
+    if (idx < 0) { alert("تعذّر تحديد موقع السيارة في ملف الداتا. جرّب تعمل «فرز» من جديد."); return; }
     const headers = dataTable?.headers ?? (r.dataRow ? Object.keys(r.dataRow) : Object.keys(orderedRows[idx] ?? {}));
     const locCol = detectLocationColumn(headers);
     if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }

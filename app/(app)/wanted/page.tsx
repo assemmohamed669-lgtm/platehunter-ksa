@@ -86,12 +86,14 @@ export default function WantedPage() {
   // نافذة «موقعها» — جيران السيارة في نفس الشارع من ملف الداتا المرتّب.
   function showNeighbors(r: WantedRow) {
     const nd = wantedNeighborData;
-    if (!nd || r.dataIdx == null) { alert("مفيش بيانات موقع لهذه السيارة في ملف الداتا."); return; }
+    if (!nd) { alert("اعمل «فرز» الأول عشان نحدّد موقع السيارة."); return; }
     if (!nd.locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
-    const target = nd.orderedData[r.dataIdx];
-    if (!target) { alert("تعذّر تحديد موقع السيارة في ملف الداتا."); return; }
-    const ctx = neighborsInSameLocation(nd.orderedData, r.dataIdx, nd.locCol);
-    setNeighborView({ ...ctx, target, plateCol: nd.plateCol, detailCols: nd.detailCols });
+    let idx = (r.dataIdx != null && r.dataIdx >= 0 && r.dataIdx < nd.orderedData.length) ? r.dataIdx : -1;
+    // احتياطي: نتايج قديمة (مفيش dataIdx) — ندوّر على أول صف داتا بنفس اللوحة.
+    if (idx < 0 && r.norm) idx = nd.orderedData.findIndex((row) => normalizePlate(bankPlateToArabic(String(row[nd.plateCol] ?? ""))) === r.norm);
+    if (idx < 0) { alert("تعذّر تحديد موقع السيارة في ملف الداتا. جرّب تعمل «فرز» من جديد."); return; }
+    const ctx = neighborsInSameLocation(nd.orderedData, idx, nd.locCol);
+    setNeighborView({ ...ctx, target: nd.orderedData[idx], plateCol: nd.plateCol, detailCols: nd.detailCols });
   }
 
   // استرجاع النتيجة المخزّنة عند العودة للصفحة.
