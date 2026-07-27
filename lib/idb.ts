@@ -306,12 +306,21 @@ export async function updateGeodata(
 // explicitly deletes them via the trash icon.
 // =====================================================================
 
+// كاش في الذاكرة لملفات الفرز المرفوعة — بيخلّي الملف الكبير (داتا ٤٦٤ ألف صف)
+// يتقري من IndexedDB مرة واحدة في الجلسة ويتشارك (بالمرجع) بين كل الصفحات
+// (الفرز/المطلوب/التشييك) بدل ما كل صفحة تعيد قراءته وتحتفظ بنسخة منفصلة. ده:
+//   • بيشيل تجميد الرجوع لصفحة الفرز (مكانش بيعيد تحميل الـ٤٦٤ ألف صف كل مرة)
+//   • بيخفّف ضغط الذاكرة (نسخة واحدة مشتركة بدل نسختين أو أكتر)
+// كل رفع/تغيير/مسح بيمر على save/deleteUploadedFile فبيحدّث الكاش تلقائياً —
+// فمفيش خطر إن البيانات تبقى قديمة، والمندوب يقدر يغيّر الملف عادي.
+const uploadedFileCache = new Map<string, UploadedFileRecord | null>();
+
 export async function saveUploadedFile(record: UploadedFileRecord): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readwrite");
     tx.objectStore(FILES_STORE).put(record);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => { uploadedFileCache.set(record.key, record); resolve(); };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -320,11 +329,17 @@ export async function getUploadedFile(
   agentId: string,
   slot: UploadedSlot
 ): Promise<UploadedFileRecord | null> {
+  const cacheKey = `${agentId}:${slot}`;
+  if (uploadedFileCache.has(cacheKey)) return uploadedFileCache.get(cacheKey) ?? null;
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readonly");
-    const req = tx.objectStore(FILES_STORE).get(`${agentId}:${slot}`);
-    req.onsuccess = () => resolve((req.result as UploadedFileRecord) ?? null);
+    const req = tx.objectStore(FILES_STORE).get(cacheKey);
+    req.onsuccess = () => {
+      const rec = (req.result as UploadedFileRecord) ?? null;
+      uploadedFileCache.set(cacheKey, rec);
+      resolve(rec);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -334,7 +349,7 @@ export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): P
   return new Promise((resolve, reject) => {
     const tx = db.transaction(FILES_STORE, "readwrite");
     tx.objectStore(FILES_STORE).delete(`${agentId}:${slot}`);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => { uploadedFileCache.set(`${agentId}:${slot}`, null); resolve(); };
     tx.onerror = () => reject(tx.error);
   });
 }
