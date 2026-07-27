@@ -1,5 +1,25 @@
 import { describe, it, expect } from "vitest";
 import { extractVehicleType } from "@/lib/plateParser";
+import { typeToCode, VEHICLE_TYPE_CODES } from "@/lib/vehicleType";
+
+describe("typeToCode — تحويل نوع السيارة للحرف المختصر (و/ف/ت/م)", () => {
+  it("بيسيب الحرف زي ما هو", () => {
+    for (const c of VEHICLE_TYPE_CODES) expect(typeToCode(c)).toBe(c);
+  });
+  it("بيحوّل الكلمة المنطوقة للحرف", () => {
+    expect(typeToCode("ونيت")).toBe("و");
+    expect(typeToCode("فان")).toBe("ف");
+    expect(typeToCode("تاكسي")).toBe("ت");
+    expect(typeToCode("أجرة")).toBe("ت");
+    expect(typeToCode("ملاكي")).toBe("م");
+    expect(typeToCode("خصوصي")).toBe("م");
+  });
+  it("غير معروف أو فاضي → فاضي (فيفضل النص الأصلي عند التصدير)", () => {
+    expect(typeToCode("")).toBe("");
+    expect(typeToCode("دباب")).toBe("");
+    expect(typeToCode("مركونة")).toBe("");
+  });
+});
 
 describe("extractVehicleType", () => {
   it("pulls the type spoken after the plate and returns the rest", () => {

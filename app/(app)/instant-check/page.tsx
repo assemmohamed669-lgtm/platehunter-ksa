@@ -35,6 +35,8 @@ import { saveTrainingSample, saveTrainingSession, countTrainingToday } from "@/l
 import { syncTrainingData } from "@/lib/trainingSync";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
+import VehicleTypeSelect from "@/components/VehicleTypeSelect";
+import { typeToCode } from "@/lib/vehicleType";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -1145,6 +1147,16 @@ export default function InstantCheckPage() {
     setManualDraft((prev) => prev.filter((e) => e.id !== id));
   }
 
+  // اختيار نوع السيارة (حرف مختصر) لصف يدوي — بيتخزّن في row["النوع"].
+  function setManualDraftType(id: string, code: string) {
+    setManualDraft((prev) => prev.map((e) => {
+      if (e.id !== id) return e;
+      const row = { ...e.row };
+      if (code) row["النوع"] = code; else delete row["النوع"];
+      return { ...e, row };
+    }));
+  }
+
   function draftRowText(e: FieldCheckEntry): string {
     const lines = [`🚗 اللوحة: ${e.plate}`];
     for (const [k, v] of Object.entries(e.row)) {
@@ -1429,6 +1441,7 @@ export default function InstantCheckPage() {
     const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
     return fieldEntries.map((e) => {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
+      obj["النوع"] = typeToCode(e.row["النوع"] ?? "") || (e.row["النوع"] ?? "");
       obj["الحي-الشارع"] = e.row["الحي-الشارع"] ?? "";
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
@@ -1876,7 +1889,7 @@ export default function InstantCheckPage() {
         "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
         "رقم اللوحة": r.plate,
         "الحي-الشارع": r.row?.["الحي-الشارع"] ?? "",
-        "النوع": r.vehicleType ?? "",
+        "النوع": typeToCode(r.vehicleType ?? "") || (r.vehicleType ?? ""),
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
       obj["اسم الموقع"] = r.locationName;
@@ -1916,6 +1929,11 @@ export default function InstantCheckPage() {
     const result: PlateResult = { plate: r.plate, normalized: "", found: r.found, matchType: r.matchType, similarity: r.similarity, row: mergedRow };
     const gps = (r.lat != null && r.lng != null) ? { lat: r.lat, lng: r.lng } : undefined;
     await exportToFieldCheck(result, "ptt", gps);
+  }
+
+  // اختيار نوع السيارة (حرف مختصر) لصف صوتي — بيتخزّن في vehicleType.
+  function setPttType(id: string, code: string) {
+    setPttResults((prev) => prev.map((r) => (r.id === id ? { ...r, vehicleType: code || undefined } : r)));
   }
 
   // Remove a single voice row.
@@ -1975,7 +1993,7 @@ export default function InstantCheckPage() {
     const stamp = Date.now();
     const toSave: FieldCheckEntry[] = freshRows.map((r, i) => {
       const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
-      if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
+      if (r.vehicleType) mergedRow["النوع"] = typeToCode(r.vehicleType) || r.vehicleType;
       if (r.locationName) mergedRow["اسم الموقع"] = r.locationName;
       mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
       return {
@@ -2932,7 +2950,7 @@ export default function InstantCheckPage() {
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-center">
                                 {matched && <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">مطلوبة</span>}
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "النوع")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={e.row["النوع"] ?? ""} onChange={(code) => setManualDraftType(e.id, code)} /></td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] ?? ""}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
                               <td className="border-l border-border px-3 py-2">
@@ -3542,7 +3560,7 @@ export default function InstantCheckPage() {
                                   <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
                                 ))}
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.vehicleType || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} /></td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.["ملاحظات"] || "—"}</td>
                               {dynCols.map((h) => (
