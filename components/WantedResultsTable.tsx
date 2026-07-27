@@ -30,6 +30,7 @@ export interface WantedRow {
   mapsLink: string;  // GPS
   lat?: number;
   lng?: number;
+  dataIdx?: number;  // موضع الصف في ملف الداتا المرتّب — لعرض «موقعها» (الجيران)
 }
 
 // ألوان تمييز اللوحات المكررة — كل مجموعة لون مختلف، تشتغل على الفاتح والغامق.
@@ -56,9 +57,11 @@ function rowText(r: WantedRow): string {
 export default function WantedResultsTable({
   rows,
   onDelete,
+  onLocate,
 }: {
   rows: WantedRow[];
   onDelete: (ids: string[]) => void;
+  onLocate?: (r: WantedRow) => void;
 }) {
   const [zoom, setZoom] = useState(3);
   const pinchRef = usePinchZoom(zoom, setZoom);
@@ -119,6 +122,7 @@ export default function WantedResultsTable({
   const allSel = selected.size === rows.length;
   const showBank = rows.some((r) => r.bank && r.bank.trim()); // عمود البنك يظهر لو الشيت فيه بنك
   const showDistrict = rows.some((r) => r.district && r.district.trim()); // عمود الحي يظهر لو موجود
+  const showLocate = !!onLocate; // عمود «موقعها» يظهر لنافذة الداتا بس (الجيران متاحين)
   const px = zoomFontPx(zoom);
   const TH = "border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap";
   const TD = "border-l border-border px-3 py-2 whitespace-nowrap text-ink";
@@ -144,6 +148,7 @@ export default function WantedResultsTable({
             <tr className="bg-surface-2 text-muted">
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
               <th className={TH}>رقم اللوحة</th>
+              {showLocate && <th className="border-b border-l border-border px-2 py-2 text-center font-bold">موقعها</th>}
               <th className={TH}>نوع السيارة</th>
               <th className={TH}>الماركة</th>
               {showBank && <th className={TH}>البنك</th>}
@@ -169,6 +174,16 @@ export default function WantedResultsTable({
                     </button>
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
+                  {showLocate && (
+                    <td className="border-l border-border px-2 py-2 text-center">
+                      {r.dataIdx != null ? (
+                        <button onClick={() => onLocate!(r)} title="شوف موقعها بين الجيران في نفس الشارع"
+                          className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
+                          <MapPin size={12} /> موقعها
+                        </button>
+                      ) : "—"}
+                    </td>
+                  )}
                   <td className={TD}>{r.type || "—"}</td>
                   <td className={TD}>{r.brand || "—"}</td>
                   {showBank && <td className={TD}>{r.bank || "—"}</td>}

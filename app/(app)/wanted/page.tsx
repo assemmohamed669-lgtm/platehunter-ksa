@@ -17,9 +17,13 @@ import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
 import { buildColoredSortExcel } from "@/lib/excel";
 import { resolveCheckColumns, inferVehicleType } from "@/lib/wantedColumns";
 import { resolveResultColumns } from "@/lib/resultColumns";
+import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
+import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
+// الداتا المرتّبة الكاملة + عمود الموقع/اللوحة — لميزة «موقعها» (جيران نفس الشارع).
+let wantedNeighborData: { orderedData: Record<string, string>[]; locCol: string | null; plateCol: string; detailCols: string[] } | null = null;
 
 function findGps(row: Record<string, string>): { lat: number; lng: number } | null {
   for (const v of Object.values(row)) {
@@ -77,6 +81,18 @@ export default function WantedPage() {
   const [error, setError] = useState<string | null>(null);
   const [dataRows, setDataRows] = useState<WantedRow[]>([]);
   const [recordRows, setRecordRows] = useState<WantedRow[]>([]);
+  const [neighborView, setNeighborView] = useState<NeighborsView | null>(null);
+
+  // نافذة «موقعها» — جيران السيارة في نفس الشارع من ملف الداتا المرتّب.
+  function showNeighbors(r: WantedRow) {
+    const nd = wantedNeighborData;
+    if (!nd || r.dataIdx == null) { alert("مفيش بيانات موقع لهذه السيارة في ملف الداتا."); return; }
+    if (!nd.locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
+    const target = nd.orderedData[r.dataIdx];
+    if (!target) { alert("تعذّر تحديد موقع السيارة في ملف الداتا."); return; }
+    const ctx = neighborsInSameLocation(nd.orderedData, r.dataIdx, nd.locCol);
+    setNeighborView({ ...ctx, target, plateCol: nd.plateCol, detailCols: nd.detailCols });
+  }
 
   // استرجاع النتيجة المخزّنة عند العودة للصفحة.
   useEffect(() => {
@@ -142,15 +158,30 @@ export default function WantedPage() {
       // الداتا (مناطق تحت بعضها).
       const dRows: WantedRow[] = [];
       let di = 0;
+      // قائمة الداتا المرتّبة كاملة (كل الصفوف) — لميزة «موقعها» (جيران نفس الشارع).
+      // dataIdx على كل صف مطابق = موضعه هنا. عمود الموقع/اللوحة من أول ملف داتا.
+      const orderedData: Record<string, string>[] = [];
+      let neighborLocCol: string | null = null;
+      let neighborPlateCol = "";
+      let neighborDetailCols: string[] = [];
       for (const rec of allDataRecs) {
         const dataCol = detectPlateColumn(rec.headers, rec.rows);
         if (!dataCol) continue;
+        if (!neighborPlateCol) {
+          neighborPlateCol = dataCol;
+          neighborLocCol = detectLocationColumn(rec.headers);
+          const t = rec.headers.find((h) => /نوع|طراز|ماركة|صانع|vehicle|model|make/i.test(h));
+          const c = rec.headers.find((h) => /لون|colou?r/i.test(h));
+          neighborDetailCols = [t, c].filter((h): h is string => !!h && h !== dataCol);
+        }
         // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/حي/GPS/لون/سنة/تاريخ) — لكل ملف.
         const resolved = resolveResultColumns(rec.headers, rec.rows, dataCol);
         const srcOf = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
         const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address"), distSrc = srcOf("district");
         const gpsSrc = srcOf("gps"), colorSrc = srcOf("color"), yearSrc = srcOf("year"), dateSrc = srcOf("date");
         for (const row of rec.rows) {
+          const gIdx = orderedData.length;
+          orderedData.push(row);
           const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
           if (!norm || !wanted.has(norm)) continue;
           const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
@@ -178,9 +209,11 @@ export default function WantedPage() {
             mapsLink,
             lat: coords?.lat,
             lng: coords?.lng,
+            dataIdx: gIdx,
           });
         }
       }
+      wantedNeighborData = { orderedData, locCol: neighborLocCol, plateCol: neighborPlateCol, detailCols: neighborDetailCols };
 
       // (٢) مطابقة على شيت السجلات (field_check).
       const rRows: WantedRow[] = [];
@@ -229,14 +262,14 @@ export default function WantedPage() {
     setRecordRows((prev) => { const next = prev.filter((r) => !s.has(r.id)); persist(dataRows, next, true); return next; });
   }
 
-  function windowBlock(title: string, rows: WantedRow[], onDelete: (ids: string[]) => void, clearAll: () => void) {
+  function windowBlock(title: string, rows: WantedRow[], onDelete: (ids: string[]) => void, clearAll: () => void, onLocate?: (r: WantedRow) => void) {
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-3" dir="rtl">
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold text-ink">{title}</span>
           <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-bold text-brand">{rows.length} لوحة</span>
         </div>
-        <WantedResultsTable rows={rows} onDelete={onDelete} />
+        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} />
         {rows.length > 0 && (
           <div className="flex flex-col gap-2 pt-1">
             {/* زرّين تحت بعض: مشاركة النتيجة (قائمة: فتح إكسيل / واتساب / صورة) + مسح.
@@ -279,13 +312,15 @@ export default function WantedPage() {
           {windowBlock("مطلوبين في الداتا", dataRows, deleteFromData, () => {
             if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${dataRows.length} لوحة من النافذة دي؟`)) return;
             setDataRows([]); persist([], recordRows, true);
-          })}
+          }, showNeighbors)}
           {windowBlock("مطلوبين في السجلات", recordRows, deleteFromRecords, () => {
             if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${recordRows.length} لوحة من النافذة دي؟`)) return;
             setRecordRows([]); persist(dataRows, [], true);
           })}
         </>
       )}
+
+      <LocationNeighborsModal view={neighborView} onClose={() => setNeighborView(null)} />
     </div>
   );
 }

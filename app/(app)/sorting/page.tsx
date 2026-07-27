@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
-  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus,
+  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -20,6 +20,8 @@ import { resolveMergedResultColumns, type ResultColumnSource, type MergedResultC
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
+import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
+import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
@@ -731,6 +733,8 @@ export default function SortingPage() {
     setDataBoxOpen(true);
   }
 
+  const [neighborView, setNeighborView] = useState<NeighborsView | null>(null);
+
   // كل مصادر الداتا (الأساسية + الإضافية) — كل مصدر بعمود لوحته. تُستخدم في كل
   // مسارات الفرز عشان الفرز يتم على كل ملفات الداتا مدموجة.
   function collectDataSources(): Array<{ rows: Record<string, string>[]; plateCol: string }> {
@@ -746,6 +750,37 @@ export default function SortingPage() {
       srcs.push({ rows: ed.table.rows, plateCol });
     }
     return srcs;
+  }
+
+  // ── نافذة «موقعها» — جيران السيارة في نفس الموقع من ملف الداتا المرتّب ──────
+  function pickNeighborDetailCols(headers: string[], plateCol: string): string[] {
+    const type = headers.find((h) => /نوع|طراز|ماركة|صانع|vehicle|model|make/i.test(h));
+    const color = headers.find((h) => /لون|colou?r/i.test(h));
+    return [type, color].filter((h): h is string => !!h && h !== plateCol);
+  }
+
+  function showNeighbors(r: MatchResult) {
+    if (r.dataIdx == null && !r.dataRow) { alert("مفيش بيانات موقع لهذه السيارة في ملف الداتا (اتطابقت من السجلات مش الداتا)."); return; }
+    const sources = collectDataSources();
+    // نبني قائمة مرتّبة واحدة من كل ملفات الداتا (نفس ترتيب التفريغ).
+    const orderedRows: Record<string, string>[] = [];
+    const bounds: { start: number; plateCol: string }[] = [];
+    for (const s of sources) {
+      bounds.push({ start: orderedRows.length, plateCol: s.plateCol });
+      for (const row of s.rows) orderedRows.push(row);
+    }
+    // الموضع: dataIdx المخزّن وقت الفرز (بيصمد بعد إعادة الفتح لأن نفس ملف
+    // الداتا وترتيبه)، وإلا الـidentity (نفس مرجع الصف في نفس الجلسة).
+    let idx = (r.dataIdx != null && r.dataIdx >= 0 && r.dataIdx < orderedRows.length) ? r.dataIdx : -1;
+    if (idx < 0 && r.dataRow) idx = orderedRows.indexOf(r.dataRow);
+    if (idx < 0) { alert("تعذّر تحديد موقع السيارة في ملف الداتا."); return; }
+    const headers = dataTable?.headers ?? (r.dataRow ? Object.keys(r.dataRow) : Object.keys(orderedRows[idx] ?? {}));
+    const locCol = detectLocationColumn(headers);
+    if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
+    let plateCol = sources[0]?.plateCol ?? "";
+    for (const b of bounds) if (b.start <= idx) plateCol = b.plateCol;
+    const ctx = neighborsInSameLocation(orderedRows, idx, locCol);
+    setNeighborView({ ...ctx, target: orderedRows[idx], plateCol, detailCols: pickNeighborDetailCols(headers, plateCol) });
   }
 
   // الأعمدة المختارة افتراضياً لمربع إضافي (نفس منطق المربع الأساسي): للداتا =
@@ -854,6 +889,9 @@ export default function SortingPage() {
       const matches: MatchResult[] = [];
       const CHUNK = 16000;
       // نلف على كل ملفات الداتا (الأساسي + الإضافية) — كل واحد بعمود لوحته.
+      // dataBase = بداية الفهرس العام للملف الحالي (نفس ترتيب collectDataSources)
+      // عشان dataIdx يطابق الترتيب المستخدم في نافذة «موقعها».
+      let dataBase = 0;
       for (const src of collectDataSources()) {
         const rows = src.rows;
         const pc = src.plateCol;
@@ -864,10 +902,11 @@ export default function SortingPage() {
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
             const hit = refIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm });
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: dataBase + j });
           }
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
+        dataBase += rows.length;
       }
       let finalTashyeek: TashyeekResultRow[] | null = null;
       if (tashyeekTable && tashyeekPlateCol) {
@@ -1611,6 +1650,7 @@ export default function SortingPage() {
                   <tr className="bg-surface-2 text-muted">
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها</th>
                     {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
@@ -1638,6 +1678,12 @@ export default function SortingPage() {
                           </button>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
+                        <td className="border-l border-border px-2 py-2 text-center">
+                          <button onClick={() => showNeighbors(r)} title="شوف موقعها بين الجيران في نفس الشارع"
+                            className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
+                            <MapPin size={12} /> موقعها
+                          </button>
+                        </td>
                         {allResultCols.map((rc) => {
                           const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
                           return (
@@ -2214,6 +2260,8 @@ export default function SortingPage() {
             </button>
           </>
         )}
+
+        <LocationNeighborsModal view={neighborView} onClose={() => setNeighborView(null)} />
       </div>
     </div>
   );
