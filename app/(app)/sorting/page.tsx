@@ -754,9 +754,11 @@ export default function SortingPage() {
 
   // ── نافذة «موقعها» — جيران السيارة في نفس الموقع من ملف الداتا المرتّب ──────
   function pickNeighborDetailCols(headers: string[], plateCol: string): string[] {
-    const type = headers.find((h) => /نوع|طراز|ماركة|صانع|vehicle|model|make/i.test(h));
-    const color = headers.find((h) => /لون|colou?r/i.test(h));
-    return [type, color].filter((h): h is string => !!h && h !== plateCol);
+    // العمودان جنب اللوحة في نافذة «موقعها»: نوع السيارة ثم العنوان (عنوان كل
+    // لوحة زي ما هو مسجّل في الداتا).
+    const type = headers.find((h) => /نوع|طراز/i.test(h)) ?? headers.find((h) => /ماركة|صانع|vehicle|model|make/i.test(h));
+    const address = headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h));
+    return [type, address].filter((h): h is string => !!h && h !== plateCol);
   }
 
   function showNeighbors(r: MatchResult) {
@@ -1665,7 +1667,7 @@ export default function SortingPage() {
                   <tr className="bg-surface-2 text-muted">
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها</th>
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
                     {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}

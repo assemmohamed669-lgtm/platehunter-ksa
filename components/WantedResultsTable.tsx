@@ -148,7 +148,7 @@ export default function WantedResultsTable({
             <tr className="bg-surface-2 text-muted">
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
               <th className={TH}>رقم اللوحة</th>
-              {showLocate && <th className="border-b border-l border-border px-2 py-2 text-center font-bold">موقعها</th>}
+              {showLocate && <th className="border-b border-l border-border px-2 py-2 text-center font-bold">موقعها في الداتا</th>}
               <th className={TH}>نوع السيارة</th>
               <th className={TH}>الماركة</th>
               {showBank && <th className={TH}>البنك</th>}
