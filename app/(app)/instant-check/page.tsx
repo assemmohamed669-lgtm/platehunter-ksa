@@ -1039,11 +1039,22 @@ export default function InstantCheckPage() {
     return [...list].sort((a, b) => distOf(a) - distOf(b));
   }
 
+  // اسم «الحي-الشارع» من إحداثيات — بنفس صيغة خانة حالة الـGPS (شارع - حي).
+  // بيتخزّن جوّه row["الحي-الشارع"] فبيظهر في كل نافذة تسجيل وبيتزامن تلقائياً
+  // (بيركب في عمود extra مع باقي بيانات الصف — من غير أي تعديل على السيرفر).
+  async function regionTextFor(lat: number, lng: number): Promise<string> {
+    try {
+      const a = await reverseGeocode(lat, lng);
+      return [a.street, a.district].filter((s) => s && s !== "غير معروف").join(" - ");
+    } catch { return ""; }
+  }
+
   // Fetch GPS for a hit and stamp it (or mark gpsError on failure)
   async function fetchGpsForHit(hitId: string) {
     const gps = await getCurrentGps();
     if (gps) {
-      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : h));
+      const region = await regionTextFor(gps.lat, gps.lng);
+      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...h.row, "الحي-الشارع": region } : h.row } : h));
     } else {
       setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
     }
@@ -1059,7 +1070,8 @@ export default function InstantCheckPage() {
   async function fetchGpsForPttRow(id: string) {
     const gps = await getCurrentGps();
     if (gps) {
-      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) } : r));
+      const region = await regionTextFor(gps.lat, gps.lng);
+      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...(r.row ?? {}), "الحي-الشارع": region } : r.row } : r));
     } else {
       setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r));
     }
@@ -1098,7 +1110,8 @@ export default function InstantCheckPage() {
     setManualDraft((prev) => [base, ...prev]);
     const gps = await getCurrentGps();
     if (gps) {
-      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
+      const region = await regionTextFor(gps.lat, gps.lng);
+      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...base.row, "الحي-الشارع": region } : base.row };
       setManualDraft((prev) => prev.map((e) => (e.id === id ? withGps : e)));
     }
 
@@ -1316,7 +1329,8 @@ export default function InstantCheckPage() {
     // intentionally NOT stored on the sheet.
     const gps = await gpsPromise;
     if (gps) {
-      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng) };
+      const region = await regionTextFor(gps.lat, gps.lng);
+      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...base.row, "الحي-الشارع": region } : base.row };
       setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
       await saveFieldCheckEntry(withGps);
     }
@@ -1415,6 +1429,7 @@ export default function InstantCheckPage() {
     const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
     return fieldEntries.map((e) => {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
+      obj["الحي-الشارع"] = e.row["الحي-الشارع"] ?? "";
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
       obj["GPS"] = e.mapsLink ?? "";
@@ -1545,7 +1560,7 @@ export default function InstantCheckPage() {
     setChDate(new Date().toISOString());
     void getCurrentGps().then((g) => {
       setCameraGps(g);
-      if (g) reverseGeocode(g.lat, g.lng).then((a) => setChRegion(a.district || a.street || "")).catch(() => {});
+      if (g) regionTextFor(g.lat, g.lng).then((t) => { if (t) setChRegion(t); }).catch(() => {});
     });
     if (match.found) {
       fireWantedAlert({ plate: vin, matchType: match.matchType === "exact" ? "exact" : "fuzzy", similarity: match.similarity, info: match.row ? chassisRowToInfo(match.row) : [] });
@@ -1860,6 +1875,7 @@ export default function InstantCheckPage() {
       const obj: Record<string, unknown> = {
         "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
         "رقم اللوحة": r.plate,
+        "الحي-الشارع": r.row?.["الحي-الشارع"] ?? "",
         "النوع": r.vehicleType ?? "",
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
@@ -2889,6 +2905,7 @@ export default function InstantCheckPage() {
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
@@ -2915,6 +2932,7 @@ export default function InstantCheckPage() {
                                   {matched && <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">مطلوبة</span>}
                                 </span>
                               </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] ?? ""}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "النوع")}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{draftCell(e, "اسم الموقع")}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
@@ -3471,6 +3489,7 @@ export default function InstantCheckPage() {
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                             <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                             {dynCols.map((h) => (
                               <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
@@ -3526,6 +3545,7 @@ export default function InstantCheckPage() {
                                   </span>
                                 )}
                               </td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.vehicleType || "—"}</td>
                               {dynCols.map((h) => (
                                 <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
@@ -3650,6 +3670,7 @@ export default function InstantCheckPage() {
                         <tr className="bg-surface-2 text-muted">
                           <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
                           {dynCols.map((h) => (
                             <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
@@ -3670,6 +3691,9 @@ export default function InstantCheckPage() {
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
                               {hit.plate}
+                            </td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
+                              {hit.row["الحي-الشارع"] || "—"}
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap">
                               {hit.found ? (
@@ -3903,6 +3927,7 @@ export default function InstantCheckPage() {
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-surface-2 text-muted">
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                       {dynCols.map((h) => (
                         <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                       ))}
@@ -3940,6 +3965,7 @@ export default function InstantCheckPage() {
                             </span>
                           )}
                         </td>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] || "—"}</td>
                         {dynCols.map((h) => (
                           <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>
                         ))}
