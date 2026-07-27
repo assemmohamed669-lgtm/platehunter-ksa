@@ -753,12 +753,13 @@ export default function SortingPage() {
   }
 
   // ── نافذة «موقعها» — جيران السيارة في نفس الموقع من ملف الداتا المرتّب ──────
-  function pickNeighborDetailCols(headers: string[], plateCol: string): string[] {
+  function pickNeighborDetailCols(headers: string[], plateCol: string, locCol: string | null): string[] {
     // العمودان جنب اللوحة في نافذة «موقعها»: نوع السيارة ثم العنوان (عنوان كل
-    // لوحة زي ما هو مسجّل في الداتا).
+    // لوحة زي ما هو في الداتا). لو مفيش عمود عنوان صريح، نستخدم عمود الموقع
+    // نفسه (اللي بنجمّع بيه) لأنه اللي فيه بيانات الموقع فعلاً.
     const type = headers.find((h) => /نوع|طراز/i.test(h)) ?? headers.find((h) => /ماركة|صانع|vehicle|model|make/i.test(h));
-    const address = headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h));
-    return [type, address].filter((h): h is string => !!h && h !== plateCol);
+    const address = headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h)) ?? locCol ?? undefined;
+    return [...new Set([type, address].filter((h): h is string => !!h && h !== plateCol))];
   }
 
   function showNeighbors(r: MatchResult) {
@@ -797,7 +798,7 @@ export default function SortingPage() {
     let plateCol = sources[0]?.plateCol ?? "";
     for (const b of bounds) if (b.start <= idx) plateCol = b.plateCol;
     const ctx = neighborsInSameLocation(orderedRows, idx, locCol);
-    setNeighborView({ ...ctx, target: orderedRows[idx], plateCol, detailCols: pickNeighborDetailCols(headers, plateCol) });
+    setNeighborView({ ...ctx, target: orderedRows[idx], plateCol, detailCols: pickNeighborDetailCols(headers, plateCol, locCol) });
   }
 
   // الأعمدة المختارة افتراضياً لمربع إضافي (نفس منطق المربع الأساسي): للداتا =

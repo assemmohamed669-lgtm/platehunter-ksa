@@ -172,10 +172,11 @@ export default function WantedPage() {
         if (!neighborPlateCol) {
           neighborPlateCol = dataCol;
           neighborLocCol = detectLocationColumn(rec.headers);
-          // العمودان جنب اللوحة في نافذة «موقعها»: نوع السيارة ثم العنوان.
+          // العمودان جنب اللوحة في نافذة «موقعها»: نوع السيارة ثم العنوان. لو مفيش
+          // عمود عنوان صريح، نستخدم عمود الموقع نفسه (اللي فيه بيانات الموقع فعلاً).
           const t = rec.headers.find((h) => /نوع|طراز/i.test(h)) ?? rec.headers.find((h) => /ماركة|صانع|vehicle|model|make/i.test(h));
-          const addr = rec.headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h));
-          neighborDetailCols = [t, addr].filter((h): h is string => !!h && h !== dataCol);
+          const addr = rec.headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h)) ?? neighborLocCol ?? undefined;
+          neighborDetailCols = [...new Set([t, addr].filter((h): h is string => !!h && h !== dataCol))];
         }
         // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/حي/GPS/لون/سنة/تاريخ) — لكل ملف.
         const resolved = resolveResultColumns(rec.headers, rec.rows, dataCol);
