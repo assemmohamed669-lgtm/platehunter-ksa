@@ -3,12 +3,11 @@
 /**
  * نافذة «موقعها» — بتوري السيارة المطلوبة معلَّمة بلون + ٥ سيارات قبلها و٥ بعدها
  * في نفس الموقع (الشارع/الحي) من ملف الداتا، عشان المندوب يحدد مكانها بالظبط
- * من خلال جيرانها. لو أول/آخر الموقع بتظهر علامة واضحة.
+ * من خلال جيرانها. بتظهر كجدول مضغوط بنفس شكل نافذة نتيجة الفرز.
  */
 
 import { useEffect } from "react";
 import { X, MapPin, ArrowUp, ArrowDown } from "lucide-react";
-import PlateBadge from "@/components/PlateBadge";
 import { pushBackHandler } from "@/lib/backStack";
 
 export interface NeighborsView {
@@ -19,35 +18,8 @@ export interface NeighborsView {
   isFirstInLocation: boolean;
   isLastInLocation: boolean;
   plateCol: string;
-  /** أعمدة مختصرة تُعرض تحت كل لوحة للتعريف البصري (نوع/لون…). */
+  /** أعمدة مختصرة تُعرض جنب اللوحة للتعريف البصري (نوع/لون…). */
   detailCols: string[];
-}
-
-function detailsText(row: Record<string, string>, cols: string[]): string {
-  return cols.map((c) => String(row[c] ?? "").trim()).filter(Boolean).join(" • ");
-}
-
-function NeighborRow({
-  row, plateCol, detailCols, highlight,
-}: { row: Record<string, string>; plateCol: string; detailCols: string[]; highlight?: boolean }) {
-  const details = detailsText(row, detailCols);
-  return (
-    <div
-      className={
-        highlight
-          ? "flex items-center gap-3 rounded-xl border-2 border-brand bg-brand/15 px-3 py-2"
-          : "flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2"
-      }
-    >
-      <PlateBadge value={String(row[plateCol] ?? "")} size="sm" />
-      {details && <span className="text-xs text-muted truncate">{details}</span>}
-      {highlight && (
-        <span className="mr-auto flex items-center gap-1 rounded-full bg-brand px-2 py-0.5 text-[10px] font-bold text-night">
-          <MapPin size={11} /> السيارة المطلوبة
-        </span>
-      )}
-    </div>
-  );
 }
 
 export default function LocationNeighborsModal({ view, onClose }: { view: NeighborsView | null; onClose: () => void }) {
@@ -55,6 +27,11 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
   if (!view) return null;
 
   const { locationName, before, target, after, isFirstInLocation, isLastInLocation, plateCol, detailCols } = view;
+  const list: { row: Record<string, string>; isTarget: boolean }[] = [
+    ...before.map((row) => ({ row, isTarget: false })),
+    { row: target, isTarget: true },
+    ...after.map((row) => ({ row, isTarget: false })),
+  ];
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 sm:items-center" onClick={onClose}>
@@ -72,7 +49,6 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
         </div>
 
         <div className="flex flex-1 flex-col gap-2 overflow-auto p-3">
-          {/* علامة أول الموقع */}
           {isFirstInLocation ? (
             <p className="flex items-center justify-center gap-1 rounded-lg bg-surface-2 py-1.5 text-[11px] font-bold text-muted">
               <ArrowUp size={12} /> دي أول سيارة في الموقع — مفيش قبلها
@@ -81,17 +57,35 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
             <p className="text-center text-[11px] text-muted">قبلها {before.length} {before.length === 1 ? "سيارة" : "سيارات"} بس في نفس الموقع</p>
           ) : null}
 
-          {before.map((row, i) => (
-            <NeighborRow key={`b-${i}`} row={row} plateCol={plateCol} detailCols={detailCols} />
-          ))}
+          <div className="overflow-auto rounded-xl border border-border">
+            <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-surface-2 text-muted">
+                  <th className="border-b border-l border-border px-2 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                  {detailCols.map((c) => (
+                    <th key={c} className="border-b border-l border-border px-2 py-1.5 text-right font-bold whitespace-nowrap">{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {list.map(({ row, isTarget }, i) => (
+                  <tr key={i} className={isTarget ? "bg-brand/25 border-b border-border" : "border-b border-border"}>
+                    <td className="border-l border-border px-2 py-1.5 whitespace-nowrap font-bold text-ink">
+                      <span className="inline-flex items-center gap-1">
+                        {isTarget && <MapPin size={11} className="shrink-0 text-brand" />}
+                        {String(row[plateCol] ?? "") || "—"}
+                        {isTarget && <span className="rounded-full bg-brand px-1.5 py-0.5 text-[9px] font-bold text-night leading-none">المطلوبة</span>}
+                      </span>
+                    </td>
+                    {detailCols.map((c) => (
+                      <td key={c} className="border-l border-border px-2 py-1.5 whitespace-nowrap text-ink">{String(row[c] ?? "").trim() || "—"}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-          <NeighborRow row={target} plateCol={plateCol} detailCols={detailCols} highlight />
-
-          {after.map((row, i) => (
-            <NeighborRow key={`a-${i}`} row={row} plateCol={plateCol} detailCols={detailCols} />
-          ))}
-
-          {/* علامة آخر الموقع */}
           {isLastInLocation ? (
             <p className="flex items-center justify-center gap-1 rounded-lg bg-surface-2 py-1.5 text-[11px] font-bold text-muted">
               <ArrowDown size={12} /> دي آخر سيارة في الموقع — مفيش بعدها
