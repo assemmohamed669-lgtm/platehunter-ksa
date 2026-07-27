@@ -2905,9 +2905,9 @@ export default function InstantCheckPage() {
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
-                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
@@ -2927,14 +2927,13 @@ export default function InstantCheckPage() {
                                 </button>
                               </td>
                               <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`}>
-                                <span className="inline-flex items-center gap-1.5">
-                                  {draftCell(e, "plate")}
-                                  {matched && <span className="rounded-full bg-brand/20 px-1 py-0.5 text-[9px] font-bold text-brand leading-none">مطلوبة</span>}
-                                </span>
+                                {draftCell(e, "plate")}
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] ?? ""}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-center">
+                                {matched && <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">مطلوبة</span>}
+                              </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "النوع")}</td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{draftCell(e, "اسم الموقع")}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] ?? ""}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
                               <td className="border-l border-border px-3 py-2">
                                 {e.mapsLink ? (
@@ -3487,14 +3486,14 @@ export default function InstantCheckPage() {
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
-                            <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             {dynCols.map((h) => (
                               <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                             ))}
-                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الموقع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                             <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
@@ -3507,15 +3506,6 @@ export default function InstantCheckPage() {
                                 <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
                                   {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
-                              </td>
-                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
-                                {!r.found ? (
-                                  <span className="inline-flex items-center gap-0.5 text-muted"><XCircle size={13} /> غير مطلوبة</span>
-                                ) : r.matchType === "fuzzy" ? (
-                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} /> مطلوبة؟ {r.similarity}%</span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
-                                )}
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
                                 {editingPttId === r.id ? (
@@ -3545,12 +3535,19 @@ export default function InstantCheckPage() {
                                   </span>
                                 )}
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
+                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                                {r.found && (r.matchType === "fuzzy" ? (
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} /> مطلوبة؟ {r.similarity}%</span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
+                                ))}
+                              </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.vehicleType || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.["ملاحظات"] || "—"}</td>
                               {dynCols.map((h) => (
                                 <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
                               ))}
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.locationName || "—"}</td>
                               <td className="border-l border-border px-3 py-2">
                                 {r.mapsLink ? (
                                   <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
@@ -3670,8 +3667,10 @@ export default function InstantCheckPage() {
                         <tr className="bg-surface-2 text-muted">
                           <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
-                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
+                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                           {dynCols.map((h) => (
                             <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                           ))}
@@ -3692,18 +3691,16 @@ export default function InstantCheckPage() {
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
                               {hit.plate}
                             </td>
-                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
-                              {hit.row["الحي-الشارع"] || "—"}
-                            </td>
-                            <td className="border-l border-border px-3 py-2 whitespace-nowrap">
-                              {hit.found ? (
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-center">
+                              {hit.found && (
                                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${hit.matchType === "fuzzy" ? "bg-alert/15 text-alert" : "bg-brand/15 text-brand"}`}>
                                   {hit.matchType === "fuzzy" ? `مطلوبة؟ ${hit.similarity ?? ""}%` : "مطلوبة"}
                                 </span>
-                              ) : (
-                                <span className="rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted">غير مطلوبة</span>
                               )}
                             </td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{hit.row["النوع"] || "—"}</td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{hit.row["الحي-الشارع"] || "—"}</td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{hit.row["ملاحظات"] || "—"}</td>
                             {dynCols.map((h) => (
                               <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                                 {hit.row[h] || "—"}
@@ -3790,11 +3787,11 @@ export default function InstantCheckPage() {
               <thead>
                 <tr className="text-muted">
                   <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم الشاص</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">نوع السيارة</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">ملاحظات</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">المنطقة</th>
                   <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الحالة</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الموقع</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">نوع السيارة</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">الحي-الشارع</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">ملاحظات</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">GPS</th>
                   <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">التاريخ</th>
                   <th></th>
                 </tr>
@@ -3803,10 +3800,10 @@ export default function InstantCheckPage() {
                 {chassisRecords.slice(0, 200).map((r) => (
                   <tr key={r.id} className={`border-t border-border ${r.found ? "bg-danger/10" : ""}`}>
                     <td className="whitespace-nowrap px-2 py-1.5 font-mono" dir="ltr">{r.chassis}</td>
+                    <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : ""}`}>{r.found ? "مطلوب" : ""}</td>
                     <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.vehicleType || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { vehicleType: v }))} /></td>
-                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.notes || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { notes: v }))} /></td>
                     <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.region || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { region: v }))} /></td>
-                    <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : "text-brand"}`}>{r.found ? "مطلوب" : "غير مطلوب"}</td>
+                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.notes || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { notes: v }))} /></td>
                     <td className="px-2 py-1.5 text-center">
                       {(r.mapsLink || (r.lat != null && r.lng != null)) ? (
                         <a href={r.mapsLink || toMapsLink(r.lat as number, r.lng as number)} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><MapPin size={15} /></a>
