@@ -196,3 +196,18 @@ describe("sessionParser — الأحداث والتسلسل", () => {
     expect(recs[1].notes).not.toContain("جراج");
   });
 });
+
+// لوحة برقم ناقص (المحرك سقّط رقم) لازم تتعلّم uncertain — عشان التشييك الصوتي
+// يعرضها «راجع» بدل ما يحشي صفر ويعرضها كإنها مؤكّدة. (اللوحة رقم ٤ في اختبار
+// المستخدم: «قاف كاف طا خمسة خمسة زيرو» = ٣ أرقام بس بدل ٤ → المفروض uncertain.)
+describe("رقم ناقص → uncertain (ممنوع الإسقاط الصامت)", () => {
+  it("٣ أرقام بس بيتعلّموا uncertain", () => {
+    const recs = batch("قاف كاف طا خمسة خمسة زيرو");
+    expect(recs.length).toBeGreaterThan(0);
+    expect(recs[0].uncertain).toBe(true);
+  });
+  it("٤ أرقام كاملة مش uncertain", () => {
+    const recs = batch("قاف كاف طا خمسة خمسة زيرو زيرو");
+    expect(recs[0].uncertain).toBeFalsy();
+  });
+});

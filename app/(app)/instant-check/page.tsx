@@ -1814,7 +1814,7 @@ export default function InstantCheckPage() {
   // مطلوبة. مشترك بين المحرك المحلي (لوحة لكل نتيجة) ومسار Whisper (كل لوحة
   // بيطلّعها sessionParser من المقطع). idx بيميّز الـ id لو أكتر من لوحة اتضافت
   // في نفس الملّي ثانية.
-  function addOnePttRow(rawPlate: string, vehicleType?: string, idx = 0) {
+  function addOnePttRow(rawPlate: string, vehicleType?: string, idx = 0, uncertain?: boolean) {
     if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي لوحة لحد ما يكمّل
     // التعلّم التلقائي الحي (blend/confusions) **متوقّف** — كان بيلوّث النتايج
     // بتصحيحات غير مُدقّقة (أخطاء غريبة زي «الا5121»). التفريغ دلوقتي = Deepgram +
@@ -1846,7 +1846,7 @@ export default function InstantCheckPage() {
       similarity: result.similarity,
       row: result.row,
       vehicleType,
-      needsReview: !isComplete, // مش لوحة كاملة (٣+٤) → علامة «راجع»
+      needsReview: !isComplete || !!uncertain, // مش كاملة (٣+٤) أو المحلّل شكّك (رقم ناقص اتحشى صفر) → «راجع»
       locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
       // توقيت + ثقة من آخر نتيجة نهائية (Deepgram) — لجمع التدريب فقط (لو المفتاح شغّال).
@@ -2186,7 +2186,7 @@ export default function InstantCheckPage() {
     if (text.trim()) { setPttLiveText(text.trim()); logRawTranscript(text); }
     const res = parseSessionChunk(text, pttSessionStateRef.current, { final });
     pttSessionStateRef.current = res.state;
-    res.records.forEach((r) => addOnePttRow(r.plate, r.vehicleType, pttRowIdxRef.current++));
+    res.records.forEach((r) => addOnePttRow(r.plate, r.vehicleType, pttRowIdxRef.current++, r.uncertain));
   }
 
   // مسار Deepgram: بث صوت مباشر (WebSocket) لـ Deepgram nova-3 بلهجة مصرية
