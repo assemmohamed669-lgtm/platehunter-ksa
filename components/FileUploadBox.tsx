@@ -17,6 +17,13 @@ interface Props {
   showReplaceButtons?: boolean;
   /** When true: file is fixed — no تغيير/مسح, only a download button */
   fixed?: boolean;
+  /**
+   * ملفات الداتا الكبيرة: لو الحجم أكبر من العتبة دي، بدل ما نفتح الملف في الذاكرة
+   * (اللي بيعمل crash على iOS) نستدعي onLargeFile اللي بيقراه على دفعات ويخزّنه.
+   * بيتمرّر بس لصندوق الداتا في صفحة الفرز — باقي الصناديق مابتتأثرش.
+   */
+  largeFileThresholdBytes?: number;
+  onLargeFile?: (file: File, onProgress: (rows: number) => void) => Promise<void>;
 }
 
 export default function FileUploadBox({
@@ -29,6 +36,8 @@ export default function FileUploadBox({
   plateCount = null,
   showReplaceButtons = false,
   fixed = false,
+  largeFileThresholdBytes,
+  onLargeFile,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
@@ -42,9 +51,28 @@ export default function FileUploadBox({
   const [allSheets, setAllSheets] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
   const [lastFile, setLastFile] = useState<File | null>(null);
+  // تقدّم استيراد الملف الكبير (عدد الصفوف المقروءة على دفعات) — null = مفيش استيراد.
+  const [importRows, setImportRows] = useState<number | null>(null);
 
   async function handleFile(file: File, forcedSheet?: string) {
     setError(null);
+    // ملف داتا كبير → قراءة على دفعات وتخزين على الجهاز (بدل فتحه في الذاكرة).
+    if (onLargeFile && largeFileThresholdBytes != null && file.size > largeFileThresholdBytes && !forcedSheet) {
+      setLoading(true);
+      setImportRows(0);
+      try {
+        await onLargeFile(file, (rows) => setImportRows(rows));
+        setLastFile(file);
+        setPendingFile(null);
+        setNeedsPassword(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "تعذّر استيراد الملف الكبير.");
+      } finally {
+        setLoading(false);
+        setImportRows(null);
+      }
+      return;
+    }
     setLoading(true);
     try {
       const table = await parseExcelFile(file, undefined, forcedSheet);
@@ -232,7 +260,9 @@ export default function FileUploadBox({
         className={`relative flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-3 text-sm text-muted transition hover:border-primary hover:text-primary ${loading ? "pointer-events-none opacity-60" : ""}`}
       >
         <Upload size={16} />
-        {loading ? "جارٍ القراءة..." : "اختر ملف Excel"}
+        {importRows != null
+          ? `جاري التحضير... ${importRows.toLocaleString("en-US")} صف`
+          : loading ? "جارٍ القراءة..." : "اختر ملف Excel"}
         <input
           ref={inputRef}
           type="file"

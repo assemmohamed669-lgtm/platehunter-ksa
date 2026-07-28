@@ -21,6 +21,7 @@ import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSor
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
+import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, lookupByPlate, type DataMeta } from "@/lib/dataStore";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -51,6 +52,10 @@ type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Rec
 // كاش على مستوى الموديول — بيعيش طول ما التطبيق مفتوح (عبر التنقّل بين الصفحات)
 // حتى لو localStorage فشل (نتايج كبيرة تتعدّى حد المساحة). الاسترجاع بيفضّله على
 // localStorage عشان الفرز مايضيعش لمجرد إنك رحت صفحة تانية ورجعت.
+// فوق الحجم ده: ملف الداتا يتقرا على دفعات ويتخزّن على الجهاز (بدل الذاكرة) عشان
+// مايعملش crash على iOS. تحته: نفس المسار القديم بالظبط (الملفات الصغيرة مش متأثرة).
+const LARGE_DATA_THRESHOLD_BYTES = 12 * 1024 * 1024; // ~12MB
+
 type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number };
 type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string };
 // نتايج الفرز محفوظة لكل وضع لوحده (جديد/كلي) — عشان التبديل بين الوضعين
@@ -133,6 +138,11 @@ export default function SortingPage() {
   const [dataBoxOpen, setDataBoxOpen] = useState(true); // collapse/expand the whole "مربع الداتا"
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
+  // ملف الداتا الكبير: بيتخزّن على دفعات في IndexedDB على الجهاز (بدل الذاكرة) عشان
+  // مايقعش على iOS. dataTable في الوضع ده = عيّنة صغيرة للعرض/كشف الأعمدة بس؛
+  // المطابقة الفعلية بتقرا الداتا الكاملة من القاعدة. الملفات الصغيرة زي ماهي.
+  const [dataStreamed, setDataStreamed] = useState(false);
+  const [dataStreamMeta, setDataStreamMeta] = useState<DataMeta | null>(null);
 
   // ── Referral file (single, shared between new/full sort) ──
   const [referralTable, setReferralTable] = useState<ExcelTable | null>(null);
@@ -222,6 +232,17 @@ export default function SortingPage() {
         if (dataRec) {
           setDataTable({ headers: dataRec.headers, rows: dataRec.rows });
           setDataFile(new File([dataRec.fileBlob ?? new Blob()], dataRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+        } else {
+          // مفيش ملف صغير → شوف لو فيه ملف داتا كبير مخزّن على الجهاز (streamed).
+          const bigMeta = await getDataMeta("data");
+          if (bigMeta) {
+            const sample = await getSampleRows(50, "data");
+            setDataStreamed(true);
+            setDataStreamMeta(bigMeta);
+            setDataTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
+            setDataFile(new File([new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+            setOutputCols(new Set(guessDefaultColumns(bigMeta.headers, bigMeta.plateCol)));
+          }
         }
         if (refRec) {
           setReferralTable({ headers: refRec.headers, rows: refRec.rows });
@@ -602,6 +623,8 @@ export default function SortingPage() {
     };
     await saveUploadedFile(record);
     if (slot === "data") {
+      // ملف صغير عادي → نلغي أي وضع «داتا كبيرة» سابق (ونمسح قاعدتها على الجهاز).
+      setDataStreamed(false); setDataStreamMeta(null); void clearBigData("data");
       setDataTable(table); setDataFile(file); setDataPlateColOverride(null);
       setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers, table.rows))));
       setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
@@ -613,9 +636,25 @@ export default function SortingPage() {
     }
   }, []);
 
+  // استيراد ملف داتا كبير: يقراه على دفعات ويخزّنه على الجهاز، ويحط عيّنة صغيرة
+  // كـ dataTable عشان كشف الأعمدة/المعاينة/الجاهزية يشتغلوا زي ما هم.
+  const handleLargeData = useCallback(async (file: File, onProgress: (rows: number) => void) => {
+    const meta = await importLargeDataFile(file, { slot: "data", onProgress });
+    const sample = await getSampleRows(50, "data");
+    await deleteUploadedFile("local", "data"); // شيل أي ملف صغير قديم في نفس الـslot
+    setDataStreamed(true);
+    setDataStreamMeta(meta);
+    setDataTable({ headers: meta.headers, rows: sample, sheetName: meta.sheetName });
+    setDataFile(file);
+    setDataPlateColOverride(null);
+    setOutputCols(new Set(guessDefaultColumns(meta.headers, meta.plateCol)));
+    setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
+  }, []);
+
   async function clearSlot(slot: "data" | "referral") {
     await deleteUploadedFile("local", slot);
     if (slot === "data") {
+      setDataStreamed(false); setDataStreamMeta(null); await clearBigData("data");
       setDataTable(null); setDataFile(null); setDataPlateColOverride(null); setOutputCols(new Set());
     } else {
       setReferralTable(null); setReferralFile(null); setReferralPlateColOverride(null); setReferralExtraCols(new Set());
@@ -910,7 +949,27 @@ export default function SortingPage() {
       // dataBase = بداية الفهرس العام للملف الحالي (نفس ترتيب collectDataSources)
       // عشان dataIdx يطابق الترتيب المستخدم في نافذة «موقعها».
       let dataBase = 0;
-      for (const src of collectDataSources()) {
+      // الداتا الكبيرة (streamed): نلفّ عليها من القاعدة على الجهاز على دفعات
+      // بدل الذاكرة — نفس منطق المطابقة بالظبط، بس مصدر الصفوف مختلف.
+      if (dataStreamed && dataStreamMeta) {
+        const pc = dataStreamMeta.plateCol;
+        let gj = 0;
+        await iterateRows(async (batch) => {
+          for (const dataRow of batch) {
+            const idx = gj++;
+            const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
+            if (!n) continue;
+            const hit = refIndex.get(n);
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx });
+          }
+          await new Promise<void>((r) => setTimeout(r, 0));
+        }, { slot: "data", batchSize: CHUNK });
+        dataBase = gj;
+      }
+      // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية. في وضع streamed
+      // نتخطّى الأساسي (لأنه عيّنة فقط) ونطابق الإضافية بس.
+      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      for (const src of memSources) {
         const rows = src.rows;
         const pc = src.plateCol;
         for (let i = 0; i < rows.length; i += CHUNK) {
@@ -964,30 +1023,44 @@ export default function SortingPage() {
       // Track each data row's original position so results can be ordered the
       // same way as the data file (not the referral file) — cars at the same
       // location sit adjacent in the data file, so this keeps them grouped.
-      const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
-      // كل ملفات الداتا (الأساسي + الإضافية) — عدّاد ترتيب عام يحافظ على ترتيب
-      // الملفات ورا بعض ثم الصفوف جوه كل ملف.
-      let gIdx = 0;
-      for (const src of collectDataSources()) {
-        const pc = src.plateCol;
-        for (const row of src.rows) {
-          const idx = gIdx++;
-          const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
-          if (!n) continue;
-          const arr = dataIndex.get(n);
-          if (arr) arr.push({ row, dataIdx: idx }); else dataIndex.set(n, [{ row, dataIdx: idx }]);
+      const matches: (MatchResult & { dataIdx: number })[] = [];
+      // (أ) الداتا الكبيرة (streamed): بحث بالفهرس على الجهاز لكل لوحة جديدة —
+      // بدل ما نبني فهرس ٧٤٠ ألف صف في الذاكرة.
+      if (dataStreamed && dataStreamMeta) {
+        for (const e of newEntries) {
+          let hits = await lookupByPlate(e.norm, "data");
+          if (!hits.length && !e.isArabic && /[A-Za-z]/.test(e.raw)) {
+            const rev = reversePlateLetters(e.norm);
+            if (rev !== e.norm) hits = await lookupByPlate(rev, "data");
+          }
+          for (const { data: dataRow, idx } of hits) {
+            matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: e.norm });
+          }
         }
       }
-      const matches: (MatchResult & { dataIdx: number })[] = [];
-      for (const e of newEntries) {
-        const dataRows = dataIndex.get(e.norm) ?? (
-          !e.isArabic && /[A-Za-z]/.test(e.raw)
-            ? dataIndex.get(reversePlateLetters(e.norm))
-            : undefined
-        );
-        if (dataRows) {
-          for (const { row: dataRow, dataIdx } of dataRows) {
-            matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm });
+      // (ب) ملفات الداتا في الذاكرة (الأساسي لو مش streamed + الإضافية) — فهرس صغير.
+      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      if (memSources.length) {
+        const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
+        let gIdx = dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : 0;
+        for (const src of memSources) {
+          const pc = src.plateCol;
+          for (const row of src.rows) {
+            const idx = gIdx++;
+            const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
+            if (!n) continue;
+            const arr = dataIndex.get(n);
+            if (arr) arr.push({ row, dataIdx: idx }); else dataIndex.set(n, [{ row, dataIdx: idx }]);
+          }
+        }
+        for (const e of newEntries) {
+          const dataRows = dataIndex.get(e.norm) ?? (
+            !e.isArabic && /[A-Za-z]/.test(e.raw) ? dataIndex.get(reversePlateLetters(e.norm)) : undefined
+          );
+          if (dataRows) {
+            for (const { row: dataRow, dataIdx } of dataRows) {
+              matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm });
+            }
           }
         }
       }
@@ -1429,10 +1502,12 @@ export default function SortingPage() {
         title={extraData.length > 0 ? "ملف الداتا 1" : "ملف الداتا"}
         hint="بيانات التفريغ الميداني"
         parsedFile={dataFile}
-        parsedRowCount={dataTable?.rows.length ?? null}
+        parsedRowCount={dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : (dataTable?.rows.length ?? null)}
         onParsed={(table, file) => persistAndSet("data", table, file)}
         onClear={() => clearSlot("data")}
         showReplaceButtons
+        largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
+        onLargeFile={handleLargeData}
       />
       {dataTable && (
         <div className="rounded-xl border border-border bg-surface">
