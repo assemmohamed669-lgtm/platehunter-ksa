@@ -22,7 +22,7 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
-import { buildDupeColorMap } from "@/lib/dupeColors";
+import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
@@ -875,13 +875,16 @@ export default function InstantCheckPage() {
   const chassisPlateKeyOf = useCallback((r: ChassisRecord): string => (r.row ? plateKeyFromRow(r.row) : ""), []);
 
   const dupeColorMap = useMemo(() => {
-    const keys: string[] = [];
-    for (const e of fieldEntries) keys.push(plateKey(e.plate));
-    for (const e of manualDraft) keys.push(plateKey(e.plate));
-    for (const h of manualHits) if (!hitsExportedIds.has(h.id)) keys.push(plateKey(h.plate));
-    for (const r of pttResults) if (!pttExportedIds.has(r.id)) keys.push(plateKey(r.plate));
-    for (const r of chassisRecords) keys.push(chassisPlateKeyOf(r));
-    return buildDupeColorMap(keys, FIELD_DUPE_COLORS.length);
+    // نطاق «الشغل الحالي» (اللي لسه في القوائم): يدوي + كاميرا + صوت مع بعض —
+    // فلوحة اتشيّكت بطريقتين قبل التصدير تبان مكررة.
+    const live: string[] = [];
+    for (const e of manualDraft) live.push(plateKey(e.plate));
+    for (const h of manualHits) if (!hitsExportedIds.has(h.id)) live.push(plateKey(h.plate));
+    for (const r of pttResults) if (!pttExportedIds.has(r.id)) live.push(plateKey(r.plate));
+    // نطاق السجلات (الشيت الدائم) ونطاق الشاص — كل واحد لوحده.
+    const sheet = fieldEntries.map((e) => plateKey(e.plate));
+    const chass = chassisRecords.map((r) => chassisPlateKeyOf(r));
+    return buildScopedDupeColorMap([live, sheet, chass], FIELD_DUPE_COLORS.length);
   }, [fieldEntries, manualDraft, manualHits, pttResults, chassisRecords, hitsExportedIds, pttExportedIds, chassisPlateKeyOf]);
 
   /** كلاس لون اللوحة المكررة (أو "" لو مش مكررة) — يُستخدم في كل الجداول. */

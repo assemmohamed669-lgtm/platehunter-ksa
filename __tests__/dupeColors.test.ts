@@ -1,5 +1,52 @@
 import { describe, it, expect } from "vitest";
-import { buildDupeColorMap } from "@/lib/dupeColors";
+import { buildDupeColorMap, buildScopedDupeColorMap } from "@/lib/dupeColors";
+
+describe("buildScopedDupeColorMap — نطاقات منفصلة (بلا تلوين كاذب)", () => {
+  // الحالة الميدانية اللي كانت بتلوّن غلط: لوحة متشيّكة **مرة واحدة** بس موجودة
+  // في قائمة الصوت وكمان في شيت السجلات (لأنها اتصدّرت) — مش مكررة.
+  it("لوحة واحدة موجودة في القائمة وفي السجلات → مش مكررة (مفيش لون)", () => {
+    const live = ["سحو2894"];
+    const sheet = ["سحو2894"];
+    const m = buildScopedDupeColorMap([live, sheet], 8);
+    expect(m.size).toBe(0);
+  });
+
+  it("لوحة اتقالت مرتين في نفس الجلسة → مكررة", () => {
+    const m = buildScopedDupeColorMap([["ابح1234", "ابح1234"], []], 8);
+    expect(m.get("ابح1234")).toBe(0);
+  });
+
+  it("لوحة ليها سجلين في الشيت → مكررة (اتشيّكت قبل كده)", () => {
+    const m = buildScopedDupeColorMap([[], ["دهس5678", "دهس5678"]], 8);
+    expect(m.get("دهس5678")).toBe(0);
+  });
+
+  it("لوحة اتشيّكت بطريقتين قبل التصدير (صوت + كاميرا) → مكررة", () => {
+    // النطاق الواحد بيجمع يدوي/كاميرا/صوت مع بعض
+    const live = ["ابح1234" /* صوت */, "ابح1234" /* كاميرا */];
+    const m = buildScopedDupeColorMap([live, []], 8);
+    expect(m.get("ابح1234")).toBe(0);
+  });
+
+  it("نفس اللوحة بتاخد نفس اللون مهما اتكرّرت في أكتر من نطاق", () => {
+    const m = buildScopedDupeColorMap([["أ", "أ"], ["أ", "أ"], ["ب", "ب"]], 8);
+    expect(m.get("أ")).toBe(0);
+    expect(m.get("ب")).toBe(1);
+  });
+
+  it("الشاص نطاق لوحده — تكراره مايتخلطش بالقوائم", () => {
+    const m = buildScopedDupeColorMap([["س1111"], [], ["س1111", "س1111"]], 8);
+    expect(m.get("س1111")).toBe(0); // مكررة جوّه الشاص
+    const m2 = buildScopedDupeColorMap([["س1111"], [], ["س1111"]], 8);
+    expect(m2.size).toBe(0);        // مرة في كل نطاق → مش مكررة
+  });
+
+  it("المفاتيح الفاضية ونطاقات فاضية → مفيش لون", () => {
+    expect(buildScopedDupeColorMap([[], [], []], 8).size).toBe(0);
+    expect(buildScopedDupeColorMap([["", ""], [""]], 8).size).toBe(0);
+    expect(buildScopedDupeColorMap([["أ", "أ"]], 0).size).toBe(0);
+  });
+});
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 
 // نفس منطق plateKeyFromRow في صفحة التشييك: لوحة صف الشاص بتتقرا من أعمدة الصف
