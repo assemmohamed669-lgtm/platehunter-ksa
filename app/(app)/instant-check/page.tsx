@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
@@ -22,6 +22,7 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
+import { buildDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
@@ -96,7 +97,8 @@ interface PttRow {
   row?: Record<string, string>;
   vehicleType?: string;          // نوع السيارة spoken after the plate (ونيت/فان/…)
   needsReview?: boolean;         // الشكل مكسور (أرقام بس/حرف غريب) → محتاجة مراجعة
-  locationName: string;
+  /** (مهجور) اسم موقع كان بيتكتب بإيد المندوب — اتشال، «الحي-الشارع» بيغني عنه. */
+  locationName?: string;
   lat?: number;
   lng?: number;
   mapsLink?: string;
@@ -363,13 +365,31 @@ function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCh
   );
 }
 
+/**
+ * مفتاح لوحة صف الشاص لأغراض التلوين — بيكتشف عمود اللوحة من **أعمدة الصف نفسه**
+ * (الصف ممكن ييجي من ورقة تانية بأعمدة مختلفة عن ملف التشييك)، وبيتحقّق من شكل
+ * اللوحة (٣ حروف + ٤ أرقام) — لأن detectPlateColumn بيرجّع أول عمود لو مالقاش،
+ * فبدون التحقّق ممكن قيمة عشوائية (بنك/رقم) تتلوّن كأنها لوحة مكررة.
+ */
+function plateKeyFromRow(row: Record<string, string>): string {
+  const col = detectPlateColumn(Object.keys(row), [row]);
+  const k = plateKey(String(col ? row[col] ?? "" : ""));
+  const letters = k.replace(/[0-9]/g, "");
+  const digits = k.replace(/[^0-9]/g, "");
+  return letters.length === 3 && digits.length === 4 ? k : "";
+}
+
 // كاش على مستوى الموديول — بيخلّي قوائم التشييك (يدوي/كاميرا/صوتي) تعيش عبر
 // التنقّل بين الصفحات وفتح/قفل التطبيق (طول ما الجلسة شغّالة)، مايتأثرش بحد
 // مساحة localStorage. القوائم تتمسح بس لما المندوب يمسحها بنفسه.
 let icHitsCache: CheckHit[] | null = null;
 let icPttCache: PttRow[] | null = null;
 let icManualDraftCache: FieldCheckEntry[] | null = null;
-let icPttLocationCache: string | null = null;
+// أي صفوف (كاميرا/صوت) اتصدّرت للسجلات — لازم تفضل محفوظة زي القوائم نفسها،
+// وإلا بعد إعادة فتح التطبيق نفس التشييك يتحسب مرتين (القائمة + السجلات) فيظهر
+// «مكرر» وهو مرة واحدة، وكمان زر التصدير يعيد تصدير اللي اتصدّر.
+let icHitsExportedCache: string[] | null = null;
+let icPttExportedCache: string[] | null = null;
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function InstantCheckPage() {
@@ -396,7 +416,6 @@ export default function InstantCheckPage() {
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
-  const [manualLocationName, setManualLocationName] = useState("");
   // Manual working-list (draft) — plates typed here stay local until the
   // delegate presses «تصدير للسجلات», mirroring the voice (PTT) flow.
   const [manualDraft, setManualDraft] = useState<FieldCheckEntry[]>([]);
@@ -476,9 +495,10 @@ export default function InstantCheckPage() {
   // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
   const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
-  // التشخيص التقني (اسم المحرك + النص الخام) يظهر للأدمن فقط — مش للمشتركين.
-  const [isAdmin, setIsAdmin] = useState(false);
-  // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للأدمن لتشخيص الدقة.
+  // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
+  // المناديب ولا الأدمنز العاديين.
+  const [isSuper, setIsSuper] = useState(false);
+  // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للسوبر أدمن لتشخيص الدقة.
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
   // منظّم الإيقاع: اهتزاز + وميض بصري كل X ثانية أثناء الاستماع (بدون صوت،
@@ -493,7 +513,6 @@ export default function InstantCheckPage() {
   const [icUserLoc, setIcUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [icLocating, setIcLocating] = useState(false);
   const [pttError, setPttError] = useState<string | null>(null);
-  const [pttLocationName, setPttLocationName] = useState("");
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
   const [pttCopiedId, setPttCopiedId] = useState<string | null>(null);
   // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
@@ -507,9 +526,6 @@ export default function InstantCheckPage() {
   // التسجيل، وبعدين يكمّل. الـref للقراءة الفورية جوه معالِجات التفريغ (البوابة).
   const [pttPaused, setPttPaused] = useState(false);
   const pttPausedRef = useRef(false);
-  // Mirror of pttLocationName so the listening loop reads the latest value
-  // (the loop's addPttResult closure would otherwise capture a stale one).
-  const pttLocationNameRef = useRef("");
   // ── مسار Whisper السحابي المتواصل (لو فيه مفتاح Groq) ──
   const pttChunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pttChunkBusyRef = useRef(false);            // جزء بيتبدّل/بيترفع دلوقتي؟
@@ -552,6 +568,9 @@ export default function InstantCheckPage() {
   const [learningOn, setLearningOn] = useState(false);   // نسخة تفاعلية من المفتاح (لإظهار العدّاد)
   // صور الكاميرا اللي اتصدّرت خلاص — عشان «تصدير الكل» يبعت الجديد بس (مايكررش).
   const [hitsExportedIds, setHitsExportedIds] = useState<Set<string>>(new Set());
+  // معرّف آخر صف كاميرا اتسجّل — عشان تصدير كارت النتيجة يعلّمه «اتصدّر» فمايتحسبش
+  // مرتين (مرة في قائمة الكاميرا ومرة في السجلات) ويظهر «مكرر» وهو مرة واحدة.
+  const lastHitIdRef = useRef<string | null>(null);
 
   // Load the learned-correction maps once on mount.
   useEffect(() => {
@@ -612,14 +631,15 @@ export default function InstantCheckPage() {
     finally { setGpsRefreshing(false); }
   }
 
-  // هل المستخدم الحالي أدمن؟ (التشخيص التقني — اسم المحرك + النص الخام — للأدمن فقط).
+  // هل المستخدم الحالي **سوبر أدمن**؟ (التشخيص التقني — اسم المحرك + النص الخام —
+  // للسوبر أدمن فقط: لا المناديب ولا الأدمنز العاديين يشوفوه).
   useEffect(() => {
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
-        setIsAdmin(prof?.role === "admin");
+        const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
+        setIsSuper(!!prof?.is_super);
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
@@ -685,15 +705,6 @@ export default function InstantCheckPage() {
   // زر الرجوع (الهاتف) يقفل نافذة «إظهار وتعديل اللوحات» بدل ما يتنقّل بعيد.
   useEffect(() => { if (platesEditorOpen) return pushBackHandler(() => setPlatesEditorOpen(false)); }, [platesEditorOpen]);
 
-  // Colour index per DUPLICATED plate (plates appearing more than once).
-  const fieldColorMap = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const e of fieldEntries) { const k = plateKey(e.plate); if (k) counts.set(k, (counts.get(k) ?? 0) + 1); }
-    const map = new Map<string, number>();
-    let ci = 0;
-    for (const [k, c] of counts) { if (c > 1) { map.set(k, ci % FIELD_DUPE_COLORS.length); ci++; } }
-    return map;
-  }, [fieldEntries]);
 
   // Owner of new field-check rows — so a shared device doesn't mix two agents.
   const agentIdRef = useRef<string | null>(null);
@@ -758,8 +769,10 @@ export default function InstantCheckPage() {
       else { const s = localStorage.getItem("ic-manual-draft"); if (s) { const v = JSON.parse(s) as FieldCheckEntry[]; icManualDraftCache = v; setManualDraft(v); } }
     } catch {}
     try {
-      const loc = icPttLocationCache ?? localStorage.getItem("ic-ptt-location");
-      if (loc) { icPttLocationCache = loc; setPttLocationName(loc); pttLocationNameRef.current = loc; }
+      const h = icHitsExportedCache ?? JSON.parse(localStorage.getItem("ic-hits-exported") || "null");
+      if (Array.isArray(h)) { icHitsExportedCache = h; setHitsExportedIds(new Set(h)); }
+      const t = icPttExportedCache ?? JSON.parse(localStorage.getItem("ic-ptt-exported") || "null");
+      if (Array.isArray(t)) { icPttExportedCache = t; setPttExportedIds(new Set(t)); }
     } catch {}
   }, []);
 
@@ -784,9 +797,17 @@ export default function InstantCheckPage() {
 
   useEffect(() => {
     if (!listsHydrated.current) return;
-    icPttLocationCache = pttLocationName;
-    try { localStorage.setItem("ic-ptt-location", pttLocationName); } catch {}
-  }, [pttLocationName]);
+    const arr = [...hitsExportedIds];
+    icHitsExportedCache = arr;
+    try { localStorage.setItem("ic-hits-exported", JSON.stringify(arr)); } catch {}
+  }, [hitsExportedIds]);
+
+  useEffect(() => {
+    if (!listsHydrated.current) return;
+    const arr = [...pttExportedIds];
+    icPttExportedCache = arr;
+    try { localStorage.setItem("ic-ptt-exported", JSON.stringify(arr)); } catch {}
+  }, [pttExportedIds]);
 
   // بعد ما تأثيرات الاسترجاع + الحفظ الابتدائية تعدّي، نعلّم إن الاسترجاع خلّص.
   // (لازم يكون آخر تأثير عشان تأثيرات الحفظ فوقه تتخطّى الكتابة الابتدائية
@@ -842,6 +863,34 @@ export default function InstantCheckPage() {
   // silently break matching.
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const [selectedCheckCols, setSelectedCheckCols] = useState<Set<string>>(new Set());
+
+  // ── تلوين اللوحات المكررة — موحّد على كل نوافذ التشييك ────────────────────────
+  // أي لوحة اتشيّكت أكتر من مرة (بأي طريقة: يدوي/صوت/كاميرا/شاص أو في السجلات)
+  // بتتلوّن — وكل لوحة مكررة بلون خاص بيها، **نفس اللون في كل النوافذ** — فالمندوب
+  // يعرف فوراً إن السيارة دي ليها أكتر من موقع أو سبق تشييكها.
+  //
+  // مهم: الصفوف اللي اتصدّرت للسجلات بالفعل (hitsExportedIds/pttExportedIds)
+  // مابتتحسبش تاني — عشان نفس التشييك مايظهرش «مكرر» وهو مرة واحدة.
+  /** مفتاح لوحة سجل الشاصي (من أعمدة الصف المطابق نفسه) — "" لو مفيش لوحة. */
+  const chassisPlateKeyOf = useCallback((r: ChassisRecord): string => (r.row ? plateKeyFromRow(r.row) : ""), []);
+
+  const dupeColorMap = useMemo(() => {
+    const keys: string[] = [];
+    for (const e of fieldEntries) keys.push(plateKey(e.plate));
+    for (const e of manualDraft) keys.push(plateKey(e.plate));
+    for (const h of manualHits) if (!hitsExportedIds.has(h.id)) keys.push(plateKey(h.plate));
+    for (const r of pttResults) if (!pttExportedIds.has(r.id)) keys.push(plateKey(r.plate));
+    for (const r of chassisRecords) keys.push(chassisPlateKeyOf(r));
+    return buildDupeColorMap(keys, FIELD_DUPE_COLORS.length);
+  }, [fieldEntries, manualDraft, manualHits, pttResults, chassisRecords, hitsExportedIds, pttExportedIds, chassisPlateKeyOf]);
+
+  /** كلاس لون اللوحة المكررة (أو "" لو مش مكررة) — يُستخدم في كل الجداول. */
+  function dupeBgByKey(key: string): string {
+    const i = dupeColorMap.get(key);
+    return i === undefined ? "" : FIELD_DUPE_COLORS[i];
+  }
+  function dupeBg(plate: string): string { return dupeBgByKey(plateKey(plate)); }
+  const DUPE_TITLE = "لوحة مكررة — اتشيّكت أكتر من مرة (ممكن يكون ليها أكتر من موقع)";
 
   const checkIndex = useMemo(() => {
     if (!checkTable || !checkPlateCol) return new Map<string, Record<string, string>>();
@@ -983,6 +1032,7 @@ export default function InstantCheckPage() {
 
   function saveHitWithGps(result: PlateResult) {
     const hitId = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
+    lastHitIdRef.current = hitId; // الكارت المعروض بيعبّر عن الصف ده — لو اتصدّر نعلّمه
     const hit: CheckHit = {
       id: hitId, plate: result.plate, row: result.row ?? {},
       found: result.found, matchType: result.matchType, similarity: result.similarity,
@@ -1096,7 +1146,6 @@ export default function InstantCheckPage() {
     setManualResult(result);
 
     const row: Record<string, string> = {};
-    if (manualLocationName.trim()) row["اسم الموقع"] = manualLocationName.trim();
     if (result?.found && result.row) {
       for (const [k, v] of Object.entries(result.row)) {
         if (k !== checkPlateCol && String(v).trim()) row[k] = v;
@@ -1148,6 +1197,16 @@ export default function InstantCheckPage() {
 
   function deleteDraftEntry(id: string) {
     setManualDraft((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  // اختيار نوع السيارة (حرف مختصر) لصف كاميرا — بيتخزّن في row["النوع"].
+  function setHitType(id: string, code: string) {
+    setManualHits((prev) => prev.map((h) => {
+      if (h.id !== id) return h;
+      const row = { ...h.row };
+      if (code) row["النوع"] = code; else delete row["النوع"];
+      return { ...h, row };
+    }));
   }
 
   // اختيار نوع السيارة (حرف مختصر) لصف يدوي — بيتخزّن في row["النوع"].
@@ -1857,7 +1916,6 @@ export default function InstantCheckPage() {
       row: result.row,
       vehicleType,
       needsReview: !isComplete || !!uncertain, // مش كاملة (٣+٤) أو المحلّل شكّك (رقم ناقص اتحشى صفر) → «راجع»
-      locationName: pttLocationNameRef.current.trim(),
       checkedAt: new Date().toISOString(),
       // توقيت + ثقة من آخر نتيجة نهائية (Deepgram) — لجمع التدريب فقط (لو المفتاح شغّال).
       sessionId: pttSessionIdRef.current || undefined,
@@ -1902,7 +1960,6 @@ export default function InstantCheckPage() {
         "النوع": typeToCode(r.vehicleType ?? "") || (r.vehicleType ?? ""),
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
-      obj["اسم الموقع"] = r.locationName;
       obj["GPS"] = r.mapsLink ?? "";
       obj["التاريخ"] = formatDate(r.checkedAt);
       return obj;
@@ -1960,7 +2017,6 @@ export default function InstantCheckPage() {
     lines.push(r.found ? (r.matchType === "fuzzy" ? `الحالة: مطلوبة؟ ${r.similarity}%` : "الحالة: مطلوبة") : "الحالة: غير مطلوبة");
     if (r.vehicleType) lines.push(`النوع: ${r.vehicleType}`);
     for (const [k, v] of Object.entries(r.row ?? {})) { if (String(v).trim()) lines.push(`${k}: ${v}`); }
-    if (r.locationName) lines.push(`اسم الموقع: ${r.locationName}`);
     if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
     return lines.join("\n");
   }
@@ -2004,7 +2060,6 @@ export default function InstantCheckPage() {
     const toSave: FieldCheckEntry[] = freshRows.map((r, i) => {
       const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
       if (r.vehicleType) mergedRow["النوع"] = typeToCode(r.vehicleType) || r.vehicleType;
-      if (r.locationName) mergedRow["اسم الموقع"] = r.locationName;
       mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
       return {
         id: `${stamp}-${i}`,
@@ -2838,14 +2893,7 @@ export default function InstantCheckPage() {
           {/* ── Manual ── */}
           {mode === "manual" && (
             <div className="flex flex-col gap-3">
-              {/* اسم الموقع (يتسجّل على كل لوحة تدخلها) */}
-              <div className="relative">
-                <MapPin size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
-                <input dir="rtl" value={manualLocationName} onChange={(e) => setManualLocationName(e.target.value)}
-                  placeholder="اسم الموقع اللي بتشيّك فيه (اختياري)"
-                  className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
-              </div>
-
+              {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -2946,9 +2994,10 @@ export default function InstantCheckPage() {
                           {sortNear(manualDraft).map((e, i) => {
                             const matched = isDraftMatched(e);
                             const sel = manualSel.has(e.id);
-                            const rowBg = sel ? "bg-primary/15" : matched ? "bg-brand/10" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40";
+                            const dup = dupeBg(e.plate);
+                            const rowBg = sel ? "bg-primary/15" : dup || (matched ? "bg-brand/10" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
                             return (
-                            <tr key={e.id} className={`border-b border-border ${rowBg}`}>
+                            <tr key={e.id} title={dup ? DUPE_TITLE : undefined} className={`border-b border-border ${rowBg}`}>
                               <td className="border-l border-border px-2 py-2 text-center">
                                 <button onClick={() => toggleManualSel(e.id)} className="text-muted hover:text-primary transition">
                                   {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
@@ -3144,7 +3193,7 @@ export default function InstantCheckPage() {
                 </p>
               )}
 
-              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={(r) => exportToFieldCheck(r, "camera", cameraGps)} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
+              {cameraResult && <ResultCard result={cameraResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} onExport={async (r) => { await exportToFieldCheck(r, "camera", cameraGps); const id = lastHitIdRef.current ?? manualHits.find((h) => plateKey(h.plate) === plateKey(r.plate) && !hitsExportedIds.has(h.id))?.id; if (id) setHitsExportedIds((s) => new Set(s).add(id)); }} onShare={shareCameraResult} priorCheck={cameraResult.found ? findDuplicateEntry(fieldEntries, cameraResult.plate) : undefined} />}
             </div>
           )}
 
@@ -3251,7 +3300,11 @@ export default function InstantCheckPage() {
                         </div>
                       ))}
 
-                    <EditableField label="نوع السيارة" value={chVehicleType} onChange={setChVehicleType} placeholder="نوع السيارة" />
+                    {/* نوع السيارة بقائمة الحروف المختصرة — نفس اللي في جداول اللوحات */}
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="shrink-0 text-[11px] font-medium text-muted">نوع السيارة</span>
+                      <VehicleTypeSelect value={chVehicleType} onChange={setChVehicleType} className="rounded-lg border border-border bg-surface-2 px-2 py-1 text-sm text-ink outline-none focus:border-primary" />
+                    </div>
                     <EditableField label="ملاحظات" value={chNotes} onChange={setChNotes} placeholder="ملاحظات" />
                     <EditableField label="اسم المنطقة" value={chRegion} onChange={setChRegion} placeholder="اسم المنطقة" />
 
@@ -3316,21 +3369,7 @@ export default function InstantCheckPage() {
           {/* ── PTT ── */}
           {mode === "ptt" && (
             <div className="flex flex-col items-center gap-4">
-              {/* اسم الموقع — يتسجّل على كل لوحة تتقال بعد كتابته */}
-              <div className="w-full">
-                <label className="mb-1 block text-[11px] text-muted">اسم الموقع اللي بتشيّك فيه</label>
-                <div className="relative">
-                  <MapPin size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
-                  <input
-                    dir="rtl"
-                    value={pttLocationName}
-                    onChange={(e) => { setPttLocationName(e.target.value); pttLocationNameRef.current = e.target.value; }}
-                    placeholder="مثال: حي النرجس - شارع 15"
-                    className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
-                  />
-                </div>
-              </div>
-
+              {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
               {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
               <div className="flex w-full max-w-xs flex-col items-center gap-1">
                 <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2" dir="rtl">
@@ -3418,8 +3457,8 @@ export default function InstantCheckPage() {
                 </span>
               )}
 
-              {/* اسم المحرك النشط — للأدمن فقط (تشخيص، مخفي عن المشتركين) */}
-              {pttListening && isAdmin && (
+              {/* اسم المحرك النشط — للسوبر أدمن فقط (تشخيص، مخفي عن المناديب والأدمنز) */}
+              {pttListening && isSuper && (
                 <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[10px] font-bold text-primary" dir="ltr">
                   🎙 {pttEngine === "deepgram" ? "Deepgram (لحظي)"
                     : pttEngine === "speechmatics" ? "Speechmatics (لحظي)"
@@ -3439,11 +3478,11 @@ export default function InstantCheckPage() {
                 <p className="text-center text-xs text-danger">{pttError}</p>
               )}
 
-              {/* لوحة ديبج النص الخام — للأدمن فقط (اللي المحرك سمعه قبل التحليل) */}
-              {isAdmin && pttRawLog.length > 0 && (
+              {/* لوحة ديبج النص الخام — للسوبر أدمن فقط (اللي المحرك سمعه قبل التحليل) */}
+              {isSuper && pttRawLog.length > 0 && (
                 <div className="w-full max-w-xs rounded-xl border border-dashed border-primary/40 bg-surface-2 p-2" dir="rtl">
                   <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-primary">🐞 النص الخام (أدمن)</span>
+                    <span className="text-[10px] font-bold text-primary">🐞 النص الخام (سوبر أدمن)</span>
                     <button type="button" onClick={() => { pttRawLogRef.current = []; setPttRawLog([]); }}
                       className="text-[10px] text-muted underline">مسح</button>
                   </div>
@@ -3473,7 +3512,7 @@ export default function InstantCheckPage() {
                     result={{ plate: pttAlert.plate, normalized: "", found: pttAlert.found, matchType: pttAlert.matchType, similarity: pttAlert.similarity, row: pttAlert.row }}
                     plateCol={checkPlateCol}
                     selectedCols={selectedCheckCols}
-                    onExport={(r) => exportToFieldCheck(r, "ptt")}
+                    onExport={async (r) => { await exportToFieldCheck(r, "ptt"); setPttExportedIds((s) => new Set(s).add(pttAlert.id)); }}
                     priorCheck={findDuplicateEntry(fieldEntries, pttAlert.plate)}
                   />
                 </div>
@@ -3529,7 +3568,7 @@ export default function InstantCheckPage() {
                         </thead>
                         <tbody>
                           {sortNear(pttResults).map((r) => (
-                            <tr key={r.id} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface"}`}>
+                            <tr key={r.id} title={dupeBg(r.plate) ? DUPE_TITLE : undefined} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : dupeBg(r.plate) || (r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface")}`}>
                               <td className="border-l border-border px-2 py-2 text-center">
                                 <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
                                   {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
@@ -3710,7 +3749,8 @@ export default function InstantCheckPage() {
                       <tbody>
                         {manualHits.map((hit, i) => (
                           <tr key={hit.id}
-                            className={`border-b border-border transition ${hitsSelected.has(hit.id) ? "bg-primary/15" : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                            title={dupeBg(hit.plate) ? DUPE_TITLE : undefined}
+                            className={`border-b border-border transition ${hitsSelected.has(hit.id) ? "bg-primary/15" : dupeBg(hit.plate) || (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40")}`}>
                             <td className="border-l border-border px-2 py-2 text-center">
                               <button onClick={() => toggleHitSelect(hit.id)} className="text-muted hover:text-primary transition">
                                 {hitsSelected.has(hit.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
@@ -3726,7 +3766,7 @@ export default function InstantCheckPage() {
                                 </span>
                               )}
                             </td>
-                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{hit.row["النوع"] || "—"}</td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={hit.row["النوع"] ?? ""} onChange={(code) => setHitType(hit.id, code)} /></td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{hit.row["الحي-الشارع"] || "—"}</td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{hit.row["ملاحظات"] || "—"}</td>
                             {dynCols.map((h) => (
@@ -3826,10 +3866,10 @@ export default function InstantCheckPage() {
               </thead>
               <tbody>
                 {chassisRecords.slice(0, 200).map((r) => (
-                  <tr key={r.id} className={`border-t border-border ${r.found ? "bg-danger/10" : ""}`}>
+                  <tr key={r.id} title={dupeBgByKey(chassisPlateKeyOf(r)) ? DUPE_TITLE : undefined} className={`border-t border-border ${dupeBgByKey(chassisPlateKeyOf(r)) || (r.found ? "bg-danger/10" : "")}`}>
                     <td className="whitespace-nowrap px-2 py-1.5 font-mono" dir="ltr">{r.chassis}</td>
                     <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : ""}`}>{r.found ? "مطلوب" : ""}</td>
-                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.vehicleType || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { vehicleType: v }))} /></td>
+                    <td className="min-w-[80px] px-2 py-1.5"><VehicleTypeSelect value={r.vehicleType || ""} onChange={(code) => setChassisRecords(updateChassisRecord(r.id, { vehicleType: code }))} /></td>
                     <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.region || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { region: v }))} /></td>
                     <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.notes || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { notes: v }))} /></td>
                     <td className="px-2 py-1.5 text-center">
@@ -3963,10 +4003,10 @@ export default function InstantCheckPage() {
                   </thead>
                   <tbody>
                     {sortNear(visible).map((e, i) => {
-                      const cIdx = fieldColorMap.get(plateKey(e.plate));
-                      const rowBg = cIdx !== undefined ? FIELD_DUPE_COLORS[cIdx] : (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
+                      const dup = dupeBg(e.plate);
+                      const rowBg = dup || (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
                       return (
-                      <tr key={e.id} className={`border-b border-border ${rowBg}`}>
+                      <tr key={e.id} title={dup ? DUPE_TITLE : undefined} className={`border-b border-border ${rowBg}`}>
                         <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
                           {editingFieldId === e.id ? (
                             <span className="inline-flex items-center gap-1">

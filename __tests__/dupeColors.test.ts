@@ -1,0 +1,81 @@
+import { describe, it, expect } from "vitest";
+import { buildDupeColorMap } from "@/lib/dupeColors";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+
+// نفس منطق plateKeyFromRow في صفحة التشييك: لوحة صف الشاص بتتقرا من أعمدة الصف
+// نفسه (ممكن ييجي من ورقة تانية) + تحقّق من الشكل (٣ حروف + ٤ أرقام) عشان
+// detectPlateColumn بيرجّع أول عمود لو مالقاش فمانلوّنش قيم عشوائية كمكرر.
+function plateKeyFromRow(row: Record<string, string>): string {
+  const col = detectPlateColumn(Object.keys(row), [row]);
+  const k = normalizePlate(bankPlateToArabic(String(col ? row[col] ?? "" : "")));
+  const letters = k.replace(/[0-9]/g, "");
+  const digits = k.replace(/[^0-9]/g, "");
+  return letters.length === 3 && digits.length === 4 ? k : "";
+}
+
+describe("plateKeyFromRow — لوحة صف الشاص (لتلوين المكرر)", () => {
+  it("بيمسك اللوحة من عمود بأي اسم (ورقة تانية) — «رقماللوحة» بدون مسافة", () => {
+    expect(plateKeyFromRow({ "رقماللوحة": "أ ب ح 1234", "هيكل المرور": "6G1LL54F56L462203" })).toBe("ابح1234");
+  });
+  it("يطابق نفس مفتاح اللوحة المتشيّكة يدوي (فالاتنين ياخدوا نفس اللون)", () => {
+    const fromChassisRow = plateKeyFromRow({ "Plate Number": "ابح1234", "VIN": "6G1LL54F56L462203" });
+    const fromManual = normalizePlate(bankPlateToArabic("أ ب ح 1234"));
+    expect(fromChassisRow).toBe(fromManual);
+    const m = buildDupeColorMap([fromChassisRow, fromManual], 8);
+    expect(m.get(fromManual)).toBe(0); // مكررة → لون واحد للاتنين
+  });
+  it("مايلوّنش قيمة مش لوحة (بنك/رقم) لو الكشف رجّع أول عمود", () => {
+    expect(plateKeyFromRow({ "البنك": "الأهلي", "المبلغ": "50000" })).toBe("");
+  });
+  it("صف بلا لوحة → مفتاح فاضي (مايتحسبش في التلوين)", () => {
+    expect(plateKeyFromRow({})).toBe("");
+    expect(buildDupeColorMap(["", ""], 8).size).toBe(0);
+  });
+});
+
+describe("buildDupeColorMap — لون لكل لوحة مكررة", () => {
+  it("المكرر بس هو اللي بياخد لون (اللي مرة واحدة يفضل بلا لون)", () => {
+    const m = buildDupeColorMap(["ابح1234", "ابح1234", "دهس5678"], 8);
+    expect(m.get("ابح1234")).toBe(0);
+    expect(m.has("دهس5678")).toBe(false);
+  });
+
+  it("كل لوحة مكررة بلون مختلف", () => {
+    const m = buildDupeColorMap(["أ", "أ", "ب", "ب", "ج", "ج"], 8);
+    expect(m.get("أ")).toBe(0);
+    expect(m.get("ب")).toBe(1);
+    expect(m.get("ج")).toBe(2);
+  });
+
+  it("٣ نسخ من نفس اللوحة = لون واحد ليهم كلهم", () => {
+    const m = buildDupeColorMap(["س", "س", "س"], 8);
+    expect(m.size).toBe(1);
+    expect(m.get("س")).toBe(0);
+  });
+
+  it("اللون بترتيب أول ظهور (ثابت مايتغيّرش مع إعادة الرسم)", () => {
+    const a = buildDupeColorMap(["ب", "ب", "أ", "أ"], 8);
+    expect(a.get("ب")).toBe(0); // «ب» ظهرت الأول
+    expect(a.get("أ")).toBe(1);
+  });
+
+  it("لو المكرر أكتر من عدد الألوان، الألوان بتلفّ من الأول", () => {
+    const keys: string[] = [];
+    for (let i = 0; i < 5; i++) keys.push(`p${i}`, `p${i}`);
+    const m = buildDupeColorMap(keys, 3);
+    expect(m.get("p0")).toBe(0);
+    expect(m.get("p3")).toBe(0); // لفّت
+    expect(m.get("p4")).toBe(1);
+  });
+
+  it("المفاتيح الفاضية بتتجاهل", () => {
+    const m = buildDupeColorMap(["", "", "أ", "أ"], 8);
+    expect(m.has("")).toBe(false);
+    expect(m.get("أ")).toBe(0);
+  });
+
+  it("قائمة فاضية / بلا ألوان → خريطة فاضية", () => {
+    expect(buildDupeColorMap([], 8).size).toBe(0);
+    expect(buildDupeColorMap(["أ", "أ"], 0).size).toBe(0);
+  });
+});

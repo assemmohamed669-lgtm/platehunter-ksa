@@ -14,6 +14,12 @@ describe("typeToCode — تحويل نوع السيارة للحرف المخت�
     expect(typeToCode("ملاكي")).toBe("م");
     expect(typeToCode("خصوصي")).toBe("م");
   });
+  it("الحرفان الجديدان (دي / د) موجودان في القائمة وبيرجعوا زي ما هما", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("دي");
+    expect(VEHICLE_TYPE_CODES).toContain("د");
+    expect(typeToCode("دي")).toBe("دي");
+    expect(typeToCode("د")).toBe("د");   // «د» ماتتلغبطش بـ«دي»
+  });
   it("غير معروف أو فاضي → فاضي (فيفضل النص الأصلي عند التصدير)", () => {
     expect(typeToCode("")).toBe("");
     expect(typeToCode("دباب")).toBe("");

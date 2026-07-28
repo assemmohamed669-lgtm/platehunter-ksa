@@ -22,7 +22,7 @@ export default function VehicleTypeSelect({
     <select
       value={typeToCode(value)}
       onChange={(e) => onChange(e.target.value)}
-      title="و = ونيت • ف = فان • ت = تاكسي • م = ملاكي"
+      title="و = ونيت • ف = فان • ت = تاكسي • م = ملاكي • دي • د"
       style={{ direction: "rtl" }}
       className={className ?? "rounded border border-border bg-surface-2 px-2 py-1 text-ink outline-none focus:border-primary"}
     >
