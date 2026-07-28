@@ -21,7 +21,7 @@ import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSor
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
-import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, lookupByPlate, type DataMeta } from "@/lib/dataStore";
+import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -236,7 +236,7 @@ export default function SortingPage() {
           // مفيش ملف صغير → شوف لو فيه ملف داتا كبير مخزّن على الجهاز (streamed).
           const bigMeta = await getDataMeta("data");
           if (bigMeta) {
-            const sample = await getSampleRows(50, "data");
+            const sample = await getSampleRows(50);
             setDataStreamed(true);
             setDataStreamMeta(bigMeta);
             setDataTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
@@ -640,7 +640,7 @@ export default function SortingPage() {
   // كـ dataTable عشان كشف الأعمدة/المعاينة/الجاهزية يشتغلوا زي ما هم.
   const handleLargeData = useCallback(async (file: File, onProgress: (rows: number) => void) => {
     const meta = await importLargeDataFile(file, { slot: "data", onProgress });
-    const sample = await getSampleRows(50, "data");
+    const sample = await getSampleRows(50);
     await deleteUploadedFile("local", "data"); // شيل أي ملف صغير قديم في نفس الـslot
     setDataStreamed(true);
     setDataStreamMeta(meta);
@@ -963,7 +963,7 @@ export default function SortingPage() {
             if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx });
           }
           await new Promise<void>((r) => setTimeout(r, 0));
-        }, { slot: "data", batchSize: CHUNK });
+        }, { slot: "data" });
         dataBase = gj;
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية. في وضع streamed
@@ -1024,19 +1024,30 @@ export default function SortingPage() {
       // same way as the data file (not the referral file) — cars at the same
       // location sit adjacent in the data file, so this keeps them grouped.
       const matches: (MatchResult & { dataIdx: number })[] = [];
-      // (أ) الداتا الكبيرة (streamed): بحث بالفهرس على الجهاز لكل لوحة جديدة —
-      // بدل ما نبني فهرس ٧٤٠ ألف صف في الذاكرة.
+      // (أ) الداتا الكبيرة (streamed): مرور واحد على الدفعات من القرص، وكل صف
+      // بنطابقه على خريطة اللوحات الجديدة (في الذاكرة، صغيرة) — بدل ما نبني فهرس
+      // ٧٤٠ ألف صف في الذاكرة، وبدل بحث لكل لوحة (بطيء).
       if (dataStreamed && dataStreamMeta) {
+        const newIndex = new Map<string, { row: Record<string, string>; norm: string }>();
         for (const e of newEntries) {
-          let hits = await lookupByPlate(e.norm, "data");
-          if (!hits.length && !e.isArabic && /[A-Za-z]/.test(e.raw)) {
+          if (!newIndex.has(e.norm)) newIndex.set(e.norm, { row: e.row, norm: e.norm });
+          if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
             const rev = reversePlateLetters(e.norm);
-            if (rev !== e.norm) hits = await lookupByPlate(rev, "data");
-          }
-          for (const { data: dataRow, idx } of hits) {
-            matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: e.norm });
+            if (rev !== e.norm && !newIndex.has(rev)) newIndex.set(rev, { row: e.row, norm: e.norm });
           }
         }
+        const pc = dataStreamMeta.plateCol;
+        let gj = 0;
+        await iterateRows(async (batch) => {
+          for (const dataRow of batch) {
+            const idx = gj++;
+            const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
+            if (!n) continue;
+            const hit = newIndex.get(n);
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm });
+          }
+          await new Promise<void>((r) => setTimeout(r, 0));
+        }, { slot: "data" });
       }
       // (ب) ملفات الداتا في الذاكرة (الأساسي لو مش streamed + الإضافية) — فهرس صغير.
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();

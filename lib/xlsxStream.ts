@@ -282,7 +282,7 @@ export async function streamXlsxToBatches(
         if (!hasData) return; // تخطّى الصفوف الفاضية
         batch.push(rowToObj(arr));
         dataCount++;
-        if (opts.onProgress && dataCount % 2000 === 0) opts.onProgress(dataCount);
+        if (opts.onProgress && dataCount % 10000 === 0) opts.onProgress(dataCount);
         if (batch.length >= batchSize) {
           // backpressure: وقف التيار وفرّغ الدفعة قبل ما نكمّل
           stream.pause();
