@@ -219,6 +219,7 @@ export default function SortingPage() {
   // تشييكها صوت/يدوي قبل كدة، منفصلة عن تطابق ملف الداتا لأن أعمدتها مختلفة.
   const [pasteRecordResults, setPasteRecordResults] = useState<TokenMatch[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
+  const [pasteBusy, setPasteBusy] = useState(false); // بحث اللصق شغّال (الملف الكبير بياخد ثواني)
   const [pasteZoom, setPasteZoom] = useState(1);
 
   // ── Bootstrap ──
@@ -1361,18 +1362,37 @@ export default function SortingPage() {
   }
 
   // ── Paste sort ──
-  function runPasteSort() {
+  async function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
     const tokens = tokenizePastedPlates(pasteText);
     // نطابق على كل ملفات الداتا (الأساسي + الإضافية) — كل واحد بعمود لوحته، مع
     // إزاحة dataIdx عشان الترتيب يفضل ملف ورا ملف.
     const matches: TokenMatch[] = [];
     let base = 0;
-    for (const src of collectDataSources()) {
-      for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol)) {
-        matches.push({ ...m, dataIdx: m.dataIdx + base });
+    setPasteBusy(true);
+    try {
+      // الداتا الكبيرة (streamed): لفّ على الدفعات من القرص وطابق كل دفعة — بدل
+      // ما نطابق على عيّنة العرض بس (كانت بتخلّي اللصق مايطلّعش نتايج).
+      if (dataStreamed && dataStreamMeta) {
+        const pc = dataStreamMeta.plateCol;
+        await iterateRows(async (batch) => {
+          for (const m of matchTokensAgainstRows(tokens, batch, pc)) {
+            matches.push({ ...m, dataIdx: m.dataIdx + base });
+          }
+          base += batch.length;
+          await new Promise<void>((r) => setTimeout(r, 0));
+        }, { slot: "data" });
       }
-      base += src.rows.length;
+      // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية.
+      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      for (const src of memSources) {
+        for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol)) {
+          matches.push({ ...m, dataIdx: m.dataIdx + base });
+        }
+        base += src.rows.length;
+      }
+    } finally {
+      setPasteBusy(false);
     }
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
 
@@ -2102,7 +2122,7 @@ export default function SortingPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                runPasteSort();
+                if (!pasteBusy) void runPasteSort();
               }
             }}
             placeholder={"كل لوحة في سطر أو مفصولة بفاصلة...\nمثال: أبح1234 أو GUR4560"}
@@ -2112,9 +2132,9 @@ export default function SortingPage() {
           />
         </div>
 
-        <button onClick={runPasteSort} disabled={!pasteText.trim() || !dataTable}
+        <button onClick={() => { if (!pasteBusy) void runPasteSort(); }} disabled={!pasteText.trim() || !dataTable || pasteBusy}
           className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night disabled:opacity-50">
-          <ListFilter size={16} /> فرز
+          <ListFilter size={16} /> {pasteBusy ? "جاري الفرز..." : "فرز"}
         </button>
 
         {!dataTable && <p className="text-xs text-alert">رفع «ملف الداتا» بالأعلى مطلوب أولاً.</p>}

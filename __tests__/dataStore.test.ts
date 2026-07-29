@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach } from "vitest";
 import * as XLSX from "xlsx";
 import { importLargeDataFile, iterateRows, getSampleRows, getDataMeta, clearData } from "@/lib/dataStore";
+import { tokenizePastedPlates, matchTokensAgainstRows } from "@/lib/plateParser";
 
 function xlsxFile(aoa: unknown[][], name = "big.xlsx"): File {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -52,6 +53,27 @@ describe("dataStore (IndexedDB على الجهاز — dep دفعات)", () => {
     const all = await collectAll();
     expect(all.length).toBe(2);
     expect(all.map((r) => r["رقم اللوحه"])).toEqual(["تان2222", "تان3333"]);
+  });
+
+  it("مسار «لصق»: لفّ على القاعدة + مطابقة التوكنز يلاقي اللوحات الموجودة", async () => {
+    const aoa = [
+      ["رقم اللوحه", "الحي"],
+      ["أبح1234", "حي1"],
+      ["دمم5012", "حي2"],
+      ["سعم7788", "حي3"],
+    ];
+    await importLargeDataFile(xlsxFile(aoa), { slot: "data" });
+    const tokens = tokenizePastedPlates("أبح1234\nدمم5012\nزيتون9999");
+    const matches: { converted: string; dataIdx: number }[] = [];
+    let base = 0;
+    await iterateRows((batch) => {
+      for (const m of matchTokensAgainstRows(tokens, batch, "رقم اللوحه")) {
+        matches.push({ ...m, dataIdx: m.dataIdx + base });
+      }
+      base += batch.length;
+    }, { slot: "data" });
+    // لقى اللوحتين الموجودتين، وتجاهل غير الموجودة
+    expect(matches.length).toBe(2);
   });
 
   it("لفّ على دفعات متعددة (baseIndex متتابع)", async () => {
