@@ -384,14 +384,14 @@ export default function MapsPage() {
               <button onClick={() => setWindowOpen(false)} className="rounded-lg p-1.5 text-muted hover:text-ink" title="إغلاق"><X size={18} /></button>
             </div>
 
-            {/* شريط الأدوات — ترتيب بالأقرب + تحديد الكل */}
+            {/* شريط الأدوات — «تحديد الكل» أول حاجة على اليمين (بطلب المستخدم) */}
             <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+              <button onClick={toggleSelAll} className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition">
+                {allSel ? <CheckSquare size={13} /> : <Square size={13} />} تحديد الكل
+              </button>
               <button onClick={() => setNearest((v) => !v)} disabled={!userLoc}
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition disabled:opacity-40 ${nearest ? "bg-primary text-night" : "bg-surface-2 text-ink"}`}>
                 <Navigation size={13} /> {nearest ? "الأقرب أولاً ✓" : "رتّب حسب الأقرب"}
-              </button>
-              <button onClick={toggleSelAll} className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition">
-                {allSel ? <CheckSquare size={13} /> : <Square size={13} />} تحديد الكل
               </button>
               <PlateImagesButton title="اللوحات المطلوبة"
                 build={() => filtered.map((m) => { const r = matchToRow(m); delete r["GPS"]; return objToPlateRow(r); })}

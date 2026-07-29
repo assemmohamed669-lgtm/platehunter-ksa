@@ -2998,12 +2998,13 @@ export default function InstantCheckPage() {
                   <div className="flex flex-col gap-2 pt-2 border-t border-border">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted">{manualDraft.length} لوحة في القائمة</span>
+                      {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
                       <div className="flex items-center gap-1.5">
-                        <ZoomControl zoom={manualZoom} setZoom={setManualZoom} />
                         <button onClick={toggleManualSelAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
                           {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
                           {allSel ? "إلغاء الكل" : "تحديد الكل"}
                         </button>
+                        <ZoomControl zoom={manualZoom} setZoom={setManualZoom} />
                       </div>
                     </div>
                     <div ref={manualPinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "45vh", touchAction: "pan-x pan-y" }}>
@@ -3011,14 +3012,14 @@ export default function InstantCheckPage() {
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
-                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
+                            <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3033,6 +3034,17 @@ export default function InstantCheckPage() {
                                 <button onClick={() => toggleManualSel(e.id)} className="text-muted hover:text-primary transition">
                                   {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
+                              </td>
+                              {/* ترقيم + نسخ/واتساب/حذف — تاني عمود بعد التحديد */}
+                              <td className="border-l border-border px-2 py-2">
+                                <div className="flex items-center gap-2 whitespace-nowrap">
+                                  <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                                  <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
+                                    {manualCopiedId === e.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                  </button>
+                                  <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
+                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                                </div>
                               </td>
                               <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`}>
                                 {draftCell(e, "plate")}
@@ -3049,15 +3061,6 @@ export default function InstantCheckPage() {
                                 ) : <span className="text-muted text-[10px] animate-pulse">جاري...</span>}
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
-                              <td className="px-2 py-2">
-                                <div className="flex items-center justify-center gap-2">
-                                  <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
-                                    {manualCopiedId === e.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                  </button>
-                                  <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
-                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
-                                </div>
-                              </td>
                             </tr>
                             );
                           })}
@@ -3563,8 +3566,13 @@ export default function InstantCheckPage() {
                           </button>
                         )}
                       </span>
+                      {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
                       <div className="flex items-center gap-1.5">
-                        <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />
+                        <button onClick={togglePttSelAll}
+                          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                          {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                          {pttSel.size === pttResults.length && pttResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+                        </button>
                         <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
                           className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
                           <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
@@ -3572,11 +3580,7 @@ export default function InstantCheckPage() {
                         <PlateImagesButton title="لوحات التشييك (صوتي)"
                           build={() => pttImgRows(sortNear(pttResults))}
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
-                        <button onClick={togglePttSelAll}
-                          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-                          {pttSel.size === pttResults.length && pttResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-                          {pttSel.size === pttResults.length && pttResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
-                        </button>
+                        <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />
                       </div>
                     </div>
                     <div ref={pttPinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
@@ -3584,6 +3588,7 @@ export default function InstantCheckPage() {
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
@@ -3593,17 +3598,41 @@ export default function InstantCheckPage() {
                               <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                             ))}
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
-                            <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
+                            <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {sortNear(pttResults).map((r) => (
+                          {sortNear(pttResults).map((r, i) => (
                             <tr key={r.id} title={dupeBg(r.plate) ? DUPE_TITLE : undefined} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : dupeBg(r.plate) || (r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface")}`}>
                               <td className="border-l border-border px-2 py-2 text-center">
                                 <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
                                   {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
+                              </td>
+                              {/* ترقيم + تشييك/نسخ/حذف — تاني عمود بعد التحديد */}
+                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                                  {r.found && (
+                                    pttExportedIds.has(r.id) ? (
+                                      <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
+                                    ) : (
+                                      <button
+                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
+                                        className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
+                                        title="تصدير للتشييك"
+                                      >
+                                        <ClipboardCheck size={12} /> تشييك
+                                      </button>
+                                    )
+                                  )}
+                                  <button onClick={() => copyPttRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
+                                    {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                  </button>
+                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
                                 {editingPttId === r.id ? (
@@ -3660,29 +3689,6 @@ export default function InstantCheckPage() {
                                 )}
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(r.checkedAt)}</td>
-                              <td className="px-2 py-2 text-center whitespace-nowrap">
-                                <div className="flex items-center justify-center gap-2">
-                                  {r.found && (
-                                    pttExportedIds.has(r.id) ? (
-                                      <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
-                                    ) : (
-                                      <button
-                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
-                                        className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
-                                        title="تصدير للتشييك"
-                                      >
-                                        <ClipboardCheck size={12} /> تشييك
-                                      </button>
-                                    )
-                                  )}
-                                  <button onClick={() => copyPttRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
-                                    {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                  </button>
-                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
-                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -3737,8 +3743,13 @@ export default function InstantCheckPage() {
                   <p className="text-[11px] text-muted">إجمالي</p>
                 </div>
 
-                {/* Zoom + select all */}
+                {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
                 <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
+                  <button onClick={toggleHitsAll}
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+                    {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                    {allSel ? "إلغاء الكل" : "تحديد الكل"}
+                  </button>
                   <div className="flex items-center gap-2">
                     <button onClick={() => setHitsZoom((z) => Math.max(z - 1, 0))} disabled={hitsZoom === 0}
                       className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 transition">
@@ -3750,11 +3761,6 @@ export default function InstantCheckPage() {
                       <ZoomIn size={14} />
                     </button>
                   </div>
-                  <button onClick={toggleHitsAll}
-                    className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-                    {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-                    {allSel ? "إلغاء الكل" : "تحديد الكل"}
-                  </button>
                 </div>
 
                 {/* Table */}
@@ -3764,6 +3770,7 @@ export default function InstantCheckPage() {
                       <thead className="sticky top-0 z-10">
                         <tr className="bg-surface-2 text-muted">
                           <th className="border-b border-l border-border px-2 py-2 font-bold whitespace-nowrap">☐</th>
+                          <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                           <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
@@ -3773,8 +3780,7 @@ export default function InstantCheckPage() {
                             <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                           ))}
                           <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                          <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
-                          <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                          <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3786,6 +3792,21 @@ export default function InstantCheckPage() {
                               <button onClick={() => toggleHitSelect(hit.id)} className="text-muted hover:text-primary transition">
                                 {hitsSelected.has(hit.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                               </button>
+                            </td>
+                            {/* ترقيم + نسخ/واتساب/حذف — تاني عمود بعد التحديد */}
+                            <td className="border-l border-border px-2 py-2">
+                              <div className="flex items-center gap-2 whitespace-nowrap">
+                                <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                                <button onClick={() => copyHit(hit)} title="نسخ" className="text-muted hover:text-primary transition">
+                                  {copiedHitId === hit.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                                </button>
+                                <button onClick={() => shareHitWhatsApp(hit)} title="واتساب" className="text-muted hover:text-primary transition">
+                                  <Share2 size={13} />
+                                </button>
+                                <button onClick={() => deleteHit(hit.id)} title="حذف" className="text-muted hover:text-danger transition">
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-brand">
                               {hit.plate}
@@ -3823,19 +3844,6 @@ export default function InstantCheckPage() {
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
                               {formatDate(hit.checkedAt)}
-                            </td>
-                            <td className="px-2 py-2">
-                              <div className="flex items-center gap-2">
-                                <button onClick={() => copyHit(hit)} title="نسخ" className="text-muted hover:text-primary transition">
-                                  {copiedHitId === hit.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                </button>
-                                <button onClick={() => shareHitWhatsApp(hit)} title="واتساب" className="text-muted hover:text-primary transition">
-                                  <Share2 size={13} />
-                                </button>
-                                <button onClick={() => deleteHit(hit.id)} title="حذف" className="text-muted hover:text-danger transition">
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
                             </td>
                           </tr>
                         ))}

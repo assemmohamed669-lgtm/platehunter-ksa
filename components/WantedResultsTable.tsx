@@ -129,26 +129,27 @@ export default function WantedResultsTable({
 
   return (
     <div className="flex flex-col gap-2">
+      {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
       <div className="flex items-center justify-between gap-2">
-        <ZoomControl zoom={zoom} setZoom={setZoom} />
         <div className="flex items-center gap-1.5">
+          <button onClick={toggleAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+            {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />} {allSel ? "إلغاء الكل" : "تحديد الكل"}
+          </button>
           <button onClick={toggleNearest} disabled={locating}
             className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
             <Navigation size={13} /> {locating ? "..." : "الأقرب"}
           </button>
-          <button onClick={toggleAll} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-            {allSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />} {allSel ? "إلغاء الكل" : "تحديد الكل"}
-          </button>
         </div>
+        <ZoomControl zoom={zoom} setZoom={setZoom} />
       </div>
 
       <div ref={pinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
         <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${px}px`, minWidth: "max-content" }}>
           <thead className="sticky top-0 z-10">
             <tr className="bg-surface-2 text-muted">
-              {/* ترقيم + نسخ/واتساب/حذف — أول عمود في الويندو */}
-              <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">م / إجراءات</th>
+              {/* التحديد (للمشاركة الجماعية) أول عمود، وبعده الترقيم + نسخ/واتساب/حذف */}
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
+              <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
               <th className={TH}>نوع السيارة</th>
               <th className={TH}>الماركة</th>
@@ -170,7 +171,13 @@ export default function WantedResultsTable({
               const bg = sel ? "rgba(107,163,232,0.22)" : dup ?? (i % 2 === 0 ? "transparent" : "rgba(127,127,127,0.06)");
               return (
                 <tr key={r.id} className="border-b border-border" style={{ backgroundColor: bg }}>
-                  {/* ترقيم + نسخ/واتساب/حذف — أول عمود */}
+                  {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
+                  <td className="border-l border-border px-2 py-2 text-center">
+                    <button onClick={() => toggleSel(r.id)} className="text-muted hover:text-primary transition">
+                      {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                    </button>
+                  </td>
+                  {/* ترقيم + نسخ/واتساب/حذف */}
                   <td className="border-l border-border px-2 py-2">
                     <div className="flex items-center gap-2 whitespace-nowrap">
                       <span className="text-[11px] font-bold text-muted">{i + 1}</span>
@@ -180,11 +187,6 @@ export default function WantedResultsTable({
                       <button onClick={() => shareRow(r)} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={13} /></button>
                       <button onClick={() => onDelete([r.id])} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
                     </div>
-                  </td>
-                  <td className="border-l border-border px-2 py-2 text-center">
-                    <button onClick={() => toggleSel(r.id)} className="text-muted hover:text-primary transition">
-                      {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
-                    </button>
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
                   <td className={TD}>{r.type || "—"}</td>

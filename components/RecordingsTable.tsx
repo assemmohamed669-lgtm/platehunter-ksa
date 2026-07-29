@@ -225,6 +225,20 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
 
       {/* Zoom controls */}
       <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
+        {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
+        <div className="flex items-center gap-1.5">
+          <button onClick={toggleAll}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
+            {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+            {allSelected ? "إلغاء الكل" : "تحديد الكل"}
+          </button>
+          <button onClick={handleNearest} disabled={locating} title="ترتيب حسب الأقرب لموقعك"
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
+            <Navigation size={13} /> {locating ? "..." : "الأقرب"}
+          </button>
+          <PlateImagesButton title="السجلات الميدانية" build={imgRows}
+            className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
+        </div>
         <div className="flex items-center gap-2">
           <button onClick={zoomOut} disabled={zoom === 0}
             className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 hover:text-ink transition">
@@ -234,19 +248,6 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
           <button onClick={zoomIn} disabled={zoom === ZOOM_LEVELS.length - 1}
             className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted disabled:opacity-30 hover:text-ink transition">
             <ZoomIn size={14} />
-          </button>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button onClick={handleNearest} disabled={locating} title="ترتيب حسب الأقرب لموقعك"
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
-            <Navigation size={13} /> {locating ? "..." : "الأقرب"}
-          </button>
-          <PlateImagesButton title="السجلات الميدانية" build={imgRows}
-            className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
-          <button onClick={toggleAll}
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-            {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-            {allSelected ? "إلغاء الكل" : "تحديد الكل"}
           </button>
         </div>
       </div>
@@ -262,6 +263,7 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
             <thead className="sticky top-0 z-10">
               <tr className="bg-surface-2 text-muted">
                 <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
+                <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">نوع السيارة</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الشارع</th>
@@ -269,8 +271,7 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسجّل</th>
-                <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
-                <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
               </tr>
             </thead>
             <tbody>
@@ -303,6 +304,43 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                           : <Square size={14} />
                         }
                       </button>
+                    </td>
+
+                    {/* ترقيم + إجراءات — تاني عمود بعد التحديد */}
+                    <td className="border-l border-border px-2 py-2">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                        {onPlayAudio && entry.audioBlobBase64 && (
+                          <button onClick={() => onPlayAudio(entry)} title="تشغيل المقطع الصوتي"
+                            className="text-muted hover:text-primary transition">
+                            {playingId === entry.localId
+                              ? <Pause size={13} className="text-primary" />
+                              : <Play size={13} />
+                            }
+                          </button>
+                        )}
+                        {onShareAudio && entry.audioBlobBase64 && (
+                          <button onClick={() => onShareAudio(entry)} title="مشاركة المقطع الصوتي"
+                            className="text-muted hover:text-primary transition">
+                            <Share2 size={13} />
+                          </button>
+                        )}
+                        <button onClick={() => copyRow(entry)} title="نسخ"
+                          className="text-muted hover:text-primary transition">
+                          {copiedId === entry.localId
+                            ? <Check size={13} className="text-primary" />
+                            : <Copy size={13} />
+                          }
+                        </button>
+                        <button onClick={() => shareRow(entry)} title="واتساب"
+                          className="text-muted hover:text-primary transition">
+                          <Share2 size={13} />
+                        </button>
+                        <button onClick={() => onDelete(entry.localId)} title="حذف"
+                          className="text-muted hover:text-danger transition">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
 
                     {/* Plate */}
@@ -428,42 +466,6 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                           <MapPin size={10} /> خريطة
                         </a>
                       ) : "—"}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-2 py-2">
-                      <div className="flex items-center gap-2">
-                        {onPlayAudio && entry.audioBlobBase64 && (
-                          <button onClick={() => onPlayAudio(entry)} title="تشغيل المقطع الصوتي"
-                            className="text-muted hover:text-primary transition">
-                            {playingId === entry.localId
-                              ? <Pause size={13} className="text-primary" />
-                              : <Play size={13} />
-                            }
-                          </button>
-                        )}
-                        {onShareAudio && entry.audioBlobBase64 && (
-                          <button onClick={() => onShareAudio(entry)} title="مشاركة المقطع الصوتي"
-                            className="text-muted hover:text-primary transition">
-                            <Share2 size={13} />
-                          </button>
-                        )}
-                        <button onClick={() => copyRow(entry)} title="نسخ"
-                          className="text-muted hover:text-primary transition">
-                          {copiedId === entry.localId
-                            ? <Check size={13} className="text-primary" />
-                            : <Copy size={13} />
-                          }
-                        </button>
-                        <button onClick={() => shareRow(entry)} title="واتساب"
-                          className="text-muted hover:text-primary transition">
-                          <Share2 size={13} />
-                        </button>
-                        <button onClick={() => onDelete(entry.localId)} title="حذف"
-                          className="text-muted hover:text-danger transition">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
                     </td>
                   </tr>
                 );
