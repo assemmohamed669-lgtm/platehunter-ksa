@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--epochs", type=float, default=10, help="عدد مرات المرور على الداتا")
     ap.add_argument("--batch", type=int, default=8, help="حجم الدفعة (قلّليه لو الذاكرة صغيرة)")
     ap.add_argument("--lr", type=float, default=1e-5, help="معدّل التعلّم")
+    ap.add_argument("--eval-samples", type=int, default=200, help="عيّنات التقييم الداخلي (التقييم الحقيقي بـtest_whisper.py)")
     args = ap.parse_args()
 
     # استيراد المكتبات جوّه الدالة عشان رسالة الخطأ تبقى واضحة لو مش متثبّتة.
@@ -90,25 +91,20 @@ def main():
     model.generation_config.task = "transcribe"
     model.generation_config.forced_decoder_ids = None
 
-    # ── (٣) تجهيز العيّنات (صوت → ميزات، لوحة → رموز) ─────────────────────────
-    def prepare(batch):
-        audio = batch["audio"]
-        batch["input_features"] = processor.feature_extractor(
-            audio["array"], sampling_rate=16000).input_features[0]
-        batch["labels"] = processor.tokenizer(batch["transcription"]).input_ids
-        return batch
-
-    cols = split["train"].column_names
-    split = split.map(prepare, remove_columns=cols, num_proc=1)
-
-    # ── (٤) مُجمِّع الدفعات ───────────────────────────────────────────────────
+    # ── (٣) الميزات **وقت التدريب** (لكل دفعة) — مش map مسبق ───────────────────
+    # ليه؟ حساب الميزات لكل الداتاسِت مقدماً (map) بياخد ~١ ميجا للمقطع، فـ٧٦٠٠
+    # مقطع = ~٧ جيجا → Colab بيقتل العملية في نص الطريق (اتأكد ميدانياً: كانت
+    # بتموت عند ٧٣٪ بالظبط مرتين). بحساب الميزات في المُجمِّع، الذاكرة المستخدمة
+    # = حجم الدفعة بس (٨ مقاطع) — ثابتة وصغيرة، وكمان بنوفّر وقت الـmap.
     @dataclass
     class Collator:
         processor: Any
         def __call__(self, features):
-            inp = [{"input_features": f["input_features"]} for f in features]
-            batch = self.processor.feature_extractor.pad(inp, return_tensors="pt")
-            lab = [{"input_ids": f["labels"]} for f in features]
+            arrays = [f["audio"]["array"] for f in features]      # فك الصوت لحظياً
+            batch = self.processor.feature_extractor(
+                arrays, sampling_rate=16000, return_tensors="pt")
+            lab = [{"input_ids": self.processor.tokenizer(f["transcription"]).input_ids}
+                   for f in features]
             labels_batch = self.processor.tokenizer.pad(lab, return_tensors="pt")
             labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
             if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
@@ -117,6 +113,12 @@ def main():
             return batch
 
     collator = Collator(processor)
+
+    # التقييم الداخلي: نكتفي بعيّنة صغيرة (التقييم الحقيقي بيتم بـtest_whisper.py
+    # على مقاطع حقيقية محجوزة) — التوليد بطيء، و٧٦١ مقطع بياخد ~٢٥ دقيقة بلا داعي.
+    if len(split["test"]) > args.eval_samples:
+        split["test"] = split["test"].select(range(args.eval_samples))
+    print(f"   تقييم داخلي على: {len(split['test'])} مقطع", flush=True)
 
     # ── (٥) مقياس الدقة (CER = نسبة خطأ الحروف؛ الأقل أحسن) ───────────────────
     cer_metric = evaluate.load("cer")
@@ -146,6 +148,7 @@ def main():
         logging_steps=5,
         save_strategy="no",
         report_to=[],
+        remove_unused_columns=False,  # الـcollator محتاج أعمدة audio/transcription
     )
 
     trainer = Seq2SeqTrainer(
