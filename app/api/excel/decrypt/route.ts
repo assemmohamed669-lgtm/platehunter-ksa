@@ -6,14 +6,30 @@
  * (تشفير ECMA-376 الحديث AES) — تكتفي برمي "File is password-protected".
  * هذا الـ route يفكّ التشفير بمكتبة officecrypto-tool ويعيد الملف بعد فك
  * تشفيره (bytes) عشان العميل يقرأه محلياً بمنطق الفرز/الأعمدة المعتاد.
+ *
+ * **مقفول على المناديب المسجّلين فقط**: فكّ التشفير بيستهلك CPU/رام السيرفر، ولو
+ * مفتوح للعامة يبقى (١) تعطيل رخيص للخدمة، (٢) آلة تجريب كلمات سر على حسابنا.
  */
 import { NextRequest, NextResponse } from "next/server";
 import officeCrypto from "officecrypto-tool";
+import { verifySession, rateLimit } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
+// أكبر ملف مسموح — أكبر من كده مافيش داعي يتفكّ على السيرفر.
+const MAX_BYTES = 30 * 1024 * 1024;
+
 export async function POST(req: NextRequest) {
   try {
+    const userId = await verifySession(req.headers.get("authorization"));
+    // كود مميّز: العميل بيفرّق بينه وبين 401 بتاعة «كلمة مرور الملف غلط».
+    if (!userId) {
+      return NextResponse.json({ error: "NO_SESSION" }, { status: 401 });
+    }
+    if (!rateLimit(`excel-decrypt:${userId}`, 20, 60_000)) {
+      return NextResponse.json({ error: "محاولات كتير — استنى دقيقة وجرّب تاني." }, { status: 429 });
+    }
+
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const password = String(formData.get("password") ?? "");
@@ -23,6 +39,9 @@ export async function POST(req: NextRequest) {
     }
     if (!password) {
       return NextResponse.json({ error: "كلمة المرور مطلوبة." }, { status: 400 });
+    }
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json({ error: "الملف أكبر من ٣٠ ميجا — فكّ تشفيره على الكمبيوتر واحفظه بدون كلمة سر." }, { status: 413 });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());

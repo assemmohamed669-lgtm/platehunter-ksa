@@ -135,11 +135,20 @@ async function decryptViaServer(file: File, password: string): Promise<File> {
   fd.append("password", password);
   let res: Response;
   try {
-    res = await fetch("/api/excel/decrypt", { method: "POST", body: fd });
+    // الراوت مقفول على المناديب المسجّلين — لازم نبعت توكن الجلسة.
+    const { authHeader } = await import("./authHeader");
+    res = await fetch("/api/excel/decrypt", { method: "POST", body: fd, headers: await authHeader() });
   } catch {
     throw new Error("تعذّر الاتصال بالخادم لفك تشفير الملف — تأكد من الإنترنت.");
   }
-  if (res.status === 401) throw new Error("كلمة مرور الملف غير صحيحة.");
+  if (res.status === 401) {
+    // 401 لها معنيان: جلسة ساقطة (NO_SESSION) أو كلمة مرور الملف غلط.
+    const code = await res.clone().json().then((j) => String(j?.error ?? "")).catch(() => "");
+    if (code === "NO_SESSION") throw new Error("الجلسة انتهت — سجّل الدخول تاني وجرّب.");
+    throw new Error("كلمة مرور الملف غير صحيحة.");
+  }
+  if (res.status === 429) throw new Error("محاولات كتير — استنى دقيقة وجرّب تاني.");
+  if (res.status === 413) throw new Error("الملف كبير جداً لفكّ التشفير على الخادم — افتحه على الكمبيوتر واحفظه بدون كلمة سر.");
   if (!res.ok) throw new Error("تعذّر فك تشفير الملف — قد يكون محمياً بكلمة مرور.");
   const buf = await res.arrayBuffer();
   return new File([buf], file.name, { type: file.type });
