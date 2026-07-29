@@ -11,7 +11,7 @@
  * قاعدة **منفصلة تماماً** ("platehunter-bigdata") — مابتلمسش قاعدة التطبيق
  * الرئيسية ("platehunter") ولا داتا المناديب. كله على الجهاز — مفيش سيرفر.
  */
-import { streamXlsxToBatches, type XlsxStreamMeta } from "./xlsxStream";
+import { streamXlsxToBatches, NotXlsxWorksheetError, type XlsxStreamMeta } from "./xlsxStream";
 import { detectPlateColumn, detectArabicPlateColumn } from "./plateParser";
 
 const DB_NAME = "platehunter-bigdata";
@@ -61,9 +61,17 @@ export async function clearData(slot = "data"): Promise<void> {
   db.close();
 }
 
+const CHUNK_ROWS = 10000;
+
 /**
  * يستورد ملف داتا كبير: يقراه على دفعات ويكتب كل دفعة كسجل واحد (بيمسح القديم
  * أولاً). onProgress بعدد الصفوف. بيرجّع الميتاداتا (عناوين/عمود اللوحة/عدد الصفوف).
+ *
+ * قارئ الدفعات بيفهم **xlsx بس**. لو الملف بصيغة تانية (xlsb/xls/ods) أو ببنية
+ * غريبة أو أول ورقة فيه فاضية → بنرجع للقارئ العادي (SheetJS) اللي بيفهم كل
+ * الصيغ، وبنكتب صفوفه كدفعات بنفس الشكل. الرجوع بيحصل بس لو **لسه مكتبناش
+ * ولا صف** (يعني الفشل في القراءة نفسها، مش في نص الاستيراد) — عشان مانعملش
+ * الشغل مرتين ومانفتحش ملف ضخم في الذاكرة بلا داعي.
  */
 export async function importLargeDataFile(
   file: File,
@@ -75,26 +83,64 @@ export async function importLargeDataFile(
 
   let plateCol = "";
   let headers: string[] = [];
+  let written = 0;
 
   const writeChunk = (rows: DataRow[]): Promise<void> =>
     new Promise((resolve, reject) => {
       const tx = db.transaction(CHUNKS, "readwrite");
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => { written += rows.length; resolve(); };
       tx.onerror = () => reject(tx.error);
       tx.objectStore(CHUNKS).put({ rows } as ChunkRec);
     });
 
-  const meta: XlsxStreamMeta = await streamXlsxToBatches(
-    file,
-    async (batch) => {
-      if (!plateCol && batch.length) {
-        headers = Object.keys(batch[0]);
-        plateCol = detectArabicPlateColumn(headers) ?? detectPlateColumn(headers, batch) ?? "";
+  const takeHeaders = (batch: DataRow[]) => {
+    if (!plateCol && batch.length) {
+      headers = Object.keys(batch[0]);
+      plateCol = detectArabicPlateColumn(headers) ?? detectPlateColumn(headers, batch) ?? "";
+    }
+  };
+
+  let meta: XlsxStreamMeta | null = null;
+  let streamErr: unknown = null;
+  try {
+    meta = await streamXlsxToBatches(
+      file,
+      async (batch) => { takeHeaders(batch); await writeChunk(batch); },
+      { onProgress: opts.onProgress, batchSize: CHUNK_ROWS }
+    );
+  } catch (e) {
+    if (written > 0) { db.close(); throw e; } // اتكتبت صفوف بالفعل → مش مشكلة صيغة
+    streamErr = e;
+  }
+
+  // احتياطي: القارئ العادي (SheetJS) — لصيغة مختلفة أو بنية غريبة أو صفر صفوف
+  // (مثلاً أول ورقة فاضية وSheetJS بيختار الورقة اللي فيها اللوحات).
+  if (!meta || meta.rowCount === 0) {
+    try {
+      const { parseExcelFile } = await import("./excel");
+      const table = await parseExcelFile(file);
+      if (!table.rows.length) throw new Error("الملف فارغ أو لا يحتوي على بيانات.");
+      plateCol = ""; headers = [];
+      for (let i = 0; i < table.rows.length; i += CHUNK_ROWS) {
+        const batch = table.rows.slice(i, i + CHUNK_ROWS) as DataRow[];
+        takeHeaders(batch);
+        await writeChunk(batch);
+        opts.onProgress?.(written);
       }
-      await writeChunk(batch);
-    },
-    { onProgress: opts.onProgress, batchSize: 10000 }
-  );
+      meta = {
+        headers: table.headers,
+        sheetName: table.sheetName ?? "",
+        rowCount: written,
+        allSheetNames: table.allSheetNames ?? [],
+      };
+    } catch (e) {
+      db.close();
+      await clearData(slot);
+      // رسالة قارئ الدفعات أوضح **بس** لما تكون بتسمّي الصيغة؛ غير كده (زي خطأ
+      // jszip الإنجليزي للملف اللي مش zip) رسالة القارئ العادي أنفع للمندوب.
+      throw streamErr instanceof NotXlsxWorksheetError ? streamErr : e;
+    }
+  }
 
   const dataMeta: DataMeta = {
     slot,

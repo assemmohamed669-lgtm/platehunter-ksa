@@ -13,6 +13,31 @@ function xlsxFile(aoa: unknown[][], name = "big.xlsx"): File {
   return new File([out], name);
 }
 
+// ملف بصيغة تانية (اللي المندوب بيرفعها فعلاً) — xlsb / xls / ods.
+function otherFormatFile(aoa: unknown[][], bookType: "xlsb" | "biff8" | "ods", name: string): File {
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "داتا");
+  const out = XLSX.write(wb, { type: "array", bookType }) as ArrayBuffer;
+  return new File([out], name);
+}
+
+// ملف بورقتين: الأولى فاضية (زي ورقة «فرز») والتانية فيها الداتا.
+function twoSheetFile(dataAoa: unknown[][], name = "big.xlsx"): File {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[]]), "فرز");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(dataAoa), "داتا جديد");
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  return new File([out], name);
+}
+
+const PLATE_AOA = [
+  ["رقم اللوحه", "الحي"],
+  ["ابح1234", "النسيم"],
+  ["دمم5012", "الملز"],
+  ["سعم7788", "العليا"],
+];
+
 async function collectAll(): Promise<Record<string, string>[]> {
   const all: Record<string, string>[] = [];
   await iterateRows((b) => { all.push(...b); }, { slot: "data" });
@@ -74,6 +99,46 @@ describe("dataStore (IndexedDB على الجهاز — dep دفعات)", () => {
     }, { slot: "data" });
     // لقى اللوحتين الموجودتين، وتجاهل غير الموجودة
     expect(matches.length).toBe(2);
+  });
+
+  // ── احتياطي الصيغ: قارئ الدفعات بيفهم xlsx بس. أي صيغة تانية لازم ترجع
+  //    للقارئ العادي (SheetJS) بدل ما ترمي «تعذّر إيجاد ورقة بيانات في الملف».
+  it("ملف xlsb (ورقته .bin) → يرجع للقارئ العادي ويستورد الصفوف", async () => {
+    const meta = await importLargeDataFile(otherFormatFile(PLATE_AOA, "xlsb", "داتا.xlsb"), { slot: "data" });
+    expect(meta.rowCount).toBe(3);
+    expect(meta.plateCol).toBe("رقم اللوحه");
+    const all = await collectAll();
+    expect(all.map((r) => r["رقم اللوحه"])).toEqual(["ابح1234", "دمم5012", "سعم7788"]);
+  });
+
+  it("ملف xls قديم (مش zip خالص) → يرجع للقارئ العادي ويستورد الصفوف", async () => {
+    const meta = await importLargeDataFile(otherFormatFile(PLATE_AOA, "biff8", "داتا.xls"), { slot: "data" });
+    expect(meta.rowCount).toBe(3);
+    expect((await collectAll()).length).toBe(3);
+  });
+
+  it("ملف ods → يرجع للقارئ العادي ويستورد الصفوف", async () => {
+    const meta = await importLargeDataFile(otherFormatFile(PLATE_AOA, "ods", "داتا.ods"), { slot: "data" });
+    expect(meta.rowCount).toBe(3);
+    expect((await collectAll()).length).toBe(3);
+  });
+
+  it("أول ورقة فاضية والداتا في التانية → مايرجعش صفر صفوف", async () => {
+    const meta = await importLargeDataFile(twoSheetFile(PLATE_AOA), { slot: "data" });
+    expect(meta.rowCount).toBe(3);
+    expect(meta.plateCol).toBe("رقم اللوحه");
+    expect(meta.sheetName).toBe("داتا جديد");
+    expect((await collectAll()).length).toBe(3);
+  });
+
+  it("ملف مش جدول بيانات خالص → رسالة عربية مفهومة (مش خطأ jszip إنجليزي)", async () => {
+    const junk = new File([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])], "صورة.xlsx");
+    let err: unknown = null;
+    try { await importLargeDataFile(junk, { slot: "data" }); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/الملف|تعذّر/);           // عربي
+    expect((err as Error).message).not.toMatch(/central directory/i); // مش خطأ jszip
+    expect(await getDataMeta("data")).toBeNull();
   });
 
   it("لفّ على دفعات متعددة (baseIndex متتابع)", async () => {

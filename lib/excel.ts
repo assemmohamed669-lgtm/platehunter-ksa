@@ -454,7 +454,9 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     }
 
     if (rows.length === 0) throw new Error("empty");
-    return { headers, rows };
+    // اسم الورقة المختارة + كل الورقات — زي مسار الـWorker بالظبط (عشان اسم
+    // الورقة وأزرار تبديل الورقة تشتغل برضه لما الـWorker مش متاح).
+    return { headers, rows, sheetName: finalSheet, allSheetNames };
   } catch (err) {
     if (err instanceof Error && err.message === "empty") {
       throw new Error("الملف فارغ أو لا يحتوي على بيانات.");

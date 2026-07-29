@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import * as XLSX from "xlsx";
-import { streamXlsxToBatches } from "@/lib/xlsxStream";
+import JSZip from "jszip";
+import { streamXlsxToBatches, NotXlsxWorksheetError } from "@/lib/xlsxStream";
 
 // يبني ملف xlsx في الذاكرة من مصفوفة صفوف
 function buildXlsx(aoa: unknown[][], sheetName = "داتا"): Uint8Array {
@@ -24,6 +25,40 @@ async function collect(buf: Uint8Array, batchSize = 5000) {
   const meta = await streamXlsxToBatches(buf, (b) => { rows.push(...b); batches++; }, { batchSize });
   return { rows, batches, meta };
 }
+
+// ── بناء zip بملفات جوّه محدّدة بالإيد — لمحاكاة تنويعات بنية الملفات الحقيقية
+// (اسم ورقة بدون رقم، بادئة namespace، حروف كبيرة، ...) اللي SheetJS بيقراها.
+async function buildZip(files: Record<string, string>): Promise<Uint8Array> {
+  const zip = new JSZip();
+  for (const [name, content] of Object.entries(files)) zip.file(name, content);
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+// ورقة بخلايا inlineStr، مع بادئة عناصر اختيارية (زي "x:").
+function sheetXml(rows: string[][], p = ""): string {
+  const body = rows
+    .map((row, ri) => {
+      const cells = row
+        .map((v, ci) =>
+          `<${p}c r="${String.fromCharCode(65 + ci)}${ri + 1}" t="inlineStr">` +
+          `<${p}is><${p}t>${v}</${p}t></${p}is></${p}c>`
+        )
+        .join("");
+      return `<${p}row r="${ri + 1}">${cells}</${p}row>`;
+    })
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8"?><${p}worksheet xmlns:x="http://x"><${p}sheetData>${body}</${p}sheetData></${p}worksheet>`;
+}
+
+function workbookXml(sheetName: string, opts: { prefix?: string; ridAttr?: string } = {}): string {
+  const p = opts.prefix ?? "";
+  const rid = opts.ridAttr ?? "r:id";
+  return `<?xml version="1.0" encoding="UTF-8"?><${p}workbook xmlns:r="http://r" xmlns:rel="http://r" xmlns:x="http://x">` +
+    `<${p}sheets><${p}sheet name="${sheetName}" sheetId="1" ${rid}="rId1"/></${p}sheets></${p}workbook>`;
+}
+
+const relsXml = (target: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?><Relationships><Relationship Id="rId1" Type="ws" Target="${target}"/></Relationships>`;
 
 const norm = (r: Record<string, string>) => {
   const o: Record<string, string> = {};
@@ -85,6 +120,78 @@ describe("streamXlsxToBatches", () => {
     expect(batches).toBeGreaterThanOrEqual(3); // 10 + 10 + 5
     expect(rows[0]["رقم اللوحه"]).toBe("لوح1000");
     expect(rows[24]["رقم اللوحه"]).toBe("لوح1024");
+  });
+
+  // ── تنويعات بنية الملف (ملفات المناديب الحقيقية مش كلها بنفس البنية القياسية) ──
+
+  it("ورقة اسمها sheet.xml (بدون رقم) و r:id ببادئة تانية → يقراها عادي", async () => {
+    const buf = await buildZip({
+      "xl/workbook.xml": workbookXml("داتا جديد", { ridAttr: "rel:id" }),
+      "xl/_rels/workbook.xml.rels": relsXml("worksheets/sheet.xml"),
+      "xl/worksheets/sheet.xml": sheetXml([
+        ["رقم اللوحه", "الحي"],
+        ["ابح1234", "النسيم"],
+        ["دمم5012", "الملز"],
+      ]),
+    });
+    const { rows, meta } = await collect(buf);
+    expect(meta.rowCount).toBe(2);
+    expect(meta.sheetName).toBe("داتا جديد");
+    expect(rows[0]["رقم اللوحه"]).toBe("ابح1234");
+    expect(rows[1]["الحي"]).toBe("الملز");
+  });
+
+  it("عناصر بـ namespace prefix (x:row / x:c / x:sheet) → يقرا الصفوف مش صفر", async () => {
+    const buf = await buildZip({
+      "xl/workbook.xml": workbookXml("داتا", { prefix: "x:" }),
+      "xl/_rels/workbook.xml.rels": relsXml("worksheets/sheet1.xml"),
+      "xl/worksheets/sheet1.xml": sheetXml([
+        ["رقم اللوحه", "الحي"],
+        ["ابح1234", "النسيم"],
+      ], "x:"),
+    });
+    const { rows, meta } = await collect(buf);
+    expect(meta.headers).toEqual(["رقم اللوحه", "الحي"]);
+    expect(meta.rowCount).toBe(1);
+    expect(rows[0]["رقم اللوحه"]).toBe("ابح1234");
+  });
+
+  it("حروف كبيرة في اسم الورقة (Sheet1.xml) بدون rels → لقطة احتياطية بتلاقيها", async () => {
+    const buf = await buildZip({
+      "xl/worksheets/Sheet1.xml": sheetXml([
+        ["رقم اللوحه"],
+        ["ابح1234"],
+      ]),
+    });
+    const { rows, meta } = await collect(buf);
+    expect(meta.rowCount).toBe(1);
+    expect(rows[0]["رقم اللوحه"]).toBe("ابح1234");
+  });
+
+  it("ملف xlsb (zip سليم بس ورقته .bin) → خطأ يسمّي الصيغة ويقترح الحل", async () => {
+    const ws = XLSX.utils.aoa_to_sheet([["رقم اللوحه"], ["ابح1234"]]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "داتا");
+    const buf = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsb" }) as ArrayBuffer);
+
+    let err: unknown = null;
+    try { await collect(buf); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(NotXlsxWorksheetError);
+    const msg = (err as Error).message;
+    expect(msg).toMatch(/xlsb/i);   // يقول الصيغة الحقيقية
+    expect(msg).toMatch(/xlsx/i);   // ويقترح الحفظ كـ xlsx
+  });
+
+  it("ملف ods → خطأ يسمّي الصيغة", async () => {
+    const ws = XLSX.utils.aoa_to_sheet([["رقم اللوحه"], ["ابح1234"]]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "داتا");
+    const buf = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "ods" }) as ArrayBuffer);
+
+    let err: unknown = null;
+    try { await collect(buf); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(NotXlsxWorksheetError);
+    expect((err as Error).message).toMatch(/ods/i);
   });
 
   it("عمود بلا عنوان → مفتاح __EMPTY (زي SheetJS)", async () => {
