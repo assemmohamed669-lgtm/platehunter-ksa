@@ -146,9 +146,10 @@ export default function WantedResultsTable({
         <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${px}px`, minWidth: "max-content" }}>
           <thead className="sticky top-0 z-10">
             <tr className="bg-surface-2 text-muted">
+              {/* ترقيم + نسخ/واتساب/حذف — أول عمود في الويندو */}
+              <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">م / إجراءات</th>
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
               <th className={TH}>رقم اللوحة</th>
-              {showLocate && <th className="border-b border-l border-border px-2 py-2 text-center font-bold">موقعها في الداتا</th>}
               <th className={TH}>نوع السيارة</th>
               <th className={TH}>الماركة</th>
               {showBank && <th className={TH}>البنك</th>}
@@ -158,7 +159,8 @@ export default function WantedResultsTable({
               <th className={TH}>اللون</th>
               <th className={TH}>سنة الصنع</th>
               <th className={TH}>تاريخ التسجيل</th>
-              <th className="border-b border-border px-2 py-2 text-center font-bold">إجراءات</th>
+              {/* آخر الويندو بعد التاريخ بطلب المستخدم */}
+              {showLocate && <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>}
             </tr>
           </thead>
           <tbody>
@@ -168,22 +170,23 @@ export default function WantedResultsTable({
               const bg = sel ? "rgba(107,163,232,0.22)" : dup ?? (i % 2 === 0 ? "transparent" : "rgba(127,127,127,0.06)");
               return (
                 <tr key={r.id} className="border-b border-border" style={{ backgroundColor: bg }}>
+                  {/* ترقيم + نسخ/واتساب/حذف — أول عمود */}
+                  <td className="border-l border-border px-2 py-2">
+                    <div className="flex items-center gap-2 whitespace-nowrap">
+                      <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                      <button onClick={() => copyRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
+                        {copiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                      </button>
+                      <button onClick={() => shareRow(r)} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={13} /></button>
+                      <button onClick={() => onDelete([r.id])} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                    </div>
+                  </td>
                   <td className="border-l border-border px-2 py-2 text-center">
                     <button onClick={() => toggleSel(r.id)} className="text-muted hover:text-primary transition">
                       {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                     </button>
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
-                  {showLocate && (
-                    <td className="border-l border-border px-2 py-2 text-center">
-                      {r.dataIdx != null ? (
-                        <button onClick={() => onLocate!(r)} title="شوف موقعها بين الجيران في نفس الشارع"
-                          className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
-                          <MapPin size={12} /> موقعها
-                        </button>
-                      ) : "—"}
-                    </td>
-                  )}
                   <td className={TD}>{r.type || "—"}</td>
                   <td className={TD}>{r.brand || "—"}</td>
                   {showBank && <td className={TD}>{r.bank || "—"}</td>}
@@ -197,15 +200,17 @@ export default function WantedResultsTable({
                   <td className={TD}>{r.color || "—"}</td>
                   <td className={TD}>{r.year || "—"}</td>
                   <td className={TD}>{r.date || "—"}</td>
-                  <td className="px-2 py-2">
-                    <div className="flex items-center justify-center gap-2">
-                      <button onClick={() => copyRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
-                        {copiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                      </button>
-                      <button onClick={() => shareRow(r)} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={13} /></button>
-                      <button onClick={() => onDelete([r.id])} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
-                    </div>
-                  </td>
+                  {/* آخر الويندو: موقعها في الداتا */}
+                  {showLocate && (
+                    <td className="px-2 py-2 text-center">
+                      {r.dataIdx != null ? (
+                        <button onClick={() => onLocate!(r)} title="شوف موقعها بين الجيران في نفس الشارع"
+                          className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
+                          <MapPin size={12} /> موقعها
+                        </button>
+                      ) : "—"}
+                    </td>
+                  )}
                 </tr>
               );
             })}

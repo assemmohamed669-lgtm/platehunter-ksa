@@ -1881,17 +1881,19 @@ export default function SortingPage() {
               <table className="border-collapse w-full" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-surface-2 text-muted">
+                    {/* ترقيم + نسخ/واتساب/حذف — أول عمود في الويندو */}
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">م / إجراءات</th>
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
-                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
-                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
                     {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
                     {nearestActive && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
-                    <th className="border-b border-border px-2 py-2 text-right font-bold whitespace-nowrap">⋮</th>
+                    {/* آخر الويندو (بعد أعمدة الداتا والتاريخ) بطلب المستخدم */}
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                    <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1907,12 +1909,47 @@ export default function SortingPage() {
                     const rowBg = isSel ? "bg-primary/15" : colorIdx !== undefined ? DUPE_COLORS[colorIdx].tw : "hover:bg-brand/10";
                     return (
                       <tr key={i} className={`border-b border-border transition ${rowBg}`}>
+                        {/* ترقيم + نسخ/واتساب/حذف — أول عمود */}
+                        <td className="border-l border-border px-2 py-2">
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                            <button onClick={async () => { await navigator.clipboard.writeText(buildRowSummaryText(buildRowObject(r))); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1200); }} className="text-muted hover:text-primary transition" title="نسخ">
+                              {copiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                            </button>
+                            <button onClick={() => shareRowToWhatsApp(buildRowObject(r))} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={13} /></button>
+                            <button onClick={() => deleteResult(i)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                          </div>
+                        </td>
                         <td className="border-l border-border px-2 py-2 text-center">
                           <button onClick={() => toggleResult(i)} className="text-muted hover:text-primary transition">
                             {isSel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                           </button>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
+                        {allResultCols.map((rc) => {
+                          const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
+                          return (
+                            <td key={rc.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                              {(() => {
+                                const v = String(val).trim();
+                                const link = gpsCellToLink(v);
+                                if (link) return <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                return <>{v || "—"}</>;
+                              })()}
+                            </td>
+                          );
+                        })}
+                        {nearestActive && "_dist" in r && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">
+                            {formatDistanceKm((r as { _dist: number })._dist)}
+                          </td>
+                        )}
+                        {nearestActive && "_min" in r && (
+                          <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">
+                            {formatDurationMin((r as { _min: number })._min)}
+                          </td>
+                        )}
+                        {/* آخر الويندو: موقعها في الداتا › الحالة › السجل */}
                         <td className="border-l border-border px-2 py-2 text-center">
                           <button onClick={() => showNeighbors(r)} title="شوف موقعها بين الجيران في نفس الشارع"
                             className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
@@ -1973,38 +2010,6 @@ export default function SortingPage() {
                               </button>
                             );
                           })()}
-                        </td>
-                        {allResultCols.map((rc) => {
-                          const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
-                          return (
-                            <td key={rc.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                              {(() => {
-                                const v = String(val).trim();
-                                const link = gpsCellToLink(v);
-                                if (link) return <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
-                                return <>{v || "—"}</>;
-                              })()}
-                            </td>
-                          );
-                        })}
-                        {nearestActive && "_dist" in r && (
-                          <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">
-                            {formatDistanceKm((r as { _dist: number })._dist)}
-                          </td>
-                        )}
-                        {nearestActive && "_min" in r && (
-                          <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">
-                            {formatDurationMin((r as { _min: number })._min)}
-                          </td>
-                        )}
-                        <td className="px-2 py-2">
-                          <div className="flex items-center gap-2">
-                            <button onClick={async () => { await navigator.clipboard.writeText(buildRowSummaryText(buildRowObject(r))); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1200); }} className="text-muted hover:text-primary transition">
-                              {copiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                            </button>
-                            <button onClick={() => shareRowToWhatsApp(buildRowObject(r))} className="text-muted hover:text-primary transition"><Share2 size={13} /></button>
-                            <button onClick={() => deleteResult(i)} className="text-muted hover:text-danger transition"><Trash2 size={13} /></button>
-                          </div>
                         </td>
                       </tr>
                     );
@@ -2129,22 +2134,33 @@ export default function SortingPage() {
               <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-surface-2 text-muted">
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">م / إجراءات</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                     {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => (
                       <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                     ))}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
-                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
-                    <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">⋮</th>
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {displayTashyeek.map(({ r, idx: i, _dist, _min }) => {
+                  {displayTashyeek.map(({ r, idx: i, _dist, _min }, n) => {
                     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
                     const sel = tashyeekSelected.has(i);
                     return (
                       <tr key={i} className={`border-b border-border transition ${sel ? "bg-primary/15" : "bg-primary/5 hover:bg-primary/10"}`}>
+                        {/* ترقيم + نسخ/واتساب/حذف — أول عمود */}
+                        <td className="border-l border-border px-2 py-2">
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <span className="text-[11px] font-bold text-muted">{n + 1}</span>
+                            <button onClick={() => copyTashyeekRow(r, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                              {tashyeekCopiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                            </button>
+                            <button onClick={() => shareTashyeekRow(r)} title="واتساب" className="text-muted hover:text-primary transition"><Share2 size={13} /></button>
+                            <button onClick={() => removeTashyeekRow(i)} title="حذف" className="text-muted hover:text-danger transition"><Trash2 size={13} /></button>
+                          </div>
+                        </td>
                         <td className="border-l border-border px-2 py-2 text-center">
                           <button onClick={() => toggleTashyeekSel(i)} className="text-muted hover:text-primary transition">
                             {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
@@ -2170,15 +2186,6 @@ export default function SortingPage() {
                         {nearestActive && tashyeekGpsCol && (
                           <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">{formatDurationMin(_min)}</td>
                         )}
-                        <td className="px-2 py-2">
-                          <div className="flex items-center justify-center gap-2">
-                            <button onClick={() => copyTashyeekRow(r, i)} title="نسخ" className="text-muted hover:text-primary transition">
-                              {tashyeekCopiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                            </button>
-                            <button onClick={() => shareTashyeekRow(r)} title="واتساب" className="text-muted hover:text-primary transition"><Share2 size={13} /></button>
-                            <button onClick={() => removeTashyeekRow(i)} title="حذف" className="text-muted hover:text-danger transition"><Trash2 size={13} /></button>
-                          </div>
-                        </td>
                       </tr>
                     );
                   })}
@@ -2354,8 +2361,8 @@ export default function SortingPage() {
                 <table className="border-collapse w-full">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-surface-2 text-muted">
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">م / إجراءات</th>
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">☐</th>
-                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                       {nearestActive && <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">المسافة</th>}
                       {pasteAllCols.map((col) => (
@@ -2363,7 +2370,6 @@ export default function SortingPage() {
                           {col}
                         </th>
                       ))}
-                      <th className="border-b border-border px-2 py-1.5" />
                     </tr>
                   </thead>
                   <tbody>
@@ -2379,12 +2385,26 @@ export default function SortingPage() {
                         key={i}
                         className={`border-b border-border ${pasteSelected.has(i) ? "bg-primary/15" : pasteBg}`}
                       >
+                        {/* ترقيم + نسخ/واتساب/حذف — أول عمود */}
+                        <td className="border-l border-border px-2 py-1.5">
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                            <button onClick={() => copyPasteRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                              {pasteCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
+                            </button>
+                            <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                              <Share2 size={12} />
+                            </button>
+                            <button onClick={() => deletePasteResult(i)} title="حذف" className="text-muted hover:text-danger transition">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </td>
                         <td className="border-l border-border px-2 py-1.5 text-center">
                           <button onClick={() => togglePasteSel(i)} className="text-muted hover:text-primary transition">
                             {pasteSelected.has(i) ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
                           </button>
                         </td>
-                        <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
                         <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-ink">{p.converted}</span>
@@ -2418,19 +2438,6 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
-                        <td className="px-2 py-1.5">
-                          <div className="flex items-center justify-center gap-2">
-                            <button onClick={() => copyPasteRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
-                              {pasteCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
-                            </button>
-                            <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
-                              <Share2 size={12} />
-                            </button>
-                            <button onClick={() => deletePasteResult(i)} title="حذف" className="text-muted hover:text-danger transition">
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        </td>
                       </tr>
                       );
                     })}
@@ -2474,20 +2481,30 @@ export default function SortingPage() {
                   <table className="border-collapse w-full text-xs">
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-surface-2 text-muted">
-                        <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">#</th>
+                        <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">م / إجراءات</th>
                         <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                         {pasteRecordCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
                             {col}
                           </th>
                         ))}
-                        <th className="border-b border-border px-2 py-1.5" />
                       </tr>
                     </thead>
                     <tbody>
                       {pasteRecordResults.map((p, i) => (
                         <tr key={i} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
-                          <td className="border-l border-border px-2 py-1.5 text-center text-muted whitespace-nowrap">{i + 1}</td>
+                          {/* ترقيم + نسخ/واتساب — أول عمود */}
+                          <td className="border-l border-border px-2 py-1.5">
+                            <div className="flex items-center gap-2 whitespace-nowrap">
+                              <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                              <button onClick={() => copyPasteRecordRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
+                                {pasteRecordCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
+                              </button>
+                              <button onClick={() => shareRowToWhatsApp(buildPasteRecordRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                                <Share2 size={12} />
+                              </button>
+                            </div>
+                          </td>
                           <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
                               <span className="font-bold text-ink">{p.converted}</span>
@@ -2513,16 +2530,6 @@ export default function SortingPage() {
                               </td>
                             );
                           })}
-                          <td className="px-2 py-1.5">
-                            <div className="flex items-center justify-center gap-2">
-                              <button onClick={() => copyPasteRecordRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
-                                {pasteRecordCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
-                              </button>
-                              <button onClick={() => shareRowToWhatsApp(buildPasteRecordRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
-                                <Share2 size={12} />
-                              </button>
-                            </div>
-                          </td>
                         </tr>
                       ))}
                     </tbody>
