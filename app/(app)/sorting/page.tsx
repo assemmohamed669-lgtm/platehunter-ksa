@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
-  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin,
+  ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin, History,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -22,6 +22,12 @@ import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMin
 import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
 import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
+import {
+  recordAppearances, setPlateStatus, sheetFingerprint, describeHistory, isClosedStatus,
+  newHistoryMap, pruneDetail, type HistoryMap, type PlateStatus,
+} from "@/lib/plateHistory";
+import { loadHistory, saveHistoryEntries } from "@/lib/plateHistoryStore";
+import PlateHistoryModal from "@/components/PlateHistoryModal";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import {
@@ -220,6 +226,14 @@ export default function SortingPage() {
   const [pasteRecordResults, setPasteRecordResults] = useState<TokenMatch[]>([]);
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteBusy, setPasteBusy] = useState(false); // بحث اللصق شغّال (الملف الكبير بياخد ثواني)
+
+  // ── سجل السيارات (هيستوري) — خاص بكل مندوب على جهازه ──────────────────────
+  // بيتحمّل مرة عند فتح الصفحة، وبيتحدّث بعد كل فرز (ظهور جديد) وبعد كل إجراء
+  // (سحبها / ملقيتهاش). مايأثرش على منطق الفرز — عمود عرض + تسجيل إجراء فقط.
+  const [history, setHistory] = useState<HistoryMap>(() => newHistoryMap());
+  const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
+  const [historyPlate, setHistoryPlate] = useState<string | null>(null); // اللوحة المفتوحة في النافذة
+  const [hideClosed, setHideClosed] = useState(false);                   // إخفاء المقفولة (اختياري)
   const [pasteZoom, setPasteZoom] = useState(1);
 
   // ── Bootstrap ──
@@ -534,6 +548,63 @@ export default function SortingPage() {
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
+  // ── سجل السيارات: تحميل + مساعدات ─────────────────────────────────────────
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+
+  // تحميل سجل المندوب الحالي (بحسابه) مرة عند فتح الصفحة.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const uid = data.user?.id;
+        if (!uid || !alive) return;
+        setHistoryAgentId(uid);
+        const loaded = await loadHistory(uid);
+        if (alive) setHistory(loaded);
+      } catch { /* أوفلاين أو مش مسجّل — السجل يفضل فاضي، الفرز مايتأثرش */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // اللوحة المطبّعة لصف نتيجة (نفس مفتاح التلوين/التصدير).
+  const rowPlateNorm = useCallback((r: MatchResult): string => (
+    r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")))
+  ), [effectiveReferralPlateCol]);
+
+  // بعد كل فرز: نسجّل ظهور اللوحات اللي طلعت (بقاعدة بصمة الشيت + فترة السماح)
+  // ونحفظ. أي فشل هنا مايأثرش على النتيجة المعروضة.
+  const recordSortHistory = useCallback(async (matches: MatchResult[]) => {
+    if (!historyAgentId || matches.length === 0) return;
+    try {
+      const plates = matches.map(rowPlateNorm).filter(Boolean);
+      // البصمة من **كل** لوحات الإحالة (الدفعة) — مش نتايج الفرز — عشان تتغيّر
+      // لما الدفعة تتغيّر بس، مهما اتكرر الفرز على نفس الشيت.
+      const refNorms = collectReferralEntries(collectRefSources()).map((e) => e.norm);
+      const fp = sheetFingerprint(refNorms);
+      const today = todayStr();
+      const { map } = recordAppearances(history, plates, { today, fingerprint: fp });
+      const pruned = pruneDetail(map, today);
+      setHistory(pruned);
+      const touched = new Set(plates);
+      await saveHistoryEntries(historyAgentId, [...pruned.values()].filter((e) => touched.has(e.plate)));
+    } catch (err) { console.error("history record failed", err); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyAgentId, history, rowPlateNorm]);
+
+  // تسجيل إجراء المندوب على لوحة (بيتحفظ فوراً محلياً — مايستناش نت).
+  const applyPlateStatus = useCallback(async (plateNorm: string, status: PlateStatus) => {
+    if (!plateNorm) return;
+    const today = todayStr();
+    const next = setPlateStatus(history, plateNorm, status, today);
+    setHistory(next);
+    const entry = next.get(plateNorm);
+    if (historyAgentId && entry) {
+      try { await saveHistoryEntries(historyAgentId, [entry]); }
+      catch (err) { console.error("history status save failed", err); }
+    }
+  }, [history, historyAgentId]);
+
   const plateColorMap = useMemo(() => {
     if (!results) return new Map<string, number>();
     const counts = new Map<string, number>();
@@ -552,16 +623,28 @@ export default function SortingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results, effectiveReferralPlateCol]);
 
+  // إخفاء المقفولة (سحبتها / حد تاني / سدّد / مستبعدة) — **مطفي افتراضياً**، فلو
+  // المندوب ماشغّلهوش تبقى النتيجة زي ما هي بالظبط.
+  const openResults = useMemo(() => {
+    if (!hideClosed || history.size === 0) return matchedResults;
+    return matchedResults.filter((r) => {
+      const st = history.get(rowPlateNorm(r))?.status;
+      return !st || !isClosedStatus(st);
+    });
+  }, [matchedResults, hideClosed, history, rowPlateNorm]);
+
+  const closedCount = matchedResults.length - openResults.length;
+
   const displayResults = useMemo(() => {
-    if (!nearestActive || !userLoc || !gpsCol) return matchedResults;
-    return [...matchedResults]
+    if (!nearestActive || !userLoc || !gpsCol) return openResults;
+    return [...openResults]
       .map((r) => {
         const coords = gpsCellCoords(r.dataRow?.[gpsCol] ?? "");
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...r, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
       .sort((a, b) => a._dist - b._dist);
-  }, [matchedResults, nearestActive, userLoc, gpsCol]);
+  }, [openResults, nearestActive, userLoc, gpsCol]);
 
   // عمود GPS في شيت التسجيلات — لترتيب «الأقرب» + حساب الوقت.
   const tashyeekGpsCol = useMemo(() => (tashyeekTable ? findGpsColumn(tashyeekTable.headers) : null), [tashyeekTable]);
@@ -1000,6 +1083,7 @@ export default function SortingPage() {
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
       persistSortResults(matches, finalTashyeek, "full", 0);
+      void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
@@ -1100,6 +1184,7 @@ export default function SortingPage() {
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
       persistSortResults(matches, finalTashyeek, "new", newEntries.length);
+      void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
   }
@@ -1739,13 +1824,22 @@ export default function SortingPage() {
             <h2 className="text-sm font-bold text-brand">
               {sortMode === "new" ? "نتيجة السيارات المطلوبة في فرز جديد" : "نتيجة السيارات المطلوبة في فرز كلي"}
             </h2>
-            {gpsCol && (
-              <button onClick={handleNearest} disabled={locating}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
-                <Navigation size={13} />
-                {locating ? "جارٍ..." : "الأقرب"}
-              </button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {/* إخفاء السيارات المقفولة (مسحوبة / سدّد / حد تاني) — اختياري */}
+              {(hideClosed || closedCount > 0) && (
+                <button onClick={() => setHideClosed((v) => !v)}
+                  className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-xs transition ${hideClosed ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
+                  {hideClosed ? `مخفي ${closedCount}` : "إخفاء المقفولة"}
+                </button>
+              )}
+              {gpsCol && (
+                <button onClick={handleNearest} disabled={locating}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
+                  <Navigation size={13} />
+                  {locating ? "جارٍ..." : "الأقرب"}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
@@ -1775,6 +1869,8 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
                     {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
@@ -1807,6 +1903,61 @@ export default function SortingPage() {
                             className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
                             <MapPin size={12} /> موقعها
                           </button>
+                        </td>
+                        {/* الحالة: زرين تسجيل سريع (ضغطة واحدة تحفظ)، أو الحالة المسجّلة */}
+                        <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                          {(() => {
+                            const hp = plateKey;
+                            const st = history.get(hp)?.status ?? "none";
+                            const stAt = history.get(hp)?.statusAt;
+                            if (st === "none") {
+                              return (
+                                <span className="inline-flex gap-1">
+                                  <button onClick={() => void applyPlateStatus(hp, "taken")} title="سحبتها"
+                                    className="inline-flex items-center gap-0.5 rounded-lg border border-primary/50 bg-primary/10 px-1.5 py-1 text-[11px] font-bold text-primary transition hover:bg-primary/25">
+                                    <Check size={11} /> سحبتها
+                                  </button>
+                                  <button onClick={() => void applyPlateStatus(hp, "notFound")} title="مش في الموقع"
+                                    className="inline-flex items-center gap-0.5 rounded-lg border border-border px-1.5 py-1 text-[11px] text-muted transition hover:border-alert hover:text-alert">
+                                    <X size={11} /> ملقيتهاش
+                                  </button>
+                                </span>
+                              );
+                            }
+                            const closed = isClosedStatus(st);
+                            const label = st === "taken" ? "مسحوبة" : st === "otherTook" ? "حد تاني سحبها"
+                              : st === "paid" ? "العميل سدّد" : st === "excluded" ? "مستبعدة" : "مش في الموقع";
+                            return (
+                              <button onClick={() => setHistoryPlate(hp)}
+                                className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${closed ? "bg-primary/15 text-primary" : "bg-alert/15 text-alert"}`}>
+                                {closed ? <Check size={11} /> : <X size={11} />}
+                                {label}{stAt ? ` · ${stAt.slice(8)}/${stAt.slice(5, 7)}` : ""}
+                              </button>
+                            );
+                          })()}
+                        </td>
+                        {/* السجل: شارة تفتح نافذة تفاصيل السيارة */}
+                        <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                          {(() => {
+                            const e = history.get(plateKey);
+                            if (!e || e.count <= 1) {
+                              const d = e ? describeHistory(e, todayStr()) : null;
+                              if (!d || d.tone === "new") {
+                                return (
+                                  <button onClick={() => setHistoryPlate(plateKey)}
+                                    className="text-[11px] text-muted underline decoration-dotted transition hover:text-primary">جديدة</button>
+                                );
+                              }
+                            }
+                            const d = describeHistory(e!, todayStr());
+                            const cls = d.tone === "danger" ? "bg-danger/15 text-danger" : "bg-alert/15 text-alert";
+                            return (
+                              <button onClick={() => setHistoryPlate(plateKey)}
+                                className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${cls}`}>
+                                <History size={11} /> {d.text}
+                              </button>
+                            );
+                          })()}
                         </td>
                         {allResultCols.map((rc) => {
                           const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
@@ -2386,6 +2537,47 @@ export default function SortingPage() {
         )}
 
         <LocationNeighborsModal view={neighborView} onClose={() => setNeighborView(null)} />
+
+        {/* نافذة سجل السيارة — تواريخ الظهور + الإجراءات + تسجيل نتيجة */}
+        {historyPlate && (() => {
+          const row = matchedResults.find((r) => rowPlateNorm(r) === historyPlate);
+          const dataRow = row?.dataRow;
+          const locCol = dataTable ? detectLocationColumn(dataTable.headers) : null;
+          const addrCol = dataTable?.headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h)) ?? null;
+          const loc = [locCol ? dataRow?.[locCol] : "", addrCol ? dataRow?.[addrCol] : ""]
+            .map((v) => String(v ?? "").trim()).filter(Boolean).join(" — ");
+          // سطر وصف مختصر: أول ٣ أعمدة نتيجة فيها قيمة (بدون GPS/الروابط).
+          const sub = row
+            ? allResultCols
+                .filter((rc) => !/gps|خريطة|موقع/i.test(rc.label))
+                .map((rc) => String(cellValue(rc.source === "data" ? row.dataRow : row.referralRow, rc)).trim())
+                .filter((v) => v && !gpsCellToLink(v))
+                .slice(0, 3)
+                .join(" · ")
+            : undefined;
+          // هل ظهرت في سجلات تشييكه (شافها بعينه)؟ من شيت السجلات لو محمّل.
+          let seen: string | null = null;
+          if (tashyeekTable && tashyeekPlateCol) {
+            const hit = tashyeekTable.rows.find((tr) => normalizePlate(bankPlateToArabic(String(tr[tashyeekPlateCol] ?? ""))) === historyPlate);
+            if (hit) {
+              const dCol = tashyeekTable.headers.find((h) => /تاريخ|date/i.test(h));
+              const raw = dCol ? String(hit[dCol] ?? "").trim() : "";
+              seen = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : (raw || todayStr());
+            }
+          }
+          return (
+            <PlateHistoryModal
+              plate={historyPlate}
+              entry={history.get(historyPlate) ?? null}
+              today={todayStr()}
+              subtitle={sub}
+              location={loc || undefined}
+              seenInChecks={seen}
+              onSetStatus={(st) => { void applyPlateStatus(historyPlate, st); setHistoryPlate(null); }}
+              onClose={() => setHistoryPlate(null)}
+            />
+          );
+        })()}
       </div>
     </div>
   );
