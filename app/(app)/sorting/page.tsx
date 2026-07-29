@@ -26,7 +26,8 @@ import {
   recordAppearances, setPlateStatus, sheetFingerprint, describeHistory, isClosedStatus,
   newHistoryMap, pruneDetail, type HistoryMap, type PlateStatus,
 } from "@/lib/plateHistory";
-import { loadHistory, saveHistoryEntries } from "@/lib/plateHistoryStore";
+import { loadHistory, saveHistoryEntries, saveHistoryMap } from "@/lib/plateHistoryStore";
+import { backupHistory, restoreHistory, pruneRemoteMonths } from "@/lib/plateHistoryBackup";
 import PlateHistoryModal from "@/components/PlateHistoryModal";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { usePinchZoom } from "@/components/usePinchZoom";
@@ -561,7 +562,16 @@ export default function SortingPage() {
         if (!uid || !alive) return;
         setHistoryAgentId(uid);
         const loaded = await loadHistory(uid);
-        if (alive) setHistory(loaded);
+        if (!alive) return;
+        if (loaded.size > 0) { setHistory(loaded); return; }
+        // مفيش سجل على الجهاز (تليفون جديد / إعادة تثبيت) → جرّب النسخة الاحتياطية.
+        try {
+          const restored = await restoreHistory(uid, new Date().toISOString().slice(0, 10));
+          if (alive && restored.size > 0) {
+            setHistory(restored);
+            await saveHistoryMap(uid, restored); // خزّنها محلياً عشان تشتغل أوفلاين
+          }
+        } catch { /* مفيش نسخة أو مفيش نت — سجل جديد */ }
       } catch { /* أوفلاين أو مش مسجّل — السجل يفضل فاضي، الفرز مايتأثرش */ }
     })();
     return () => { alive = false; };
@@ -588,6 +598,11 @@ export default function SortingPage() {
       setHistory(pruned);
       const touched = new Set(plates);
       await saveHistoryEntries(historyAgentId, [...pruned.values()].filter((e) => touched.has(e.plate)));
+      // نسخة احتياطية على Storage (خاصة بالمندوب) — بتفشل بصمت لو مفيش نت.
+      try {
+        await backupHistory(historyAgentId, pruned, today);
+        await pruneRemoteMonths(historyAgentId, today);
+      } catch { /* مفيش نت أو الـbucket لسه ماتعملش — السجل المحلي شغّال عادي */ }
     } catch (err) { console.error("history record failed", err); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyAgentId, history, rowPlateNorm]);
