@@ -35,6 +35,11 @@ export const DEFAULT_GATE_OPTS: SpeechGateOpts = {
   floorRelease: 0.2,
 };
 
+/** كل قد إيه نقيس الصوت (ms) — ~٥٠ فريم/ثانية، كفاية للـVAD وأخف من rAF. */
+export const TICK_MS = 20;
+/** لو مفيش قياس بقالنا أكتر من كده (ms) يبقى الحلقة متجمدة → نبعت كل الصوت. */
+export const STALL_MS = 1500;
+
 export function newSpeechGateState(): SpeechGateState {
   return { noiseFloor: 0.01, speaking: false, lastSpeechAt: -Infinity };
 }
@@ -51,8 +56,16 @@ export function updateSpeechState(
 ): SpeechGateState {
   // أرضية الضجيج: تنزل بسرعة للهدوء الجديد، وتصعد ببطء (عشان نبضة كلام قصيرة
   // ماترفعهاش، لكن ضجيج مستمر يتعرف عليه ويتّرفض مع الوقت).
+  //
+  // ⚠️ باج ميداني مثبت (٢٩ يوليو ٢٠٢٦): الأرضية كانت بتصعد **وإحنا بنبعت كلام**،
+  // فكلام المندوب كان بيرفع العتبة اللي المفروض يعديها → البوابة تقفل على نفسها
+  // بعد ~٢ ثانية من الكلام المتواصل وتفضل مقفولة (الصوت مايوصلش Deepgram خالص،
+  // فمفيش لوحات تظهر لباقي الجلسة والمندوب يضطر يوقف التسجيل ويبدأ من جديد).
+  // الحل (أسلوب VAD القياسي): الأرضية تتحدّث بس لما مانكونش بنبعت، أو لما الطاقة
+  // تنزل تحتها (السكوت ينزّلها) — فالكلام عمره ما يرفع عتبة نفسه.
+  const adapt = !s.speaking || energy < s.noiseFloor;
   const rate = energy < s.noiseFloor ? opts.floorRelease : opts.floorAttack;
-  const noiseFloor = s.noiseFloor + (energy - s.noiseFloor) * rate;
+  const noiseFloor = adapt ? s.noiseFloor + (energy - s.noiseFloor) * rate : s.noiseFloor;
 
   const isLoud = energy >= opts.minEnergy && energy > noiseFloor * opts.factor;
   const lastSpeechAt = isLoud ? now : s.lastSpeechAt;
@@ -94,8 +107,8 @@ export function createSpeechGate(
   const buf = new Float32Array(analyser.fftSize);
   let state = newSpeechGateState();
   let smoothed = 0; // مستوى منعّم للعرض
-  let raf = 0;
   let closed = false;
+  let lastTickAt = performance.now();
 
   const tick = () => {
     if (closed) return;
@@ -104,17 +117,21 @@ export function createSpeechGate(
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     const rms = Math.sqrt(sum / buf.length);
     smoothed = smoothed * 0.8 + rms * 0.2;
-    state = updateSpeechState(state, rms, performance.now(), opts);
-    raf = requestAnimationFrame(tick);
+    lastTickAt = performance.now();
+    state = updateSpeechState(state, rms, lastTickAt, opts);
   };
-  raf = requestAnimationFrame(tick);
+  // مؤقّت (مش requestAnimationFrame): الـrAF بيتوقف تماماً لما التطبيق يبقى في
+  // الخلفية أو الشاشة تتقفل — فالحالة كانت بتتجمد على «مفيش كلام» = صمت دائم.
+  const timer = setInterval(tick, TICK_MS);
 
   return {
-    isSpeaking: () => state.speaking,
+    // fail-open: لو حلقة القياس اتجمدت/اتخنقت (خلفية، شاشة مقفولة، جهاز مشغول)
+    // نبعت كل الصوت بدل ما نضيّع لوحات — الأمان أهم من توفير الفاتورة.
+    isSpeaking: () => (performance.now() - lastTickAt > STALL_MS ? true : state.speaking),
     level: () => Math.min(1, smoothed * 8), // rms كلام ~0.02-0.12 → 0..1
     close: () => {
       closed = true;
-      cancelAnimationFrame(raf);
+      clearInterval(timer);
       try { source.disconnect(); } catch { /* already gone */ }
       try { void ctx.close(); } catch { /* already closed */ }
     },

@@ -36,10 +36,63 @@ describe("updateSpeechState — بوابة الكلام (VAD)", () => {
     expect(s.speaking).toBe(false);
   });
 
-  it("أرضية الضجيج بتتكيّف: ضجيج ثابت عالي بيرفع noiseFloor (رفض ضجيج مستمر)", () => {
+  it("أرضية الضجيج بتتكيّف على الضجيج **قبل** الكلام (تمنع تشغيله على ضجيج البيئة)", () => {
     let s = newSpeechGateState();
-    for (let t = 0; t < 120; t++) s = updateSpeechState(s, 0.05, t * 50);
-    expect(s.noiseFloor).toBeGreaterThan(0.02);
+    // ضجيج بيئة تحت minEnergy (مايعتبرش كلام) → الأرضية بتتكيّف عليه وبنفضل ساكتين
+    for (let t = 0; t < 200; t++) s = updateSpeechState(s, 0.007, t * 20);
+    expect(s.speaking).toBe(false);
+    expect(s.noiseFloor).toBeGreaterThan(0.005);
+  });
+
+  // ── انحدار: الباج الميداني اللي كان بيضيّع كل اللوحات بعد أول ثانيتين ──────────
+  // كانت الأرضية بتصعد **وإحنا بنبعت**، فكلام المندوب يرفع عتبة نفسه → البوابة
+  // تقفل بعد ~٢ ثانية كلام متواصل وتفضل مقفولة (مفيش صوت يوصل Deepgram).
+  describe("انحدار: البوابة ماتقفلش على نفسها وإحنا بنبعت", () => {
+    const secondsOf = (energy: number, seconds: number, s: ReturnType<typeof newSpeechGateState>, t0 = 0) => {
+      let s2 = s;
+      let t = t0;
+      let blocked = 0;
+      const frames = Math.round((seconds * 1000) / 20);
+      for (let f = 0; f < frames; f++) {
+        t += 20;
+        s2 = updateSpeechState(s2, energy, t);
+        if (!s2.speaking) blocked++;
+      }
+      return { s: s2, t, blocked, frames };
+    };
+
+    it("كلام متواصل ١٥ ثانية بنفس المستوى → بيفضل يبعت طول الوقت", () => {
+      const r = secondsOf(0.05, 15, newSpeechGateState());
+      expect(r.blocked).toBe(0);
+      expect(r.s.speaking).toBe(true);
+    });
+
+    it("رفع الصوت (يعيد اللوحة) ثم الرجوع للمستوى العادي → يفضل يبعت", () => {
+      const loud = secondsOf(0.25, 3, newSpeechGateState());
+      const normal = secondsOf(0.05, 5, loud.s, loud.t);
+      expect(normal.blocked).toBe(0);
+      expect(normal.s.speaking).toBe(true);
+    });
+
+    it("لوحة كاملة (٤ ثواني) بوقفات قصيرة بين الحروف → مفيش قطع", () => {
+      let s = newSpeechGateState();
+      let t = 0;
+      let blocked = 0;
+      for (let i = 0; i < 7; i++) {           // ٧ مقاطع (٣ حروف + ٤ أرقام)
+        for (let f = 0; f < 20; f++) { t += 20; s = updateSpeechState(s, 0.06, t); if (!s.speaking) blocked++; }
+        for (let f = 0; f < 8; f++) { t += 20; s = updateSpeechState(s, 0.001, t); if (!s.speaking) blocked++; }
+      }
+      expect(blocked).toBe(0);
+    });
+
+    it("السكوت الطويل لسه بيوقف الإرسال (البوابة لسه بتوفّر الفاتورة)", () => {
+      let s = newSpeechGateState();
+      s = updateSpeechState(s, 0.05, 1000);
+      expect(s.speaking).toBe(true);
+      const quiet = 1000 + DEFAULT_GATE_OPTS.hangoverMs + 100;
+      s = updateSpeechState(s, 0.0005, quiet);
+      expect(s.speaking).toBe(false);
+    });
   });
 
   it("DEFAULT_GATE_OPTS معرّفة بقيم منطقية", () => {

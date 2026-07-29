@@ -54,6 +54,8 @@ const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
 // منظّم الإيقاع في التشييك الصوتي — اهتزاز + وميض بين اللوحات (نفس فكرة التسجيل).
 const LS_CHECK_PACER = "ph:check:pacer";
+// لو المندوب بيتكلم ومفيش أي نص من المحرك المدة دي → القناة اتعطّلت، نعيد التشغيل.
+const DG_SILENT_MS = 20000;
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -539,6 +541,12 @@ export default function InstantCheckPage() {
   const dgGateRef = useRef<SpeechGate | null>(null);   // بوابة الكلام (VAD)
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
+  // شبكة أمان: آخر لحظة وصل فيها نص من المحرك + مؤقّت الحارس. لو المندوب بيتكلم
+  // ومفيش أي نص بقاله فترة طويلة، يبقى القناة اتعطّلت (مايك/بوابة/سوكيت) —
+  // نعيد تشغيل البث تلقائياً بدل ما المندوب يفضل يتكلم والكلام رايح في الهوا.
+  const dgLastTextAtRef = useRef<number>(0);
+  const dgWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dgAutoRestartsRef = useRef(0);
   const dgReconnectsRef = useRef(0); // عدّاد إعادة اتصال Deepgram (محدود عشان مايعملش لوب)
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
   // حارس تكرار الصوت: آخر لوحة اتفرّغت + وقتها — عشان لو نفس النطق اتفرّغ مرتين
@@ -2222,6 +2230,7 @@ export default function InstantCheckPage() {
     if (pttChunkTimerRef.current) clearInterval(pttChunkTimerRef.current);
     if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
     if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
+    if (dgWatchdogRef.current) { clearInterval(dgWatchdogRef.current); dgWatchdogRef.current = null; }
     // نظّف بث Deepgram لو الصفحة اتقفلت والمايك شغّال.
     try { dgGateRef.current?.close(); } catch {}
     dgGateRef.current = null;
@@ -2344,6 +2353,22 @@ export default function InstantCheckPage() {
         dgMicPollRef.current = setInterval(() => {
           setPttMicActive(dgGateRef.current ? dgGateRef.current.isSpeaking() : true);
         }, 150);
+        // الحارس: لو عدّى DG_SILENT_MS وإحنا «بنبعت» (المندوب بيتكلم) ومفيش أي نص
+        // وصل، نعيد تشغيل البث (محدود بـ3 مرات عشان مايعملش لوب).
+        dgLastTextAtRef.current = performance.now();
+        dgWatchdogRef.current = setInterval(() => {
+          if (!isListeningRef.current || pttPausedRef.current) return;
+          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
+          const silentFor = performance.now() - dgLastTextAtRef.current;
+          if (!speaking || silentFor < DG_SILENT_MS) return;
+          if (dgAutoRestartsRef.current >= 3) {
+            setPttError("التفريغ مش راجع — أوقف المايك وشغّله تاني.");
+            return;
+          }
+          dgAutoRestartsRef.current += 1;
+          dgLastTextAtRef.current = performance.now();
+          try { dgSocketRef.current?.close(); } catch {}  // onclose بيعيد الاتصال
+        }, 5000);
       };
       ws.onmessage = (ev) => {
         try {
@@ -2353,6 +2378,8 @@ export default function InstantCheckPage() {
           if (msg.type === "UtteranceEnd") { processWhisperText("", true); return; }
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
+          dgLastTextAtRef.current = performance.now(); // القناة سليمة — صفّر الحارس
+          dgAutoRestartsRef.current = 0;
           setPttLiveText(text);
           // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
           if (msg.is_final) {
@@ -2399,6 +2426,7 @@ export default function InstantCheckPage() {
       ws.onclose = () => {
         if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
         if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
+        if (dgWatchdogRef.current) { clearInterval(dgWatchdogRef.current); dgWatchdogRef.current = null; }
         if (!isListeningRef.current) return; // المندوب أوقف بنفسه — مفيش إعادة اتصال
         // نضّف تيار/مسجّل/بوابة القديمة قبل ما نبدأ واحدة جديدة (منعاً للتسريب).
         try { rec.stop(); } catch {}
