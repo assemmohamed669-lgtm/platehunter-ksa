@@ -3,7 +3,9 @@
  * app. A subscription runs until `subscription_end`; after it there's a
  * GRACE_DAYS window where the service still works, then it's cut off.
  */
-export const GRACE_DAYS = 5;
+/** فترة السماح بعد انتهاء الاشتراك: **يوم واحد** — بعده الخدمة بتتقطع
+ *  والمندوب مايقدرش يدخل لحد ما يجدّد (بطلب المالك ٢٠٢٦/٧/٣٠). */
+export const GRACE_DAYS = 1;
 
 export type SubStatus = "active" | "expiring" | "grace" | "expired" | "none";
 

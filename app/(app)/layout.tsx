@@ -99,7 +99,7 @@ export default function AppShellLayout({
   if (cutOff) {
     const text = isTrial
       ? "السلام عليكم، انتهت فترة التجربة المجانية وأرغب في الاشتراك في تطبيق قناص اللوحات."
-      : "السلام عليكم، برجاء تفعيل اشتراكي الشهري في تطبيق قناص اللوحات.";
+      : "السلام عليكم، انتهى اشتراكي في تطبيق قناص اللوحات وأرغب في معرفة طريقة الدفع لإعادة تشغيل الخدمة.";
     return (
       <SessionGuard>
         <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-night px-6 text-center">
@@ -108,12 +108,12 @@ export default function AppShellLayout({
           </div>
           <div>
             <h1 className="text-lg font-bold text-ink">
-              {isTrial ? "انتهت فترة التجربة المجانية" : "الخدمة متوقّفة"}
+              {isTrial ? "انتهت فترة التجربة المجانية" : "انتهى اشتراكك"}
             </h1>
             <p className="mt-2 text-sm text-muted">
               {isTrial
                 ? "انتهت فترة التجربة المجانية (١٥ يوم). للاشتراك والاستمرار تواصل مع الأدمن."
-                : "لتشغيل الخدمة برجاء تسديد اشتراكك الشهري."}
+                : "اشتراكك في التطبيق انتهى وتم إيقاف الخدمة. برجاء التواصل مع الإدارة لمعرفة طريقة الدفع وإعادة تشغيل الخدمة."}
             </p>
           </div>
           <a href={`https://wa.me/${ADMIN_WHATSAPP}?text=${encodeURIComponent(text)}`} target="_blank" rel="noopener noreferrer"
