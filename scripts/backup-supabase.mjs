@@ -8,13 +8,16 @@
  *
  * التشغيل:
  *   npm run backup
- *   npm run backup -- --out "D:\\نسخ" --with-audio
+ *   npm run backup -- --out "D:\\نسخ" --with-audio --keep 30
+ *
+ * بيحتفظ بآخر ١٤ نسخة ويمسح الأقدم (كل نسخة ~٣٠ ميجا).
  *
  * محتاج متغيّرين: NEXT_PUBLIC_SUPABASE_URL و SUPABASE_SERVICE_ROLE_KEY.
  * بياخدهم من .env.local لو موجود، وإلا من متغيّرات البيئة.
  */
 import { createClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "./lib/paginate.mjs";
+import { foldersToPrune } from "./lib/retention.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -87,12 +90,30 @@ function parseArgs(argv) {
   const out = {
     dir: path.join(os.homedir(), "OneDrive", "نسخ-احتياطي-platehunter"),
     withAudio: false,
+    keep: 14,
   };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--out" && argv[i + 1]) out.dir = argv[++i];
     else if (argv[i] === "--with-audio") out.withAudio = true;
+    else if (argv[i] === "--keep" && argv[i + 1]) out.keep = Number(argv[++i]);
   }
   return out;
+}
+
+/**
+ * يمسح النسخ الأقدم من آخر `keep` نسخة. بيتنفّذ **بعد** نجاح النسخة الجديدة
+ * عشان مانمسحش القديم قبل ما يبقى عندنا بديل.
+ */
+function pruneOld(dir, keep) {
+  const names = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+
+  for (const name of foldersToPrune(names, keep)) {
+    fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    console.log(`  مسحت النسخة القديمة: ${name}`);
+  }
 }
 
 /** ٢٠٢٦-٠٧-٣٠_٢٢-٤٧ — يترتّب أبجدياً بالتاريخ. */
@@ -202,9 +223,12 @@ async function main() {
   const total = Object.values(manifest.tables).reduce((s, t) => s + t.rows, 0);
   console.log(`\n${failed ? "⚠️ " : "✅ "}إجمالي ${total} صف في ${outDir}`);
   if (failed) {
-    console.log(`   ${failed} جدول فشل — شوف _manifest.json`);
+    // النسخة ناقصة — مانمسحش القديم، ساعتها هو اللي معانا.
+    console.log(`   ${failed} جدول فشل — شوف _manifest.json (والقديم ماتمسحش)`);
     process.exit(1);
   }
+
+  pruneOld(args.dir, args.keep);
   console.log(`   ⚠️ الملفات دي فيها بيانات مناديب — خليها في مكان خاص.\n`);
 }
 
