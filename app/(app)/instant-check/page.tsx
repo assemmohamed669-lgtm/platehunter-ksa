@@ -698,6 +698,8 @@ export default function InstantCheckPage() {
   // Recordings sheet (شيت التسجيلات) — persisted in IDB, fixed log the agent
   // can only download or share (no delete / no edit).
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
+  // أي مشاركة/تصدير شغّالة دلوقتي (لعرض «جاري التجهيز» ومنع الضغط المتكرر).
+  const [shareBusy, setShareBusy] = useState<string | null>(null);
   const [fieldZoom, setFieldZoom] = useState(3);
   const [fieldSearch, setFieldSearch] = useState("");
   // فلتر عدادات شيت السجلات: الكل / صوتي / يدوي / مطلوب.
@@ -1533,13 +1535,23 @@ export default function InstantCheckPage() {
     }
   }
 
+  // بناء الشيت + المشاركة شغل تقيل. من غير مؤشّر، المندوب بيفتكر البرنامج
+  // متجمّد ويدوس تاني. runShare بيعلّم الزر «جاري التجهيز» **ويسيب الواجهة
+  // ترسمه** قبل ما الشغل التقيل يبدأ، ويمنع الضغط المتكرر.
+  async function runShare(key: string, fn: () => Promise<void>) {
+    if (shareBusy) return;
+    setShareBusy(key);
+    await new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    try { await fn(); }
+    catch (err) { alert((err as { message?: string })?.message ?? "تعذّرت المشاركة"); }
+    finally { setShareBusy(null); }
+  }
+
   async function shareFieldExcel() {
-    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
-    try {
+    await runShare("field", async () => {
+      const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
       await shareExcelBlob(blob, "التشييك-الميداني.xlsx", "التشييك الميداني");
-    } catch (err: any) {
-      alert(err?.message ?? "تعذّرت المشاركة");
-    }
+    });
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -2055,10 +2067,10 @@ export default function InstantCheckPage() {
     setPttSel(new Set());
   }
   async function sharePttDraftFile() {
-    try {
+    await runShare("ptt", async () => {
       const blob = buildExcelBlob(buildPttRows(), "تشييك صوتي");
       await shareExcelBlob(blob, `تشييك-صوتي-${Date.now()}.xlsx`, "تشييك صوتي");
-    } catch (e) { alert((e as { message?: string })?.message ?? "تعذّرت المشاركة"); }
+    });
   }
 
   // يصدّر لوحات الصوت لشيت التسجيلات — الجديد بس (اللي ما اتصدّرش قبل كده).
@@ -4107,9 +4119,9 @@ export default function InstantCheckPage() {
                 label="فتح الشيت"
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
               />
-              <button onClick={shareFieldExcel}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
-                <Share2 size={14} /> مشاركة واتساب
+              <button onClick={shareFieldExcel} disabled={shareBusy !== null}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition disabled:opacity-60">
+                <Share2 size={14} /> {shareBusy === "field" ? "جاري التجهيز..." : "مشاركة واتساب"}
               </button>
             </div>
           </div>

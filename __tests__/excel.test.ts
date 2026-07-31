@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, buildRowSummaryText, buildColoredSortExcel } from "@/lib/excel";
+import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, blobToBase64, buildRowSummaryText, buildColoredSortExcel } from "@/lib/excel";
 
 describe("buildColoredSortExcel — hyperlink الـGPS جوّه الملف قابل للفتح", () => {
   it("يكتب Target نضيف (بدون &amp;) للرابط المشفّر مزدوجاً — round-trip", async () => {
@@ -60,6 +60,44 @@ describe("bytesToBase64", () => {
     const decoded = atob(encoded);
     expect(decoded.length).toBe(size);
     for (let i = 0; i < size; i++) expect(decoded.charCodeAt(i)).toBe(bytes[i]);
+  });
+});
+
+// تحويل غير محجوب للشاشة — بيستخدم FileReader (كود أصلي) بدل بناء نص ضخم
+// على الخيط الرئيسي، فالتصدير/المشاركة مايجمّدوش التطبيق مهما كبرت السجلات.
+describe("blobToBase64 (غير محجوب)", () => {
+  it("بيدي نفس ناتج التحويل المتزامن", async () => {
+    const bytes = new Uint8Array([0, 1, 2, 200, 255, 128, 64]);
+    const blob = new Blob([bytes.buffer as ArrayBuffer]);
+    expect(await blobToBase64(blob)).toBe(bytesToBase64(bytes));
+  });
+
+  it("ملف فاضي → نص فاضي", async () => {
+    expect(await blobToBase64(new Blob([]))).toBe("");
+  });
+
+  it("ملف كبير (أكتر من دفعة) بيتحوّل صح", async () => {
+    const size = 120_000;
+    const bytes = new Uint8Array(size);
+    for (let i = 0; i < size; i++) bytes[i] = (i * 7) % 256;
+    const encoded = await blobToBase64(new Blob([bytes.buffer as ArrayBuffer]));
+    const decoded = atob(encoded);
+    expect(decoded.length).toBe(size);
+    expect(decoded.charCodeAt(0)).toBe(bytes[0]);
+    expect(decoded.charCodeAt(size - 1)).toBe(bytes[size - 1]);
+  });
+
+  it("لو FileReader مش متاح بيرجع للطريقة اليدوية بنفس الناتج", async () => {
+    const bytes = new Uint8Array([9, 8, 7, 250, 3]);
+    const blob = new Blob([bytes.buffer as ArrayBuffer]);
+    const original = globalThis.FileReader;
+    // @ts-expect-error — إخفاء FileReader لاختبار المسار الاحتياطي
+    delete globalThis.FileReader;
+    try {
+      expect(await blobToBase64(blob)).toBe(bytesToBase64(bytes));
+    } finally {
+      globalThis.FileReader = original;
+    }
   });
 });
 
