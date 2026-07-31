@@ -34,10 +34,39 @@ export function buildPlateShareText(opts: {
  * نستخدم Share plugin (بيطلّع قائمة اختيار النظام: واتساب / واتساب أعمال / أي
  * تطبيق)؛ على الويب نستخدم Web Share API لو متاح؛ وإلا نرجع لرابط wa.me.
  */
-export async function shareTextViaChooser(
+/**
+ * أقصى طول آمن لنص المشاركة.
+ * سببان: (١) أندرويد بيرفض نقل بيانات ضخمة بين التطبيقات
+ * (TransactionTooLargeException) فالتطبيق بيتجمّد أو بيقف؛ (٢) واتساب نفسه
+ * حدّه ٦٥٬٥٣٦ حرف للرسالة. ٦٠ ألف بتقعد تحت الاتنين بأمان.
+ */
+export const SAFE_SHARE_TEXT_CHARS = 60_000;
+
+const RECORD_SEPARATOR = "\n\n──────────\n\n";
+
+/**
+ * يقصّ نص المشاركة لحد آمن — **عند حدود سجل** مش في نص سجل — ويضيف سطر
+ * بيوضّح إن فيه باقي. من غير ده، تحديد آلاف اللوحات كان بيجمّد التطبيق.
+ */
+export function trimShareText(
   text: string,
+  max = SAFE_SHARE_TEXT_CHARS,
+): { text: string; trimmed: boolean } {
+  if (text.length <= max) return { text, trimmed: false };
+  const notice = "\n\n… القائمة أطول من إن واتساب يستحملها — شارك الملف عشان توصل كاملة.";
+  const room = Math.max(0, max - notice.length);
+  // اقطع عند آخر فاصل سجل جوه المساحة المتاحة؛ لو مفيش فاصل قريب اقطع مباشرة.
+  const sep = text.lastIndexOf(RECORD_SEPARATOR, room);
+  const cut = sep > room * 0.5 ? sep : room;
+  return { text: text.slice(0, cut).trimEnd() + notice, trimmed: true };
+}
+
+export async function shareTextViaChooser(
+  rawText: string,
   dialogTitle = "مشاركة عبر",
 ): Promise<ShareOutcome> {
+  // حماية إجبارية لكل أزرار المشاركة النصية في التطبيق.
+  const { text } = trimShareText(rawText);
   // ── Native (Capacitor): قائمة النظام ──────────────────────────────────────
   try {
     const { Capacitor } = await import("@capacitor/core");

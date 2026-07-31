@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser } from "@/lib/share";
+import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, SAFE_SHARE_TEXT_CHARS } from "@/lib/share";
 
 describe("shareTextViaChooser — قائمة النظام بدل واتساب المباشر", () => {
   const hadShare = "share" in navigator;
@@ -104,5 +104,51 @@ describe("dataUrlToBlob", () => {
   it("defaults to image/jpeg when the mime is absent", () => {
     const blob = dataUrlToBlob("data:;base64,SGVsbG8=");
     expect(blob.type).toBe("image/jpeg");
+  });
+});
+
+// أندرويد بيرفض نقل بيانات ضخمة بين التطبيقات (TransactionTooLargeException)،
+// وواتساب نفسه بيقطع الرسايل الطويلة. لو المندوب حدّد آلاف اللوحات، النص
+// بيوصل مئات الكيلوبايت والتطبيق كان بيتجمّد — فبنقصّه عند حد آمن.
+describe("trimShareText — حماية من تجميد المشاركة النصية", () => {
+  const SEP = "\n\n──────────\n\n";
+  const rec = (i: number) => `${i}. لوحة: سسع ${1000 + i}\nالحالة: مطلوبة\nالحي: النسيم الغربي`;
+  const many = (n: number) => Array.from({ length: n }, (_, i) => rec(i)).join(SEP);
+
+  it("النص القصير بيعدّي زي ما هو", () => {
+    const t = many(5);
+    const r = trimShareText(t);
+    expect(r.trimmed).toBe(false);
+    expect(r.text).toBe(t);
+  });
+
+  it("النص الطويل بيتقصّ لحد آمن", () => {
+    const r = trimShareText(many(5000));
+    expect(r.trimmed).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_CHARS);
+  });
+
+  it("بيضيف سطر بيوضّح إن فيه باقي", () => {
+    const r = trimShareText(many(5000));
+    expect(r.text).toMatch(/الملف|أطول/);
+  });
+
+  it("بيقطع عند حدود سجل مش نص سجل", () => {
+    const r = trimShareText(many(5000));
+    // آخر سطر قبل التنويه لازم يكون سجل كامل (مش مقطوع في نص كلمة)
+    const body = r.text.slice(0, r.text.lastIndexOf("\n\n"));
+    expect(body.trimEnd().endsWith("النسيم الغربي")).toBe(true);
+  });
+
+  it("بيحترم حد مخصّص", () => {
+    const r = trimShareText(many(500), 1000);
+    expect(r.text.length).toBeLessThanOrEqual(1000);
+    expect(r.trimmed).toBe(true);
+  });
+
+  it("نص بلا فواصل سجلات بيتقصّ برضه (مايعلّقش)", () => {
+    const r = trimShareText("ا".repeat(200_000));
+    expect(r.trimmed).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_CHARS);
   });
 });
