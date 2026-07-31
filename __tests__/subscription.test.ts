@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { subStatus, isCutOff, GRACE_DAYS } from "@/lib/subscription";
+import { subStatus, isCutOff, GRACE_DAYS, subscriptionNotice } from "@/lib/subscription";
 
 // اليوم ثابت في كل الاختبارات: 2026-08-10
 const TODAY = new Date("2026-08-10T13:00:00");
@@ -82,5 +82,44 @@ describe("isCutOff — القطع الفعلي للخدمة", () => {
   it("التجربة (سماح صفر) بتتقطع اليوم اللي بعد الانتهاء", () => {
     expect(isCutOff(day(-1), true, 0)).toBe(true);
     expect(isCutOff(day(0), true, 0)).toBe(false);
+  });
+});
+
+describe("subscriptionNotice — رسالة التنبيه للمشترك", () => {
+  it("آخر يوم في الاشتراك (٠ يوم) → تحذير «غداً سيتم فصل الخدمة»", () => {
+    const n = subscriptionNotice(subStatus(day(0)), false)!;
+    expect(n.urgent).toBe(true);
+    expect(n.text).toContain("غداً سيتم فصل الخدمة");
+    expect(n.text).toContain("برجاء دفع الاشتراك");
+  });
+
+  it("التحذير بيطمّن إن السجلات محفوظة", () => {
+    const n = subscriptionNotice(subStatus(day(0)), false)!;
+    expect(n.note).toContain("محفوظة");
+    expect(n.note).toContain("لن يتم مسحها");
+  });
+
+  it("حساب التجربة بيقول «التجربة المجانية» مش «الاشتراك»", () => {
+    expect(subscriptionNotice(subStatus(day(0), 0), true)!.text).toContain("التجربة المجانية");
+    expect(subscriptionNotice(subStatus(day(0)), false)!.text).toContain("مدة الاشتراك");
+  });
+
+  it("يوم السماح (بعد الانتهاء) → نفس التحذير العاجل", () => {
+    const n = subscriptionNotice(subStatus(day(-1)), false)!;
+    expect(n.urgent).toBe(true);
+    expect(n.text).toContain("غداً سيتم فصل الخدمة");
+  });
+
+  it("باقي أيام (١-٣) → تنبيه عادي مش عاجل", () => {
+    const n = subscriptionNotice(subStatus(day(2)), false)!;
+    expect(n.urgent).toBe(false);
+    expect(n.text).toContain("برجاء السداد");
+    expect(n.note).toBe("");
+  });
+
+  it("اشتراك نشط أو مقطوع أو بدون → مفيش تنبيه", () => {
+    expect(subscriptionNotice(subStatus(day(30)), false)).toBeNull();
+    expect(subscriptionNotice(subStatus(day(-30)), false)).toBeNull();
+    expect(subscriptionNotice(subStatus(null), false)).toBeNull();
   });
 });

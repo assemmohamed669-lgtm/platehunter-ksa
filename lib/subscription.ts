@@ -33,6 +33,42 @@ export function subStatus(end: string | null | undefined, graceDays = GRACE_DAYS
   return { status: "expired", daysLeft, label: "منتهي — مقطوع", color: "#EF4444" };
 }
 
+export interface SubNotice {
+  /** نص التنبيه الأساسي. */
+  text: string;
+  /** طمأنة عن السجلات — فاضية في التنبيه العادي. */
+  note: string;
+  /** عاجل (آخر يوم أو يوم السماح) → يتعرض بشكل أوضح. */
+  urgent: boolean;
+}
+
+/**
+ * تنبيه الاشتراك اللي بيتعرض للمندوب فوق الصفحة.
+ *
+ * آخر يوم في الاشتراك (٠ يوم) ويوم السماح بياخدوا تحذير عاجل وواضح إن الخدمة
+ * هتتفصل، ومعاه طمأنة إن السجلات كلها محفوظة — عشان المندوب مايخافش إن الدفع
+ * المتأخر معناه ضياع شغله (وده مضمون فعلاً: القطع بيمنع الاستخدام ومابيمسحش
+ * ولا صف). باقي الأيام بتاخد تنبيه عادي.
+ */
+export function subscriptionNotice(sub: SubInfo, isTrial: boolean): SubNotice | null {
+  const RECORDS_NOTE =
+    "ملاحظة: جميع سجلاتك ستظل محفوظة ولن يتم مسحها — وبمجرد الدفع وتسجيل الدخول ستجد جميع سجلاتك كما هي.";
+
+  const lastDay = sub.status === "expiring" && sub.daysLeft === 0;
+  if (lastDay || sub.status === "grace") {
+    const what = isTrial ? "فترة التجربة المجانية" : "مدة الاشتراك";
+    return {
+      text: `غداً سيتم فصل الخدمة لانتهاء ${what}. لتجنب قطع الخدمة برجاء دفع الاشتراك.`,
+      note: RECORDS_NOTE,
+      urgent: true,
+    };
+  }
+  if (sub.status === "expiring") {
+    return { text: `اشتراكك ${sub.label} — برجاء السداد لعدم قطع الخدمة.`, note: "", urgent: false };
+  }
+  return null;
+}
+
 /** True when the service should be CUT OFF (past end + grace). */
 export function isCutOff(end: string | null | undefined, isActive: boolean, graceDays = GRACE_DAYS): boolean {
   if (!isActive) return true;

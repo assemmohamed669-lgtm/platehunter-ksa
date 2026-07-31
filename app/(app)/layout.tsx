@@ -17,7 +17,7 @@ import { applyServiceKeys } from "@/lib/voiceKeys";
 import { fetchSharedDeepgramKey } from "@/lib/sharedVoiceKey";
 import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
-import { subStatus, isCutOff, GRACE_DAYS, type SubInfo } from "@/lib/subscription";
+import { subStatus, isCutOff, GRACE_DAYS, subscriptionNotice, type SubInfo } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
 
 const ADMIN_WHATSAPP = "971542482545";
@@ -162,14 +162,28 @@ export default function AppShellLayout({
         <UpdateBanner />
         <AgentPresenceReporter />
 
-        {sub && (sub.status === "expiring" || sub.status === "grace") && !bannerDismissed && (
-          <div className="flex items-center gap-2 border-b border-alert/30 bg-alert/10 px-4 py-2 text-xs text-alert">
-            <CalendarClock size={14} className="shrink-0" />
-            <span className="flex-1">اشتراكك {sub.label} — برجاء السداد لعدم قطع الخدمة.</span>
-            <a href={`https://wa.me/${ADMIN_WHATSAPP}`} target="_blank" rel="noopener noreferrer" className="shrink-0 font-bold underline">تواصل</a>
-            <button onClick={() => setBannerDismissed(true)} className="shrink-0 text-alert/70">✕</button>
-          </div>
-        )}
+        {(() => {
+          // آخر يوم / يوم السماح ياخدوا تحذير عاجل بنص واضح + طمأنة عن السجلات.
+          const notice = sub ? subscriptionNotice(sub, isTrial) : null;
+          if (!notice || bannerDismissed) return null;
+          const tone = notice.urgent
+            ? "border-danger/40 bg-danger/10 text-danger"
+            : "border-alert/30 bg-alert/10 text-alert";
+          return (
+            <div className={`border-b px-4 py-2 text-xs ${tone}`}>
+              <div className="flex items-start gap-2">
+                <CalendarClock size={14} className="mt-0.5 shrink-0" />
+                <span className={`flex-1 ${notice.urgent ? "font-bold" : ""}`}>{notice.text}</span>
+                <a href={`https://wa.me/${ADMIN_WHATSAPP}`} target="_blank" rel="noopener noreferrer"
+                  className="shrink-0 font-bold underline">تواصل</a>
+                <button onClick={() => setBannerDismissed(true)} className="shrink-0 opacity-70">✕</button>
+              </div>
+              {notice.note && (
+                <p className="mt-1 pr-5 leading-relaxed opacity-90">{notice.note}</p>
+              )}
+            </div>
+          );
+        })()}
 
         <main className="mx-auto w-full max-w-md px-4 py-5 min-h-[calc(100dvh-9rem)] overflow-x-hidden">{children}</main>
 
