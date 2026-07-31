@@ -2,9 +2,11 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck, Eye, EyeOff, LogIn } from "lucide-react";
+import { ShieldCheck, Eye, EyeOff, LogIn, CalendarClock, MessageCircle } from "lucide-react";
 import { loginAgent } from "@/lib/auth";
 import PlateBadge from "@/components/PlateBadge";
+
+const ADMIN_WHATSAPP = "971542482545";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +14,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // اشتراك مفصول → بنعرض بلوك خاص فيه زر تواصل بدل رسالة خطأ عادية.
+  const [expired, setExpired] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -29,6 +33,7 @@ export default function LoginPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setExpired(false);
 
     if (!username.trim() || !password) {
       setError("الرجاء إدخال اسم المستخدم وكلمة المرور.");
@@ -40,6 +45,7 @@ export default function LoginPage() {
     setLoading(false);
 
     if (!result.ok) {
+      if (result.errorCode === "SUBSCRIPTION_EXPIRED") { setExpired(true); return; }
       setError(result.errorMessage ?? "حدث خطأ غير متوقع.");
       return;
     }
@@ -110,11 +116,35 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {error && (
+        {/* اشتراك مفصول: رسالة واضحة + زر يكلّم الإدارة لطلب التمديد. */}
+        {expired ? (
+          <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 p-3.5 text-danger">
+            <div className="mb-1.5 flex items-center gap-1.5 text-sm font-bold">
+              <CalendarClock size={16} className="shrink-0" />
+              تم فصل الخدمة عن هذا الحساب
+            </div>
+            <p className="text-xs leading-relaxed">
+              تم إيقاف الخدمة لعدم دفع الاشتراك. لإعادة تشغيلها برجاء التواصل مع الإدارة لطلب التمديد.
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed opacity-90">
+              جميع سجلاتك محفوظة ولن يتم مسحها — وبمجرد الدفع وتسجيل الدخول ستجدها كما هي.
+            </p>
+            <a
+              href={`https://wa.me/${ADMIN_WHATSAPP}?text=${encodeURIComponent(
+                "السلام عليكم، تم فصل الخدمة عن حسابي في تطبيق قناص اللوحات وأرغب في تجديد الاشتراك لإعادة تشغيلها."
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 flex items-center justify-center gap-2 rounded-lg bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95"
+            >
+              <MessageCircle size={16} /> تواصل مع الإدارة لطلب التمديد
+            </a>
+          </div>
+        ) : error ? (
           <div className="mb-4 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
             {error}
           </div>
-        )}
+        ) : null}
 
         <button
           type="submit"
