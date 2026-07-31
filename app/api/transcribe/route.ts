@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
+import { resolveGroqKey } from "@/lib/groqKey";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile, readFile, unlink } from "node:fs/promises";
@@ -49,10 +50,13 @@ const MIME_SUBTYPE_ALIASES: Record<string, string> = {
   "x-mpeg-3": "mp3",
 };
 
-// Voice-to-text for plate registration via Groq's hosted Whisper. Uses the
-// AGENT'S OWN API key (sent from the client, not a shared server key) — each
-// field agent has their own free Groq account, so usage never pools onto one
-// account's rate limit no matter how many agents use the app.
+// Voice-to-text for plate registration via Groq's hosted Whisper. Prefers the
+// AGENT'S OWN key when they set one (usage spreads across their free accounts
+// instead of pooling onto one rate limit), and falls back to the company key on
+// the server. Most agents never set a key, and requiring one meant registration
+// voice simply didn't work for them. Registration is ~1% of check volume
+// (524 recordings vs 56k field checks), so the shared fallback has ample
+// headroom. The key never reaches the device either way — see lib/groqKey.ts.
 
 // The native Android recorder plugin hardcodes MediaRecorder.OutputFormat.AAC_ADTS
 // with no way to configure it — always a raw AAC/ADTS elementary stream, not a
@@ -119,8 +123,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: null, error: "rate_limited" }, { status: 429 });
     }
 
-    const { audio, mimeType, apiKey } = await req.json();
-    if (typeof audio !== "string" || !audio || typeof apiKey !== "string" || !apiKey) {
+    const { audio, mimeType, apiKey: clientKey } = await req.json();
+    // مفتاح المندوب لو باعته، وإلا مفتاح الشركة من السيرفر — نفس نمط
+    // read-plate و structure-plates و reanalyze. المناديب اللي معملوش مفاتيح
+    // (وهُم الأغلبية) كان صوت التسجيل بيقف عندهم قبل كده.
+    const apiKey = resolveGroqKey(clientKey, process.env.GROQ_API_KEY);
+    if (typeof audio !== "string" || !audio || !apiKey) {
       return NextResponse.json({ text: null, error: "missing_audio_or_key" }, { status: 400 });
     }
 
