@@ -57,9 +57,16 @@ describe("loginAgent — منع دخول المشترك المفصول", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("يوم السماح → الدخول بينجح (لسه مش مفصول)", async () => {
-    state.profile = { role: "agent", is_active: true, is_trial: false, subscription_end: day(-1) };
+  it("آخر يوم في الاشتراك → الدخول بينجح", async () => {
+    state.profile = { role: "agent", is_active: true, is_trial: false, subscription_end: day(0) };
     expect((await loginAgent("ali", "pw")).ok).toBe(true);
+  });
+
+  it("اليوم اللي بعد الانتهاء → الدخول بيترفض فوراً (مفيش سماح)", async () => {
+    state.profile = { role: "agent", is_active: true, is_trial: false, subscription_end: day(-1) };
+    const r = await loginAgent("ali", "pw");
+    expect(r.ok).toBe(false);
+    expect(r.errorCode).toBe("SUBSCRIPTION_EXPIRED");
   });
 
   it("بعد السماح → الدخول بيترفض برسالة الاشتراك", async () => {

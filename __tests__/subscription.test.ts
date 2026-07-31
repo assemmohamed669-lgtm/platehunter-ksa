@@ -16,8 +16,8 @@ function day(offset: number): string {
 }
 
 describe("GRACE_DAYS", () => {
-  it("فترة السماح يوم واحد", () => {
-    expect(GRACE_DAYS).toBe(1);
+  it("مفيش فترة سماح (صفر)", () => {
+    expect(GRACE_DAYS).toBe(0);
   });
 });
 
@@ -33,15 +33,14 @@ describe("subStatus", () => {
     expect(subStatus(day(0)).status).toBe("expiring"); // يوم الانتهاء لسه شغّال
   });
 
-  it("يوم السماح الوحيد: اليوم اللي بعد الانتهاء", () => {
-    const s = subStatus(day(-1));
-    expect(s.status).toBe("grace");
-    expect(s.daysLeft).toBe(-1);
-  });
-
-  it("مقطوع من اليوم التاني بعد الانتهاء", () => {
+  it("مقطوع من اليوم اللي بعد الانتهاء مباشرة (مفيش سماح)", () => {
+    expect(subStatus(day(-1)).status).toBe("expired");
     expect(subStatus(day(-2)).status).toBe("expired");
     expect(subStatus(day(-30)).status).toBe("expired");
+  });
+
+  it("سماح صريح (وسيط) لسه بيشتغل لو اتمرّر", () => {
+    expect(subStatus(day(-1), 1).status).toBe("grace");
   });
 
   it("بدون اشتراك = none", () => {
@@ -62,11 +61,8 @@ describe("isCutOff — القطع الفعلي للخدمة", () => {
     expect(isCutOff(day(0), true)).toBe(false);
   });
 
-  it("يوم السماح → مايتقطعش (الخدمة شغّالة)", () => {
-    expect(isCutOff(day(-1), true)).toBe(false);
-  });
-
-  it("بعد يوم السماح → يتقطع", () => {
+  it("اليوم اللي بعد الانتهاء → يتقطع فوراً (مفيش سماح)", () => {
+    expect(isCutOff(day(-1), true)).toBe(true);
     expect(isCutOff(day(-2), true)).toBe(true);
   });
 
@@ -104,8 +100,8 @@ describe("subscriptionNotice — رسالة التنبيه للمشترك", () =
     expect(subscriptionNotice(subStatus(day(0)), false)!.text).toContain("مدة الاشتراك");
   });
 
-  it("يوم السماح (بعد الانتهاء) → نفس التحذير العاجل", () => {
-    const n = subscriptionNotice(subStatus(day(-1)), false)!;
+  it("يوم السماح (لو اتفعّل بوسيط) ياخد نفس التحذير العاجل", () => {
+    const n = subscriptionNotice(subStatus(day(-1), 1), false)!;
     expect(n.urgent).toBe(true);
     expect(n.text).toContain("غداً سيتم فصل الخدمة");
   });
