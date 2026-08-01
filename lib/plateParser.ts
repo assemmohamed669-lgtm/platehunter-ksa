@@ -171,9 +171,22 @@ export function pickBestHypothesis(candidates: string[], confidences?: number[])
  */
 export type PlateAtom =
   | { t: "L"; v: string; fromName?: boolean }
-  | { t: "D"; v: string; joinedByWaw?: boolean }
+  // solo: الرقم جه من كلمة **أحادية** («تمانية» / خانة رقمية واحدة) — مش خانة
+  // جوّه رقم أطول («666» من «تلات ستات» أو «100» من «مية»). ده الشرط اللي
+  // مركّب الواو بيتعلّق بيه: «تمانية وثمانين» = 88، إنما «تلات ستات وعشرين»
+  // مالهاش مركّب لأن الـ٦ الأخيرة مش رقم أحادي منطوق لوحده.
+  // cFrom/cTens: الذرّة دي أول نص مركّب واو («٨ + ٨٠» → ذرّتين ٨ و٨). بنحتفظ
+  // بالأصل عشان خطوة ٢.٦ تقدر ترجّعه لزق لو المركّب سـاب اللوحة ناقصة.
+  | { t: "D"; v: string; joinedByWaw?: boolean; solo?: boolean; cFrom?: string; cTens?: number }
   | { t: "V"; v: string }
   | { t: "N"; v: string; letters: string[] };
+
+// طول سلسلة الأرقام في آخر الذرّات (بحد أقصى cap — مالناش لزمة بأكتر منه).
+function trailingDigitRun(atoms: PlateAtom[], cap: number): number {
+  let n = 0;
+  for (let i = atoms.length - 1; i >= 0 && n < cap && atoms[i].t === "D"; i--) n++;
+  return n;
+}
 
 /**
  * Steps 1-2.5 من استخراج اللوحات المتعددة: التطبيع الكامل + تصنيف التوكنات
@@ -214,6 +227,16 @@ export function plateAtoms(transcript: string): PlateAtom[] {
   text = text.replace(/(?<![؀-ۿ])(?:واو|وا)(?![؀-ۿ])/g, " __WAWNAME__ ");
   text = replaceAll(text, LETTER_NAMES);     // دال→د, صاد→ص, لام→ل …
   text = replaceAll(text, PHONETIC_MERGES);  // احلام→ا ح ل …
+  // علّم كلمات **العشرات** المبدوءة بواو («وثمانين» → «@80») قبل ما القاموس
+  // ياكل الواو ويخلّيها رقم عادي زي أي رقم تاني. الواو دي هي الفرق بين مركّب
+  // عربي يتجمع (٨+٨٠=٨٨) ووصل يتلزق، وبعد ما القاموس يحوّلها التمييز بيضيع
+  // خالص — كان «اتنين وعشرين تمانية وثمانين» يطلّع 2·20·8·80 = 2208 بدل 2288.
+  // نفس مرور التعليم بالظبط اللي المسار المفرد بيعمله (خطوة ٦أ)، بس مقصور على
+  // العشرات: هي القائمة الوحيدة المقفولة اللي الواو بتعمل معاها مركّب.
+  // بنفضّي «@» الأول عشان العلامة تبقى بتاعتنا مافيش غيرها (تفريغ حقيقي رجّع
+  // «و80» ملزوقة قبل كده، فالواو نفسها ما تنفعش علامة).
+  text = text.replace(/@/g, " ");
+  text = text.replace(WAW_TENS_RE, (w) => ` ${WAW_TENS_VALUE.get(w)} `);
   text = replaceAll(text, SPOKEN_NUMBERS);   // خمسة→5, تلاتين→30, ألفين→2000 …
   // standalone ه → هـ (SR drops the tatweel) — MUST run AFTER the word maps
   // above, not before: converting bare ه too early corrupts the letter name
@@ -236,6 +259,31 @@ export function plateAtoms(transcript: string): PlateAtom[] {
     // The protected letter-name placeholder — always a deliberate letter و,
     // flagged so Step 2.5 never mistakes it for the conjunction.
     if (raw === "__WAWNAME__") { atoms.push({ t: "L", v: "و", fromName: true }); continue; }
+    // ── مركّب الواو (العلامة اتحطت فوق): «و» + عشرات ⇒ **جمع** على الرقم
+    //   الأحادي اللي قبلها على طول، مش لزق. شروط الجمع — نفس شروط المسار
+    //   المفرد بالحرف (joinSpokenDigits) عشان المسارين يتفقوا:
+    //     · الذرّة اللي قبلها رقم أحادي منطوق لوحده (solo) وقيمته ١..٩.
+    //       الصفر مستثنى، و«تلات ستات» (666) مش solo فما بتدخلش المركّب.
+    //     · سلسلة الأرقام بعد الضم لسه ≤ ٤ خانات — نفس حرس «≤ ٤» بتاع خطوة
+    //       ٢.٥. من غيره «واحد اتنين تلاتة اربعة وعشرين» (٥ خانات) كانت
+    //       بتزحزح لوحة مظبوطة أصلاً.
+    //   أي حالة تانية ⇒ العشرات بتتلزق زي ما هي النهاردة بالظبط.
+    const wt = WAW_TENS_TOKEN_RE.exec(raw);
+    if (wt) {
+      const tens = Number(wt[1]);
+      const prev = atoms[atoms.length - 1];
+      if (prev && prev.t === "D" && prev.solo && prev.v !== "0" && trailingDigitRun(atoms, 4) <= 3) {
+        const sum = String(Number(prev.v) + tens); // ١..٩ + ٢٠..٩٠ ⇒ دايماً خانتين
+        prev.cFrom = prev.v;   // الأصل — خطوة ٢.٦ ممكن ترجّعه
+        prev.cTens = tens;
+        prev.v = sum[0];
+        prev.solo = false;
+        atoms.push({ t: "D", v: sum[1] });
+      } else {
+        for (const d of String(tens)) atoms.push({ t: "D", v: d });
+      }
+      continue;
+    }
     // Strip tashkeel + tatweel; keep base plate letters. (Reuse the same helper
     // the single-plate parser trusts rather than an inline fragile range.)
     const clean = removeDiacritics(raw).replace(/ـ/g, "");
@@ -243,11 +291,12 @@ export function plateAtoms(transcript: string): PlateAtom[] {
 
     // Pure digit run → individual digit atoms (kept per-digit so 5 9 3 2 → 5932).
     if (/^\d+$/.test(clean)) {
-      for (const d of clean) atoms.push({ t: "D", v: d });
+      const solo = clean.length === 1;
+      for (const d of clean) atoms.push({ t: "D", v: d, solo });
       continue;
     }
     // Single mapped digit from Egyptian speech ("واحد"→"1").
-    if (/^\d$/.test(mapped)) { atoms.push({ t: "D", v: mapped }); continue; }
+    if (/^\d$/.test(mapped)) { atoms.push({ t: "D", v: mapped, solo: true }); continue; }
     // Single valid Saudi plate letter after Egyptian mapping.
     if (mapped.length === 1 && VALID_AR_LETTERS.has(mapped)) {
       atoms.push({ t: "L", v: mapped }); continue;
@@ -310,6 +359,36 @@ export function plateAtoms(transcript: string): PlateAtom[] {
       next.joinedByWaw = true;
       atoms.splice(i, 1); i--;
     }
+  }
+
+  // ── Step 2.6: تراجُع عن مركّب الواو لما يسيب اللوحة ناقصة واللزق كان بيكمّلها.
+  //   مقيس على الصوت الميداني الحقيقي: Deepgram بيلخّص خانتين منطوقتين
+  //   («سبعة صفر») في كلمة عشرات واحدة («وسبعين»)، فالكلمة عندنا مش دايماً
+  //   مركّب — كتير بتبقى إملاء خانتين. مافيش طريقة نعرف من الكلمة نفسها، لكن
+  //   في مميّز قاطع بعد التجميع: **الطول**. لوحة السعودية ٤ خانات دايماً، فلو
+  //   الجمع سايب المجموعة ٣ خانات واللزق كان هيسيبها ٤ بالظبط ⇒ اللزق هو
+  //   الصح. (المجموعة بتتقسّم كل ٤، فالشرط على الباقي: len % 4 === 3.)
+  //   بلا الخطوة دي بتضيع ٢٨ لوحة حقيقية من قايمة المطلوبين في ١١ تسجيل.
+  //   ⚠️ لازم تيجي بعد خطوة ٢.٥: دمج واو العطف بيغيّر أطوال السلاسل.
+  for (let i = atoms.length - 1; i >= 0; i--) {
+    if (atoms[i].t !== "D") continue;
+    const end = i;
+    let start = i;
+    while (start - 1 >= 0 && atoms[start - 1].t === "D") start--;
+    if ((end - start + 1) % 4 === 3) {
+      // رجّع **آخر** مركّب في السلسلة — هو اللي في المجموعة الناقصة.
+      for (let k = end; k >= start; k--) {
+        const a = atoms[k];
+        if (a.t !== "D" || a.cFrom === undefined || a.cTens === undefined) continue;
+        const tens = String(a.cTens);
+        atoms.splice(k, 2,
+          { t: "D", v: a.cFrom, solo: true },
+          { t: "D", v: tens[0] },
+          { t: "D", v: tens[1] });
+        break;
+      }
+    }
+    i = start;
   }
 
   return atoms;
@@ -868,17 +947,74 @@ const SPOKEN_NUMBERS: [string, string][] = ([
   ["سبعة",   "7"], ["سبعه",   "7"], ["سبع",    "7"],
   ["ثمانية", "8"], ["تمانية", "8"], ["ثمانيه", "8"], ["تمانيه", "8"], ["تمنية",  "8"], ["تمنيه",  "8"], ["ثماني",  "8"], ["تماني",  "8"], ["تمان", "8"],
   ["تسعة",   "9"], ["تسعه",   "9"], ["تسع",    "9"],
+  // ⚠️ «ثنان» (النطق السعودي المختصر لـ«اثنان») **اتشالت بعد القياس**: صفر ورود
+  // في ٧٢ ألف حرف تفريغ ميداني حقيقي، وإصلاح واحد على داتا مولَّدة بس، مقابل
+  // تصادم مع اسم سعودي شائع («ثنيان») لو التفريغ غلط بحرف واحد ⇒ رقم وهمي
+  // جوّه اسم عميل. «اثنان» الفصحى فوق بتغطّي الحالة المؤكَّدة.
   // ── أرقام بأداة الـ«ال» (Deepgram/Whisper بيطلّعوها كتير: «الثلاثة»، «الاتنين») ──
   // آمنة: replaceAll بتطابق كلمة كاملة، وكلها كلمات أرقام مش حروف/ملاحظات.
   ["الصفر", "0"], ["الواحد", "1"], ["الاثنين", "2"], ["الاتنين", "2"],
   ["الثلاثة", "3"], ["التلاتة", "3"], ["الأربعة", "4"], ["الاربعة", "4"],
   ["الخمسة", "5"], ["الستة", "6"], ["السبعة", "7"],
   ["الثمانية", "8"], ["التمانية", "8"], ["التسعة", "9"],
-  // ── تكرار ملخّص من Whisper ─────────────────────────────────────────────────
-  // Whisper بيميل يلخّص الأرقام المكررة («خمسة خمسة خمسة»→«تلات خمسات»=555،
-  // «صفر صفر صفر»→«تلات اصفار»=000). عبارات كاملة (أطول) فبتتطبّق قبل «تلات»=3.
-  ["تلات خمسات", "555"], ["ثلاث خمسات", "555"], ["تلاته خمسات", "555"],
-  ["تلات اصفار", "000"], ["ثلاث اصفار", "000"], ["تلاته اصفار", "000"],
+  // ── صيغ التكرار «N × رقم» ─────────────────────────────────────────────────
+  // المندوب بينطق الخانات المكررة كعبارة واحدة («خمسة خمسة خمسة» → «تلات
+  // خمسات»)، وWhisper/Deepgram بيلخّصوها بنفس الشكل. مصدر الصيغ: **إملاء
+  // المالك ٢٠٢٦/٠٨/٠١** + قياس على صوت المناديب
+  // (`docs/spoken-numbers-dictionary.md` — مستوى ١ و٢).
+  //
+  // ليه دي مداخل قاموس مش قاعدة: العبارة بتطلّع **سلسلة خانات** جاهزة، والجدول
+  // مرتّب بالطول تنازلياً فبتتطابق **قبل** «تلات»=3 و«اربع»=4 — الآلية دي
+  // موجودة وشغّالة من الأصل.
+  //
+  // ملاحظة إملائية: الألف المهموزة (أربع/أصفار/أربعات) **مش** محتاجة مدخل
+  // مستقل — الأنبوب بيحوّل أإآ→ا في المسارات التلاتة كلها قبل الجدول ده.
+  // لكن التاء المربوطة عمرها ما بتتحوّل، فكل صيغة ة/ه مكتوبة بالاتنين.
+  //
+  // «واحدات» مستبعدة عمداً: كلمة عربية عادية (وحدات سكنية) ومكسبها ضعيف —
+  // «وحايد» بتغطّي نفس المعنى بلا تصادم. «ستات» موجودة **بقرار المالك**
+  // رغم إنها كلمة عادية (نساء): أكتر صيغة تكرار في صوتنا، والمندوب بيملي
+  // لوحة مش بيسرد كلام.
+
+  // «أربع × رقم» = اللوحة كاملة (٤ خانات) — ما بتحتاجش تتضم مع رقم تاني.
+  ["اربع اصفار",   "0000"], ["اربع تصفار",   "0000"],
+  ["اربع وحايد",   "1111"],
+  ["اربع اتنينات", "2222"],
+  ["اربع تلاتات",  "3333"], ["اربع تلتات",   "3333"], ["اربع ثلاثات", "3333"],
+  ["اربع اربعات",  "4444"],
+  ["اربع خمسات",   "5555"],
+  // ⚠️ «اربع ستات» **اتشالت بعد القياس**: التفريغ الحقيقي فيه «تلات/ثلاث ستات»
+  // بس (٧ ورودات، كلها إملاء لوحة) ومافيهوش «اربع ستات» ولا مرة. مكسبها ١٠
+  // إصلاحات على داتا مولَّدة، وخسارتها إن «شفت اربع ستات» بتطلّع ٦٦٦٦ **كاملة**
+  // — لوحة قابلة للمطابقة، مش زي ٠٦٦٦ اللي المالك وافق عليها.
+  ["اربع سبعات",   "7777"],
+  ["اربع تمنيات",  "8888"], ["اربع تمانيات", "8888"], ["اربع ثمانيات", "8888"],
+  ["اربع تسعات",   "9999"],
+
+  // «تلات × رقم» = ٣ خانات — بتتلزق بالخانة اللي قبلها («تسعة تلات ستات» = 9666).
+  // أربع إملاءات لكلمة التلاتة: تلات · ثلاث · تلاته · تالت (كلها من إملاء المالك
+  // أو من الكود الأصلي).
+  ["تلات اصفار",   "000"], ["ثلاث اصفار",   "000"], ["تلاته اصفار",   "000"], ["تالت اصفار",   "000"],
+  ["تلات تصفار",   "000"], ["ثلاث تصفار",   "000"], ["تلاته تصفار",   "000"], ["تالت تصفار",   "000"],
+  ["تلاتصفار",     "000"],
+  ["تلات وحايد",   "111"], ["ثلاث وحايد",   "111"], ["تلاته وحايد",   "111"], ["تالت وحايد",   "111"],
+  ["تلات اتنينات", "222"], ["ثلاث اتنينات", "222"], ["تلاته اتنينات", "222"], ["تالت اتنينات", "222"],
+  ["تلات تلاتات",  "333"], ["ثلاث تلاتات",  "333"], ["تلاته تلاتات",  "333"], ["تالت تلاتات",  "333"],
+  ["تلات تلتات",   "333"], ["ثلاث تلتات",   "333"], ["تلاته تلتات",   "333"], ["تالت تلتات",   "333"],
+  ["تلات ثلاثات",  "333"], ["ثلاث ثلاثات",  "333"], ["تلاته ثلاثات",  "333"], ["تالت ثلاثات",  "333"],
+  ["تلات اربعات",  "444"], ["ثلاث اربعات",  "444"], ["تلاته اربعات",  "444"], ["تالت اربعات",  "444"],
+  ["تلات خمسات",   "555"], ["ثلاث خمسات",   "555"], ["تلاته خمسات",   "555"], ["تالت خمسات",   "555"],
+  ["تلات ستات",    "666"], ["ثلاث ستات",    "666"], ["تلاته ستات",    "666"], ["تالت ستات",    "666"],
+  ["تلات سبعات",   "777"], ["ثلاث سبعات",   "777"], ["تلاته سبعات",   "777"], ["تالت سبعات",   "777"],
+  ["تلات تمنيات",  "888"], ["ثلاث تمنيات",  "888"], ["تلاته تمنيات",  "888"], ["تالت تمنيات",  "888"],
+  ["تلات تمانيات", "888"], ["ثلاث تمانيات", "888"], ["تلاته تمانيات", "888"], ["تالت تمانيات", "888"],
+  ["تلات ثمانيات", "888"], ["ثلاث ثمانيات", "888"], ["تلاته ثمانيات", "888"], ["تالت ثمانيات", "888"],
+  ["تلات تسعات",   "999"], ["ثلاث تسعات",   "999"], ["تلاته تسعات",   "999"], ["تالت تسعات",   "999"],
+
+  // «صفرين» = 00 — المثنى الوحيد اللي نجا من القياس: ١٨ ورود في صوتنا
+  // و١١ لوحة مؤكدة، وأكّده المالك. باقي صيغ المثنى (تسعتين/ستتين…) مرفوضة:
+  // صفر ورود في ٧٨ تفريغ + ٦ تصادمات بفرق حرف واحد مع العشرات (ستين/ستتين).
+  ["صفرين", "00"],
   // ── 10-19 (two-word, must be LONGEST so they win over single words) ───────
   // ⚠️ «عشر» المفردة مقصودة الغياب — كلمة تعداد شائعة («عشر عمارات») بتحقن أرقام
   // وهمية وتكسر العشرات العامّية (مراجعة عدائية). صيغ الهاء المركّبة اتضافت تحت.
@@ -920,6 +1056,11 @@ const SPOKEN_NUMBERS: [string, string][] = ([
   ["تسعمئة",  "900"], ["تسعمية",  "900"],
   ["مئتين",   "200"], ["ميتين",   "200"],
   ["مئة",     "100"], ["مية",     "100"], ["ميه",     "100"],
+  // المئات المدغمة بواو زيادة — إملاء المالك حرفياً («خومسميه» · «ستوميه»).
+  // مش مركّبات واو: الواو جوه الكلمة، فما بتتعلّمش في خطوة ٦أ وبتتلزق عادي
+  // («واحد خومسمية» = 1500). «امية»=100 مرفوضة — كلمة/اسم عادي (مُثبت معملياً).
+  ["خومسمئة", "500"], ["خومسمية", "500"], ["خومسميه", "500"],
+  ["ستومئة",  "600"], ["ستومية",  "600"], ["ستوميه",  "600"],
   // ── Thousands ────────────────────────────────────────────────────────────
   ["ثمانية آلاف", "8000"], ["تمانية آلاف", "8000"], ["ثمانية الاف", "8000"], ["تمانية الاف", "8000"],
   ["تسعة آلاف",   "9000"], ["تسعة الاف",   "9000"],
@@ -929,6 +1070,16 @@ const SPOKEN_NUMBERS: [string, string][] = ([
   ["أربعة آلاف",  "4000"], ["اربعة آلاف",  "4000"], ["أربعة الاف",  "4000"], ["اربعة الاف",  "4000"],
   ["ثلاثة آلاف",  "3000"], ["تلاتة آلاف",  "3000"], ["ثلاثة الاف",  "3000"], ["تلاتة الاف", "3000"],
   ["ألفين",  "2000"], ["الفين",  "2000"],
+  // ⚠️ الآلاف بإملاء المالك (ستلاف · «X تلاف» · «X الاف») **اتشالت كلها بعد
+  // القياس** — ٢٦ مدخل. السبب مش رأي، ده رقم:
+  //   · صفر ورود لأي واحدة منهم في ٧٢ ألف حرف تفريغ ميداني حقيقي. المندوب
+  //     عمره ما أملى لوحة بصيغة الآلاف؛ اللي في الصوت هو «تلات اصفار».
+  //   · مكسبها ٦٣ إصلاح، كله على داتا **مولَّدة** من نفس قائمة الإملاء (دوران).
+  //   · خسارتها حقيقية: أي ملاحظة فلوس («المطلوب عليه تمن الاف ريال») قبل
+  //     اللوحة كانت بتاكل اللوحة على مسار parsePlateFromTranscript، و١٤ جملة
+  //     فلوس بلا لوحة خالص بقت تطلّع لوحة تعدّي فلتر الإنتاج («طلع8000»).
+  //     و«تمن» في المصري = السعر، فدي أكتر جملة بتتقال في تطبيق تحصيل.
+  // الصيغة الفصحى بالتاء المربوطة («ستة الاف»/«خمسة الاف») فوق **ما اتلمستش**.
   ["ألف",    "1000"], ["الف",    "1000"],
   // ── و-prefixed hundreds (for compound: ألف ومئة → 1100) ─────────────────
   ["وتسعمئة",  "900"], ["وتسعمية",  "900"],
@@ -946,6 +1097,11 @@ const SPOKEN_NUMBERS: [string, string][] = ([
   ["وأربعين", "40"], ["واربعين", "40"],
   ["وثلاثين", "30"], ["وتلاتين", "30"],
   ["وعشرين",  "20"], ["وعشرة",  "10"], ["وعشره",  "10"],
+  // صيغة الـ ـون الفصحى/السعودية — جدول الواو كان فيه صيغ الـ ـين بس، فمندوب
+  // بيقول «اثنان وعشرون» كان الكود يمسك 2 ويفشل في «وعشرون» ⇒ اللوحة تتكسر.
+  // بتدخل تلقائياً في WAW_NUMBER_MARKS (بتبدأ بواو) فبتتجمع مركّب صح: 2+20=22.
+  ["وتسعون",  "90"], ["وثمانون", "80"], ["وسبعون",  "70"], ["وستون",   "60"],
+  ["وخمسون",  "50"], ["واربعون", "40"], ["وثلاثون", "30"], ["وعشرون",  "20"],
   // ── و-prefixed units (for compound: مئة وخمسة → 105) ─────────────────────
   ["وتسعة",   "9"], ["وتسعه",   "9"], ["وتسع",   "9"],
   ["وثمانية", "8"], ["وتمانية", "8"], ["وثمانيه", "8"], ["وتمانيه", "8"], ["وتمنيه", "8"],
@@ -958,6 +1114,114 @@ const SPOKEN_NUMBERS: [string, string][] = ([
   ["وواحد",   "1"], ["ووحده",   "1"],
 ] as [string, string][]).sort((a, b) => b[0].length - a[0].length);
 
+// ─── مركّبات الواو ──────────────────────────────────────────────────────────
+// الواو نفسها معلومة، والقاموس فوق بياكلها («وثمانين» → «80») قبل ما نستعملها.
+// فبنعمل مرور تعليم قبله بيحوّل «وثمانين» → «@80»، والعلامة بتتشال بعد
+// التقطيع وبتتسجّل كعلم موازي. القائمة **مشتقّة من القاموس نفسه** فمافيش ولا
+// كلمة جديدة بتتلمس — نفس المداخل بالظبط، بعلامة زيادة.
+//
+// العلامة «@» مش الواو نفسها عن قصد: تفريغ حقيقي ممكن يرجّع «و80» ملزوقة
+// (حصل في ٣ تسجيلات طويلة عندنا)، ولو استعملنا الواو كعلامة كنا هنخطف
+// التوكن ده من الملاحظات. و«@» مضمونة إنها بتاعتنا لأن خطوة ٦أ بتشيل أي «@»
+// جاية من التفريغ الأول — وده نفس اللي كانت خطوة ٨ بتعمله بيها أصلاً.
+const WAW_MARK = "@";
+const WAW_NUMBER_MARKS: [string, string][] = SPOKEN_NUMBERS
+  .filter(([word]) => word.startsWith("و"))
+  .map(([word, value]) => [word, `${WAW_MARK}${value}`] as [string, string]);
+const WAW_MARKED_RE = new RegExp(`^${WAW_MARK}\\d+$`);
+
+// نفس فكرة WAW_NUMBER_MARKS بس **للعشرات بس** — ده اللي المسار المتعدد
+// (plateAtoms) محتاجه: هو بيلزق بطبعه، والاستثناء الوحيد اللي بيجمع هو مركّب
+// «آحاد + و + عشرات». باقي كلمات الواو (وواحد، وخمسمية…) بتفضل لزق عنده،
+// فمالوش لازمة يعلّمها. مشتقّة من القاموس نفسه فمافيش ولا كلمة جديدة بتتلمس.
+const WAW_TENS_MARKS: [string, string][] = SPOKEN_NUMBERS
+  .filter(([word, value]) => word.startsWith("و") && isTensWord(Number(value)))
+  .map(([word, value]) => [word, `${WAW_MARK}${value}`] as [string, string]);
+const WAW_TENS_TOKEN_RE = new RegExp(`^${WAW_MARK}([2-9]0)$`);
+
+// نفس شغل replaceAll() على WAW_TENS_MARKS بالظبط، بس **متجمّع في regex واحد
+// متبني مرة واحدة** بدل ١٩ regex جديدة كل نداء. plateAtoms بيتنادى على كل
+// chunk في الجلسة الحيّة، والفرق مقيس: ٢٨٠ → ٢١٩ ميكروثانية للنداء.
+// مكافئ حرفياً: الكلمات محاطة بنفس الحارس (مش جوّه كلمة عربية)، ومرتّبة
+// الأطول أولاً زي الجدول الأصلي، ومخرجها «@NN» مش عربي فمفيش مدخل بيتطابق
+// على ناتج مدخل قبله. (مُتحقَّق: نفس المخرج بايت‑ببايت على ١٣٧٧٦ مدخل.)
+const WAW_TENS_RE = new RegExp(
+  `(?<![\\u0600-\\u06FF])(?:${WAW_TENS_MARKS.map(([w]) => w).join("|")})(?![\\u0600-\\u06FF])`,
+  "g",
+);
+const WAW_TENS_VALUE = new Map(WAW_TENS_MARKS);
+
+/**
+ * الكلمة العربية الأصلية لعشرات مركّب الواو («20» → «وعشرين»).
+ *
+ * لازمتها الوحيدة: الترحيل عبر حدود الرسائل في `sessionParser`. المركّب بيتخزّن
+ * في الذرّة كناتج **جمع** + الأصل (`cFrom`/`cTens`)، وخطوة ٢.٦ محتاجة الأصل
+ * ده عشان تتراجع. لما اللوحة تتقطع بين رسالتين، النص المرحَّل بيرجّع الكلام
+ * زي ما اتقال بدل الجمع المحسوب، فقرار المركّب يتاخد من الأول في الرسالة
+ * الجاية وسلسلة الأرقام كاملة قدّامه.
+ */
+export function wawTensWord(tens: number): string {
+  const hit = WAW_TENS_MARKS.find(([, v]) => v === `${WAW_MARK}${tens}`);
+  return hit ? hit[0] : "";
+}
+
+// العشرات الصحيحة ٢٠..٩٠ — القائمة المقفولة (٨ كلمات بكل إملاءاتها) اللي
+// الواو بتعمل معاها مركّب عربي. «عشرة» و١١-١٩ مش منها: مافيش «تمانية وعشرة».
+function isTensWord(value: number): boolean {
+  return value >= 20 && value <= 90 && value % 10 === 0;
+}
+
+/**
+ * يضم أرقام اللوحة المنطوقة لسلسلة أرقام واحدة.
+ *
+ * قاعدة المالك (§٨ من `docs/spoken-numbers-dictionary.md`): الافتراضي **لزق** —
+ * «واحد خمسمية» = 1500 و«تلاتة وواحد» = 31. الجمع استثناء ضيّق: مركّب عربي
+ * موصول بواو، وله شكلين بس:
+ *   ١) آحاد + و + عشرات صحيحة              «تمانية وثمانين» = 88
+ *   ٢) نزول مرتبة: و + رقم أصغر من مجموعة على **مرتبة صحيحة**
+ *                                          «ألف وخمسمية» = 1500 · «مية وخمسة» = 105
+ * الواو شرط في الاتنين؛ من غيرها مافيش جمع خالص.
+ *
+ * حرس المصيدة في الشكل (٢): «وواحد»/«ووحده» بيبدأوا بواو لكنهم مش مركّب.
+ * لازم المجموعة الحالية تكون عشرية (≥١٠) عشان يتقبلوا، وإلا «تسعة تسعة تسعة
+ * وواحد» تبقى 999+1=1000 بدل 9991.
+ *
+ * وشرط «مرتبة صحيحة» (min % 10 === 0) بيقفل نفس المصيدة من الناحية التانية:
+ * مداخل التكرار بتطلّع توكن زي 999، و«واحد» بعدها كانت بتتجمع 999+1=1000 بدل
+ * ما تتلزق 9991. النزول العربي الحقيقي دايماً من مرتبة صحيحة (ألف/مية/عشرات)،
+ * فالشرط ما بيمنعش ولا مركّب سليم. و«تلات ستات واحد» موجودة **بالحرف** في
+ * تفريغ ميداني حقيقي عندنا.
+ *
+ * (اللي كان قبل كده: أي رقم ≥١٠ في الجملة يحوّل **كل** الأرقام لجمع.)
+ */
+function joinSpokenDigits(values: string[], wawMarked: boolean[]): string {
+  interface Group { text: string; sum: number; min: number; last: number; count: number }
+  const groups: Group[] = [];
+  for (let i = 0; i < values.length; i++) {
+    const value = Number(values[i]);
+    const g = groups[groups.length - 1];
+    const compound =
+      !!g &&
+      wawMarked[i] &&
+      ((isTensWord(value) && g.last >= 1 && g.last <= 9) ||
+        (value < g.min && g.min >= 10 && g.min % 10 === 0));
+    if (g && compound) {
+      g.sum += value;
+      g.min = Math.min(g.min, value);
+      g.last = value;
+      g.count++;
+    } else {
+      groups.push({ text: values[i], sum: value, min: value, last: value, count: 1 });
+    }
+  }
+  // مجموعة من توكن واحد بترجع بنصّها الأصلي مش برقمها، عشان الأصفار البادية
+  // ما تضيعش: «تلات اصفار» = "000" لازم تفضل ٣ خانات لا تبقى "0".
+  return groups
+    .map((g) => (g.count === 1 ? g.text : String(g.sum)))
+    .join("")
+    .slice(0, 4);
+}
+
 const ARABIC_INDIC: Record<string, string> = {
   "٠":"0","١":"1","٢":"2","٣":"3","٤":"4",
   "٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
@@ -967,7 +1231,15 @@ const ARABIC_INDIC: Record<string, string> = {
 
 function removeDiacritics(text: string): string {
   // Strip tashkeel: fatha, damma, kasra, sukun, shadda, tanwin variants, superscript alef
-  return text.replace(/[ً-ٰٟ]/g, "");
+  //
+  // U+064B-U+065F = the tashkeel marks, U+0670 = superscript alef, U+066A-U+066F
+  // = the Arabic punctuation/dotless letters this has always removed.
+  // The class used to be written as ONE range U+064B-U+0670, which swallowed the
+  // Arabic-Indic digits U+0660-U+0669 sitting inside it: ٥٨١٩ was deleted here,
+  // long before normalizeNumerals ever got to fold it to 5819, so any transcript
+  // with Arabic-Indic digits produced an EMPTY plate. Only that digit block is
+  // carved out — every other character in the old range is still stripped.
+  return text.replace(/[ً-ٟ٪-ٰ]/g, "");
 }
 
 function replaceAll(text: string, pairs: [string, string][]): string {
@@ -999,6 +1271,32 @@ function isAllPlateLetters(tok: string): boolean {
   return i > 0;
 }
 
+/**
+ * Resolve ONE spoken token to ONE plate letter through EGYPTIAN_LETTERS —
+ * exactly the lookup `plateAtoms` (Step 2) already does, factored out so the
+ * single-plate parser can share it instead of inventing a third behaviour.
+ *
+ * Why it's needed: several table entries are TWO plate-letter characters glued
+ * together ("هه"=ه, "به"=ب, "حه"=ح, "ره"=ر, "طه"=ط, "يه"=ي) or a word whose
+ * chars are individually valid ("ها"=ه, "هة"=ه, "اليف"=ا). Without this lookup
+ * the token scan treats them character-by-character: "هه" becomes TWO letters
+ * and evicts the real first letter of the plate ("حاء هه لام …" → ههل… instead
+ * of حهل…), while "هة"/"اليف" are dropped entirely. And "هه" is one of the 45
+ * keyterms the app sends to Deepgram (lib/deepgramKey.ts), so the recognizer is
+ * actively steered toward it.
+ *
+ * Returns null for anything that isn't a letter word (digit words like "خمسة"
+ * are already digits by the time the token scan runs, and must stay that way).
+ * The token is matched tatweel-stripped so an already-rewritten "هـهـ" resolves
+ * the same as the raw "هه".
+ */
+function egyptianPlateLetter(token: string): string | null {
+  const clean = removeDiacritics(token).replace(/ـ/g, "");
+  const mapped = EGYPTIAN_LETTERS[clean];
+  if (mapped && mapped.length === 1 && VALID_AR_LETTERS.has(mapped)) return mapped;
+  return null;
+}
+
 // Extract valid plate letters from a single token, treating "هـ" as one unit.
 function extractLettersFromToken(token: string): string[] {
   const result: string[] = [];
@@ -1016,6 +1314,76 @@ function extractLettersFromToken(token: string): string[] {
     }
   }
   return result;
+}
+
+// ─── مصيدة «ألف»: اسم الحرف ا **و** الرقم ١٠٠٠ ──────────────────────────────
+// نفس علاج «واو» في plateAtoms: علامة لاتينية بدل الكلمة، تتحل بعدين.
+// اللاتيني مقصود — كل جدول/regex بعد كده عربي بحارس `(?<![؀-ۿ])`، فالعلامة
+// بتعدّي سليمة، وخطوة ٨ اللي بتمسح غير العربي بتيجي **بعد** الحسم.
+const ALEF_MARK = "__ALEFNAME__";
+// كلمة كاملة بس. الحارس العربي حوالين الكلمة هو اللي بيحمي:
+//   «ألفين» (٢٠٠٠) — بعدها ي عربية ⇒ ما تتلمسش
+//   «الالف»/«الفا» (أسماء حرف لا لبس فيها في LETTER_NAMES) ⇒ ما تتلمسش
+// «آلف» داخلة لأن خطوة ٣ بتوحّد أإآ→ا **قبل** دي، فبتوصل «الف» — بس مكتوبة
+// صراحةً عشان الدالة ما تعتمدش على ترتيب خطوة قبلها.
+const ALEF_NAME_RE = /(?<![؀-ۿ])(?:ألف|الف|آلف)(?![؀-ۿ])/g;
+
+/**
+ * عدد حروف اللوحة في توكن واحد — بنفس تعريف ذرّة «L» في plateAtoms (خطوة ٢)
+ * بالظبط، مش تعريف تالت: اسم حرف مصري («دال»، «هه») = حرف واحد مهما كان طوله،
+ * أو توكن كله حروف لوحة صالحة وعدد حروفه ١..٣. أي حاجة تانية (كلمة ملاحظة
+ * طويلة، رقم، كلمة فيها حرف مش من حروف اللوحة) = صفر.
+ */
+function plateLetterCount(token: string): number {
+  if (egyptianPlateLetter(token)) return 1;
+  const clean = removeDiacritics(token).replace(/ـ/g, "");
+  if (!/^[؀-ۿ]+$/.test(clean)) return 0;
+  const letters = extractLettersFromToken(clean);
+  if (letters.length >= 1 && letters.length <= 3 && isAllPlateLetters(clean)) return letters.length;
+  return 0;
+}
+
+/**
+ * يحسم علامات «ألف»: الحرف ا ولا الرقم ١٠٠٠؟ شرطين لازم يتحققوا مع بعض عشان
+ * تُقرأ رقم — غير كده هي الحرف:
+ *
+ *   ١) اتجمع **٣ حروف** قبلها.
+ *      اللوحة السعودية حروفها الأول دايماً، فأي «ألف» قبل اكتمال التلاتة لازم
+ *      تكون حرف. المالك أكّدها بإيده: «الف لام به واحد خمسمية» ⇒ الب1500.
+ *      العدّ تراكمي من أول الجملة — المسار ده بيطلّع لوحة واحدة بس.
+ *
+ *   ٢) و**فاتحة مركّب واو** («ألف وخمسمية»).
+ *      دي قاعدة الواو بتاعت المالك نفسها: العربي بيركّب الآلاف بواو. «ألف»
+ *      وبعدها رقم منطوق بلا واو مش مركّب، والقراءة كرقم بتدمّر — ١٠٠٠ لوحدها
+ *      ٤ خانات فبتاكل كل الأرقام اللي بعدها.
+ *
+ * الشرط (٢) هو اللي بيمسك التوكن الملزوق اللي شكله ٣ حروف وهو أصلاً حرف واحد
+ * متفرّغ غلط. التقييم الذهبي فيه «دار ألف نون واحد تمانية زيرو تمانية» —
+ * «دار» = «دال» مغلوطة، فالعدّاد بيوصل ٣ والشرط (١) بيعدّي؛ الشرط (٢) هو اللي
+ * بيرجّعها حرف ⇒ دان1808 بدل دار1001. ونفس الشرط بيحمي «حطه ألف تسعة …»
+ * و«بيه بيه ألف تماني …» و«اله الف الف تلاتة …» من نفس المصير.
+ *
+ * ⚠️ **اتشال بعد القياس**: «ألف» وهي **آخر توكن** كانت كمان بتتقرا ١٠٠٠.
+ * `plateLetterCount` بتعدّ أي كلمة عربية من ٣ حروف كلها من حروف اللوحة، و«معه»
+ * و«كان» و«منه» و«قال» و«مال» و«سدد» و«قسط» كلها كده — فجملة تحصيل عادية زي
+ * «صاحبها قال الف» كانت بتطلّع «قال1000»: لوحة كاملة الشكل و`uncertain=false`،
+ * يعني بتوصل المندوب على إنها أكيدة. ١٦ جملة من ١٨ جرّبناها. وكمان كانت بتخترع
+ * الخانة الناقصة في لوحة مقطوعة («… تسعة تمانية سبعة ألف» ⇒ حبك9871 بدل
+ * حبك0987 — الـ١ جاية من ١٠٠٠). مكسب الفرع كان ٣ مدخلات **مولَّدة** بس
+ * (حبك1000)، فاتشال. مركّب الواو فوق ما اتلمسش.
+ */
+function resolveAlefNameMarks(text: string): string {
+  if (!text.includes(ALEF_MARK)) return text;
+  const parts = text.split(/\s+/);
+  let letters = 0;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] !== ALEF_MARK) { letters += plateLetterCount(parts[i]); continue; }
+    const next = parts[i + 1];
+    const opensWawCompound = next !== undefined && WAW_MARKED_RE.test(next);
+    if (letters >= 3 && opensWawCompound) parts[i] = "1000";
+    else { parts[i] = "ا"; letters++; }
+  }
+  return parts.join(" ");
 }
 
 // ─── Exported public helpers ────────────────────────────────────────────────
@@ -1390,11 +1758,18 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // 3. Normalize alef variants (أ إ آ → ا) — SR may return these for the letter ا
   text = text.replace(/[أإآ]/g, "ا");
 
-  // 3c. Resolve ألف/الف ambiguity: when followed by و (number compound context)
-  // treat as 1000, not the letter ا. Must run BEFORE LETTER_NAMES consumes "ألف".
-  // Excludes the letter NAME واو/وا specifically — "دال ألف واو" (spelling
-  // د-ا-و) must not have its ا eaten just because واو also starts with و.
-  text = text.replace(/(?:ألف|الف)(?=\s+و)(?!\s+(?:واو|وا)(?:\s|$))/g, " 1000 ");
+  // 3c. «ألف» اسم الحرف ا **و** الرقم ١٠٠٠ في نفس الوقت، والفرق بنيوي مش
+  // معجمي — فمافيش جدول يقدر يحسمه. بنأجّل الحسم: علامة لاتينية مكان الكلمة
+  // دلوقتي (قبل ما LETTER_NAMES تاكلها وتخلّيها ا للأبد)، والحسم في خطوة ٧ب
+  // بعد ما الشكل يبان. نفس حيلة اسم الحرف «واو» في plateAtoms بالظبط — علامة
+  // لاتينية بتعدّي كل الـregex والجداول العربية اللي بعدها سليمة.
+  //
+  // اللي كان هنا قبل كده: أي «ألف» جاي بعدها كلمة **بتبدأ بواو** تتحوّل ١٠٠٠
+  // فوراً. و«واحد» بتبدأ بواو، فأشيع إملاء في الدنيا («… ألف واحد …») كان
+  // بياكل الحرف ا ويحط ١٠٠٠ مكانه، وقاعدة الضم بتجمع ١٠٠٠+١ = ١٠٠١.
+  // مقيس: القاعدة دي كانت بتضرب على ١٨٦ مدخل من الكوربَس، **مافيش ولا واحد**
+  // منهم كان بيطلع صح.
+  text = text.replace(ALEF_NAME_RE, ` ${ALEF_MARK} `);
 
   // 3b. Normalize ى (alef maqsura) → ي — both are valid plate letters, treated as equivalent
   text = text.replace(/ى/g, "ي");
@@ -1404,6 +1779,13 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
 
   // 5. Replace phonetic merges
   text = replaceAll(text, PHONETIC_MERGES);
+
+  // 6a. علّم كلمات الأرقام المبدوءة بواو («وثمانين» → «@80») قبل ما القاموس
+  // ياكل الواو. الواو هي الفرق بين مركّب يتجمع ووصل يتلزق — خطوة ٩ تحت.
+  // بنفضّي «@» الأول عشان العلامة تبقى بتاعتنا مافيش غيرها (خطوة ٨ كانت
+  // بتحوّلها لمسافة برضه، فالسلوك للنص العادي زي ما هو).
+  text = text.replace(/@/g, " ");
+  text = replaceAll(text, WAW_NUMBER_MARKS);
 
   // 6. Replace spoken numbers (multi-word 10-90 sorted first, then 0-9)
   text = replaceAll(text, SPOKEN_NUMBERS);
@@ -1418,23 +1800,35 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // 7. Normalize Arabic-Indic numerals
   text = normalizeNumerals(text);
 
-  // 8. Clean: keep Arabic Unicode block + digits + spaces
-  text = text.replace(/[^؀-ۿ0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  // 7b. احسم علامة «ألف» (خطوة ٣ج) دلوقتي — الشكل بان: كل اسم حرف بقى حرفه
+  // وكل كلمة رقم بقت رقمها، فنقدر نعدّ الحروف. لازم قبل خطوة ٨ اللي بتمسح أي
+  // حرف لاتيني (العلامة نفسها).
+  text = resolveAlefNameMarks(text);
 
-  const normalized = text;
+  // 8. Clean: keep Arabic Unicode block + digits + spaces (+ علامة الواو
+  //    من خطوة ٦أ، بتتشال في خطوة ٩)
+  text = text.replace(/[^؀-ۿ0-9\s@]/g, " ").replace(/\s+/g, " ").trim();
 
   // ── 9. Token scan (proximity-based extraction) ───────────────────────────
   //  Find digit tokens first, then scan BACKWARD from the first digit to
   //  collect plate letters. This way observations before OR after the plate
   //  always end up in notes regardless of order.
-  const tokens = normalized.split(/\s+/).filter(Boolean);
+  //  علامة الواو (خطوة ٦أ) بتتشال من التوكن هنا وتتسجّل في مصفوفة موازية،
+  //  فالنص المطبّع والملاحظات بيفضلوا زي ما هما بالظبط من غير العلامة.
+  const rawTokens = text.split(/\s+/).filter(Boolean);
+  const wawMarked = rawTokens.map((t) => WAW_MARKED_RE.test(t));
+  const tokens = rawTokens.map((t, i) => (wawMarked[i] ? t.slice(WAW_MARK.length) : t));
+  text = tokens.join(" ");
+  const normalized = text;
 
   const digitTokenIndices: number[] = [];
   const digitTokenValues: string[] = [];
+  const digitTokenWaw: boolean[] = [];
   for (let i = 0; i < tokens.length; i++) {
     if (/^\d+$/.test(tokens[i]) && tokens[i].length <= 4) {
       digitTokenIndices.push(i);
       digitTokenValues.push(tokens[i]);
+      digitTokenWaw.push(wawMarked[i]);
     }
   }
 
@@ -1451,6 +1845,16 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
     // Scan BACKWARD from the first digit token — letters adjacent to digits win
     for (let i = firstDigitIdx - 1; i >= 0 && letterBuf.length < 3; i--) {
       const tok = tokens[i];
+      // An Egyptian letter NAME is ONE letter, whatever its spelling looks like
+      // ("هه" is the letter ه, not ه+ه). Must be tried before the per-character
+      // paths below, which would split it. Same lookup, same precedence as
+      // plateAtoms Step 2.
+      const eg = egyptianPlateLetter(tok);
+      if (eg) {
+        letterBuf.unshift(eg);
+        usedIdx.add(i);
+        continue;
+      }
       if (tok.length <= 2 || (tok.length <= 4 && isAllPlateLetters(tok))) {
         const letters = extractLettersFromToken(tok);
         if (letters.length > 0) {
@@ -1466,6 +1870,12 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
       const lastDigitIdx = digitTokenIndices[digitTokenIndices.length - 1];
       for (let i = lastDigitIdx + 1; i < tokens.length && letterBuf.length < 3; i++) {
         const tok = tokens[i];
+        const eg = egyptianPlateLetter(tok);
+        if (eg) {
+          letterBuf.push(eg);
+          usedIdx.add(i);
+          continue;
+        }
         if (tok.length <= 2 || (tok.length <= 4 && isAllPlateLetters(tok))) {
           const letters = extractLettersFromToken(tok);
           if (letters.length > 0) {
@@ -1476,13 +1886,9 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
       }
     }
 
-    // Combine digit tokens:
-    // – all single digits (0-9) → concatenate  e.g. 5 9 3 2 → "5932"
-    // – any token ≥ 10        → additive Arabic compound  e.g. 5 + 20 → "25"
-    const digitNums = digitTokenValues.map(Number);
-    const digits = digitNums.some((v) => v >= 10)
-      ? String(digitNums.reduce((a, b) => a + b, 0)).slice(0, 4)
-      : digitTokenValues.join("").slice(0, 4);
+    // Combine digit tokens: الافتراضي لزق، والمركّب الموصول بواو بس هو اللي
+    // بيتجمع — شوف joinSpokenDigits لتفاصيل القاعدة.
+    const digits = joinSpokenDigits(digitTokenValues, digitTokenWaw);
 
     plate = letterBuf.join("") + digits;
     notes = tokens.filter((_, i) => !usedIdx.has(i)).join(" ");

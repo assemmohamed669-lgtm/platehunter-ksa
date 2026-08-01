@@ -22,6 +22,7 @@ import {
   splitByNotePhrases,
   plateAtoms,
   platesFromAtoms,
+  wawTensWord,
   parsePlateFromTranscript,
   extractMultiplePlates,
   type PlateAtom,
@@ -54,6 +55,26 @@ export interface SessionRecord {
   /** السياق الساري وقت اكتمال اللوحة (للاختبار/العرض — متضمَّن في notes). */
   contextNote: string;
   seq: number;
+  /**
+   * نصّ السجل ده اتلمّ من **رسالتين** (فيه مادة من `state.carryText`)؟
+   *
+   * ليه العلَم ده موجود؟ طيّار الرأي التاني بيقصّ نافذة صوت من **الرسالة
+   * الحالية** بس. لو اللوحة اتلمّت من رسالتين فنص صوتها في نبضة سابقة، والنافذة
+   * مايمكنها تحتويه ⇒ الطيّار لازم يسكت بسبب مسمّى (`carried_over`) بدل ما يبعت
+   * طلب على نص لوحة. المقيس في جلسة المالك: ٦ لوحات من ٣٠ كانت كده (Deepgram
+   * نهّى الأرقام لوحدها والحروف جات من الرسالة اللي قبلها).
+   *
+   * ⚠️ محافظ عن قصد: بيتعلّم على السجل **الأول** من أي chunk دخل وفيه
+   * `carryText` مش فاضي. مادة الترحيل دايماً **بادئة** النص المدمَج
+   * (`${carryText} ${text}`) و`splitCarryAtoms` عمرها ما ترحّل لوحة كاملة (حروف
+   * بلا أرقام، أو مجموعة أرقام ناقصة + حروفها) — فمستحيل تغذّي غير أول لوحة.
+   * لو الترحيل اتساقط ومادخلش السجل الأول فالعلَم بيبقى إيجابية زايدة = سكوت
+   * زيادة، وده الاتجاه الآمن.
+   *
+   * ملاحظة: الترحيل **جوّه** نفس الـchunk (`pendingLetterText` — لوحة قطعتها
+   * ملاحظة) **مش** بيعلّم: صوته في نفس الرسالة، فالنافذة بتلمّه.
+   */
+  fromCarry: boolean;
 }
 
 export function newSessionState(): SessionState {
@@ -65,6 +86,41 @@ export function newSessionState(): SessionState {
 function atomToText(a: PlateAtom): string {
   if (a.t === "L") return a.fromName ? "واو" : a.v;
   return a.v;
+}
+
+/**
+ * يسلسل ذرّات للنص المرحَّل — و**بيفكّ مركّب الواو لأصله المنطوق**.
+ *
+ * مركّب الواو («واحد وعشرين» = ٢١) بيتخزّن في الذرّة كناتج جمع + الأصل
+ * (`cFrom`/`cTens`). الأصل ده هو دليل خطوة ٢.٦ في `plateParser`: لو سلسلة
+ * الأرقام طلعت ٣ خانات واللزق كان بيكمّلها ٤، بترجع لزق (Deepgram بيلخّص
+ * «سبعة صفر» المنطوقة في كلمة «وسبعين»، فالكلمة مش دايماً مركّب).
+ *
+ * `atomToText` بتطلّع الخانة المحسوبة بس، فالدليل كان بيموت على حدّ الرسالة
+ * وخطوة ٢.٦ تبقى مش قادرة تتراجع أبداً بعد كده: «دال سين كاف واحد وعشرين» ثم
+ * «تلاتة» كانت بتدّي دسك0213 بدل دسك1203. القياس على التسجيلات الميدانية:
+ * ٤٨ لوحة حقيقية من قايمة المطلوبين كانت بتضيع.
+ *
+ * الحل مش قاعدة جديدة — النص المرحَّل بيرجّع الكلام زي ما اتقال («1 وعشرين»)،
+ * فالمركّب يتقرّر من الأول في الرسالة الجاية وهو شايف السلسلة كاملة. النتيجة:
+ * البث والدفعة بيدّوا نفس اللوحة **بالبناء**، مش بالصدفة.
+ *
+ * الذرّتين لازم يبقوا مع بعض (الجمع بيطلّع خانتين متجاورتين). لو القصّ فصلهم
+ * بنرجع للسلسلة العادية بدل ما نلفّق نص مش مطابق للمنطوق.
+ */
+function atomsToCarryText(atoms: PlateAtom[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < atoms.length; i++) {
+    const a = atoms[i];
+    const next = atoms[i + 1];
+    if (a.t === "D" && a.cFrom !== undefined && a.cTens !== undefined
+        && next && next.t === "D") {
+      const word = wawTensWord(a.cTens);
+      if (word) { out.push(a.cFrom, word); i++; continue; }
+    }
+    out.push(atomToText(a));
+  }
+  return out.join(" ");
 }
 
 /**
@@ -112,7 +168,7 @@ function splitCarryAtoms(atoms: PlateAtom[]): { head: PlateAtom[]; carry: string
 
   return {
     head: atoms.slice(0, cut),
-    carry: atoms.slice(cut).map(atomToText).join(" "),
+    carry: atomsToCarryText(atoms.slice(cut)),
   };
 }
 
@@ -126,6 +182,9 @@ export function parseSessionChunk(
   opts?: { final?: boolean }
 ): { records: SessionRecord[]; events: SessionEvent[]; state: SessionState } {
   const final = !!opts?.final;
+  // مادة مرحَّلة من رسالة سابقة؟ لازم تتقرا **قبل** ما نبني `combined` — أول لوحة
+  // بتخرج هي الوحيدة اللي تقدر تكون مبنية عليها (شوف `SessionRecord.fromCarry`).
+  const hadCarry = state.carryText.trim().length > 0;
   const combined = `${state.carryText} ${text}`.trim();
   const records: SessionRecord[] = [];
   const events: SessionEvent[] = [];
@@ -159,6 +218,7 @@ export function parseSessionChunk(
         rawLetterSource: p.rawLetterSource,
         contextNote: currentNote,
         seq,
+        fromCarry: hadCarry && records.length === 0,
       });
       events.push({ type: "PlateCompleted", value: p.plate, seq: seq++ });
     }
@@ -213,7 +273,7 @@ export function parseSessionChunk(
     if (plates.length === 0 && head.length > 0) {
       if (head.length <= 10) {
         // مفيش لوحة مكتملة — رحّل الجزء كله (محدود الحجم) بدل ما يضيع.
-        carryOut = [head.map(atomToText).join(" "), carry].filter(Boolean).join(" ");
+        carryOut = [atomsToCarryText(head), carry].filter(Boolean).join(" ");
         plates = [];
       } else if (!carry) {
         const parsed = parsePlateFromTranscript(effective);

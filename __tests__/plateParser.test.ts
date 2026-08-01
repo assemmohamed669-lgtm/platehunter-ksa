@@ -1549,3 +1549,141 @@ describe("tokenizePastedPlates", () => {
     expect(tokenizePastedPlates("ر ون 5939")).toEqual(["رون5939"]);
   });
 });
+
+// ─── نطق الحروف المصري متعدد الحروف (هه / به / ره / طه / يه / هة / ها / اليف) ──
+// المحلّل الواحد (parsePlateFromTranscript) ماكانش بيسأل جدول EGYPTIAN_LETTERS
+// خالص، فالتوكن «هه» — وهو واحد من الـ45 keyterm اللي التطبيق نفسه بيبعتها
+// لـDeepgram (lib/deepgramKey.ts) — كان بينفلق حرفين (ه + ه) ويطرد أول حرف
+// حقيقي في اللوحة، وبيسيب uncertain مش مضبوطة (غلط صامت).
+// مدخل التطبيق التاني (parseSessionChunk → extractMultiplePlates → plateAtoms)
+// بيسأل الجدول ده وبيطلّع الصح — فالمفروض المدخلين يتفقوا.
+describe("parsePlateFromTranscript — Egyptian multi-char letter names (EGYPTIAN_LETTERS)", () => {
+  const P = (t: string) => normalizePlate(parsePlateFromTranscript(t).plate);
+
+  it("resolves 'هه' to ONE ه — gold_0020 of the 120-clip eval (حهل5802)", () => {
+    // كانت تطلّع «ههل5802»: الـ«هه» بقت حرفين والـ«ح» اتطردت — وuncertain مش مضبوطة
+    expect(P("حاء هه لام خمسة تمانية زيرو اتنين")).toBe("حهل5802");
+  });
+
+  // كل مدخلات EGYPTIAN_LETTERS اللي قيمتها حرف ومش موجودة في LETTER_NAMES —
+  // دي كل صنف الباج (٩ مدخلات مقيسة)، مش توكن واحد.
+  const EGY_LETTER_CASES: [string, string][] = [
+    ["به", "ب"], ["حه", "ح"], ["ره", "ر"], ["طه", "ط"],
+    ["هه", "ه"], ["هة", "ه"], ["يه", "ي"], ["ها", "ه"], ["اليف", "ا"],
+  ];
+  for (const [spoken, letter] of EGY_LETTER_CASES) {
+    it(`'${spoken}' → حرف واحد (${letter}) في وسط اللوحة`, () => {
+      expect(P(`دال ${spoken} لام واحد اتنين تلاتة اربعة`)).toBe(
+        normalizePlate(`د${letter}ل1234`)
+      );
+    });
+  }
+
+  it("agrees with extractMultiplePlates (the entry point production actually uses)", () => {
+    const t = "حاء هه لام خمسة تمانية زيرو اتنين";
+    const single = normalizePlate(parsePlateFromTranscript(t).plate);
+    const multi = extractMultiplePlates(t).map((p) => normalizePlate(p.plate));
+    expect(multi).toEqual(["حهل5802"]);
+    expect(single).toBe(multi[0]);
+  });
+
+  it("does not mark a cleanly-dictated 'هه' plate as uncertain", () => {
+    const r = parsePlateFromTranscript("حاء هه لام خمسة تمانية زيرو اتنين");
+    expect(normalizePlate(r.plate)).toBe("حهل5802");
+    expect(r.uncertain).toBeFalsy();
+  });
+
+  it("still reads a plate whose LAST letter is 'هه' (letters before the digits)", () => {
+    expect(P("دال كاف هه تسعة اربعة تمانية واحد")).toBe("دكه9481"); // gold_0111
+  });
+
+  it("still reads two consecutive 'هه' tokens as two ه letters", () => {
+    expect(P("حاء هه هه ستة اتنين زيرو اتنين")).toBe("حهه6202"); // gold_0117
+  });
+});
+
+// الـ11 لوحة في التقييم الذهبي (120 مقطع) اللي فيها حرف ه — نطقها الفعلي
+// بيستخدم «هه» (واحدة من صيغ SPOKEN في training/synth_plates.py) فكانت كلها
+// بتتحلّل غلط في المحلّل الواحد.
+describe("parsePlateFromTranscript — the 11 ه-plates of the gold eval round-trip", () => {
+  // نفس جدولَي SPOKEN/DIGITS في training/synth_plates.py — أول صيغة لكل حرف/رقم،
+  // ما عدا ه اللي بناخد فيها «هه» (هي دي الصيغة اللي كانت بتكسر المحلّل).
+  // (ملاحظة: صيغة ا = «ألف» بتتحول 1000 لو جاها بعدها كلمة بواو — مافيش ا في
+  //  الـ11 لوحة دي فمابتتلمسش هنا.)
+  const SPOKEN: Record<string, string> = {
+    "ا": "ألف", "ب": "باء", "ح": "حاء", "د": "دال", "ر": "راء", "س": "سين",
+    "ص": "صاد", "ط": "طاء", "ع": "عين", "ق": "قاف", "ك": "كاف", "ل": "لام",
+    "م": "ميم", "ن": "نون", "ه": "هه", "و": "واو", "ي": "ياء",
+  };
+  const DIGITS: Record<string, string> = {
+    "0": "زيرو", "1": "واحد", "2": "اتنين", "3": "تلاتة", "4": "أربعة",
+    "5": "خمسة", "6": "ستة", "7": "سبعة", "8": "تمانية", "9": "تسعة",
+  };
+  const spoken = (plate: string) => {
+    const letters = [...plate].filter((c) => !/\d/.test(c));
+    const digits = [...plate].filter((c) => /\d/.test(c));
+    return [...letters.map((c) => SPOKEN[c]), ...digits.map((d) => DIGITS[d])].join(" ");
+  };
+
+  // eval/data/metadata-full.csv — كل مقطع فيه ه في اللوحة الصح
+  const GOLD_HE_PLATES = [
+    "حهل5802", "رهط4639", "حهط2967", "حهم8362", "ححه2283", "حده1325",
+    "دهر5818", "حهم6937", "دكه9481", "دمه4420", "حهه6202",
+  ];
+  for (const plate of GOLD_HE_PLATES) {
+    it(`${plate} ← "${spoken(plate)}"`, () => {
+      expect(normalizePlate(parsePlateFromTranscript(spoken(plate)).plate)).toBe(plate);
+    });
+  }
+});
+
+// ─── الأرقام العربية-الهندية (٥٨١٩) في نص التفريغ ────────────────────────────
+// كلاس شيل التشكيل كان /[ً-ٰ]/ — والمدى ده جوّاه U+0660-U+0669، يعني
+// أرقام ٠-٩ العربية كانت بتتمسح قبل ما المحوّل (normalizeNumerals) يشوفها خالص،
+// فاللوحة تطلع فاضية. التطبيق بيبعت numerals=true لـDeepgram (أرقام لاتينية
+// غالباً) فالباج كان كامن — لكن أي محرّك/لوكيل يرجّع ٠-٩ يولّد لوحات فاضية.
+describe("parsePlateFromTranscript — Arabic-Indic digits (٥٨١٩) are read, not deleted", () => {
+  const P = (t: string) => parsePlateFromTranscript(t);
+
+  it("parses ٥٨١٩ exactly like 5819", () => {
+    expect(P("حاء الف باء ٥٨١٩").plate).toBe("حاب5819");
+    expect(P("حاء الف باء ٥٨١٩").plate).toBe(P("حاء الف باء 5819").plate);
+  });
+
+  it("both digit scripts give identical results for whole plates", () => {
+    const AR_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+    const toArabicIndic = (s: string) => s.replace(/\d/g, (d) => AR_DIGITS[+d]);
+    for (const t of [
+      "حاء الف باء 5819",
+      "دال راء قاف 4121",
+      "حاء هه لام 5802",
+      "حمن 8531 جراج يمين",
+      "ونيت درق 4121 مركونه",
+    ]) {
+      const latin = P(t);
+      const indic = P(toArabicIndic(t));
+      expect(indic.plate).toBe(latin.plate);
+      expect(indic.uncertain).toBe(latin.uncertain);
+      expect(indic.vehicleType).toBe(latin.vehicleType);
+    }
+  });
+
+  it("reads Arabic-Indic digits dictated one by one", () => {
+    expect(P("دال راء قاف ٤ ١ ٢ ١").plate).toBe("درق4121");
+  });
+
+  it("extractMultiplePlates reads them too (shared removeDiacritics)", () => {
+    expect(extractMultiplePlates("دال راء قاف ٤١٢١").map((p) => p.plate)).toEqual(["درق4121"]);
+  });
+
+  it("still strips real tashkeel (U+064B-U+065F) — narrowing the class must not lose that", () => {
+    // fatha on خ + sukun on م inside a number word that is only in the table
+    // WITHOUT diacritics: if they weren't stripped, replaceAll's Arabic-char
+    // lookaround would refuse the word and the digit would be lost.
+    expect(P("حاء ميم نون خَمْسة ثمانية ثلاثة واحد").plate).toBe("حمن5831");
+  });
+
+  it("still strips the superscript alef U+0670", () => {
+    expect(P("حاء ميم نون خمسةٰ ثمانية ثلاثة واحد").plate).toBe("حمن5831");
+  });
+});
