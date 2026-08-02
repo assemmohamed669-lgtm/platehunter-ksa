@@ -25,6 +25,14 @@ let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boole
 // الداتا المرتّبة الكاملة + عمود الموقع/اللوحة — لميزة «موقعها» (جيران نفس الشارع).
 let wantedNeighborData: { orderedData: Record<string, string>[]; locCol: string | null; plateCol: string; detailCols: string[] } | null = null;
 
+/** تاريخ تشييك المندوب بنفس شكل صفحة التشييك (يوم-شهر-سنة ساعة:دقيقة). */
+function fmtCheckDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function findGps(row: Record<string, string>): { lat: number; lng: number } | null {
   for (const v of Object.values(row)) {
     const g = gpsCellCoords(String(v ?? ""));
@@ -241,7 +249,12 @@ export default function WantedPage() {
           district,
           color: colorOf(norm),
           year: yearOf(norm),
-          date: (e.row?.["التاريخ"] || e.row?.["تاريخ التسجيل"] || "").trim(),
+          // تاريخ **تشييك المندوب** للّوحة (checkedAt) — هو التاريخ اللي يهمه هنا،
+          // وموجود لكل سجل مهما كان مصدره (يدوي/صوت/كاميرا/شاصي). بنرجع لأعمدة
+          // الشيت بس لو السجل قديم ومفيهوش وقت تشييك.
+          date: e.checkedAt
+            ? fmtCheckDate(e.checkedAt)
+            : (e.row?.["التاريخ"] || e.row?.["تاريخ التسجيل"] || "").trim(),
           mapsLink: e.mapsLink || "",
           lat: e.lat,
           lng: e.lng,

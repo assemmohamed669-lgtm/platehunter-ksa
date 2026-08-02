@@ -92,6 +92,14 @@ function fmtChassisDate(iso: string): string {
   return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`;
 }
 
+/** تاريخ تشييك المندوب بنفس شكل صفحة التشييك (يوم-شهر-سنة ساعة:دقيقة). */
+function fmtCheckDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function persistSortCache() {
   try {
     localStorage.setItem(SORT_RESULTS_KEY, JSON.stringify({ byMode: sortCacheByMode, activeMode: sortActiveMode }));
@@ -330,6 +338,7 @@ export default function SortingPage() {
             const keys = new Set<string>(["رقم اللوحة"]);
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
             keys.add("GPS");
+            keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
             const headers = [...keys];
             const rows = fieldEntries.map((e) => ({
               "رقم اللوحة": e.plate,
@@ -337,6 +346,8 @@ export default function SortingPage() {
               // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
               // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
               "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
+              // وقت التشييك الفعلي (مش عمود من الشيت) — بيغلب أي «تاريخ» جوه e.row.
+              "التاريخ": e.checkedAt ? fmtCheckDate(e.checkedAt) : (e.row?.["التاريخ"] ?? ""),
             } as Record<string, string>));
             setTashyeekTable({ headers, rows });
             setTashyeekFile(null);
