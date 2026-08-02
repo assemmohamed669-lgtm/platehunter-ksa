@@ -565,12 +565,22 @@ export function platesFromAtoms(atoms: PlateAtom[]): MultiPlateResult[] {
     // بدل ما نحشّي أصفار ونعرض «دمك0065» كأنها صح. (الشكوى الميدانية: يسمع رقم
     // من الأربعة فيكتب ٣ أصفار ورقم).
     const incompleteDigits = p.digits.length < 4;
+    // ولوحة السعودية ٣ حروف زي ما هي ٤ أرقام — القاعدة اللي فوق كانت مطبّقة على
+    // **نص اللوحة بس**. لوحة بحرف أو حرفين كانت بتعدي `uncertain=false` يعني
+    // «مؤكّدة»، والمندوب يمشي عليها.
+    // مقيس على ٣٠٦ نص Deepgram حقيقي: ٩٪ من النتايج غلط ومعروضة كأنها مؤكّدة،
+    // و**٢٦ من ٢٩** منهم حروفهم أقل من ٣. حالات ميدانية (٢٠٢٦/٠٨/٠٢):
+    //   «قف نون نون 9999» ⇒ نن9999   («قف» مش حرف صالح فاتشال)
+    //   «حه ص 66 زيرو»    ⇒ حص0660   (Deepgram ضيّع راء)
+    // الفحص **مابيصلّحش** اللوحة — الحرف ضايع من التفريغ أصلاً؛ بيمنعها بس إنها
+    // تعدي كأنها مؤكّدة، فالمندوب يقولها تاني بدل ما يمشي على لوحة ناقصة.
+    const incompleteLetters = p.letters.length < 3;
     return {
       plate,
       vehicleType: p.vehicleType || undefined,
       notes: p.notes.join(" "),
       normalized: normalizePlate(plate),
-      uncertain: p.uncertain || incompleteDigits || undefined,
+      uncertain: p.uncertain || incompleteDigits || incompleteLetters || undefined,
       rawLetterSource: p.rawLetterSource,
     };
   });
