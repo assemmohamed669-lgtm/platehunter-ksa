@@ -17,20 +17,6 @@ import { renderPlateImages, renderTableImages, objToPlateRow, downloadDataUrl, t
 import { shareImageWithText } from "@/lib/share";
 import { pushBackHandler } from "@/lib/backStack";
 
-/**
- * قسم واحد في المشاركة الموحّدة (نتيجة الداتا / نتيجة السجلات).
- * الإكسيل بيجمعهم في ملف واحد بعناوين فاصلة، والصورة بتطلع صورة لكل قسم
- * وعنوانه مكتوب فوقها — عشان المندوب يعرف كل مجموعة جاية منين.
- */
-export interface ShareSection {
-  title: string;                          // العنوان الكبير فوق القسم/الصورة
-  columns: string[];
-  rows: string[][];
-  rowColors?: (string | null)[];
-  objects: Record<string, unknown>[];     // نفس الصفوف ككائنات (للإكسيل)
-  subtitle?: string;
-}
-
 interface Props {
   /** اسم الشيت + عنوان الصورة + أساس اسم الملف. */
   title: string;
@@ -45,12 +31,6 @@ interface Props {
   /** بنّاء صورة جدول (زي شيت إكسيل) — رؤوس أعمدة + خانات. لو موجود بيتقدّم على
    *  imageRows وrows() في «إرسال كصورة». */
   imageTable?: () => { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] };
-  /**
-   * مشاركة موحّدة بأقسام (نتيجة الداتا + نتيجة السجلات في نفس المشاركة).
-   * لو موجودة بتتقدّم على excelBlob/imageTable: الإكسيل بيبقى ملف واحد
-   * بعناوين فاصلة، والصورة بتطلع صورة لكل قسم وعنوانه فوقها.
-   */
-  sections?: () => ShareSection[];
   className?: string;
   /** نص الزر + عنوان القائمة (افتراضي «مشاركة الفرز»). */
   label?: string;
@@ -60,7 +40,7 @@ function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, rows, excelBlob, imageRows, imageTable, sections, className, label }: Props) {
+export default function ShareSortButton({ title, rows, excelBlob, imageRows, imageTable, className, label }: Props) {
   const btnLabel = label ?? "مشاركة الفرز";
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -76,27 +56,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
     if (!r.length) { alert("مفيش نتايج للمشاركة."); return null; }
     return r;
   }
-  /** أقسام فيها صفوف فعلاً (بنتجاهل الفاضي). */
-  function activeSections(): ShareSection[] | null {
-    if (!sections) return null;
-    const s = sections().filter((x) => x.rows.length > 0);
-    return s.length ? s : null;
-  }
-
   async function buildBlob(): Promise<{ blob: Blob; ext: string } | null> {
-    const secs = activeSections();
-    if (secs) {
-      // ملف واحد: عنوان القسم في صف لوحده، تحته صفوفه، وسطر فاضي بين الأقسام.
-      const allCols = [...new Set(secs.flatMap((s) => s.columns))];
-      const blank = Object.fromEntries(allCols.map((c) => [c, ""]));
-      const out: Record<string, unknown>[] = [];
-      secs.forEach((s, i) => {
-        if (i > 0) out.push({ ...blank });
-        out.push({ ...blank, [allCols[0]]: `── ${s.title} (${s.rows.length}) ──` });
-        out.push(...s.objects);
-      });
-      return buildSpreadsheetBlob(out, title);
-    }
     if (excelBlob) return await excelBlob();
     const r = getRows(); if (!r) return null;
     return buildSpreadsheetBlob(r, title);
@@ -122,18 +82,9 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
     setMenuOpen(false); setBusy(true);
     try {
       await new Promise((res) => setTimeout(res, 0)); // فسحة للـ spinner قبل الرسم المتزامن
-      // الأولوية: أقسام موحّدة → جدول (زي إكسيل) → صفوف مخصّصة → rows().
+      // الأولوية: جدول (زي إكسيل) → صفوف مخصّصة → كل الأعمدة من rows().
       let imgs: string[];
-      const secs = activeSections();
-      if (secs) {
-        // صورة (أو أكتر) لكل قسم، وعنوان القسم مكتوب فوقها.
-        imgs = secs.flatMap((s) =>
-          renderTableImages({
-            title: s.title, subtitle: s.subtitle,
-            columns: s.columns, rows: s.rows, rowColors: s.rowColors,
-          })
-        );
-      } else if (imageTable) {
+      if (imageTable) {
         const t = imageTable();
         if (!t.rows.length) { alert("مفيش نتايج."); return; }
         imgs = renderTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows, rowColors: t.rowColors });
