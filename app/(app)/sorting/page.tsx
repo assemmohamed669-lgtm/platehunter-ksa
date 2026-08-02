@@ -391,11 +391,15 @@ export default function SortingPage() {
         getUploadedFile("local", "referral").then((rec) => {
           if (!rec) return;
           setReferralTable({ headers: rec.headers, rows: rec.rows });
-          setReferralFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+          const rf = new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+          setReferralFile(rf);
           setReferralPlateColOverride(null);
           setResults(null); setSorted(false);
           const p = detectPlateColumn(rec.headers, rec.rows);
           setReferralExtraCols(new Set(rec.headers.filter((h) => h !== p && matchesPreferred(h))));
+          // الملف اتغيّر من مكان تاني → أعد تحليل الورقات، وإلا الاختيار يفضل
+          // على ورقات الملف القديم أو يختفي.
+          if (rec.fileBlob) void analyzeReferralFile(rf);
         });
       } else if (slot === "data") {
         getUploadedFile("local", "data").then((rec) => {
@@ -582,8 +586,9 @@ export default function SortingPage() {
         saved ? new Set(saved.filter((n) => valid.has(n))) : valid
       );
     } catch (err) {
+      // فشل مؤقت (ملف مقفول/ذاكرة) — نسيب الاختيار القديم زي ما هو بدل ما
+      // يختفي قدام المندوب فجأة. المسح الحقيقي بيتم في clearSlot بس.
       console.error("referral sheets analyze failed", err);
-      setRefSheets([]); setRefSheetSel(new Set());
     }
   }, []);
 
