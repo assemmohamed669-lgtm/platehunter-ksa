@@ -921,6 +921,15 @@ export default function InstantCheckPage() {
   const [platesEditorOpen, setPlatesEditorOpen] = useState(false);
   const [draftFieldEntries, setDraftFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [peSearch, setPeSearch] = useState("");            // بحث برقم اللوحة داخل المحرّر
+  // أول لوحة مطابقة — بنتنطّ عليها عشان تبان في وسط الشاشة مع اللي حواليها.
+  const peFirstHitRef = useRef<HTMLTableRowElement | null>(null);
+  useEffect(() => {
+    if (!peSearch.trim()) return;
+    const t = setTimeout(() => {
+      peFirstHitRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 120);   // بعد ما الجدول يترسم
+    return () => clearTimeout(t);
+  }, [peSearch]);
   const [peCols, setPeCols] = useState<Set<string>>(new Set()); // الأعمدة المعروضة في المحرّر
   // زر الرجوع (الهاتف) يقفل نافذة «إظهار وتعديل اللوحات» بدل ما يتنقّل بعيد.
   useEffect(() => { if (platesEditorOpen) return pushBackHandler(() => setPlatesEditorOpen(false)); }, [platesEditorOpen]);
@@ -4954,9 +4963,13 @@ export default function InstantCheckPage() {
         const shownCols = allCols.filter((h) => peCols.has(h));
         // بحث برقم اللوحة — نطبّع الاتنين عشان المطابقة تشتغل مع/بدون فراغات وحروف EN.
         const q = normalizePlate(bankPlateToArabic(peSearch.trim()));
-        const rows = q
-          ? draftFieldEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q))
-          : draftFieldEntries;
+        // البحث **مايخفيش** الباقي: القايمة بتفضل كاملة واللوحة المطابقة بتتعلّم
+        // وبيتنطّ عليها — عشان المندوب يشوف اللي قبلها واللي بعدها في السياق.
+        const rows = draftFieldEntries;
+        const matchIds = new Set(
+          q ? draftFieldEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q)).map((e) => e.id) : []
+        );
+        const firstMatchId = q ? draftFieldEntries.find((e) => matchIds.has(e.id))?.id : undefined;
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
             <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
@@ -4976,7 +4989,13 @@ export default function InstantCheckPage() {
                     <button onClick={() => setPeSearch("")} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={14} /></button>
                   )}
                 </div>
-                {q && <p className="mt-1 text-[11px] text-muted">{rows.length} نتيجة</p>}
+                {q && (
+                  <p className="mt-1 text-[11px] text-muted">
+                    {matchIds.size > 0
+                      ? `${matchIds.size} نتيجة — متعلّمة في مكانها وسط باقي اللوحات`
+                      : "مفيش لوحة مطابقة"}
+                  </p>
+                )}
                 {/* تحديد الأعمدة المعروضة */}
                 {allCols.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -5010,11 +5029,15 @@ export default function InstantCheckPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((e) => (
-                        <tr key={e.id} className="border-b border-border">
+                      {rows.map((e) => {
+                        const hit = matchIds.has(e.id);
+                        return (
+                        <tr key={e.id}
+                          ref={e.id === firstMatchId ? peFirstHitRef : undefined}
+                          className={`border-b border-border ${hit ? "bg-primary/15" : ""}`}>
                           <td className="border-l border-border p-1 whitespace-nowrap">
                             <input dir="rtl" value={e.plate} onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
-                              className="w-28 rounded border border-transparent bg-transparent px-2 py-1 font-bold text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
+                              className={`w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none ${hit ? "font-black text-primary" : "font-bold"}`} />
                           </td>
                           {shownCols.map((h) => (
                             <td key={h} className="border-l border-border p-1 whitespace-nowrap">
@@ -5027,7 +5050,8 @@ export default function InstantCheckPage() {
                               className="rounded-lg border border-danger/40 bg-danger/10 p-1.5 text-danger transition hover:bg-danger/20"><Trash2 size={14} /></button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
