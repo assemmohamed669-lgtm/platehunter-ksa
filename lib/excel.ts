@@ -226,6 +226,24 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
  * بسيطة ومباشرة (الصف الأول = هيدر)؛ كشف عمود الشاصي بالمحتوى بيعوّض أي هيدر
  * مزاح. بترجّع الورقات اللي فيها بيانات فقط.
  */
+/**
+ * يقرا **كل** ورقات الملف كصفوف خام (مصفوفات) بدون أي افتراض إن أول صف هيدر.
+ * ضروري لملفات الإحالة اللي فوق الهيدر فيها صفوف عناوين — التحليل بيتم في
+ * lib/referralSheets (كشف صف الهيدر وعمود اللوحة بالمحتوى).
+ */
+export async function readAllSheetsRaw(
+  file: File
+): Promise<{ name: string; aoa: unknown[][] }[]> {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: false, cellStyles: false });
+  return wb.SheetNames.map((name) => ({
+    name,
+    aoa: XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], {
+      header: 1, raw: false, defval: "",
+    }),
+  }));
+}
+
 export async function readAllSheets(
   file: File
 ): Promise<{ sheetName: string; headers: string[]; rows: Record<string, string>[] }[]> {

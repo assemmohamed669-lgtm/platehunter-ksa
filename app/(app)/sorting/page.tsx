@@ -10,7 +10,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import {
   type ExcelTable, buildSpreadsheetBlob, buildCsvBlob,
-  openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel,
+  openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw,
 } from "@/lib/excel";
 import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
@@ -21,6 +21,8 @@ import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSor
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
+import { analyzeWorkbook, totalPlates, type SheetInfo } from "@/lib/referralSheets";
+import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, sheetFingerprint, describeHistory, isClosedStatus,
@@ -159,6 +161,13 @@ export default function SortingPage() {
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
   const [referralPlateColOverride, setReferralPlateColOverride] = useState<string | null>(null);
 
+  // ── ملف إحالة متعدد الورقات ────────────────────────────────────────────────
+  // ملفات الشركات بتيجي فيها ورقة بكل الأسطول + ورقات بالمطلوبين فعلاً، وكل ورقة
+  // بشكل مختلف (اسم عمود اللوحة مختلف، والهيدر مش في أول صف، وفيه ورقات بلا
+  // هيدر). بنحلّلها كلها ونخلّي المندوب يعلّم على اللي عايز يفرز عليه.
+  const [refSheets, setRefSheets] = useState<SheetInfo[]>([]);
+  const [refSheetSel, setRefSheetSel] = useState<Set<string>>(new Set());
+
   // ── شيتات إحالة إضافية (زر "+" — إحالة ٢، ٣، ٤...) ──
   // كل شيت إضافي بيتخزّن في slot خاص (referral-2, referral-3, ...) وبيتدمج مع
   // الإحالة الأساسية وقت الفرز. صندوق فاضي (بدون ملف) عادي — بيتخطّى في الفرز.
@@ -262,7 +271,10 @@ export default function SortingPage() {
         }
         if (refRec) {
           setReferralTable({ headers: refRec.headers, rows: refRec.rows });
-          setReferralFile(new File([refRec.fileBlob ?? new Blob()], refRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+          const refFile = new File([refRec.fileBlob ?? new Blob()], refRec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+          setReferralFile(refFile);
+          // أعد تحليل الورقات (لو الملف متعدد) واسترجع اختيار المندوب المحفوظ.
+          if (refRec.fileBlob) void analyzeReferralFile(refFile);
           const p = detectPlateColumn(refRec.headers, refRec.rows);
           setReferralExtraCols(new Set(refRec.headers.filter((h) => h !== p && matchesPreferred(h))));
         }
@@ -549,6 +561,43 @@ export default function SortingPage() {
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
+  // ── ورقات ملف الإحالة ─────────────────────────────────────────────────────
+  const REF_SHEETS_KEY = "ph:sorting:refSheetSel";
+
+  /** يحلّل ورقات ملف الإحالة ويحدّد المختار (يستعيد اختيار سابق لو موجود). */
+  const analyzeReferralFile = useCallback(async (file: File) => {
+    try {
+      const raw = await readAllSheetsRaw(file);
+      const infos = analyzeWorkbook(raw);
+      const withPlates = infos.filter((s) => s.plateCount > 0);
+      setRefSheets(infos);
+      // اختيار محفوظ لنفس الملف؟ وإلا علّم كل الورقات اللي فيها لوحات.
+      let saved: string[] | null = null;
+      try {
+        const j = JSON.parse(localStorage.getItem(REF_SHEETS_KEY) ?? "null");
+        if (j && j.file === file.name && Array.isArray(j.sheets)) saved = j.sheets;
+      } catch { /* ignore */ }
+      const valid = new Set(withPlates.map((s) => s.name));
+      setRefSheetSel(
+        saved ? new Set(saved.filter((n) => valid.has(n))) : valid
+      );
+    } catch (err) {
+      console.error("referral sheets analyze failed", err);
+      setRefSheets([]); setRefSheetSel(new Set());
+    }
+  }, []);
+
+  /** يحفظ اختيار الورقات (مربوط باسم الملف). */
+  const setRefSheetSelection = useCallback((next: Set<string>) => {
+    setRefSheetSel(next);
+    try {
+      localStorage.setItem(REF_SHEETS_KEY, JSON.stringify({
+        file: referralFile?.name ?? "", sheets: [...next],
+      }));
+    } catch { /* ignore */ }
+    setResults(null); setSorted(false); wipeSortResults();
+  }, [referralFile]);
+
   // ── سجل السيارات: تحميل + مساعدات ─────────────────────────────────────────
   const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -709,9 +758,23 @@ export default function SortingPage() {
   const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
   const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
 
+  // ── ورقات الإحالة المختارة (ملف متعدد الورقات) ─────────────────────────────
+  const selectedRefSheets = useMemo(
+    () => refSheets.filter((s) => s.plateCount > 0 && refSheetSel.has(s.name)),
+    [refSheets, refSheetSel]
+  );
+  const isMultiSheetRef = refSheets.filter((s) => s.plateCount > 0).length > 1;
+  const selectedRefPlateCount = useMemo(() => totalPlates(selectedRefSheets), [selectedRefSheets]);
+
+  // في الوضع المتعدد الجاهزية = فيه ورقة مختارة فيها لوحات (مش عمود الورقة الأولى،
+  // لأن الورقة الأولى ممكن تكون بشكل غريب أو غير مختارة أصلاً).
+  const referralReady = isMultiSheetRef
+    ? selectedRefPlateCount > 0
+    : !!referralTable && !!effectiveReferralPlateCol;
+
   const canSort = sortMode === "new"
-    ? !!dataTable && !!referralTable && !!checkTable && !!effectiveDataPlateCol && !!effectiveReferralPlateCol && !!effectiveCheckPlateCol
-    : !!dataTable && !!referralTable && !!effectiveDataPlateCol && !!effectiveReferralPlateCol;
+    ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol
+    : !!dataTable && referralReady && !!effectiveDataPlateCol;
 
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
@@ -732,8 +795,9 @@ export default function SortingPage() {
       const p = detectPlateColumn(table.headers, table.rows);
       setReferralExtraCols(new Set(table.headers.filter((h) => h !== p && matchesPreferred(h))));
       setReferralColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
+      void analyzeReferralFile(file);   // ملف متعدد الورقات؟ حلّله واعرض الاختيار
     }
-  }, []);
+  }, [analyzeReferralFile]);
 
   // استيراد ملف داتا كبير: يقراه على دفعات ويخزّنه على الجهاز، ويحط عيّنة صغيرة
   // كـ dataTable عشان كشف الأعمدة/المعاينة/الجاهزية يشتغلوا زي ما هم.
@@ -757,6 +821,8 @@ export default function SortingPage() {
       setDataTable(null); setDataFile(null); setDataPlateColOverride(null); setOutputCols(new Set());
     } else {
       setReferralTable(null); setReferralFile(null); setReferralPlateColOverride(null); setReferralExtraCols(new Set());
+      setRefSheets([]); setRefSheetSel(new Set());
+      try { localStorage.removeItem(REF_SHEETS_KEY); } catch { /* ignore */ }
     }
     setResults(null); setSorted(false); wipeSortResults();
   }
@@ -963,7 +1029,17 @@ export default function SortingPage() {
   // كل مصادر الإحالة (الأساسية + الإضافية) كـ ReferralSource للفرز الموحّد.
   function collectRefSources(): ReferralSource[] {
     const srcs: ReferralSource[] = [];
-    if (referralTable && effectiveReferralPlateCol) {
+    // ملف متعدد الورقات: كل ورقة مختارة بتبقى مصدر إحالة، والدمج وإزالة التكرار
+    // بيتمّوا في collectReferralEntries زي الشيتات الإضافية بالظبط.
+    if (isMultiSheetRef) {
+      for (const s of selectedRefSheets) {
+        srcs.push({
+          rows: s.rows,
+          plateCol: s.headers[s.plateCol],
+          isArabic: detectArabicPlateColumn(s.headers) !== null,
+        });
+      }
+    } else if (referralTable && effectiveReferralPlateCol) {
       srcs.push({ rows: referralTable.rows, plateCol: effectiveReferralPlateCol, isArabic: referralPlateIsArabic });
     }
     for (const er of extraReferrals) {
@@ -978,7 +1054,10 @@ export default function SortingPage() {
 
   // إجمالي صفوف الإحالة عبر كل الشيتات (للعداد في نتيجة الفرز الكلي).
   const totalReferralRows =
-    (referralTable?.rows.length ?? 0) +
+    // في وضع الورقات المتعددة العدد بيتحسب من الورقات المختارة بس.
+    (isMultiSheetRef
+      ? selectedRefSheets.reduce((s, x) => s + x.rows.length, 0)
+      : (referralTable?.rows.length ?? 0)) +
     extraReferrals.reduce((s, e) => s + (e.table?.rows.length ?? 0), 0);
 
   const persistAndSetTashyeek = useCallback(async (table: ExcelTable, file: File) => {
@@ -1739,6 +1818,13 @@ export default function SortingPage() {
         onParsed={(table, file) => persistAndSet("referral", table, file)}
         onClear={() => clearSlot("referral")}
         showReplaceButtons
+      />
+      {/* ملف إحالة فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه */}
+      <ReferralSheetPicker
+        sheets={refSheets}
+        selected={refSheetSel}
+        onChange={setRefSheetSelection}
+        total={selectedRefPlateCount}
       />
       {referralTable && (
         <div className="rounded-xl border border-border bg-surface">
