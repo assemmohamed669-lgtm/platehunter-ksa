@@ -29,8 +29,14 @@ import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText, shareTextViaChooser } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
-import { readDeepgramWords, type DgWord } from "@/lib/deepgramWords";
+import { readDeepgramWords, type DgWord, type DgFinal } from "@/lib/deepgramWords";
 import { fetchLearningEnabled } from "@/lib/learningSettings";
+import { isPilotOwner, fetchPlateJudgeEnabled, readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
+import type { FusionSource } from "@/lib/plateFusion";
+// أنواع بس (بتتشال وقت البناء) — الدوال نفسها بتتقرا من `judgeModsRef` عشان
+// chunk المالك يفضل كسول ومايتحمّلش على أجهزة باقي المناديب.
+import type { JudgeSessionCounts } from "@/lib/plateJudgeLog";
+import type { JudgeTranscribeProbeResult } from "@/lib/plateJudgeClient";
 import { classifyForCollection, type CollectAction } from "@/lib/trainingCollector";
 import { saveTrainingSample, saveTrainingSession, countTrainingToday } from "@/lib/trainingStore";
 import { syncTrainingData } from "@/lib/trainingSync";
@@ -56,6 +62,79 @@ const LS_WORD_BLENDS = "ph:registration:wordBlends";
 const LS_CHECK_PACER = "ph:check:pacer";
 // لو المندوب بيتكلم ومفيش أي نص من المحرك المدة دي → القناة اتعطّلت، نعيد التشغيل.
 const DG_SILENT_MS = 20000;
+// ── طيّار «الرأي التاني» (موديلنا المدرَّب جنب Deepgram) — للمالك وحده ──
+// **المقيس على جلسة المالك (٣٠ لوحة):** ٥ لوحات اتسكتت `busy` بالسقف ١ — هو
+// بيقول لوحة كل ٢٫٩٨ث (وسيط) وتأخّر وصول النتيجة النهائية بيتلخبط ٠٫٣–٢٫٢ث،
+// فنتيجتين بيوصلوا ورا بعض بجزء من الثانية والتانية كانت **بتتضيّع**.
+// السقف ٢ + طابور ٢ (`planJudgeAdmission`): التانية تمشي فوراً، والتالتة/الرابعة
+// **تستنى** بدل ما تتضيّع (استنى ≈ زمن خدمة واحد؛ المهلة بتبدأ عند الإرسال مش عند
+// الحجز)، والخامسة بتتسجّل `queue_full` — سبب مميّز، مش سكوت مجهول.
+// ليه ٢ ومش أكتر؟ الخدمة بتسمح ٤ مع بعض (`--max-inflight`) فسيبنا سلوتين
+// (للفحص/جهاز تاني) ومابنخلّيهاش ترمي ٥٠٣؛ والبادئة المرفوعة بتكبر مع الجلسة
+// (المقيس: ٥١ كيلو أول لوحة → **١٫٤٥ ميجا** آخر لوحة، ~١٤٫٣ كيلو/ث) والبث الحي
+// عايش على نفس الرفع — فطلبين سقف، مش أربعة.
+const JUDGE_MAX_INFLIGHT = 2;
+const JUDGE_MAX_QUEUE = 2;
+// كل جزء من MediaRecorder = ٢٥٠ms (rec.start(250)) — الأساس اللي بنحوّل بيه
+// زمن الميديا لفهرس جزء وقت تقطيع بادئة الجلسة.
+const JUDGE_CHUNK_MS = 250;
+// كام نتيجة نهائية نفضل شايلين كلماتها للنافذة **المقسومة** (لوحة اتقالت «حروف …
+// سكتة … أرقام» فـDeepgram نهّى نصّها).
+//   • **٢ يكفّوا لكل حالة مقيسة**: كل اللوحات المقسومة في جلسة المالك حروفها في
+//     النتيجة اللي قبل والأرقام في الحالية (٩ لوحات من ٣٠، الوقفة ١٢٠–٩٣٠ms).
+//   • التالت لنتيجة **مكرّرة** بينهم — Deepgram بيبعت نفس النتيجة النهائية مرتين
+//     (نفس السبب اللي عشانه فيه حارس تكرار ٢ث في `addOnePttRow`)، وساعتها نصّ
+//     اللوحة يبقى نتيجتين لورا.
+//   • أكتر من كده مالوش فايدة: **السقف الزمني** (`JUDGE_MAX_SPLIT_SPAN_MS` =
+//     ٤٢٧٠ms) هو اللي بيحدّ النافذة، مش عدد النتايج — فنتايج أقدم من كده مستحيل
+//     تدخل نافذة صالحة، وبتزوّد شغل متزامن على الثريد الرئيسي ببلاش.
+const JUDGE_FINALS_HISTORY = 3;
+
+/**
+ * مكوّنات نافذة الرأي التاني **الخام** — بلا أي حساب في الصفحة. الحساب كله في
+ * `planPlateWindow` (دالة نقية مغطّاة باختبار على أرقام القياس الحقيقية).
+ * ⚠️ ده **مش** توقيت التدريب: `curTimingRef` (نافذة واسعة بحشوة ٣ث) سايب زي ما
+ * هو بالحرف لجمع الداتا — الواسعة صح للتدريب، وقاتلة للاستنتاج.
+ */
+type JudgeTiming = {
+  /** بداية/نهاية كلام النبضة من كلمات Deepgram — **زمن التيار = زمن الميديا**. */
+  wordStartMs: number | null;
+  wordEndMs: number | null;
+  /** لحظة وصول النتيجة النهائية بساعة الحقيقة نسبةً لبداية المسجّل. */
+  arrivalMs: number | null;
+  /** زمن الميديا المتجمّع — لكشف ساعة كلمات مش من التيار ده. */
+  mediaElapsedMs: number | null;
+  /** الرسالة من نفس جيل المسجّل/السوكيت الحالي؟ */
+  streamFresh: boolean;
+  /** أجزاء صوت فشل إرسالها للمحرك على التيار ده (تزحّف ساعة Deepgram). */
+  audioDrops: number;
+  /**
+   * كلمات النتيجة النهائية بتوقيتها زي ما جت. `planPlateWindow` بيبني عليها نطق
+   * **آخر لوحة** ويتحقّق إنه لوحة الصف — بدل min(starts)…max(ends) اللي كان
+   * بيسرّب اللوحة السابقة (مقيس ٤٥٠–٥٤٠ms في ٤ نوافذ من ٢٥).
+   */
+  words: DgWord[];
+  /**
+   * نهاية آخر كلمة في النتيجة النهائية **اللي قبل دي** على نفس التيار (ms).
+   * حدّ سفلي للنافذة: Deepgram نفسه قال إن كلام النبضة السابقة خلص هناك.
+   */
+  prevWordEndMs: number | null;
+  /**
+   * صورة من تاريخ آخر `JUDGE_FINALS_HISTORY` نتيجة نهائية على نفس التيار (آخر
+   * عنصر = النتيجة الحالية). لازمة للوحة اللي المالك قالها «حروف … سكتة …
+   * أرقام»: Deepgram بينهّي نصّها، والمحلّل بيلمّها carry-over، فكلمات النتيجة
+   * الأخيرة لوحدها مافيهاش لوحة الصف ⇒ كانت سكوت. المخطِّط بيبني عليها المدى
+   * بنفس التحقّق بالحرف (`provePlateSpanAcrossFinals`).
+   */
+  finals: DgFinal[];
+};
+
+/** الوحدات الكسولة للطيّار — بتتحمّل جوّه فرع المالك بس (chunks منفصلة). */
+type JudgeMods = {
+  client: typeof import("@/lib/plateJudgeClient");
+  fusion: typeof import("@/lib/plateFusion");
+  log: typeof import("@/lib/plateJudgeLog");
+};
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -111,6 +190,22 @@ interface PttRow {
   startMs?: number;
   endMs?: number;
   wordConfidenceOk?: boolean;
+  /**
+   * الرأي التاني من موديلنا المدرَّب — **طيّار المالك وحده**. الحقل ده مش موجود
+   * خالص على صفوف أي حد تاني، فالواجهة والتصدير والتدريب كلهم زي النهاردة.
+   */
+  judge?: {
+    oursPlate: string;        // نص موديلنا الخام
+    dgPlate: string;          // لوحة Deepgram المطبّعة (اللي الصف طلع بيها أصلاً)
+    fusedPlate: string;       // قرار fusePlate
+    source: FusionSource;
+    reason: string;
+    agreed: boolean;          // ٩٩٫٠٪ صح عند الاتفاق (٩٨/١٢٠ مقطع مقيس)
+    needsReview: boolean;
+    accepted: boolean;        // قرار بوابة الثقة على مخرَج موديلنا
+    refuseReason?: string | null;
+    serverMs?: number | null;
+  };
 }
 
 // Blob → base64 (بدون بادئة data:) — لحفظ صوت الجلسة في مخزن التدريب.
@@ -548,6 +643,14 @@ export default function InstantCheckPage() {
   const dgWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgAutoRestartsRef = useRef(0);
   const dgReconnectsRef = useRef(0); // عدّاد إعادة اتصال Deepgram (محدود عشان مايعملش لوب)
+  // جيل التيار: بيزيد مع كل `startDeepgramPtt`. إعادة الاتصال بتعمل سوكيت **ومسجّل**
+  // جديدين، فساعة Deepgram و`dgRecStartRef` و`judgeStreamBaseRef` يتصفّروا مع بعض.
+  // نتيجة نهائية متأخّرة من السوكيت القديم صوتها **قبل** البادئة الحالية = مافيش
+  // مرساة سليمة ⇒ الرأي التاني بيسكت `stale_stream` بدل ما يقصّ صوت لوحة تانية.
+  const dgStreamSeqRef = useRef(0);
+  // أجزاء صوت فشل إرسالها لـDeepgram على التيار ده. أي جزء ضايع = المحرك سمع صوت
+  // أقصر مننا ⇒ ساعة كلماته زحفت بمقدار مش معروف ⇒ نرجع لساعة الحقيقة المحكمة.
+  const dgAudioDropRef = useRef(0);
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
   // حارس تكرار الصوت: آخر لوحة اتفرّغت + وقتها — عشان لو نفس النطق اتفرّغ مرتين
   // (Deepgram بيبعت النتيجة النهائية مرتين: نهاية المقطع + نقطة الصمت) مايتكتبش مرتين.
@@ -574,6 +677,62 @@ export default function InstantCheckPage() {
   const trainingSessionSavedRef = useRef<string>(""); // آخر جلسة اتحفظ صوتها (منعاً للتكرار)
   const [trainingToday, setTrainingToday] = useState(0); // عدّاد المتجمّع النهاردة (يظهر لو المفتاح شغّال)
   const [learningOn, setLearningOn] = useState(false);   // نسخة تفاعلية من المفتاح (لإظهار العدّاد)
+
+  // ── طيّار «الرأي التاني»: موديلنا المدرَّب (٩٥٫٨٪) يحكم جنب Deepgram (٨١٫٧٪) ──
+  // **المالك وحده**، والافتراضي **مقفول** حتى له (مفتاح مركزي + إعداد جهاز).
+  // لو مش مسلَّح: مافيش fetch، مافيش مؤقّت، مافيش مستمع، ولا حتى تحميل الكود.
+  const judgeArmedRef = useRef(false);                   // الهوية + المفتاح المركزي عدّوا
+  const judgeOwnerIdRef = useRef<string | null>(null);   // معرّف المالك المتحقَّق منه (وسم السجل)
+  const judgeModsRef = useRef<JudgeMods | null>(null);   // الوحدات الكسولة (chunk المالك)
+  const judgeInflightRef = useRef(0);                    // طلبات جوّه (سقف JUDGE_MAX_INFLIGHT)
+  // مكوّنات نافذة آخر نتيجة نهائية للرأي التاني — **منفصل تماماً** عن
+  // `curTimingRef` بتاع التدريب (اللي نافذته الواسعة صح للتدريب وقاتلة للاستنتاج).
+  const judgeTimingRef = useRef<JudgeTiming | null>(null);
+  // طابور قصير (FIFO) بدل ما اللوحة تتضيّع لو المالك بيتكلم أسرع من الخدمة.
+  // كل عنصر شايل **صفّه** وجيل تياره وجلسته، فالرد المتأخّر بيرقّع الصف الصح
+  // (الترقيع بيمشي على `r.id`) والعنصر اللي جلسته/تياره اتغيّروا بيسكت `stale_stream`.
+  const judgeQueueRef = useRef<Array<{
+    row: PttRow; timing: JudgeTiming | null; pausedMs: number;
+    streamSeq: number; sessionId: string;
+    seq: number; emit: { index: number; count: number; fromCarry: boolean };
+  }>>([]);
+  const judgeStreamBaseRef = useRef(0);                  // فهرس أول جزء للتيار الحالي (ترويسة webm)
+  // نهاية آخر كلمة في آخر نتيجة نهائية على التيار ده — حدّ سفلي لنافذة النبضة
+  // اللي بعدها. بيتصفّر مع التيار (سوكيت/مسجّل جديد ⇒ ساعة Deepgram من الصفر).
+  const judgePrevWordEndRef = useRef<number | null>(null);
+  // تاريخ آخر نتايج نهائية (كلماتها + حدّ الجار بتاع كل واحدة) — للنافذة
+  // **المقسومة**. زمن ميديا لتيار **واحد**، فبيتصفّر مع التيار بالظبط زي
+  // `judgePrevWordEndRef` فوق: كلمات من ساعة قديمة + كلمات من ساعة جديدة في
+  // مصفوفة واحدة = نافذة على صوت غلط.
+  const judgeFinalsRef = useRef<DgFinal[]>([]);
+  // ترتيب الصفوف في الجلسة — عدّاد تصاعدي. الكارت بيتكتب لـ**الأحدث** بس، فرد
+  // متأخّر لصف قديم مايمسحش كارت أحدث (`canJudgeWriteAlert`). الـ`id` فيه
+  // `Date.now()` فمش صالح للمقارنة (ساعة الجهاز تقدر ترجع لورا).
+  const pttSeqRef = useRef(0);
+  const pttRowSeqRef = useRef<Map<string, number>>(new Map());
+  // أيدي الصفوف **الموجودة فعلاً** — قراءة حيّة بلا انتظار إعادة رسم. لازمة لأن
+  // رد الطيّار بيوصل بعد ٤١٠–٢٣٠٢ms (المقيس)، وفي الوقت ده المالك يقدر يمسح الصف؛
+  // ورد لصف ممسوح كان بيلفّ صفّارة ويفتح كارت «مطلوبة» لصف مش في القائمة.
+  const pttRowIdsRef = useRef<Set<string>>(new Set());
+  const judgePausedMsRef = useRef(0);                    // مجموع الإيقاف المؤقت (ساعة الحقيقة ≠ زمن الميديا)
+  const judgePauseAtRef = useRef<number | null>(null);
+  const [judgeVisible, setJudgeVisible] = useState(false);   // مربّع الإعداد + علامات الصفوف
+  const [judgeCfgOk, setJudgeCfgOk] = useState(false);       // النفق + التوكن محفوظين وسليمين
+  const [judgeUrlInput, setJudgeUrlInput] = useState("");
+  const [judgeTokenInput, setJudgeTokenInput] = useState("");
+  const [judgeOpenId, setJudgeOpenId] = useState<string | null>(null); // الصف المفتوح تفاصيله
+  // عدّاد الجلسة (عرض بس) — بيعدّ **المسكوت زي المجاوب**. العدّاد القديم كان
+  // بيعدّ المجاوب لوحده ومايظهرش غير لو > ٠، فجلسة صفر طلب كان شكلها زي الطيّار
+  // مقفول: مافيش أي سطر. الصفر لازم يبان صفر.
+  const [judgeCounts, setJudgeCounts] = useState<JudgeSessionCounts>(
+    { answered: 0, agree: 0, skipped: 0, reasons: {} });
+  // كود نتيجة **آخر نبضة** (answered أو سبب السكوت). «متوصّل» بتوصف التخزين بس،
+  // فبلا ده الطيّار يقدر يموت بصمت والمربّع لسه بيقول «متوصّل» — وده اللي حصل.
+  const [judgeLast, setJudgeLast] = useState<string | null>(null);
+  // نتيجة «جرّب الاتصال» — رحلة حقيقية للخدمة. `null` = لسه ماتجرّبتش، وده
+  // **مختلف** عن «الإعداد محفوظ»: الإعداد بيوصف التخزين، ودي بتوصف الطريق.
+  const [judgeProbe, setJudgeProbe] = useState<JudgeTranscribeProbeResult | null>(null);
+  const [judgeProbing, setJudgeProbing] = useState(false);
   // صور الكاميرا اللي اتصدّرت خلاص — عشان «تصدير الكل» يبعت الجديد بس (مايكررش).
   const [hitsExportedIds, setHitsExportedIds] = useState<Set<string>>(new Set());
   // معرّف آخر صف كاميرا اتسجّل — عشان تصدير كارت النتيجة يعلّمه «اتصدّر» فمايتحسبش
@@ -607,6 +766,57 @@ export default function InstantCheckPage() {
           void syncTrainingData();
         }
       } catch { /* افتراضي مقفول */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // تسليح طيّار «الرأي التاني» مرّة عند التحميل. تلات بوابات بالترتيب، وأي واحدة
+  // تفشل = خروج صامت والسلوك يفضل **زي النهاردة بالحرف** (Deepgram لوحده):
+  //   ١. الهوية: المالك وحده (`isPilotOwner` — فحص شكل UUID على الطرفين، فأي
+  //      هوية ماتحلّتش/فاضية/أوفلاين تفشل **مغلقة**؛ لاحظ إن الهوية بتفضل null
+  //      عند التحميل لكل مستخدم، والجلسة كلها لو أوفلاين).
+  //   ٢. المفتاح المركزي: افتراضي مقفول، وأي خطأ RPC = مقفول.
+  //   ٣. الإعداد على الجهاز (نفق + توكن) — نص إعداد = مقفول.
+  // الكود نفسه بيتحمّل **كسول** جوّه الفرع ده بس، فـwebpack بيطلّعه chunks
+  // منفصلة مانديب تانية عمرها ما تحمّلها.
+  //
+  // ⚠️ الهوية بتتقرا بـ`getSession()` **مش** `getUser()`، وده فرق سلوك حقيقي على
+  //    كل المستخدمين: في supabase-js 2.108.2 `getUser()` بيعمل
+  //    `GET /auth/v1/user` على الشبكة **كل مرة** بلا أي مسار محلي
+  //    (auth-js/GoTrueClient.js:2611-2635)، وده كان معناه طلب مصادقة تالت زيادة
+  //    عند تحميل أكتر صفحة مستخدَمة في التطبيق — تأخير وبطارية وطلب زيادة تحت
+  //    حدّ المعدّل، لكل مندوب، عشان بوابة بتقفل عند الجميع أصلاً.
+  //    `getSession()` بيقرا الجلسة المحفوظة من التخزين بلا شبكة
+  //    (GoTrueClient.js:2333 → `__loadSession` :2431-2484)، وبيرجّع
+  //    `session.user.id` — نفس المعرّف اللي البوابة محتاجاه (مافيش `userStorage`
+  //    مضبوط في lib/supabaseClient.ts، فـ`session.user` هو الكائن الحقيقي).
+  //    وبيفشل **مغلق** في كل الحالات المهمة: مافيش جلسة ⇒ `session: null`؛
+  //    الجلسة منتهية والتحديث فشل (أوفلاين مثلاً) ⇒ `session: null` + خطأ
+  //    (:2486-2507) ⇒ `uid = null` ⇒ `isPilotOwner(null) === false` ⇒ الطيّار
+  //    مقفول والسلوك زي النهاردة بالحرف.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        let uid: string | null = null;
+        try { uid = (await supabase.auth.getSession()).data.session?.user?.id ?? null; } catch { /* أوفلاين */ }
+        if (!isPilotOwner(uid)) return;                          // ← الباب الأول
+        if (!(await fetchPlateJudgeEnabled())) return;            // ← الباب التاني
+        if (!alive) return;
+        const [client, fusion, log] = await Promise.all([
+          import("@/lib/plateJudgeClient"),
+          import("@/lib/plateFusion"),
+          import("@/lib/plateJudgeLog"),
+        ]);
+        if (!alive) return;
+        judgeModsRef.current = { client, fusion, log };
+        judgeOwnerIdRef.current = uid;
+        judgeArmedRef.current = true;
+        setJudgeVisible(true);
+        const cfg = readJudgeEndpoint();                          // ← الباب التالت
+        setJudgeCfgOk(!!cfg);
+        if (cfg) { setJudgeUrlInput(cfg.base); setJudgeTokenInput(cfg.token); }
+      } catch { /* أي فشل = مقفول */ }
     })();
     return () => { alive = false; };
   }, []);
@@ -799,6 +1009,14 @@ export default function InstantCheckPage() {
     try { localStorage.setItem("ic-ptt-results", JSON.stringify(pttResults)); } catch {}
   }, [pttResults]);
 
+  // مرآة أيدي الصفوف — **مصدر الحقيقة** لسؤال «الصف لسه موجود؟» بلا ما نقرا حالة
+  // React جوّه دالة تحديث (ممنوع: الـupdater لازم يفضل نقي، وStrictMode بينادّيه
+  // مرتين). بتغطّي كل مسارات الشيل (مسح صف · مسح المحدَّد · مسح الكل · استرجاع من
+  // التخزين)، والمسح الفردي بيشيل من الريف فوراً كمان فمافيش ولا ms سباق.
+  useEffect(() => {
+    pttRowIdsRef.current = new Set(pttResults.map((r) => r.id));
+  }, [pttResults]);
+
   useEffect(() => {
     if (!listsHydrated.current) return;
     icManualDraftCache = manualDraft;
@@ -989,15 +1207,27 @@ export default function InstantCheckPage() {
       .map(([k, v]) => [k, String(v)] as [string, string]);
   }
 
-  function searchInCheck(rawPlate: string): PlateResult | null {
+  /**
+   * بحث اللوحة في ملف التشييك.
+   *
+   * ⚠️ `opts.silent` (الافتراضي **false** = سلوك النهاردة بالحرف لكل المنادين
+   * الحاليين): الدالة دي بتنادي `fireWantedAlert` جوّاها، واللي بيطلّع صفّارة
+   * **بتلفّ** لحد ما المندوب يدوس «تم» (WantedAlertOverlay). فممنوع تتنادى
+   * مرتين لنفس النبضة — تاني نداء = صفّارة تانية لنفس العربية.
+   * `silent: true` بيستخدمه **الرأي التاني بس** لما لوحته تختلف عن اللي الصف
+   * طلع بيها: العربية دي **اتنبّه عليها خلاص** وقت النطق، فاللي إحنا محتاجينه
+   * هنا تصحيح حالة المطابقة على الصف، مش إنذار جديد.
+   */
+  function searchInCheck(rawPlate: string, opts?: { silent?: boolean }): PlateResult | null {
     if (!checkPlateCol || checkIndex.size === 0) return null;
     const normalized = normalizePlate(bankPlateToArabic(rawPlate));
     if (!normalized) return null;
+    const silent = opts?.silent === true;
 
     // O(1) exact lookup
     const exactRow = checkIndex.get(normalized);
     if (exactRow) {
-      fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
+      if (!silent) fireWantedAlert({ plate: rawPlate, matchType: "exact", info: rowToAlertInfo(exactRow) });
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
     }
 
@@ -1011,7 +1241,7 @@ export default function InstantCheckPage() {
         if (sim > bestSim) { bestSim = sim; bestRow = row; }
       }
       if (bestSim >= 88 && bestRow) {
-        fireWantedAlert({ plate: rawPlate, matchType: "fuzzy", similarity: Math.round(bestSim), info: rowToAlertInfo(bestRow) });
+        if (!silent) fireWantedAlert({ plate: rawPlate, matchType: "fuzzy", similarity: Math.round(bestSim), info: rowToAlertInfo(bestRow) });
         return { plate: rawPlate, normalized, found: true, matchType: "fuzzy", similarity: Math.round(bestSim), row: bestRow };
       }
     }
@@ -1899,7 +2129,12 @@ export default function InstantCheckPage() {
   // مطلوبة. مشترك بين المحرك المحلي (لوحة لكل نتيجة) ومسار Whisper (كل لوحة
   // بيطلّعها sessionParser من المقطع). idx بيميّز الـ id لو أكتر من لوحة اتضافت
   // في نفس الملّي ثانية.
-  function addOnePttRow(rawPlate: string, vehicleType?: string, idx = 0, uncertain?: boolean) {
+  function addOnePttRow(
+    rawPlate: string, vehicleType?: string, idx = 0, uncertain?: boolean,
+    // من أنهي سجل في أنهي رسالة. الافتراضي = سجل وحيد بلا ترحيل، وده بالظبط
+    // حالة المحرك المحلي (لوحة واحدة لكل نتيجة) ⇒ سلوكه بالحرف زي ما هو.
+    emit: { index: number; count: number; fromCarry: boolean } = { index: 0, count: 1, fromCarry: false },
+  ) {
     if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي لوحة لحد ما يكمّل
     // التعلّم التلقائي الحي (blend/confusions) **متوقّف** — كان بيلوّث النتايج
     // بتصحيحات غير مُدقّقة (أخطاء غريبة زي «الا5121»). التفريغ دلوقتي = Deepgram +
@@ -1946,10 +2181,339 @@ export default function InstantCheckPage() {
       endMs: curTimingRef.current?.endMs,
       wordConfidenceOk: curTimingRef.current?.confOk ?? false,
     };
+    // ترتيب الصف في الجلسة — الكارت بيتكتب للأحدث بس (`canJudgeWriteAlert`).
+    const seq = ++pttSeqRef.current;
+    pttRowSeqRef.current.set(id, seq);
+    // الصف بقى «موجود» من دلوقتي — قبل أي إعادة رسم، فرد سريع مايتحسبش لصف ممسوح.
+    pttRowIdsRef.current.add(id);
     setPttResults((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
     if (result.found) setPttAlert(row);
     void fetchGpsForPttRow(id);
+
+    // ── الرأي التاني (طيّار المالك) — **آخر حاجة**، بعد ما الصف اترسم وإنذاره
+    //    طلع. الاستدعاء `void` بلا انتظار، فمافيش أي ملي ثانية تأخير على الواجهة.
+    //    التوقيت بيتصوّر **دلوقتي** لأن أول نتيجة نهائية جديدة بتكتب فوق
+    //    judgeTimingRef قبل ما الرد يوصل.
+    if (judgeArmedRef.current) {
+      const t = judgeTimingRef.current;
+      void requestSecondOpinion(row, t ? { ...t } : null, judgePausedMsRef.current, seq, emit);
+    }
+  }
+
+  /**
+   * يطلب رأي موديلنا المدرَّب على نفس النبضة، ويدمجه بـ`fusePlate`، ويحدّث الصف
+   * **في مكانه**. الدالة كلها اختيارية: أي خروج بدري = الصف يفضل زي ما هو
+   * (Deepgram لوحده) + سطر في سجل القياس يقول ليه سكتنا.
+   *
+   * ─── قرار التقطيع: بادئة الجلسة + القصّ على السيرفر ──────────────────────────
+   *  المشكلة: `pttAudioChunksRef` فيه أجزاء ٢٥٠ms من تيار webm/opus **واحد
+   *  متصل**. الترويسة (EBML + Segment + Tracks) في **الجزء الأول بس**، فأي
+   *  `new Blob(chunks.slice(i, j))` من الوسط **مش ملف يتفك** أصلاً.
+   *  المشحون: نبعت `chunks[base .. آخر جزء فيه اللوحة]` (بادئة من ترويسة التيار
+   *  الحالي) + `start`/`end` والخدمة هي اللي تقصّ بـffmpeg. **متحقَّق منه**:
+   *  بادئة webm حي مقطوعة (بلا ذيل ولا Cues) بتتفك rc=0، والقصّ بيرجّع النافذة
+   *  بالظبط (٣٫٥٠٠ث = ٥٦٠٠٠ عيّنة)، وتكلفة البحث **ثابتة** (٢٢٥ms عند -ss 0
+   *  و٢٢٥ms عند -ss 580 على بادئة ٢٫٩٨ ميجا / ١٠ دقايق) لأن `-ss` **قبل** `-i`
+   *  بيعدّي الحزم بلا فك ترميز.
+   *  البدايل اللي اترفضت:
+   *   • لزق الجزء صفر + أجزاء الوسط: صغير بس **غير متحقَّق منه** — الأجزاء مش
+   *     مضمونة إنها متراصّة على حدود Cluster، والطوابع الزمنية مطلقة فالملف
+   *     الناتج بيبقى فيه سكوت أول بطول startMs، والسكوت بيحرّك `mean_db` اللي
+   *     بوابة الثقة بتقرا منه ⇒ ممكن يقلب قرار البوابة. مرفوض بلا قياس.
+   *   • مسجّل تاني على نفس الـMediaStream: كان بيدّي ملفات مستقلة، بس بيضاعف
+   *     ترميز opus على تليفون بيبث لايف، وحدود النبضة بنعرفها **بعد** is_final
+   *     فالتقطيع بيقصّ لوحات. أي ضغط زيادة على المسار الحي مرفوض — هو الأساس.
+   *   • APK جديد (تسجيل خام PCM من الأصل): مش محتاجينه — كل ده JS بيتنزّل من
+   *     Vercel فوراً، والشرط كان «بلا إعادة بناء APK».
+   *  السقف: لو البادئة > `JUDGE_MAX_PREFIX_BYTES` (٢ ميجا ≈ ٧ دقايق جلسة على
+   *  المقيس ~٥ كيلو/ث) بنسكت ونسجّل `prefix_too_large` — أحسن من إننا نزنق نفس
+   *  الرفع اللي بث Deepgram (الأساس) عايش عليه.
+   *
+   * ─── النافذة: نطق **آخر لوحة** متحقَّق منه، مش حدود الرسالة ──────────────────
+   *  الدالة دي **مابتحسبش** النافذة: بتمرّر المكوّنات الخام (الكلمات + لوحة الصف +
+   *  نهاية النبضة السابقة + لحظة الوصول + جيل التيار) لـ`planPlateWindow` جوّه
+   *  `planJudgeSlice`. تطوّر القاعدة، وكله مقيس على صوت المالك:
+   *   ١. لحظة الوصول → نافذة ٥٫٩ث فيها **لوحتين** في ٢٣ من ٢٥ (الوصول متأخّر ١ث).
+   *   ٢. min(starts)…max(ends) + سقف ٣٤٠٠ مربوط على النهاية → ٦ من ٢٥ لسه فيها
+   *      كلام الجار (١٠–٥٤٠ms)، والسقف كان بياكل من قدّام النطق كمان (لغاية
+   *      ١٨٦٠ms، منها ٢١٠ms كلام حقيقي) لأنه مايعرفش يفرّق بين «لزق نبضتين»
+   *      و«لوحة بوقفة جوّانية».
+   *   ٣. نطق آخر لوحة من ذرّات `plateAtoms`، ومتحقَّق إنه يطبّع لنفس لوحة الصف
+   *      بالظبط ⇒ ٠ من ٢٥ فيها كلام الجار، وولا ms من صوت الصف مقصوص. فشل
+   *      التحقّق = سكوت `window_unproven`، مش نافذة على تخمين.
+   *   ٤. **الحالي**: نفس (٣)، وإن فشل بنعيد **نفس** البناء والتحقّق على كلمات آخر
+   *      `JUDGE_FINALS_HISTORY` نتيجة **موصولة** — عشان اللوحة اللي المالك قالها
+   *      «حروف … سكتة … أرقام» (٩ من ٣٠ مقيسة، الوقفة توصل ٩٣٠ms) بيبقى نصّها في
+   *      نتيجة والباقي في اللي بعدها. الحدود ساعتها بكلمات الجار نفسها + سقف
+   *      ٤٢٧٠ms، وفوقه سكوت (`split_too_long`) — **مش** قصّ، لأن القصّ هنا بيرمي
+   *      حروف اللوحة.
+   *  واللي فضل من بوابة الإصدار: الصف اللي مش السجل الوحيد لرسالته أو نصّه اتلمّ
+   *  من رسالتين **ممنوع** ياخد نافذة رسالة (احتياطي min/max أو ساعة الحقيقة) —
+   *  نافذة مثبَتة أو سكوت. البوابة القديمة كانت بتسكّته أصلاً، والمقيس إنها كانت
+   *  بتسكّت لوحات الموديل جابها **صح** (كهط٥٢٥١ · بدك١٥٨٨).
+   */
+  async function requestSecondOpinion(
+    baseRow: PttRow,
+    timing: JudgeTiming | null,
+    pausedMs: number,
+    /** ترتيب الصف في الجلسة — للحرس على كارت الإنذار. */
+    seq: number,
+    /** من أنهي سجل في أنهي رسالة طلع الصف — بيحدّد هل النافذة لازم تبقى مثبَتة. */
+    emit: { index: number; count: number; fromCarry: boolean },
+  ) {
+    const rowId = baseRow.id;
+    // اللوحة اللي الصف طلع بيها = `corrected` بالحرف (`row.plate = result.plate`،
+    // و`result.plate` هو نفس النص اللي اندَه بيه `searchInCheck`).
+    const dgPlateNorm = baseRow.plate;
+    // هل الصفّارة اتشغّلت وقت النطق؟ `searchInCheck` غير الصامت بينادي
+    // `fireWantedAlert` جوّاه لو لقى، و`row.found = result.found` — فدي بالظبط
+    // «صفّارة واحدة اتشغّلت خلاص».
+    const wasFound = baseRow.found;
+    const mods = judgeModsRef.current;
+    const owner = judgeOwnerIdRef.current;
+    if (!judgeArmedRef.current || !mods || !owner) return;
+    const t0 = Date.now();
+    const sessionId = pttSessionIdRef.current;
+    /** سطر «سكتنا وده السبب» — القياس لازم يبان فيه المسكوت زي المجاوب. */
+    const logSkip = (why: string, extra: Record<string, unknown> = {}) => {
+      setJudgeLast(why);                 // يبان فوراً في مربّع المالك
+      // والعدّاد كمان: المسكوت بيتعدّ زي المجاوب، فجلسة صفر بتبان صفر.
+      setJudgeCounts((c) => mods.log.bumpJudgeCounts(c, why, false));
+      void mods.log.appendJudgeLog(mods.log.newJudgeLogRecord({
+        id: rowId, agentId: owner, sessionId,
+        dgPlate: dgPlateNorm, fusedPlate: dgPlateNorm,
+        source: "skipped", reason: why, skipped: why,
+        // حدود كلام النبضة زي ما Deepgram قالها (زمن ميديا) — للتحليل بعدين.
+        startMs: timing?.wordStartMs ?? null, endMs: timing?.wordEndMs ?? null,
+        ...extra,
+      }));
+    };
+    // الطابور: لو السقف ملآن وفيه مكان، النبضة **تستنى** بدل ما تتضيّع. القرار
+    // من نفس الدالة النقية اللي `planJudgeSlice` بينادّيها (فمستحيل يختلفوا)،
+    // والدرين بيحصل أول ما سلوت يفضى (في `finally` تحت).
+    if (mods.client.planJudgeAdmission({
+      inflight: judgeInflightRef.current, queued: judgeQueueRef.current.length,
+      maxInflight: JUDGE_MAX_INFLIGHT, maxQueue: JUDGE_MAX_QUEUE,
+    }) === "queue") {
+      judgeQueueRef.current.push({
+        row: baseRow, timing, pausedMs, seq, emit,
+        streamSeq: dgStreamSeqRef.current, sessionId,
+      });
+      return;
+    }
+    try {
+      // الإعداد بيتقرا كل نبضة عشان لزق النفق/التوكن وسط الجلسة يشتغل فوراً.
+      const cfg = readJudgeEndpoint();
+      const all = pttAudioChunksRef.current;
+      // كل قرارات السكوت + حساب النافذة في **دالة نقية واحدة** مغطّاة باختبار
+      // (`planJudgeSlice`): نفس الأرقام بالحرف، بس كل سبب بقى قابل للوصول
+      // والإثبات، والنافذة مضمون إنها محدودة (مافيش قصّة بلا ترويسة تيار، ولا
+      // نافذة NaN بتتسجّل بسبب غلط، ولا بادئة أكبر من السقف).
+      const plan = mods.client.planJudgeSlice({
+        hasConfig: !!cfg,
+        // مافيش نافذة جاهزة — المكوّنات الخام بس، والمخطِّط هو اللي يحسب.
+        timing: null,
+        // الكلمات + لوحة الصف = المسار المثبَت: نطق **آخر لوحة** متحقَّق إنه
+        // لوحة الصف دي بالظبط. فشل التحقّق = سكوت `window_unproven`.
+        words: timing?.words ?? null,
+        // وتاريخ آخر نتايج نهائية: لو لوحة الصف مش في كلمات النتيجة الأخيرة
+        // (اتقالت «حروف … سكتة … أرقام») المخطِّط يعيد نفس البناء والتحقّق على
+        // الكلمات موصولة. فشل التحقّق = سكوت زي النهاردة بالحرف.
+        finals: timing?.finals ?? null,
+        expectPlateNorm: dgPlateNorm,
+        prevWordEndMs: timing?.prevWordEndMs ?? null,
+        // ومين أصدر الصف — رسالة بلوحتين أو لوحة اتلمّت من رسالتين = سكوت.
+        emit,
+        wordStartMs: timing?.wordStartMs ?? null,
+        wordEndMs: timing?.wordEndMs ?? null,
+        arrivalMs: timing?.arrivalMs ?? null,
+        mediaElapsedMs: timing?.mediaElapsedMs ?? null,
+        // `undefined` لما مافيش توقيت خالص — عشان السبب يطلع `no_timing` (السبب
+        // الحقيقي) مش `stale_stream`. الأخير لـ**رسالة موجودة** من تيار قديم بس.
+        streamFresh: timing?.streamFresh,
+        audioDrops: timing?.audioDrops ?? 0,
+        inflight: judgeInflightRef.current,
+        queued: judgeQueueRef.current.length,
+        chunkSizes: all.map((p) => p.size),
+        base: judgeStreamBaseRef.current,
+        pausedMs,
+        maxInflight: JUDGE_MAX_INFLIGHT,
+        maxQueue: JUDGE_MAX_QUEUE,
+        chunkMs: JUDGE_CHUNK_MS,
+      });
+      if (plan.skip !== null || !cfg) {
+        logSkip(plan.skip ?? "not_configured", plan.bytes == null ? {} : { bytes: plan.bytes });
+        return;
+      }
+      const { base, endIdx, startMs, endMs, bytes } = plan;
+      const parts = all.slice(base, endIdx);
+
+      const mime = pttAudioMimeRef.current;
+      const blob = new Blob(parts, { type: mime });
+      let errCode: string | null = null;
+      judgeInflightRef.current += 1;
+      let resp: Awaited<ReturnType<JudgeMods["client"]["postAudioForPlate"]>> = null;
+      try {
+        resp = await mods.client.postAudioForPlate(blob, {
+          transcribeUrl: cfg.transcribeUrl, token: cfg.token, mimeType: mime,
+          startMs, endMs, debug: true,
+          onError: (c) => { errCode = c; },
+        });
+      } finally {
+        judgeInflightRef.current -= 1;
+        drainJudgeQueue();          // سلوت فضي ⇒ اللي مستني يمشي
+      }
+      const clientMs = Date.now() - t0;
+      if (!resp) { logSkip(errCode ?? "no_answer", { clientMs, bytes }); return; }
+
+      // الدمج — دالة نقية مغطّاة بـ٤٠ اختبار. الاتفاق = الحالة الوحيدة بلا مراجعة.
+      const fused = mods.fusion.fusePlate({
+        deepgramPlate: dgPlateNorm,
+        ours: {
+          plate: resp.plate, accepted: resp.accepted, reason: resp.refuseReason ?? "ok",
+          meanLogprob: resp.meanLogprob, minLogprob: resp.minLogprob, noSpeechProb: resp.noSpeechProb,
+        },
+        // الشيت هو الدليل الخارجي الوحيد وقت التنفيذ. قراءة Map بس — بلا إنذار.
+        onCheckSheet: (p) => checkIndex.has(p),
+      });
+
+      // لوحة مختلفة ⇒ نعيد البحث **صامت**. الصفّارة اتشغّلت للنبضة دي خلاص،
+      // وتاني نداء عادي كان هيلفّ صفّارة تانية لنفس العربية.
+      const changed = !!fused.plate && fused.plate !== dgPlateNorm;
+      const re = changed ? searchInCheck(fused.plate, { silent: true }) : null;
+
+      // هل الترقيع هيتطبّق فعلاً؟ محسوبة **بره** الـupdater عشان قرار الإنذار تحت
+      // يبقى مبنيّ على نفس الشرط بالظبط (الـupdater دالة نقية — ممنوع أي أثر
+      // جانبي جوّاها، وReact في StrictMode بينادّيها مرتين).
+      // `pttEditedIdsRef` ريف فالقراءة دايماً حيّة. وفحص `r.plate !== dgPlateNorm`
+      // اللي جوّه الـupdater مايقدرش يختلف عنها: `applyPttEdit` هو **الكاتب
+      // الوحيد** للوحة صف موجود (page.tsx:2277-2279) وبيسجّل الـid في الريف قبلها
+      // (page.tsx:2274)، وباقي الكُتّاب بيلمسوا vehicleType/GPS بس.
+      const userEdited = pttEditedIdsRef.current.has(rowId);
+      // والصف لسه موجود؟ `deletePttRow` بيشيل الصف ويقفل الكارت بس **مابيلغيش**
+      // الطلب اللي في الطريق. بلا الفحص ده كان `patched` بتفضل `true` لصف ممسوح
+      // ⇒ `fire` ⇒ صفّارة + كارت «مطلوبة» لصف مش في القائمة (وحرس الترتيب تحت
+      // بيسمح بالكتابة لأن الكارت مقفول). الريف قراءة حيّة، فمافيش سباق.
+      const rowAlive = pttRowIdsRef.current.has(rowId);
+      const patched = changed && !userEdited && !!re && rowAlive;
+
+      setPttResults((prev) => prev.map((r) => {
+        if (r.id !== rowId) return r;
+        // المندوب عدّل الصف بإيده وسط ما الرد في الطريق؟ عينه أعلى من الاتنين.
+        const patch = (patched && r.plate === dgPlateNorm && re)
+          ? { plate: fused.plate, found: re.found, matchType: re.matchType, similarity: re.similarity, row: re.row }
+          : {};
+        return {
+          ...r,
+          ...patch,
+          // اتجاه واحد: بنزوّد علامة المراجعة، وعمرنا ما نشيل واحدة موجودة.
+          needsReview: r.needsReview || fused.needsReview,
+          judge: {
+            oursPlate: resp!.plate, dgPlate: dgPlateNorm, fusedPlate: fused.plate,
+            source: fused.source, reason: fused.reason, agreed: fused.agreed,
+            needsReview: fused.needsReview, accepted: resp!.accepted,
+            refuseReason: resp!.refuseReason, serverMs: resp!.serverMs,
+          },
+        };
+      }));
+
+      // ── مزامنة الإنذار مع الحالة الجديدة — **صفّارة واحدة بالظبط لكل نبضة** ──
+      // إعادة البحث فوق كانت صامتة عن قصد، فلولا البلوك ده كان الصف يقدر يقلب
+      // «مطلوبة» بلا صفّارة وبلا كارت (F→T)، أو يقلب «غير مطلوبة» والكارت فاضل
+      // واقف على اللوحة القديمة «مطلوبة» بعد ما الصفّارة اتشغّلت (T→F، وبيحصل
+      // فعلاً من مسار fuzzy ≥٨٨٪ لأن `found=true` بينما `checkIndex.has()=false`).
+      // القرار في دالة نقية مغطّاة بـ٣٢ حالة: lib/plateFusion.decideJudgeAlertAction.
+      const alertAction = mods.fusion.decideJudgeAlertAction({
+        patched, prevPlate: dgPlateNorm, nextPlate: fused.plate,
+        wasFound, nowFound: re?.found === true,
+        // حزام تانٍ مستقل: صف اتمسح = مافيش أي فعل، حتى لو `patched` اتحسبت غلط.
+        rowAlive,
+      });
+      if (alertAction === "fire" && re) {
+        // `wasFound=false` ⇒ نداء النطق مافجّرش إنذار، وإعادة البحث كانت صامتة
+        // ⇒ دي أول وآخر صفّارة للنبضة دي.
+        fireWantedAlert({
+          plate: fused.plate,
+          matchType: re.matchType,
+          similarity: re.similarity,
+          info: re.row ? rowToAlertInfo(re.row) : undefined,
+        });
+        // نفس سلوك النطق: أحدث لوحة مطلوبة هي اللي تكسب الكارت — بس **الترتيب
+        // لازم يتحسب**. الكتابة كانت غير مشروطة، وبسقف ٢ + طابور ٢ بقى فيه
+        // ردّين في الهوا، فرد **متأخّر** لصف قديم كان يقدر يمسح كارت أحدث
+        // (٥ من ٢٤ زوج صفوف متتابعة في جلسة المالك بينهم ١٫٥٦–٢٫٣٩ث فقط).
+        // القرار في دالة نقية (`canJudgeWriteAlert`) وجوّه updater عشان يتاخد
+        // على الحالة **الحيّة** — نفس مصطلح فرعي `clear`/`repoint` تحت.
+        // ⚠️ الصفّارة فوق **بره** الحرس عن قصد: نبضة قلبت «مطلوبة» لازم تسمع
+        //    مرة واحدة بالظبط أياً كان الكارت المعروض. الحرس على العرض بس.
+        // الكارت بيقرا id/plate/found/matchType/similarity/row بس، وكلهم دقيقين
+        // هنا؛ الباقي من صورة الصف وقت إنشائه.
+        setPttAlert((a) => (mods.fusion.canJudgeWriteAlert(
+          a ? { rowId: a.id, seq: pttRowSeqRef.current.get(a.id) ?? 0 } : null,
+          { rowId, seq },
+        )
+          ? { ...baseRow, plate: fused.plate, found: true, matchType: re.matchType, similarity: re.similarity, row: re.row }
+          : a));
+      } else if (alertAction === "clear") {
+        // نفس مصطلح deletePttRow (page.tsx:2340) — بيقفل بس لو الكارت على الصف ده.
+        setPttAlert((a) => (a?.id === rowId ? null : a));
+      } else if (alertAction === "repoint" && re) {
+        // الصفّارة اتشغّلت خلاص ⇒ الكارت يلحق اللوحة الجديدة بلا صفّارة تانية.
+        setPttAlert((a) => (a?.id === rowId
+          ? { ...a, plate: fused.plate, found: true, matchType: re.matchType, similarity: re.similarity, row: re.row }
+          : a));
+      }
+
+      setJudgeLast("answered");
+      setJudgeCounts((c) => mods.log.bumpJudgeCounts(c, "answered", fused.agreed));
+
+      void mods.log.appendJudgeLog(mods.log.newJudgeLogRecord({
+        id: rowId, agentId: owner, sessionId,
+        dgPlate: dgPlateNorm, oursPlate: resp.plate, fusedPlate: fused.plate,
+        source: fused.source, reason: fused.reason, agreed: fused.agreed,
+        needsReview: fused.needsReview, accepted: resp.accepted, refuseReason: resp.refuseReason,
+        meanLogprob: resp.meanLogprob, minLogprob: resp.minLogprob, noSpeechProb: resp.noSpeechProb,
+        serverMs: resp.serverMs, clientMs, bytes, startMs, endMs,
+        windowSource: plan.windowSource,
+      }));
+    } catch { /* الرأي التاني عمره ما يكسر مسار الصوت */ }
+  }
+
+  /**
+   * يفضّي الطابور: كل ما سلوت يفضى، اللي مستني يمشي بالترتيب (FIFO).
+   *
+   * ليه ده آمن مع رد متأخّر؟ نافذة كل عنصر **زمن ميديا مطلق**، فهي صح مهما
+   * استنى. والترقيع بيمشي على `r.id` (`setPttResults … r.id !== rowId`) فالرد
+   * بيروح لصفّه هو؛ ولو المالك عدّل الصف وسط الاستنى، `pttEditedIdsRef` بتخلّي
+   * `patched=false` فالرد بيضيف علامة الطيّار بس ومايكتبش فوق اللوحة؛ ولو الصف
+   * اتمسح فـ`map` مالقاهوش = مافيش حاجة بتحصل.
+   * ولو الجلسة أو التيار اتغيّروا وهو مستني، الصوت اللي النافذة بتشاور عليه بقى
+   * مش موجود ⇒ `streamFresh=false` ⇒ سكوت `stale_stream`، مش قصّة على صوت غلط.
+   */
+  function drainJudgeQueue() {
+    const mods = judgeModsRef.current;
+    if (!judgeArmedRef.current || !mods) { judgeQueueRef.current = []; return; }
+    while (judgeQueueRef.current.length > 0 && mods.client.planJudgeAdmission({
+      inflight: judgeInflightRef.current, queued: 0,
+      maxInflight: JUDGE_MAX_INFLIGHT, maxQueue: JUDGE_MAX_QUEUE,
+    }) === "run") {
+      const item = judgeQueueRef.current.shift();
+      if (!item) break;
+      const fresh = item.streamSeq === dgStreamSeqRef.current
+        && item.sessionId === pttSessionIdRef.current;
+      const timing = item.timing
+        ? { ...item.timing, streamFresh: item.timing.streamFresh && fresh }
+        : null;
+      void requestSecondOpinion(item.row, timing, item.pausedMs, item.seq, item.emit);
+    }
+  }
+
+  /** يعلّم صفوف الطيّار «اتصدّرت» — للقياس بس، وللمالك بس. */
+  function markJudgeExportedIfArmed(ids: string[]) {
+    const mods = judgeModsRef.current;
+    if (!judgeArmedRef.current || !mods || ids.length === 0) return;
+    void mods.log.markJudgeExported(ids);
   }
 
   // Save a manual edit of a voice row: teach the learners (same logic as the
@@ -2028,6 +2592,9 @@ export default function InstantCheckPage() {
 
   // Remove a single voice row.
   function deletePttRow(id: string) {
+    // فوراً، قبل إعادة الرسم: أي رد طيّار في الطريق للصف ده يبقى بلا أي فعل
+    // (لا ترقيع ولا صفّارة ولا كارت) — `deletePttRow` مابيلغيش الطلب نفسه.
+    pttRowIdsRef.current.delete(id);
     setPttResults((prev) => prev.filter((r) => r.id !== id));
     setPttExportedIds((s) => { const n = new Set(s); n.delete(id); return n; });
     setPttAlert((a) => (a?.id === id ? null : a));
@@ -2062,6 +2629,7 @@ export default function InstantCheckPage() {
   }
   function deletePttSelected() {
     const ids = pttSel;
+    ids.forEach((i) => pttRowIdsRef.current.delete(i));   // نفس سبب `deletePttRow`
     setPttResults((prev) => prev.filter((r) => !ids.has(r.id)));
     setPttExportedIds((s) => { const n = new Set(s); ids.forEach((i) => n.delete(i)); return n; });
     setPttSel(new Set());
@@ -2102,6 +2670,7 @@ export default function InstantCheckPage() {
       // نضيف اللي اتصدّر دلوقتي للمصدَّرين (union) — مش نستبدل، عشان القديم
       // يفضل متعلّم إنه اتصدّر والجديد بس هو اللي يتصدّر المرة الجاية.
       setPttExportedIds((s) => { const n = new Set(s); freshRows.forEach((r) => n.add(r.id)); return n; });
+      markJudgeExportedIfArmed(freshRows.map((r) => r.id)); // قياس الطيّار: الصف اتصدّر فعلاً
       alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
       // جمع داتا التدريب (خلفية، مربوط بالمفتاح) — بعد التصدير الناجح، مايعطّلش المندوب.
       void collectTrainingFrom(freshRows);
@@ -2225,9 +2794,16 @@ export default function InstantCheckPage() {
     pttPausedRef.current = next;
     setPttPaused(next);
     if (next) {
+      // الطيّار: زمن الميديا بيتجمّد مع pause() والساعة ماشية — نجمّع الفرق عشان
+      // القصّ مايزحفش. (بيتنفّذ للمالك المسلَّح بس؛ لغيره فحص بوليان واحد.)
+      if (judgeArmedRef.current) judgePauseAtRef.current = performance.now();
       stopPttTimer();
       try { if (dgRecorderRef.current?.state === "recording") dgRecorderRef.current.pause(); } catch {}
     } else {
+      if (judgeArmedRef.current && judgePauseAtRef.current != null) {
+        judgePausedMsRef.current += performance.now() - judgePauseAtRef.current;
+        judgePauseAtRef.current = null;
+      }
       resumePttTimer();
       try { if (dgRecorderRef.current?.state === "paused") dgRecorderRef.current.resume(); } catch {}
     }
@@ -2275,7 +2851,15 @@ export default function InstantCheckPage() {
     if (text.trim()) { setPttLiveText(text.trim()); logRawTranscript(text); }
     const res = parseSessionChunk(text, pttSessionStateRef.current, { final });
     pttSessionStateRef.current = res.state;
-    res.records.forEach((r) => addOnePttRow(r.plate, r.vehicleType, pttRowIdxRef.current++, r.uncertain));
+    // ⚠️ `index`/`count`/`fromCarry` **لازم** يوصلوا: كل السجلات في الرسالة دي
+    // بتقرا **نفس** `judgeTimingRef` (كائن واحد لكل نتيجة نهائية)، فالصف اللي مش
+    // وحيد في رسالته — أو نصّه اتلمّ من رسالتين — ممنوع ياخد نافذة **رسالة**
+    // (اللي كانت بتتشارك بين صفّين). النافذة المثبَتة بترتكز على لوحة الصف نفسه
+    // وبتتحقّق منها، فسجلّين في رسالة واحدة بياخدوا نافذتين مختلفتين.
+    res.records.forEach((r, i) => addOnePttRow(
+      r.plate, r.vehicleType, pttRowIdxRef.current++, r.uncertain,
+      { index: i, count: res.records.length, fromCarry: r.fromCarry === true },
+    ));
   }
 
   // مسار Deepgram: بث صوت مباشر (WebSocket) لـ Deepgram nova-3 بلهجة مصرية
@@ -2339,20 +2923,40 @@ export default function InstantCheckPage() {
         // مربوط بالمفتاح (persistPttAudio/collectTrainingFrom)، فمقفول = مايتحفظش.
         pttAudioChunksRef.current.push(e.data);
         if (ws.readyState === WebSocket.OPEN) {
-          while (pending.length) { try { ws.send(pending.shift()!); } catch {} }
-          ws.send(e.data);
+          // أي جزء مابيوصلش للمحرك = ساعة كلماته بتزحف عن زمن الميديا بمقداره،
+          // فنعدّه: الرأي التاني بيرجع لساعة الحقيقة لما يشوف العدّاد > ٠.
+          while (pending.length) { try { ws.send(pending.shift()!); } catch { dgAudioDropRef.current += 1; } }
+          try { ws.send(e.data); } catch { dgAudioDropRef.current += 1; }
         } else {
           pending.push(e.data); // الاتصال لسه بيفتح — خزّن بالترتيب
         }
       };
       dgRecStartRef.current = performance.now(); // مرجع الساعة الحقيقية لتوقيت التدريب
+      // الطيّار: التيار الجديد ترويسته في الجزء ده — مهم بعد **إعادة الاتصال**
+      // (pttAudioChunksRef مابيتصفّرش، فمسجّل جديد = ترويسة جديدة وسط المصفوفة،
+      // وdgRecStartRef بيتصفّر معاه فعدّاد الإيقاف المؤقت لازم يتصفّر برضه).
+      judgeStreamBaseRef.current = pttAudioChunksRef.current.length;
+      judgePausedMsRef.current = 0;
+      judgePauseAtRef.current = null;
+      // ساعة Deepgram رجعت للصفر مع التيار ده، فحدّ «نهاية النبضة السابقة»
+      // (بساعته) بقى بلا معنى — لازم يتصفّر معاهم، وإلا أول نبضة في التيار
+      // الجديد تتقصّ بحدّ من التيار القديم. ونفس الكلام على تاريخ النتايج:
+      // كلمات بساعة قديمة جوّه نافذة جديدة = نافذة على صوت غلط.
+      judgePrevWordEndRef.current = null;
+      judgeFinalsRef.current = [];
+      // بصمة التيار ده: `dgRecStartRef` + `judgeStreamBaseRef` + ساعة Deepgram
+      // كلهم اتصفّروا **مع بعض** فوق. أي نتيجة نهائية جاية من سوكيت أقدم بصمتها
+      // أقدم ⇒ توقيتها مش قابل للمطابقة على البادئة الحالية (شوف `stale_stream`).
+      dgStreamSeqRef.current += 1;
+      dgAudioDropRef.current = 0;
+      const streamSeq = dgStreamSeqRef.current;
       rec.start(250); // يبعت جزء صوت كل 250ms
 
       ws.onopen = () => {
         if (!isListeningRef.current) { try { ws.close(); } catch {} try { rec.stop(); } catch {} return; }
         dgReconnectsRef.current = 0; // اتصال ناجح → صفّر عدّاد إعادة الاتصال
         // فضّي أي أجزاء اتسجّلت قبل ما الاتصال يفتح.
-        while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch {} }
+        while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch { dgAudioDropRef.current += 1; } }
         // KeepAlive عشان Deepgram مايقفلش الاتصال في فترات الصمت.
         dgKeepAliveRef.current = setInterval(() => {
           const s = dgSocketRef.current;
@@ -2396,7 +3000,12 @@ export default function InstantCheckPage() {
           // بس النتيجة النهائية للجملة بتتفرّغ للوحات (interim للعرض فقط).
           if (msg.is_final) {
             // اقرأ توقيت + ثقة الكلمات (لجمع التدريب) قبل التفريغ — addOnePttRow بيقراها.
-            if (learningGateRef.current) {
+            // ⚠️ البوابة اتوسّعت بـOR **ومااتشالتش**: الطيّار محتاج نفس التوقيت
+            // عشان يقصّ نبضة اللوحة. لو شلناها كنّا بدأنا نكتب
+            // startMs/endMs/wordConfidenceOk في **كل** صف لكل مستخدم والتعلّم
+            // مقفول — والصفوف دي بتتخزّن في localStorage وبتغذّي
+            // collectTrainingFrom، يعني تغيير سلوك عابر للمستخدمين.
+            if (learningGateRef.current || judgeArmedRef.current) {
               const words: DgWord[] = readDeepgramWords(msg);
               if (words.length > 0) {
                 const starts = words.map((w) => w.start).filter((n): n is number => typeof n === "number");
@@ -2423,8 +3032,71 @@ export default function InstantCheckPage() {
                     confOk,
                   };
                 }
+                // ── الرأي التاني: **مكوّنات خام، ومرجع تانية خالص** ──────────────
+                // النافذة الواسعة فوق (حشوة ٣ث) صح للتدريب — التدريب مايحتاجش قصّة
+                // مضبوطة — و**قاتلة** للاستنتاج: الموديل مدرَّب على لوحة واحدة في
+                // المقطع، والمقيس على صوت المالك إنها كانت بتطلّع ٥٫٩ث فيها لوحتين.
+                // فالطيّار له ريف مستقل بمكوّنات خام، و`planPlateWindow` هو اللي
+                // يحسب. مسار التدريب فوق **مالمسوش**.
+                if (judgeArmedRef.current) {
+                  const epoch = dgRecStartRef.current;
+                  const nowRel = epoch == null ? null : performance.now() - epoch;
+                  const wordEndMs = ends.length ? Math.max(...ends) * 1000 : null;
+                  // التاريخ: كل نتيجة بكلماتها **وحدّ الجار بتاعها** (نهاية اللي
+                  // قبلها) — لأن النطق المقسوم يقدر يبدأ عند أول كلمة في أقدم
+                  // نتيجة، وساعتها الحدّ السفلي بيجي من هناك.
+                  const hist = judgeFinalsRef.current;
+                  // ⚠️ بصمة التيار **لازم** تتحفظ مع النتيجة. نتيجة نهائية متأخّرة
+                  //    من سوكيت قديم بتوصل بعد ما التاريخ اتصفّر (التصفير مع كل
+                  //    مسجّل جديد تحت)، فبتدخل تاريخ التيار الجديد وتوقيتها بساعة
+                  //    تانية خالص ⇒ مدى مثبَت على صوت **مش** صوت اللوحة.
+                  //    `provePlateSpanAcrossFinals` بيقطع التاريخ عند آخر نتيجة
+                  //    موسومة `false` فمابيعبرهاش (شوف `DgFinal.streamFresh`).
+                  hist.push({
+                    words,
+                    prevWordEndMs: judgePrevWordEndRef.current,
+                    streamFresh: dgStreamSeqRef.current === streamSeq,
+                  });
+                  if (hist.length > JUDGE_FINALS_HISTORY) {
+                    hist.splice(0, hist.length - JUDGE_FINALS_HISTORY);
+                  }
+                  judgeTimingRef.current = {
+                    wordStartMs: starts.length ? Math.min(...starts) * 1000 : null,
+                    wordEndMs,
+                    arrivalMs: nowRel,
+                    mediaElapsedMs: nowRel == null ? null : nowRel - judgePausedMsRef.current,
+                    streamFresh: dgStreamSeqRef.current === streamSeq,
+                    audioDrops: dgAudioDropRef.current,
+                    // الكلمات نفسها — أساس نافذة «آخر لوحة».
+                    words,
+                    // نهاية كلام النبضة **السابقة**، تُقرا قبل ما نكتب فوقها.
+                    prevWordEndMs: judgePrevWordEndRef.current,
+                    // صورة (مش الريف نفسه) عشان النتايج الجديدة مايغيّروش نافذة
+                    // نبضة لسه ردّها في الطريق.
+                    finals: hist.slice(),
+                  };
+                  if (wordEndMs != null) judgePrevWordEndRef.current = wordEndMs;
+                }
               } else {
                 curTimingRef.current = null;
+                // مافيش كلمات خالص: الطيّار لسه عنده مرساة ساعة الحقيقة ⇒ نافذة
+                // احتياطية محكمة (٢٫٩ث)، مش سكوت ومش نافذة ٦ث.
+                if (judgeArmedRef.current) {
+                  const epoch = dgRecStartRef.current;
+                  const nowRel = epoch == null ? null : performance.now() - epoch;
+                  judgeTimingRef.current = {
+                    wordStartMs: null, wordEndMs: null,
+                    arrivalMs: nowRel,
+                    mediaElapsedMs: nowRel == null ? null : nowRel - judgePausedMsRef.current,
+                    streamFresh: dgStreamSeqRef.current === streamSeq,
+                    audioDrops: dgAudioDropRef.current,
+                    // مافيش كلمات خالص ⇒ مافيش مسار مثبَت، والاحتياطي المحكم
+                    // (ساعة الحقيقة، ٢٫٩ث) هو اللي يمشي — زي ما هو بالحرف.
+                    // والتاريخ فاضي عن قصد: المسار المقسوم بيبدأ من كلمات
+                    // النتيجة الحالية، ومافيش كلمات هنا.
+                    words: [], prevWordEndMs: judgePrevWordEndRef.current, finals: [],
+                  };
+                }
               }
             }
             processWhisperText(text, false);
@@ -2504,6 +3176,23 @@ export default function InstantCheckPage() {
     pttAudioChunksRef.current = [];
     trainingSessionSavedRef.current = "";
     curTimingRef.current = null;
+    // عدّاد الطيّار بيتصفّر مع كل جلسة — «الجلسة» لازم تعني الجلسة دي، وإلا أرقام
+    // جلسة قديمة ناجحة بتغطّي على جلسة جديدة صفر. (للمالك بس؛ حالة عرض بحتة.)
+    if (judgeArmedRef.current) {
+      setJudgeCounts({ answered: 0, agree: 0, skipped: 0, reasons: {} });
+      setJudgeLast(null);
+      // جلسة جديدة = بَفر صوت جديد (`pttAudioChunksRef` اتصفّر فوق)، فأي عنصر
+      // مستني في الطابور نافذته بتشاور على صوت **مش موجود** ⇒ يتشال دلوقتي.
+      judgeQueueRef.current = [];
+      judgeTimingRef.current = null;
+      judgePrevWordEndRef.current = null;
+      judgeFinalsRef.current = [];
+    }
+    // ⚠️ `pttSeqRef`/`pttRowSeqRef` **مابيتصفّروش** مع الجلسة عن قصد: `pttResults`
+    //    (والكارت المفتوح) بيعيشوا عبر الجلسات، فلو العدّاد رجع للصفر كان كارت
+    //    قديم (تسلسل ٥) يقدر يمنع صف جديد (تسلسل ١) من فتح كارته. تصاعدي لعمر
+    //    الصفحة = «الأحدث» تعني الأحدث فعلاً. وصف مستعاد من localStorage مالوش
+    //    تسلسل ⇒ `?? 0` ⇒ أي صف جديد يكسبه، وده الصح.
     isListeningRef.current = true;
     pttPausedRef.current = false; setPttPaused(false); // جلسة جديدة — مش متوقّفة
     setPttListening(true);
@@ -3438,6 +4127,119 @@ export default function InstantCheckPage() {
                 )}
               </div>
 
+              {/* ── الرأي التاني (موديلنا المدرَّب) — **المالك وحده**، والمفتاح المركزي شغّال ──
+                  المربّع ده مايظهرش لأي حد تاني: judgeVisible بيتحوّل true بس بعد
+                  isPilotOwner + المفتاح. النفق والتوكن بيتحفظوا على الجهاز
+                  (ph:plateJudge:url / ph:plateJudge:token) — مافيش سر في الريبو. */}
+              {judgeVisible && (
+                <div className="w-full max-w-xs rounded-xl border border-dashed border-primary/50 bg-surface-2 p-2" dir="rtl">
+                  {/* ── الحالة: **إعداد محفوظ ≠ واصل** ─────────────────────────
+                      الكلمة «متوصّل» هي اللي غشّت المالك جلسة كاملة: كانت بتتكتب
+                      من `readJudgeEndpoint()` بس، يعني «فيه نفق وتوكن مخزّنين
+                      وشكلهم سليم» — ولا بايت اتحرّك على الشبكة. دلوقتي «محفوظ»
+                      بتوصف التخزين، و«واصل ✓» مابتتكتبش غير بعد **رحلة حقيقية**
+                      (زر «جرّب الاتصال» أو نبضة جاوبت فعلاً). */}
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-primary">🧪 الرأي التاني (طيّار)</span>
+                    {(() => {
+                      const verified = judgeProbe?.ok === true || judgeLast === "answered";
+                      const label = !judgeCfgOk ? "محتاج إعداد"
+                        : verified ? "واصل ✓"
+                        : (judgeProbe && !judgeProbe.ok) ? "مش واصل ✗"
+                        : "محفوظ (مش متجرَّب)";
+                      const tone = !judgeCfgOk ? "text-muted"
+                        : verified ? "text-brand"
+                        : (judgeProbe && !judgeProbe.ok) ? "text-alert"
+                        : "text-amber-500";
+                      return <span className={`text-[10px] font-bold ${tone}`}>{label}</span>;
+                    })()}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <input
+                      dir="ltr" inputMode="url" autoComplete="off" spellCheck={false}
+                      value={judgeUrlInput} onChange={(e) => setJudgeUrlInput(e.target.value)}
+                      placeholder="https://xxx.trycloudflare.com"
+                      className="w-full rounded-lg border border-border bg-surface px-2 py-1 text-[11px] text-ink outline-none focus:border-primary"
+                    />
+                    <input
+                      dir="ltr" type="password" autoComplete="off" spellCheck={false}
+                      value={judgeTokenInput} onChange={(e) => setJudgeTokenInput(e.target.value)}
+                      placeholder="التوكن المشترك"
+                      className="w-full rounded-lg border border-border bg-surface px-2 py-1 text-[11px] text-ink outline-none focus:border-primary"
+                    />
+                    <div className="flex items-center gap-1">
+                      <button type="button"
+                        onClick={() => {
+                          const ok = saveJudgeEndpoint(judgeUrlInput, judgeTokenInput);
+                          setJudgeCfgOk(ok);
+                          // إعداد جديد ⇒ أي «واصل ✓» قديم بقى بلا معنى.
+                          setJudgeProbe(null);
+                          if (!ok) alert("العنوان لازم https (أو localhost) بلا استعلام، والتوكن ١٢ محرف على الأقل بلا مسافات.");
+                          else { const cfg = readJudgeEndpoint(); if (cfg) setJudgeUrlInput(cfg.base); }
+                        }}
+                        className="flex-1 rounded-lg bg-primary px-2 py-1 text-[11px] font-bold text-night">حفظ</button>
+                      <button type="button"
+                        onClick={() => { clearJudgeEndpoint(); setJudgeCfgOk(false); setJudgeProbe(null); setJudgeUrlInput(""); setJudgeTokenInput(""); }}
+                        className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted">مسح</button>
+                      <button type="button"
+                        onClick={async () => {
+                          const mods = judgeModsRef.current;
+                          if (!mods) return;
+                          try {
+                            const jsonl = await mods.log.judgeLogJsonl();
+                            const s = mods.log.summarizeJudgeLog(await mods.log.getJudgeLog());
+                            if (jsonl) await navigator.clipboard.writeText(jsonl);
+                            alert(`سجل الطيّار: ${s.total} نبضة · مجاوبة ${s.answered} · اتفاق ${s.agreed} (${s.agreeRate}٪) · مسكوتة ${s.skipped} · مُصدَّرة ${s.exported} · متوسط الخدمة ${s.avgServerMs ?? "—"}ms\n${jsonl ? "اتنسخ JSONL للحافظة ✓" : "لسه فاضي"}`);
+                          } catch { alert("تعذّر نسخ السجل."); }
+                        }}
+                        className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted">السجل</button>
+                    </div>
+                    {/* ── «جرّب الاتصال»: رحلة **حقيقية** كاملة قبل أي كلام ──────
+                        بيبعت مقطع WAV صناعي ٤٠٠ms على نفس `POST /transcribe` اللي
+                        النبضة بتمشي عليه — نفس الترويسة، نفس الـpreflight، نفس
+                        النفق، نفس ffmpeg، نفس الموديل، نفس فحص الرد. فالنتيجة
+                        بتسمّي المشكلة بالحرف (لوحة وزمن، أو ٤٠١/٤٠٤/مخرجش) قبل ما
+                        المالك يقرا جلسة كاملة في الهوا. */}
+                    <button type="button" disabled={judgeProbing || !judgeCfgOk}
+                      onClick={async () => {
+                        const mods = judgeModsRef.current;
+                        const cfg = readJudgeEndpoint();
+                        if (!mods || !cfg) { setJudgeProbe(null); return; }
+                        setJudgeProbing(true);
+                        try {
+                          setJudgeProbe(await mods.client.probeJudgeTranscribe({
+                            transcribeUrl: cfg.transcribeUrl, token: cfg.token,
+                          }));
+                        } finally { setJudgeProbing(false); }
+                      }}
+                      className="rounded-lg border border-primary/60 px-2 py-1 text-[11px] font-bold text-primary disabled:opacity-40">
+                      {judgeProbing ? "بيجرّب…" : "جرّب الاتصال"}
+                    </button>
+                    {judgeProbe && (
+                      <span className={`text-[10px] ${judgeProbe.ok ? "text-brand" : "text-alert"}`}>
+                        {judgeProbe.ok
+                          ? `الفحص: وصل ✓ «${judgeProbe.plate || "—"}» · ${judgeProbe.serverMs ?? "?"}ms خدمة · ${judgeProbe.clientMs}ms إجمالي · ${judgeProbe.model ?? "—"}`
+                          : `الفحص فشل: ${judgeModsRef.current?.log.describeJudgeOutcome(judgeProbe.code) ?? judgeProbe.code}`}
+                      </span>
+                    )}
+                    {/* آخر نبضة — «محفوظ» بتوصف التخزين بس، ودي بتوصف الواقع.
+                        بلا السطر ده الطيّار يقدر يموت بصمت (٤٠٤/٤٠١ كانوا بيرجعوا
+                        من الخدمة قبل أي تسجيل) والمربّع يفضل مطمّن. للمالك بس. */}
+                    {judgeLast && (
+                      <span className={`text-[10px] ${judgeLast === "answered" ? "text-brand" : "text-alert"}`}>
+                        آخر نبضة: {judgeModsRef.current?.log.describeJudgeOutcome(judgeLast) ?? judgeLast}
+                      </span>
+                    )}
+                    {/* عدّاد الجلسة — **دايماً** ظاهر، بالمسكوت وأعلى سببه. قبل كده
+                        كان بيظهر بس لو فيه نبضة مجاوبة، فجلسة صفر طلب كان شكلها
+                        بالحرف زي الطيّار مقفول: مافيش سطر خالص. الصفر لازم يبان. */}
+                    <span className="text-[10px] text-muted">
+                      {judgeModsRef.current?.log.formatJudgeSessionLine(judgeCounts) ?? ""}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* زر الميكروفون الكبير + زر الإيقاف المؤقت الأصغر جنبه (أثناء التسجيل) */}
               <div className="flex items-center justify-center gap-3">
                 {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع (مايومضش وقت الإيقاف المؤقت) */}
@@ -3558,7 +4360,7 @@ export default function InstantCheckPage() {
                     result={{ plate: pttAlert.plate, normalized: "", found: pttAlert.found, matchType: pttAlert.matchType, similarity: pttAlert.similarity, row: pttAlert.row }}
                     plateCol={checkPlateCol}
                     selectedCols={selectedCheckCols}
-                    onExport={async (r) => { await exportToFieldCheck(r, "ptt"); setPttExportedIds((s) => new Set(s).add(pttAlert.id)); }}
+                    onExport={async (r) => { await exportToFieldCheck(r, "ptt"); setPttExportedIds((s) => new Set(s).add(pttAlert.id)); markJudgeExportedIfArmed([pttAlert.id]); }}
                     priorCheck={findDuplicateEntry(fieldEntries, pttAlert.plate)}
                   />
                 </div>
@@ -3630,7 +4432,7 @@ export default function InstantCheckPage() {
                                       <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
                                     ) : (
                                       <button
-                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); }}
+                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); markJudgeExportedIfArmed([r.id]); }}
                                         className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
                                         title="تصدير للتشييك"
                                       >
@@ -3667,10 +4469,28 @@ export default function InstantCheckPage() {
                                       <Pencil size={12} />
                                     </button>
                                     {r.needsReview && (
-                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-alert/15 px-1.5 py-0.5 text-[10px] font-bold text-alert" title="الشكل مكسور — راجع اللوحة وعدّلها">
+                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-alert/15 px-1.5 py-0.5 text-[10px] font-bold text-alert"
+                                        title={r.judge && !r.judge.agreed ? "المحرّكان اختلفوا — راجع اللوحة" : "الشكل مكسور — راجع اللوحة وعدّلها"}>
                                         <AlertTriangle size={10} /> راجع
                                       </span>
                                     )}
+                                    {/* علامة الرأي التاني — نقطة صغيرة (كهرماني = اختلاف، أخضر =
+                                        اتفاق ⇒ ٩٩٫٠٪ صح). للمالك بس؛ الصفوف التانية مافيهاش judge. */}
+                                    {judgeVisible && r.judge && (
+                                      <button type="button"
+                                        onClick={() => setJudgeOpenId((v) => (v === r.id ? null : r.id))}
+                                        title={r.judge.agreed ? "المحرّكان اتفقوا — اضغط للتفاصيل" : "المحرّكان اختلفوا — اضغط تشوف المرشّحين"}
+                                        className="inline-flex items-center">
+                                        <span className={`h-2 w-2 rounded-full ${r.judge.agreed ? "bg-brand" : "bg-amber-500"}`} />
+                                      </button>
+                                    )}
+                                  </span>
+                                )}
+                                {judgeVisible && r.judge && judgeOpenId === r.id && (
+                                  <span className="mt-1 block whitespace-normal rounded-lg border border-border bg-surface-2 px-2 py-1 text-[10px] font-normal leading-4 text-muted" dir="rtl">
+                                    <span className="block">موديلنا: <b className="text-ink">{r.judge.oursPlate || "—"}</b>{!r.judge.accepted && ` (مرفوض: ${r.judge.refuseReason ?? "—"})`}</span>
+                                    <span className="block">Deepgram: <b className="text-ink">{r.judge.dgPlate || "—"}</b></span>
+                                    <span className="block">القرار: {r.judge.fusedPlate || "—"} · {r.judge.reason} · {r.judge.serverMs ?? "?"}ms</span>
                                   </span>
                                 )}
                               </td>
