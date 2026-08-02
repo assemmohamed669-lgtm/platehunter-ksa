@@ -147,6 +147,37 @@ export function analyzeWorkbook(sheets: { name: string; aoa: unknown[][] }[]): S
   return sheets.map((s) => analyzeSheet(s.name, s.aoa));
 }
 
+/**
+ * الاختيار الافتراضي عند رفع الملف — بيعلّم على ورقات «المطلوبين» بس.
+ *
+ * ملفات الشركات بتيجي بنمط ثابت: ورقة ضخمة فيها **كل أسطول الشركة** (مرجع، مش
+ * مطلوبين)، + ورقات صغيرة بالمطلوبين فعلاً (مباعة/مسروقة/قبل وبعد الاستحواذ)،
+ * + أحياناً ورقة خام بلا عنوان (نسخة عمل). فبنستبعد:
+ *   • الورقة **المهيمنة**: لوحاتها ≥٦٠٪ من الملف و≥٣ أضعاف تانية أكبر ورقة.
+ *   • الورقات **بلا صف عنوان** — دي نسخ خام مش قوائم رسمية.
+ * وأي استبعاد بيرجع لو هيسيبنا بلا اختيار خالص.
+ *
+ * ده **افتراضي بس** — المندوب بيغيّره من الاختيار وبيتحفظ.
+ */
+export function defaultSelection(sheets: SheetInfo[]): Set<string> {
+  const withPlates = sheets.filter((s) => s.plateCount > 0);
+  if (withPlates.length <= 1) return new Set(withPlates.map((s) => s.name));
+
+  const counts = withPlates.map((s) => s.plateCount).sort((a, b) => b - a);
+  const total = counts.reduce((a, b) => a + b, 0);
+  const [biggest, second = 0] = counts;
+  const hasDominant = biggest >= total * 0.6 && biggest >= second * 3;
+
+  const keep = withPlates.filter((s) => {
+    if (hasDominant && s.plateCount === biggest) return false;   // أسطول الشركة
+    if (s.headerRow < 0) return false;                            // نسخة خام بلا عنوان
+    return true;
+  });
+
+  // ماينفعش نسيبه بلا اختيار — لو الاستبعاد شال كل حاجة، علّم على الكل.
+  return new Set((keep.length ? keep : withPlates).map((s) => s.name));
+}
+
 /** إجمالي اللوحات الفريدة عبر الورقات المختارة (المكرر بين الورقات مرة واحدة). */
 export function totalPlates(sheets: SheetInfo[]): number {
   const all = new Set<string>();

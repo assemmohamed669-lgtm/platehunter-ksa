@@ -8,7 +8,8 @@
  * لوحده أنهي ورقة هي المطلوبين — فالمندوب بيعلّم على اللي عايزه، والإجمالي
  * بيتحدّث فوراً قدامه قبل ما يفرز.
  */
-import { CheckSquare, Square, Layers } from "lucide-react";
+import { useState } from "react";
+import { CheckSquare, Square, Layers, ChevronDown } from "lucide-react";
 import type { SheetInfo } from "@/lib/referralSheets";
 
 interface Props {
@@ -21,10 +22,12 @@ interface Props {
 }
 
 export default function ReferralSheetPicker({ sheets, selected, onChange, total }: Props) {
+  const [open, setOpen] = useState(false);   // مطويّة افتراضياً — القايمة بتملى الشاشة
   const withPlates = sheets.filter((s) => s.plateCount > 0);
   if (withPlates.length <= 1) return null;   // ورقة واحدة → مفيش داعي للاختيار
 
   const allOn = withPlates.every((s) => selected.has(s.name));
+  const selectedCount = withPlates.filter((s) => selected.has(s.name)).length;
   const toggle = (name: string) => {
     const next = new Set(selected);
     if (next.has(name)) next.delete(name); else next.add(name);
@@ -32,12 +35,33 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total 
   };
 
   return (
-    <div className="rounded-xl border border-border bg-surface p-3" dir="rtl">
+    <div className="rounded-xl border border-border bg-surface" dir="rtl">
+      {/* الملخص — دايماً ظاهر. القايمة نفسها مطويّة عشان ماتمليش الشاشة. */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-right"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Layers size={14} className="shrink-0 text-primary" />
+          <span className="truncate text-xs font-bold text-ink">
+            ورقات الملف — مختار {selectedCount} من {withPlates.length}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="text-sm font-black text-primary">
+            {total.toLocaleString("en-US")} لوحة
+          </span>
+          <ChevronDown size={16} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+
+      {!open && total === 0 && (
+        <p className="px-3 pb-2 text-[11px] text-alert">علّم ورقة واحدة على الأقل عشان تقدر تفرز.</p>
+      )}
+
+      {open && (<div className="border-t border-border p-3">
       <div className="mb-2 flex items-center justify-between">
-        <p className="flex items-center gap-1.5 text-xs font-bold text-ink">
-          <Layers size={13} className="text-primary" />
-          ورقات الملف ({withPlates.length}) — علّم اللي عايز تفرز عليها
-        </p>
+        <p className="text-[11px] text-muted">علّم اللي عايز تفرز عليها</p>
         <button
           onClick={() => onChange(allOn ? new Set() : new Set(withPlates.map((s) => s.name)))}
           className="text-[11px] text-primary underline"
@@ -85,6 +109,7 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total 
       {total === 0 && (
         <p className="mt-1 text-[11px] text-alert">علّم ورقة واحدة على الأقل عشان تقدر تفرز.</p>
       )}
+      </div>)}
     </div>
   );
 }

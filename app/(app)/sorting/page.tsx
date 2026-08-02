@@ -21,7 +21,7 @@ import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSor
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
-import { analyzeWorkbook, totalPlates, type SheetInfo } from "@/lib/referralSheets";
+import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
@@ -582,8 +582,10 @@ export default function SortingPage() {
         if (j && j.file === file.name && Array.isArray(j.sheets)) saved = j.sheets;
       } catch { /* ignore */ }
       const valid = new Set(withPlates.map((s) => s.name));
+      // مفيش اختيار محفوظ → الاختيار الذكي (المطلوبين بس، من غير أسطول الشركة
+      // والورقات الخام). المندوب يقدر يغيّره وقتها بيتحفظ.
       setRefSheetSel(
-        saved ? new Set(saved.filter((n) => valid.has(n))) : valid
+        saved ? new Set(saved.filter((n) => valid.has(n))) : defaultSelection(infos)
       );
     } catch (err) {
       // فشل مؤقت (ملف مقفول/ذاكرة) — نسيب الاختيار القديم زي ما هو بدل ما

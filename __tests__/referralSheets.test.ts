@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPlateLike, analyzeSheet, totalPlates, type SheetInfo } from "@/lib/referralSheets";
+import { isPlateLike, analyzeSheet, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 
 describe("isPlateLike — شكل اللوحة السعودية", () => {
   it("اللوحة العادية (٣ حروف + ٤ أرقام)", () => {
@@ -161,5 +161,62 @@ describe("totalPlates — إجمالي الورقات المختارة (بدون
 
   it("قائمة فاضية = صفر", () => {
     expect(totalPlates([])).toBe(0);
+  });
+});
+
+// ملفات الشركات فيها عادةً ورقة ضخمة بكل أسطول الشركة (مرجع) + ورقات صغيرة
+// بالمطلوبين فعلاً + ورقات خام بلا عنوان. الاختيار الافتراضي بيعلّم على
+// المطلوبين بس، والمندوب يقدر يغيّر أي حاجة.
+describe("defaultSelection — الاختيار التلقائي", () => {
+  const sheet = (name: string, count: number, withHeader = true): SheetInfo =>
+    analyzeSheet(name, [
+      ...(withHeader ? [["رقم اللوحة"]] : []),
+      ...Array.from({ length: count }, (_, i) => [`ابح${1000 + i}`]),
+    ]);
+
+  it("بيستبعد الورقة المهيمنة (أسطول الشركة كله)", () => {
+    const sheets = [sheet("vehicle_list", 1380), sheet("مباعة", 35), sheet("مسروقة", 28)];
+    const sel = defaultSelection(sheets);
+    expect(sel.has("vehicle_list")).toBe(false);
+    expect(sel.has("مباعة")).toBe(true);
+    expect(sel.has("مسروقة")).toBe(true);
+  });
+
+  it("بيستبعد الورقة اللي بلا عنوان (نسخة خام)", () => {
+    const sheets = [sheet("مباعة", 35), sheet("Sheet1", 69, false)];
+    const sel = defaultSelection(sheets);
+    expect(sel.has("Sheet1")).toBe(false);
+    expect(sel.has("مباعة")).toBe(true);
+  });
+
+  it("الحالة الحقيقية: ٦ ورقات → الأربعة بس", () => {
+    const sheets = [
+      sheet("vehicle_list", 1380), sheet("سيارات مباعة", 35), sheet("سيارات مسروقة", 28),
+      sheet("سيارات قبل الاستحواذ", 43), sheet("سيارات بعد الاستحواذ", 22), sheet("Sheet1", 69, false),
+    ];
+    expect([...defaultSelection(sheets)].sort()).toEqual(
+      ["سيارات بعد الاستحواذ", "سيارات قبل الاستحواذ", "سيارات مباعة", "سيارات مسروقة"].sort()
+    );
+  });
+
+  it("ورقات متقاربة الحجم → بيعلّم عليها كلها (مفيش مهيمنة)", () => {
+    const sheets = [sheet("أ", 40), sheet("ب", 35), sheet("ج", 30)];
+    expect(defaultSelection(sheets).size).toBe(3);
+  });
+
+  it("ورقة واحدة بس → متعلّمة", () => {
+    expect(defaultSelection([sheet("أ", 40)]).size).toBe(1);
+  });
+
+  it("لو الاستبعاد هيفضّي الاختيار → بيعلّم على الكل (مانسيبوش بلا اختيار)", () => {
+    const sheets = [sheet("كبيرة", 1000), sheet("Sheet1", 5, false)];
+    expect(defaultSelection(sheets).size).toBeGreaterThan(0);
+  });
+
+  it("بيتجاهل الورقات اللي مفيهاش لوحات", () => {
+    const sheets = [sheet("مباعة", 35), analyzeSheet("ملخص", [["البند"], ["إجمالي"]])];
+    const sel = defaultSelection(sheets);
+    expect(sel.has("ملخص")).toBe(false);
+    expect(sel.has("مباعة")).toBe(true);
   });
 });
