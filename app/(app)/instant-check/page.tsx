@@ -2569,6 +2569,7 @@ export default function InstantCheckPage() {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
+      obj["التاريخ"] = formatDate(e.checkedAt);   // التاريخ يفضل مع اللوحة في الصورة كمان
       return objToPlateRow(obj);
     });
   }
@@ -2581,6 +2582,7 @@ export default function InstantCheckPage() {
         "النوع": r.vehicleType ?? "",
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
+      obj["التاريخ"] = formatDate(r.checkedAt);   // التاريخ يفضل مع اللوحة في الصورة كمان
       return objToPlateRow(obj);
     });
   }
