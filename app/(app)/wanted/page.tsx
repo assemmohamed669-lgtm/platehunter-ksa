@@ -321,6 +321,27 @@ export default function WantedPage() {
             if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${recordRows.length} لوحة من النافذة دي؟`)) return;
             setRecordRows([]); persist(dataRows, [], true);
           })}
+
+          {/* مشاركة واحدة بالاتنين مع بعض — الداتا فوق والسجلات تحتها، وكل قسم
+              بعنوانه (في الإكسيل صف فاصل، وفي الصورة عنوان فوق كل صورة). */}
+          {dataRows.length > 0 && recordRows.length > 0 && (
+            <ShareSortButton
+              title="نتيجة الفرز الكاملة"
+              label="مشاركة الاتنين مع بعض (الداتا + السجلات)"
+              rows={() => [...toExportRows(dataRows), ...toExportRows(recordRows)]}
+              sections={() => {
+                const d = toImageTable(dataRows);
+                const s = toImageTable(recordRows);
+                return [
+                  { title: "نتيجة فرز الداتا", columns: d.columns, rows: d.rows,
+                    rowColors: dupeHexColors(dataRows), objects: toExportRows(dataRows) },
+                  { title: "سيارات مطلوبة من السجلات", columns: s.columns, rows: s.rows,
+                    rowColors: dupeHexColors(recordRows), objects: toExportRows(recordRows) },
+                ];
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition hover:bg-brand/90 disabled:opacity-60"
+            />
+          )}
         </>
       )}
 

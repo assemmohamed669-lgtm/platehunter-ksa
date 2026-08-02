@@ -37,7 +37,7 @@ import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
-import ShareSortButton from "@/components/ShareSortButton";
+import ShareSortButton, { type ShareSection } from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -1455,6 +1455,51 @@ export default function SortingPage() {
   }
 
   // ── نافذة المطلوبين (شيت التشييك) — helpers ──
+  /**
+   * أقسام المشاركة الموحّدة: نتيجة الداتا فوق، ونتيجة السجلات تحتها — في نفس
+   * ملف الإكسيل وفي نفس المشاركة (صورة لكل قسم وعنوانه فوقها). المندوب كان
+   * بيضطر يشارك الاتنين منفصلين ومحدش يعرف كل مجموعة جاية منين.
+   */
+  function buildShareSections(): ShareSection[] {
+    const out: ShareSection[] = [];
+
+    // (١) نتيجة فرز الداتا
+    const t = buildSortImageTable();
+    if (t.rows.length) {
+      out.push({
+        title: "نتيجة فرز الداتا",
+        subtitle: t.subtitle,
+        columns: t.columns,
+        rows: t.rows,
+        rowColors: t.rowColors,
+        objects: displayResults.map(buildRowObject),
+      });
+    }
+
+    // (٢) سيارات مطلوبة من السجلات
+    const raw = displayTashyeek.map(({ r }) => buildTashyeekRowObj(r));
+    if (raw.length) {
+      // نوحّد اسم عمود اللوحة مع قسم الداتا («المطلوب») عشان اللوحات تنزل تحت
+      // بعضها في نفس العمود في الإكسيل بدل ما تتزحلق لعمود تاني.
+      const PLATE = "المطلوب";
+      const tRows: Record<string, unknown>[] = raw.map((o) => {
+        const rest: Record<string, unknown> = { ...o };
+        const plate = rest["رقم اللوحة"] ?? "";
+        delete rest["رقم اللوحة"];
+        return { [PLATE]: plate, ...rest };
+      });
+      const cols = [PLATE, ...(tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol) ?? [])];
+      out.push({
+        title: "سيارات مطلوبة من السجلات",
+        subtitle: shareSubtitle(),
+        columns: cols,
+        rows: tRows.map((o) => cols.map((c) => String(o[c] ?? ""))),
+        objects: tRows,
+      });
+    }
+    return out;
+  }
+
   function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
     const obj: Record<string, unknown> = { "رقم اللوحة": plate };
@@ -2133,10 +2178,13 @@ export default function SortingPage() {
 
           {/* ⑥ مشاركة الفرز — زر موحّد (فتح / واتساب / صورة).
               excelBlob = النسخة الملوّنة (تمييز المكرّرات) لملف الفرز. */}
+          {/* المشاركة بتجمع نتيجة الداتا + نتيجة السجلات في مشاركة واحدة.
+              لو مفيش سجلات، بترجع تلقائياً للمسار القديم (بتلوين المكرّرات). */}
           <ShareSortButton title="نتائج الفرز"
             rows={() => displayResults.map(buildRowObject)}
             imageTable={buildSortImageTable}
-            excelBlob={buildSortExcelBlob} />
+            excelBlob={buildSortExcelBlob}
+            sections={displayTashyeek.length ? buildShareSections : undefined} />
           <button onClick={clearMainResults}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
             <Trash2 size={15} /> مسح نتايج الفرز
