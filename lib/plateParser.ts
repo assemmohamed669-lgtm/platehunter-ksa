@@ -1468,6 +1468,35 @@ export function bankPlateToArabic(raw: string): string {
   }
   if (!hasAscii) return raw.replace(/[^؀-ۿ0-9٠-٩]/g, "");
 
+  // ── Latin plate layout: digits BEFORE letters ────────────────────────────
+  // Some wallets arrive with the plate transcribed off the LATIN line of the
+  // plate instead of the Arabic one — «7709 ABS» for what is really «س ب ا 7709».
+  // Two things differ from Arabic layout, and both have to be undone:
+  //   1. the digits come first
+  //   2. the Latin letters are a MIRROR of the Arabic ones (Arabic reads
+  //      right-to-left, Latin left-to-right, so the two lines are reversed
+  //      relative to each other)
+  // Reading such a cell character by character produced «7709ابس» — letters
+  // backwards and digits leading — so not one plate in the file ever matched.
+  // Verified against every row of a real referral (55/55 correct reversed,
+  // 0/55 correct as-is).
+  //
+  // The trigger is the layout itself, not the file: digits-then-letters means
+  // Latin layout. A cell that already leads with its letters («NKD 5678») is in
+  // Arabic order and is left exactly as it was.
+  // 1-3 letters: reversing one letter is a no-op, but the digits-then-letters
+  // ORDER still has to be flipped so the key matches the Arabic plates.
+  const latinLayout = raw.match(/^[^\p{L}\d]*(\d{1,4})[^\p{L}\d]*([A-Za-z]{1,3})[^\p{L}\d]*$/u);
+  if (latinLayout) {
+    const digits = latinLayout[1];
+    const letters = latinLayout[2].toUpperCase();
+    let arabic = "";
+    for (let i = letters.length - 1; i >= 0; i--) {   // mirror the letter run
+      arabic += EN_TO_AR[letters[i]] ?? letters[i];
+    }
+    return arabic + digits;                            // Arabic order: letters, then digits
+  }
+
   // Slow path: convert English plate letters to Arabic.
   // Keep: digits, mapped Arabic equiv of EN letters, existing Arabic chars.
   // Skip: spaces, dashes, dots, slashes, and any other punctuation.
