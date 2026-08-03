@@ -4,7 +4,6 @@ import {
   setStoredSessionToken,
   clearStoredSessionToken,
 } from "./device";
-import { isCutOff, GRACE_DAYS } from "./subscription";
 
 /**
  * Agents log in with a plain username (assigned by the admin), not an
@@ -22,7 +21,6 @@ export type LoginErrorCode =
   | "DEVICE_MISMATCH"
   | "ACCOUNT_DISABLED"
   | "PROFILE_NOT_FOUND"
-  | "SUBSCRIPTION_EXPIRED"
   | "UNKNOWN";
 
 export interface LoginResult {
@@ -37,8 +35,6 @@ const ERROR_MESSAGES: Record<LoginErrorCode, string> = {
     "هذا الحساب مرتبط بجهاز آخر. تواصل مع الإدارة لإعادة ضبط الجهاز.",
   ACCOUNT_DISABLED: "تم تعطيل هذا الحساب. تواصل مع الإدارة.",
   PROFILE_NOT_FOUND: "لم يتم العثور على حساب لهذا المستخدم. تواصل مع الإدارة.",
-  SUBSCRIPTION_EXPIRED:
-    "تم فصل الخدمة عن هذا الحساب لعدم دفع الاشتراك. لإعادة تشغيل الخدمة تواصل مع الإدارة لطلب التمديد.",
   UNKNOWN: "حدث خطأ غير متوقع. حاول مرة أخرى.",
 };
 
@@ -91,32 +87,6 @@ export async function loginAgent(
       errorMessage: ERROR_MESSAGES[code],
     };
   }
-
-  // اشتراك مفصول → نمنع الدخول من هنا بدل ما يدخل ويتحجب جوه. بنسجّل خروج
-  // فمايفضلش جلسة مفتوحة على الجهاز. متسامح عند الشك: لو تعذّرت قراءة البروفايل
-  // (أوفلاين/خطأ) بنسيب الدخول يكمّل — عشان مانقفلش على حد بالغلط.
-  try {
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("role, is_active, is_trial, subscription_end")
-      .eq("id", (await supabase.auth.getUser()).data.user?.id ?? "")
-      .maybeSingle();
-    const p = prof as {
-      role?: string; is_active?: boolean; is_trial?: boolean; subscription_end?: string | null;
-    } | null;
-    if (p && p.role === "agent") {
-      const grace = p.is_trial ? 0 : GRACE_DAYS;
-      if (isCutOff(p.subscription_end, p.is_active !== false, grace)) {
-        await supabase.auth.signOut();
-        clearStoredSessionToken();
-        return {
-          ok: false,
-          errorCode: "SUBSCRIPTION_EXPIRED",
-          errorMessage: ERROR_MESSAGES.SUBSCRIPTION_EXPIRED,
-        };
-      }
-    }
-  } catch { /* مانمنعش الدخول بسبب فشل الفحص */ }
 
   if (data) {
     setStoredSessionToken(data as string);
