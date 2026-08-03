@@ -499,6 +499,9 @@ export default function InstantCheckPage() {
   const [gpsAddress, setGpsAddress] = useState<string>("جارٍ تحديد الموقع...");
   const [gpsBoxOpen, setGpsBoxOpen] = useState(true);
   const [gpsRefreshing, setGpsRefreshing] = useState(false);
+  // رسالة سبب فشل «تحديث» — بتتعرض للمندوب. كانت `catch {}` صامتة، فالزرار
+  // كان يبان بايظ (شكوى مندوب ٢٠٢٦/٠٨/٠٢). السبب مهم: يخرج برّه؟ يفتح الأذونات؟
+  const [gpsMsg, setGpsMsg] = useState<string | null>(null);
   const [mode, setMode] = useState<CheckMode>(() => {
     if (typeof window === "undefined") return "manual";
     const saved = window.localStorage.getItem("ph:check:mode");
@@ -837,15 +840,33 @@ export default function InstantCheckPage() {
     return () => { unsub(); gpsService.stopTracking(); };
   }, []);
 
-  // زر «تحديث» في خانة الـ GPS — قراءة موقع جديدة بدقّة عالية.
+  // زر «تحديث» في خانة الـ GPS.
+  //
+  // كان `catch {}` صامت تماماً: لو الفيكس فشل، `pinCurrentLocation` بترجّع
+  // الفيكس القديم والواجهة تحدّث نفسها بنفس الإحداثيات ⇒ المندوب يشوف **صفر
+  // تغيير** ويفتكر الزرار بايظ. (شكوى مندوب ٢٠٢٦/٠٨/٠٢: «بدوس تحديث ومفيش أي
+  // استجابة».) دلوقتي الخدمة بتعلّم الفيكس القديم بـ`stale`، والغلط بيوصل
+  // للمندوب بسببه — لأن السبب بيغيّر اللي هو هيعمله (يخرج برّه؟ يفتح الأذونات؟).
   async function refreshGps() {
     setGpsRefreshing(true);
+    setGpsMsg(null);
     try {
       const coords = await gpsService.pinCurrentLocation();
       setGps(coords);
-      const addr = await reverseGeocode(coords.lat, coords.lng);
-      setGpsAddress(`${addr.street} • ${addr.district}`);
-    } catch { /* لسه مفيش fix — الخانة تفضل حمرا */ }
+      if (coords.stale) {
+        setGpsMsg("مافيش إشارة GPS جديدة — المعروض آخر موقع قديم. اطلع في مكان مفتوح وجرّب تاني.");
+      } else {
+        const addr = await reverseGeocode(coords.lat, coords.lng);
+        setGpsAddress(`${addr.street} • ${addr.district}`);
+      }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "";
+      setGpsMsg(
+        /denied|permission/i.test(m) ? "إذن الموقع مرفوض — افتحه من إعدادات التطبيق."
+        : /unsupported|not supported/i.test(m) ? "الجهاز مش بيدعم تحديد الموقع."
+        : "مش قادر يجيب الموقع — اطلع في مكان مفتوح وجرّب تاني.",
+      );
+    }
     finally { setGpsRefreshing(false); }
   }
 
@@ -3520,6 +3541,12 @@ export default function InstantCheckPage() {
               <RefreshCw size={15} className={gpsRefreshing ? "animate-spin" : ""} />
             </button>
           </div>
+          {/* سبب فشل «تحديث» — لازم يبان، وإلا الزرار يبان كأنه مايعملش حاجة. */}
+          {gpsMsg && (
+            <p className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-warning" dir="rtl">
+              {gpsMsg}
+            </p>
+          )}
           <p className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-danger" dir="rtl">
             ⚠️ اتأكد إن خانة الـ GPS شغّالة كويس وبدقّة عالية قبل ما تبدأ — الموقع الدقيق مهم جداً في التشييك الصوتي واليدوي.
           </p>

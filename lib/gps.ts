@@ -3,6 +3,12 @@ export interface GpsCoords {
   lng: number;
   accuracy: number;
   timestamp: number;
+  /**
+   * `true` = الفيكس ده **قديم** (من المراقب) ومش قراءة جديدة — بيتحطّ لما «تحديث»
+   * يفشل في جلب فيكس جديد. الواجهة **لازم** تقول للمندوب، وإلا الزرار يبان
+   * كأنه مايعملش حاجة (شكوى مندوب ٢٠٢٦/٠٨/٠٢: «بدوس تحديث ومفيش أي تغيير»).
+   */
+  stale?: boolean;
 }
 
 type GpsCallback = (coords: GpsCoords | null) => void;
@@ -173,56 +179,81 @@ class GpsService {
     return this.lastCoords;
   }
 
+  /**
+   * «تحديث» — يحاول يجيب فيكس جديد على مرحلتين.
+   *
+   * الأصل كان بيطلب `enableHighAccuracy: true` **بس**، يعني أقمار صناعية فقط.
+   * المندوب جوّه عربية أو مبنى ⇒ القفلة الباردة بتاخد أكتر من ١٥ ثانية أو
+   * مابتجيش، فالطلب يفشل، الغلط يروح للـconsole، **والكود يرجّع نفس الفيكس
+   * القديم** ⇒ الواجهة مافيهاش أي تغيير. شكوى مندوب (٢٠٢٦/٠٨/٠٢): «الموقع مش
+   * متقري، بدوس تحديث ومفيش أي استجابة» — **وقال إن شبكته كويسة**، وهي بالظبط
+   * الدليل: الشبكة تمام وإحنا مش بنستعملها.
+   *
+   * المرحلتين:
+   *   ١. أقمار (دقة عالية، ١٥ث) — أدق حاجة لو متاحة.
+   *   ٢. **شبكة/واي-فاي** (دقة منخفضة، ٨ث) — أخشن بس بتشتغل جوّه المباني،
+   *      وأحسن بمراحل من «مافيش موقع».
+   * وبعدهم بس نرجع للفيكس القديم — **معلَّم `stale`** عشان الواجهة تقدر تقول
+   * للمندوب إن دي قراءة قديمة مش جديدة، بدل ما الزرار يبان كأنه بايظ.
+   */
   async pinCurrentLocation(): Promise<GpsCoords> {
-    // Native Android
+    const toCoords = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => ({
+      lat: p.coords.latitude,
+      lng: p.coords.longitude,
+      accuracy: p.coords.accuracy,
+      timestamp: p.timestamp,
+    });
+    let lastErr: unknown = null;
+
+    // Native Android — أقمار ثم شبكة.
     try {
       const { Capacitor } = await import("@capacitor/core");
       if (Capacitor.isNativePlatform()) {
         const { Geolocation } = await import("@capacitor/geolocation");
-        // «تحديث» = المندوب عايز موقعه الحالي بالظبط → اقرا فيكس جديد تماماً
-        // (maximumAge:0) عشان مايرجعش نفس الفيكس الغلط المخزّن.
-        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
-        const coords: GpsCoords = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          timestamp: pos.timestamp,
-        };
-        this.lastCoords = coords;
-        return coords;
+        for (const opts of [
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 0 },
+        ]) {
+          try {
+            const coords = toCoords(await Geolocation.getCurrentPosition(opts));
+            this.lastCoords = coords;
+            return coords;
+          } catch (e) { lastErr = e; }
+        }
+        // الاتنين فشلوا — الفيكس القديم أحسن من لا شيء، بس **معلَّم**.
+        if (this.lastCoords) return { ...this.lastCoords, stale: true };
+        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "GPS unavailable"));
       }
     } catch (e) {
-      console.warn("Capacitor getCurrentPosition failed:", e);
-      // Don't strand the caller — a fix from the running watch is good enough.
-      if (this.lastCoords) return this.lastCoords;
+      if (this.lastCoords) return { ...this.lastCoords, stale: true };
+      lastErr = e;
     }
 
-    // Web fallback
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        if (this.lastCoords) { resolve(this.lastCoords); return; }
-        reject(new Error("Geolocation not supported"));
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const coords: GpsCoords = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            timestamp: pos.timestamp,
-          };
-          this.lastCoords = coords;
-          resolve(coords);
-        },
-        (err) => {
-          // Fall back to the most recent watch fix rather than failing outright.
-          if (this.lastCoords) resolve(this.lastCoords);
-          else reject(new Error(err.message));
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    // Web — نفس المرحلتين.
+    if (!navigator.geolocation) {
+      if (this.lastCoords) return { ...this.lastCoords, stale: true };
+      throw new Error("Geolocation not supported");
+    }
+    const once = (opts: PositionOptions) =>
+      new Promise<GpsCoords>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve(toCoords(p)),
+          (err) => reject(new Error(err.message || `GPS error ${err.code}`)),
+          opts,
+        ),
       );
-    });
+    for (const opts of [
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 0 },
+    ]) {
+      try {
+        const coords = await once(opts);
+        this.lastCoords = coords;
+        return coords;
+      } catch (e) { lastErr = e; }
+    }
+    if (this.lastCoords) return { ...this.lastCoords, stale: true };
+    throw lastErr instanceof Error ? lastErr : new Error("GPS unavailable");
   }
 
   private notifyListeners(coords: GpsCoords | null) {
