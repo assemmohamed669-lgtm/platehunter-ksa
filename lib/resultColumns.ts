@@ -190,9 +190,10 @@ export function resolveMergedResultColumns(
   for (const src of sources) {
     for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
       if (src.kind === "referral") {
-        // «عنوان/تاريخ المحفظة» = بيانات البنك (مدينة/تاريخ سجلّه) مش موقع/تاريخ
-        // تفريغ المندوب — فمش مفيدين في النتيجة ومايظهروش (المفيد بتاع الداتا).
-        if (c.key === "address" || c.key === "date") continue;
+        // «عنوان/حي/تاريخ المحفظة» = بيانات سجلّ البنك (مدينة/منطقة/تاريخ
+        // التسجيل عنده) مش موقع ولا تاريخ تفريغ المندوب — فمالهمش لازمة في
+        // النتيجة ومايظهروش خالص. اسم الموقع بييجي من ملف الداتا بس.
+        if (c.key === "address" || c.key === "district" || c.key === "date") continue;
         const arr = refCols.get(c.key) ?? [];
         if (!arr.includes(c.sourceCol)) arr.push(c.sourceCol);
         refCols.set(c.key, arr);
@@ -218,7 +219,16 @@ export function resolveMergedResultColumns(
       idx++;
     }
   }
-  return out;
+
+  // بطلب المندوب: بعد رقم اللوحة على طول **نوع السيارة اللي في ملف الداتا**،
+  // وبعده على طول **اسم الموقع من الداتا** (العنوان و/أو الحي — لو الاتنين
+  // موجودين الاتنين يظهروا)، وبعدهم باقي الأعمدة. من غير التقديم ده كانت أعمدة
+  // المحفظة (زي «نوع السيارة (المحفظة)») بتتحشر بين النوع والحي.
+  const HEAD_KEYS = ["type", "address", "district"];
+  const head = out.filter((c) => c.source === "data" && HEAD_KEYS.includes(c.key));
+  if (head.length === 0) return out;
+  const headSet = new Set(head);
+  return [...head, ...out.filter((c) => !headSet.has(c))];
 }
 
 /**
