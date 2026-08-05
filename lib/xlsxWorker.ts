@@ -7,6 +7,7 @@
 import * as XLSX from "xlsx";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
+import { trimSheetToData } from "./xlsxRange";
 
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
@@ -71,10 +72,29 @@ function countPlatesInBestColumn(raw2d: any[][]): number {
   return count;
 }
 
-onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; forcedSheet?: string }>) {
-  const { buffer, password, forcedSheet } = e.data;
+onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; forcedSheet?: string; mode?: string }>) {
+  const { buffer, password, forcedSheet, mode } = e.data;
   try {
     const data = new Uint8Array(buffer);
+
+    // وضع «كل الورقات خام» — بيستخدمه تحليل شيتات الإحالة. بيتعمل هنا في الـ
+    // worker عشان قراءة محفظة كبيرة ما تجمّدش الشاشة على الموبايل.
+    if (mode === "rawSheets") {
+      const rawOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false };
+      (rawOpts as Record<string, unknown>).dense = true;
+      if (password) (rawOpts as Record<string, unknown>).password = password;
+      const rawWb = XLSX.read(data, rawOpts);
+      const sheets = rawWb.SheetNames.map((name) => {
+        const ws = rawWb.Sheets[name];
+        trimSheetToData(ws);
+        return {
+          name,
+          aoa: XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, raw: false, defval: "" }),
+        };
+      });
+      postMessage({ success: true, sheets });
+      return;
+    }
 
     // Pass 1: read sheet names only — no cell data parsed (very fast)
     let sheetName: string | undefined;
@@ -107,6 +127,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
           const wbScan = XLSX.read(data, scanOpts);
           const wsScan = wbScan.Sheets[name];
           if (!wsScan) continue;
+          trimSheetToData(wsScan);
           const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false, defval: null });
           if (scanRows.length < 2) continue;
           const count = countPlatesInBestColumn(scanRows);
@@ -127,6 +148,7 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
             const wbScan = XLSX.read(data, scanOpts);
             const wsScan = wbScan.Sheets[name];
             if (!wsScan) continue;
+            trimSheetToData(wsScan);
             const scanRows = XLSX.utils.sheet_to_json<any[]>(wsScan, { header: 1, raw: false });
             const hasPlate = scanRows.slice(0, 20).some((row: any[]) =>
               row.some((c: any) => {
@@ -160,6 +182,9 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     const wb = XLSX.read(data, opts);
     const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
+
+    // قصّ المدى الوهمي قبل التحويل لصفوف (شوف lib/xlsxRange.ts)
+    trimSheetToData(ws);
 
     // خلايا =HYPERLINK("url","خريطة") → قيمتها تبقى الرابط عشان يتعرض كـ«خريطة» لينك
     resolveHyperlinkCells(ws);

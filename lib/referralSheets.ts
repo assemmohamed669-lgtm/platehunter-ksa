@@ -67,14 +67,33 @@ function widthOf(aoa: unknown[][]): number {
  * عمود اللوحة = العمود اللي فيه أكبر عدد قيم شكلها لوحة. الاكتشاف بالمحتوى
  * (مش بالاسم) عشان يشتغل مع أي تسمية وحتى بدون هيدر.
  */
+/**
+ * فوق العدد ده بنختار العمود من عيّنة بدل الورقة كلها — عشان ورقة ضخمة
+ * (لو حد رفع ملف داتا بالغلط في مربع الإحالة) ما تعملش عدد × أعمدة عمليات
+ * على الـ main thread وتجمّد الصفحة. العدّ النهائي بيفضل على الورقة كلها،
+ * فالرقم اللي بيتعرض للمندوب دقيق. ملفات الإحالة العادية (آلاف قليلة) أقل
+ * من الحد ده، يعني سلوكها ما اتغيرش.
+ */
+const PLATE_COL_SCAN_LIMIT = 20_000;
+
 function findPlateColumn(aoa: unknown[][], width: number): { col: number; count: number } {
+  const scan = aoa.length > PLATE_COL_SCAN_LIMIT ? aoa.slice(0, PLATE_COL_SCAN_LIMIT) : aoa;
+
   let bestCol = -1;
   let bestCount = 0;
   for (let c = 0; c < width; c++) {
     let n = 0;
-    for (const r of aoa) if (isPlateLike(r?.[c])) n++;
+    for (const r of scan) if (isPlateLike(r?.[c])) n++;
     if (n > bestCount) { bestCount = n; bestCol = c; }
   }
+
+  // اتعيّن العمود من عيّنة → نعدّ العمود ده لوحده على الورقة كلها
+  if (bestCol >= 0 && scan !== aoa) {
+    let n = 0;
+    for (const r of aoa) if (isPlateLike(r?.[bestCol])) n++;
+    bestCount = n;
+  }
+
   return { col: bestCol, count: bestCount };
 }
 

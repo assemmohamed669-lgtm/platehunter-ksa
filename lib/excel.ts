@@ -10,6 +10,7 @@ import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
+import { trimSheetToData } from "./xlsxRange";
 import { gpsCellToLink } from "./gps";
 
 // روابط خرائط جوجل — بتتعرض في التصدير ككلمة «خريطة» بدل الرابط الطويل.
@@ -235,13 +236,63 @@ export async function readAllSheetsRaw(
   file: File
 ): Promise<{ name: string; aoa: unknown[][] }[]> {
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: false, cellStyles: false });
-  return wb.SheetNames.map((name) => ({
-    name,
-    aoa: XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], {
-      header: 1, raw: false, defval: "",
-    }),
-  }));
+
+  // الأول: الـ worker — القراءة تفضل بعيد عن الـ main thread فالشاشة ما تتجمّدش.
+  if (typeof Worker !== "undefined") {
+    try {
+      return await new Promise<{ name: string; aoa: unknown[][] }[]>((resolve, reject) => {
+        let worker: Worker;
+        try {
+          worker = new Worker(new URL("./xlsxWorker.ts", import.meta.url));
+        } catch {
+          reject(new Error("__WORKER_UNAVAILABLE__"));
+          return;
+        }
+        const timer = setTimeout(() => {
+          worker.terminate();
+          reject(new Error("__WORKER_UNAVAILABLE__"));
+        }, 120_000);
+        worker.onmessage = (ev: MessageEvent) => {
+          clearTimeout(timer);
+          worker.terminate();
+          const d = ev.data as { success: boolean; sheets?: { name: string; aoa: unknown[][] }[] };
+          if (d.success && d.sheets) resolve(d.sheets);
+          else reject(new Error("__WORKER_UNAVAILABLE__"));
+        };
+        worker.onerror = () => {
+          clearTimeout(timer);
+          worker.terminate();
+          reject(new Error("__WORKER_UNAVAILABLE__"));
+        };
+        worker.postMessage({ buffer: buf, mode: "rawSheets" });
+      });
+    } catch {
+      /* الـ worker مش متاح — نكمل على الـ main thread زي الأول */
+    }
+  }
+
+  return readAllSheetsRawSync(new Uint8Array(buf));
+}
+
+/**
+ * نفس المنطق على الـ main thread — احتياطي لو الـ worker مش متاح.
+ * dense + قصّ المدى الوهمي: محافظ زي «البنك العربي» بتسجّل !ref لغاية صف
+ * ٩٩٨ ألف وفيها ١٥٠٠ صف بس — من غير ده الصفحة بتتجمّد والتطبيق بيقفل.
+ */
+function readAllSheetsRawSync(data: Uint8Array): { name: string; aoa: unknown[][] }[] {
+  const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false };
+  (opts as Record<string, unknown>).dense = true;
+  const wb = XLSX.read(data, opts);
+  return wb.SheetNames.map((name) => {
+    const ws = wb.Sheets[name];
+    trimSheetToData(ws);
+    return {
+      name,
+      aoa: XLSX.utils.sheet_to_json<unknown[]>(ws, {
+        header: 1, raw: false, defval: "",
+      }),
+    };
+  });
 }
 
 export async function readAllSheets(
@@ -253,6 +304,7 @@ export async function readAllSheets(
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
     if (!ws) continue;
+    trimSheetToData(ws);
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { raw: false, defval: "" });
     if (!rows.length) continue;
     const headers = Object.keys(rows[0] ?? {});
@@ -282,6 +334,7 @@ function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
     if (!ws) return 0;
+    trimSheetToData(ws);
 
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
     if (raw2d.length < 2) return 0;
@@ -322,6 +375,7 @@ function _sheetHasPlateCol(data: Uint8Array, sheetName: string, password?: strin
     const wb = XLSX.read(data, opts);
     const ws = wb.Sheets[sheetName];
     if (!ws) return false;
+    trimSheetToData(ws);
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false });
     return rows.slice(0, 20).some((row) =>
       (row as unknown[]).some((c) => {
@@ -388,6 +442,9 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     const wb = XLSX.read(data, opts);
     const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
+
+    // قصّ المدى الوهمي قبل أي تحويل لصفوف (شوف lib/xlsxRange.ts)
+    trimSheetToData(ws);
 
     // خلايا =HYPERLINK("url","خريطة") → قيمتها تبقى الرابط عشان يتعرض كـ«خريطة» لينك
     resolveHyperlinkCells(ws);
