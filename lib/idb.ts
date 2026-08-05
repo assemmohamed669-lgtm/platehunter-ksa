@@ -371,6 +371,27 @@ export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void>
   });
 }
 
+/**
+ * حفظ **دفعة** سجلات في معاملة واحدة.
+ *
+ * الاسترجاع من السيرفر كان بينادي saveFieldCheckEntry لكل صف لوحده — يعني
+ * مندوب عنده ٦١١٠ سجل بيعمل ٦١١٠ معاملة IndexedDB متتالية، وده اللي كان
+ * بيخلّيه يستنى دقايق لحد ما سجلاته ترجع. معاملة واحدة للدفعة كلها أسرع
+ * بمراحل، خصوصاً على الموبايل.
+ */
+export async function saveFieldCheckEntries(entries: FieldCheckEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+    const store = tx.objectStore(FIELD_CHECK_STORE);
+    for (const e of entries) store.put(e);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
 /** All field-check entries, newest first. */
 /**
  * All field-check entries, newest first. Pass `agentId` to get only the

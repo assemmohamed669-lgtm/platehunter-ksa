@@ -6,7 +6,7 @@
  * no audio.
  */
 import { supabase } from "./supabaseClient";
-import { getAllFieldCheckEntries, getPendingFieldChecks, markFieldChecksSynced, saveFieldCheckEntry, type FieldCheckEntry } from "./idb";
+import { getAllFieldCheckEntries, getPendingFieldChecks, markFieldChecksSynced, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
 
 async function upsertFieldCheck(uid: string, e: FieldCheckEntry): Promise<string | null> {
   const { error } = await supabase.from("field_checks").upsert(
@@ -28,8 +28,12 @@ async function upsertFieldCheck(uid: string, e: FieldCheckEntry): Promise<string
 }
 
 async function requireSession(agentId: string): Promise<string | null> {
-  const { data } = await supabase.auth.getUser();
-  const uid = data.user?.id;
+  // **مهم:** getSession() بيقرا الجلسة **محلياً** بلا نداء شبكة. getUser() بيعمل
+  // نداء بيفشل «Failed to fetch» على شبكة الموبايل — وساعتها كان الاسترجاع
+  // بيرجع بلا أي صف والمندوب يفتح البرنامج يلاقي سجلاته فاضية. (نفس الدرس
+  // الموثّق في lib/trainingSync.ts).
+  const { data } = await supabase.auth.getSession();
+  const uid = data.session?.user?.id;
   if (!uid || uid !== agentId) return null;
   return uid;
 }
@@ -92,38 +96,84 @@ export async function pushPendingFieldChecks(
  * ‎4590 سجل يشوف ‎~1019). بنلف بالـ range لحد ما نجيب الكل.
  */
 export async function restoreFieldChecks(
-  agentId: string
+  agentId: string,
+  onProgress?: (done: number, total: number) => void
 ): Promise<{ restored: number; error?: string }> {
   const PAGE = 1000;
-  let from = 0;
-  let restored = 0;
-  for (;;) {
-    const { data, error } = await supabase
+  const CONCURRENCY = 4;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toEntry = (r: any): FieldCheckEntry => ({
+    id: r.local_id,
+    agentId,
+    plate: r.plate,
+    row: (r.extra as Record<string, string>) ?? {},
+    method: r.method ?? "",
+    lat: r.lat ?? undefined,
+    lng: r.lng ?? undefined,
+    mapsLink: r.maps_link ?? undefined,
+    checkedAt: r.checked_at,
+  });
+
+  const fetchPage = (from: number) =>
+    supabase
       .from("field_checks")
       .select("*")
       .eq("agent_id", agentId)
       .order("checked_at", { ascending: true }) // ترتيب ثابت عشان الصفحات ماتتداخلش
       .range(from, from + PAGE - 1);
-    if (error) return { restored, error: error.message };
 
-    const rows = data ?? [];
-    for (const r of rows) {
-      const entry: FieldCheckEntry = {
-        id: r.local_id,
-        agentId,
-        plate: r.plate,
-        row: (r.extra as Record<string, string>) ?? {},
-        method: r.method ?? "",
-        lat: r.lat ?? undefined,
-        lng: r.lng ?? undefined,
-        mapsLink: r.maps_link ?? undefined,
-        checkedAt: r.checked_at,
-      };
-      await saveFieldCheckEntry(entry);
-      restored++;
+  // العدد الكلي الأول — يخلّينا نجيب كل الصفحات **مع بعض** بدل واحدة ورا التانية،
+  // ويخلّينا نعرض تقدّم حقيقي للمندوب («٢٠٠٠ من ٦١١٠») بدل انتظار أعمى.
+  const { count, error: cErr } = await supabase
+    .from("field_checks")
+    .select("id", { count: "exact", head: true })
+    .eq("agent_id", agentId);
+
+  let restored = 0;
+
+  // فشل العدّ (أوفلاين/صلاحيات) → نرجع للطريقة المتتابعة، بس بكتابة بالجملة برضه.
+  if (cErr || count == null) {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await fetchPage(from);
+      if (error) return { restored, error: error.message };
+      const rows = data ?? [];
+      await saveFieldCheckEntries(rows.map(toEntry));
+      restored += rows.length;
+      onProgress?.(restored, restored);
+      if (rows.length < PAGE) break;
     }
-    if (rows.length < PAGE) break; // آخر دفعة
-    from += PAGE;
+    return { restored };
   }
-  return { restored };
+
+  const total = count;
+  onProgress?.(0, total);
+  if (total === 0) return { restored: 0 };
+
+  const offsets: number[] = [];
+  for (let from = 0; from < total; from += PAGE) offsets.push(from);
+
+  let firstError: string | undefined;
+  // مجموعات متوازية — أسرع بكتير من صفحة ورا صفحة على شبكة الموبايل، ومحدودة
+  // بـ٤ في المرة عشان ما نغرقش الشبكة ولا الذاكرة.
+  for (let i = 0; i < offsets.length; i += CONCURRENCY) {
+    const batch = offsets.slice(i, i + CONCURRENCY);
+    const pages = await Promise.all(batch.map((from) => fetchPage(from)));
+    const entries: FieldCheckEntry[] = [];
+    for (const p of pages) {
+      if (p.error) { if (!firstError) firstError = p.error.message; continue; }
+      for (const r of p.data ?? []) entries.push(toEntry(r));
+    }
+    // معاملة واحدة للمجموعة كلها. لو فشلت (مساحة الجهاز مثلاً) بنكمّل باقي
+    // المجموعات بدل ما الاسترجاع كله يقف — ومافيش سجل محلي بيتمسح في الحالتين.
+    try {
+      await saveFieldCheckEntries(entries);
+      restored += entries.length;
+    } catch (e) {
+      if (!firstError) firstError = e instanceof Error ? e.message : String(e);
+    }
+    onProgress?.(restored, total);
+  }
+
+  return firstError ? { restored, error: firstError } : { restored };
 }

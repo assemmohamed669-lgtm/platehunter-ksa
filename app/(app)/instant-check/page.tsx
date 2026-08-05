@@ -44,6 +44,7 @@ import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode } from "@/lib/vehicleType";
+import { PAGE_STEP, pageSlice, hasMore, growShown } from "@/lib/pagedRows";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -942,8 +943,47 @@ export default function InstantCheckPage() {
   const [platesEditorOpen, setPlatesEditorOpen] = useState(false);
   const [draftFieldEntries, setDraftFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [peSearch, setPeSearch] = useState("");            // بحث برقم اللوحة داخل المحرّر
+  // ── ترقيم الرسم ──────────────────────────────────────────────────────────
+  // بنرسم دفعة وبنزوّد مع التمرير. من غير كده مندوب عنده ٦٠٠٠ سجل بيرسم عشرات
+  // الآلاف من العناصر مرة واحدة وسفاري على الأيفون بيقتل الصفحة. العدّادات
+  // والبحث والتصدير والمشاركة بتفضل على **كل** الصفوف — الحد على الرسم بس.
+  const [fieldShown, setFieldShown] = useState(PAGE_STEP);   // جدول السجلات
+  const [peShown, setPeShown] = useState(PAGE_STEP);         // نافذة تعديل اللوحات
+  const [restoringChecks, setRestoringChecks] = useState(false);
+  const [restoreProgress, setRestoreProgress] = useState<{ done: number; total: number } | null>(null);
+  const fieldMoreRef = useRef<HTMLDivElement | null>(null);
+  const peMoreRef = useRef<HTMLDivElement | null>(null);
   // أول لوحة مطابقة — بنتنطّ عليها عشان تبان في وسط الشاشة مع اللي حواليها.
   const peFirstHitRef = useRef<HTMLTableRowElement | null>(null);
+
+  // مراقب التمرير: أول ما آخر الجدول يبان، نزوّد دفعة. كده المندوب بيوصل لكل
+  // سجلاته بالتمرير العادي من غير ما نرسمهم كلهم من الأول.
+  useEffect(() => {
+    const el = fieldMoreRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) setFieldShown((s) => s + PAGE_STEP);
+    }, { rootMargin: "400px" });
+    io.observe(el);
+    return () => io.disconnect();
+    // mode لازم يكون في القايمة — المستشعر موجود في تبويب «السجلات» بس، ومن
+    // غيره المراقب مايتركّبش لما المندوب يفتح التبويب.
+  }, [fieldShown, fieldEntries.length, fieldFilter, fieldSearch, mode]);
+
+  useEffect(() => {
+    const el = peMoreRef.current;
+    if (!el || !platesEditorOpen || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) setPeShown((s) => s + PAGE_STEP);
+    }, { rootMargin: "400px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [peShown, platesEditorOpen, peSearch, draftFieldEntries.length]);
+
+  // بحث أو فلتر جديد → نرجع لأول دفعة عشان النتيجة تبان من فوق
+  useEffect(() => { setFieldShown(PAGE_STEP); }, [fieldSearch, fieldFilter]);
+  useEffect(() => { setPeShown(PAGE_STEP); }, [peSearch]);
+
   useEffect(() => {
     if (!peSearch.trim()) return;
     const t = setTimeout(() => {
@@ -983,12 +1023,20 @@ export default function InstantCheckPage() {
   useEffect(() => {
     (async () => {
       let uid: string | undefined;
-      try { uid = (await supabase.auth.getUser()).data.user?.id; } catch { /* offline */ }
+      // getSession() = قراءة محلية بلا شبكة. getUser() كان بيعمل نداء بيفشل على
+      // شبكة الموبايل فالاسترجاع مايحصلش والمندوب يلاقي سجلاته فاضية.
+      try { uid = (await supabase.auth.getSession()).data.session?.user?.id; } catch { /* offline */ }
       agentIdRef.current = uid ?? null;
       setFieldEntries(await getAllFieldCheckEntries(uid).catch(() => []));
       if (!uid) return;
       try {
-        await restoreFieldChecks(uid);
+        setRestoringChecks(true);
+        // تقدّم حقيقي («٢٠٠٠ من ٦١١٠») + عرض أول دفعة فور وصولها بدل ما المندوب
+        // يفضل قدام شاشة فاضية لحد ما الكل يخلص.
+        await restoreFieldChecks(uid, (done, total) => {
+          setRestoreProgress({ done, total });
+          if (done > 0) void getAllFieldCheckEntries(uid).then(setFieldEntries).catch(() => {});
+        });
         pushPendingFieldChecks(uid).catch(() => {}); // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع
         setFieldEntries(await getAllFieldCheckEntries(uid));
         // سجلات الشاص: استرجاع من السيرفر + رفع المحلي (نفس فكرة اللوحات).
@@ -996,6 +1044,7 @@ export default function InstantCheckPage() {
         pushChassisRecords(uid).catch(() => {});
         setChassisRecords(getChassisRecords());
       } catch { /* offline / no session */ }
+      finally { setRestoringChecks(false); }
     })();
   }, []);
 
@@ -1168,9 +1217,22 @@ export default function InstantCheckPage() {
   const [chassisIndex, setChassisIndex] = useState<Map<string, Record<string, string>>>(new Map());
   const [chassisSheetFound, setChassisSheetFound] = useState(false);
   const [chassisColByRow, setChassisColByRow] = useState<Map<Record<string, string>, string>>(new Map());
+  // فهرس الشاص بيتبنى مرة واحدة لكل ملف، وأول ما المندوب يفتح تبويب «شاص» بس
+  const chassisBuiltForRef = useRef<unknown>(null);
+  const [chassisBuilding, setChassisBuilding] = useState(false);
 
   useEffect(() => {
+    // **مهم — سبب تجميد الصفحة عند الدخول:** بناء فهرس الشاص بيعمل تحليل كامل
+    // تاني لملف الإكسل (readAllSheets = XLSX.read على الـ main thread) وبيولّد
+    // نسخة تانية من كل صفوف الملف. مع ملف ٥٣ ألف صف ده ثواني شلل + طفرة ذاكرة
+    // كانت بتخلّي سفاري يقتل الصفحة — وكان بيحصل حتى لو المندوب عمره ما فتح
+    // «شاص». دلوقتي مابيتبنيش إلا لما يفتح التبويب فعلاً، ومرة واحدة لكل ملف.
+    if (mode !== "chassis") return;
+    const token = checkFile ?? checkTable;
+    if (!token || chassisBuiltForRef.current === token) return;
+
     let cancelled = false;
+    setChassisBuilding(true);
     (async () => {
       const combined = new Map<string, Record<string, string>>();
       const colMap = new Map<Record<string, string>, string>();
@@ -1189,10 +1251,16 @@ export default function InstantCheckPage() {
           for (const s of await readAllSheets(checkFile)) addSheet(s.headers, s.rows);
         } catch { /* blob غير قابل للقراءة — نكتفي بالورقة المحمّلة */ }
       }
-      if (!cancelled) { setChassisIndex(combined); setChassisSheetFound(found); setChassisColByRow(colMap); }
+      if (!cancelled) {
+        setChassisIndex(combined);
+        setChassisSheetFound(found);
+        setChassisColByRow(colMap);
+        chassisBuiltForRef.current = token;   // اتبنى لهذا الملف — مايتعادش
+      }
+      if (!cancelled) setChassisBuilding(false);
     })();
-    return () => { cancelled = true; };
-  }, [checkFile, checkTable]);
+    return () => { cancelled = true; setChassisBuilding(false); };
+  }, [checkFile, checkTable, mode]);
 
   // اللوحة المرتبطة برقم الشاص (من الصف المطابق) — عشان تظهر بارزة قدّام الشاص.
   function chassisPlate(row: Record<string, string>): string | null {
@@ -1724,6 +1792,7 @@ export default function InstantCheckPage() {
   function openPlatesEditor() {
     // نسخة عميقة من الصفوف (نسخ row كمان) عشان التعديل يفضل معزول لحد الحفظ.
     setDraftFieldEntries(fieldEntries.map((e) => ({ ...e, row: { ...e.row } })));
+    setPeShown(PAGE_STEP);   // نبدأ من أول دفعة كل مرة تتفتح النافذة
     // كل الأعمدة المتاحة تظهر افتراضياً، والبحث يبدأ فاضي.
     const dyn = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
     setPeCols(new Set(dyn));
@@ -3977,7 +4046,10 @@ export default function InstantCheckPage() {
               <input ref={chassisGalInputRef} type="file" accept="image/*" className="hidden" onChange={handleChassisCapture} />
 
               <p className="text-center text-xs text-muted">صوّر رقم الشاصي (VIN) أو ارفع صورة أو اكتبه — ويتشيّك على عمود الهيكل في كل ورقات ملف التشييك.</p>
-              {checkTable && !chassisSheetFound && (
+              {chassisBuilding && (
+                <p className="text-center text-xs font-bold text-primary animate-pulse">جاري تجهيز فهرس الشاص من ملف التشييك…</p>
+              )}
+              {checkTable && !chassisBuilding && !chassisSheetFound && (
                 <p className="text-center text-xs text-alert">⚠️ مفيش عمود شاصي/هيكل في ملف التشييك — هيقرا الرقم بس من غير تشييك.</p>
               )}
 
@@ -4804,7 +4876,18 @@ export default function InstantCheckPage() {
       )}
 
       {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
-      {mode === "sheet" && fieldEntries.length === 0 && chassisRecords.length === 0 && (
+      {/* لسه بنسترجع من السيرفر → مانقولش «مفيش تسجيلات» (المندوب كان بيفتكرها
+          ضاعت وهي لسه بتحمّل من حسابه). */}
+      {mode === "sheet" && restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
+        <div className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-8 text-center text-sm font-bold text-primary">
+          <span className="animate-pulse">
+            جاري استرجاع سجلاتك…
+            {restoreProgress && restoreProgress.total > 0 && ` ${restoreProgress.done} من ${restoreProgress.total}`}
+          </span>
+          <p className="mt-1 text-[11px] font-normal text-muted">سجلاتك محفوظة على حسابك وبترجع على أي جهاز تدخل منه</p>
+        </div>
+      )}
+      {mode === "sheet" && !restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
         <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
           لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
         </div>
@@ -4911,7 +4994,7 @@ export default function InstantCheckPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortNear(visible).map((e, i) => {
+                    {pageSlice(sortNear(visible), fieldShown).map((e, i) => {
                       const dup = dupeBg(e.plate);
                       const rowBg = dup || (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
                       return (
@@ -4961,6 +5044,18 @@ export default function InstantCheckPage() {
                     );})}
                   </tbody>
                 </table>
+                {/* مستشعر آخر الجدول — أول ما يبان بنزوّد دفعة تلقائياً */}
+                {hasMore(visible.length, fieldShown) && (
+                  <div ref={fieldMoreRef} className="flex flex-col items-center gap-1 py-3">
+                    <span className="text-[11px] text-muted">
+                      معروض {Math.min(fieldShown, visible.length)} من {visible.length}
+                    </span>
+                    <button onClick={() => setFieldShown((s) => growShown(visible.length, s))}
+                      className="rounded-lg border border-border bg-surface-2 px-3 py-1 text-xs font-bold text-primary transition hover:bg-surface">
+                      عرض المزيد
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -4994,11 +5089,16 @@ export default function InstantCheckPage() {
         const q = normalizePlate(bankPlateToArabic(peSearch.trim()));
         // البحث **مايخفيش** الباقي: القايمة بتفضل كاملة واللوحة المطابقة بتتعلّم
         // وبيتنطّ عليها — عشان المندوب يشوف اللي قبلها واللي بعدها في السياق.
-        const rows = draftFieldEntries;
         const matchIds = new Set(
           q ? draftFieldEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q)).map((e) => e.id) : []
         );
-        const firstMatchId = q ? draftFieldEntries.find((e) => matchIds.has(e.id))?.id : undefined;
+        const firstMatchIdx = q ? draftFieldEntries.findIndex((e) => matchIds.has(e.id)) : -1;
+        const firstMatchId = firstMatchIdx >= 0 ? draftFieldEntries[firstMatchIdx].id : undefined;
+        // بنرسم دفعة وبنزوّد مع التمرير — ٦٠٠٠ صف بخانات إدخال مرة واحدة كانت
+        // بتقتل الصفحة على الأيفون. البحث والحفظ بيشتغلوا على **الكل** زي ما هما،
+        // ولو أول لوحة مطابقة برّه الدفعة بنوسّع لحد ما توصلها عشان النطّ يشتغل.
+        const effShown = firstMatchIdx >= 0 ? Math.max(peShown, firstMatchIdx + 1) : peShown;
+        const rows = pageSlice(draftFieldEntries, effShown);
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
             <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
@@ -5083,6 +5183,18 @@ export default function InstantCheckPage() {
                       })}
                     </tbody>
                   </table>
+                )}
+                {/* مستشعر آخر القايمة — بيزوّد دفعة تلقائياً مع التمرير */}
+                {hasMore(draftFieldEntries.length, effShown) && (
+                  <div ref={peMoreRef} className="flex flex-col items-center gap-1 py-3">
+                    <span className="text-[11px] text-muted">
+                      معروض {Math.min(effShown, draftFieldEntries.length)} من {draftFieldEntries.length}
+                    </span>
+                    <button onClick={() => setPeShown((s) => growShown(draftFieldEntries.length, Math.max(s, effShown)))}
+                      className="rounded-lg border border-border bg-surface-2 px-3 py-1 text-xs font-bold text-primary transition hover:bg-surface">
+                      عرض المزيد
+                    </button>
+                  </div>
                 )}
               </div>
 
