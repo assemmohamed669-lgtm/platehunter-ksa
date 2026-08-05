@@ -46,10 +46,12 @@ function toExportRows(rows: WantedRow[]): Record<string, unknown>[] {
   const hasBank = rows.some((r) => r.bank && r.bank.trim());
   const hasDistrict = rows.some((r) => r.district && r.district.trim());
   return rows.map((r) => ({
-    "رقم اللوحة": r.plate, "نوع السيارة": r.type, "الماركة": r.brand,
-    ...(hasBank ? { "البنك": r.bank ?? "" } : {}),
+    // الترتيب: اللوحة › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
+    "رقم اللوحة": r.plate, "نوع السيارة": r.type,
     "العنوان": r.address,
     ...(hasDistrict ? { "الحي": r.district ?? "" } : {}),
+    "الماركة": r.brand,
+    ...(hasBank ? { "البنك": r.bank ?? "" } : {}),
     "GPS": r.mapsLink, "اللون": r.color,
     "سنة الصنع": r.year, "تاريخ التسجيل": r.date,
   }));
@@ -76,9 +78,9 @@ function dupeHexColors(rows: WantedRow[]): (string | null)[] {
 function toImageTable(rows: WantedRow[]): { columns: string[]; rows: string[][]; rowColors?: (string | null)[] } {
   const hasBank = rows.some((r) => r.bank && r.bank.trim());
   const hasDistrict = rows.some((r) => r.district && r.district.trim());
-  const columns = ["رقم اللوحة", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "العنوان", ...(hasDistrict ? ["الحي"] : []), "اللون", "سنة الصنع", "تاريخ التسجيل"];
+  const columns = ["رقم اللوحة", "نوع السيارة", "العنوان", ...(hasDistrict ? ["الحي"] : []), "الماركة", ...(hasBank ? ["البنك"] : []), "اللون", "سنة الصنع", "تاريخ التسجيل"];
   const tableRows = rows.map((r) => [
-    r.plate, r.type, r.brand, ...(hasBank ? [r.bank ?? ""] : []), r.address, ...(hasDistrict ? [r.district ?? ""] : []), r.color, r.year, r.date,
+    r.plate, r.type, r.address, ...(hasDistrict ? [r.district ?? ""] : []), r.brand, ...(hasBank ? [r.bank ?? ""] : []), r.color, r.year, r.date,
   ]);
   return { columns, rows: tableRows, rowColors: dupeHexColors(rows) };
 }

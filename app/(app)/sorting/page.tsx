@@ -339,10 +339,14 @@ export default function SortingPage() {
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
             keys.add("GPS");
             keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
+            keys.add("الحالة");    // طريقة التشييك (كاميرا/صوت/يدوي) — زي تصدير السجلات
             const headers = [...keys];
             const rows = fieldEntries.map((e) => ({
               "رقم اللوحة": e.plate,
               ...e.row,
+              // طريقة التشييك — متخزّنة في e.method مش جوه e.row، فلازم تتضاف
+              // هنا وإلا عمود «الحالة» يفضل فاضي في نتيجة فرز السجلات.
+              "الحالة": e.method || "",
               // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
               // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
               "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
@@ -566,6 +570,38 @@ export default function SortingPage() {
     return [...picked].filter((h) => !usedData.has(h))
       .map((col, i) => ({ id: `xdata-${i}`, key: `xdata-${col}`, label: col, source: "data" as const, sourceCol: col, sourceCols: [col] }));
   }, [dataTable, resultCols, effectiveDataPlateCol, outputCols, extraData, extraColsSel]);
+
+  // أعمدة نتيجة **السجلات** — نفس نظام أعمدة نتيجة الداتا بالظبط: الأعمدة
+  // الثابتة بالترتيب (نوع السيارة › العنوان › الحي › الماركة › GPS › اللون ›
+  // سنة الصنع › تاريخ التسجيل) مدموجة من مصدرين: شيت السجلات + شيتات الإحالة.
+  // قبل كده الأعمدة كانت بتتاخد من شيت السجلات **بس**، فبيانات السيارة اللي
+  // في المحفظة (النوع/الماركة/اللون/السنة) ماكانش ليها عمود يعرضها أصلاً حتى
+  // لو الصف موجود — فكانت النتيجة بتطلع لوحة وتاريخ وموقع وخلاص.
+  const tashyeekResultCols = useMemo<MergedResultColumn[]>(() => {
+    if (!tashyeekTable) return [];
+    const sources: ResultColumnSource[] = [
+      { kind: "data", headers: tashyeekTable.headers, rows: tashyeekTable.rows, plateCol: tashyeekPlateCol },
+    ];
+    if (referralTable) {
+      sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
+    }
+    for (const er of extraReferrals) {
+      if (!er.table) continue;
+      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectPlateColumn(er.table.headers, er.table.rows);
+      sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
+    }
+    const fixed = resolveMergedResultColumns(sources);
+    // أي عمود في شيت السجلات ما اتستخدمش في الأعمدة الثابتة (زي «الحالة») بيتلحق
+    // بعدها — عشان ما نفقدش أي بيانات كانت بتظهر قبل كده.
+    const used = new Set(fixed.filter((c) => c.source === "data").flatMap((c) => c.sourceCols));
+    const leftovers: MergedResultColumn[] = tashyeekTable.headers
+      .filter((h) => h && h !== tashyeekPlateCol && !used.has(h))
+      .map((col, i) => ({
+        id: `xtash-${i}`, key: `xtash-${col}`, label: col,
+        source: "data" as const, sourceCol: col, sourceCols: [col],
+      }));
+    return [...fixed, ...leftovers];
+  }, [tashyeekTable, tashyeekPlateCol, referralTable, effectiveReferralPlateCol, extraReferrals]);
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
   // (عرض + تصدير + واتساب).
@@ -1371,8 +1407,8 @@ export default function SortingPage() {
   }
 
   // يحلّ حقول المشاركة (صورة + إكسيل) لكل صف نتيجة، بالترتيب اللي طلبه المستخدم:
-  // المطلوب (اللوحة) › نوع السيارة (داتا) › الماركة (موديل الإحالة) › البنك (لو
-  // موجود في الإحالة) › الحي › العنوان › GPS › اللون (المحفظة) › الملاحظات (الداتا).
+  // المطلوب (اللوحة) › نوع السيارة (داتا) › العنوان › الحي › الماركة (موديل
+  // الإحالة) › البنك (لو موجود) › GPS › اللون (المحفظة) › الملاحظات (الداتا).
   function buildSortShareData() {
     const find = (key: string, source?: "data" | "referral") =>
       resultCols.find((c) => c.key === key && (source ? c.source === source : true));
@@ -1430,9 +1466,10 @@ export default function SortingPage() {
   // بلون واحد (نفس ألوان الإكسيل) عشان تتميّز.
   function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
     const { rowsData, hasBank, hasDate } = buildSortShareData();
-    const columns = ["المطلوب", "نوع السيارة", "الماركة", ...(hasBank ? ["البنك"] : []), "الحي", "العنوان", ...(hasDate ? ["تاريخ التسجيل"] : []), "اللون", "الملاحظات"];
+    // الترتيب: المطلوب › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
+    const columns = ["المطلوب", "نوع السيارة", "العنوان", "الحي", "الماركة", ...(hasBank ? ["البنك"] : []), ...(hasDate ? ["تاريخ التسجيل"] : []), "اللون", "الملاحظات"];
     const rows = rowsData.map((x) => [
-      x.plate, x.type, x.model, ...(hasBank ? [x.bank] : []), x.dist, x.addr, ...(hasDate ? [x.date] : []), x.color, x.notes,
+      x.plate, x.type, x.addr, x.dist, x.model, ...(hasBank ? [x.bank] : []), ...(hasDate ? [x.date] : []), x.color, x.notes,
     ]);
     const rowColors = displayResults.map((r) => {
       const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
@@ -1469,8 +1506,12 @@ export default function SortingPage() {
   function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
     const obj: Record<string, unknown> = { "رقم اللوحة": plate };
-    for (const h of tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol) ?? []) {
-      obj[h] = r.tashyeekRow[h] || r.referralRow[h] || "";
+    // نفس أعمدة العرض وبنفس الترتيب — عشان الواتساب والإكسيل والصورة يطلعوا
+    // زي اللي المندوب شايفه في النافذة بالظبط.
+    for (const c of tashyeekResultCols) {
+      obj[c.label] = c.source === "referral"
+        ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
+        : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
     }
     return obj;
   }
@@ -2243,8 +2284,8 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => (
-                      <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                    {tashyeekResultCols.map((c) => (
+                      <th key={c.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c.label}</th>
                     ))}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
@@ -2274,10 +2315,14 @@ export default function SortingPage() {
                           </div>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        {tashyeekTable?.headers.filter((h) => h !== tashyeekPlateCol).map((h) => {
-                          const val = r.tashyeekRow[h] || r.referralRow[h] || "";
+                        {tashyeekResultCols.map((c) => {
+                          // عمود من شيت السجلات → يتقرا من صف السجل؛ من المحفظة →
+                          // من صف الإحالة. وبنسيب الاحتياطي على المصدر التاني.
+                          const val = c.source === "referral"
+                            ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
+                            : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
                           return (
-                            <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                            <td key={c.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {
                                 const link = gpsCellToLink(String(val));
                                 return link

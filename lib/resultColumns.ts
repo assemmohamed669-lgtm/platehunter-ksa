@@ -77,16 +77,11 @@ export const RESULT_TARGETS: TargetColumn[] = [
       "model en", "variant", "original description"],
     content: looksLikeVehicleType,
   },
-  {
-    key: "brand", label: "الماركة",
-    // الماركة = الصانع بس (تويوتا/دودج/شيفورلية) — منفصلة عن الطراز فوق.
-    aliases: ["الماركة", "ماركة", "ماركه", "الماركه", "صانع المركبة", "صانع", "الصانع",
-      "الشركة", "شركة", "make", "manufacturer", "brand"],
-    content: looksLikeCarName,
-  },
+  // ── اسم الموقع بييجي بعد نوع السيارة على طول (بطلب المندوب) ──────────────
+  // الترتيب المطلوب في النتيجة: رقم اللوحة › نوع السيارة › اسم الموقع › الباقي.
   {
     key: "address", label: "العنوان",
-    // العنوان/الشارع بس — «الحي» بقى هدف منفصل تحت عشان العنوان والحي يظهروا
+    // العنوان/الشارع بس — «الحي» هدف منفصل تحت عشان العنوان والحي يظهروا
     // الاتنين كعمودين مستقلين، مش عمود واحد ياخد أول مطابقة ويرمي التاني.
     aliases: ["العنوان", "عنوان", "الشارع", "شارع", "address", "street"],
     content: looksLikeDistrict,
@@ -96,6 +91,13 @@ export const RESULT_TARGETS: TargetColumn[] = [
     aliases: ["الحي", "حي", "الحى", "حى", "المنطقة", "منطقة", "المدينة", "مدينة",
       "district", "area", "neighborhood", "neighbourhood", "city", "region"],
     content: looksLikeDistrict,
+  },
+  {
+    key: "brand", label: "الماركة",
+    // الماركة = الصانع بس (تويوتا/دودج/شيفورلية) — منفصلة عن الطراز فوق.
+    aliases: ["الماركة", "ماركة", "ماركه", "الماركه", "صانع المركبة", "صانع", "الصانع",
+      "الشركة", "شركة", "make", "manufacturer", "brand"],
+    content: looksLikeCarName,
   },
   {
     key: "gps", label: "GPS",

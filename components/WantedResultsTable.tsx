@@ -42,11 +42,12 @@ const DUP_COLORS = [
 
 function rowText(r: WantedRow): string {
   const lines = [`🚗 ${r.plate}`];
+  // الترتيب: اللوحة › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
   if (r.type) lines.push(`نوع السيارة: ${r.type}`);
-  if (r.brand) lines.push(`الماركة: ${r.brand}`);
-  if (r.bank) lines.push(`البنك: ${r.bank}`);
   if (r.address) lines.push(`العنوان: ${r.address}`);
   if (r.district) lines.push(`الحي: ${r.district}`);
+  if (r.brand) lines.push(`الماركة: ${r.brand}`);
+  if (r.bank) lines.push(`البنك: ${r.bank}`);
   if (r.color) lines.push(`اللون: ${r.color}`);
   if (r.year) lines.push(`سنة الصنع: ${r.year}`);
   if (r.date) lines.push(`تاريخ التسجيل: ${r.date}`);
@@ -152,10 +153,10 @@ export default function WantedResultsTable({
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
               <th className={TH}>نوع السيارة</th>
-              <th className={TH}>الماركة</th>
-              {showBank && <th className={TH}>البنك</th>}
               <th className={TH}>العنوان</th>
               {showDistrict && <th className={TH}>الحي</th>}
+              <th className={TH}>الماركة</th>
+              {showBank && <th className={TH}>البنك</th>}
               <th className={TH}>GPS</th>
               <th className={TH}>اللون</th>
               <th className={TH}>سنة الصنع</th>
@@ -190,10 +191,10 @@ export default function WantedResultsTable({
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
                   <td className={TD}>{r.type || "—"}</td>
-                  <td className={TD}>{r.brand || "—"}</td>
-                  {showBank && <td className={TD}>{r.bank || "—"}</td>}
                   <td className={TD}>{r.address || "—"}</td>
                   {showDistrict && <td className={TD}>{r.district || "—"}</td>}
+                  <td className={TD}>{r.brand || "—"}</td>
+                  {showBank && <td className={TD}>{r.bank || "—"}</td>}
                   <td className="border-l border-border px-3 py-2">
                     {r.mapsLink ? (
                       <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
