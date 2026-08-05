@@ -1555,7 +1555,10 @@ export default function RegistrationPage() {
       setDebugRaw(sessionTranscriptRef.current);
     }
 
-    const res = parseSessionChunk(text, sessionStateRef.current, { final });
+    // reverseCarry: يلمّ اللوحة المعكوسة (أرقام قبل حروف من Deepgram) عبر
+    // الرسائل. مُفعَّل في التسجيل فقط — التشييك (مسار المناديب) لسه مطفّي عنده
+    // لحد ما نتأكد من التعديل هنا (صفحة التسجيل مقفولة على المالك).
+    const res = parseSessionChunk(text, sessionStateRef.current, { final, reverseCarry: true });
     sessionStateRef.current = res.state;
     sessionEventsRef.current.push(...res.events);
 

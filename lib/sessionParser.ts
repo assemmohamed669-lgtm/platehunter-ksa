@@ -34,6 +34,12 @@ export interface SessionState {
   currentNote: string;
   /** ذيل نصي مرحَّل من chunk سابق (لوحة/عبارة ناقصة على الحدود). */
   carryText: string;
+  /**
+   * أرقام لوحة **معكوسة** (Deepgram بعت الأرقام قبل الحروف) بتنتظر حروفها في
+   * الرسالة الجاية. متخزّنة منفصلة عن `carryText` عشان تتحط **بعد** الحروف مش
+   * قبلها — اللوحة السعودية حروف ثم أرقام دايماً. فاضية = مفيش أرقام معلّقة.
+   */
+  carryDigits: string;
   /** عدّاد تسلسلي للأحداث والسجلات عبر الجلسة كلها. */
   seq: number;
 }
@@ -78,7 +84,7 @@ export interface SessionRecord {
 }
 
 export function newSessionState(): SessionState {
-  return { currentNote: "", carryText: "", seq: 0 };
+  return { currentNote: "", carryText: "", carryDigits: "", seq: 0 };
 }
 
 // إعادة إصدار ذرّة كنص يعيد تطبيعه لنفس الذرّة في الـ chunk الجاي.
@@ -175,25 +181,36 @@ function splitCarryAtoms(atoms: PlateAtom[]): { head: PlateAtom[]; carry: string
 /**
  * يحلّل chunk نص (من التفريغ) في سياق الجلسة الجارية.
  * final=true (وقفة التسجيل / batch): مفيش ترحيل — كل حاجة بتتفرّغ.
+ *
+ * `reverseCarry` (افتراضي **مطفّي**): يفعّل ترحيل اللوحة **المعكوسة** (أرقام
+ * قبل حروف) عبر الرسائل. مطفّي في صفحة التشييك (المناديب) عن قصد — عشان
+ * التعديل يتجرّب في صفحة التسجيل الأول (مقفولة على المالك) قبل ما يمسّ مسار
+ * المناديب. تعديل «آمن» على المحلّل بوّظ التشييك قبل كده، فالعزل ده مقصود.
  */
 export function parseSessionChunk(
   text: string,
   state: SessionState,
-  opts?: { final?: boolean }
+  opts?: { final?: boolean; reverseCarry?: boolean }
 ): { records: SessionRecord[]; events: SessionEvent[]; state: SessionState } {
   const final = !!opts?.final;
+  const reverseCarry = !!opts?.reverseCarry;
   // مادة مرحَّلة من رسالة سابقة؟ لازم تتقرا **قبل** ما نبني `combined` — أول لوحة
   // بتخرج هي الوحيدة اللي تقدر تكون مبنية عليها (شوف `SessionRecord.fromCarry`).
   const hadCarry = state.carryText.trim().length > 0;
-  const combined = `${state.carryText} ${text}`.trim();
+  // أرقام لوحة معكوسة من رسالة سابقة بتتحط **بعد** نص الرسالة دي (اللي المفروض
+  // فيه الحروف) — عشان الترتيب يرجع طبيعي: حروف ثم أرقام.
+  const revDigits = state.carryDigits?.trim() ?? "";
+  const withRev = revDigits ? `${text} ${revDigits}`.trim() : text;
+  const combined = `${state.carryText} ${withRev}`.trim();
   const records: SessionRecord[] = [];
   const events: SessionEvent[] = [];
   let seq = state.seq;
   let currentNote = state.currentNote;
   let carryText = "";
+  let carryDigits = "";
 
   if (!combined) {
-    return { records, events, state: { currentNote, carryText, seq } };
+    return { records, events, state: { currentNote, carryText, carryDigits, seq } };
   }
 
   const { parts, pendingTail } = splitByNotePhrases(combined, { holdPending: !final });
@@ -266,6 +283,26 @@ export function parseSessionChunk(
     // جزء متبوع بملاحظة (أو آخر جزء في chunk غير نهائي): افصل الذيل الناقص —
     // يترحّل عبر الملاحظة (pendingLetters) أو عبر حدود الـ chunk (carryText).
     const atoms = plateAtoms(effective);
+
+    // ── لوحة **معكوسة** من Deepgram: أرقام لوحدها في رسالة، وحروفها في اللي بعدها.
+    //   المندوب قال اللوحة صح (حروف ثم أرقام) — المحرك هو اللي عكس الرسالتين.
+    //   مرصود في جلسة المالك ٢٠٢٦/٠٨/٠٢: "9999" ثم "قف نون نون" ⇒ كان 9999 ناقصة
+    //   والحروف تضيع. splitCarryAtoms مابيرحّلش الأرقام **الكاملة** (٤ خانات) لأنه
+    //   بيتوقّعها لوحة مكتملة — فالحالة دي بتفلت منه.
+    //   الشرط **صارم** لمنع خلط لوحتين متتاليتين: نرحّل بس لو الجزء **كله** أرقام
+    //   (٤ خانات بالظبط) **بلا أي حرف خالص**، وفي **رسالة غير نهائية**. لوحة كاملة
+    //   (حروف + أرقام) مالهاش أي حرف من ده — فمستحيل نرحّل أرقام لوحة مكتملة.
+    const allDigitsNoLetters = reverseCarry
+      && atoms.length > 0
+      && atoms.every((a) => a.t === "D")
+      && atoms.length === 4;
+    if (allDigitsNoLetters && isLastPart && !final) {
+      // رحّل الأرقام في خانة منفصلة (`carryDigits`) عشان الرسالة الجاية تحطها
+      // **بعد** حروفها مش قبلها. ماتطلّعش لوحة دلوقتي.
+      carryDigits = atomsToCarryText(atoms);
+      continue;
+    }
+
     const { head, carry } = splitCarryAtoms(atoms);
     let plates = platesFromAtoms(head);
     let carryOut = carry;
@@ -310,5 +347,5 @@ export function parseSessionChunk(
     carryText = [carryText, pendingTail].filter(Boolean).join(" ");
   }
 
-  return { records, events, state: { currentNote, carryText, seq } };
+  return { records, events, state: { currentNote, carryText, carryDigits, seq } };
 }
