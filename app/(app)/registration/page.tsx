@@ -34,7 +34,7 @@ import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { useRouter } from "next/navigation";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
-import { getVoiceEngine, getSpeechmaticsKey, getElevenlabsKey, getGroqKey } from "@/lib/voiceKeys";
+import { getVoiceEngine, getSpeechmaticsKey, setSpeechmaticsKey, getElevenlabsKey, getGroqKey, getRegistrationEngine, setRegistrationEngine, type RegistrationEngine } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -467,6 +467,11 @@ export default function RegistrationPage() {
   // فيه مفتاح صوت محفوظ (Deepgram/Speechmatics/ElevenLabs)؟ (عشان التسجيل يشتغل حتى من غير Groq).
   const [hasDgKey, setHasDgKey] = useState(false);
   const [hasSmKey, setHasSmKey] = useState(false);
+  // ── معمل اختبار المحرك (صفحة التسجيل فقط، مستقل عن التشييك) ──────────────────
+  // اختيار المالك بين Deepgram و Speechmatics + خانة مفتاح Speechmatics. الاختيار
+  // بيتخزّن في ph:registration:engine (منفصل عن getVoiceEngine بتاع التشييك).
+  const [regChoiceEngine, setRegChoiceEngine] = useState<RegistrationEngine>("deepgram");
+  const [smKeyInput, setSmKeyInput] = useState<string>("");
 
   // Transcript captured from the last recording session, held until the user
   // presses "احفظ وصدّر الإكسيل" to extract + save plates from it.
@@ -715,6 +720,8 @@ export default function RegistrationPage() {
 
     // فيه مفتاح صوت؟ لو آه، التسجيل يشتغل حتى من غير مفتاح Groq.
     try { setHasDgKey(getDeepgramKey().trim() !== ""); setHasSmKey(getSpeechmaticsKey().trim() !== ""); } catch { /* ignore */ }
+    // اختيار محرك المعمل + مفتاح Speechmatics المحفوظ (صفحة التسجيل فقط).
+    try { setRegChoiceEngine(getRegistrationEngine()); setSmKeyInput(getSpeechmaticsKey()); } catch { /* ignore */ }
 
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
@@ -1039,23 +1046,11 @@ export default function RegistrationPage() {
     lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
     const selectedEngine = getVoiceEngine();
-    // ── التسجيل الصوتي = «سجّل ثم حلّل» (batch) بمفتاح Groq — دقيق وثابت (زي فيديو
-    // المنافس). قرار المستخدم: **مفتاح Groq بيربط تلقائياً بالتسجيل** (مستقل عن المحرك
-    // العام — التشييك الصوتي بياخد Deepgram اللحظي بمفتاحه). فطول ما فيه مفتاح Groq
-    // نستخدمه للتسجيل؛ ElevenLabs يفضل بس لو مختار صراحةً. التقطيع اللحظي اتشال
-    // (تجربة ميدانية أثبتت إنه هش بيلخبط الحروف على حدود المقاطع).
-    if (groqApiKey.trim() || selectedEngine === "elevenlabs") {
-      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
-      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
-      if (!groqApiKey.trim()) { setRecordingError("المحرك ده محتاج مفتاح Groq — حطّه من القائمة ← «مفتاح Groq»."); return; }
-      const engineLabel = selectedEngine === "elevenlabs" ? "elevenlabs" : "groq";
-      const ok = await startRawRecording(engineLabel);
-      if (ok) return;
-      // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
-    }
-
-    // ── Speechmatics (لو هو المحرك المختار) — نفس مسار الحفظ الحدثي.
-    if (getVoiceEngine() === "speechmatics" && getSpeechmaticsKey()) {
+    // ── معمل الاختبار (المالك فقط): محرك التسجيل مستقل تماماً عن التشييك — بيتخزّن
+    // في مفتاح منفصل (ph:registration:engine). لو المالك مختار Speechmatics صراحةً
+    // نشغّله **الأول** قبل أي مسار تاني (Groq batch/Deepgram) عشان يختبره على صوته.
+    const regChoice = getRegistrationEngine();
+    if (regChoice === "speechmatics" && getSpeechmaticsKey()) {
       if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
       if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
       sessionStateRef.current = newSessionState();
@@ -1083,6 +1078,24 @@ export default function RegistrationPage() {
       // فشل البدء → نظّف ونكمّل بالمسارات التانية.
       smActiveRef.current = false; isRecordingRef.current = false; setIsRecording(false); setRegEngine(null);
     }
+
+    // ── التسجيل الصوتي = «سجّل ثم حلّل» (batch) بمفتاح Groq — دقيق وثابت (زي فيديو
+    // المنافس). قرار المستخدم: **مفتاح Groq بيربط تلقائياً بالتسجيل** (مستقل عن المحرك
+    // العام — التشييك الصوتي بياخد Deepgram اللحظي بمفتاحه). فطول ما فيه مفتاح Groq
+    // نستخدمه للتسجيل؛ ElevenLabs يفضل بس لو مختار صراحةً. التقطيع اللحظي اتشال
+    // (تجربة ميدانية أثبتت إنه هش بيلخبط الحروف على حدود المقاطع).
+    // ملاحظة: لو المالك مختار Speechmatics فوق، مابنوصلش هنا (المسار رجع بالفعل).
+    if (groqApiKey.trim() || selectedEngine === "elevenlabs") {
+      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
+      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
+      if (!groqApiKey.trim()) { setRecordingError("المحرك ده محتاج مفتاح Groq — حطّه من القائمة ← «مفتاح Groq»."); return; }
+      const engineLabel = selectedEngine === "elevenlabs" ? "elevenlabs" : "groq";
+      const ok = await startRawRecording(engineLabel);
+      if (ok) return;
+      // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
+    }
+
+    // (مسار Speechmatics اتنقل لفوق — بيتحكم فيه محرك التسجيل المنفصل regChoice.)
 
     // ── Deepgram (الأولوية) — تفريغ لحظي مستمر أدق بالمصري، بيحفظ اللوحات
     // (لوحة/نوع/ملاحظة) فوراً أثناء الكلام عبر applySessionText. نفس مفتاح
@@ -2210,6 +2223,13 @@ export default function RegistrationPage() {
     await deleteRecording(localId);
     if (agentId) loadRecordings(agentId);
   }
+  // مسح جماعي: يمسح كل السجلات **بالتوازي** ويعيد تحميل القائمة **مرة واحدة** في
+  // الآخر — بدل ما كل واحدة تتمسح وتعيد رسم القائمة كلها (كان بيتمسحوا واحدة
+  // واحدة قدام المندوب ببطء).
+  async function handleDeleteMany(localIds: string[]) {
+    await Promise.all(localIds.map((id) => deleteRecording(id).catch(() => {})));
+    if (agentId) loadRecordings(agentId);
+  }
 
   async function handleSync() {
     if (!agentId || !isOnline) return;
@@ -2809,6 +2829,49 @@ export default function RegistrationPage() {
               </p>
             </div>
 
+            {/* 🧪 معمل المحرك (صفحة التسجيل فقط — مستقل تماماً عن التشييك) —
+                يختار المالك محرك التفريغ اللحظي لتجربته على صوته. الاختيار بيتخزّن
+                في مفتاح منفصل (ph:registration:engine) فالتشييك مايتأثرش خالص. */}
+            <div className="flex w-full max-w-xs flex-col items-center gap-2 rounded-xl border border-alert/30 bg-alert/5 p-2.5" dir="rtl">
+              <span className="text-[11px] font-bold text-alert">🧪 محرك التفريغ (تجريبي — التسجيل فقط)</span>
+              <div className="flex w-full gap-1 rounded-xl border border-border bg-surface-2 p-1">
+                <button type="button"
+                  onClick={() => { setRegChoiceEngine("deepgram"); setRegistrationEngine("deepgram"); }}
+                  disabled={isRecording}
+                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${regChoiceEngine === "deepgram" ? "bg-primary text-night" : "text-muted"}`}>
+                  Deepgram
+                </button>
+                <button type="button"
+                  onClick={() => { setRegChoiceEngine("speechmatics"); setRegistrationEngine("speechmatics"); }}
+                  disabled={isRecording}
+                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${regChoiceEngine === "speechmatics" ? "bg-primary text-night" : "text-muted"}`}>
+                  Speechmatics
+                </button>
+              </div>
+              {regChoiceEngine === "speechmatics" && (
+                <div className="flex w-full flex-col gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="password"
+                      value={smKeyInput}
+                      onChange={(e) => setSmKeyInput(e.target.value)}
+                      placeholder="مفتاح Speechmatics"
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-ink placeholder:text-muted focus:outline-none focus:border-primary"
+                      dir="ltr"
+                    />
+                    <button type="button"
+                      onClick={() => { const k = smKeyInput.trim(); setSpeechmaticsKey(k); setSmKeyInput(k); setHasSmKey(k !== ""); }}
+                      className="shrink-0 rounded-lg bg-brand px-3 py-2 text-xs font-bold text-night transition active:scale-95">
+                      حفظ
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted">
+                    {hasSmKey ? "✅ المفتاح محفوظ — جاهز للتجربة" : "محتاج مفتاح مجاني من portal.speechmatics.com"}
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
             <div className="flex w-full max-w-xs flex-col items-center gap-1">
               <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2" dir="rtl">
@@ -3048,7 +3111,7 @@ export default function RegistrationPage() {
               <button
                 onClick={async () => {
                   if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${voiceRecs.length} نتيجة؟ مش هترجع تاني.`)) return;
-                  for (const r of voiceRecs) await handleDelete(r.localId);
+                  await handleDeleteMany(voiceRecs.map((r) => r.localId));
                 }}
                 className="flex items-center justify-center gap-2 rounded-xl border border-danger bg-danger/10 py-2.5 text-sm font-bold text-danger transition active:scale-95 hover:bg-danger/20">
                 <Trash2 size={15} /> مسح الكل

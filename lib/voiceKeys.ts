@@ -104,6 +104,25 @@ export function applyServiceKeys(sk: unknown): void {
   setDeepgramEnabled(n.engine === "deepgram"); // Deepgram شغّال بس لو هو المختار (حصري)
 }
 
+// ── محرك التسجيل (صفحة /registration فقط — معزول تماماً عن التشييك) ──────────
+// صفحة التسجيل «معمل اختبار» للمالك يجرّب محركات بديلة (Speechmatics) من غير ما
+// يلمس التشييك (المناديب). التشييك بيقرا getVoiceEngine() المشترك؛ فبنخزّن اختيار
+// التسجيل في مفتاح **منفصل تماماً**: لا التشييك بيقراه، ولا applyServiceKeys
+// (اللي بيتنده كل تحميل من البروفايل ويكتب على المشترك) بيلمسه.
+export const LS_REGISTRATION_ENGINE = "ph:registration:engine";
+export type RegistrationEngine = "deepgram" | "speechmatics";
+
+export function getRegistrationEngine(): RegistrationEngine {
+  if (typeof window === "undefined") return "deepgram";
+  try {
+    const v = window.localStorage.getItem(LS_REGISTRATION_ENGINE);
+    return v === "speechmatics" ? "speechmatics" : "deepgram";
+  } catch { return "deepgram"; }
+}
+export function setRegistrationEngine(e: RegistrationEngine): void {
+  try { window.localStorage.setItem(LS_REGISTRATION_ENGINE, e); } catch { /* storage unavailable */ }
+}
+
 /** المفتاح النشط للمحرك المختار. */
 export function getActiveVoiceKey(): { engine: VoiceEngine; key: string } {
   const engine = getVoiceEngine();
