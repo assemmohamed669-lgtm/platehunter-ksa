@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, tokenizePastedPlates, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, detectPlateColumn, collectReferralEntries, normalizeReferralPlate, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { bankPlateToArabic, normalizePlate, similarityPercent, levenshtein, matchDataAgainstReferral, matchTokensAgainstRows, tokenizePastedPlates, parsePlateFromTranscript, extractMultiplePlates, plateContentScore, pickBestHypothesis, diffLetterCorrections, recordLetterCorrections, applyLetterConfusions, serializeLetterConfusions, deserializeLetterConfusions, recordWordBlend, applyWordBlend, serializeWordBlend, deserializeWordBlend, detectPlateColumn, collectReferralEntries, normalizeReferralPlate, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 
 describe("detectPlateColumn — لا يخلط عمود اللوحة بعمود تصنيفات قصيرة (R8)", () => {
   // ملف إحالة حقيقي: عمود Risk Grading قيمه «R8» (حرف + رقم واحد) كان بيتحسب
@@ -65,6 +65,45 @@ describe("plateNeedsReview — علامة اللوحة المكسورة الشك
   });
   it("متسامحة مع 1-2 حرف و 3 أرقام (ماتعلّمش غلط)", () => {
     expect(plateNeedsReview("اب123")).toBe(false);
+  });
+});
+
+describe("isValidManualPlate — صيغة اللوحة في التشييك اليدوي", () => {
+  it("سيارة: 3 حروف + 4 أرقام → سليمة", () => {
+    expect(isValidManualPlate("ق ن ص 1234")).toBe(true);
+    expect(isValidManualPlate("ابح1234")).toBe(true);
+  });
+  it("موتوسيكل: حرفين + 4 أرقام → سليمة", () => {
+    expect(isValidManualPlate("ا ب 1234")).toBe(true);
+    expect(isValidManualPlate("اب1234")).toBe(true);
+  });
+  it("أرقام معكوسة (أرقام قبل حروف) بنفس العدد → سليمة", () => {
+    expect(isValidManualPlate("1234 ق ن ص")).toBe(true);
+  });
+  it("حروف إنجليزية بنكية تتحول وتُقبل", () => {
+    expect(isValidManualPlate("NKD 5678")).toBe(true); // 3 حروف + 4 أرقام
+  });
+  it("حرف واحد + 4 أرقام → غير سليمة", () => {
+    expect(isValidManualPlate("ا 1234")).toBe(false);
+  });
+  it("4 حروف + 4 أرقام → غير سليمة", () => {
+    expect(isValidManualPlate("ابحد1234")).toBe(false);
+  });
+  it("3 حروف + 3 أرقام → غير سليمة", () => {
+    expect(isValidManualPlate("ابح123")).toBe(false);
+  });
+  it("3 حروف + 5 أرقام → غير سليمة", () => {
+    expect(isValidManualPlate("ابح12345")).toBe(false);
+  });
+  it("أرقام بس → غير سليمة", () => {
+    expect(isValidManualPlate("1234")).toBe(false);
+  });
+  it("حروف بس → غير سليمة", () => {
+    expect(isValidManualPlate("ابح")).toBe(false);
+  });
+  it("فاضية → غير سليمة", () => {
+    expect(isValidManualPlate("")).toBe(false);
+    expect(isValidManualPlate("   ")).toBe(false);
   });
 });
 

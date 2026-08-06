@@ -2270,6 +2270,21 @@ export function plateNeedsReview(normalized: string): boolean {
 }
 
 /**
+ * صيغة اللوحة المقبولة في التشييك اليدوي: بعد التطبيع لازم تكون إما
+ * 3 حروف + 4 أرقام (سيارة) أو حرفين + 4 أرقام (موتوسيكل). أي شكل تاني مرفوض.
+ * بتقبل الإدخال بفراغات، حروف إنجليزية بنكية، وأرقام معكوسة (normalizePlate بيرتّبها).
+ */
+export function isValidManualPlate(raw: string): boolean {
+  // bankPlateToArabic (لا normalizePlate) — عشان ماينفعش نعتمد على تصفير/إعادة
+  // ترتيب normalizePlate اللي بيخلّي 3 أرقام تبان 4. بنعدّ الأرقام الخام زي ما اتكتبت.
+  const s = bankPlateToArabic(raw.trim()).replace(/ـ/g, ""); // شيل التطويل (H→هـ)
+  if (!s) return false;
+  const digits = (s.match(/[0-9٠-٩]/g) || []).length;
+  const letters = s.replace(/[0-9٠-٩]/g, "").length;
+  return (letters === 2 || letters === 3) && digits === 4;
+}
+
+/**
  * يدمج عدة شيتات إحالة في قائمة واحدة مطبّعة ومزالة التكرار (أول ظهور يكسب).
  * الخلايا الفارغة تُتخطى. الترتيب يحافظ على ترتيب الشيتات ثم الصفوف.
  */
