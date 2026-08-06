@@ -24,23 +24,46 @@ export interface SpeechmaticsHandle {
   stop: () => Promise<void>;
 }
 
+/** محتوى أول بديل في نتيجة/توكن Speechmatics. */
+function smContent(r: any): string {
+  const c = r?.alternatives?.[0]?.content;
+  return typeof c === "string" ? c : "";
+}
+
 /**
  * يستخرج نص الجملة من رسالة AddTranscript/AddPartialTranscript.
- * مهم: في بروتوكول Speechmatics v2 النص موجود في **metadata.transcript**،
- * مش في جذر الرسالة. (الباجّ القديم كان بيقرا msg.transcript = undefined دايماً
- * → المسجّل يشتغل بس مفيش لوحات بتطلع.) fallback: بناء من results.
+ *
+ * الأهم (إصلاح عكس الأرقام): Speechmatics بيحوّل الأرقام المنطوقة لصيغة رقمية
+ * منسّقة (ITN)، وفي العربي (RTL) بيعكس ترتيبها — المندوب يقول ٢٥٧٨ فتطلع "87 5 2".
+ * لكن مع enable_entities كل رقم بيرجع كـ entity فيه **spoken_form** = الكلمات زي
+ * ما اتقالت بالترتيب الصح. فبنبني النص من الكلمات المنطوقة بدل الصيغة الرقمية:
+ *   • الترتيب يرجع صح (مفيش عكس)،
+ *   • والأرقام المركّبة («ثلاث ستات») تفضل كلمات فالقاموس بتاعنا يحوّلها.
+ *
+ * نبني من results أولاً (مع spoken_form للـentities)؛ لو مفيش results نرجع لـ
+ * metadata.transcript. (ملاحظة v2: النص في metadata.transcript مش في جذر الرسالة.)
  * دالة نقية — قابلة للاختبار.
  */
 export function speechmaticsTranscript(msg: any): string {
+  if (Array.isArray(msg?.results)) {
+    const parts: string[] = [];
+    for (const r of msg.results) {
+      // رقم منسّق (entity): استخدم الكلمات المنطوقة بدل الصيغة الرقمية المعكوسة.
+      if (r?.type === "entity" && Array.isArray(r.spoken_form) && r.spoken_form.length) {
+        for (const sf of r.spoken_form) {
+          const c = smContent(sf);
+          if (c) parts.push(c);
+        }
+      } else {
+        const c = smContent(r);
+        if (c) parts.push(c);
+      }
+    }
+    const joined = parts.join(" ").replace(/\s+/g, " ").trim();
+    if (joined) return joined;
+  }
   const t = msg?.metadata?.transcript ?? msg?.transcript;
   if (typeof t === "string" && t.trim()) return t.trim();
-  if (Array.isArray(msg?.results)) {
-    return msg.results
-      .map((r: any) => r?.alternatives?.[0]?.content ?? "")
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
   return "";
 }
 
@@ -118,6 +141,10 @@ export async function startSpeechmatics(
         max_delay_mode: "flexible",
         // إيقاف الترقيم — النقط بتفتّت النص وتزوّد حدود النتائج النهائية بلا داعي.
         punctuation_overrides: { permitted_marks: [] },
+        // تفعيل الـentities — عشان الأرقام ترجع بصيغة النطق (spoken_form) مش الصيغة
+        // الرقمية المنسّقة اللي بتتعكس في العربي. speechmaticsTranscript بيستخدم
+        // الكلمات المنطوقة → الترتيب صح + القاموس بتاعنا يشتغل على الأرقام المركّبة.
+        enable_entities: true,
       },
     }));
   };
