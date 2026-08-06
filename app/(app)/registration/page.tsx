@@ -56,7 +56,7 @@ import {
   type RecordingEntry,
   type FieldCheckEntry,
 } from "@/lib/idb";
-import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, bankPlateToArabic, detectPlateColumn, pickBestHypothesis, applyLetterConfusions, recordLetterCorrections, serializeLetterConfusions, deserializeLetterConfusions, applyWordBlend, recordWordBlend, serializeWordBlend, deserializeWordBlend, mergeCountMaps, diffLetterCorrections, buildWantedIndex, anchorPlateToWanted, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { fetchSharedCorrections, pushCorrection, flushPendingCorrections } from "@/lib/plateCorrectionsSync";
 import { type StructuredRow } from "@/lib/structuredPlates";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
@@ -90,6 +90,28 @@ const GROQ_CHUNK_MS = 90_000;
 // حارس Deepgram: لو عدّت المدة دي والمندوب بيتكلم ومفيش أي نص وصل → أعِد البث.
 // (نفس قيمة التشييك الصوتي بالضبط.)
 const DG_SILENT_MS = 20000;
+
+// تنبيه صوتي قصير للوحة شكلها غلط (مش ٣ حروف+٤ أرقام) وقت الحفظ الحي — نبرة واطية
+// (٣٢٠هرتز) مميّزة عن تنبيه «المطلوب»، عشان المندوب ياخد باله ويعيد قولها.
+function playShapeAlert() {
+  try {
+    const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext });
+    const Ctor = AC.AudioContext || AC.webkitAudioContext;
+    if (!Ctor) return;
+    const ctx = new Ctor();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.value = 320;
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.36);
+    o.onended = () => { try { void ctx.close(); } catch { /* ignore */ } };
+  } catch { /* الصوت غير متاح — نتجاهل */ }
+}
 
 interface GroqChunkResult {
   text: string;
@@ -1549,6 +1571,7 @@ export default function RegistrationPage() {
     const liveAgentId = agentIdRef.current;
     const liveDistrict = manualDistrictRef.current.trim();
     const savedIds: string[] = [];
+    let sawBadShape = false; // لوحة شكلها غلط اتحفظت في الدفعة دي → تنبيه صوتي مرة واحدة
     for (const r of res.records) {
       // نفس تصحيح التعلّم المستخدم في مسار «فرّغ واحفظ»
       let working = r.plate;
@@ -1584,8 +1607,11 @@ export default function RegistrationPage() {
       await saveRecording(entry);
       savedIds.push(localId);
       sessionSavedCountRef.current++;
+      if (!isValidManualPlate(corrected)) sawBadShape = true;
       checkPlateMatch(corrected, entry);
     }
+    // تنبيه صوتي مرة واحدة لو أي لوحة في الدفعة شكلها غلط — المندوب يراجعها فوراً.
+    if (sawBadShape) playShapeAlert();
 
     if (savedIds.length && coords) {
       reverseGeocode(coords.lat, coords.lng)

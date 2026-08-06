@@ -21,7 +21,7 @@ import {
   Navigation,
 } from "lucide-react";
 import type { RecordingEntry } from "@/lib/idb";
-import { findDuplicates, normalizePlate } from "@/lib/plateParser";
+import { findDuplicates, normalizePlate, isValidManualPlate } from "@/lib/plateParser";
 import { haversineKm, gpsService } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import PlateImagesButton from "@/components/PlateImagesButton";
@@ -281,6 +281,9 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                 const isMatched = !!(checkPlates?.has(normPlate));
                 const isSelected = selected.has(entry.localId);
                 const isPin = entry.plate.startsWith("📍");
+                // شكل غلط = مش (٣ حروف سيارة / حرفين موتوسيكل) + ٤ أرقام. علامة بارزة
+                // «راجع الشكل» عشان المندوب يشوفها بسرعة ويصلّحها (الكلام السريع بيكتّرها).
+                const badShape = !isPin && !isValidManualPlate(entry.plate);
                 return (
                   <tr
                     key={entry.localId}
@@ -367,11 +370,15 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                             ? <CheckCircle2 size={10} className="text-primary shrink-0" />
                             : <Clock size={10} className="text-muted shrink-0" />
                           }
-                          <span className={`font-bold ${isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
+                          <span className={`font-bold ${badShape ? "text-danger" : isMatched ? "text-brand" : isDup ? "text-alert" : isPin ? "text-primary" : "text-ink"}`}>
                             {entry.plate}
                           </span>
                           {onUpdatePlate && !isPin && <Pencil size={10} className="text-muted shrink-0" />}
-                          {entry.uncertain && (
+                          {badShape ? (
+                            <span title="الشكل مش ٣ حروف + ٤ أرقام — أعد قولها أو صلّحها" className="flex items-center gap-0.5 rounded-full bg-danger/20 px-1.5 py-0.5 text-[9px] font-bold text-danger leading-none">
+                              <AlertTriangle size={10} className="text-danger" /> راجع الشكل
+                            </span>
+                          ) : entry.uncertain && (
                             <span title="الاستخراج مش متأكد منه — يستاهل نظرة" className="flex items-center rounded-full bg-alert/20 px-1 py-0.5 leading-none">
                               <AlertTriangle size={10} className="text-alert" />
                             </span>
