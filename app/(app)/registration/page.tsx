@@ -34,8 +34,8 @@ import OpenDownloadButton from "@/components/OpenDownloadButton";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { useRouter } from "next/navigation";
 import { getActiveDeepgramKey, getDeepgramKey, PLATE_LETTER_KEYTERMS } from "@/lib/deepgramKey";
-import { getVoiceEngine, getSpeechmaticsKey, setSpeechmaticsKey, getElevenlabsKey, getGroqKey, getRegistrationEngine, setRegistrationEngine, type RegistrationEngine } from "@/lib/voiceKeys";
-import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
+import { getVoiceEngine, getSpeechmaticsKey, getElevenlabsKey, getGroqKey } from "@/lib/voiceKeys";
+import { type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { parseSessionChunk, newSessionState, type SessionState, type SessionEvent } from "@/lib/sessionParser";
@@ -87,6 +87,9 @@ const LS_PACER = "ph:registration:pacer";
 // فيزيائية ~100-300ms كل دورة (كلام فيها مش بيتسجّل أصلاً والترحيل مايقدرش
 // يصلّح صوت ماتسجّلش) — فمابننزلش عن 90ث عشان مانضاعفش عدد الفجوات.
 const GROQ_CHUNK_MS = 90_000;
+// حارس Deepgram: لو عدّت المدة دي والمندوب بيتكلم ومفيش أي نص وصل → أعِد البث.
+// (نفس قيمة التشييك الصوتي بالضبط.)
+const DG_SILENT_MS = 20000;
 
 interface GroqChunkResult {
   text: string;
@@ -467,11 +470,6 @@ export default function RegistrationPage() {
   // فيه مفتاح صوت محفوظ (Deepgram/Speechmatics/ElevenLabs)؟ (عشان التسجيل يشتغل حتى من غير Groq).
   const [hasDgKey, setHasDgKey] = useState(false);
   const [hasSmKey, setHasSmKey] = useState(false);
-  // ── معمل اختبار المحرك (صفحة التسجيل فقط، مستقل عن التشييك) ──────────────────
-  // اختيار المالك بين Deepgram و Speechmatics + خانة مفتاح Speechmatics. الاختيار
-  // بيتخزّن في ph:registration:engine (منفصل عن getVoiceEngine بتاع التشييك).
-  const [regChoiceEngine, setRegChoiceEngine] = useState<RegistrationEngine>("deepgram");
-  const [smKeyInput, setSmKeyInput] = useState<string>("");
 
   // Transcript captured from the last recording session, held until the user
   // presses "احفظ وصدّر الإكسيل" to extract + save plates from it.
@@ -646,6 +644,12 @@ export default function RegistrationPage() {
   const lastSessionAudioRef = useRef<{ base64: string; mimeType: string } | null>(null);
   const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dgMicPollRef = useRef<ReturnType<typeof setInterval> | null>(null); // تحديث مؤشّر "بيسمع"
+  // ── موثوقية Deepgram (منقولة من التشييك الصوتي حرفياً) ────────────────────────
+  // حارس ضد «التفريغ علّق» + إعادة اتصال تلقائي لو السوكِت قفل والمندوب لسه بيسجّل.
+  const dgLastTextAtRef = useRef<number>(0);
+  const dgWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dgAutoRestartsRef = useRef(0);   // إعادة تشغيل بسبب علّق (محدودة)
+  const dgReconnectsRef = useRef(0);     // إعادة اتصال بسبب قفل مفاجئ (محدودة)
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
   const smActiveRef = useRef(false); // الجلسة الحالية بتستخدم Speechmatics؟
   // مسار «تسجيل ثم تحليل» للمحركات اللي مش لحظية (ElevenLabs / Groq Whisper):
@@ -720,8 +724,6 @@ export default function RegistrationPage() {
 
     // فيه مفتاح صوت؟ لو آه، التسجيل يشتغل حتى من غير مفتاح Groq.
     try { setHasDgKey(getDeepgramKey().trim() !== ""); setHasSmKey(getSpeechmaticsKey().trim() !== ""); } catch { /* ignore */ }
-    // اختيار محرك المعمل + مفتاح Speechmatics المحفوظ (صفحة التسجيل فقط).
-    try { setRegChoiceEngine(getRegistrationEngine()); setSmKeyInput(getSpeechmaticsKey()); } catch { /* ignore */ }
 
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
@@ -1046,45 +1048,11 @@ export default function RegistrationPage() {
     lastSessionAudioRef.current = null; // صوت جلسة جديدة — امسح القديم عشان «تحليل ذكي» مايستخدمش صوت قديم
 
     const selectedEngine = getVoiceEngine();
-    // ── معمل الاختبار (المالك فقط): محرك التسجيل مستقل تماماً عن التشييك — بيتخزّن
-    // في مفتاح منفصل (ph:registration:engine). لو المالك مختار Speechmatics صراحةً
-    // نشغّله **الأول** قبل أي مسار تاني (Groq batch/Deepgram) عشان يختبره على صوته.
-    const regChoice = getRegistrationEngine();
-    if (regChoice === "speechmatics" && getSpeechmaticsKey()) {
-      if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
-      if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
-      sessionStateRef.current = newSessionState();
-      sessionQueueRef.current = Promise.resolve();
-      sessionCoordsRef.current = [gpsService.getLastCoords()];
-      sessionChunkIndexRef.current = 0;
-      sessionIdRef.current = uid();
-      sessionStartedAtRef.current = new Date().toISOString();
-      sessionTranscriptRef.current = "";
-      sessionEventsRef.current = [];
-      sessionSavedCountRef.current = 0;
-      sessionFailedChunksRef.current = 0;
-      smActiveRef.current = true;
-      isRecordingRef.current = true;
-      setIsRecording(true);
-      gpsAtRecordRef.current = gpsService.getLastCoords();
-      setDebugStatus("✅ STARTED (Speechmatics)");
-      setRegEngine("speechmatics");
-      const h = await startSpeechmatics(getSpeechmaticsKey(), {
-        onPartial: (t) => { setLiveTranscript(t); setDebugRaw(t); },
-        onFinal: (t) => enqueueDeepgramText(t),
-        onError: (m) => setRecordingError(m),
-      });
-      if (h) { smHandleRef.current = h; return; }
-      // فشل البدء → نظّف ونكمّل بالمسارات التانية.
-      smActiveRef.current = false; isRecordingRef.current = false; setIsRecording(false); setRegEngine(null);
-    }
-
     // ── التسجيل الصوتي = «سجّل ثم حلّل» (batch) بمفتاح Groq — دقيق وثابت (زي فيديو
     // المنافس). قرار المستخدم: **مفتاح Groq بيربط تلقائياً بالتسجيل** (مستقل عن المحرك
     // العام — التشييك الصوتي بياخد Deepgram اللحظي بمفتاحه). فطول ما فيه مفتاح Groq
     // نستخدمه للتسجيل؛ ElevenLabs يفضل بس لو مختار صراحةً. التقطيع اللحظي اتشال
     // (تجربة ميدانية أثبتت إنه هش بيلخبط الحروف على حدود المقاطع).
-    // ملاحظة: لو المالك مختار Speechmatics فوق، مابنوصلش هنا (المسار رجع بالفعل).
     if (groqApiKey.trim() || selectedEngine === "elevenlabs") {
       if (stoppingRef.current) { setRecordingError("لحظة — التسجيل السابق لسه بيتحفظ. جرّب تاني بعد ثانية."); return; }
       if (!agentIdRef.current) { setRecordingError("سجّل دخول الأول عشان اللوحات تتحفظ على حسابك."); return; }
@@ -1094,8 +1062,6 @@ export default function RegistrationPage() {
       if (ok) return;
       // لو فشل البدء → نكمّل بالمسارات التانية كـ fallback.
     }
-
-    // (مسار Speechmatics اتنقل لفوق — بيتحكم فيه محرك التسجيل المنفصل regChoice.)
 
     // ── Deepgram (الأولوية) — تفريغ لحظي مستمر أدق بالمصري، بيحفظ اللوحات
     // (لوحة/نوع/ملاحظة) فوراً أثناء الكلام عبر applySessionText. نفس مفتاح
@@ -1414,11 +1380,14 @@ export default function RegistrationPage() {
 
     // ── Deepgram: أوقف البث، استنى آخر النتايج، اعمل flush نهائي واحفظ ──
     if (dgActiveRef.current) {
-      dgActiveRef.current = false;
+      dgActiveRef.current = false; // قبل قفل السوكِت → onclose مايعيدش الاتصال
+      dgAutoRestartsRef.current = 0;
+      dgReconnectsRef.current = 0;
       setIsTranscribing(true);
       try {
         if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
         if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
+        if (dgWatchdogRef.current) { clearInterval(dgWatchdogRef.current); dgWatchdogRef.current = null; }
         try { dgGateRef.current?.close(); } catch { /* closed */ }
         dgGateRef.current = null;
         try { dgRecorderRef.current?.stop(); } catch { /* already stopped */ }
@@ -1886,7 +1855,9 @@ export default function RegistrationPage() {
   // ── Deepgram: بث صوت لحظي (WebSocket) بموديل nova-3 لهجة مصرية مع تعزيز
   // حروف اللوحة — بيحفظ اللوحات (لوحة/نوع/ملاحظة) فوراً عبر applySessionText
   // (زي مسار Groq). يرجّع true لو بدأ بنجاح. ──
-  async function startDeepgramRecording(apiKey: string): Promise<boolean> {
+  // isReconnect=true: السوكِت قفل فجأة والمندوب لسه بيسجّل → نعيد الاتصال **بدون**
+  // ما نصفّر الجلسة (نحافظ على carry-over + العدّادات + صوت «التحليل الذكي»).
+  async function startDeepgramRecording(apiKey: string, isReconnect = false): Promise<boolean> {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       return false;
     }
@@ -1901,16 +1872,20 @@ export default function RegistrationPage() {
       try { dgGateRef.current = createSpeechGate(stream); } catch { dgGateRef.current = null; }
 
       // تهيئة جلسة التحليل الحدثي (نفس مسار Groq) — سياق جديد، طابور فاضي.
-      sessionStateRef.current = newSessionState();
-      sessionQueueRef.current = Promise.resolve();
-      sessionCoordsRef.current = [gpsService.getLastCoords()];
-      sessionChunkIndexRef.current = 0;
-      sessionIdRef.current = uid();
-      sessionStartedAtRef.current = new Date().toISOString();
-      sessionTranscriptRef.current = "";
-      sessionEventsRef.current = [];
-      sessionSavedCountRef.current = 0;
-      sessionFailedChunksRef.current = 0;
+      // عند **إعادة الاتصال** بنتخطّاها عشان نحافظ على اللوحة اللي في carry-over
+      // والعدّادات والصوت المجمّع (وإلا كل قطع اتصال يبدأ «جلسة» جديدة وسط التسجيل).
+      if (!isReconnect) {
+        sessionStateRef.current = newSessionState();
+        sessionQueueRef.current = Promise.resolve();
+        sessionCoordsRef.current = [gpsService.getLastCoords()];
+        sessionChunkIndexRef.current = 0;
+        sessionIdRef.current = uid();
+        sessionStartedAtRef.current = new Date().toISOString();
+        sessionTranscriptRef.current = "";
+        sessionEventsRef.current = [];
+        sessionSavedCountRef.current = 0;
+        sessionFailedChunksRef.current = 0;
+      }
 
       const params = new URLSearchParams({
         model: "nova-3",
@@ -1919,7 +1894,14 @@ export default function RegistrationPage() {
         smart_format: "false",
         punctuate: "false",
         numerals: "true",        // يرجّع الأرقام رقمياً (1234) بدل كلمات — أدق وأنضف للّوحات
-        endpointing: "300",      // يستنى وقفة 300ms قبل ما يقفل الجملة — يمنع قطع اللوحة نصّين
+        // endpointing أقصر (100ms بدل 300) — منقول من التشييك: لما المندوب يقول
+        // اللوحات بسرعة ورا بعض، Deepgram بيقفل كل لوحة في مقطع أقصر لوحدها بدل ما
+        // يلزقهم (اللزق كان بيخليه يخلط/يرمي أرقام). لو لوحة اتقطعت نصّين الـ
+        // carry-over في sessionParser بيلحمها تاني.
+        endpointing: "100",
+        // نهاية النطق: Deepgram يبعت UtteranceEnd بعد ١ث سكوت فعلي → نفرّغ أي لوحة
+        // متعلّقة في carry-over فوراً (تطلع كاملة في وقتها) بدل ما تستنى الكلام اللي بعدها.
+        utterance_end_ms: "1000",
       });
       for (const t of PLATE_LETTER_KEYTERMS) params.append("keyterm", t);
       // المتصفح مايقدرش يبعت هيدر Authorization على WebSocket — Deepgram بيدعم
@@ -1928,18 +1910,20 @@ export default function RegistrationPage() {
       dgSocketRef.current = ws;
       dgActiveRef.current = true;
       isRecordingRef.current = true;
-      setIsRecording(true);
-      gpsAtRecordRef.current = gpsService.getLastCoords();
-      setDebugStatus("✅ STARTED (Deepgram)");
-      setRegEngine("deepgram");
+      if (!isReconnect) {
+        setIsRecording(true);
+        gpsAtRecordRef.current = gpsService.getLastCoords();
+        setDebugStatus("✅ STARTED (Deepgram)");
+        setRegEngine("deepgram");
+      }
 
       // ابدأ التسجيل فوراً (قبل ما الاتصال يفتح) عشان مانفقدش أول حرف أثناء فتح
       // الاتصال. الأجزاء قبل الفتح تتخزّن وتتبعت بالترتيب. تيار WebM مترابط
       // فمنعش نرمي أجزاء.
       const rec = new MediaRecorder(stream, { mimeType: mime });
       dgRecorderRef.current = rec;
-      dgChunksRef.current = [];             // نجمّع الصوت كامل عشان «تحليل ذكي» يعيد تفريغه بدقة
-      lastSessionAudioRef.current = null;
+      // عند إعادة الاتصال بنحافظ على الصوت المجمّع (للتحليل الذكي) — منصفّرش.
+      if (!isReconnect) { dgChunksRef.current = []; lastSessionAudioRef.current = null; }
       const pending: Blob[] = [];
       rec.ondataavailable = (e) => {
         if (e.data.size === 0) return;
@@ -1966,6 +1950,7 @@ export default function RegistrationPage() {
 
       ws.onopen = () => {
         if (!isRecordingRef.current) { try { ws.close(); } catch { /* closed */ } try { rec.stop(); } catch { /* stopped */ } return; }
+        dgReconnectsRef.current = 0; // اتصال ناجح → صفّر عدّاد إعادة الاتصال
         while (pending.length && ws.readyState === WebSocket.OPEN) { try { ws.send(pending.shift()!); } catch { /* closed */ } }
         // KeepAlive عشان Deepgram مايقفلش الاتصال في فترات الصمت.
         dgKeepAliveRef.current = setInterval(() => {
@@ -1980,18 +1965,64 @@ export default function RegistrationPage() {
           setRegMicActive(dgGateRef.current ? dgGateRef.current.isSpeaking() : true);
           setRegLevel(dgGateRef.current ? dgGateRef.current.level() : 0);
         }, 150);
+        // الحارس (منقول من التشييك): لو عدّى DG_SILENT_MS والمندوب بيتكلم ومفيش أي
+        // نص وصل → أعِد تشغيل البث (محدود بـ3 مرات عشان مايعملش لوب).
+        dgLastTextAtRef.current = performance.now();
+        dgWatchdogRef.current = setInterval(() => {
+          if (!dgActiveRef.current) return;
+          const speaking = dgGateRef.current ? dgGateRef.current.isSpeaking() : true;
+          const silentFor = performance.now() - dgLastTextAtRef.current;
+          if (!speaking || silentFor < DG_SILENT_MS) return;
+          if (dgAutoRestartsRef.current >= 3) {
+            setRecordingError("التفريغ مش راجع — أوقف المايك وشغّله تاني.");
+            return;
+          }
+          dgAutoRestartsRef.current += 1;
+          dgLastTextAtRef.current = performance.now();
+          try { dgSocketRef.current?.close(); } catch { /* closed */ } // onclose بيعيد الاتصال
+        }, 5000);
       };
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
+          // نهاية النطق (سكتة المندوب): فرّغ أي لوحة متعلّقة في carry-over فوراً
+          // → تطلع كاملة في وقتها بدل ما تستنى الكلام اللي بعدها (زي التشييك).
+          if (msg.type === "UtteranceEnd") {
+            sessionQueueRef.current = sessionQueueRef.current.then(async () => {
+              try { await applySessionText("", gpsService.getLastCoords(), null, true); }
+              catch { /* تجاهل — flush */ }
+            });
+            return;
+          }
           const text: string = msg?.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
           if (!text) return;
+          dgLastTextAtRef.current = performance.now(); // القناة سليمة — صفّر الحارس
+          dgAutoRestartsRef.current = 0;
           setLiveTranscript(text);
           setDebugRaw(text);
           if (msg.is_final) enqueueDeepgramText(text);
         } catch { /* رسالة مش JSON — تجاهل */ }
       };
       ws.onerror = () => setRecordingError("خطأ في الاتصال بـ Deepgram — راجع المفتاح والإنترنت.");
+      // لو الاتصال قفل فجأة والمندوب لسه بيسجّل → أعِد الاتصال تلقائياً (محدود بـ5).
+      // منقول من التشييك. العدّاد بيتصفّر مع كل اتصال ناجح (في onopen).
+      ws.onclose = () => {
+        if (dgKeepAliveRef.current) { clearInterval(dgKeepAliveRef.current); dgKeepAliveRef.current = null; }
+        if (dgMicPollRef.current) { clearInterval(dgMicPollRef.current); dgMicPollRef.current = null; }
+        if (dgWatchdogRef.current) { clearInterval(dgWatchdogRef.current); dgWatchdogRef.current = null; }
+        if (!dgActiveRef.current) return; // المندوب أوقف بنفسه — مفيش إعادة اتصال
+        // نضّف التيار/المسجّل/البوابة القديمة قبل بداية واحدة جديدة (منعاً للتسريب).
+        try { rec.stop(); } catch { /* stopped */ }
+        try { stream.getTracks().forEach((t) => t.stop()); } catch { /* stopped */ }
+        try { dgGateRef.current?.close(); } catch { /* closed */ }
+        dgGateRef.current = null;
+        if (dgReconnectsRef.current < 5) {
+          dgReconnectsRef.current += 1;
+          setTimeout(() => { if (dgActiveRef.current) void startDeepgramRecording(apiKey, true); }, 1200);
+        } else {
+          setRecordingError("انقطع الاتصال بـ Deepgram كذا مرة — أوقف المايك وشغّله تاني.");
+        }
+      };
       return true;
     } catch (err) {
       dgActiveRef.current = false;
@@ -2827,49 +2858,6 @@ export default function RegistrationPage() {
               <p className="text-center text-[10px] text-muted" dir="rtl">
                 {analysisMode === "live" ? "يفرّغ وإنت بتتكلم ويحفظ فوراً" : "سجّل بس — التحليل الذكي هيشتغل تلقائي بعد ما توقف"}
               </p>
-            </div>
-
-            {/* 🧪 معمل المحرك (صفحة التسجيل فقط — مستقل تماماً عن التشييك) —
-                يختار المالك محرك التفريغ اللحظي لتجربته على صوته. الاختيار بيتخزّن
-                في مفتاح منفصل (ph:registration:engine) فالتشييك مايتأثرش خالص. */}
-            <div className="flex w-full max-w-xs flex-col items-center gap-2 rounded-xl border border-alert/30 bg-alert/5 p-2.5" dir="rtl">
-              <span className="text-[11px] font-bold text-alert">🧪 محرك التفريغ (تجريبي — التسجيل فقط)</span>
-              <div className="flex w-full gap-1 rounded-xl border border-border bg-surface-2 p-1">
-                <button type="button"
-                  onClick={() => { setRegChoiceEngine("deepgram"); setRegistrationEngine("deepgram"); }}
-                  disabled={isRecording}
-                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${regChoiceEngine === "deepgram" ? "bg-primary text-night" : "text-muted"}`}>
-                  Deepgram
-                </button>
-                <button type="button"
-                  onClick={() => { setRegChoiceEngine("speechmatics"); setRegistrationEngine("speechmatics"); }}
-                  disabled={isRecording}
-                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${regChoiceEngine === "speechmatics" ? "bg-primary text-night" : "text-muted"}`}>
-                  Speechmatics
-                </button>
-              </div>
-              {regChoiceEngine === "speechmatics" && (
-                <div className="flex w-full flex-col gap-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="password"
-                      value={smKeyInput}
-                      onChange={(e) => setSmKeyInput(e.target.value)}
-                      placeholder="مفتاح Speechmatics"
-                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-ink placeholder:text-muted focus:outline-none focus:border-primary"
-                      dir="ltr"
-                    />
-                    <button type="button"
-                      onClick={() => { const k = smKeyInput.trim(); setSpeechmaticsKey(k); setSmKeyInput(k); setHasSmKey(k !== ""); }}
-                      className="shrink-0 rounded-lg bg-brand px-3 py-2 text-xs font-bold text-night transition active:scale-95">
-                      حفظ
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-muted">
-                    {hasSmKey ? "✅ المفتاح محفوظ — جاهز للتجربة" : "محتاج مفتاح مجاني من portal.speechmatics.com"}
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
