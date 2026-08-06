@@ -2316,6 +2316,20 @@ export function similarityPercent(a: string, b: string): number {
   return Math.round((1 - dist / maxLen) * 100);
 }
 
+/**
+ * لوحة سعودية بالشكل القياسي؟ **٣ حروف + ٤ أرقام** بعد التطبيع (normalizePlate).
+ *
+ * ضرورية قبل أي مطابقة تقريبية: similarityPercent بتقرّب جوّاها، وفرق خانة
+ * واحدة من ٨ خانات = (1 − 1/8) × 100 = 87.5 → بتتقرّب لـ**88** فبتعدّي عتبة
+ * الـ٨٨٪. يعني مندوب يكتب ٤ حروف بالغلط فتطلعله «مطلوبة ٨٨٪» لعربية مش
+ * مطلوبة — وده حصل فعلاً في الميدان. بالمقابل غلطة حقيقية في لوحة سليمة
+ * (٧ خانات) بتطلع 85.7 → 86 فبتترفض. فالنسبة وحدها بتقبل الغلط وترفض الصح،
+ * والشكل هو اللي بيمسك الحالة دي.
+ */
+export function isStandardPlate(normalized: string): boolean {
+  return /^[؀-ۿ]{3}[0-9]{4}$/.test(normalized);
+}
+
 // Pre-built index for referral file — call once, reuse across chunks.
 export interface ReferralIndex {
   exact: Map<string, Record<string, string>>;

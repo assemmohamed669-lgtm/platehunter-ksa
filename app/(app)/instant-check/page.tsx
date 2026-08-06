@@ -5,7 +5,7 @@ import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loade
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
@@ -1330,11 +1330,18 @@ export default function InstantCheckPage() {
     }
 
     // Fuzzy fallback (88% threshold, first-char optimization)
-    if (normalized.length >= 4) {
+    //
+    // **الطرفين لازم يكونوا لوحة سعودية قياسية (٣ حروف + ٤ أرقام).** من غير
+    // الشرط ده، مدخل بـ٨ خانات (٤ حروف بالغلط) بيطلع ٨٨٪ ضد لوحة سليمة —
+    // لأن فرق خانة من ٨ = 87.5 وبتتقرّب لـ٨٨ — فبيدّي إنذار كاذب لعربية مش
+    // مطلوبة (حصل فعلاً في الميدان). وده مابيلغيش أي مطابقة صحيحة: غلطة
+    // حقيقية بين لوحتين سليمتين بتطلع ٨٦٪ وكانت مرفوضة أصلاً تحت العتبة.
+    if (isStandardPlate(normalized)) {
       let bestSim = 0;
       let bestRow: Record<string, string> | undefined;
       for (const [key, row] of checkIndex) {
         if (key[0] !== normalized[0]) continue;
+        if (!isStandardPlate(key)) continue;
         const sim = similarityPercent(normalized, key);
         if (sim > bestSim) { bestSim = sim; bestRow = row; }
       }
