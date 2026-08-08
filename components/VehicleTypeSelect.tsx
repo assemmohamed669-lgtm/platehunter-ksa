@@ -22,14 +22,14 @@ export default function VehicleTypeSelect({
     <select
       value={typeToCode(value)}
       onChange={(e) => onChange(e.target.value)}
-      title="و = ونيت • ن = نقل • ف = فان • ت = تاكسي • دي = دينه • د = دباب • ب = باص • م = ملاكي"
+      title="و = ونيت • ن = نقل • ف = فان • ت = تاكسي • دي = دينه • د = دباب • ب = باص • م = ملاكي • H1"
       style={{ direction: "rtl" }}
       className={className ?? "rounded border border-border bg-surface-2 px-2 py-1 text-ink outline-none focus:border-primary"}
     >
       <option value="">—</option>
       {/* القيمة المخزّنة = الحرف بس؛ الاسم بين قوسين للعرض عشان يعرف معناه */}
       {VEHICLE_TYPE_LABELS.map(([code, name]) => (
-        <option key={code} value={code}>{code} ({name})</option>
+        <option key={code} value={code}>{code === name ? code : `${code} (${name})`}</option>
       ))}
     </select>
   );

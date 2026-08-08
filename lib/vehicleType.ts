@@ -19,14 +19,20 @@ export const VEHICLE_TYPE_LABELS = [
   ["د", "دباب"],
   ["ب", "باص"],
   ["م", "ملاكي"],
+  // H1 اسمها هو نفسه المختصر — بتتعرض «H1» من غير قوسين (شوف vehicleTypeLabel)
+  ["H1", "H1"],
 ] as const;
 
 export const VEHICLE_TYPE_CODES: readonly string[] = VEHICLE_TYPE_LABELS.map(([c]) => c);
 
-/** نص العرض في القايمة: «و (ونيت)» — الاسم مفصول عن الحرف بمسافة. */
+/**
+ * نص العرض في القايمة: «و (ونيت)» — الاسم مفصول عن الحرف بمسافة.
+ * لو المختصر هو نفسه الاسم (زي H1) بنعرضه لوحده بدل «H1 (H1)».
+ */
 export function vehicleTypeLabel(code: string): string {
   const hit = VEHICLE_TYPE_LABELS.find(([c]) => c === code);
-  return hit ? `${hit[0]} (${hit[1]})` : code;
+  if (!hit) return code;
+  return hit[0] === hit[1] ? hit[0] : `${hit[0]} (${hit[1]})`;
 }
 
 /** يحوّل قيمة نوع (حرف أو كلمة منطوقة) للحرف المختصر — عشان الصوت اللي بيسمع
@@ -34,6 +40,9 @@ export function vehicleTypeLabel(code: string): string {
 export function typeToCode(v: string): string {
   const s = String(v ?? "").trim();
   if (VEHICLE_TYPE_CODES.includes(s)) return s;
+  // H1: بأي حالة حروف، أو منطوقة عربي («اتش وان» / «إتش ١» / «اتش1»)
+  if (/^h\s*[1١]$/i.test(s)) return "H1";
+  if (/^[إأا]تش\s*(وان|[1١])$/.test(s)) return "H1";
   if (/ونيت|ونت/.test(s)) return "و";
   if (/نقل/.test(s)) return "ن";
   if (/فان/.test(s)) return "ف";

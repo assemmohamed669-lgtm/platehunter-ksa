@@ -50,7 +50,7 @@ describe("vehicleTypeLabel — شكل العرض في القايمة", () => {
   });
 
   it("الترتيب زي ما المالك طلبه", () => {
-    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م"]);
+    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "H1"]);
   });
 
   it("حرف مش في القايمة بيرجع زي ما هو", () => {
@@ -76,5 +76,34 @@ describe("extractVehicleType", () => {
 
   it("collapses the gap left where the type word was removed", () => {
     expect(extractVehicleType("ادن 6121 ونيت").rest).toBe("ادن 6121");
+  });
+});
+
+describe("H1 — نوع مضاف بطلب المندوب", () => {
+  it("H1 موجود في قايمة الأنواع", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("H1");
+  });
+
+  it("بيتعرض «H1» لوحده من غير قوسين", () => {
+    expect(vehicleTypeLabel("H1")).toBe("H1");
+  });
+
+  it("typeToCode بيرجّع H1 مهما كانت حالة الحروف", () => {
+    expect(typeToCode("H1")).toBe("H1");
+    expect(typeToCode("h1")).toBe("H1");
+    expect(typeToCode(" H1 ")).toBe("H1");
+  });
+
+  it("بيلقط النطق العربي لـH1", () => {
+    expect(typeToCode("اتش وان")).toBe("H1");
+    expect(typeToCode("إتش ١")).toBe("H1");
+    expect(typeToCode("اتش1")).toBe("H1");
+  });
+
+  it("مابيأثرش على الأنواع القديمة", () => {
+    expect(typeToCode("ونيت")).toBe("و");
+    expect(typeToCode("فان")).toBe("ف");
+    expect(typeToCode("ملاكي")).toBe("م");
+    expect(vehicleTypeLabel("و")).toBe("و (ونيت)");
   });
 });
