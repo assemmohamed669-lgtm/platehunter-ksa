@@ -12,6 +12,7 @@ import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
 import { gpsCellToLink } from "./gps";
+import { rtlAlignBlob } from "./rtlExcel";
 
 // روابط خرائط جوجل — بتتعرض في التصدير ككلمة «خريطة» بدل الرابط الطويل.
 const MAP_URL_RE = /maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google/i;
@@ -24,6 +25,17 @@ function formatDate(iso: string): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${dd}-${mm}-${yyyy} ${hh}:${min}`;
+}
+
+/**
+ * الشيت يفتح من اليمين. **مهم:** SheetJS بتقرا الإعداد ده من
+ * `wb.Workbook.Views` بس — `ws["!views"] = [{ RTL: true }]` بتتجاهل تماماً في
+ * الكتابة، وده اللي كان خلّي كل الشيتات تفتح من الشمال عند المناديب.
+ * (محاذاة الخلايا نفسها بتتظبط في `rtlAlignBlob` — النسخة المجانية من SheetJS
+ * مابتكتبش أنماط خلايا.)
+ */
+function setWorkbookRtl(wb: XLSX.WorkBook): void {
+  wb.Workbook = { ...(wb.Workbook ?? {}), Views: [{ RTL: true }] };
 }
 
 export function exportRecordingsToExcel(
@@ -77,6 +89,7 @@ export function exportRecordingsToExcel(
   });
 
   const wb = XLSX.utils.book_new();
+  setWorkbookRtl(wb);
   XLSX.utils.book_append_sheet(wb, ws, "اللوحات");
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
@@ -560,8 +573,6 @@ export function buildExcelBlob(
   watermark?: WatermarkInfo
 ): Blob {
   const ws = XLSX.utils.json_to_sheet(rows);
-  // المحتوى عربي واللوحات عربية → افتح الورقة من اليمين لليسار (RTL).
-  ws["!views"] = [{ RTL: true }];
 
   // Make URL cells proper hyperlinks — روابط الخرائط تظهر ككلمة «خريطة»
   const ref = ws["!ref"];
@@ -584,6 +595,8 @@ export function buildExcelBlob(
   }
 
   const wb = XLSX.utils.book_new();
+  // المحتوى عربي واللوحات عربية → افتح الورقة من اليمين لليسار (RTL).
+  setWorkbookRtl(wb);
 
   if (watermark) {
     const stamp = `🔒 صدّر هذا الملف: ${watermark.username} (${watermark.userId}) — ${new Date().toLocaleString("ar-SA")}`;
@@ -741,6 +754,7 @@ export async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
+  blob = await rtlAlignBlob(blob, filename);   // يفتح من اليمين + كل الخلايا محاذاة يمين
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
     try {
@@ -773,6 +787,7 @@ export async function openExcelBlob(blob: Blob, filename: string): Promise<"open
 }
 
 export async function shareExcelBlob(blob: Blob, filename: string, title: string): Promise<void> {
+  blob = await rtlAlignBlob(blob, filename);   // يفتح من اليمين + كل الخلايا محاذاة يمين
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
     try {

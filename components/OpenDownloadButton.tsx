@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { FolderOpen, ExternalLink, Download } from "lucide-react";
 import { openExcelBlob, downloadExcelBlob } from "@/lib/excel";
+import { rtlAlignBlob } from "@/lib/rtlExcel";
 
 interface Props {
   /** يبني الـ blob + الاسم عند الطلب (ممكن async). */
@@ -27,7 +28,9 @@ export default function OpenDownloadButton({ build, label = "فتح", className 
         const result = await openExcelBlob(blob, name);
         alert(result === "opened" ? "تم تصدير الملف وفتحه." : "تم تصدير الملف وتنزيله.");
       } else {
-        downloadExcelBlob(blob, name);
+        // التنزيل المباشر مابيعدّيش على openExcelBlob، فبنظبّط الاتجاه هنا كمان
+        // عشان الشيت يفتح من اليمين زي أي شيت تاني بيطلع من البرنامج.
+        downloadExcelBlob(await rtlAlignBlob(blob, name), name);
         alert("تم تصدير الملف وتنزيله.");
       }
     } catch (e) {
