@@ -165,6 +165,7 @@ export default function SortingPage() {
   const [referralTable, setReferralTable] = useState<ExcelTable | null>(null);
   const [referralFile, setReferralFile] = useState<File | null>(null);
   const [referralColsOpen, setReferralColsOpen] = useState(false);
+  const [resultColsPickerOpen, setResultColsPickerOpen] = useState(false);
   const [referralBoxOpen, setReferralBoxOpen] = useState(true); // collapse/expand the whole "مربع الإحالة"
   const [referralExtraCols, setReferralExtraCols] = useState<Set<string>>(new Set());
   const [referralPlateColOverride, setReferralPlateColOverride] = useState<string | null>(null);
@@ -518,12 +519,57 @@ export default function SortingPage() {
   // كل عمود بيتكتشف بالاسم أو بالمحتوى (resolveResultColumns) — فيشتغل مهما كان
   // اسم العمود، وحتى لو الشيت بدون أسماء أعمدة. بندمج مصدرين: الداتا (نوع/عنوان/
   // GPS/تاريخ غالباً) + الإحالة (ماركة/لون/سنة غالباً)، والداتا لها الأولوية.
+  // ── ورقات الإحالة المختارة (ملف متعدد الورقات) ─────────────────────────────
+  // لازم تتعرّف **قبل** resultCols لأنها بتدخل في مصادر الأعمدة.
+  const selectedRefSheets = useMemo(
+    () => refSheets.filter((s) => s.plateCount > 0 && refSheetSel.has(s.name)),
+    [refSheets, refSheetSel]
+  );
+  const isMultiSheetRef = refSheets.filter((s) => s.plateCount > 0).length > 1;
+
+  // أعمدة قايمة الاختيار تحت مربع الإحالة — من الورقات المختارة (مش من الورقة
+  // اللي parseExcelFile اختارها)، وإلا المندوب يشوف أعمدة ورقة مش بيفرز عليها.
+  const refPickerPlateCol = useMemo(
+    () => (isMultiSheetRef ? (selectedRefSheets[0]?.plateColName || null) : effectiveReferralPlateCol),
+    [isMultiSheetRef, selectedRefSheets, effectiveReferralPlateCol]
+  );
+  const refPickerCols = useMemo(() => {
+    const plate = refPickerPlateCol;
+    const src = isMultiSheetRef
+      ? selectedRefSheets.flatMap((s) => s.headers)
+      : (referralTable?.headers ?? []);
+    return [...new Set(src)].filter((h) => h && h !== plate);
+  }, [isMultiSheetRef, selectedRefSheets, referralTable, refPickerPlateCol]);
+
+  // لما الورقات المختارة تتغيّر في ملف متعدد الورقات، الأعمدة الافتراضية لازم
+  // تتحسب من الورقات دي — مش من الورقة اللي parseExcelFile اختارها وقت الرفع.
+  const lastRefSelSig = useRef<string>("");
+  useEffect(() => {
+    if (!isMultiSheetRef) return;
+    const sig = selectedRefSheets.map((s) => s.name).join("");
+    if (sig === lastRefSelSig.current) return;
+    lastRefSelSig.current = sig;
+    const plate = selectedRefSheets[0]?.plateColName ?? "";
+    const cols = [...new Set(selectedRefSheets.flatMap((s) => s.headers))]
+      .filter((h) => h && h !== plate && matchesPreferred(h));
+    setReferralExtraCols(new Set(cols));
+  }, [isMultiSheetRef, selectedRefSheets]);
+
   const resultCols = useMemo(() => {
     const sources: ResultColumnSource[] = [];
     if (dataTable) {
       sources.push({ kind: "data", headers: dataTable.headers, rows: dataTable.rows, plateCol: effectiveDataPlateCol });
     }
-    if (referralTable) {
+    // **مهم:** لو الملف متعدد الورقات، الأعمدة لازم تتقري من **الورقات المختارة**
+    // (نفس اللي المطابقة بتتم عليها في collectRefSources) — مش من الورقة اللي
+    // parseExcelFile اختارها لوحدها. من غير كده البرنامج بيطابق على ورقة ويجيب
+    // الأعمدة من ورقة تانية (حصل فعلاً: محفظة فيها Sheet1 مخفية بأعمدة إنجليزي،
+    // فعمود «نوع المركبة» العربي ماكانش بيظهر في النتيجة خالص).
+    if (isMultiSheetRef) {
+      for (const s of selectedRefSheets) {
+        sources.push({ kind: "referral", headers: s.headers, rows: s.rows, plateCol: s.headers[s.plateCol] ?? null });
+      }
+    } else if (referralTable) {
       sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
     }
     // شيتات الإحالة الإضافية (زر +) — أعمدتها (لون/سنة/ماركة) لازم تظهر في النتيجة
@@ -534,7 +580,8 @@ export default function SortingPage() {
       sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
     }
     return resolveMergedResultColumns(sources);
-  }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals]);
+  }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals,
+      isMultiSheetRef, selectedRefSheets]);
 
   // أعمدة الإحالة الإضافية المختارة — من المربع الأساسي (referralExtraCols) +
   // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
@@ -605,9 +652,36 @@ export default function SortingPage() {
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
   // (عرض + تصدير + واتساب).
-  const allResultCols = useMemo(
+  /**
+   * إخفاء أعمدة النتيجة بطلب المندوب — بالاسم المعروض (label).
+   * الافتراضي فاضي = كل حاجة ظاهرة زي دلوقتي بالظبط؛ المندوب يخفي اللي مش عايزه
+   * من قايمة «أعمدة النتيجة» ويرجّعه في أي وقت.
+   */
+  const [hiddenResultCols, setHiddenResultCols] = useState<Set<string>>(new Set());
+  const HIDDEN_COLS_KEY = "ph:sorting:hiddenCols";
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_COLS_KEY);
+      if (raw) setHiddenResultCols(new Set(JSON.parse(raw) as string[]));
+    } catch { /* تخزين معطّل */ }
+  }, []);
+  function toggleHiddenCol(label: string) {
+    setHiddenResultCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label); else next.add(label);
+      try { localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify([...next])); } catch { /* تخزين معطّل */ }
+      return next;
+    });
+  }
+
+  // كل الأعمدة اللي البرنامج قدر يطلّعها (قبل الإخفاء) — لقايمة الإظهار/الإخفاء
+  const allResultColsRaw = useMemo(
     () => [...resultCols, ...extraDataResultCols, ...extraReferralResultCols],
     [resultCols, extraDataResultCols, extraReferralResultCols]
+  );
+  const allResultCols = useMemo(
+    () => allResultColsRaw.filter((c) => !hiddenResultCols.has(c.label)),
+    [allResultColsRaw, hiddenResultCols]
   );
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
@@ -812,12 +886,6 @@ export default function SortingPage() {
   const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
   const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
 
-  // ── ورقات الإحالة المختارة (ملف متعدد الورقات) ─────────────────────────────
-  const selectedRefSheets = useMemo(
-    () => refSheets.filter((s) => s.plateCount > 0 && refSheetSel.has(s.name)),
-    [refSheets, refSheetSel]
-  );
-  const isMultiSheetRef = refSheets.filter((s) => s.plateCount > 0).length > 1;
   const selectedRefPlateCount = useMemo(() => totalPlates(selectedRefSheets), [selectedRefSheets]);
 
   // في الوضع المتعدد الجاهزية = فيه ورقة مختارة فيها لوحات (مش عمود الورقة الأولى،
@@ -1892,20 +1960,20 @@ export default function SortingPage() {
         <div className="rounded-xl border border-border bg-surface">
           <button onClick={() => setReferralColsOpen((v) => !v)}
             className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
-            <span>أعمدة الإحالة ({referralTable.headers.length - 1}) — محدد: {referralExtraCols.size}</span>
+            <span>أعمدة الإحالة ({refPickerCols.length}) — محدد: {referralExtraCols.size}</span>
             <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${referralColsOpen ? "rotate-180" : ""}`} />
           </button>
           {referralColsOpen && (
             <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
               <div>
                 <p className="text-[11px] text-muted">
-                  عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{effectiveReferralPlateCol ?? "—"}</span>
+                  عمود اللوحة (اكتشاف تلقائي): <span className="font-bold text-primary">{refPickerPlateCol ?? "—"}</span>
                 </p>
               </div>
               <div>
                 <p className="mb-1.5 text-[11px] text-muted">أعمدة إضافية في النتائج:</p>
                 <div className="flex flex-wrap gap-2">
-                  {referralTable.headers.filter((h) => h !== effectiveReferralPlateCol).map((h) => (
+                  {refPickerCols.map((h) => (
                     <button key={h} onClick={() => toggleSet(referralExtraCols, h, setReferralExtraCols)}
                       className={`rounded-full px-3 py-1 text-xs transition ${referralExtraCols.has(h) ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
                       {h}
@@ -2004,6 +2072,40 @@ export default function SortingPage() {
               )}
             </div>
           </div>
+
+          {/* أعمدة النتيجة — المندوب يخفي أي عمود ويرجّعه في أي وقت. الافتراضي
+              كل حاجة ظاهرة، والاختيار بيتحفظ على الجهاز. */}
+          {allResultColsRaw.length > 0 && (
+            <div className="rounded-xl border border-border bg-surface">
+              <button onClick={() => setResultColsPickerOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
+                <span>أعمدة النتيجة ({allResultColsRaw.length - hiddenResultCols.size} من {allResultColsRaw.length})</span>
+                <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${resultColsPickerOpen ? "rotate-180" : ""}`} />
+              </button>
+              {resultColsPickerOpen && (
+                <div className="border-t border-border px-3 pb-3 pt-2">
+                  <p className="mb-1.5 text-[11px] text-muted">دوس على العمود عشان تخفيه أو ترجّعه:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {allResultColsRaw.map((c) => {
+                      const shown = !hiddenResultCols.has(c.label);
+                      return (
+                        <button key={c.id} onClick={() => toggleHiddenCol(c.label)}
+                          className={`rounded-full px-3 py-1 text-xs transition ${shown ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
+                          {c.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {hiddenResultCols.size > 0 && (
+                    <button onClick={() => { setHiddenResultCols(new Set()); try { localStorage.removeItem(HIDDEN_COLS_KEY); } catch { /* تخزين معطّل */ } }}
+                      className="mt-2 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
+                      إظهار الكل
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
           <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
