@@ -15,6 +15,7 @@
 import JSZip from "jszip";
 import { SaxesParser } from "saxes";
 import * as XLSX from "xlsx";
+import { hyperlinkFormulaUrl } from "./hyperlink";
 
 export interface XlsxStreamMeta {
   headers: string[];
@@ -272,6 +273,10 @@ export async function streamXlsxToBatches(
     let row: string[] | null = null;
     let curCol = -1, curType: string | null = null, curStyle: number | null = null;
     let inV = false, inT = false, valBuf = "";
+    // خلية الموقع في ملفات الداتا بتتكتب `=HYPERLINK("https://…","خريطة")` —
+    // القيمة المخزّنة كلمة «خريطة» والرابط جوّه الصيغة. من غير ما نقرا الصيغة،
+    // عمود GPS بيوصل للتطبيق كنص مش لينك (ولا في الجدول ولا في المشاركة).
+    let inF = false, fBuf = "";
 
     const stream = internalStreamOf(zip, path);
     let flushing = false;
@@ -315,15 +320,25 @@ export async function streamXlsxToBatches(
         const s = t.attributes.s as string | undefined;
         curStyle = s != null ? parseInt(s, 10) : null;
         valBuf = "";
+        fBuf = "";
       } else if (n === "v") { inV = true; valBuf = ""; }
+      else if (n === "f") { inF = true; fBuf = ""; }
       else if (n === "t") inT = true;
     });
-    parser.on("text", (txt) => { if (inV || inT) valBuf += txt; });
+    parser.on("text", (txt) => {
+      if (inF) fBuf += txt;
+      else if (inV || inT) valBuf += txt;
+    });
     parser.on("closetag", (t) => {
       const n = localName(t.name);
       if (n === "v") inV = false;
+      else if (n === "f") inF = false;
       else if (n === "t") inT = false;
       else if (n === "c") {
+        // خلية HYPERLINK → قيمتها = الرابط نفسه (زي resolveHyperlinkCells في
+        // القارئ العادي)، عشان عمود الموقع يطلع لينك يفتح الخريطة.
+        const linkUrl = hyperlinkFormulaUrl(fBuf);
+        if (linkUrl) { if (row && curCol >= 0) row[curCol] = linkUrl; return; }
         let val = "";
         if (curType === "s") { const i = parseInt(valBuf, 10); val = Number.isNaN(i) ? "" : (sst[i] ?? ""); }
         else if (curType === "inlineStr" || curType === "str") val = valBuf;
