@@ -15,6 +15,7 @@ import {
 import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
+import { groupResultsBySource } from "@/lib/resultWindows";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
@@ -32,7 +33,7 @@ import { loadHistory, saveHistoryEntries, saveHistoryMap } from "@/lib/plateHist
 import { backupHistory, restoreHistory, pruneRemoteMonths } from "@/lib/plateHistoryBackup";
 import PlateHistoryModal from "@/components/PlateHistoryModal";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
-import { usePinchZoom } from "@/components/usePinchZoom";
+import { usePinchZoom, usePinchZoomMulti } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
@@ -221,12 +222,21 @@ export default function SortingPage() {
   const [sorting, setSorting] = useState(false);
   const [zoom, setZoom] = useState(3);
   // زوم بإصبعين لنوافذ نتائج الفرز (كلها بتشارك نفس مؤشّر الزوم).
-  const resPinch = usePinchZoom(zoom, setZoom);
+  const resPinchFor = usePinchZoomMulti(zoom, setZoom);   // نافذة لكل ملف داتا
   const tashPinch = usePinchZoom(zoom, setZoom);
   const pastePinch = usePinchZoom(zoom, setZoom);
   const pastePinch2 = usePinchZoom(zoom, setZoom);
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
+  /**
+   * لما يتحطّ أكتر من ملف داتا، نتيجة كل ملف بتطلع في **نافذة لوحدها**. الحالات
+   * دي بقت لكل نافذة (المفتاح = رقم ملف الداتا): الترقيم، والتحديد.
+   * الأرقام اللي جوه الـ Set هي فهارس **عامّة** في `displayResults` — عشان
+   * دوال الحذف/المشاركة القديمة تفضل شغالة زي ما هي بالظبط.
+   */
+  const [visibleByWin, setVisibleByWin] = useState<Record<number, number>>({});
+  const [selectedByWin, setSelectedByWin] = useState<Record<number, Set<number>>>({});
+  const EMPTY_SEL: Set<number> = useMemo(() => new Set(), []);
+  const visibleOf = (k: number) => visibleByWin[k] ?? PAGE_SIZE;
+  const selOf = (k: number) => selectedByWin[k] ?? EMPTY_SEL;
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [nearestActive, setNearestActive] = useState(false);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
@@ -838,6 +848,14 @@ export default function SortingPage() {
       .sort((a, b) => a._dist - b._dist);
   }, [openResults, nearestActive, userLoc, gpsCol]);
 
+  /**
+   * نتيجة كل ملف داتا في نافذة لوحدها (بطلب المندوب). المجموعة بتتحدد بـ
+   * srcIdx اللي اتخزّن وقت الفرز. لو ملف واحد (أو نتايج قديمة محفوظة قبل
+   * الميزة دي وبالتالي بلا srcIdx) بترجع مجموعة واحدة بلا عنوان — يعني نفس
+   * شكل النافذة القديمة بالظبط.
+   */
+  const resultGroups = useMemo(() => groupResultsBySource(displayResults), [displayResults]);
+
   // عمود GPS في شيت التسجيلات — لترتيب «الأقرب» + حساب الوقت.
   const tashyeekGpsCol = useMemo(() => (tashyeekTable ? findGpsColumn(tashyeekTable.headers) : null), [tashyeekTable]);
 
@@ -1260,7 +1278,7 @@ export default function SortingPage() {
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
             const hit = refIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx });
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx, srcIdx: 0 });
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data" });
@@ -1268,8 +1286,11 @@ export default function SortingPage() {
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية. في وضع streamed
       // نتخطّى الأساسي (لأنه عيّنة فقط) ونطابق الإضافية بس.
+      // srcBase: في وضع streamed الملف الأول اتطابق فوق (srcIdx=0) فالباقي يبدأ من ١.
+      const srcBase = dataStreamed ? 1 : 0;
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
-      for (const src of memSources) {
+      for (let si = 0; si < memSources.length; si++) {
+        const src = memSources[si];
         const rows = src.rows;
         const pc = src.plateCol;
         for (let i = 0; i < rows.length; i += CHUNK) {
@@ -1279,7 +1300,7 @@ export default function SortingPage() {
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
             const hit = refIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: dataBase + j });
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: dataBase + j, srcIdx: srcBase + si });
           }
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
@@ -1297,7 +1318,7 @@ export default function SortingPage() {
         finalTashyeek = tashyeekMatches;
       }
       setTashyeekResults(finalTashyeek);
-      setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "full", 0);
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
@@ -1345,24 +1366,26 @@ export default function SortingPage() {
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
             const hit = newIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm });
+            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm, srcIdx: 0 });
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data" });
       }
       // (ب) ملفات الداتا في الذاكرة (الأساسي لو مش streamed + الإضافية) — فهرس صغير.
+      const srcBase = dataStreamed ? 1 : 0;
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
       if (memSources.length) {
-        const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
+        const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>>();
         let gIdx = dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : 0;
-        for (const src of memSources) {
-          const pc = src.plateCol;
-          for (const row of src.rows) {
+        for (let si = 0; si < memSources.length; si++) {
+          const pc = memSources[si].plateCol;
+          for (const row of memSources[si].rows) {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
             if (!n) continue;
+            const entry = { row, dataIdx: idx, srcIdx: srcBase + si };
             const arr = dataIndex.get(n);
-            if (arr) arr.push({ row, dataIdx: idx }); else dataIndex.set(n, [{ row, dataIdx: idx }]);
+            if (arr) arr.push(entry); else dataIndex.set(n, [entry]);
           }
         }
         for (const e of newEntries) {
@@ -1370,8 +1393,8 @@ export default function SortingPage() {
             !e.isArabic && /[A-Za-z]/.test(e.raw) ? dataIndex.get(reversePlateLetters(e.norm)) : undefined
           );
           if (dataRows) {
-            for (const { row: dataRow, dataIdx } of dataRows) {
-              matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm });
+            for (const { row: dataRow, dataIdx, srcIdx } of dataRows) {
+              matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm, srcIdx });
             }
           }
         }
@@ -1398,7 +1421,7 @@ export default function SortingPage() {
         finalTashyeek = tashyeekMatches;
       }
       setTashyeekResults(finalTashyeek);
-      setResults(matches); setSorted(true); setNearestActive(false); setVisibleCount(PAGE_SIZE);
+      setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "new", newEntries.length);
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
@@ -1427,8 +1450,8 @@ export default function SortingPage() {
     sortActiveMode = target;
     persistSortCache();
     const c = sortCacheByMode[target];
-    setSelectedResults(new Set());
-    setVisibleCount(PAGE_SIZE);
+    setSelectedByWin({});
+    setVisibleByWin({});
     if (c && c.results.length > 0) {
       setResults(c.results);
       setTashyeekResults(c.tashyeekResults);
@@ -1480,7 +1503,8 @@ export default function SortingPage() {
   // يحلّ حقول المشاركة (صورة + إكسيل) لكل صف نتيجة، بالترتيب اللي طلبه المستخدم:
   // المطلوب (اللوحة) › نوع السيارة (داتا) › العنوان › الحي › الماركة (موديل
   // الإحالة) › البنك (لو موجود) › GPS › اللون (المحفظة) › الملاحظات (الداتا).
-  function buildSortShareData() {
+  // rows = صفوف النافذة اللي بتشارك منها (نافذة لكل ملف داتا)؛ الافتراضي كل النتايج.
+  function buildSortShareData(rows: MatchResult[] = displayResults) {
     const find = (key: string, source?: "data" | "referral") =>
       resultCols.find((c) => c.key === key && (source ? c.source === source : true));
     const dataType = find("type", "data");
@@ -1503,7 +1527,7 @@ export default function SortingPage() {
     const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
       c ? cellValue(c.source === "data" ? r.dataRow : r.referralRow, c) : "";
 
-    const rowsData = displayResults.map((r) => {
+    const rowsData = rows.map((r) => {
       const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i).join(" ");
       return {
@@ -1535,14 +1559,14 @@ export default function SortingPage() {
 
   // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك). اللوحات المكررة كل مجموعة
   // بلون واحد (نفس ألوان الإكسيل) عشان تتميّز.
-  function buildSortImageTable(): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
-    const { rowsData, hasBank, hasDate } = buildSortShareData();
+  function buildSortImageTable(src: MatchResult[] = displayResults): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
+    const { rowsData, hasBank, hasDate } = buildSortShareData(src);
     // الترتيب: المطلوب › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
     const columns = ["المطلوب", "نوع السيارة", "العنوان", "الحي", "الماركة", ...(hasBank ? ["البنك"] : []), ...(hasDate ? ["تاريخ التسجيل"] : []), "اللون", "الملاحظات"];
     const rows = rowsData.map((x) => [
       x.plate, x.type, x.addr, x.dist, x.model, ...(hasBank ? [x.bank] : []), ...(hasDate ? [x.date] : []), x.color, x.notes,
     ]);
-    const rowColors = displayResults.map((r) => {
+    const rowColors = src.map((r) => {
       const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
       const idx = plateColorMap.get(k);
       return idx !== undefined ? DUPE_COLORS[idx].hex : null;
@@ -1621,9 +1645,9 @@ export default function SortingPage() {
 
   // Colored xlsx, but falls back to a plain CSV if the xlsx build crashes on
   // the device WebView (loses the row colors, but the data always comes out).
-  async function buildSortExcelBlob(): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
+  async function buildSortExcelBlob(src: MatchResult[] = displayResults): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
     // نفس ترتيب الصورة + عمود GPS (لينك الخريطة) + البنك لو موجود.
-    const { rowsData, hasBank, hasDate } = buildSortShareData();
+    const { rowsData, hasBank, hasDate } = buildSortShareData(src);
     const rowObjects = rowsData.map((x) => ({
       "المطلوب": x.plate,
       "نوع السيارة": x.type,
@@ -1637,7 +1661,7 @@ export default function SortingPage() {
       "الملاحظات": x.notes,
     }));
     try {
-      const rowColors = displayResults.map((r) => {
+      const rowColors = src.map((r) => {
         const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
         const idx = plateColorMap.get(k);
         return idx !== undefined ? DUPE_COLORS[idx].hex : null;
@@ -1651,7 +1675,7 @@ export default function SortingPage() {
   // ── مسح نتايج نافذة واحدة (بتأكيد) — كل زر يمسح نتايج نافذته فقط ──
   function clearMainResults() {
     if (!confirm("متأكد تمسح نتايج الفرز؟")) return;
-    setResults(null); setSorted(false); setSelectedResults(new Set());
+    setResults(null); setSorted(false); setSelectedByWin({}); setVisibleByWin({});
     persistSortResults([], tashyeekResults, sortMode, 0);
   }
   function clearTashyeekResults() {
@@ -1741,9 +1765,23 @@ export default function SortingPage() {
   }
 
   // ── Selection ──
-  function toggleResult(i: number) { setSelectedResults((p) => { const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n; }); }
-  function toggleAllResults() { setSelectedResults((p) => p.size === displayResults.length ? new Set() : new Set(displayResults.map((_, i) => i))); }
-  function deleteResult(i: number) { const r = displayResults[i]; setResults((p) => p ? p.filter((x) => x !== r) : null); setSelectedResults(new Set()); }
+  // التحديد بقى **لكل نافذة** (win = رقم ملف الداتا)، والأرقام جواه فهارس عامّة
+  // في displayResults — فالمشاركة والحذف مابيتغيّروش.
+  function toggleResult(win: number, i: number) {
+    setSelectedByWin((p) => {
+      const n = new Set(p[win] ?? []);
+      if (n.has(i)) n.delete(i); else n.add(i);
+      return { ...p, [win]: n };
+    });
+  }
+  function toggleAllResults(win: number, all: number[]) {
+    setSelectedByWin((p) => {
+      const cur = p[win] ?? new Set<number>();
+      return { ...p, [win]: cur.size === all.length ? new Set<number>() : new Set(all) };
+    });
+  }
+  // الحذف بيزحزح الفهارس العامّة، فبنفضّي تحديد كل النوافذ (أأمن من تصحيح جزئي).
+  function deleteResult(i: number) { const r = displayResults[i]; setResults((p) => p ? p.filter((x) => x !== r) : null); setSelectedByWin({}); }
   // الحذف/التحديد بيشتغلوا على القائمة المعروضة (displayPaste) — اللي ممكن تكون
   // مرتّبة بالأقرب — بالهوية (اللوحة نفسها) مش بالرقم، عشان الترتيب مايخربطش.
   function deletePasteResult(i: number) {
@@ -2107,12 +2145,29 @@ export default function SortingPage() {
             </div>
           )}
 
+          {/* نافذة نتيجة لكل ملف داتا. لو ملف واحد → مجموعة واحدة بلا عنوان
+              وبلا إطار زيادة، يعني نفس الشكل القديم بالظبط. */}
+          {resultGroups.map((g) => {
+          const gRows = g.items.map((it) => it.r);
+          const gIdxs = g.items.map((it) => it.gi);
+          const gSel = selOf(g.key);
+          const gVisible = visibleOf(g.key);
+          const gSelInWin = gIdxs.filter((gi) => gSel.has(gi)).length;
+          return (
+          <div key={g.key} className={g.title ? "flex flex-col gap-3 rounded-xl border border-brand/40 bg-surface p-3" : "flex flex-col gap-3"}>
+          {g.title && (
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-brand">{g.title}</h3>
+              <span className="rounded-full bg-brand/15 px-2.5 py-1 text-[11px] font-bold text-brand">{gRows.length} سيارة</span>
+            </div>
+          )}
+
           {/* «تحديد الكل» على اليمين والزوم على الشمال (بطلب المستخدم) */}
           <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2">
-            <button onClick={toggleAllResults}
+            <button onClick={() => toggleAllResults(g.key, gIdxs)}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-ink transition">
-              {selectedResults.size === displayResults.length && displayResults.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
-              {selectedResults.size === displayResults.length && displayResults.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
+              {gSelInWin === gIdxs.length && gIdxs.length > 0 ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+              {gSelInWin === gIdxs.length && gIdxs.length > 0 ? "إلغاء الكل" : "تحديد الكل"}
             </button>
             <div className="flex items-center gap-2">
               <button onClick={() => setZoom((z) => Math.max(0, z - 1))} disabled={zoom === 0}
@@ -2127,7 +2182,7 @@ export default function SortingPage() {
             </div>
           </div>
 
-          <div ref={resPinch} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
+          <div ref={resPinchFor(g.key)} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
             <div style={{ fontSize: `${ZOOM_LEVELS[zoom] * 12}px`, minWidth: "max-content" }}>
               <table className="border-collapse w-full" style={{ direction: "rtl" }}>
                 <thead className="sticky top-0 z-10">
@@ -2148,9 +2203,9 @@ export default function SortingPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayResults.slice(0, visibleCount).map((r, i) => {
+                  {g.items.slice(0, gVisible).map(({ r, gi: i }, rowNo) => {
                     const plate = plateForRow(r);
-                    const isSel = selectedResults.has(i);
+                    const isSel = gSel.has(i);
                     // refPlateNorm محسوبة وقت الفرز بعمود لوحة الشيت الصح (شامل الإحالات
                     // الإضافية)؛ نستخدمها للتلوين زي ما plateColorMap/التصدير بيعملوا —
                     // إعادة الحساب من effectiveReferralPlateCol بتفشل لصفوف الشيتات الإضافية.
@@ -2162,14 +2217,15 @@ export default function SortingPage() {
                       <tr key={i} className={`border-b border-border transition ${rowBg}`}>
                         {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
                         <td className="border-l border-border px-2 py-2 text-center">
-                          <button onClick={() => toggleResult(i)} className="text-muted hover:text-primary transition">
+                          <button onClick={() => toggleResult(g.key, i)} className="text-muted hover:text-primary transition">
                             {isSel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                           </button>
                         </td>
                         {/* ترقيم + نسخ/واتساب/حذف */}
                         <td className="border-l border-border px-2 py-2">
                           <div className="flex items-center gap-2 whitespace-nowrap">
-                            <span className="text-[11px] font-bold text-muted">{i + 1}</span>
+                            {/* الترقيم بيبدأ من ١ في كل نافذة لوحدها */}
+                            <span className="text-[11px] font-bold text-muted">{rowNo + 1}</span>
                             <button onClick={async () => { await navigator.clipboard.writeText(buildRowSummaryText(buildRowObject(r))); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1200); }} className="text-muted hover:text-primary transition" title="نسخ">
                               {copiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
                             </button>
@@ -2271,29 +2327,33 @@ export default function SortingPage() {
             </div>
           </div>
 
-          {displayResults.length > visibleCount && (
-            <button onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}
+          {g.items.length > gVisible && (
+            <button onClick={() => setVisibleByWin((p) => ({ ...p, [g.key]: (p[g.key] ?? PAGE_SIZE) + PAGE_SIZE }))}
               className="flex items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-sm text-muted hover:text-ink transition">
-              <ChevronDown size={15} /> تحميل المزيد ({displayResults.length - visibleCount} متبقي)
+              <ChevronDown size={15} /> تحميل المزيد ({g.items.length - gVisible} متبقي)
             </button>
           )}
 
-          {selectedResults.size > 0 && (
+          {gSelInWin > 0 && (
             <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
-              <span className="text-xs font-bold text-ink">{selectedResults.size} محددة</span>
-              <button onClick={() => shareSelectedToWhatsApp(selectedResults)}
+              <span className="text-xs font-bold text-ink">{gSelInWin} محددة</span>
+              <button onClick={() => shareSelectedToWhatsApp(gSel)}
                 className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night">
                 <Share2 size={13} /> واتساب
               </button>
             </div>
           )}
 
-          {/* ⑥ مشاركة الفرز — زر موحّد (فتح / واتساب / صورة).
-              excelBlob = النسخة الملوّنة (تمييز المكرّرات) لملف الفرز. */}
-          <ShareSortButton title="نتائج الفرز"
-            rows={() => displayResults.map(buildRowObject)}
-            imageTable={buildSortImageTable}
-            excelBlob={buildSortExcelBlob} />
+          {/* ⑥ مشاركة الفرز — زر موحّد (فتح / واتساب / صورة). بيشارك صفوف
+              **النافذة دي بس**. excelBlob = النسخة الملوّنة (تمييز المكرّرات). */}
+          <ShareSortButton title={g.title ?? "نتائج الفرز"}
+            rows={() => gRows.map(buildRowObject)}
+            imageTable={() => buildSortImageTable(gRows)}
+            excelBlob={() => buildSortExcelBlob(gRows)} />
+          </div>
+          );
+          })}
+
           <button onClick={clearMainResults}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
             <Trash2 size={15} /> مسح نتايج الفرز
