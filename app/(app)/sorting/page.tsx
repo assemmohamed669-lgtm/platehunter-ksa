@@ -16,6 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
+import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
@@ -1614,11 +1615,24 @@ export default function SortingPage() {
     setTashyeekResults((prev) => (prev ? prev.filter((_, idx) => idx !== i) : prev));
     setTashyeekSelected(new Set());
   }
+  /** خلية GPS الخام لصف السجلات — عمود الموقع في شيت التشييك. */
+  function rawGpsOfTashyeek(r: TashyeekResultRow): string {
+    if (tashyeekGpsCol) {
+      const direct = gpsCellToLink(String(r.tashyeekRow?.[tashyeekGpsCol] ?? ""));
+      if (direct) return direct;
+    }
+    return pickMapsLink(r.tashyeekRow, tashyeekTable?.headers ?? null)
+      || pickMapsLink(r.referralRow, null);
+  }
+  /** ملخّص صف السجلات + سطر «📍 لينك الموقع». */
+  function tashyeekShareText(r: TashyeekResultRow): string {
+    return withLocationLink(buildRowSummaryText(buildTashyeekRowObj(r)), rawGpsOfTashyeek(r));
+  }
   function shareTashyeekRow(r: TashyeekResultRow) {
-    void shareTextViaChooser(buildRowSummaryText(buildTashyeekRowObj(r)));
+    void shareTextViaChooser(tashyeekShareText(r));
   }
   async function copyTashyeekRow(r: TashyeekResultRow, i: number) {
-    await navigator.clipboard.writeText(buildRowSummaryText(buildTashyeekRowObj(r)));
+    await navigator.clipboard.writeText(tashyeekShareText(r));
     setTashyeekCopiedIdx(i);
     setTimeout(() => setTashyeekCopiedIdx(null), 1200);
   }
@@ -1636,7 +1650,7 @@ export default function SortingPage() {
     const rows = (tashyeekResults ?? []).filter((_, idx) => tashyeekSelected.has(idx));
     if (!rows.length) return;
     const text = `*سيارات مطلوبة (${rows.length})*\n\n` +
-      rows.map((r, i) => `${i + 1}. ${buildRowSummaryText(buildTashyeekRowObj(r))}`).join("\n\n──────────\n\n");
+      rows.map((r, i) => `${i + 1}. ${tashyeekShareText(r)}`).join("\n\n──────────\n\n");
     void shareTextViaChooser(text);
   }
 
@@ -1742,25 +1756,52 @@ export default function SortingPage() {
   }
 
   // ── WhatsApp ──
-  function shareRowToWhatsApp(rowObj: Record<string, unknown>) {
-    void shareTextViaChooser(buildRowSummaryText(rowObj));
-  }
-  function shareSelectedToWhatsApp(indices: Set<number>) {
-    const rows = displayResults.filter((_, i) => indices.has(i)).map(buildRowObject);
-    const text = `*السيارات المطلوبة للسحب (${rows.length})*\n\n` +
-      rows.map((r, i) =>
-        `${i + 1}. 🚗 ${r["رقم اللوحة"]}\n` +
-        Object.entries(r).filter(([k]) => k !== "رقم اللوحة" && r[k]).map(([k, v]) => `${k}: ${v}`).join("\n")
-      ).join("\n\n──────────\n\n");
-    void shareTextViaChooser(text);
+  /**
+   * خلية الـ GPS الخام لصف نتيجة — من الداتا الأول (هي اللي فيها الموقع
+   * الميداني)، وإلا من الإحالة. بنقراها **مستقلة عن الأعمدة الظاهرة** عشان
+   * لينك الموقع يوصل للمندوب حتى لو مخفي عمود GPS من «أعمدة النتيجة».
+   */
+  function rawGpsOf(r: MatchResult): string {
+    if (gpsCol) {
+      const direct = gpsCellToLink(String(r.dataRow?.[gpsCol] ?? ""));
+      if (direct) return direct;
+    }
+    return pickMapsLink(r.dataRow, dataTable?.headers ?? null)
+      || pickMapsLink(r.referralRow, referralTable?.headers ?? null)
+      || pickMapsLink(r.referralRow, null);
   }
 
+  /** ملخّص لوحة واحدة + سطر «📍 لينك الموقع» في الآخر. */
+  function rowShareText(r: MatchResult): string {
+    return withLocationLink(buildRowSummaryText(buildRowObject(r)), rawGpsOf(r));
+  }
+
+  function shareResultRow(r: MatchResult) {
+    void shareTextViaChooser(rowShareText(r));
+  }
+  function shareSelectedToWhatsApp(indices: Set<number>) {
+    const rows = displayResults
+      .filter((_, i) => indices.has(i))
+      .map((r) => ({ obj: buildRowObject(r), gps: rawGpsOf(r) }));
+    void shareTextViaChooser(buildSelectedShareText(rows, buildRowSummaryText));
+  }
+
+  /** خلية GPS الخام لصف لصق — نفس عمود موقع الداتا. */
+  function rawGpsOfPaste(p: { row: Record<string, string> }): string {
+    if (gpsCol) {
+      const direct = gpsCellToLink(String(p.row?.[gpsCol] ?? ""));
+      if (direct) return direct;
+    }
+    return pickMapsLink(p.row, dataTable?.headers ?? null) || pickMapsLink(p.row, null);
+  }
+  /** ملخّص صف لصق + سطر «📍 لينك الموقع». */
+  function pasteShareText(p: { converted: string; row: Record<string, string> }): string {
+    const body = Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n");
+    return withLocationLink(`🚗 ${p.converted}\n${body}`, rawGpsOfPaste(p));
+  }
   function sharePasteToWhatsApp() {
     const text = `*اللوحات المطلوبة (${pasteResults.length})*\n\n` +
-      pasteResults.map((p, i) =>
-        `${i + 1}. 🚗 ${p.converted}\n` +
-        Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")
-      ).join("\n\n──────────\n\n");
+      pasteResults.map((p, i) => `${i + 1}. ${pasteShareText(p)}`).join("\n\n──────────\n\n");
     void shareTextViaChooser(text);
   }
 
@@ -1804,19 +1845,17 @@ export default function SortingPage() {
     const rows = displayPaste.filter((_, idx) => pasteSelected.has(idx));
     if (!rows.length) return;
     const text = `*اللوحات المطلوبة (${rows.length})*\n\n` +
-      rows.map((p, i) => `${i + 1}. 🚗 ${p.converted}\n` +
-        Object.entries(p.row).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")
-      ).join("\n\n──────────\n\n");
+      rows.map((p, i) => `${i + 1}. ${pasteShareText(p)}`).join("\n\n──────────\n\n");
     void shareTextViaChooser(text);
   }
   async function copyPasteRow(p: { converted: string; row: Record<string, string> }, i: number) {
-    await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRowObject(p)));
+    await navigator.clipboard.writeText(withLocationLink(buildRowSummaryText(buildPasteRowObject(p)), rawGpsOfPaste(p)));
     setPasteCopiedIdx(i);
     setTimeout(() => setPasteCopiedIdx(null), 1200);
   }
 
   async function copyPasteRecordRow(p: { converted: string; row: Record<string, string> }, i: number) {
-    await navigator.clipboard.writeText(buildRowSummaryText(buildPasteRecordRowObject(p)));
+    await navigator.clipboard.writeText(withLocationLink(buildRowSummaryText(buildPasteRecordRowObject(p)), rawGpsOfPaste(p)));
     setPasteRecordCopiedIdx(i);
     setTimeout(() => setPasteRecordCopiedIdx(null), 1200);
   }
@@ -2226,10 +2265,11 @@ export default function SortingPage() {
                           <div className="flex items-center gap-2 whitespace-nowrap">
                             {/* الترقيم بيبدأ من ١ في كل نافذة لوحدها */}
                             <span className="text-[11px] font-bold text-muted">{rowNo + 1}</span>
-                            <button onClick={async () => { await navigator.clipboard.writeText(buildRowSummaryText(buildRowObject(r))); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1200); }} className="text-muted hover:text-primary transition" title="نسخ">
+                            {/* النسخ والمشاركة الاتنين بيطلعوا معاهم لينك موقع السيارة */}
+                            <button onClick={async () => { await navigator.clipboard.writeText(rowShareText(r)); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1200); }} className="text-muted hover:text-primary transition" title="نسخ">
                               {copiedIdx === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
                             </button>
-                            <button onClick={() => shareRowToWhatsApp(buildRowObject(r))} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={13} /></button>
+                            <button onClick={() => shareResultRow(r)} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={13} /></button>
                             <button onClick={() => deleteResult(i)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
                           </div>
                         </td>
@@ -2715,7 +2755,7 @@ export default function SortingPage() {
                             <button onClick={() => copyPasteRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
                               {pasteCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
                             </button>
-                            <button onClick={() => shareRowToWhatsApp(buildPasteRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                            <button onClick={() => void shareTextViaChooser(pasteShareText(p))} title="واتساب" className="text-muted hover:text-primary transition">
                               <Share2 size={12} />
                             </button>
                             <button onClick={() => deletePasteResult(i)} title="حذف" className="text-muted hover:text-danger transition">
@@ -2818,7 +2858,7 @@ export default function SortingPage() {
                               <button onClick={() => copyPasteRecordRow(p, i)} title="نسخ" className="text-muted hover:text-primary transition">
                                 {pasteRecordCopiedIdx === i ? <Check size={12} className="text-primary" /> : <Copy size={12} />}
                               </button>
-                              <button onClick={() => shareRowToWhatsApp(buildPasteRecordRowObject(p))} title="واتساب" className="text-muted hover:text-primary transition">
+                              <button onClick={() => void shareTextViaChooser(withLocationLink(buildRowSummaryText(buildPasteRecordRowObject(p)), rawGpsOfPaste(p)))} title="واتساب" className="text-muted hover:text-primary transition">
                                 <Share2 size={12} />
                               </button>
                             </div>
