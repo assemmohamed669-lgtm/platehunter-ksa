@@ -147,6 +147,36 @@ export interface ResolvedColumn {
   key: string;
   label: string;
   sourceCol: string; // اسم العمود الأصلي في الملف
+  /**
+   * أعمدة **مكررة الاسم** في نفس الشيت (زي «نوع المركبة» و«نوع المركبة_1»).
+   * قيمها بتتدمج مع قيمة sourceCol في خانة واحدة — شوف joinDupValues.
+   */
+  dupCols?: string[];
+}
+
+/**
+ * الاسم الأساسي للعمود بعد شيل لاحقة التكرار اللي بيحطها قارئ الإكسل
+ * («نوع المركبة_1» → «نوع المركبة»). بيستخدم عشان نعرف الأعمدة اللي أصلها
+ * اسم واحد اتكرر في نفس الشيت.
+ */
+export function dupBaseName(header: string): string {
+  return String(header ?? "").replace(/_\d+$/, "").trim();
+}
+
+/**
+ * يدمج قيمة العمود مع قيم توائمه المكررة في نص واحد: «تويوتا لاندكروزر».
+ * الفاضي بيتشال، والقيمة المتكررة بتتكتب مرة واحدة.
+ */
+export function joinDupValues(
+  row: Record<string, string> | undefined,
+  col: { sourceCol: string; dupCols?: string[] },
+): string {
+  const parts: string[] = [];
+  for (const c of [col.sourceCol, ...(col.dupCols ?? [])]) {
+    const v = String(row?.[c] ?? "").trim();
+    if (v && !parts.includes(v)) parts.push(v);
+  }
+  return parts.join(" ");
 }
 
 // مصدر أعمدة لدمج نتيجة الفرز: الداتا أو أي شيت إحالة (أساسي/إضافي).
@@ -164,6 +194,8 @@ export interface MergedResultColumn {
   source: "data" | "referral"; // منين تُقرأ القيمة (صف الداتا ولا صف الإحالة)
   sourceCol: string;           // اسم العمود الأساسي (أول مرشّح) — للتوافق/التصدير
   sourceCols: string[];        // كل الأعمدة المرشّحة عبر المحافظ — تُقرأ بالتتابع لأول قيمة
+  /** أعمدة مكررة الاسم في نفس الشيت — قيمها بتتدمج مع القيمة الأساسية. */
+  dupCols?: string[];
 }
 
 /**
@@ -187,8 +219,10 @@ export function resolveMergedResultColumns(
 ): MergedResultColumn[] {
   const dataCols = new Map<string, string[]>(); // key الهدف → أعمدة الداتا (كل واحد عمود مستقل)
   const refCols = new Map<string, string[]>();  // key الهدف → أعمدة كل المحافظ (تتدمج في عمود واحد)
+  const dupOf = new Map<string, string[]>();    // عمود مصدر → توائمه المكررة الاسم
   for (const src of sources) {
     for (const c of resolveResultColumns(src.headers, src.rows, src.plateCol, contentThreshold)) {
+      if (c.dupCols?.length) dupOf.set(c.sourceCol, c.dupCols);
       if (src.kind === "referral") {
         // «عنوان/حي/تاريخ المحفظة» = بيانات سجلّ البنك (مدينة/منطقة/تاريخ
         // التسجيل عنده) مش موقع ولا تاريخ تفريغ المندوب — فمالهمش لازمة في
@@ -209,13 +243,16 @@ export function resolveMergedResultColumns(
     let idx = 0;
     for (const col of dataCols.get(t.key) ?? []) {
       const label = idx === 0 ? t.label : `${t.label} (الداتا)`;
-      out.push({ id: `${t.key}-${idx}`, key: t.key, label, source: "data", sourceCol: col, sourceCols: [col] });
+      const d = dupOf.get(col);
+      out.push({ id: `${t.key}-${idx}`, key: t.key, label, source: "data", sourceCol: col, sourceCols: [col], ...(d?.length ? { dupCols: d } : {}) });
       idx++;
     }
     const rCols = refCols.get(t.key) ?? [];
     if (rCols.length > 0) {
       const label = idx === 0 ? t.label : `${t.label} (المحفظة)`;
-      out.push({ id: `${t.key}-${idx}`, key: t.key, label, source: "referral", sourceCol: rCols[0], sourceCols: rCols });
+      // توائم كل الأعمدة المرشّحة — عشان الدمج يشتغل مهما كانت المحفظة المطابِقة
+      const d = rCols.flatMap((c) => dupOf.get(c) ?? []);
+      out.push({ id: `${t.key}-${idx}`, key: t.key, label, source: "referral", sourceCol: rCols[0], sourceCols: rCols, ...(d.length ? { dupCols: d } : {}) });
       idx++;
     }
   }
@@ -253,6 +290,14 @@ export function resolveResultColumns(
     const src = available.find((h) => !used.has(h) && nameMatches(h, target.aliases));
     if (src) { used.add(src); resolved.set(target.key, src); }
   }
+  // (١.٥) توائم الأعمدة المكررة الاسم تتحجز **قبل** مطابقة المحتوى — وإلا
+  // «نوع المركبة_1» (لاندكروزر) ممكن يتسرق لهدف «الماركة» بالمحتوى.
+  const dups = new Map<string, string[]>();   // العمود المحلول → توائمه
+  for (const src of resolved.values()) {
+    const base = dupBaseName(src);
+    const twins = available.filter((h) => h !== src && !used.has(h) && dupBaseName(h) === base);
+    if (twins.length) { dups.set(src, twins); for (const t of twins) used.add(t); }
+  }
   // (٢) الأهداف اللي لسه مالهاش عمود → بالمحتوى
   for (const target of RESULT_TARGETS) {
     if (resolved.has(target.key) || !target.content || rows.length === 0) continue;
@@ -266,10 +311,20 @@ export function resolveResultColumns(
     if (bestRatio >= contentThreshold) { used.add(best!); resolved.set(target.key, best!); }
   }
 
+  // أعمدة اتحلّت بالمحتوى ممكن يكون ليها توائم مكررة برضه
+  for (const src of resolved.values()) {
+    if (dups.has(src)) continue;
+    const base = dupBaseName(src);
+    const twins = available.filter((h) => h !== src && !used.has(h) && dupBaseName(h) === base);
+    if (twins.length) { dups.set(src, twins); for (const t of twins) used.add(t); }
+  }
+
   const out: ResolvedColumn[] = [];
   for (const target of RESULT_TARGETS) {
     const src = resolved.get(target.key);
-    if (src) out.push({ key: target.key, label: target.label, sourceCol: src });
+    if (!src) continue;
+    const dupCols = dups.get(src);
+    out.push({ key: target.key, label: target.label, sourceCol: src, ...(dupCols?.length ? { dupCols } : {}) });
   }
   return out;
 }

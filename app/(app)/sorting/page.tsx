@@ -16,7 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, joinDupValues, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
@@ -1390,14 +1390,17 @@ export default function SortingPage() {
   // بتطلّع نوعها/ماركتها حتى لو المحافظ بأسماء أعمدة مختلفة.
   function cellValue(
     row: Record<string, string> | undefined,
-    col: { sourceCol: string; sourceCols?: string[] },
+    col: { sourceCol: string; sourceCols?: string[]; dupCols?: string[] },
   ): string {
     const cols = col.sourceCols && col.sourceCols.length ? col.sourceCols : [col.sourceCol];
     for (const c of cols) {
       const v = String(row?.[c] ?? "").trim();
-      if (v) return v;
+      // أعمدة مكررة الاسم في نفس المحفظة («نوع المركبة» و«نوع المركبة_1» =
+      // الماركة والطراز) بتتدمج في خانة واحدة: «تويوتا لاندكروزر».
+      if (v) return col.dupCols?.length ? joinDupValues(row, { sourceCol: c, dupCols: col.dupCols }) : v;
     }
-    return "";
+    // القيمة الأساسية فاضية بس التوأم فيه قيمة
+    return col.dupCols?.length ? joinDupValues(row, { sourceCol: col.sourceCol, dupCols: col.dupCols }) : "";
   }
 
   function plateForRow(r: MatchResult): string {
