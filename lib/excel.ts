@@ -13,6 +13,7 @@ import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
 import { gpsCellToLink } from "./gps";
 import { rtlAlignBlob } from "./rtlExcel";
+import { readAllSheetsRawStream } from "./xlsxStream";
 
 // روابط خرائط جوجل — بتتعرض في التصدير ككلمة «خريطة» بدل الرابط الطويل.
 const MAP_URL_RE = /maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google/i;
@@ -251,6 +252,7 @@ export async function readAllSheetsRaw(
   const buf = await file.arrayBuffer();
 
   // الأول: الـ worker — القراءة تفضل بعيد عن الـ main thread فالشاشة ما تتجمّدش.
+  // (جوّه الـ worker بيجرّب القارئ المتدفّق الأول وبعدين القارئ العادي.)
   if (typeof Worker !== "undefined") {
     try {
       return await new Promise<{ name: string; aoa: unknown[][] }[]>((resolve, reject) => {
@@ -283,6 +285,13 @@ export async function readAllSheetsRaw(
       /* الـ worker مش متاح — نكمل على الـ main thread زي الأول */
     }
   }
+
+  // الـ worker مش متاح: برضه نجرّب المتدفّق الأول — أخفّ بكتير على الذاكرة من
+  // القارئ العادي مع المحافظ اللي فيها مدى وهمي ضخم.
+  try {
+    const streamed = await readAllSheetsRawStream(new Uint8Array(buf));
+    if (streamed.some((s) => s.aoa.length > 0)) return streamed;
+  } catch { /* مش xlsx أو بنية غريبة — نكمل على القارئ العادي */ }
 
   return readAllSheetsRawSync(new Uint8Array(buf));
 }

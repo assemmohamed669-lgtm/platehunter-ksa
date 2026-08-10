@@ -230,6 +230,175 @@ function buildHeaderKeys(headerRow: string[]): string[] {
   return keys;
 }
 
+/** كل ورقات الملف بمسارها جوّه الـzip، بترتيب الـworkbook. */
+async function listSheetPaths(zip: ZipLike): Promise<{ name: string; path: string }[]> {
+  const wbXml = await readEntryText(zip, "xl/workbook.xml");
+  const relsXml = await readEntryText(zip, "xl/_rels/workbook.xml.rels");
+  const sheets: { name: string; rid: string }[] = [];
+  const rels: Record<string, string> = {};
+  if (wbXml) {
+    const p = new SaxesParser();
+    p.on("opentag", (t) => {
+      if (localName(t.name) === "sheet") {
+        sheets.push({ name: attrByLocal(t.attributes, "name"), rid: attrByLocal(t.attributes, "id") });
+      }
+    });
+    p.write(wbXml).close();
+  }
+  if (relsXml) {
+    const p = new SaxesParser();
+    p.on("opentag", (t) => {
+      if (localName(t.name) === "Relationship") {
+        const id = attrByLocal(t.attributes, "Id");
+        if (id) rels[id] = attrByLocal(t.attributes, "Target");
+      }
+    });
+    p.write(relsXml).close();
+  }
+  const toPath = (target: string): string => {
+    const t = target.replace(/^\/xl\//, "").replace(/^\//, "");
+    return t.startsWith("xl/") ? t : "xl/" + t;
+  };
+
+  const out = sheets
+    .filter((s) => s.name)
+    .map((s) => ({ name: s.name, path: s.rid && rels[s.rid] ? toPath(rels[s.rid]) : "" }))
+    .filter((s) => s.path && zip.file(s.path));
+  if (out.length) return out;
+
+  // احتياطي: أسماء ملفات غير قياسية — رتّب رقمياً (sheet2 قبل sheet10).
+  const names = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/[^/]+\.xml$/i.test(n));
+  names.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  return names.map((path, i) => ({ name: sheets[i]?.name || `Sheet${i + 1}`, path }));
+}
+
+/**
+ * يقرا **كل** ورقات الملف كصفوف خام (مصفوفات) بمرور SAX واحد لكل ورقة —
+ * بديل منخفض الذاكرة لـ `XLSX.read` في مسار ملفات الإحالة.
+ *
+ * ليه: محافظ البنوك بتيجي بمدى وهمي ضخم (الورقة مسجّلة لغاية صف ٩٩٨ ألف وفيها
+ * ١٦٧٤ لوحة بس، والباقي صفوف فاضية متنسّقة) وأحياناً معاها pivot cache بمئات
+ * الميجات. SheetJS بيفكّ ويبني ده كله في الذاكرة الأول وبعدين إحنا بنقصّه —
+ * فالتليفون بيتجمّد أو التطبيق بيقفل. هنا بنعدّي على الـXML مرة واحدة، بنرمي
+ * الصفوف الفاضية وإحنا ماشيين، وماببنقربش من الـpivot cache أصلاً.
+ *
+ * بيرمي `NotXlsxWorksheetError` لو الملف مش xlsx — فالمستدعي يرجع للقارئ العادي.
+ */
+export async function readAllSheetsRawStream(
+  input: Blob | ArrayBuffer | Uint8Array,
+): Promise<{ name: string; aoa: unknown[][] }[]> {
+  const zip = await JSZip.loadAsync(input as ArrayBuffer);
+  const sst = parseSharedStrings(await readEntryText(zip, "xl/sharedStrings.xml"));
+  const { styleToFmt, customFmts } = parseStyles(await readEntryText(zip, "xl/styles.xml"));
+  const decodeCell = makeCellDecoder(sst, styleToFmt, customFmts);
+
+  const sheets = await listSheetPaths(zip);
+  if (sheets.length === 0) {
+    const { hint, entries } = describeNonXlsxZip(zip);
+    throw new NotXlsxWorksheetError(
+      `تعذّر إيجاد ورقة بيانات — الملف مش xlsx من جوّه: ${hint}. ` +
+        "الحل: افتح الملف واعمل «حفظ باسم → Excel Workbook (.xlsx)».",
+      entries
+    );
+  }
+
+  const out: { name: string; aoa: unknown[][] }[] = [];
+  for (const s of sheets) out.push({ name: s.name, aoa: await streamSheetAoa(zip, s.path, decodeCell) });
+  return out;
+}
+
+/** مرور SAX على ورقة واحدة → صفوف خام، بلا الصفوف الفاضية. */
+function streamSheetAoa(
+  zip: ZipLike,
+  path: string,
+  decodeCell: (type: string | null, valBuf: string, style: number | null, formula: string) => string,
+): Promise<unknown[][]> {
+  return new Promise<unknown[][]>((resolve, reject) => {
+    const aoa: unknown[][] = [];
+    const parser = new SaxesParser();
+    let row: string[] | null = null;
+    let curCol = -1, curType: string | null = null, curStyle: number | null = null;
+    let inV = false, inT = false, inF = false, valBuf = "", fBuf = "";
+
+    parser.on("opentag", (t) => {
+      const n = localName(t.name);
+      if (n === "row") row = [];
+      else if (n === "c") {
+        curCol = colToIdx((t.attributes.r as string) || "");
+        curType = (t.attributes.t as string) || null;
+        const s = t.attributes.s as string | undefined;
+        curStyle = s != null ? parseInt(s, 10) : null;
+        valBuf = ""; fBuf = "";
+      } else if (n === "v") { inV = true; valBuf = ""; }
+      else if (n === "f") { inF = true; fBuf = ""; }
+      else if (n === "t") inT = true;
+    });
+    parser.on("text", (txt) => {
+      if (inF) fBuf += txt;
+      else if (inV || inT) valBuf += txt;
+    });
+    parser.on("closetag", (t) => {
+      const n = localName(t.name);
+      if (n === "v") inV = false;
+      else if (n === "f") inF = false;
+      else if (n === "t") inT = false;
+      else if (n === "c") {
+        if (row && curCol >= 0) row[curCol] = decodeCell(curType, valBuf, curStyle, fBuf);
+      } else if (n === "row") {
+        const arr = row || [];
+        row = null;
+        // الصف الفاضي بيتشال هنا — ده اللي بيمنع بناء مليون صف فاضي في الذاكرة.
+        if (arr.some((v) => v != null && String(v).trim() !== "")) aoa.push(arr);
+      }
+    });
+    parser.on("error", (e) => reject(e as unknown as Error));
+
+    const stream = internalStreamOf(zip, path);
+    stream.on("data", (chunk: string) => { try { parser.write(chunk); } catch (e) { reject(e as Error); } });
+    stream.on("error", (e: unknown) => reject(e as Error));
+    stream.on("end", () => { try { parser.close(); } catch { /* XML ناقص */ } resolve(aoa); });
+    stream.resume();
+  });
+}
+
+/**
+ * بيبني دالة بتحوّل خلية خام (نوعها + نصّها + نمطها + صيغتها) لقيمة نصية —
+ * نفس المنطق المستخدم في كل قرايات الـ streaming (دفعات أو ورقات خام).
+ */
+function makeCellDecoder(
+  sst: string[],
+  styleToFmt: Record<number, number>,
+  customFmts: Record<number, string>,
+): (type: string | null, valBuf: string, style: number | null, formula: string) => string {
+  const fmtFor = (s: number | null): string | number => {
+    if (s == null) return "General";
+    const id = styleToFmt[s];
+    if (id == null) return "General";
+    return customFmts[id] != null ? customFmts[id] : id;
+  };
+  // الوصول لـ SSF بشكل آمن ضد تعارف CJS/ESM (أحياناً بيتحط تحت .default).
+  type SSFType = { format: (fmt: string | number, v: number) => string };
+  const XLSXns = XLSX as unknown as { SSF?: SSFType; default?: { SSF?: SSFType } };
+  const SSF = XLSXns.SSF ?? XLSXns.default?.SSF ?? null;
+
+  return (type, valBuf, style, formula) => {
+    // خلية HYPERLINK → قيمتها = الرابط نفسه (زي resolveHyperlinkCells في القارئ
+    // العادي)، عشان عمود الموقع يطلع لينك يفتح الخريطة.
+    const linkUrl = hyperlinkFormulaUrl(formula);
+    if (linkUrl) return linkUrl;
+    if (type === "s") { const i = parseInt(valBuf, 10); return Number.isNaN(i) ? "" : (sst[i] ?? ""); }
+    if (type === "inlineStr" || type === "str") return valBuf;
+    if (type === "b") return valBuf === "1" ? "TRUE" : "FALSE";
+    // خلية خطأ (#N/A، #REF!، #VALUE!…) → فاضية، زي القارئ العادي. من غير كده
+    // المندوب كان هيشوف «#N/A» مكتوبة في عمود العنوان.
+    if (type === "e") return "";
+    if (valBuf === "") return "";
+    const num = Number(valBuf);
+    if (Number.isNaN(num) || !SSF) return valBuf;
+    try { return String(SSF.format(fmtFor(style), num)); } catch { return valBuf; }
+  };
+}
+
 /**
  * يقرا ملف xlsx على دفعات ويسلّم كل دفعة صفوف (ككائنات مفاتيحها العناوين) —
  * بنفس شكل ExcelTable.rows — للمُستهلِك، مع backpressure. بيرجّع الميتاداتا.
@@ -253,20 +422,11 @@ export async function streamXlsxToBatches(
     );
   }
 
-  const fmtFor = (s: number | null): string | number => {
-    if (s == null) return "General";
-    const id = styleToFmt[s];
-    if (id == null) return "General";
-    return customFmts[id] != null ? customFmts[id] : id;
-  };
+  const decodeCell = makeCellDecoder(sst, styleToFmt, customFmts);
 
   let headerKeys: string[] | null = null;
   let dataCount = 0;
   let batch: Record<string, string>[] = [];
-  // الوصول لـ SSF بشكل آمن ضد تعارف CJS/ESM (أحياناً بيتحط تحت .default).
-  type SSFType = { format: (fmt: string | number, v: number) => string };
-  const XLSXns = XLSX as unknown as { SSF?: SSFType; default?: { SSF?: SSFType } };
-  const SSF = XLSXns.SSF ?? XLSXns.default?.SSF ?? null;
 
   return new Promise<XlsxStreamMeta>((resolve, reject) => {
     const parser = new SaxesParser();
@@ -335,19 +495,7 @@ export async function streamXlsxToBatches(
       else if (n === "f") inF = false;
       else if (n === "t") inT = false;
       else if (n === "c") {
-        // خلية HYPERLINK → قيمتها = الرابط نفسه (زي resolveHyperlinkCells في
-        // القارئ العادي)، عشان عمود الموقع يطلع لينك يفتح الخريطة.
-        const linkUrl = hyperlinkFormulaUrl(fBuf);
-        if (linkUrl) { if (row && curCol >= 0) row[curCol] = linkUrl; return; }
-        let val = "";
-        if (curType === "s") { const i = parseInt(valBuf, 10); val = Number.isNaN(i) ? "" : (sst[i] ?? ""); }
-        else if (curType === "inlineStr" || curType === "str") val = valBuf;
-        else if (curType === "b") val = valBuf === "1" ? "TRUE" : "FALSE";
-        else if (valBuf !== "") {
-          const num = Number(valBuf);
-          if (Number.isNaN(num) || !SSF) val = valBuf;
-          else { try { val = String(SSF.format(fmtFor(curStyle), num)); } catch { val = valBuf; } }
-        }
+        const val = decodeCell(curType, valBuf, curStyle, fBuf);
         if (row && curCol >= 0) row[curCol] = val;
       } else if (n === "row") {
         const arr = row || [];

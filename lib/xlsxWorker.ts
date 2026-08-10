@@ -8,6 +8,7 @@ import * as XLSX from "xlsx";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
+import { readAllSheetsRawStream } from "./xlsxStream";
 
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
@@ -72,7 +73,7 @@ function countPlatesInBestColumn(raw2d: any[][]): number {
   return count;
 }
 
-onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; forcedSheet?: string; mode?: string }>) {
+onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; forcedSheet?: string; mode?: string }>) {
   const { buffer, password, forcedSheet, mode } = e.data;
   try {
     const data = new Uint8Array(buffer);
@@ -80,6 +81,20 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string; 
     // وضع «كل الورقات خام» — بيستخدمه تحليل شيتات الإحالة. بيتعمل هنا في الـ
     // worker عشان قراءة محفظة كبيرة ما تجمّدش الشاشة على الموبايل.
     if (mode === "rawSheets") {
+      // الأول: القارئ المتدفّق — بيعدّي على الـXML مرة واحدة وبيرمي الصفوف
+      // الفاضية وهو ماشي. محافظ زي «البنك العربي» ورقتها مسجّلة لغاية صف ٩٩٨
+      // ألف وفيها ١٦٧٤ لوحة بس ومعاها pivot cache بمئات الميجات: القارئ العادي
+      // بياخد ~٦٤٠ ميجا ذاكرة، والمتدفّق ~٦٠ ميجا. لو الملف مش xlsx (xls/محمي)
+      // بيرمي وبنكمّل على القارئ العادي زي الأول بالظبط.
+      if (!password) {
+        try {
+          const streamed = await readAllSheetsRawStream(data);
+          if (streamed.some((s) => s.aoa.length > 0)) {
+            postMessage({ success: true, sheets: streamed });
+            return;
+          }
+        } catch { /* مش xlsx أو بنية غريبة — نكمل على القارئ العادي */ }
+      }
       const rawOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false };
       (rawOpts as Record<string, unknown>).dense = true;
       if (password) (rawOpts as Record<string, unknown>).password = password;
