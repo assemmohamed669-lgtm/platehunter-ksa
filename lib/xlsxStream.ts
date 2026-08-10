@@ -322,6 +322,19 @@ export async function readAllSheetsRawStream(
   return out;
 }
 
+/**
+ * بعد الكمّ ده من الصفوف الفاضية **ورا بعض** بنوقف القراءة ونعتبر الورقة خلصت.
+ *
+ * ليه: محافظ البنوك بتيجي بمدى وهمي — «البنك العربي» ورقتها ١٠٦ ميجا XML فيها
+ * ١٦٧٥ صف داتا في الأول و**٩٩٧ ألف صف فاضي** وراهم. من غير الوقفة دي بنفكّ
+ * ونحلّل الـ١٠٦ ميجا كلها عشان نرميها — وده كل التقل اللي المندوب حاسس بيه وهو
+ * بيفتح الملف من واتساب.
+ *
+ * ٢٠ ألف صف فاضي ورا بعض رقم كبير جداً على أي ملف حقيقي (أكبر محفظة شفناها
+ * ٣٧٨٢ صف)، فمفيش داتا حقيقية ممكن تتقطع.
+ */
+const EMPTY_ROW_STOP = 20_000;
+
 /** مرور SAX على ورقة واحدة → صفوف خام، بلا الصفوف الفاضية. */
 function streamSheetAoa(
   zip: ZipLike,
@@ -334,8 +347,17 @@ function streamSheetAoa(
     let row: unknown[] | null = null;
     let curCol = -1, curType: string | null = null, curStyle: number | null = null;
     let inV = false, inT = false, inF = false, valBuf = "", fBuf = "";
+    let emptyRun = 0;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      try { stream.pause(); } catch { /* التيار خلص أصلاً */ }
+      resolve(aoa);
+    };
 
     parser.on("opentag", (t) => {
+      if (done) return;
       const n = localName(t.name);
       if (n === "row") row = [];
       else if (n === "c") {
@@ -349,10 +371,12 @@ function streamSheetAoa(
       else if (n === "t") inT = true;
     });
     parser.on("text", (txt) => {
+      if (done) return;
       if (inF) fBuf += txt;
       else if (inV || inT) valBuf += txt;
     });
     parser.on("closetag", (t) => {
+      if (done) return;
       const n = localName(t.name);
       if (n === "v") inV = false;
       else if (n === "f") inF = false;
@@ -363,15 +387,27 @@ function streamSheetAoa(
         const arr = row || [];
         row = null;
         // الصف الفاضي بيتشال هنا — ده اللي بيمنع بناء مليون صف فاضي في الذاكرة.
-        if (arr.some((v) => v != null && String(v).trim() !== "")) aoa.push(arr);
+        if (arr.some((v) => v != null && String(v).trim() !== "")) {
+          aoa.push(arr);
+          emptyRun = 0;
+        } else if (++emptyRun >= EMPTY_ROW_STOP) {
+          finish();   // ذيل وهمي — الباقي كله فاضي، مفيش داعي نكمّل قراءة
+        }
       }
     });
-    parser.on("error", (e) => reject(e as unknown as Error));
+    parser.on("error", (e) => { if (!done) reject(e as unknown as Error); });
 
     const stream = internalStreamOf(zip, path);
-    stream.on("data", (chunk: string) => { try { parser.write(chunk); } catch (e) { reject(e as Error); } });
-    stream.on("error", (e: unknown) => reject(e as Error));
-    stream.on("end", () => { try { parser.close(); } catch { /* XML ناقص */ } resolve(aoa); });
+    stream.on("data", (chunk: string) => {
+      if (done) return;
+      try { parser.write(chunk); } catch (e) { if (!done) reject(e as Error); }
+    });
+    stream.on("error", (e: unknown) => { if (!done) reject(e as Error); });
+    stream.on("end", () => {
+      if (done) return;
+      try { parser.close(); } catch { /* XML ناقص */ }
+      finish();
+    });
     stream.resume();
   });
 }
