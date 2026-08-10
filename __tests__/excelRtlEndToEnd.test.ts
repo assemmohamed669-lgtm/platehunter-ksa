@@ -87,7 +87,8 @@ describe("الشيتات اللي البرنامج بيشاركها — من ا�
     const ws = wb.Sheets[wb.SheetNames[0]];
     expect(ws["B2"].l?.Target).toContain("google.com/maps");
     expect(ws["B2"].l?.Target).toContain("21.5,39.2");
-    expect(ws["B2"].v).toBe("خريطة");
+    // نص الخانة = الرابط نفسه — عشان النسخ للواتساب يوصل رابط شغّال
+    expect(String(ws["B2"].v)).toContain("21.5,39.2");
   });
 
   it("CSV (الحل البديل لما xlsx يفشل على الموبايل) بيعدّي زي ما هو", async () => {

@@ -15,9 +15,6 @@ import { gpsCellToLink } from "./gps";
 import { rtlAlignBlob } from "./rtlExcel";
 import { readAllSheetsRawStream } from "./xlsxStream";
 
-// روابط خرائط جوجل — بتتعرض في التصدير ككلمة «خريطة» بدل الرابط الطويل.
-const MAP_URL_RE = /maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google/i;
-
 function formatDate(iso: string): string {
   const d = new Date(iso);
   const dd = String(d.getDate()).padStart(2, "0");
@@ -682,8 +679,12 @@ export function buildExcelBlob(
           // رابط خرائط نظيف (q=lat,lng بدون & — ماينكسرش بترميز HTML)، وإلا نفكّ
           // &amp; المزدوج/الثلاثي على الأقل عشان الرابط يفضل شغّال.
           const clean = gpsCellToLink(raw) || raw.replace(/&(?:amp;)+/gi, "&");
+          // نص الخانة = الرابط نفسه (مش كلمة «خريطة»). المندوب بينسخ الصف
+          // ويبعته على واتساب — والـhyperlink مابيتنسخش مع النص، فلو الخانة
+          // مكتوب فيها «خريطة» بيوصل للمستقبِل كلمة مش رابط. كده النسخ بياخد
+          // الرابط، ولسه قابل للدوس جوّه إكسيل عادي.
           cell.l = { Target: clean };
-          if (MAP_URL_RE.test(raw)) { cell.v = "خريطة"; cell.w = "خريطة"; }
+          cell.v = clean; cell.w = clean;
         }
       }
     }
@@ -967,8 +968,9 @@ export async function buildColoredSortExcel(
         // رابط الوجهة لازم يكون نضيف — لو اتكتب بـ&amp;amp; (ترميز HTML مزدوج) Excel
         // بيفتح رابط بلا destination فمايوديش لخرايط جوجل. ننضّفه زي buildExcelBlob.
         const link = gpsCellToLink(v) || v.replace(/&(?:amp;)+/gi, "&");
-        const text = MAP_URL_RE.test(v) ? "خريطة" : link;
-        cell.value = { text, hyperlink: link } as ExcelJS.CellHyperlinkValue;
+        // النص = الرابط نفسه مش كلمة «خريطة» — عشان لما المندوب ينسخ الصف
+        // ويبعته على واتساب يوصل رابط قابل للدوس (الـhyperlink مابيتنسخش).
+        cell.value = { text: link, hyperlink: link } as ExcelJS.CellHyperlinkValue;
         cell.font = { color: { argb: "FF0563C1" }, underline: true };
       }
     });

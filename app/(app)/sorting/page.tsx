@@ -1544,7 +1544,9 @@ export default function SortingPage() {
         dist: valOf(r, dist),
         addr: valOf(r, addr),
         date: valOf(r, dateCol),
-        gps: valOf(r, gps),
+        // رابط جاهز مش إحداثيات خام — عشان خانة الموقع في الإكسيل المشارَك
+        // تتنسخ كرابط شغّال لما المندوب يبعتها على واتساب.
+        gps: rawGpsOf(r) || valOf(r, gps),
         color: valOf(r, color),
         notes: notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
       };
