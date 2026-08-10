@@ -11,8 +11,14 @@ import { isHiddenTashyeekCol } from "@/lib/resultColumns";
 
 describe("isHiddenTashyeekCol — الأعمدة اللي بتتخفي من نتيجة السجلات", () => {
   it("بتخفي الأعمدة اللي المندوب مش عايزها", () => {
-    for (const h of ["الملاحظات", "ملاحظات", "البنك", "بنك التمويل", "الشاص", "رقم الشاص", "الهيكل", "رقم الهيكل", "Chassis Number"]) {
+    for (const h of ["البنك", "بنك التمويل", "الشاص", "رقم الشاص", "الهيكل", "رقم الهيكل", "Chassis Number"]) {
       expect(isHiddenTashyeekCol(h)).toBe(true);
+    }
+  });
+
+  it("«الملاحظات» بتفضل ظاهرة — المندوب محتاجها", () => {
+    for (const h of ["الملاحظات", "ملاحظات", "ملاحظة", "Notes"]) {
+      expect(isHiddenTashyeekCol(h)).toBe(false);
     }
   });
 
