@@ -16,9 +16,10 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
+import { buildCombinedShareRows } from "@/lib/combinedShare";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, joinDupValues, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
@@ -658,7 +659,10 @@ export default function SortingPage() {
         id: `xtash-${i}`, key: `xtash-${col}`, label: col,
         source: "data" as const, sourceCol: col, sourceCols: [col],
       }));
-    return [...fixed, ...leftovers];
+    // أعمدة مالهاش لازمة في نتيجة السجلات (بطلب المندوب): الملاحظات/البنك/
+    // الشاص/الهيكل، وأعمدة اللوحة المكررة اللي بتتلحق آخر النافذة. «رقم اللوحة»
+    // الأساسي مش منها — بيتحط لوحده في أول الصف قبل الأعمدة دي.
+    return [...fixed, ...leftovers].filter((c) => !isHiddenTashyeekCol(c.label));
   }, [tashyeekTable, tashyeekPlateCol, referralTable, effectiveReferralPlateCol, extraReferrals]);
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
@@ -1505,7 +1509,7 @@ export default function SortingPage() {
   // المطلوب (اللوحة) › نوع السيارة (داتا) › العنوان › الحي › الماركة (موديل
   // الإحالة) › البنك (لو موجود) › GPS › اللون (المحفظة) › الملاحظات (الداتا).
   // rows = صفوف النافذة اللي بتشارك منها (نافذة لكل ملف داتا)؛ الافتراضي كل النتايج.
-  function buildSortShareData(rows: MatchResult[] = displayResults) {
+  function buildSortShareData(rows: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []) {
     const find = (key: string, source?: "data" | "referral") =>
       resultCols.find((c) => c.key === key && (source ? c.source === source : true));
     const dataType = find("type", "data");
@@ -1532,6 +1536,7 @@ export default function SortingPage() {
       const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i).join(" ");
       return {
+        src: "",
         plate: plateForRow(r),
         type: valOf(r, dataType),
         model,
@@ -1544,9 +1549,38 @@ export default function SortingPage() {
         notes: notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
       };
     });
+
+    // سيارات **السجلات** (شيت التشييك) بتتلحق بنفس الأعمدة ومعلّم قدامها
+    // «سجلات» — عشان المشاركة الواحدة تطلع فيها الاتنين والمندوب يفرّق بينهم.
+    const tfind = (key: string) => tashyeekResultCols.find((c) => c.key === key);
+    const tval = (r: TashyeekResultRow, c: MergedResultColumn | undefined) =>
+      c ? (c.source === "referral"
+        ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
+        : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c))) : "";
+    const tType = tfind("type"), tBrand = tfind("brand"), tDist = tfind("district");
+    const tAddr = tfind("address"), tDate = tfind("date"), tColor = tfind("color"), tGps = tfind("gps");
+    for (const r of tash) {
+      const model = [tval(r, tBrand), tval(r, tType)].filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i).join(" ");
+      rowsData.push({
+        src: "سجلات",
+        plate: String(r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "").trim(),
+        type: tval(r, tType),
+        model,
+        bank: "",
+        dist: tval(r, tDist),
+        addr: tval(r, tAddr),
+        date: tval(r, tDate),
+        gps: rawGpsOfTashyeek(r),
+        color: tval(r, tColor),
+        notes: "",
+      });
+    }
+
     const hasBank = rowsData.some((x) => x.bank);
     const hasDate = rowsData.some((x) => x.date);
-    return { rowsData, hasBank, hasDate };
+    const hasSrc = rowsData.some((x) => x.src);
+    return { rowsData, hasBank, hasDate, hasSrc };
   }
 
   function shareSubtitle(): string {
@@ -1560,18 +1594,19 @@ export default function SortingPage() {
 
   // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك). اللوحات المكررة كل مجموعة
   // بلون واحد (نفس ألوان الإكسيل) عشان تتميّز.
-  function buildSortImageTable(src: MatchResult[] = displayResults): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
-    const { rowsData, hasBank, hasDate } = buildSortShareData(src);
-    // الترتيب: المطلوب › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
-    const columns = ["المطلوب", "نوع السيارة", "العنوان", "الحي", "الماركة", ...(hasBank ? ["البنك"] : []), ...(hasDate ? ["تاريخ التسجيل"] : []), "اللون", "الملاحظات"];
-    const rows = rowsData.map((x) => [
-      x.plate, x.type, x.addr, x.dist, x.model, ...(hasBank ? [x.bank] : []), ...(hasDate ? [x.date] : []), x.color, x.notes,
-    ]);
-    const rowColors = src.map((r) => {
-      const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-      const idx = plateColorMap.get(k);
-      return idx !== undefined ? DUPE_COLORS[idx].hex : null;
-    });
+  function buildSortImageTable(src: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
+    const { rowsData } = buildSortShareData(src, tash);
+    // الترتيب وأعمدة «المصدر»/البنك/التاريخ بتتحدد في lib/combinedShare (متغطّاة
+    // باختبارات) — عشان الصورة والإكسيل يطلعوا بنفس الشكل بالظبط.
+    const { columns, imageRows: rows } = buildCombinedShareRows(rowsData, []);
+    const rowColors = [
+      ...src.map((r) => {
+        const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+        const idx = plateColorMap.get(k);
+        return idx !== undefined ? DUPE_COLORS[idx].hex : null;
+      }),
+      ...tash.map(() => null),   // صفوف السجلات بلا تلوين مكرّرات
+    ];
     return { columns, rows, subtitle: shareSubtitle(), rowColors };
   }
 
@@ -1659,10 +1694,11 @@ export default function SortingPage() {
 
   // Colored xlsx, but falls back to a plain CSV if the xlsx build crashes on
   // the device WebView (loses the row colors, but the data always comes out).
-  async function buildSortExcelBlob(src: MatchResult[] = displayResults): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
+  async function buildSortExcelBlob(src: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
     // نفس ترتيب الصورة + عمود GPS (لينك الخريطة) + البنك لو موجود.
-    const { rowsData, hasBank, hasDate } = buildSortShareData(src);
+    const { rowsData, hasBank, hasDate, hasSrc } = buildSortShareData(src, tash);
     const rowObjects = rowsData.map((x) => ({
+      ...(hasSrc ? { "المصدر": x.src } : {}),
       "المطلوب": x.plate,
       "نوع السيارة": x.type,
       "الماركة": x.model,
@@ -1675,11 +1711,14 @@ export default function SortingPage() {
       "الملاحظات": x.notes,
     }));
     try {
-      const rowColors = src.map((r) => {
-        const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-        const idx = plateColorMap.get(k);
-        return idx !== undefined ? DUPE_COLORS[idx].hex : null;
-      });
+      const rowColors = [
+        ...src.map((r) => {
+          const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+          const idx = plateColorMap.get(k);
+          return idx !== undefined ? DUPE_COLORS[idx].hex : null;
+        }),
+        ...tash.map(() => null),   // صفوف السجلات بلا تلوين مكرّرات
+      ];
       return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
     } catch {
       return { blob: buildCsvBlob(rowObjects), ext: "csv" };
@@ -2385,11 +2424,15 @@ export default function SortingPage() {
           )}
 
           {/* ⑥ مشاركة الفرز — زر موحّد (فتح / واتساب / صورة). بيشارك صفوف
-              **النافذة دي بس**. excelBlob = النسخة الملوّنة (تمييز المكرّرات). */}
+              النافذة دي **+ سيارات السجلات** معلّم قدامها «سجلات» (بطلب المندوب)
+              عشان تطلع مشاركة واحدة فيها الاتنين. excelBlob = النسخة الملوّنة. */}
           <ShareSortButton title={g.title ?? "نتائج الفرز"}
-            rows={() => gRows.map(buildRowObject)}
-            imageTable={() => buildSortImageTable(gRows)}
-            excelBlob={() => buildSortExcelBlob(gRows)} />
+            rows={() => [
+              ...gRows.map(buildRowObject),
+              ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...buildTashyeekRowObj(r) })),
+            ]}
+            imageTable={() => buildSortImageTable(gRows, tashyeekResults ?? [])}
+            excelBlob={() => buildSortExcelBlob(gRows, tashyeekResults ?? [])} />
           </div>
           );
           })}

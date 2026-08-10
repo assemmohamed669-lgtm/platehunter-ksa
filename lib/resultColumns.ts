@@ -328,3 +328,20 @@ export function resolveResultColumns(
   }
   return out;
 }
+
+/**
+ * أعمدة بتتخفي من نافذة نتيجة **السجلات** (سيارات شيت التشييك اللي طلعت
+ * مطلوبة) — بطلب المندوب: الملاحظات، البنك، الشاص/الهيكل، وأعمدة «اللوحة»
+ * المكررة اللي شيت التشييك بيلحقها آخر النافذة.
+ *
+ * **«رقم اللوحة» الأساسي مابيتخفيش** — القاعدة بتمسك بس الأعمدة اللي اسمها
+ * «لوحة/اللوحه/Plate» لوحدها (أو بلاحقة تكرار)، مش اللي فيها «رقم».
+ */
+const HIDDEN_TASHYEEK_COL =
+  /ملاحظ|بنك|شاص|هيكل|chassis|^(ال)?لوح[ةه](_\d+)?$|^plate(_\d+)?$/i;
+
+export function isHiddenTashyeekCol(label: string): boolean {
+  const s = String(label ?? "").trim();
+  if (!s) return false;
+  return HIDDEN_TASHYEEK_COL.test(s);
+}
