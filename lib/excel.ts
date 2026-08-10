@@ -32,6 +32,19 @@ function formatDate(iso: string): string {
  * (محاذاة الخلايا نفسها بتتظبط في `rtlAlignBlob` — النسخة المجانية من SheetJS
  * مابتكتبش أنماط خلايا.)
  */
+/**
+ * عرض عمود الروابط في الشيتات المشارَكة. خانة الموقع بتتكتب بالرابط كامل عشان
+ * المندوب ينسخ الصف ويبعته على واتساب فيوصل رابط شغّال — لكن الرابط طويل
+ * (~٥٠ حرف) وكان بياخد أقصى عرض ويطلّع الشيت وحش. القيمة جوّه الخانة مابتتغيّرش،
+ * العرض المعروض بس.
+ */
+export const LINK_COL_WIDTH = 14;
+
+/** عمود قيمه روابط؟ (خانة واحدة على الأقل فيها http) */
+function isLinkColumn(header: string, rows: Record<string, unknown>[]): boolean {
+  return rows.some((r) => /^https?:\/\//i.test(String(r[header] ?? "").trim()));
+}
+
 function setWorkbookRtl(wb: XLSX.WorkBook): void {
   wb.Workbook = { ...(wb.Workbook ?? {}), Views: [{ RTL: true }] };
 }
@@ -690,6 +703,15 @@ export function buildExcelBlob(
     }
   }
 
+  // عمود الروابط بيتضيّق — الرابط جوّه الخانة كامل (للنسخ) بس معروض صغير.
+  const headerNames = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const cols: XLSX.ColInfo[] = [];
+  let anyLinkCol = false;
+  headerNames.forEach((h, i) => {
+    if (isLinkColumn(h, rows)) { cols[i] = { wch: LINK_COL_WIDTH }; anyLinkCol = true; }
+  });
+  if (anyLinkCol) ws["!cols"] = cols;
+
   const wb = XLSX.utils.book_new();
   // المحتوى عربي واللوحات عربية → افتح الورقة من اليمين لليسار (RTL).
   setWorkbookRtl(wb);
@@ -976,8 +998,10 @@ export async function buildColoredSortExcel(
     });
   });
 
-  // Column widths
+  // Column widths — عمود الروابط بيتضيّق (القيمة جوّاه الرابط كامل عشان النسخ،
+  // بس العرض المعروض صغير عشان الشيت مايطلعش وحش).
   headers.forEach((h, ci) => {
+    if (isLinkColumn(h, rows)) { ws.getColumn(ci + 1).width = LINK_COL_WIDTH; return; }
     let maxLen = h.length;
     rows.forEach((row) => { const v = String(row[h] ?? ""); if (v.length > maxLen) maxLen = v.length; });
     ws.getColumn(ci + 1).width = Math.min(Math.max(maxLen + 2, 10), 55);
