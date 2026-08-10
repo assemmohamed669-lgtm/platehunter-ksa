@@ -199,10 +199,24 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
             success: boolean;
             headers?: string[];
             rows?: Record<string, string>[];
+            aoa?: unknown[][];
             sheetName?: string;
             allSheetNames?: string[];
             error?: string;
           };
+          // القارئ المتدفّق بيرجّع صفوف خام — بناء الجدول منها رخيص (آلاف
+          // الصفوف) فبيتعمل هنا، والتقيل (فكّ الضغط وتحليل الـXML) اتعمل في
+          // الـworker. كده الـworker يفضل مستقل مايستوردش من الملف ده.
+          if (d.success && d.aoa) {
+            try {
+              resolve(buildTableFromAoa(d.aoa, d.sheetName, d.allSheetNames ?? []));
+            } catch (err) {
+              reject(err instanceof Error && err.message === "empty"
+                ? new Error("الملف فارغ أو لا يحتوي على بيانات.")
+                : new Error("تعذّرت قراءة الملف."));
+            }
+            return;
+          }
           if (d.success && d.headers && d.rows) {
             if (d.rows.length === 0) {
               reject(new Error("الملف فارغ أو لا يحتوي على بيانات."));
@@ -230,6 +244,14 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
       // Only fall through on worker init/communication failures; re-throw real parse errors
       if (msg !== "__WORKER_UNAVAILABLE__") throw err;
     }
+  }
+
+  // الـworker مش متاح: برضه نجرّب المتدفّق قبل القارئ العادي — أخفّ بكتير على
+  // الذاكرة مع المحافظ اللي فيها مدى وهمي ضخم.
+  if (!password && !forcedSheet) {
+    try {
+      return await parseExcelStream(new Uint8Array(buffer));
+    } catch { /* مش xlsx أو بنية غريبة — نكمل على القارئ العادي */ }
   }
 
   // Synchronous fallback (main-thread; may briefly freeze UI on very large files)
@@ -359,33 +381,82 @@ function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string
     trimSheetToData(ws);
 
     const raw2d = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
-    if (raw2d.length < 2) return 0;
-
-    const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[]).length), 0);
-    const sampleN = Math.min(raw2d.length, 201);
-
-    let bestCol = -1, bestRatio = 0;
-    for (let col = 0; col < numCols; col++) {
-      let plateLike = 0, nonEmpty = 0;
-      for (let i = 1; i < sampleN; i++) {
-        const raw = String((raw2d[i] as unknown[])?.[col] ?? "").trim();
-        if (!raw) continue;
-        nonEmpty++;
-        if (_cellLooksLikePlate(raw)) plateLike++;
-      }
-      if (nonEmpty === 0) continue;
-      const ratio = plateLike / nonEmpty;
-      if (ratio > bestRatio) { bestRatio = ratio; bestCol = col; }
-    }
-    if (bestCol < 0 || bestRatio < 0.3) return 0;
-
-    let count = 0;
-    for (let i = 1; i < raw2d.length; i++) {
-      const raw = String((raw2d[i] as unknown[])?.[bestCol] ?? "").trim();
-      if (raw && _cellLooksLikePlate(raw)) count++;
-    }
-    return count;
+    return _plateCountInAoa(raw2d);
   } catch { return 0; }
+}
+
+/**
+ * عدد اللوحات الفعلية في أفضل عمود بالورقة — بيحدد أنهي ورقة نفرز عليها في
+ * الملفات متعددة الورقات. مشترك بين القارئ العادي والمتدفّق.
+ */
+function _plateCountInAoa(raw2d: unknown[][]): number {
+  if (raw2d.length < 2) return 0;
+
+  const numCols = Math.max(...(raw2d.slice(0, 5) as unknown[][]).map((r) => (r as unknown[])?.length ?? 0), 0);
+  const sampleN = Math.min(raw2d.length, 201);
+
+  let bestCol = -1, bestRatio = 0;
+  for (let col = 0; col < numCols; col++) {
+    let plateLike = 0, nonEmpty = 0;
+    for (let i = 1; i < sampleN; i++) {
+      const raw = String((raw2d[i] as unknown[])?.[col] ?? "").trim();
+      if (!raw) continue;
+      nonEmpty++;
+      if (_cellLooksLikePlate(raw)) plateLike++;
+    }
+    if (nonEmpty === 0) continue;
+    const ratio = plateLike / nonEmpty;
+    if (ratio > bestRatio) { bestRatio = ratio; bestCol = col; }
+  }
+  if (bestCol < 0 || bestRatio < 0.3) return 0;
+
+  let count = 0;
+  for (let i = 1; i < raw2d.length; i++) {
+    const raw = String((raw2d[i] as unknown[])?.[bestCol] ?? "").trim();
+    if (raw && _cellLooksLikePlate(raw)) count++;
+  }
+  return count;
+}
+
+/**
+ * قراءة الملف بالقارئ المتدفّق وبناء الجدول — نفس منطق اختيار الورقة وبناء
+ * الصفوف بتاع القارئ العادي بالظبط (`buildTableFromAoa`)، بس الصفوف بتيجي من
+ * مرور SAX واحد بدل ما SheetJS يبني مليون صف فاضي في الذاكرة.
+ *
+ * محفظة «البنك العربي» مثال حقيقي: ورقتها مسجّلة لغاية صف ٩٩٨,٨٣٦ وفيها ١٦٧٤
+ * لوحة بس → القارئ العادي ٧٨٣ ميجا ذاكرة و٧.٧ ثانية، والمتدفّق جزء صغير من ده.
+ */
+export async function parseExcelStream(data: Uint8Array): Promise<ExcelTable> {
+  // raw: القيم زي ما هي + التواريخ ككائن Date — عشان cellToStr تنسّقها
+  // dd/mm/yyyy وتطلع نفس ناتج القارئ العادي بالحرف.
+  const sheets = await readAllSheetsRawStream(data, { raw: true });
+  const withRows = sheets.filter((s) => s.aoa.length > 0);
+  if (withRows.length === 0) throw new Error("empty");
+  const allSheetNames = sheets.map((s) => s.name);
+
+  let chosen = withRows[0];
+  if (withRows.length > 1) {
+    // نفس ترتيب القارئ العادي: أكبر عدد لوحات فعلية، وإلا أول ورقة فيها عمود
+    // اسمه لوحة، وإلا الأولى.
+    let bestCount = 0, bestSheet: typeof chosen | null = null;
+    for (const s of withRows) {
+      const count = _plateCountInAoa(s.aoa);
+      if (count > bestCount) { bestCount = count; bestSheet = s; }
+    }
+    if (bestSheet) chosen = bestSheet;
+    else {
+      const kw = withRows.find((s) =>
+        s.aoa.slice(0, 20).some((row) =>
+          (row as unknown[]).some((c) => {
+            const v = String(c ?? "").trim().toLowerCase();
+            return PLATE_DETECT_KWS.some((k) => v.includes(k));
+          })
+        )
+      );
+      if (kw) chosen = kw;
+    }
+  }
+  return buildTableFromAoa(chosen.aoa, chosen.name, allSheetNames);
 }
 
 // يبقى احتياطي قديم لو فشل اكتشاف المحتوى تماماً (ملفات غريبة الشكل)
@@ -476,6 +547,26 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
       raw: true,
       defval: null,
     });
+    return buildTableFromAoa(raw2d, finalSheet, allSheetNames);
+  } catch (err) {
+    if (err instanceof Error && err.message === "empty") {
+      throw new Error("الملف فارغ أو لا يحتوي على بيانات.");
+    }
+    throw new Error("تعذّرت قراءة الملف — قد يكون محمياً بكلمة مرور.");
+  }
+}
+
+/**
+ * يبني ExcelTable من صفوف خام (AOA) — كشف صف العناوين، والشيتات بلا عناوين،
+ * وبناء الصفوف. مشترك بين القارئ العادي (SheetJS) والقارئ المتدفّق، فالاتنين
+ * بيدّوا نفس النتيجة بالظبط لنفس الصفوف.
+ */
+export function buildTableFromAoa(
+  raw2d: unknown[][],
+  sheetName: string | undefined,
+  allSheetNames: string[],
+): ExcelTable {
+  {
     if (raw2d.length === 0) throw new Error("empty");
 
     // Find the actual header row — skip email/instruction rows above the data table.
@@ -562,12 +653,7 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     if (rows.length === 0) throw new Error("empty");
     // اسم الورقة المختارة + كل الورقات — زي مسار الـWorker بالظبط (عشان اسم
     // الورقة وأزرار تبديل الورقة تشتغل برضه لما الـWorker مش متاح).
-    return { headers, rows, sheetName: finalSheet, allSheetNames };
-  } catch (err) {
-    if (err instanceof Error && err.message === "empty") {
-      throw new Error("الملف فارغ أو لا يحتوي على بيانات.");
-    }
-    throw new Error("تعذّرت قراءة الملف — قد يكون محمياً بكلمة مرور.");
+    return { headers, rows, sheetName, allSheetNames };
   }
 }
 

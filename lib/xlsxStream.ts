@@ -112,6 +112,18 @@ async function readEntryText(zip: ZipLike, name: string): Promise<string | null>
   return f ? f.async("string") : null;
 }
 
+/**
+ * Excel بيهرب المحارف اللي مش مسموحة في XML بالشكل `_xHHHH_` (مثلاً سطر جديد
+ * جوّه خلية بيتكتب `_x000D_`). لازم نفكّها زي القارئ العادي بالظبط — من غير كده
+ * المندوب بيشوف «ر ق أ 6720_x000D_» مكتوبة حرفياً في عمود اللوحة.
+ */
+function unescapeXlsxText(s: string): string {
+  if (s.indexOf("_x") < 0) return s;
+  return s.replace(/_x([\da-fA-F]{4})_/g, (_m, hex: string) =>
+    String.fromCharCode(parseInt(hex, 16)),
+  );
+}
+
 // يبني مصفوفة sharedStrings من نصّها (يدعم rich text: يجمع كل <t>).
 function parseSharedStrings(xml: string | null): string[] {
   const arr: string[] = [];
@@ -124,7 +136,7 @@ function parseSharedStrings(xml: string | null): string[] {
   p.on("closetag", (t) => {
     const n = localName(t.name);
     if (n === "t") inT = false;
-    else if (n === "si") { arr.push(cur ?? ""); cur = null; }
+    else if (n === "si") { arr.push(unescapeXlsxText(cur ?? "")); cur = null; }
   });
   p.write(xml).close();
   return arr;
@@ -286,11 +298,14 @@ async function listSheetPaths(zip: ZipLike): Promise<{ name: string; path: strin
  */
 export async function readAllSheetsRawStream(
   input: Blob | ArrayBuffer | Uint8Array,
+  opts: { raw?: boolean } = {},
 ): Promise<{ name: string; aoa: unknown[][] }[]> {
   const zip = await JSZip.loadAsync(input as ArrayBuffer);
   const sst = parseSharedStrings(await readEntryText(zip, "xl/sharedStrings.xml"));
   const { styleToFmt, customFmts } = parseStyles(await readEntryText(zip, "xl/styles.xml"));
-  const decodeCell = makeCellDecoder(sst, styleToFmt, customFmts);
+  const decodeCell = opts.raw
+    ? makeCellDecoder(sst, styleToFmt, customFmts, true)
+    : makeCellDecoder(sst, styleToFmt, customFmts);
 
   const sheets = await listSheetPaths(zip);
   if (sheets.length === 0) {
@@ -311,12 +326,12 @@ export async function readAllSheetsRawStream(
 function streamSheetAoa(
   zip: ZipLike,
   path: string,
-  decodeCell: (type: string | null, valBuf: string, style: number | null, formula: string) => string,
+  decodeCell: (type: string | null, valBuf: string, style: number | null, formula: string) => unknown,
 ): Promise<unknown[][]> {
   return new Promise<unknown[][]>((resolve, reject) => {
     const aoa: unknown[][] = [];
     const parser = new SaxesParser();
-    let row: string[] | null = null;
+    let row: unknown[] | null = null;
     let curCol = -1, curType: string | null = null, curStyle: number | null = null;
     let inV = false, inT = false, inF = false, valBuf = "", fBuf = "";
 
@@ -369,7 +384,19 @@ function makeCellDecoder(
   sst: string[],
   styleToFmt: Record<number, number>,
   customFmts: Record<number, string>,
-): (type: string | null, valBuf: string, style: number | null, formula: string) => string {
+): (type: string | null, valBuf: string, style: number | null, formula: string) => string;
+function makeCellDecoder(
+  sst: string[],
+  styleToFmt: Record<number, number>,
+  customFmts: Record<number, string>,
+  raw: true,
+): (type: string | null, valBuf: string, style: number | null, formula: string) => unknown;
+function makeCellDecoder(
+  sst: string[],
+  styleToFmt: Record<number, number>,
+  customFmts: Record<number, string>,
+  raw?: boolean,
+): (type: string | null, valBuf: string, style: number | null, formula: string) => unknown {
   const fmtFor = (s: number | null): string | number => {
     if (s == null) return "General";
     const id = styleToFmt[s];
@@ -377,7 +404,12 @@ function makeCellDecoder(
     return customFmts[id] != null ? customFmts[id] : id;
   };
   // الوصول لـ SSF بشكل آمن ضد تعارف CJS/ESM (أحياناً بيتحط تحت .default).
-  type SSFType = { format: (fmt: string | number, v: number) => string };
+  type SSFType = {
+    format: (fmt: string | number, v: number) => string;
+    is_date?: (fmt: string | number) => boolean;
+    parse_date_code?: (v: number) => { y: number; m: number; d: number; H: number; M: number; S: number; u: number } | null;
+    _table?: Record<number, string>;
+  };
   const XLSXns = XLSX as unknown as { SSF?: SSFType; default?: { SSF?: SSFType } };
   const SSF = XLSXns.SSF ?? XLSXns.default?.SSF ?? null;
 
@@ -387,7 +419,7 @@ function makeCellDecoder(
     const linkUrl = hyperlinkFormulaUrl(formula);
     if (linkUrl) return linkUrl;
     if (type === "s") { const i = parseInt(valBuf, 10); return Number.isNaN(i) ? "" : (sst[i] ?? ""); }
-    if (type === "inlineStr" || type === "str") return valBuf;
+    if (type === "inlineStr" || type === "str") return unescapeXlsxText(valBuf);
     if (type === "b") return valBuf === "1" ? "TRUE" : "FALSE";
     // خلية خطأ (#N/A، #REF!، #VALUE!…) → فاضية، زي القارئ العادي. من غير كده
     // المندوب كان هيشوف «#N/A» مكتوبة في عمود العنوان.
@@ -395,6 +427,24 @@ function makeCellDecoder(
     if (valBuf === "") return "";
     const num = Number(valBuf);
     if (Number.isNaN(num) || !SSF) return valBuf;
+    // الوضع الخام: رقم زي ما هو، وخلية التاريخ ترجع Date — بالظبط زي
+    // `raw: true, cellDates: true` في القارئ العادي، عشان `cellToStr` تنسّقها
+    // dd/mm/yyyy وتطلع نفس النتيجة. من غير كده التواريخ بتطلع بتنسيق الملف
+    // نفسه (27/Dec/25) والأرقام بفواصل (« 4,301 ») — اختلاف عن القديم.
+    if (raw) {
+      // is_date بتاخد **نص** التنسيق. التنسيقات المدمجة (١٤ = تاريخ) بتيجي
+      // كرقم، فلازم نحلّها من جدول SSF الأول — من غير كده التاريخ بيفضل رقم
+      // تسلسلي (42705) قدام المندوب.
+      const fmtRaw = fmtFor(style);
+      const fmt = typeof fmtRaw === "number" ? (SSF._table?.[fmtRaw] ?? String(fmtRaw)) : fmtRaw;
+      if (SSF.is_date?.(fmt)) {
+        try {
+          const d = SSF.parse_date_code?.(num);
+          if (d) return new Date(d.y, d.m - 1, d.d, d.H, d.M, d.S, d.u);
+        } catch { /* تاريخ غير صالح — نرجّع الرقم */ }
+      }
+      return num;
+    }
     try { return String(SSF.format(fmtFor(style), num)); } catch { return valBuf; }
   };
 }

@@ -111,6 +111,34 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
       return;
     }
 
+    // الوضع العادي: جرّب القارئ المتدفّق الأول — بيعدّي على الـXML مرة واحدة
+    // وبيرمي الصفوف الفاضية وهو ماشي. محفظة «البنك العربي» مثال: القارئ العادي
+    // ٧٨٣ ميجا ذاكرة و٧.٧ ثانية، والمتدفّق جزء صغير من ده. بنرجّع الصفوف الخام
+    // والصفحة بتبني منها الجدول (رخيص) — عشان الـworker يفضل مستقل.
+    if (!password && !forcedSheet) {
+      try {
+        const sheets = await readAllSheetsRawStream(data, { raw: true });
+        const withRows = sheets.filter((s) => s.aoa.length > 0);
+        if (withRows.length > 0) {
+          let chosen = withRows[0];
+          if (withRows.length > 1) {
+            let best = 0;
+            for (const s of withRows) {
+              const c = countPlatesInBestColumn(s.aoa as any[][]);
+              if (c > best) { best = c; chosen = s; }
+            }
+          }
+          postMessage({
+            success: true,
+            aoa: chosen.aoa,
+            sheetName: chosen.name,
+            allSheetNames: sheets.map((s) => s.name),
+          });
+          return;
+        }
+      } catch { /* مش xlsx أو بنية غريبة — نكمل على القارئ العادي */ }
+    }
+
     // Pass 1: read sheet names only — no cell data parsed (very fast)
     let sheetName: string | undefined;
     let allSheetNames: string[] = [];
