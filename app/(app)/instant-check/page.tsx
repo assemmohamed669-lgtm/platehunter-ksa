@@ -44,6 +44,7 @@ import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode } from "@/lib/vehicleType";
+import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
 import { PAGE_STEP, pageSlice, hasMore, growShown } from "@/lib/pagedRows";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -1557,9 +1558,10 @@ export default function InstantCheckPage() {
     setManualHits((prev) => prev.map((h) => {
       if (h.id !== id) return h;
       const row = { ...h.row };
-      if (code) row["النوع"] = code; else delete row["النوع"];
+      if (code) row[TYPE_KEY] = code; else delete row[TYPE_KEY];
       return { ...h, row };
     }));
+    void editExportedEntry(id, { type: code });   // لو الصف اتصدّر خلاص، عدّل السجل كمان
   }
 
   // اختيار نوع السيارة (حرف مختصر) لصف يدوي — بيتخزّن في row["النوع"].
@@ -1700,6 +1702,7 @@ export default function InstantCheckPage() {
       agentId: agentIdRef.current ?? undefined,
       plate: h.plate,
       row: h.row,
+      srcId: h.id,
       method: "متشيكة بالكاميرا",
       lat: h.lat,
       lng: h.lng,
@@ -1795,9 +1798,32 @@ export default function InstantCheckPage() {
     if (!entry || !trimmed || trimmed === entry.plate) return;
 
     // التعلّم التلقائي الحي متوقّف — التعديل مابيغذّيش خرايط التصحيح المحلية تاني.
-    const updated: FieldCheckEntry = { ...entry, plate: trimmed, synced: false }; // اتعدّل → يترفع تاني في المزامنة
+    await editFieldEntry(id, { plate: trimmed });
+  }
+
+  /**
+   * أي تعديل على سجل تشييك (لوحة / نوع / ملاحظات) بيتحفظ **على طول** في قاعدة
+   * الجهاز — مش في الذاكرة بس. كده التعديل بيفضل قدام السيارة في التصدير
+   * والمشاركة، وبيطلع في نتيجة الفرز بعد كده (الفرز بيبني شيت السجلات من
+   * السجلات المحفوظة وبينشر `row` كله).
+   */
+  async function editFieldEntry(id: string, edit: EntryEdit) {
+    const entry = fieldEntries.find((e) => e.id === id);
+    if (!entry) return;
+    const updated = applyEntryEdit(entry, edit);
+    if (updated === entry) return;
     setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
     await saveFieldCheckEntry(updated);
+  }
+
+  /**
+   * تعديل اتعمل على صف لسه ظاهر في قائمة الصوت/الكاميرا **بعد** ما اتصدّر —
+   * لازم يوصل للسجل المحفوظ كمان، وإلا التعديل يفضل في الذاكرة ويضيع.
+   * (قبل التصدير مافيش سجل محفوظ، والتصدير بياخد آخر حالة للصف أصلاً.)
+   */
+  async function editExportedEntry(srcId: string, edit: EntryEdit) {
+    const entry = fieldEntries.find((e) => e.srcId === srcId);
+    if (entry) await editFieldEntry(entry.id, edit);
   }
 
   // ── «إظهار اللوحات»: نافذة تعديل/حذف بتأكيد حفظ ──────────────────────────
@@ -1854,10 +1880,13 @@ export default function InstantCheckPage() {
   }
 
   function buildFieldRows() {
-    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+    // النوع والملاحظات ليهم أعمدة خاصة تحت — نستبعدهم عشان مايتكرروش
+    const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
     return fieldEntries.map((e) => {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
-      obj["النوع"] = typeToCode(e.row["النوع"] ?? "") || (e.row["النوع"] ?? "");
+      obj["النوع"] = typeToCode(entryType(e)) || entryType(e);
+      // ملاحظات المندوب — لازم تطلع في التصدير والمشاركة زي ما هي قدام السيارة
+      obj[NOTES_KEY] = entryNotes(e);
       obj["الحي-الشارع"] = e.row["الحي-الشارع"] ?? "";
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
@@ -2642,9 +2671,11 @@ export default function InstantCheckPage() {
     pttEditedIdsRef.current.add(rowId);
 
     const res = searchInCheck(trimmed);
+    const finalPlate = res?.plate ?? trimmed;
     setPttResults((prev) => prev.map((r) => r.id === rowId
-      ? { ...r, plate: res?.plate ?? trimmed, found: res?.found ?? false, matchType: res?.matchType, similarity: res?.similarity, row: res?.row }
+      ? { ...r, plate: finalPlate, found: res?.found ?? false, matchType: res?.matchType, similarity: res?.similarity, row: res?.row }
       : r));
+    void editExportedEntry(rowId, { plate: finalPlate });   // لو الصف اتصدّر خلاص، عدّل السجل كمان
   }
 
   // ── Voice-list Excel export ─────────────────────────────────────────────
@@ -2701,6 +2732,7 @@ export default function InstantCheckPage() {
   // اختيار نوع السيارة (حرف مختصر) لصف صوتي — بيتخزّن في vehicleType.
   function setPttType(id: string, code: string) {
     setPttResults((prev) => prev.map((r) => (r.id === id ? { ...r, vehicleType: code || undefined } : r)));
+    void editExportedEntry(id, { type: code });   // لو الصف اتصدّر خلاص، عدّل السجل كمان
   }
 
   // Remove a single voice row.
@@ -2770,6 +2802,7 @@ export default function InstantCheckPage() {
         agentId: agentIdRef.current ?? undefined,
         plate: r.plate,
         row: mergedRow,
+        srcId: r.id,
         method: "متشيكة بالصوت",
         lat: r.lat,
         lng: r.lng,
@@ -4906,7 +4939,8 @@ export default function InstantCheckPage() {
       )}
       {mode === "sheet" && fieldEntries.length > 0 && (() => {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
-        const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        // النوع والملاحظات ليهم أعمدة تعديل خاصة فوق — نستبعدهم من الأعمدة العادية
+        const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
         // عدادات الفئات (على كل السجلات، مش المفلترة)
         const cVoice = fieldEntries.filter((e) => /صوت/.test(e.method)).length;
         const cManual = fieldEntries.filter((e) => /يدوي/.test(e.method)).length;
@@ -4996,6 +5030,9 @@ export default function InstantCheckPage() {
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-surface-2 text-muted">
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      {/* النوع والملاحظات بيتعدّلوا من هنا وبيتحفظوا على طول */}
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                       {dynCols.map((h) => (
                         <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
@@ -5033,6 +5070,12 @@ export default function InstantCheckPage() {
                               </button>
                             </span>
                           )}
+                        </td>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
+                          <VehicleTypeSelect value={entryType(e)} onChange={(code) => void editFieldEntry(e.id, { type: code })} />
+                        </td>
+                        <td className="border-l border-border px-3 py-2 min-w-[120px] text-ink">
+                          <EditableCell value={entryNotes(e)} placeholder="ملاحظة…" onSave={(v) => void editFieldEntry(e.id, { notes: v })} />
                         </td>
                         <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] || "—"}</td>
                         {dynCols.map((h) => (

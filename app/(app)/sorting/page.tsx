@@ -1560,7 +1560,8 @@ export default function SortingPage() {
         ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
         : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c))) : "";
     const tType = tfind("type"), tBrand = tfind("brand"), tDist = tfind("district");
-    const tAddr = tfind("address"), tDate = tfind("date"), tColor = tfind("color"), tGps = tfind("gps");
+    const tAddr = tfind("address"), tDate = tfind("date"), tColor = tfind("color");
+    const tashNotesCol = tashyeekTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
     for (const r of tash) {
       const model = [tval(r, tBrand), tval(r, tType)].filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i).join(" ");
@@ -1575,7 +1576,8 @@ export default function SortingPage() {
         date: tval(r, tDate),
         gps: rawGpsOfTashyeek(r),
         color: tval(r, tColor),
-        notes: "",
+        // ملاحظات المندوب اللي كتبها على السجل — لازم تطلع في المشاركة زي ما هي
+        notes: tashNotesCol ? String(r.tashyeekRow?.[tashNotesCol] ?? "").trim() : "",
       });
     }
 
