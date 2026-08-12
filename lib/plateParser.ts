@@ -2479,44 +2479,81 @@ export function matchTokensAgainstRows(
   dataPlateCol: string,
   fuzzyThreshold = 88,
 ): TokenMatch[] {
-  const exactMap = new Map<string, Array<{ row: Record<string, string>; dataIdx: number }>>();
-  const byFirstChar = new Map<string, Array<{ norm: string; row: Record<string, string>; dataIdx: number }>>();
-  for (let i = 0; i < dataRows.length; i++) {
-    const row = dataRows[i];
-    const norm = normalizePlate(bankPlateToArabic(String(row[dataPlateCol] ?? "")));
-    if (!norm) continue;
-    const arr = exactMap.get(norm);
-    if (arr) arr.push({ row, dataIdx: i });
-    else exactMap.set(norm, [{ row, dataIdx: i }]);
-    const key = norm[0];
-    if (!byFirstChar.has(key)) byFirstChar.set(key, []);
-    byFirstChar.get(key)!.push({ norm, row, dataIdx: i });
+  // بنفهرس **التوكنات** (عددها عشرات) مش صفوف الداتا (عددها مئات الآلاف).
+  // الطريقة القديمة كانت بتبني لكل دفعة داتا خريطتين وكائن لكل صف — يعني مئات
+  // الآلاف من التخصيصات في كل لصق، وده اللي كان بيخلّي النتيجة تتأخّر على
+  // الموبايل. دلوقتي بنمرّ على الصفوف مرة واحدة ونطبّع كل صف مرة واحدة بس.
+  interface Tok {
+    converted: string;
+    norm: string;
+    exact: TokenMatch[];
+    best: { row: Record<string, string>; dataIdx: number; sim: number } | null;
   }
-
-  const results: TokenMatch[] = [];
+  const toks: Tok[] = [];
+  const byNorm = new Map<string, Tok[]>();
+  const byFirstChar = new Map<string, Tok[]>();
   for (const token of tokens) {
     const converted = bankPlateToArabic(token);
     const norm = normalizePlate(converted);
     if (!norm) continue;
+    const t: Tok = { converted, norm, exact: [], best: null };
+    toks.push(t);
+    const same = byNorm.get(norm);
+    if (same) same.push(t); else byNorm.set(norm, [t]);
+    const ch = byFirstChar.get(norm[0]);
+    if (ch) ch.push(t); else byFirstChar.set(norm[0], [t]);
+  }
+  if (toks.length === 0) return [];
 
-    const exactEntries = exactMap.get(norm);
-    if (exactEntries) {
-      for (const { row, dataIdx } of exactEntries) {
-        results.push({ converted, row, dataIdx, status: "exact" });
+  // مرور واحد: تطبيع كل صف مرة + بحث تام في فهرس التوكنات.
+  // بنحتفظ بالتطبيع للمرور التقريبي، وبنبطّله لو الداتا ضخمة (نفس حماية
+  // البطء القديمة: فوق ٥٠ ألف لوحة مختلفة مافيش تقريبي).
+  const rowNorms: string[] = [];
+  const seen = new Set<string>();
+  let fuzzyOff = false;
+  for (let i = 0; i < dataRows.length; i++) {
+    const norm = normalizePlate(bankPlateToArabic(String(dataRows[i][dataPlateCol] ?? "")));
+    if (!fuzzyOff) {
+      rowNorms.push(norm);
+      if (norm) {
+        seen.add(norm);
+        if (seen.size > 50_000) { fuzzyOff = true; rowNorms.length = 0; seen.clear(); }
       }
-      continue;
     }
-
-    if (exactMap.size > 50_000) continue;
-
-    let best: { row: Record<string, string>; dataIdx: number; sim: number } | null = null;
-    const candidates = byFirstChar.get(norm[0]) ?? [];
-    for (const { norm: rowNorm, row, dataIdx } of candidates) {
-      if (Math.abs(rowNorm.length - norm.length) > 1) continue;
-      const sim = similarityPercent(norm, rowNorm);
-      if (sim >= fuzzyThreshold && (!best || sim > best.sim)) best = { row, dataIdx, sim };
+    if (!norm) continue;
+    const hits = byNorm.get(norm);
+    if (hits) {
+      for (const t of hits) {
+        t.exact.push({ converted: t.converted, row: dataRows[i], dataIdx: i, status: "exact" });
+      }
     }
-    if (best) results.push({ converted, row: best.row, dataIdx: best.dataIdx, status: "fuzzy", similarity: best.sim });
+  }
+
+  // مرور تقريبي — للتوكنات اللي مالهاش تطابق تام بس.
+  const needFuzzy = !fuzzyOff && toks.some((t) => t.exact.length === 0);
+  if (needFuzzy) {
+    for (let i = 0; i < dataRows.length; i++) {
+      const rowNorm = rowNorms[i];
+      if (!rowNorm) continue;
+      const cands = byFirstChar.get(rowNorm[0]);
+      if (!cands) continue;
+      for (const t of cands) {
+        if (t.exact.length) continue;
+        if (Math.abs(rowNorm.length - t.norm.length) > 1) continue;
+        const sim = similarityPercent(t.norm, rowNorm);
+        if (sim >= fuzzyThreshold && (!t.best || sim > t.best.sim)) {
+          t.best = { row: dataRows[i], dataIdx: i, sim };
+        }
+      }
+    }
+  }
+
+  const results: TokenMatch[] = [];
+  for (const t of toks) {
+    if (t.exact.length) { for (const m of t.exact) results.push(m); continue; }
+    if (t.best) {
+      results.push({ converted: t.converted, row: t.best.row, dataIdx: t.best.dataIdx, status: "fuzzy", similarity: t.best.sim });
+    }
   }
   return results;
 }

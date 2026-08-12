@@ -15,6 +15,7 @@ import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
 import { buildColoredSortExcel } from "@/lib/excel";
+import { playSortBeep } from "@/lib/sortBeep";
 import { resolveCheckColumns, inferVehicleType } from "@/lib/wantedColumns";
 import { resolveResultColumns } from "@/lib/resultColumns";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
@@ -121,6 +122,7 @@ export default function WantedPage() {
 
   async function runSort() {
     if (sorting) return;
+    playSortBeep();   // تأكيد صوتي إن الفرز بدأ
     setSorting(true); setError(null);
     try {
       const [checkRec, dataRec, fieldEntries] = await Promise.all([

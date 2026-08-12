@@ -17,6 +17,7 @@ import {
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { buildCombinedShareRows } from "@/lib/combinedShare";
+import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
@@ -1434,6 +1435,7 @@ export default function SortingPage() {
   }
 
   function handleSort() {
+    playSortBeep();   // تأكيد صوتي إن الفرز بدأ (الفرز الكبير بياخد ثواني)
     setResults(null); setSorted(false); setTashyeekResults(null);
     wipeSortResults(sortMode); // امسح كاش الوضع الحالي بس — الوضع التاني يفضل بنتايجه
     // فرز أرقام الشاص المسجّلة (شيت الشاص) على عمود الشاص في الإحالة — نفس الزر
@@ -1754,6 +1756,7 @@ export default function SortingPage() {
   // ── Paste sort ──
   async function runPasteSort() {
     if (!dataTable || !effectiveDataPlateCol || !pasteText.trim()) return;
+    playSortBeep();   // تأكيد صوتي إن الفرز بدأ
     const tokens = tokenizePastedPlates(pasteText);
     // نطابق على كل ملفات الداتا (الأساسي + الإضافية) — كل واحد بعمود لوحته، مع
     // إزاحة dataIdx عشان الترتيب يفضل ملف ورا ملف.
@@ -1765,12 +1768,19 @@ export default function SortingPage() {
       // ما نطابق على عيّنة العرض بس (كانت بتخلّي اللصق مايطلّعش نتايج).
       if (dataStreamed && dataStreamMeta) {
         const pc = dataStreamMeta.plateCol;
+        // بنسيب الشاشة تتنفّس **بالوقت** مش بعد كل دفعة. الدفعة ٥٠٠٠ صف بتخلص
+        // في أجزاء من الملّي، وكل setTimeout(0) بيكلّف ٤ ملّي على الأقل في
+        // متصفّح الموبايل — يعني ٩٧ دفعة كانت بتضيّع وقت من غير أي فايدة.
+        let lastYield = Date.now();
         await iterateRows(async (batch) => {
           for (const m of matchTokensAgainstRows(tokens, batch, pc)) {
             matches.push({ ...m, dataIdx: m.dataIdx + base });
           }
           base += batch.length;
-          await new Promise<void>((r) => setTimeout(r, 0));
+          if (Date.now() - lastYield >= 50) {
+            await new Promise<void>((r) => setTimeout(r, 0));
+            lastYield = Date.now();
+          }
         }, { slot: "data" });
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية.
