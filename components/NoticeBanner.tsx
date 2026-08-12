@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Megaphone, X } from "lucide-react";
+import { Megaphone, X, MessageCircle } from "lucide-react";
 import {
-  fetchAppNotice, noticeKey, isNoticeDismissed, dismissNotice, type AppNotice,
+  fetchAppNotice, noticeKey, isNoticeDismissed, dismissNotice, adminWhatsappLink, type AppNotice,
 } from "@/lib/appNotice";
 
 /** كل قد إيه نسأل السيرفر عن رسالة جديدة (المندوب ممكن يفضل فاتح ساعات). */
@@ -47,7 +47,20 @@ export default function NoticeBanner() {
   return (
     <div className="flex items-start gap-2 border-b border-primary/30 bg-primary/10 px-3 py-2 text-right">
       <Megaphone size={16} className="mt-0.5 shrink-0 text-primary" />
-      <p className="flex-1 whitespace-pre-wrap text-xs leading-relaxed text-ink">{notice.text}</p>
+      <div className="flex-1">
+        <p className="whitespace-pre-wrap text-xs leading-relaxed text-ink">{notice.text}</p>
+        {/* زر تواصل — بيظهر بس لو الأدمن علّم عليه وقت النشر */}
+        {notice.wa && (
+          <a
+            href={adminWhatsappLink(notice.text)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-green-600 px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-green-700"
+          >
+            <MessageCircle size={12} /> تواصل معانا
+          </a>
+        )}
+      </div>
       <button
         onClick={() => { dismissNotice(noticeKey(notice)); setNotice(null); }}
         className="shrink-0 rounded p-0.5 text-muted transition hover:text-ink"

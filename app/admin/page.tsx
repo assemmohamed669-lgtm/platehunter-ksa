@@ -78,6 +78,7 @@ export default function AdminDashboard() {
   const [noticeActive, setNoticeActive] = useState<AppNotice | null>(null);
   const [noticeText, setNoticeText] = useState("");
   const [noticeHours, setNoticeHours] = useState(24);
+  const [noticeWa, setNoticeWa] = useState(false);   // زر واتساب مع الرسالة
   const [noticeBusy, setNoticeBusy] = useState(false);
   const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
   const [learningBusy, setLearningBusy] = useState(false);
@@ -386,7 +387,7 @@ export default function AdminDashboard() {
           {noticeActive ? (
             <div className="mb-2 rounded-lg border border-primary/30 bg-surface p-2">
               <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink">{noticeActive.text}</p>
-              <div className="mt-1.5 flex items-center justify-between gap-2">
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[10px] text-muted">
                   {noticeActive.until
                     ? `تنتهي: ${new Date(noticeActive.until).toLocaleString("ar-EG")}`
@@ -420,7 +421,11 @@ export default function AdminDashboard() {
             placeholder="اكتب الرسالة هنا…"
             className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs text-ink outline-none focus:border-primary"
           />
-          <div className="mt-1.5 flex items-center justify-between gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] text-muted">
+              <input type="checkbox" checked={noticeWa} onChange={(e) => setNoticeWa(e.target.checked)} className="accent-primary" />
+              زر واتساب
+            </label>
             <select
               value={noticeHours}
               onChange={(e) => setNoticeHours(Number(e.target.value))}
@@ -433,7 +438,7 @@ export default function AdminDashboard() {
               disabled={noticeBusy || !noticeText.trim()}
               onClick={async () => {
                 setNoticeBusy(true);
-                const r = await setAppNotice(noticeText, noticeHours);
+                const r = await setAppNotice(noticeText, noticeHours, noticeWa);
                 if (r.ok) { setNoticeActive(await fetchAppNotice()); alert("اتنشرت للمناديب."); }
                 else alert("تعذّر النشر: " + (r.error ?? ""));
                 setNoticeBusy(false);

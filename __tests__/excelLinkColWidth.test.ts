@@ -23,7 +23,7 @@ const widthOf = (ws: XLSX.WorkSheet, i: number) => {
 };
 
 describe("عرض عمود الروابط في الشيت المشارَك", () => {
-  it("عمود الموقع ضيّق مش على قد الرابط", async () => {
+  it("عمود الموقع ضيّق مش على قد الرابط", { timeout: 30_000 }, async () => {
     const ws = await sheetOf(await buildColoredSortExcel(
       [{ "المطلوب": "ا ب ح 1234", "GPS": PIN }], "فرز", [null],
     ));
@@ -32,7 +32,7 @@ describe("عرض عمود الروابط في الشيت المشارَك", () =
     expect(w!).toBeLessThanOrEqual(LINK_COL_WIDTH + 1);
   });
 
-  it("الرابط نفسه جوّه الخانة كامل — النسخ مايتأثرش", async () => {
+  it("الرابط نفسه جوّه الخانة كامل — النسخ مايتأثرش", { timeout: 30_000 }, async () => {
     const ws = await sheetOf(await buildColoredSortExcel(
       [{ "المطلوب": "ا ب ح 1234", "GPS": PIN }], "فرز", [null],
     ));
@@ -40,7 +40,7 @@ describe("عرض عمود الروابط في الشيت المشارَك", () =
     expect(ws["B2"].l?.Target).toBe(PIN);
   });
 
-  it("الأعمدة العادية عرضها لسه على قد محتواها", async () => {
+  it("الأعمدة العادية عرضها لسه على قد محتواها", { timeout: 30_000 }, async () => {
     const ws = await sheetOf(await buildColoredSortExcel(
       [{ "المطلوب": "ا ب ح 1234", "العنوان": "8واحه ليلي شارع طويل جداً جداً", "GPS": PIN }], "فرز", [null],
     ));

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   resolveNotice, noticeKey, isNoticeDismissed, dismissNotice, clearNoticeDismissals,
-  NOTICE_DURATIONS, DISMISS_KEY,
+  NOTICE_DURATIONS, DISMISS_KEY, adminWhatsappLink,
 } from "@/lib/appNotice";
 
 /**
@@ -49,7 +49,7 @@ describe("resolveNotice — إمتى الرسالة تعتبر سارية", () =
 });
 
 describe("الإغلاق بـ✕ — يخفيها للجلسة دي بس", () => {
-  const notice = { text: "اجتماع", at: iso(NOW), until: null };
+  const notice = { text: "اجتماع", at: iso(NOW), until: null, wa: false };
 
   it("قبل الإغلاق بتظهر", () => {
     expect(isNoticeDismissed(noticeKey(notice))).toBe(false);
@@ -68,7 +68,7 @@ describe("الإغلاق بـ✕ — يخفيها للجلسة دي بس", () =>
 
   it("رسالة **جديدة** بتظهر حتى لو المندوب قفل اللي قبلها", () => {
     dismissNotice(noticeKey(notice));
-    const newer = { text: "تنبيه تاني", at: iso(NOW + HOUR), until: null };
+    const newer = { text: "تنبيه تاني", at: iso(NOW + HOUR), until: null, wa: false };
     expect(isNoticeDismissed(noticeKey(newer))).toBe(false);
   });
 
@@ -100,5 +100,37 @@ describe("مدد الظهور المتاحة للأدمن", () => {
 
   it("كل خيار ليه اسم عربي واضح", () => {
     for (const d of NOTICE_DURATIONS) expect(d.label.trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe("زر الواتساب مع الرسالة", () => {
+  it("الرسالة اللي الأدمن علّم عليها بيبقى معاها زر واتساب", () => {
+    const n = resolveNotice({ notice_text: "عرض جديد", notice_at: null, notice_until: null, notice_wa: true }, NOW);
+    expect(n?.wa).toBe(true);
+  });
+
+  it("الرسالة العادية من غير زر", () => {
+    const n = resolveNotice({ notice_text: "تنبيه", notice_at: null, notice_until: null, notice_wa: false }, NOW);
+    expect(n?.wa).toBe(false);
+  });
+
+  it("الرسائل القديمة (قبل الميزة) بتتعامل كأنها من غير زر", () => {
+    const n = resolveNotice({ notice_text: "قديمة", notice_at: null, notice_until: null }, NOW);
+    expect(n?.wa).toBe(false);
+  });
+
+  it("رابط الواتساب بيتبنى من الرقم صح", () => {
+    expect(adminWhatsappLink("عرض جديد")).toContain("wa.me/971542482545");
+    expect(adminWhatsappLink("عرض جديد")).toContain(encodeURIComponent("عرض جديد"));
+  });
+
+  it("رابط الواتساب من غير نص بيشتغل برضه", () => {
+    expect(adminWhatsappLink("")).toBe("https://wa.me/971542482545");
+  });
+
+  it("تغيير زر الواتساب لوحده بيخلي الرسالة تظهر تاني", () => {
+    const off = { text: "عرض", at: iso(NOW), until: null, wa: false };
+    dismissNotice(noticeKey(off));
+    expect(isNoticeDismissed(noticeKey({ ...off, wa: true }))).toBe(false);
   });
 });

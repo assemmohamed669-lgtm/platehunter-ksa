@@ -16,12 +16,24 @@
 /** مفتاح تخزين الرسائل اللي المندوب قفلها (بيتمسح كل تسجيل دخول). */
 export const DISMISS_KEY = "ph:noticeDismissed";
 
+/** رقم واتساب الإدارة — نفس الرقم المستخدم في «تواصل مع الإدارة». */
+export const ADMIN_WHATSAPP = "971542482545";
+
+/** رابط محادثة واتساب مع الإدارة، والرسالة كنص مبدئي لو موجودة. */
+export function adminWhatsappLink(prefill = ""): string {
+  const base = `https://wa.me/${ADMIN_WHATSAPP}`;
+  const t = prefill.trim();
+  return t ? `${base}?text=${encodeURIComponent(t)}` : base;
+}
+
 export interface AppNotice {
   text: string;
   /** وقت النشر (ISO) — جزء من هوية الرسالة. */
   at: string | null;
   /** وقت الانتهاء (ISO)، أو null = من غير مدة. */
   until: string | null;
+  /** يظهر معاها زر واتساب للتواصل مع الإدارة؟ (اختياري لكل رسالة) */
+  wa: boolean;
 }
 
 /** مدد الظهور اللي الأدمن بيختار منها. 0 = من غير مدة. */
@@ -38,6 +50,7 @@ interface NoticeRow {
   notice_text?: string | null;
   notice_at?: string | null;
   notice_until?: string | null;
+  notice_wa?: boolean | null;
 }
 
 /**
@@ -54,12 +67,12 @@ export function resolveNotice(raw: unknown, now: number = Date.now()): AppNotice
     const end = Date.parse(until);
     if (Number.isFinite(end) && end <= now) return null;
   }
-  return { text, at: row?.notice_at ?? null, until };
+  return { text, at: row?.notice_at ?? null, until, wa: row?.notice_wa === true };
 }
 
 /** هوية الرسالة — لو النص أو وقت النشر اتغيّر تبقى رسالة جديدة وتظهر تاني. */
 export function noticeKey(n: AppNotice): string {
-  return `${n.at ?? ""}|${n.text}`;
+  return `${n.at ?? ""}|${n.wa ? "w" : ""}|${n.text}`;
 }
 
 function readDismissed(): string[] {
@@ -100,10 +113,10 @@ export async function fetchAppNotice(): Promise<AppNotice | null> {
  * ينشر رسالة أو يشيلها (نص فاضي = مسح). الأدمن فقط — الدالة على السيرفر
  * بتتحقق من الصلاحية.
  */
-export async function setAppNotice(text: string, hours: number): Promise<{ ok: boolean; error?: string }> {
+export async function setAppNotice(text: string, hours: number, wa = false): Promise<{ ok: boolean; error?: string }> {
   try {
     const { supabase } = await import("./supabaseClient");
-    const { error } = await supabase.rpc("set_app_notice", { p_text: text, p_hours: hours });
+    const { error } = await supabase.rpc("set_app_notice", { p_text: text, p_hours: hours, p_wa: wa });
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (e) {

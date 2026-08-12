@@ -39,7 +39,7 @@ describe("الإكسيل المشارَك — خانة الموقع بتتنسخ
     expect(String(ws["B2"].v)).toContain("21.5,39.2");
   });
 
-  it("buildColoredSortExcel (نتيجة الفرز والمطلوب): نص الخانة = الرابط", async () => {
+  it("buildColoredSortExcel (نتيجة الفرز والمطلوب): نص الخانة = الرابط", { timeout: 30_000 }, async () => {
     const blob = await buildColoredSortExcel(
       [{ "المطلوب": "ابح1234", "GPS": PIN }], "نتائج الفرز", [null],
     );

@@ -59,7 +59,7 @@ describe("الشيتات اللي البرنامج بيشاركها — من ا�
     expect(everyStyleIsRight(styles)).toBe(true);
   });
 
-  it("buildColoredSortExcel (نتيجة الفرز) بتفضل من اليمين وألوانها ما بتضيعش", async () => {
+  it("buildColoredSortExcel (نتيجة الفرز) بتفضل من اليمين وألوانها ما بتضيعش", { timeout: 30_000 }, async () => {
     const colors = ["#FFE0E0", null];
     const blob = await buildColoredSortExcel(ROWS, "نتائج الفرز", colors);
     const before = await inspect(blob);

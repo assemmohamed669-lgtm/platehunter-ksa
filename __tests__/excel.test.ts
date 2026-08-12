@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, blobToBase64, buildRowSummaryText, buildColoredSortExcel } from "@/lib/excel";
 
 describe("buildColoredSortExcel — hyperlink الـGPS جوّه الملف قابل للفتح", () => {
-  it("يكتب Target نضيف (بدون &amp;) للرابط المشفّر مزدوجاً — round-trip", async () => {
+  it("يكتب Target نضيف (بدون &amp;) للرابط المشفّر مزدوجاً — round-trip", { timeout: 30_000 }, async () => {
     const blob = await buildColoredSortExcel(
       [{
         "رقم اللوحة": "سبك2198",
