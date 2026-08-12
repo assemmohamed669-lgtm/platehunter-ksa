@@ -82,14 +82,14 @@ describe("الذيل الوهمي — القراءة بتقف بعد الصفو�
     expect(s.aoa).toHaveLength(3);
   });
 
-  it("الوقفة بتوفّر وقت حقيقي على ذيل ضخم", async () => {
-    const bytes = await buildWithEmptyTail(DATA, 400_000);
-    const t = Date.now();
-    const [s] = await readAllSheetsRawStream(bytes);
-    const ms = Date.now() - t;
+  it("القراءة بتقف فعلاً — اللي بعد الذيل الضخم مابيتقراش", async () => {
+    // صف داتا بعد ٦٠ ألف صف فاضي (أكبر من الحد) — لازم **مايترجعش**، وده
+    // إثبات قاطع إن القراءة وقفت ومكمّلتش الملف. (مقصودة: ملف حقيقي عمره
+    // مافيهوش فجوة ٢٠ ألف صف في نصّه.)
+    const [s] = await readAllSheetsRawStream(
+      await buildWithEmptyTail(DATA, 60_000, [["ماتقراش دي", "أبداً"]]),
+    );
     expect(s.aoa).toHaveLength(3);
-    // ٤٠٠ ألف صف فاضي — من غير الوقفة ده بياخد ثواني. الحد هنا واسع عشان
-    // ماينهارش على أجهزة بطيئة، بس بيمسك لو الوقفة اتعطّلت.
-    expect(ms).toBeLessThan(3000);
+    expect(JSON.stringify(s.aoa)).not.toContain("ماتقراش");
   });
 });

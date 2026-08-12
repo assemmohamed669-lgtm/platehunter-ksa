@@ -10,6 +10,7 @@ import BackButton from "@/components/BackButton";
 import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import AppMenu from "@/components/AppMenu";
 import UpdateBanner from "@/components/UpdateBanner";
+import NoticeBanner from "@/components/NoticeBanner";
 import AgentPresenceReporter from "@/components/AgentPresenceReporter";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
@@ -160,6 +161,8 @@ export default function AppShellLayout({
         </header>
 
         <UpdateBanner />
+        {/* رسالة الأدمن المؤقتة — بتظهر في كل صفحات المندوب */}
+        <NoticeBanner />
         <AgentPresenceReporter />
 
         {(() => {

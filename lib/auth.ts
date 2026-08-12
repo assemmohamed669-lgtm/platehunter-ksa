@@ -1,3 +1,4 @@
+import { clearNoticeDismissals } from "./appNotice";
 import { supabase } from "./supabaseClient";
 import {
   getDeviceFingerprint,
@@ -91,6 +92,10 @@ export async function loginAgent(
   if (data) {
     setStoredSessionToken(data as string);
   }
+
+  // تسجيل دخول جديد → رسالة الأدمن السارية تظهر من جديد حتى لو المندوب قفلها
+  // قبل كده (بطلب المندوب: تظهرله كل مرة يسجّل دخول طول مدة الرسالة).
+  clearNoticeDismissals();
 
   return { ok: true };
 }

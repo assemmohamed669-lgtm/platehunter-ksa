@@ -4,12 +4,13 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database,
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
 import { fetchLearningEnabled, setLearningEnabled } from "@/lib/learningSettings";
+import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 
 interface AgentProfile {
   id: string;
@@ -73,6 +74,11 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [isSuper, setIsSuper] = useState(false);
+  // رسالة الأدمن للمناديب — بتظهر في شريط البرنامج في كل الصفحات
+  const [noticeActive, setNoticeActive] = useState<AppNotice | null>(null);
+  const [noticeText, setNoticeText] = useState("");
+  const [noticeHours, setNoticeHours] = useState(24);
+  const [noticeBusy, setNoticeBusy] = useState(false);
   const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
   const [learningBusy, setLearningBusy] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0); // عيّنات متجمّعة على الجهاز
@@ -116,6 +122,7 @@ export default function AdminDashboard() {
         fetchLearningEnabled().then(setLearningOn);  // حالة مفتاح التعلّم
         import("@/lib/trainingStore").then((m) => m.countTrainingSamples().then(setTrainingCount).catch(() => {}));
       }
+      void fetchAppNotice().then(setNoticeActive);   // الرسالة الشغّالة دلوقتي
       setAuthorized(true);
       loadAgents();
     })();
@@ -370,6 +377,72 @@ export default function AdminDashboard() {
             <MapPin size={16} /> مواقع المناديب على الخريطة
           </button>
         )}
+
+        {/* رسالة للمناديب — بتظهر في شريط البرنامج في كل الصفحات لمدة تحددها. */}
+        <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
+            <Megaphone size={14} /> رسالة للمناديب
+          </div>
+          {noticeActive ? (
+            <div className="mb-2 rounded-lg border border-primary/30 bg-surface p-2">
+              <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink">{noticeActive.text}</p>
+              <div className="mt-1.5 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted">
+                  {noticeActive.until
+                    ? `تنتهي: ${new Date(noticeActive.until).toLocaleString("ar-EG")}`
+                    : "من غير مدة — بتفضل لحد ما تشيلها"}
+                </span>
+                <button
+                  disabled={noticeBusy}
+                  onClick={async () => {
+                    if (!confirm("متأكد تشيل الرسالة من عند كل المناديب؟")) return;
+                    setNoticeBusy(true);
+                    const r = await setAppNotice("", 0);
+                    if (r.ok) { setNoticeActive(null); setNoticeText(""); }
+                    else alert("تعذّر المسح: " + (r.error ?? ""));
+                    setNoticeBusy(false);
+                  }}
+                  className={`shrink-0 rounded-full border border-danger/50 bg-danger/10 px-3 py-1 text-[11px] font-bold text-danger transition ${noticeBusy ? "opacity-50" : ""}`}>
+                  شيل الرسالة
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="mb-2 text-[11px] text-muted">
+              مفيش رسالة شغّالة دلوقتي. اكتب رسالة وحدد مدتها — هتظهر لكل المناديب في أي صفحة،
+              ولو المندوب قفلها هترجع تظهرله في أول تسجيل دخول جديد.
+            </p>
+          )}
+          <textarea
+            value={noticeText}
+            onChange={(e) => setNoticeText(e.target.value)}
+            rows={2}
+            placeholder="اكتب الرسالة هنا…"
+            className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs text-ink outline-none focus:border-primary"
+          />
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            <select
+              value={noticeHours}
+              onChange={(e) => setNoticeHours(Number(e.target.value))}
+              className="rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary">
+              {NOTICE_DURATIONS.map((d) => (
+                <option key={d.hours} value={d.hours}>{d.label}</option>
+              ))}
+            </select>
+            <button
+              disabled={noticeBusy || !noticeText.trim()}
+              onClick={async () => {
+                setNoticeBusy(true);
+                const r = await setAppNotice(noticeText, noticeHours);
+                if (r.ok) { setNoticeActive(await fetchAppNotice()); alert("اتنشرت للمناديب."); }
+                else alert("تعذّر النشر: " + (r.error ?? ""));
+                setNoticeBusy(false);
+              }}
+              className={`shrink-0 rounded-full bg-primary px-4 py-1.5 text-[11px] font-bold text-night transition ${noticeBusy || !noticeText.trim() ? "opacity-50" : ""}`}>
+              {noticeBusy ? "..." : "انشر"}
+            </button>
+          </div>
+        </div>
 
         {/* مفتاح جمع/تعلّم الصوت + تنزيل الداتا — سوبر أدمن فقط. الافتراضي متوقّف. */}
         {isSuper && (
