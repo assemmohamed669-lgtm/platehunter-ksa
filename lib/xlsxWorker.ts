@@ -99,11 +99,14 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
       (rawOpts as Record<string, unknown>).dense = true;
       if (password) (rawOpts as Record<string, unknown>).password = password;
       const rawWb = XLSX.read(data, rawOpts);
-      const sheets = rawWb.SheetNames.map((name) => {
+      // حالة الإخفاء (state="hidden") — الورقة المخفية مابتتعلّمش تلقائياً في الفرز
+      const rawMeta = rawWb.Workbook?.Sheets ?? [];
+      const sheets = rawWb.SheetNames.map((name, i) => {
         const ws = rawWb.Sheets[name];
         trimSheetToData(ws);
         return {
           name,
+          hidden: Number((rawMeta as any)[i]?.Hidden ?? 0) > 0,
           aoa: XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, raw: false, defval: "" }),
         };
       });
@@ -118,7 +121,9 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
     if (!password && !forcedSheet) {
       try {
         const sheets = await readAllSheetsRawStream(data, { raw: true });
-        const withRows = sheets.filter((s) => s.aoa.length > 0);
+        // الورقة المخفية مابتتاخدش تلقائياً (إلا لو مفيش غيرها)
+        const visible = sheets.filter((s) => !s.hidden && s.aoa.length > 0);
+        const withRows = visible.length > 0 ? visible : sheets.filter((s) => s.aoa.length > 0);
         if (withRows.length > 0) {
           let chosen = withRows[0];
           if (withRows.length > 1) {

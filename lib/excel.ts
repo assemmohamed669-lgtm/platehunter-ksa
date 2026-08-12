@@ -45,6 +45,12 @@ function isLinkColumn(header: string, rows: Record<string, unknown>[]): boolean 
   return rows.some((r) => /^https?:\/\//i.test(String(r[header] ?? "").trim()));
 }
 
+/** حالة إخفاء كل ورقة من SheetJS (0=ظاهرة، 1=مخفية، 2=مخفية جداً). */
+function hiddenFlags(wb: XLSX.WorkBook): boolean[] {
+  const meta = wb.Workbook?.Sheets ?? [];
+  return wb.SheetNames.map((_, i) => Number(meta[i]?.Hidden ?? 0) > 0);
+}
+
 function setWorkbookRtl(wb: XLSX.WorkBook): void {
   wb.Workbook = { ...(wb.Workbook ?? {}), Views: [{ RTL: true }] };
 }
@@ -280,14 +286,14 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
  */
 export async function readAllSheetsRaw(
   file: File
-): Promise<{ name: string; aoa: unknown[][] }[]> {
+): Promise<{ name: string; aoa: unknown[][]; hidden?: boolean }[]> {
   const buf = await file.arrayBuffer();
 
   // الأول: الـ worker — القراءة تفضل بعيد عن الـ main thread فالشاشة ما تتجمّدش.
   // (جوّه الـ worker بيجرّب القارئ المتدفّق الأول وبعدين القارئ العادي.)
   if (typeof Worker !== "undefined") {
     try {
-      return await new Promise<{ name: string; aoa: unknown[][] }[]>((resolve, reject) => {
+      return await new Promise<{ name: string; aoa: unknown[][]; hidden?: boolean }[]>((resolve, reject) => {
         let worker: Worker;
         try {
           worker = new Worker(new URL("./xlsxWorker.ts", import.meta.url));
@@ -302,7 +308,7 @@ export async function readAllSheetsRaw(
         worker.onmessage = (ev: MessageEvent) => {
           clearTimeout(timer);
           worker.terminate();
-          const d = ev.data as { success: boolean; sheets?: { name: string; aoa: unknown[][] }[] };
+          const d = ev.data as { success: boolean; sheets?: { name: string; aoa: unknown[][]; hidden?: boolean }[] };
           if (d.success && d.sheets) resolve(d.sheets);
           else reject(new Error("__WORKER_UNAVAILABLE__"));
         };
@@ -333,15 +339,17 @@ export async function readAllSheetsRaw(
  * dense + قصّ المدى الوهمي: محافظ زي «البنك العربي» بتسجّل !ref لغاية صف
  * ٩٩٨ ألف وفيها ١٥٠٠ صف بس — من غير ده الصفحة بتتجمّد والتطبيق بيقفل.
  */
-function readAllSheetsRawSync(data: Uint8Array): { name: string; aoa: unknown[][] }[] {
+function readAllSheetsRawSync(data: Uint8Array): { name: string; aoa: unknown[][]; hidden?: boolean }[] {
   const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false };
   (opts as Record<string, unknown>).dense = true;
   const wb = XLSX.read(data, opts);
-  return wb.SheetNames.map((name) => {
+  const hidden = hiddenFlags(wb);
+  return wb.SheetNames.map((name, i) => {
     const ws = wb.Sheets[name];
     trimSheetToData(ws);
     return {
       name,
+      hidden: hidden[i],
       aoa: XLSX.utils.sheet_to_json<unknown[]>(ws, {
         header: 1, raw: false, defval: "",
       }),
@@ -440,7 +448,10 @@ export async function parseExcelStream(data: Uint8Array): Promise<ExcelTable> {
   // raw: القيم زي ما هي + التواريخ ككائن Date — عشان cellToStr تنسّقها
   // dd/mm/yyyy وتطلع نفس ناتج القارئ العادي بالحرف.
   const sheets = await readAllSheetsRawStream(data, { raw: true });
-  const withRows = sheets.filter((s) => s.aoa.length > 0);
+  // الورقات المخفية (state="hidden") مابنختارش منها تلقائياً — المحافظ بتيجي
+  // فيها ورقة عمل مخفية جنب ورقة المطلوبين. لو كلها مخفية بناخدها عادي.
+  const visible = sheets.filter((s) => !s.hidden && s.aoa.length > 0);
+  const withRows = visible.length > 0 ? visible : sheets.filter((s) => s.aoa.length > 0);
   if (withRows.length === 0) throw new Error("empty");
   const allSheetNames = sheets.map((s) => s.name);
 

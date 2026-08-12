@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPlateLike, analyzeSheet, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
+import { isPlateLike, analyzeSheet, analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 
 describe("isPlateLike — شكل اللوحة السعودية", () => {
   it("اللوحة العادية (٣ حروف + ٤ أرقام)", () => {
@@ -218,5 +218,65 @@ describe("defaultSelection — الاختيار التلقائي", () => {
     const sel = defaultSelection(sheets);
     expect(sel.has("ملخص")).toBe(false);
     expect(sel.has("مباعة")).toBe(true);
+  });
+});
+
+/**
+ * محافظ بتيجي فيها **ورقة مخفية** (state="hidden" في الإكسيل) — زي «تحديث محفظة
+ * التيسير ١٢-٨»: ورقة مخفية اسمها Sheet1 + ورقة ظاهرة اسمها «محفظة».
+ *
+ * البرنامج كان بيعلّم على الاتنين، فنتيجة الفرز بتطلع مخلوطة. المفروض يعلّم
+ * تلقائياً على **الظاهرة بس** — والمخفية تفضل معروضة في الاختيار عشان المندوب
+ * يعلّم عليها بإيده لو محتاج.
+ */
+describe("الورقات المخفية — مابتتعلّمش تلقائياً", () => {
+  const sheet = (name: string, plates: string[], hidden = false) => ({
+    name, hidden,
+    aoa: [["رقم اللوحة"], ...plates.map((p) => [p])],
+  });
+
+  it("الورقة المخفية مابتتعلّمش والظاهرة بتتعلّم", () => {
+    const infos = analyzeWorkbook([
+      sheet("Sheet1", ["ابح1234", "دنر5678"], true),
+      sheet("محفظة", ["رلد6202", "سسس9999"]),
+    ]);
+    const sel = defaultSelection(infos);
+    expect(sel.has("محفظة")).toBe(true);
+    expect(sel.has("Sheet1")).toBe(false);
+  });
+
+  it("المخفية بتفضل ظاهرة في قائمة الاختيار (المندوب يعلّم عليها لو حب)", () => {
+    const infos = analyzeWorkbook([
+      sheet("Sheet1", ["ابح1234"], true),
+      sheet("محفظة", ["رلد6202"]),
+    ]);
+    expect(infos.map((s) => s.name)).toEqual(["Sheet1", "محفظة"]);
+    expect(infos.find((s) => s.name === "Sheet1")?.hidden).toBe(true);
+    expect(infos.find((s) => s.name === "محفظة")?.hidden).toBe(false);
+  });
+
+  it("كل الورقات مخفية → بنعلّم عليها برضه (مانسيبش المندوب بلا نتيجة)", () => {
+    const infos = analyzeWorkbook([
+      sheet("أ", ["ابح1234"], true),
+      sheet("ب", ["رلد6202"], true),
+    ]);
+    expect(defaultSelection(infos).size).toBeGreaterThan(0);
+  });
+
+  it("مفيش ورقات مخفية → السلوك القديم زي ما هو", () => {
+    const infos = analyzeWorkbook([
+      sheet("أ", ["ابح1234"]),
+      sheet("ب", ["رلد6202"]),
+    ]);
+    expect(defaultSelection(infos).size).toBe(2);
+    expect(infos.every((s) => s.hidden === false)).toBe(true);
+  });
+
+  it("الملفات القديمة (بلا معلومة إخفاء) بتتعامل كأنها ظاهرة", () => {
+    const infos = analyzeWorkbook([
+      { name: "أ", aoa: [["رقم اللوحة"], ["ابح1234"]] },
+    ]);
+    expect(infos[0].hidden).toBe(false);
+    expect(defaultSelection(infos).has("أ")).toBe(true);
   });
 });

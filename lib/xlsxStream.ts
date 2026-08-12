@@ -242,17 +242,23 @@ function buildHeaderKeys(headerRow: string[]): string[] {
   return keys;
 }
 
-/** كل ورقات الملف بمسارها جوّه الـzip، بترتيب الـworkbook. */
-async function listSheetPaths(zip: ZipLike): Promise<{ name: string; path: string }[]> {
+/** كل ورقات الملف بمسارها جوّه الـzip وحالة إخفائها، بترتيب الـworkbook. */
+async function listSheetPaths(zip: ZipLike): Promise<{ name: string; path: string; hidden: boolean }[]> {
   const wbXml = await readEntryText(zip, "xl/workbook.xml");
   const relsXml = await readEntryText(zip, "xl/_rels/workbook.xml.rels");
-  const sheets: { name: string; rid: string }[] = [];
+  const sheets: { name: string; rid: string; hidden: boolean }[] = [];
   const rels: Record<string, string> = {};
   if (wbXml) {
     const p = new SaxesParser();
     p.on("opentag", (t) => {
       if (localName(t.name) === "sheet") {
-        sheets.push({ name: attrByLocal(t.attributes, "name"), rid: attrByLocal(t.attributes, "id") });
+        // state="hidden" أو "veryHidden" = ورقة مخفية في الإكسيل
+        const state = attrByLocal(t.attributes, "state").toLowerCase();
+        sheets.push({
+          name: attrByLocal(t.attributes, "name"),
+          rid: attrByLocal(t.attributes, "id"),
+          hidden: state === "hidden" || state === "veryhidden",
+        });
       }
     });
     p.write(wbXml).close();
@@ -274,14 +280,14 @@ async function listSheetPaths(zip: ZipLike): Promise<{ name: string; path: strin
 
   const out = sheets
     .filter((s) => s.name)
-    .map((s) => ({ name: s.name, path: s.rid && rels[s.rid] ? toPath(rels[s.rid]) : "" }))
+    .map((s) => ({ name: s.name, hidden: s.hidden, path: s.rid && rels[s.rid] ? toPath(rels[s.rid]) : "" }))
     .filter((s) => s.path && zip.file(s.path));
   if (out.length) return out;
 
   // احتياطي: أسماء ملفات غير قياسية — رتّب رقمياً (sheet2 قبل sheet10).
   const names = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/[^/]+\.xml$/i.test(n));
   names.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-  return names.map((path, i) => ({ name: sheets[i]?.name || `Sheet${i + 1}`, path }));
+  return names.map((path, i) => ({ name: sheets[i]?.name || `Sheet${i + 1}`, path, hidden: sheets[i]?.hidden === true }));
 }
 
 /**
@@ -299,7 +305,7 @@ async function listSheetPaths(zip: ZipLike): Promise<{ name: string; path: strin
 export async function readAllSheetsRawStream(
   input: Blob | ArrayBuffer | Uint8Array,
   opts: { raw?: boolean } = {},
-): Promise<{ name: string; aoa: unknown[][] }[]> {
+): Promise<{ name: string; aoa: unknown[][]; hidden: boolean }[]> {
   const zip = await JSZip.loadAsync(input as ArrayBuffer);
   const sst = parseSharedStrings(await readEntryText(zip, "xl/sharedStrings.xml"));
   const { styleToFmt, customFmts } = parseStyles(await readEntryText(zip, "xl/styles.xml"));
@@ -317,8 +323,10 @@ export async function readAllSheetsRawStream(
     );
   }
 
-  const out: { name: string; aoa: unknown[][] }[] = [];
-  for (const s of sheets) out.push({ name: s.name, aoa: await streamSheetAoa(zip, s.path, decodeCell) });
+  const out: { name: string; aoa: unknown[][]; hidden: boolean }[] = [];
+  for (const s of sheets) {
+    out.push({ name: s.name, hidden: s.hidden, aoa: await streamSheetAoa(zip, s.path, decodeCell) });
+  }
   return out;
 }
 

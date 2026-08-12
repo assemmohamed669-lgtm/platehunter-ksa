@@ -51,6 +51,12 @@ export interface SheetInfo {
   headers: string[];
   /** صفوف البيانات ككائنات جاهزة للفرز. */
   rows: Record<string, string>[];
+  /**
+   * الورقة مخفية في الإكسيل (state="hidden")؟ المحافظ بتيجي فيها ورقة عمل
+   * مخفية جنب ورقة المطلوبين — والمخفية مابتتعلّمش تلقائياً، بس بتفضل معروضة
+   * في الاختيار عشان المندوب يعلّم عليها بإيده لو محتاج.
+   */
+  hidden: boolean;
 }
 
 const cell = (row: unknown[] | undefined, i: number): string =>
@@ -126,11 +132,11 @@ function buildHeaders(headerCells: string[], width: number): string[] {
 }
 
 /** يحلّل ورقة واحدة (صفوفها كمصفوفات خام). */
-export function analyzeSheet(name: string, aoa: unknown[][]): SheetInfo {
+export function analyzeSheet(name: string, aoa: unknown[][], hidden = false): SheetInfo {
   const width = widthOf(aoa);
   const empty: SheetInfo = {
     name, headerRow: -1, plateCol: -1, plateColName: "",
-    plateCount: 0, headers: [], rows: [],
+    plateCount: 0, headers: [], rows: [], hidden,
   };
   if (width === 0) return empty;
 
@@ -158,12 +164,12 @@ export function analyzeSheet(name: string, aoa: unknown[][]): SheetInfo {
     rows.push(obj);
   }
 
-  return { name, headerRow, plateCol, plateColName, plateCount: unique.size, headers, rows };
+  return { name, headerRow, plateCol, plateColName, plateCount: unique.size, headers, rows, hidden };
 }
 
 /** يحلّل كل ورقات الملف. */
-export function analyzeWorkbook(sheets: { name: string; aoa: unknown[][] }[]): SheetInfo[] {
-  return sheets.map((s) => analyzeSheet(s.name, s.aoa));
+export function analyzeWorkbook(sheets: { name: string; aoa: unknown[][]; hidden?: boolean }[]): SheetInfo[] {
+  return sheets.map((s) => analyzeSheet(s.name, s.aoa, s.hidden === true));
 }
 
 /**
@@ -188,6 +194,7 @@ export function defaultSelection(sheets: SheetInfo[]): Set<string> {
   const hasDominant = biggest >= total * 0.6 && biggest >= second * 3;
 
   const keep = withPlates.filter((s) => {
+    if (s.hidden) return false;                                   // ورقة عمل مخفية
     if (hasDominant && s.plateCount === biggest) return false;   // أسطول الشركة
     if (s.headerRow < 0) return false;                            // نسخة خام بلا عنوان
     return true;
