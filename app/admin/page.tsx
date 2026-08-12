@@ -79,6 +79,7 @@ export default function AdminDashboard() {
   const [noticeText, setNoticeText] = useState("");
   const [noticeHours, setNoticeHours] = useState(24);
   const [noticeWa, setNoticeWa] = useState(false);   // زر واتساب مع الرسالة
+  const [noticeUrgent, setNoticeUrgent] = useState(false);   // عاجلة: أحمر + صفّارة
   const [noticeBusy, setNoticeBusy] = useState(false);
   const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
   const [learningBusy, setLearningBusy] = useState(false);
@@ -426,6 +427,10 @@ export default function AdminDashboard() {
               <input type="checkbox" checked={noticeWa} onChange={(e) => setNoticeWa(e.target.checked)} className="accent-primary" />
               زر واتساب
             </label>
+            <label className="flex items-center gap-1.5 text-[11px] font-bold text-danger" title="تطلع بالأحمر ومعاها صفّارة تفضل رنّانة لحد ما المندوب يقفلها">
+              <input type="checkbox" checked={noticeUrgent} onChange={(e) => setNoticeUrgent(e.target.checked)} className="accent-red-600" />
+              عاجلة 🚨
+            </label>
             <select
               value={noticeHours}
               onChange={(e) => setNoticeHours(Number(e.target.value))}
@@ -438,7 +443,7 @@ export default function AdminDashboard() {
               disabled={noticeBusy || !noticeText.trim()}
               onClick={async () => {
                 setNoticeBusy(true);
-                const r = await setAppNotice(noticeText, noticeHours, noticeWa);
+                const r = await setAppNotice(noticeText, noticeHours, noticeWa, noticeUrgent);
                 if (r.ok) { setNoticeActive(await fetchAppNotice()); alert("اتنشرت للمناديب."); }
                 else alert("تعذّر النشر: " + (r.error ?? ""));
                 setNoticeBusy(false);

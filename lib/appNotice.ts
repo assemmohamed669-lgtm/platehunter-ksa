@@ -34,6 +34,11 @@ export interface AppNotice {
   until: string | null;
   /** يظهر معاها زر واتساب للتواصل مع الإدارة؟ (اختياري لكل رسالة) */
   wa: boolean;
+  /**
+   * رسالة **عاجلة**؟ بتطلع للمندوب بالأحمر ومعاها صفّارة بتفضل رنّانة لحد ما
+   * يقفل الرسالة. اختيارية لكل رسالة — العادية (عروض/تنبيهات) بتفضل هادية.
+   */
+  urgent: boolean;
 }
 
 /** مدد الظهور اللي الأدمن بيختار منها. 0 = من غير مدة. */
@@ -51,6 +56,7 @@ interface NoticeRow {
   notice_at?: string | null;
   notice_until?: string | null;
   notice_wa?: boolean | null;
+  notice_urgent?: boolean | null;
 }
 
 /**
@@ -67,12 +73,16 @@ export function resolveNotice(raw: unknown, now: number = Date.now()): AppNotice
     const end = Date.parse(until);
     if (Number.isFinite(end) && end <= now) return null;
   }
-  return { text, at: row?.notice_at ?? null, until, wa: row?.notice_wa === true };
+  return {
+    text, at: row?.notice_at ?? null, until,
+    wa: row?.notice_wa === true,
+    urgent: row?.notice_urgent === true,
+  };
 }
 
 /** هوية الرسالة — لو النص أو وقت النشر اتغيّر تبقى رسالة جديدة وتظهر تاني. */
 export function noticeKey(n: AppNotice): string {
-  return `${n.at ?? ""}|${n.wa ? "w" : ""}|${n.text}`;
+  return `${n.at ?? ""}|${n.wa ? "w" : ""}${n.urgent ? "u" : ""}|${n.text}`;
 }
 
 function readDismissed(): string[] {
@@ -113,10 +123,12 @@ export async function fetchAppNotice(): Promise<AppNotice | null> {
  * ينشر رسالة أو يشيلها (نص فاضي = مسح). الأدمن فقط — الدالة على السيرفر
  * بتتحقق من الصلاحية.
  */
-export async function setAppNotice(text: string, hours: number, wa = false): Promise<{ ok: boolean; error?: string }> {
+export async function setAppNotice(
+  text: string, hours: number, wa = false, urgent = false,
+): Promise<{ ok: boolean; error?: string }> {
   try {
     const { supabase } = await import("./supabaseClient");
-    const { error } = await supabase.rpc("set_app_notice", { p_text: text, p_hours: hours, p_wa: wa });
+    const { error } = await supabase.rpc("set_app_notice", { p_text: text, p_hours: hours, p_wa: wa, p_urgent: urgent });
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (e) {

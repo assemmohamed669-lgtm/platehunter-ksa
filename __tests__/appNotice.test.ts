@@ -49,7 +49,7 @@ describe("resolveNotice — إمتى الرسالة تعتبر سارية", () =
 });
 
 describe("الإغلاق بـ✕ — يخفيها للجلسة دي بس", () => {
-  const notice = { text: "اجتماع", at: iso(NOW), until: null, wa: false };
+  const notice = { text: "اجتماع", at: iso(NOW), until: null, wa: false, urgent: false };
 
   it("قبل الإغلاق بتظهر", () => {
     expect(isNoticeDismissed(noticeKey(notice))).toBe(false);
@@ -68,7 +68,7 @@ describe("الإغلاق بـ✕ — يخفيها للجلسة دي بس", () =>
 
   it("رسالة **جديدة** بتظهر حتى لو المندوب قفل اللي قبلها", () => {
     dismissNotice(noticeKey(notice));
-    const newer = { text: "تنبيه تاني", at: iso(NOW + HOUR), until: null, wa: false };
+    const newer = { text: "تنبيه تاني", at: iso(NOW + HOUR), until: null, wa: false, urgent: false };
     expect(isNoticeDismissed(noticeKey(newer))).toBe(false);
   });
 
@@ -129,7 +129,7 @@ describe("زر الواتساب مع الرسالة", () => {
   });
 
   it("تغيير زر الواتساب لوحده بيخلي الرسالة تظهر تاني", () => {
-    const off = { text: "عرض", at: iso(NOW), until: null, wa: false };
+    const off = { text: "عرض", at: iso(NOW), until: null, wa: false, urgent: false };
     dismissNotice(noticeKey(off));
     expect(isNoticeDismissed(noticeKey({ ...off, wa: true }))).toBe(false);
   });

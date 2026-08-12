@@ -45,6 +45,7 @@ import PlateBadge from "@/components/PlateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
+import { setMicBusy } from "@/lib/micBusy";
 import { PAGE_STEP, pageSlice, hasMore, growShown } from "@/lib/pagedRows";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -895,6 +896,13 @@ export default function InstantCheckPage() {
       }
     } catch { /* ignore */ }
   }, []);
+
+  // نبلّغ باقي التطبيق إن الميك مفتوح — صفّارة «الرسالة العاجلة» بتتأجّل طول
+  // ما التسجيل شغّال عشان ماتدخلش في الصوت وتلخبط التفريغ.
+  useEffect(() => {
+    setMicBusy(pttListening);
+    return () => setMicBusy(false);
+  }, [pttListening]);
 
   // نبضة الإيقاع: اهتزاز + وميض كل X ثانية أثناء الاستماع — بدون أي صوت.
   useEffect(() => {
