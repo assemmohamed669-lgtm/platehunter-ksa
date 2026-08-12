@@ -5,9 +5,9 @@ import { playNoticeTone, stopNoticeTone, isNoticeTonePlaying, scheduleNoticeTone
 import { startAlertSiren, stopAlertSiren, isAlertSirenPlaying } from "@/lib/alertSiren";
 
 /**
- * «رسالة عاجلة» — بتطلع للمندوب بالأحمر ومعاها **نغمة تحذيرية قصيرة** (تلات
- * نبضات وتسكت، مش صفّارة مستمرة عشان ماتضايقوش وهو شغّال). اختيارية لكل رسالة:
- * العادية (عروض/تنبيهات) بتفضل هادية.
+ * «رسالة عاجلة» — بتطلع للمندوب بالأحمر ومعاها **نغمة إشعار عادية** (نغمتين
+ * ناعمتين وتسكت، مش صفّارة ولا رنّة عشان ماتضايقوش وهو شغّال). اختيارية لكل
+ * رسالة: العادية (عروض/تنبيهات) بتفضل هادية من غير أي صوت.
  *
  * أخطر حاجة اتغطّت هنا: **النغمة دي مالهاش دعوة بصفّارة السيارة المطلوبة**.
  * صفّارة المطلوب singleton — لو استخدمناها للرسالة كانت هتقطع إنذار السيارة
@@ -130,7 +130,7 @@ describe("نغمة الرسالة — قصيرة ومستقلة عن إنذار 
     expect(isNoticeTonePlaying()).toBe(false);
   });
 
-  it("قصيرة — تلات نبضات وتخلص في أقل من ثانية", () => {
+  it("نغمة إشعار قصيرة — نغمتين صاعدتين وتخلص بسرعة", () => {
     const oscs: Array<{ started: number; stopped: number }> = [];
     const node = () => {
       const o = { connect(){}, disconnect(){}, frequency:{value:0}, type:"",
@@ -143,8 +143,8 @@ describe("نغمة الرسالة — قصيرة ومستقلة عن إنذار 
     const c = { currentTime: 0, destination: {},
       createOscillator: node, createGain: node } as unknown as AudioContext;
     const secs = scheduleNoticeTone(c);
-    expect(oscs).toHaveLength(3);                 // تلات نبضات
-    expect(secs).toBeLessThan(1);                 // أقل من ثانية بالكامل
+    expect(oscs).toHaveLength(2);                 // نغمتين بس
+    expect(secs).toBeLessThan(0.5);               // أقل من نص ثانية
     expect(oscs[1].started).toBeGreaterThanOrEqual(oscs[0].stopped);   // ورا بعض
   });
 

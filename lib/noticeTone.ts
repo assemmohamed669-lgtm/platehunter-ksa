@@ -1,9 +1,10 @@
 /**
  * noticeTone — نغمة تحذيرية قصيرة للرسالة العاجلة من الأدمن.
  *
- * **مش صفّارة إنذار** — دي بتضايق المندوب وهو شغّال. تلات نبضات قصيرة
- * (عالي/واطي/عالي) وتسكت لوحدها في أقل من ثانية، زي نغمة تنبيه الموبايل.
- * البانر الأحمر بيفضل ظاهر لحد ما المندوب يقفله — التنبيه بالصوت مرة واحدة بس.
+ * **مش صفّارة ولا رنّة** — دول بيضايقوا المندوب وهو شغّال. دي نغمة إشعار
+ * عادية: نغمتين ناعمتين صاعدتين (زي «دِنج» الرسايل) وتسكت لوحدها في أقل من
+ * نص ثانية. البانر الأحمر بيفضل ظاهر لحد ما المندوب يقفله — التنبيه بالصوت
+ * مرة واحدة بس.
  *
  * **ليه منفصلة عن `alertSiren`:** صفّارة السيارة المطلوبة singleton — أول حاجة
  * بيعملها `startAlertSiren` إنها توقف أي صفّارة شغّالة. لو استخدمناها للرسالة،
@@ -11,12 +12,12 @@
  * إنذار عند المندوب. فالاتنين مستقلين تماماً.
  */
 
-/** النبضات: تردد (هرتز) لكل واحدة — عالي/واطي/عالي = إحساس تحذير. */
-const BEEPS = [880, 660, 880];
-const BEEP_SEC = 0.16;
-const GAP_SEC = 0.09;
-/** أعلى من نغمة بدء الفرز عشان تلفت النظر، وأقل بكتير من صفّارة الإنذار. */
-const PEAK = 0.4;
+/** نغمتين صاعدتين (نوتة G ثم C) — إحساس إشعار مش إنذار. */
+const BEEPS = [784, 1047];
+const BEEP_SEC = 0.14;
+const GAP_SEC = 0.03;
+/** هادية — تلفت النظر من غير ما تزعّق. */
+const PEAK = 0.25;
 
 let ctx: AudioContext | null = null;
 let closeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,12 +36,13 @@ export function scheduleNoticeTone(c: AudioContext): number {
   let at = c.currentTime;
   for (const freq of BEEPS) {
     const osc = c.createOscillator();
-    osc.type = "square";              // أوضح من الـsine في الضوضاء الميدانية
+    osc.type = "sine";                // ناعمة — من غير الحدّة اللي في الـsquare
     osc.frequency.value = freq;
     osc.connect(gain);
     // fade سريع بدل قطع مفاجئ — يمنع الطقطقة في السماعة
     gain.gain.setValueAtTime(0.0001, at);
-    gain.gain.exponentialRampToValueAtTime(PEAK, at + 0.015);
+    gain.gain.exponentialRampToValueAtTime(PEAK, at + 0.02);
+    // ذيل ناعم (زي الجرس) بدل قطع حاد
     gain.gain.exponentialRampToValueAtTime(0.0001, at + BEEP_SEC);
     osc.start(at);
     osc.stop(at + BEEP_SEC);
