@@ -5,7 +5,7 @@ import { Megaphone, X, MessageCircle, AlertTriangle } from "lucide-react";
 import {
   fetchAppNotice, noticeKey, isNoticeDismissed, dismissNotice, adminWhatsappLink, type AppNotice,
 } from "@/lib/appNotice";
-import { startNoticeSiren, stopNoticeSiren } from "@/lib/noticeSiren";
+import { playNoticeTone, stopNoticeTone } from "@/lib/noticeTone";
 import { isMicBusy, onMicBusyChange } from "@/lib/micBusy";
 
 /** كل قد إيه نسأل السيرفر عن رسالة جديدة (المندوب ممكن يفضل فاتح ساعات). */
@@ -18,12 +18,13 @@ const POLL_MS = 60_000;
  * لما الأدمن يشيلها. زر ✕ بيقفلها للجلسة الحالية بس — بترجع تظهر في أول
  * تسجيل دخول جديد طول ما هي سارية.
  *
- * **الرسالة العاجلة**: بتطلع بالأحمر ومعاها صفّارة بتفضل رنّانة لحد ما المندوب
- * يقفلها. الصفّارة:
- *   • بترنّ **مرة واحدة لكل رسالة** — مش كل نبضة تحديث ولا كل ما يفتح صفحة.
+ * **الرسالة العاجلة**: بتطلع بالأحمر ومعاها **نغمة تحذيرية قصيرة** (تلات
+ * نبضات وتسكت) — مش صفّارة مستمرة عشان ماتضايقش المندوب وهو شغّال. البانر
+ * الأحمر بيفضل ظاهر لحد ما يقفله. النغمة:
+ *   • بتنبّه **مرة واحدة لكل رسالة** — مش كل نبضة تحديث ولا كل ما يفتح صفحة.
  *   • **مستقلة** عن إنذار السيارة المطلوبة — مابتقطعوش أبداً.
  *   • بتتأجّل لو الميك مفتوح (تشييك صوتي) عشان ماتدخلش في التسجيل، وبتشتغل
- *     أول ما يقفل التسجيل. البانر الأحمر بيفضل ظاهر طول الوقت.
+ *     أول ما يقفل التسجيل.
  */
 export default function NoticeBanner() {
   const [notice, setNotice] = useState<AppNotice | null>(null);
@@ -39,7 +40,7 @@ export default function NoticeBanner() {
       const n = await fetchAppNotice();
       if (!alive) return;
       // اتشالت من الأدمن أو خلصت مدتها → تختفي والصفّارة تسكت
-      if (!n) { setNotice(null); pendingRef.current = null; stopNoticeSiren(); return; }
+      if (!n) { setNotice(null); pendingRef.current = null; stopNoticeTone(); return; }
       if (isNoticeDismissed(noticeKey(n))) { setNotice(null); return; }
       setNotice(n);
     }
@@ -53,7 +54,7 @@ export default function NoticeBanner() {
       alive = false;
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVisible);
-      stopNoticeSiren();   // الخروج من التطبيق مايسيبش صفّارة شغّالة
+      stopNoticeTone();   // الخروج من التطبيق مايسيبش صوت شغّال
     };
   }, []);
 
@@ -66,7 +67,7 @@ export default function NoticeBanner() {
     const ring = () => {
       rangForRef.current = key;
       pendingRef.current = null;
-      startNoticeSiren();
+      playNoticeTone();
     };
 
     if (!isMicBusy()) { ring(); return; }
@@ -108,7 +109,7 @@ export default function NoticeBanner() {
       </div>
       <button
         onClick={() => {
-          stopNoticeSiren();               // ✕ بتسكّت الصفّارة كمان
+          stopNoticeTone();               // ✕ بتسكّت النغمة لو لسه شغّالة
           pendingRef.current = null;
           dismissNotice(noticeKey(notice));
           setNotice(null);

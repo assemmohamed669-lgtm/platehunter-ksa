@@ -1,14 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { resolveNotice, noticeKey } from "@/lib/appNotice";
 import { isMicBusy, setMicBusy, onMicBusyChange, resetMicBusy } from "@/lib/micBusy";
-import { startNoticeSiren, stopNoticeSiren, isNoticeSirenPlaying } from "@/lib/noticeSiren";
+import { playNoticeTone, stopNoticeTone, isNoticeTonePlaying, scheduleNoticeTone } from "@/lib/noticeTone";
 import { startAlertSiren, stopAlertSiren, isAlertSirenPlaying } from "@/lib/alertSiren";
 
 /**
- * «رسالة عاجلة» — بتطلع للمندوب بالأحمر ومعاها صفّارة بتفضل رنّانة لحد ما
- * يقفلها. اختيارية لكل رسالة: العادية (عروض/تنبيهات) بتفضل هادية.
+ * «رسالة عاجلة» — بتطلع للمندوب بالأحمر ومعاها **نغمة تحذيرية قصيرة** (تلات
+ * نبضات وتسكت، مش صفّارة مستمرة عشان ماتضايقوش وهو شغّال). اختيارية لكل رسالة:
+ * العادية (عروض/تنبيهات) بتفضل هادية.
  *
- * أخطر حاجة اتغطّت هنا: **الصفّارة دي مالهاش دعوة بصفّارة السيارة المطلوبة**.
+ * أخطر حاجة اتغطّت هنا: **النغمة دي مالهاش دعوة بصفّارة السيارة المطلوبة**.
  * صفّارة المطلوب singleton — لو استخدمناها للرسالة كانت هتقطع إنذار السيارة
  * المطلوبة لو وصلت رسالة في نفس اللحظة.
  */
@@ -95,37 +96,62 @@ function installFakeAudio() {
   return () => { window.AudioContext = prev; };
 }
 
-describe("صفّارة الرسالة — مستقلة عن إنذار السيارة المطلوبة", () => {
+describe("نغمة الرسالة — قصيرة ومستقلة عن إنذار السيارة المطلوبة", () => {
   let restore = () => {};
   beforeEach(() => { restore = installFakeAudio(); });
-  afterEach(() => { stopNoticeSiren(); stopAlertSiren(); restore(); });
+  afterEach(() => { stopNoticeTone(); stopAlertSiren(); restore(); });
 
-  it("صفّارة الرسالة **مابتقطعش** إنذار السيارة المطلوبة", () => {
+  it("نغمة الرسالة **مابتقطعش** إنذار السيارة المطلوبة", () => {
     startAlertSiren();
     expect(isAlertSirenPlaying()).toBe(true);
-    startNoticeSiren();
+    playNoticeTone();
     expect(isAlertSirenPlaying()).toBe(true);   // لسه شغّال — ده أهم شرط
-    expect(isNoticeSirenPlaying()).toBe(true);
+    expect(isNoticeTonePlaying()).toBe(true);
   });
 
-  it("وقف صفّارة الرسالة مابيوقفش إنذار السيارة", () => {
+  it("وقف نغمة الرسالة مابيوقفش إنذار السيارة", () => {
     startAlertSiren();
-    startNoticeSiren();
-    stopNoticeSiren();
-    expect(isNoticeSirenPlaying()).toBe(false);
+    playNoticeTone();
+    stopNoticeTone();
+    expect(isNoticeTonePlaying()).toBe(false);
     expect(isAlertSirenPlaying()).toBe(true);
   });
 
-  it("تشغيلها وهي شغّالة مابيعملش صفّارة فوق صفّارة", () => {
-    startNoticeSiren();
-    expect(() => startNoticeSiren()).not.toThrow();
-    expect(isNoticeSirenPlaying()).toBe(true);
-    stopNoticeSiren();
-    expect(isNoticeSirenPlaying()).toBe(false);
+  it("تشغيلها وهي شغّالة مابيعملش نغمة فوق نغمة", () => {
+    playNoticeTone();
+    expect(() => playNoticeTone()).not.toThrow();
+    expect(isNoticeTonePlaying()).toBe(true);
+    stopNoticeTone();
+    expect(isNoticeTonePlaying()).toBe(false);
   });
 
   it("الوقف وهي مش شغّالة مايرميش خطأ", () => {
-    expect(() => stopNoticeSiren()).not.toThrow();
-    expect(isNoticeSirenPlaying()).toBe(false);
+    expect(() => stopNoticeTone()).not.toThrow();
+    expect(isNoticeTonePlaying()).toBe(false);
+  });
+
+  it("قصيرة — تلات نبضات وتخلص في أقل من ثانية", () => {
+    const oscs: Array<{ started: number; stopped: number }> = [];
+    const node = () => {
+      const o = { connect(){}, disconnect(){}, frequency:{value:0}, type:"",
+        gain:{value:0,setValueAtTime(){},exponentialRampToValueAtTime(){}},
+        started:-1, stopped:-1,
+        start(t: number){ o.started = t; oscs.push(o); },
+        stop(t: number){ o.stopped = t; } };
+      return o;
+    };
+    const c = { currentTime: 0, destination: {},
+      createOscillator: node, createGain: node } as unknown as AudioContext;
+    const secs = scheduleNoticeTone(c);
+    expect(oscs).toHaveLength(3);                 // تلات نبضات
+    expect(secs).toBeLessThan(1);                 // أقل من ثانية بالكامل
+    expect(oscs[1].started).toBeGreaterThanOrEqual(oscs[0].stopped);   // ورا بعض
+  });
+
+  it("بتسكت لوحدها من غير ما المندوب يعمل حاجة", async () => {
+    playNoticeTone();
+    expect(isNoticeTonePlaying()).toBe(true);
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(isNoticeTonePlaying()).toBe(false);
   });
 });
