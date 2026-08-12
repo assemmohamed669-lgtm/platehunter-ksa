@@ -115,7 +115,7 @@ export default function BackupPage() {
           <Lock size={26} className="text-brand" />
         </div>
         <div className="text-center">
-          <h1 className="text-lg font-bold text-ink">النسخة الاحتياطية</h1>
+          <h1 className="text-xl font-black text-ink">النسخة الاحتياطية</h1>
           <p className="mt-1 text-xs text-muted">
             {firstTime ? "أنشئ رقم سري لحماية النسخ الاحتياطية." : "اكتب الرقم السري علشان تفتح الصفحة."}
           </p>
@@ -180,7 +180,7 @@ export default function BackupPage() {
       <div className="flex items-center gap-2">
         <ShieldCheck size={20} className="text-brand" />
         <div>
-          <h1 className="text-lg font-bold text-ink">النسخة الاحتياطية</h1>
+          <h1 className="text-xl font-black text-ink">النسخة الاحتياطية</h1>
           <p className="text-xs text-muted">نسخة من كل شيت — افتحها في Excel أو شاركها على واتساب.</p>
         </div>
       </div>

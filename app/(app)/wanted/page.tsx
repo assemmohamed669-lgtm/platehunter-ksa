@@ -313,7 +313,7 @@ export default function WantedPage() {
       <div className="flex items-center gap-2">
         <Crosshair size={20} className="text-danger" />
         <div>
-          <h1 className="text-lg font-bold text-ink">المطلوب</h1>
+          <h1 className="text-xl font-black text-ink">المطلوب</h1>
           <p className="text-xs text-muted">فرز المطلوبين على الداتا والسجلات.</p>
         </div>
       </div>

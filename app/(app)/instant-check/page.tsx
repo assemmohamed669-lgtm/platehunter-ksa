@@ -3615,7 +3615,7 @@ export default function InstantCheckPage() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-lg font-bold text-ink">التشييك</h1>
+        <h1 className="text-xl font-black text-ink">التشييك</h1>
         <p className="text-xs text-muted">فحص لوحات السيارات مقابل ملف الإحالة</p>
       </div>
 

@@ -34,7 +34,8 @@ export default function BottomNav() {
   const tabs = TABS.filter((t) => !("superOnly" in t && t.superOnly) || isSuper);
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur">
+    // الشريط أسود ثابت في الوضعين (فاتح/غامق) بطلب المندوب — والكلام أبيض.
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-black/95 backdrop-blur">
       <div className="mx-auto flex max-w-md justify-between px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
         {tabs.map(({ href, label, icon: Icon }) => {
           const active = pathname?.startsWith(href);
@@ -43,13 +44,13 @@ export default function BottomNav() {
               key={href}
               href={href}
               className={`flex flex-1 flex-col items-center gap-1 rounded-xl py-2 text-xs transition ${
-                active ? "text-glow" : "text-muted hover:text-ink"
+                active ? "text-white" : "text-white/60 hover:text-white"
               }`}
             >
               <Icon
                 size={22}
                 strokeWidth={active ? 2.5 : 2}
-                className={active ? "drop-shadow-[0_0_6px_rgba(107,163,232,0.55)]" : ""}
+                className={active ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
               />
               <span className={active ? "font-bold" : ""}>{label}</span>
             </Link>

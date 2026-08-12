@@ -92,7 +92,7 @@ export default function KeysPage() {
       <div className="flex items-center gap-2">
         <KeyRound size={20} className="text-alert" />
         <div>
-          <h1 className="text-lg font-bold text-ink">المفاتيح</h1>
+          <h1 className="text-xl font-black text-ink">المفاتيح</h1>
           <p className="text-xs text-muted">مفاتيح الخدمات — كل واحد على حسابك أنت.</p>
         </div>
       </div>

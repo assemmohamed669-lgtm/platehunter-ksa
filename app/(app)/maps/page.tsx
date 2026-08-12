@@ -281,7 +281,7 @@ export default function MapsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-lg font-bold text-ink">الخرائط</h1>
+        <h1 className="text-xl font-black text-ink">الخرائط</h1>
         <p className="text-xs text-muted">كل نقاط التشييك على الخريطة + السيارات المطلوبة</p>
       </div>
 

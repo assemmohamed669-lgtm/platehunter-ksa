@@ -81,7 +81,7 @@ export default function HelpPage() {
       <div className="flex items-center gap-2">
         <HelpCircle size={22} className="text-alert" />
         <div>
-          <h1 className="text-lg font-bold text-ink">شرح ومساعدة</h1>
+          <h1 className="text-xl font-black text-ink">شرح ومساعدة</h1>
           <p className="text-xs text-muted">كل خدمة في البرنامج وهي بتعمل إيه</p>
         </div>
       </div>

@@ -2747,7 +2747,7 @@ export default function RegistrationPage() {
       {/* Header bar */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-ink">التسجيل</h1>
+          <h1 className="text-xl font-black text-ink">التسجيل</h1>
           <p className="text-xs text-muted">{recordings.length} سجل</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">

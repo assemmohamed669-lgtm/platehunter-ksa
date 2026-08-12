@@ -1947,7 +1947,7 @@ export default function SortingPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-lg font-bold text-ink">الفرز</h1>
+        <h1 className="text-xl font-black text-ink">الفرز</h1>
         <p className="text-xs text-muted">مركز مطابقة اللوحات</p>
       </div>
 

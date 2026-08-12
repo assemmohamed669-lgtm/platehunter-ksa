@@ -101,7 +101,7 @@ export default function ListPage() {
       <div className="flex items-center gap-2">
         <Icon size={20} className="text-primary" />
         <div>
-          <h1 className="text-lg font-bold text-ink">{meta.title}</h1>
+          <h1 className="text-xl font-black text-ink">{meta.title}</h1>
           <p className="text-xs text-muted">{meta.desc}</p>
         </div>
       </div>
