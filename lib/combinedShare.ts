@@ -63,3 +63,48 @@ export function buildCombinedShareRows(
 
   return { rows, columns, imageRows, hasSrc, hasBank, hasDate };
 }
+
+/**
+ * بيبني صف مشاركة من **صف نافذة السجلات زي ما المندوب شايفه** (اسم العمود →
+ * قيمته). بنقرا بالاسم مش بمفاتيح محلولة، عشان كل تفاصيل السيارة تطلع في
+ * المشاركة زي ما هي في النافذة بالظبط.
+ *
+ * قبل كده كان بيتعاد حلّه بمفاتيح ناقصة: «الماركة» كانت بتاخد نوع السيارة بدل
+ * موديل المحفظة (الموديل بيتحل تحت مفتاح type مش brand)، وباقي الأعمدة كانت
+ * بتطلع فاضية لو أسماؤها مختلفة شوية.
+ */
+export function tashyeekShareRow(
+  obj: Record<string, unknown>,
+  gps = "",
+): ShareDataRow {
+  const pick = (...labels: (string | RegExp)[]): string => {
+    for (const want of labels) {
+      for (const [k, v] of Object.entries(obj)) {
+        const hit = typeof want === "string" ? k === want : want.test(k);
+        if (!hit) continue;
+        const val = String(v ?? "").trim();
+        if (val) return val;
+      }
+    }
+    return "";
+  };
+
+  const type = pick("نوع السيارة", /^النوع$/);
+  // الماركة/الموديل من المحفظة — بتتحل تحت «نوع السيارة (المحفظة)» أو «الماركة»
+  const model = [pick("الماركة", /\(المحفظة\)/, /ماركة|صانع|طراز|model/i), type]
+    .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" ");
+
+  return {
+    src: "سجلات",
+    plate: String(obj["رقم اللوحة"] ?? "").trim(),
+    type,
+    model,
+    bank: pick(/بنك/),
+    dist: pick("الحي", /^الحي/),
+    addr: pick("العنوان", "الحي-الشارع", /شارع|عنوان|موقع/),
+    date: pick("تاريخ التسجيل", /تاريخ/),
+    gps: gps || pick("GPS", /gps|خريطة|رابط/i),
+    color: pick("اللون", /لون/),
+    notes: pick(/ملاح/),
+  };
+}

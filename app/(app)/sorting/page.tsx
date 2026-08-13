@@ -16,7 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
-import { buildCombinedShareRows } from "@/lib/combinedShare";
+import { buildCombinedShareRows, tashyeekShareRow } from "@/lib/combinedShare";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
@@ -1554,33 +1554,11 @@ export default function SortingPage() {
       };
     });
 
-    // سيارات **السجلات** (شيت التشييك) بتتلحق بنفس الأعمدة ومعلّم قدامها
-    // «سجلات» — عشان المشاركة الواحدة تطلع فيها الاتنين والمندوب يفرّق بينهم.
-    const tfind = (key: string) => tashyeekResultCols.find((c) => c.key === key);
-    const tval = (r: TashyeekResultRow, c: MergedResultColumn | undefined) =>
-      c ? (c.source === "referral"
-        ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
-        : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c))) : "";
-    const tType = tfind("type"), tBrand = tfind("brand"), tDist = tfind("district");
-    const tAddr = tfind("address"), tDate = tfind("date"), tColor = tfind("color");
-    const tashNotesCol = tashyeekTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
+    // سيارات **السجلات** بتتلحق معلّم قدامها «سجلات»، وبتتملّى من **نفس الصف
+    // اللي المندوب شايفه في نافذة السجلات** — عشان كل تفاصيل السيارة تطلع في
+    // المشاركة زي ما هي. (المنطق في lib/combinedShare ومتغطّى باختبارات.)
     for (const r of tash) {
-      const model = [tval(r, tBrand), tval(r, tType)].filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i).join(" ");
-      rowsData.push({
-        src: "سجلات",
-        plate: String(r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "").trim(),
-        type: tval(r, tType),
-        model,
-        bank: "",
-        dist: tval(r, tDist),
-        addr: tval(r, tAddr),
-        date: tval(r, tDate),
-        gps: rawGpsOfTashyeek(r),
-        color: tval(r, tColor),
-        // ملاحظات المندوب اللي كتبها على السجل — لازم تطلع في المشاركة زي ما هي
-        notes: tashNotesCol ? String(r.tashyeekRow?.[tashNotesCol] ?? "").trim() : "",
-      });
+      rowsData.push(tashyeekShareRow(buildTashyeekRowObj(r), rawGpsOfTashyeek(r)));
     }
 
     const hasBank = rowsData.some((x) => x.bank);

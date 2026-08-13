@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildCombinedShareRows, type ShareDataRow } from "@/lib/combinedShare";
+import { buildCombinedShareRows, tashyeekShareRow, type ShareDataRow } from "@/lib/combinedShare";
 
 /**
  * الفرز بيطلّع نافذتين: سيارات **الداتا** وسيارات **السجلات** (شيت التشييك).
@@ -71,5 +71,77 @@ describe("buildCombinedShareRows — الداتا والسجلات في مشار
     for (const r of imageRows) expect(r).toHaveLength(columns.length);
     expect(imageRows[2][0]).toBe("سجلات");
     expect(imageRows[2][1]).toBe("ر ل د 6202");
+  });
+});
+
+/**
+ * سيارات **السجلات** في المشاركة كانت بتطلع باللوحة بس — من غير النوع ولا
+ * الماركة ولا الموقع ولا الملاحظات ولا التاريخ. السبب: كان بيتعاد حلّ الأعمدة
+ * بمفاتيح ناقصة بدل ما نقرا من الصف اللي المندوب شايفه في النافذة.
+ */
+describe("tashyeekShareRow — كل تفاصيل سيارة السجلات في المشاركة", () => {
+  // نفس شكل الصف اللي بيظهر في نافذة السجلات
+  const row = {
+    "رقم اللوحة": "ا ب ح 1234",
+    "نوع السيارة": "ونيت",
+    "العنوان": "8واحه ليلي",
+    "نوع السيارة (المحفظة)": "لاندكروزر",
+    "اللون": "ابيض",
+    "تاريخ التسجيل": "10/08/2026",
+    "GPS": "https://maps.app.goo.gl/x",
+    "ملاحظات": "مركونة تحت العمارة",
+    "الحالة": "متشيكة بالصوت",
+  };
+
+  it("كل التفاصيل بتطلع مش اللوحة بس", () => {
+    const r = tashyeekShareRow(row);
+    expect(r.plate).toBe("ا ب ح 1234");
+    expect(r.type).toBe("ونيت");
+    expect(r.addr).toBe("8واحه ليلي");
+    expect(r.color).toBe("ابيض");
+    expect(r.date).toBe("10/08/2026");
+    expect(r.gps).toBe("https://maps.app.goo.gl/x");
+    expect(r.notes).toBe("مركونة تحت العمارة");
+  });
+
+  it("«الماركة» = موديل المحفظة مش نوع السيارة (دي كانت الغلطة)", () => {
+    expect(tashyeekShareRow(row).model).toContain("لاندكروزر");
+  });
+
+  it("معلّم عليها «سجلات»", () => {
+    expect(tashyeekShareRow(row).src).toBe("سجلات");
+  });
+
+  it("الموقع المحسوب بيغلب عمود GPS الخام", () => {
+    expect(tashyeekShareRow(row, "https://maps.app.goo.gl/better").gps)
+      .toBe("https://maps.app.goo.gl/better");
+  });
+
+  it("أسماء أعمدة مختلفة شوية بتتقرا برضه", () => {
+    const other = {
+      "رقم اللوحة": "دنر5678", "النوع": "صالون", "الحي-الشارع": "السامر",
+      "طراز المركبة": "باترول", "لون المركبة": "اسود", "التاريخ": "11/08/2026",
+      "الملاحظات": "بجوار المسجد", "بنك": "الراجحي",
+    };
+    const r = tashyeekShareRow(other);
+    expect(r.type).toBe("صالون");
+    expect(r.addr).toBe("السامر");
+    expect(r.model).toContain("باترول");
+    expect(r.color).toBe("اسود");
+    expect(r.date).toBe("11/08/2026");
+    expect(r.notes).toBe("بجوار المسجد");
+    expect(r.bank).toBe("الراجحي");
+  });
+
+  it("العمود الفاضي بيتخطّى مايوقفش الباقي", () => {
+    const r = tashyeekShareRow({ "رقم اللوحة": "ابح1234", "نوع السيارة": "", "الحي": "الواحة" });
+    expect(r.type).toBe("");
+    expect(r.dist).toBe("الواحة");
+    expect(r.plate).toBe("ابح1234");
+  });
+
+  it("صف فاضي مايكسرش", () => {
+    expect(() => tashyeekShareRow({})).not.toThrow();
+    expect(tashyeekShareRow({}).plate).toBe("");
   });
 });
