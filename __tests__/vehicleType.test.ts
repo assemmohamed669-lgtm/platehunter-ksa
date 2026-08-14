@@ -50,7 +50,7 @@ describe("vehicleTypeLabel — شكل العرض في القايمة", () => {
   });
 
   it("الترتيب زي ما المالك طلبه", () => {
-    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "H1"]);
+    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "H1"]);
   });
 
   it("حرف مش في القايمة بيرجع زي ما هو", () => {
@@ -105,5 +105,40 @@ describe("H1 — نوع مضاف بطلب المندوب", () => {
     expect(typeToCode("فان")).toBe("ف");
     expect(typeToCode("ملاكي")).toBe("م");
     expect(vehicleTypeLabel("و")).toBe("و (ونيت)");
+  });
+});
+
+/**
+ * «موتوسيكل» اتضاف لقايمة أنواع السيارات (بطلب المندوب) — بيظهر في كل أنواع
+ * التشييك (يدوي/كاميرا/صوتي/شاص/السجلات)، وبيتحفظ مع اللوحة، وبيطلع في
+ * التصدير وفي نتيجة الفرز.
+ *
+ * ملاحظة: «د (دباب)» حاجة تانية غير الموتوسيكل — الاتنين موجودين.
+ */
+describe("موتوسيكل", () => {
+  it("موجود في القايمة", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("مو");
+  });
+
+  it("بيتعرض باسمه الكامل في القايمة", () => {
+    expect(vehicleTypeLabel("مو")).toBe("مو (موتوسيكل)");
+  });
+
+  it("الكلمة المنطوقة بتتحوّل للمختصر (للتشييك الصوتي)", () => {
+    expect(typeToCode("موتوسيكل")).toBe("مو");
+    expect(typeToCode("موتسيكل")).toBe("مو");
+    expect(typeToCode("موتور")).toBe("مو");
+    expect(typeToCode("موتوسكل")).toBe("مو");
+  });
+
+  it("المختصر نفسه بيعدّي زي ما هو", () => {
+    expect(typeToCode("مو")).toBe("مو");
+  });
+
+  it("مابيتلخبطش مع «م (ملاكي)» ولا «د (دباب)»", () => {
+    expect(typeToCode("م")).toBe("م");
+    expect(typeToCode("ملاكي")).toBe("م");
+    expect(typeToCode("دباب")).toBe("د");
+    expect(typeToCode("د")).toBe("د");
   });
 });
