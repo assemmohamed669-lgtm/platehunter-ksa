@@ -902,6 +902,13 @@ export default function InstantCheckPage() {
     } catch { /* ignore */ }
   }, []);
 
+  // المؤقّت بتاع التشييك التلقائي: بيتلغي لو المندوب خرج من الوضع اليدوي أو
+  // من الصفحة — من غير كده كان ممكن يتشيّك وهو في الكاميرا أو الصوت.
+  useEffect(() => {
+    if (mode !== "manual") clearAutoCheck();
+    return () => clearAutoCheck();
+  }, [mode]);
+
   // نبلّغ باقي التطبيق إن الميك مفتوح — صفّارة «الرسالة العاجلة» بتتأجّل طول
   // ما التسجيل شغّال عشان ماتدخلش في الصوت وتلخبط التفريغ.
   useEffect(() => {
@@ -1406,6 +1413,7 @@ export default function InstantCheckPage() {
   }
 
   function dismissManualError() {
+    clearAutoCheck();
     setManualError(null);
     setManualInput("");
     setManualResult(null);
@@ -3666,6 +3674,7 @@ export default function InstantCheckPage() {
     const plate = detectPlateColumn(table.headers);
     setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate && matchesPreferred(h))));
     setCheckColsOpen(false);
+    clearAutoCheck();
     setManualInput("");
     setManualError(null);
     setManualResult(null);
@@ -3678,6 +3687,7 @@ export default function InstantCheckPage() {
     setCheckTable(null);
     setCheckFile(null);
     setSelectedCheckCols(new Set());
+    clearAutoCheck();
     setManualInput("");
     setManualError(null);
     setManualResult(null);
