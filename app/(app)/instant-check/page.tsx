@@ -46,6 +46,7 @@ import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
 import { setMicBusy } from "@/lib/micBusy";
+import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
 import { PAGE_STEP, pageSlice, hasMore, growShown } from "@/lib/pagedRows";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -517,6 +518,10 @@ export default function InstantCheckPage() {
 
   // Manual
   const [manualInput, setManualInput] = useState("");
+  /** قفل ضد الدوس المتكرر على «تشييك»/إنتر (كان بيكرّر اللوحة). */
+  const manualBusyRef = useRef(false);
+  /** مؤقّت التشييك التلقائي لما اللوحة تكمل. */
+  const autoCheckRef = useRef<number | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<PlateResult | null>(null);
   // Manual working-list (draft) — plates typed here stay local until the
@@ -1366,18 +1371,37 @@ export default function InstantCheckPage() {
   // ── Manual ────────────────────────────────────────────────────────────────
   function handleManualChange(val: string) {
     const converted = val.toUpperCase().split("").map((ch) => EN_TO_AR[ch] ?? ch).join("");
-    setManualInput(converted);
+    // الزيادة عن ٣ حروف و٤ أرقام **مابتتكتبش أصلاً** في المربع
+    const { text, blocked } = clampManualPlate(converted);
+    setManualInput(text);
     setManualResult(null);
+    clearAutoCheck();   // بيكتب لسه — نلغي أي تشييك تلقائي معلّق
 
     const invalid: string[] = [];
-    for (const ch of converted) {
+    for (const ch of text) {
       if (INVALID_AR_LETTERS_SET.has(ch) && !invalid.includes(ch)) invalid.push(ch);
     }
-
     if (invalid.length > 0) {
       setManualError(`حروف غير موجودة في اللوحات السعودية: ${invalid.join(" ")}`);
-    } else {
-      setManualError(null);
+      return;
+    }
+
+    // الرسالة الحمرا بتروح لوحدها أول ما اللوحة تبقى سليمة
+    setManualError(blocked ? manualHint(text, true) : null);
+
+    // اللوحة كملت → نشيّكها لوحدها بعد لحظة قصيرة (لو كمّل كتابة بيتلغي ويتأجّل).
+    // اللحظة دي مهمة: لوحة الموتوسيكل (حرفين) بتبقى «كاملة» وهو لسه ممكن
+    // يكتب الحرف التالت للسيارة — فمانشيّكش بدري.
+    if (!blocked && manualStatus(text) === "ok") {
+      autoCheckRef.current = window.setTimeout(() => { void handleManualSearch(); }, 450);
+    }
+  }
+
+  /** يلغي التشييك التلقائي المعلّق (المندوب لسه بيكتب أو دوس بنفسه). */
+  function clearAutoCheck() {
+    if (autoCheckRef.current != null) {
+      clearTimeout(autoCheckRef.current);
+      autoCheckRef.current = null;
     }
   }
 
@@ -1497,13 +1521,24 @@ export default function InstantCheckPage() {
   // Manual entry = check against the wanted list AND record it in شيت التسجيلات
   // (with type / location / notes / GPS), just like the registration manual entry.
   async function handleManualSearch() {
+    clearAutoCheck();
+    // قفل ضد الدوس المتكرر: المندوب بيدوس إنتر كذا مرة لما الشاشة تتأخر —
+    // من غير القفل ده كانت اللوحة بتتسجّل مرتين وتلاتة.
+    if (manualBusyRef.current) return;
+
     const raw = manualInput.trim();
     if (!raw || manualError) return;
     // صيغة اللوحة لازم تكون 3 حروف + 4 أرقام (سيارة) أو حرفين + 4 أرقام (موتوسيكل)
     if (!isValidManualPlate(raw)) {
-      setManualError("تأكد من رقم اللوحة — لازم 3 حروف و4 أرقام (سيارة) أو حرفين و4 أرقام (موتوسيكل)");
+      setManualError(manualHint(raw));
       return;
     }
+    manualBusyRef.current = true;
+    // **بنفضّي المربع دلوقتي حالاً** — قبل أي انتظار للموقع. قبل كده كان
+    // بيتفضّى بعد ما الـGPS يرجع، فالمندوب يدوس تاني واللوحة تتكرر.
+    setManualInput("");
+    setManualError(null);
+
     const result = searchInCheck(raw); // beeps + returns match (or {found:false})
     setManualResult(result);
 
@@ -1524,14 +1559,20 @@ export default function InstantCheckPage() {
     };
     // Add to the local working list only — NOT the field sheet yet.
     setManualDraft((prev) => [base, ...prev]);
-    const gps = await getCurrentGps();
-    if (gps) {
-      const region = await regionTextFor(gps.lat, gps.lng);
-      const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...base.row, "الحي-الشارع": region } : base.row };
-      setManualDraft((prev) => prev.map((e) => (e.id === id ? withGps : e)));
-    }
 
-    setManualInput(""); // ready for the next plate; keep the location for the run
+    // **القفل بيتفكّ هنا** — قبل انتظار الموقع. اللوحة اتسجّلت وظهرت تحت خلاص،
+    // فالمندوب يقدر يكتب اللي بعدها على طول من غير ما يستنى الـGPS.
+    manualBusyRef.current = false;
+
+    // الموقع بيتلحق بالصف بعدين (بالمعرّف) — ولو فشل مايأثرش على التشييك.
+    try {
+      const gps = await getCurrentGps();
+      if (gps) {
+        const region = await regionTextFor(gps.lat, gps.lng);
+        const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...base.row, "الحي-الشارع": region } : base.row };
+        setManualDraft((prev) => prev.map((e) => (e.id === id ? withGps : e)));
+      }
+    } catch { /* الموقع مش متاح — اللوحة اتسجّلت عادي من غيره */ }
   }
 
   // ── Manual draft (working list) helpers ──────────────────────────────────
@@ -3793,7 +3834,8 @@ export default function InstantCheckPage() {
                   placeholder="مثال: ق ن ص 1 2 3 4"
                   value={manualInput}
                   onChange={(e) => handleManualChange(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleManualSearch()}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleManualSearch(); } }}
+                  maxLength={7}
                   className={`flex-1 rounded-xl border bg-surface-2 px-3 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none ${
                     manualError ? "border-danger focus:border-danger" : "border-border focus:border-primary"
                   }`}
