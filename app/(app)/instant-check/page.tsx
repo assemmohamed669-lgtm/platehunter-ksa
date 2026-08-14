@@ -1400,7 +1400,7 @@ export default function InstantCheckPage() {
     // اللحظة دي مهمة: لوحة الموتوسيكل (حرفين) بتبقى «كاملة» وهو لسه ممكن
     // يكتب الحرف التالت للسيارة — فمانشيّكش بدري.
     if (!blocked && manualStatus(text) === "ok") {
-      autoCheckRef.current = window.setTimeout(() => { void handleManualSearch(); }, 450);
+      autoCheckRef.current = window.setTimeout(() => { void handleManualSearch(text); }, 450);
     }
   }
 
@@ -1528,14 +1528,22 @@ export default function InstantCheckPage() {
 
   // Manual entry = check against the wanted list AND record it in شيت التسجيلات
   // (with type / location / notes / GPS), just like the registration manual entry.
-  async function handleManualSearch() {
+  /**
+   * `plateOverride` بيتبعت من التشييك التلقائي. **مهم:** الدالة دي بتتنده من
+   * جوّه setTimeout، والـclosure بيمسك قيمة `manualInput` بتاعة الرندر اللي
+   * عمل المؤقّت — يعني **قبل آخر حرف**. من غير التمرير الصريح ده كانت اللوحة
+   * الصح تطلّع رسالة «تأكد من اللوحة» لأنها كانت لسه ناقصة في اللحظة دي.
+   */
+  async function handleManualSearch(plateOverride?: string) {
     clearAutoCheck();
     // قفل ضد الدوس المتكرر: المندوب بيدوس إنتر كذا مرة لما الشاشة تتأخر —
     // من غير القفل ده كانت اللوحة بتتسجّل مرتين وتلاتة.
     if (manualBusyRef.current) return;
 
-    const raw = manualInput.trim();
-    if (!raw || manualError) return;
+    const raw = (plateOverride ?? manualInput).trim();
+    // فحص الحروف الممنوعة بيتعمل على النص نفسه (مش من الحالة القديمة)
+    if (!raw) return;
+    if (plateOverride === undefined && manualError) return;
     // صيغة اللوحة لازم تكون 3 حروف + 4 أرقام (سيارة) أو حرفين + 4 أرقام (موتوسيكل)
     if (!isValidManualPlate(raw)) {
       setManualError(manualHint(raw));
@@ -3878,7 +3886,7 @@ export default function InstantCheckPage() {
                   autoComplete="off"
                 />
                 <button
-                  onClick={handleManualSearch}
+                  onClick={() => void handleManualSearch()}
                   disabled={!manualInput.trim() || !!manualError}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95"
                 >

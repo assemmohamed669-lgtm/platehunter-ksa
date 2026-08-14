@@ -131,3 +131,85 @@ describe("مربع التشييك اليدوي — الرحلة كاملة", () 
     expect(b.error).toBeNull();
   });
 });
+
+/**
+ * ارتداد حقيقي شافه مندوب (صورة ٢٠٢٦/٠٨/١٣): كتب «رحد5538» — لوحة صح تماماً
+ * (٣ حروف + ٤ أرقام) — وطلعتله رسالة حمرا «تأكد من اللوحة».
+ *
+ * السبب: التشييك التلقائي كان بيتنده من جوّه setTimeout، والـclosure بيمسك
+ * قيمة المربع بتاعة الرندر اللي عمل المؤقّت — يعني **قبل آخر حرف**. فالفحص
+ * كان بيشوف «رحد553» (ناقصة) ويطلّع الرسالة.
+ *
+ * الحل: التشييك التلقائي بيبعت اللوحة نفسها بدل ما يقرا الحالة.
+ */
+describe("اللوحة الصح مالهاش رسالة غلط", () => {
+  /**
+   * التشييك التلقائي بيبعت **اللوحة نفسها** للدالة بدل ما يقرا الحالة —
+   * ده اللي بيمنع الغلط. (لو قرا الحالة كان هيشوف اللوحة قبل آخر حرف.)
+   */
+  function box() {
+    let input = "", error: string | null = null;
+    const saved: string[] = [];
+    let timer: NodeJS.Timeout | null = null;
+
+    const search = (plate: string) => {
+      const raw = plate.trim();
+      if (!raw) return;
+      if (!isValidManualPlate(raw)) { error = manualHint(raw); return; }
+      saved.push(raw); input = ""; error = null;
+    };
+
+    return {
+      type(val: string) {
+        const { text, blocked } = clampManualPlate(val);
+        input = text;
+        error = blocked ? manualHint(text, true) : null;
+        if (timer) clearTimeout(timer);
+        if (!blocked && manualStatus(text) === "ok") {
+          timer = setTimeout(() => search(text), 450);   // النص متبعوت صراحةً
+        }
+      },
+      get error() { return error; }, get input() { return input; }, saved,
+    };
+  }
+
+  /** يكتب اللوحة حرف حرف زي المندوب بالظبط. */
+  async function typeOut(b: ReturnType<typeof box>, plate: string) {
+    for (let i = 1; i <= plate.length; i++) {
+      b.type(plate.slice(0, i));
+      await vi.advanceTimersByTimeAsync(60);   // سرعة كتابة واقعية
+    }
+    await vi.advanceTimersByTimeAsync(600);
+  }
+
+  it("«رحد5538» — اللوحة اللي المندوب شكا منها — بتتشيّك من غير أي رسالة", async () => {
+    vi.useFakeTimers();
+    const b = box();
+    await typeOut(b, "رحد5538");
+    vi.useRealTimers();
+    expect(b.error).toBeNull();
+    expect(b.saved).toEqual(["رحد5538"]);
+    expect(b.input).toBe("");
+  });
+
+  it("لوحات صح تانية بتعدّي من غير رسالة", async () => {
+    vi.useFakeTimers();
+    for (const plate of ["دلل6203", "ردل7595", "قنص1234", "قن1234"]) {
+      const b = box();
+      await typeOut(b, plate);
+      expect(b.error).toBeNull();
+      expect(b.saved).toEqual([plate]);
+    }
+    vi.useRealTimers();
+  });
+
+  it("الرسالة بتطلع بس لما تكون فعلاً زيادة عن الحد", async () => {
+    vi.useFakeTimers();
+    const b = box();
+    await typeOut(b, "رحد5538");
+    expect(b.error).toBeNull();
+    b.type("رحدم55389");            // حرف رابع ورقم خامس
+    expect(b.error).toContain("زيادة");
+    vi.useRealTimers();
+  });
+});
