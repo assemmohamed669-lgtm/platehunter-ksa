@@ -1564,15 +1564,34 @@ export default function InstantCheckPage() {
     // فالمندوب يقدر يكتب اللي بعدها على طول من غير ما يستنى الـGPS.
     manualBusyRef.current = false;
 
-    // الموقع بيتلحق بالصف بعدين (بالمعرّف) — ولو فشل مايأثرش على التشييك.
-    try {
-      const gps = await getCurrentGps();
-      if (gps) {
-        const region = await regionTextFor(gps.lat, gps.lng);
-        const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...base.row, "الحي-الشارع": region } : base.row };
-        setManualDraft((prev) => prev.map((e) => (e.id === id ? withGps : e)));
-      }
-    } catch { /* الموقع مش متاح — اللوحة اتسجّلت عادي من غيره */ }
+    // الموقع بيتلحق بالصف بعدين (بالمعرّف) — بإعادة محاولة، مانسيبش سيارة
+    // من غير موقعها.
+    void attachGpsToDraft(id, base);
+  }
+
+  /**
+   * بيجيب موقع السيارة ويلحقه بصف المسودة. **بيعيد المحاولة** لو الموقع مارجعش
+   * — المندوب واقف جنب السيارة، فالمحاولة التانية بعد ثانية غالباً بتنجح.
+   * أي سيارة لسه من غير موقع بتفضل مكتوب قدامها «جاري...» في القايمة، ولو
+   * فضلت كده بيتنبّه وقت التصدير.
+   */
+  async function attachGpsToDraft(id: string, base: FieldCheckEntry) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const gps = await getCurrentGps();
+        if (gps) {
+          const region = await regionTextFor(gps.lat, gps.lng);
+          const withGps: FieldCheckEntry = {
+            ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng),
+            row: region ? { ...base.row, "الحي-الشارع": region } : base.row,
+          };
+          // بنحدّث الصف لو لسه موجود (المندوب ممكن يكون مسحه)
+          setManualDraft((prev) => prev.map((e) => (e.id === id ? { ...e, ...withGps, row: { ...e.row, ...withGps.row } } : e)));
+          return;
+        }
+      } catch { /* محاولة فشلت — نجرّب تاني */ }
+      await new Promise<void>((r) => setTimeout(r, 1200 * (attempt + 1)));
+    }
   }
 
   // ── Manual draft (working list) helpers ──────────────────────────────────
@@ -1677,6 +1696,12 @@ export default function InstantCheckPage() {
   // Commit the whole working list to شيت التسجيلات (field_check), then clear it.
   async function exportManualDraft() {
     if (manualDraft.length === 0) return;
+    // مانسيبش سيارة من غير موقعها — لو فيه صفوف لسه بلا موقع نسأل المندوب.
+    const noGps = manualDraft.filter((e) => !e.mapsLink && e.lat == null).length;
+    if (noGps > 0) {
+      const msg = `فيه ${noGps} لوحة لسه من غير موقع (الموقع لسه بيتجاب).\n\n«موافق» = صدّرها كده   |   «إلغاء» = استنى شوية وصدّر بعدين`;
+      if (!window.confirm(msg)) return;
+    }
     setManualExporting(true);
     try {
       const toSave = [...manualDraft].reverse(); // keep chronological order in the sheet
