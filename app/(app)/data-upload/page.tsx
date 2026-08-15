@@ -8,7 +8,7 @@
  * (ربط الأعمدة، مكان الإدخال، معاينة الصفوف)، والملف الأصلي مابيتلمسش أبداً —
  * الناتج ملف جديد بينزل. تحديث داتا البرنامج خطوة منفصلة بزرار لوحده.
  *
- * للأدمن فقط دلوقتي (تجربة قبل ما تتفتح للمناديب).
+ * مفتوحة لكل المناديب — الخدمة تحت التجربة ورأيهم هو اللي بيظبّطها.
  */
 
 import { useState, useMemo, useEffect } from "react";
@@ -64,8 +64,6 @@ export default function DataUploadPage() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
-      if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setAllowed(true);
     })();
     syncUploadHistory().then(setHistory).catch(() => {});

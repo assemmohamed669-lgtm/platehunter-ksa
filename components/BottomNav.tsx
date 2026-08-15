@@ -14,8 +14,7 @@ const TABS = [
   { href: "/registration", label: "التسجيل", icon: Mic, superOnly: true },
   { href: "/maps", label: "الخرائط", icon: MapPin },
   { href: "/wanted", label: "المطلوب", icon: Crosshair },
-  // «رفع للداتا» للأدمن فقط (adminOnly) — تجربة قبل ما تتفتح للمناديب.
-  { href: "/data-upload", label: "رفع داتا", icon: FileUp, adminOnly: true },
+  { href: "/data-upload", label: "رفع داتا", icon: FileUp },
 ] as const;
 
 export default function BottomNav() {
