@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   normLoc, locationBase, buildLocationIndex, suggestLocations, locationsInSheet,
-  suggestColumnMapping, mapRow, mergeIntoData, verifyMerge, detectLocationColumn,
+  suggestColumnMapping, mapRow, mergeIntoData, verifyMerge, detectLocationColumn, buildReviewRows,
   type ColumnMapping,
 } from "@/lib/dataMerge";
 
@@ -268,5 +268,50 @@ describe("فحص الأمان بيمسك أي تلف", () => {
     const r = mergeIntoData(DATA, [{ "اللوحة": "x", "النوع": "", "الحي": "y" }],
       [{ source: "اللوحة", target: "رقم اللوحة" }], DATA_HEADERS, 2);
     expect(verifyMerge(DATA, r.rows, r.insertedAt, r.addedCount).ok).toBe(true);
+  });
+});
+
+/**
+ * «شيت المراجعة» — الأدمن عايز يتأكد إن اللوحات نزلت مكانها الصح. مايحتاجش
+ * يفتح ٤٨١ ألف صف على الموبايل عشان كده: الشيت الصغير ده فيه الصفوف الجديدة
+ * ومعاها اللي قبلها واللي بعدها، فبيفتح في لحظة وبيوري بالظبط اللي يهمه.
+ */
+describe("شيت المراجعة", () => {
+  const rows = Array.from({ length: 100 }, (_, i) => ({ "رقم اللوحة": `p${i}`, "الحى": "x" }));
+
+  it("بيجيب الجديد ومعاه اللي قبله واللي بعده", () => {
+    const r = buildReviewRows(rows, 50, 5, 3);
+    expect(r).toHaveLength(11);                       // 3 قبل + 5 جديد + 3 بعد
+    expect(r[0]["رقم اللوحة"]).toBe("p47");
+    expect(r[10]["رقم اللوحة"]).toBe("p57");
+  });
+
+  it("بيعلّم الصفوف الجديدة عشان الأدمن يفرّقها", () => {
+    const r = buildReviewRows(rows, 50, 2, 2);
+    expect(r.map((x) => x["الحالة"])).toEqual(["", "", "جديد", "جديد", "", ""]);
+  });
+
+  it("عمود الحالة بييجي الأول", () => {
+    expect(Object.keys(buildReviewRows(rows, 50, 1, 1)[0])[0]).toBe("الحالة");
+  });
+
+  it("الإدخال في أول الملف — مافيش صفوف قبله", () => {
+    const r = buildReviewRows(rows, 0, 2, 3);
+    expect(r).toHaveLength(5);
+    expect(r[0]["الحالة"]).toBe("جديد");
+  });
+
+  it("الإدخال في آخر الملف — مافيش صفوف بعده", () => {
+    const r = buildReviewRows(rows, 98, 2, 3);
+    expect(r).toHaveLength(5);
+    expect(r[r.length - 1]["الحالة"]).toBe("جديد");
+  });
+
+  it("إدخال ضخم بيتقص — الشيت يفضل صغير ويفتح على الموبايل", () => {
+    const big = Array.from({ length: 60_000 }, (_, i) => ({ "رقم اللوحة": `n${i}` }));
+    const merged = [...rows.slice(0, 10), ...big, ...rows.slice(10)];
+    const r = buildReviewRows(merged, 10, 60_000, 3, 500);
+    expect(r.length).toBeLessThanOrEqual(510);
+    expect(r.some((x) => String(x["الحالة"]).includes("..."))).toBe(true);   // سطر بيقول إن فيه محذوف
   });
 });

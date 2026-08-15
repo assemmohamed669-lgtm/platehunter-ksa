@@ -13,16 +13,19 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, RefreshCw, X } from "lucide-react";
+import { Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, RefreshCw, X, Share2, Eye } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { readAllSheetsRawStream } from "@/lib/xlsxStream";
-import { buildTableFromAoa, downloadExcelBlob, buildCsvBlob, type ExcelTable } from "@/lib/excel";
+import {
+  buildTableFromAoa, buildExcelBlob, buildCsvBlob, openExcelBlob, shareExcelBlob,
+  type ExcelTable,
+} from "@/lib/excel";
 import { importRowsToData } from "@/lib/dataStore";
 import {
   buildLocationIndex, suggestLocations, locationsInSheet, suggestColumnMapping,
-  mergeIntoData, verifyMerge, detectLocationColumn, type ColumnMapping, type LocationInfo,
+  mergeIntoData, verifyMerge, detectLocationColumn, buildReviewRows,
+  type ColumnMapping, type LocationInfo,
 } from "@/lib/dataMerge";
-import * as XLSX from "xlsx";
 
 /** فوق العدد ده بنطلّع CSV بدل xlsx — الكتابة بتاخد ثواني و~٢ جيجا ذاكرة. */
 const XLSX_ROW_LIMIT = 150_000;
@@ -133,31 +136,45 @@ export default function DataUploadPage() {
     finally { setBusy(null); }
   }
 
-  function downloadMerged() {
-    if (!merged || !dataTable) return;
-    setBusy("جاري تجهيز الملف…");
-    setTimeout(() => {
-      try {
-        const H = dataTable.headers;
-        const stamp = new Date().toISOString().slice(0, 10);
-        if (merged.rows.length > XLSX_ROW_LIMIT) {
-          // ملف ضخم: CSV — أسرع بعشرين مرة وذاكرته جزء صغير، وإكسيل بيفتحه عادي
-          downloadExcelBlob(buildCsvBlob(merged.rows, H), `داتا-محدّثة-${stamp}.csv`);
-        } else {
-          const ws = XLSX.utils.json_to_sheet(merged.rows, { header: H });
-          const wb = XLSX.utils.book_new();
-          wb.Workbook = { Views: [{ RTL: true }] };
-          XLSX.utils.book_append_sheet(wb, ws, "داتا");
-          const out = XLSX.write(wb, { bookType: "xlsx", type: "array", compression: true, bookSST: true });
-          downloadExcelBlob(
-            new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-            `داتا-محدّثة-${stamp}.xlsx`,
-          );
-        }
-      } catch (e) { setError((e as Error)?.message ?? "تعذّر تجهيز الملف."); }
-      finally { setBusy(null); }
-    }, 30);
+  /** الملف الكامل: xlsx لو يقدر، وإلا CSV — الـ xlsx على نص مليون صف بيوقّع الموبايل. */
+  function buildFullBlob(): { blob: Blob; name: string } {
+    if (!merged || !dataTable) throw new Error("مافيش نتيجة.");
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (merged.rows.length > XLSX_ROW_LIMIT) {
+      return { blob: buildCsvBlob(merged.rows, dataTable.headers), name: `داتا-محدّثة-${stamp}.csv` };
+    }
+    return { blob: buildExcelBlob(merged.rows, "داتا"), name: `داتا-محدّثة-${stamp}.xlsx` };
   }
+
+  /** شيت المراجعة: الجديد ومعاه اللي قبله وبعده — xlsx صغير بيفتح في لحظة. */
+  function buildReviewBlob(): { blob: Blob; name: string } {
+    if (!merged) throw new Error("مافيش نتيجة.");
+    const rows = buildReviewRows(merged.rows, merged.at, merged.added);
+    return { blob: buildExcelBlob(rows, "مراجعة"), name: "شيت-المراجعة.xlsx" };
+  }
+
+  /** بيلف أي عملية ملف بحالة انشغال ورسالة خطأ واضحة. */
+  async function withFile(label: string, run: () => Promise<void>) {
+    setBusy(label); setError(null);
+    try { await run(); }
+    catch (e) { setError((e as Error)?.message ?? "تعذّرت العملية."); }
+    finally { setBusy(null); }
+  }
+
+  const openReview = () => withFile("جاري فتح شيت المراجعة…", async () => {
+    const { blob, name } = buildReviewBlob();
+    await openExcelBlob(blob, name);
+  });
+
+  const openFull = () => withFile("جاري فتح الملف…", async () => {
+    const { blob, name } = buildFullBlob();
+    await openExcelBlob(blob, name);
+  });
+
+  const shareFull = () => withFile("جاري تجهيز المشاركة…", async () => {
+    const { blob, name } = buildFullBlob();
+    await shareExcelBlob(blob, name, "الداتا بعد الرفع");
+  });
 
   async function updateAppData() {
     if (!merged || !dataTable) return;
@@ -316,11 +333,31 @@ export default function DataUploadPage() {
           <p className="mb-2 text-[10px] text-muted">الصفوف المميّزة هي الجديدة.</p>
 
           <div className="flex flex-col gap-2">
-            <button onClick={downloadMerged} disabled={!!busy}
+            <button onClick={openReview} disabled={!!busy}
               className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition disabled:opacity-50">
-              <ArrowDownToLine size={15} />
-              {busy ?? `نزّل الملف الجديد${merged.rows.length > XLSX_ROW_LIMIT ? " (CSV)" : ""}`}
+              <Eye size={15} /> {busy ?? "افتح شيت المراجعة (إكسيل)"}
             </button>
+            <p className="-mt-1 text-center text-[10px] text-muted">
+              شيت صغير فيه الجديد ومعاه اللي قبله واللي بعده — بيفتح في لحظة
+            </p>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={openFull} disabled={!!busy}
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition disabled:opacity-50">
+                <ArrowDownToLine size={14} /> افتح الملف الكامل
+              </button>
+              <button onClick={shareFull} disabled={!!busy}
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition disabled:opacity-50">
+                <Share2 size={14} /> شارك الملف
+              </button>
+            </div>
+            {merged.rows.length > XLSX_ROW_LIMIT && (
+              <p className="-mt-1 text-center text-[10px] text-alert">
+                الملف الكامل ({merged.rows.length.toLocaleString("en")} صف) هيطلع CSV —
+                إكسيل بيفتحه عادي، بس الـ xlsx بالحجم ده بيوقّع الموبايل
+              </p>
+            )}
+
             <button onClick={updateAppData} disabled={!!busy}
               className="flex items-center justify-center gap-2 rounded-xl border border-primary/50 bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-50">
               <RefreshCw size={15} /> حدّث داتا البرنامج

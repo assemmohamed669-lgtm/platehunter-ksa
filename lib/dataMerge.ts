@@ -251,3 +251,41 @@ export function verifyMerge(
   }
   return { ok: true };
 }
+
+/**
+ * صفوف «شيت المراجعة» — الصفوف الجديدة ومعاها اللي قبلها واللي بعدها.
+ *
+ * ليه موجود: الأدمن عايز يتأكد إن اللوحات نزلت مكانها الصح، ومايقدرش يفتح
+ * ٤٨١ ألف صف على الموبايل عشان كده. الشيت ده بيفتح في لحظة وبيوري بالظبط
+ * اللي يهمه، وفيه عمود «الحالة» بيعلّم الجديد.
+ *
+ * لو الإدخال ضخم بيتقص من النص (بيفضل أول وآخر `maxNew`) وبيتحط سطر بيقول
+ * كام صف اتشالوا — عشان الشيت مايكبرش ويرجع نفس المشكلة.
+ */
+export function buildReviewRows(
+  mergedRows: Record<string, string>[],
+  insertedAt: number,
+  addedCount: number,
+  context = 10,
+  maxNew = 500,
+): Record<string, string>[] {
+  const STATUS = "الحالة";
+  const tag = (r: Record<string, string>, status: string) => ({ [STATUS]: status, ...r });
+
+  const out: Record<string, string>[] = [];
+  for (let i = Math.max(0, insertedAt - context); i < insertedAt; i++) out.push(tag(mergedRows[i], ""));
+
+  if (addedCount <= maxNew) {
+    for (let i = insertedAt; i < insertedAt + addedCount; i++) out.push(tag(mergedRows[i], "جديد"));
+  } else {
+    const half = Math.floor(maxNew / 2);
+    for (let i = insertedAt; i < insertedAt + half; i++) out.push(tag(mergedRows[i], "جديد"));
+    const hidden = addedCount - half * 2;
+    out.push({ [STATUS]: `... (${hidden} صف جديد مخفي في المراجعة — موجودين في الملف الكامل)` });
+    for (let i = insertedAt + addedCount - half; i < insertedAt + addedCount; i++) out.push(tag(mergedRows[i], "جديد"));
+  }
+
+  const end = Math.min(mergedRows.length, insertedAt + addedCount + context);
+  for (let i = insertedAt + addedCount; i < end; i++) out.push(tag(mergedRows[i], ""));
+  return out;
+}
