@@ -15,6 +15,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, RefreshCw, X, Share2, Eye, History,
+  MessageCircle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { readAllSheetsRawStream } from "@/lib/xlsxStream";
@@ -37,6 +38,9 @@ import { syncUploadHistory, pushUpload } from "@/lib/uploadHistorySync";
 
 /** فوق العدد ده بنوري الأدمن إن الفتح هياخد شوية — مش بنمنعه. */
 const SLOW_ROWS = 150_000;
+
+/** رقم الإدارة — زي باقي الصفحات. */
+const ADMIN_WHATSAPP = "971542482545";
 
 export default function DataUploadPage() {
   const router = useRouter();
@@ -250,6 +254,25 @@ export default function DataUploadPage() {
 
   return (
     <div className="flex flex-col gap-4 pb-8">
+      {/* رسالة الإدارة للمناديب — الخدمة لسه تحت التجربة ومحتاجين رأيهم */}
+      <section className="rounded-xl border-2 border-alert/60 bg-alert/10 p-3">
+        <p className="text-sm font-black text-alert">الخدمة دي تحت التجربة</p>
+        <p className="mt-1 text-xs leading-relaxed text-ink">
+          برجاء تجربة إضافة التفريغ للداتا. لو حصل معاك أي غلط أو حاجة مش ماشية صح،
+          ابعتلنا رسالة توضّح اللي حصل — شغلكم في الميدان هو اللي بيظبط البرنامج،
+          وهنعدّل على حسب اللي هتلاقوه.
+        </p>
+        <p className="mt-1 text-xs font-bold text-alert">شكراً لتعاونكم.</p>
+        <a
+          href={`https://wa.me/${ADMIN_WHATSAPP}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-alert/50 bg-alert/15 px-3 py-1.5 text-xs font-bold text-alert transition active:scale-95"
+        >
+          <MessageCircle size={14} /> ابعتلنا ملاحظتك
+        </a>
+      </section>
+
       <h1 className="text-xl font-black text-ink">رفع للداتا</h1>
       <p className="-mt-2 text-xs leading-relaxed text-muted">
         ارفع ملف الداتا + شيت التفريغ اللي المفرّغ بعتهولك، والبرنامج هيحط اللوحات
