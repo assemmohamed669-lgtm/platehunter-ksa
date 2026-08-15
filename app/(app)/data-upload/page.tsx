@@ -13,7 +13,9 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, RefreshCw, X, Share2, Eye } from "lucide-react";
+import {
+  Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, RefreshCw, X, Share2, Eye, History,
+} from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { readAllSheetsRawStream } from "@/lib/xlsxStream";
 import {
@@ -26,6 +28,11 @@ import {
   mergeIntoData, verifyMerge, detectLocationColumn, buildReviewRows,
   type ColumnMapping, type LocationInfo,
 } from "@/lib/dataMerge";
+import { detectArabicPlateColumn, detectPlateColumn } from "@/lib/plateParser";
+import {
+  matchPreviousUpload, describeMatch, sheetFingerprint, platesOf,
+  getUploadHistory, recordUpload, type UploadMatch, type UploadRecord,
+} from "@/lib/uploadHistory";
 
 /** فوق العدد ده بنوري الأدمن إن الفتح هياخد شوية — مش بنمنعه. */
 const SLOW_ROWS = 150_000;
@@ -44,6 +51,9 @@ export default function DataUploadPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [merged, setMerged] = useState<{ rows: Record<string, string>[]; at: number; added: number } | null>(null);
+  const [history, setHistory] = useState<UploadRecord[]>([]);
+  const [dupMatch, setDupMatch] = useState<UploadMatch | null>(null);
+  const [dupDismissed, setDupDismissed] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -53,6 +63,7 @@ export default function DataUploadPage() {
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setAllowed(true);
     })();
+    getUploadHistory().then(setHistory).catch(() => {});
   }, [router]);
 
   /** يقرا ملف بالقارئ المتدفّق (خفيف على الذاكرة) ويرجّع جدوله. */
@@ -79,6 +90,11 @@ export default function DataUploadPage() {
     try {
       const t = await readFile(file);
       setSheetTable(t); setSheetName(file.name);
+      setDupDismissed(false);
+
+      // اترفع قبل كده؟ بنسأل على أساس اللوحات الأول، وبعدين الاسم.
+      const pc = detectArabicPlateColumn(t.headers) ?? detectPlateColumn(t.headers, t.rows.slice(0, 200));
+      setDupMatch(pc ? matchPreviousUpload(t.rows, pc, file.name, history) : null);
     } catch (e) { setError((e as Error)?.message ?? "تعذّرت قراءة شيت التفريغ."); }
     finally { setBusy(null); }
   }
@@ -103,6 +119,13 @@ export default function DataUploadPage() {
     const byMap = sheetLocCol ? mapping.find((m) => m.source === sheetLocCol)?.target : null;
     return byMap ?? detectLocationColumn(dataTable.headers);
   }, [dataTable, mapping, sheetLocCol]);
+
+  /** عمود اللوحة في شيت التفريغ — للبصمة وتسجيل الرفعة. */
+  const sheetPlateCol = useMemo(() => {
+    if (!sheetTable) return null;
+    return detectArabicPlateColumn(sheetTable.headers)
+      ?? detectPlateColumn(sheetTable.headers, sheetTable.rows.slice(0, 200));
+  }, [sheetTable]);
 
   const locIndex = useMemo<LocationInfo[]>(
     () => (dataTable && dataLocCol ? buildLocationIndex(dataTable.rows, dataLocCol) : []),
@@ -157,6 +180,28 @@ export default function DataUploadPage() {
     return { blob: buildExcelBlob(rows, "مراجعة"), name: "شيت-المراجعة.xlsx" };
   }
 
+  /**
+   * بيسجّل إن الشيت ده اترفع — بيتنده لما الأدمن ياخد الناتج فعلاً (يفتحه
+   * أو يشاركه أو يحدّث بيه الداتا)، مش بمجرد الدمج، عشان لو رجع وعدّل
+   * مايتسجّلش شيت مااتاخدش.
+   */
+  async function markUploaded() {
+    if (!sheetTable || !sheetPlateCol || !merged) return;
+    try {
+      await recordUpload({
+        fingerprint: sheetFingerprint(sheetTable.rows, sheetPlateCol),
+        plates: platesOf(sheetTable.rows, sheetPlateCol),
+        fileName: sheetName,
+        rowCount: sheetTable.rows.length,
+        uploadedAt: new Date().toISOString(),
+        dataFileName: dataName,
+        insertedAfter: insertAfter !== null && dataTable && dataLocCol
+          ? String(dataTable.rows[insertAfter]?.[dataLocCol] ?? "") : "",
+      });
+      setHistory(await getUploadHistory());
+    } catch { /* الذاكرة مش متاحة — مانوقفش الشغل */ }
+  }
+
   /** بيلف أي عملية ملف بحالة انشغال ورسالة خطأ واضحة. */
   async function withFile(label: string, run: () => Promise<void>) {
     setBusy(label); setError(null);
@@ -173,11 +218,13 @@ export default function DataUploadPage() {
   const openFull = () => withFile("جاري فتح الملف…", async () => {
     const { blob, name } = buildFullBlob();
     await openExcelBlob(blob, name);
+    await markUploaded();
   });
 
   const shareFull = () => withFile("جاري تجهيز المشاركة…", async () => {
     const { blob, name } = buildFullBlob();
     await shareExcelBlob(blob, name, "الداتا بعد الرفع");
+    await markUploaded();
   });
 
   async function updateAppData() {
@@ -186,6 +233,7 @@ export default function DataUploadPage() {
     setBusy("جاري تحديث داتا البرنامج…"); setError(null);
     try {
       await importRowsToData(merged.rows, dataTable.headers, { fileName: `داتا-محدّثة-${dataName}` });
+      await markUploaded();
       alert("تم تحديث داتا البرنامج. افتح صفحة الفرز وجرّب.");
     } catch (e) { setError((e as Error)?.message ?? "تعذّر التحديث."); }
     finally { setBusy(null); }
@@ -224,23 +272,70 @@ export default function DataUploadPage() {
           onPick={pickSheet} />
       </div>
 
+      {/* تحذير: الشيت ده اترفع قبل كده */}
+      {dupMatch && !dupDismissed && (
+        <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${
+          dupMatch.kind === "same" ? "border-danger/50 bg-danger/10" : "border-alert/50 bg-alert/10"
+        }`}>
+          <History size={16} className={`mt-0.5 shrink-0 ${dupMatch.kind === "same" ? "text-danger" : "text-alert"}`} />
+          <div className="flex-1">
+            <p className={`text-xs font-bold ${dupMatch.kind === "same" ? "text-danger" : "text-alert"}`}>
+              {dupMatch.kind === "same" ? "الشيت ده مرفوع قبل كده" : "انتبه — فيه شبه برفعة قديمة"}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-ink">{describeMatch(dupMatch)}</p>
+            <p className="mt-1 text-[10px] text-muted">
+              لو متأكد إنك عايز ترفعه تاني كمّل عادي — البرنامج مش هيمنعك.
+            </p>
+          </div>
+          <button onClick={() => setDupDismissed(true)} className="shrink-0 text-muted" aria-label="إخفاء">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* ② ربط الأعمدة */}
       {dataTable && sheetTable && (
         <section className="rounded-xl border border-border bg-surface p-3">
-          <h2 className="mb-2 text-sm font-bold text-ink">١) ربط الأعمدة</h2>
-          <p className="mb-2 text-[11px] text-muted">البرنامج خمّنها — راجعها وغيّر أي واحدة غلط.</p>
-          <div className="flex flex-col gap-1.5">
+          <h2 className="mb-1 text-sm font-bold text-ink">١) ربط الأعمدة</h2>
+          <p className="mb-2 text-[11px] text-muted">
+            البرنامج خمّنها — راجعها وغيّر أي واحدة غلط. تحت كل عمود مثال من الملف نفسه.
+          </p>
+
+          {/* عنوانين واضحين: مين شيت التفريغ ومين الداتا */}
+          <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-surface-2 px-2 py-1.5 text-[10px] font-bold">
+            <span className="min-w-0 flex-1 truncate text-alert">
+              عمود في شيت التفريغ {sheetName ? `(${sheetName})` : ""}
+            </span>
+            <span className="shrink-0 text-muted">يروح لـ ←</span>
+            <span className="min-w-0 flex-1 truncate text-primary">
+              عمود في الداتا {dataName ? `(${dataName})` : ""}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2">
             {mapping.map((m, i) => (
               <div key={m.source} className="flex items-center gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate text-muted" title={m.source}>{m.source}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-bold text-alert" title={m.source}>{m.source}</p>
+                  <p className="truncate text-[10px] text-muted" title={sampleOf(sheetTable, m.source)}>
+                    {sampleOf(sheetTable, m.source) || "—"}
+                  </p>
+                </div>
                 <span className="shrink-0 text-muted">←</span>
-                <select
-                  value={m.target ?? ""}
-                  onChange={(e) => setMapping((p) => p.map((x, j) => (j === i ? { ...x, target: e.target.value || null } : x)))}
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2 py-1 text-ink outline-none focus:border-primary">
-                  <option value="">— تجاهل —</option>
-                  {dataTable.headers.map((h) => <option key={h} value={h}>{h}</option>)}
-                </select>
+                <div className="min-w-0 flex-1">
+                  <select
+                    value={m.target ?? ""}
+                    onChange={(e) => setMapping((p) => p.map((x, j) => (j === i ? { ...x, target: e.target.value || null } : x)))}
+                    className={`w-full rounded-lg border bg-surface-2 px-2 py-1 outline-none focus:border-primary ${
+                      m.target ? "border-border text-primary font-bold" : "border-alert/50 text-muted"
+                    }`}>
+                    <option value="">— مش هيتنقل —</option>
+                    {dataTable.headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <p className="truncate text-[10px] text-muted" title={sampleOf(dataTable, m.target)}>
+                    {m.target ? sampleOf(dataTable, m.target) || "—" : "العمود ده هيتساب"}
+                  </p>
+                </div>
               </div>
             ))}
           </div>
@@ -370,6 +465,16 @@ export default function DataUploadPage() {
       )}
     </div>
   );
+}
+
+/** أول قيمة فعلية في العمود ده — عشان الأدمن يشوف بعينه إن الربط صح. */
+function sampleOf(table: ExcelTable | null, col: string | null): string {
+  if (!table || !col) return "";
+  for (const r of table.rows.slice(0, 50)) {
+    const v = String(r?.[col] ?? "").trim();
+    if (v) return v.length > 26 ? `${v.slice(0, 26)}…` : v;
+  }
+  return "";
 }
 
 /** صفوف المعاينة: ٣ قبل، الجديد (بحد أقصى ٦)، و٣ بعد. */
