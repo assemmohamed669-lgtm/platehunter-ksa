@@ -24,6 +24,8 @@ export interface UploadRecord {
   uploadedAt: string;
   dataFileName: string;
   insertedAfter: string;
+  /** مين رفعه — بيتعبّى من السحابة عشان الأدمن يعرف زميله رفعه ولا هو. */
+  uploadedByName?: string;
 }
 
 export type MatchKind = "same" | "overlap" | "name";
@@ -151,11 +153,19 @@ function open(): Promise<IDBDatabase> {
 export async function recordUpload(rec: UploadRecord): Promise<void> {
   const db = await open();
   try {
+    // موجود قبل كده؟ نحافظ على **أول** تاريخ — ده اللي التحذير بيقوله.
+    const existing = await new Promise<UploadRecord | undefined>((resolve) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).get(rec.fingerprint);
+      req.onsuccess = () => resolve(req.result as UploadRecord | undefined);
+      req.onerror = () => resolve(undefined);
+    });
+    const merged = existing ? pickOlder(existing, rec) : rec;
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
-      tx.objectStore(STORE).put(rec);
+      tx.objectStore(STORE).put(merged);
     });
   } finally { db.close(); }
 }
@@ -184,4 +194,36 @@ export async function clearUploadHistory(): Promise<void> {
       tx.objectStore(STORE).clear();
     });
   } finally { db.close(); }
+}
+
+// ── المشاركة بين الأجهزة والأدمنز (Supabase) ────────────────────────────
+
+/**
+ * بيختار السجل اللي هيفضل لما نفس الشيت يبقى في مكانين.
+ *
+ * التاريخ: **الأقدم** يكسب — التحذير بيقول «اترفع قبل كده يوم X» فالمفيد
+ * أول مرة. باقي التفاصيل بتيجي من السجل الأقدم برضه، إلا اللوحات: لو
+ * الأقدم مالوش لوحات (سجل قديم أو ناقص) بناخدها من التاني.
+ */
+function pickOlder(a: UploadRecord, b: UploadRecord): UploadRecord {
+  const older = a.uploadedAt <= b.uploadedAt ? a : b;
+  const other = older === a ? b : a;
+  return {
+    ...older,
+    plates: older.plates?.length ? older.plates : (other.plates ?? []),
+    uploadedByName: older.uploadedByName ?? other.uploadedByName,
+  };
+}
+
+/** بيدمج أكتر من مصدر (الجهاز + السحابة) في قايمة واحدة، الأحدث الأول. */
+export function mergeHistories(...lists: UploadRecord[][]): UploadRecord[] {
+  const byFp = new Map<string, UploadRecord>();
+  for (const list of lists) {
+    for (const rec of list ?? []) {
+      if (!rec?.fingerprint) continue;
+      const hit = byFp.get(rec.fingerprint);
+      byFp.set(rec.fingerprint, hit ? pickOlder(hit, rec) : rec);
+    }
+  }
+  return [...byFp.values()].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1));
 }

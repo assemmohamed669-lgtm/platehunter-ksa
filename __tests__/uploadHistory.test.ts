@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   sheetFingerprint, platesOf, matchPreviousUpload, describeMatch,
-  recordUpload, getUploadHistory, clearUploadHistory, type UploadRecord,
+  recordUpload, getUploadHistory, clearUploadHistory, mergeHistories, type UploadRecord,
 } from "@/lib/uploadHistory";
 
 /**
@@ -117,14 +117,16 @@ describe("تخزين ذاكرة الرفع", () => {
     expect(h[0].fileName).toBe("تفريغ.xlsx");
   });
 
-  it("رفع نفس الشيت تاني مابيكرّرش السجل — بيحدّثه", async () => {
+  // التحذير بيقول «اترفع قبل كده يوم X» — فالمفيد هو **أول** مرة اترفع،
+  // مش آخر مرة. لو اترفع تاني بالغلط، أول تاريخ هو اللي يفكّر المندوب.
+  it("رفع نفس الشيت تاني مابيكرّرش السجل وبيحافظ على أول تاريخ", async () => {
     const rec = { fingerprint: "f1", plates: ["ابج1234"], fileName: "تفريغ.xlsx", rowCount: 1,
       uploadedAt: "2026-08-15T00:00:00.000Z", dataFileName: "د.xlsx", insertedAfter: "80 الصفا" };
     await recordUpload(rec);
     await recordUpload({ ...rec, uploadedAt: "2026-08-16T00:00:00.000Z" });
     const h = await getUploadHistory();
     expect(h).toHaveLength(1);
-    expect(h[0].uploadedAt).toBe("2026-08-16T00:00:00.000Z");
+    expect(h[0].uploadedAt).toBe("2026-08-15T00:00:00.000Z");
   });
 
   it("الأحدث بيطلع الأول", async () => {
@@ -133,5 +135,56 @@ describe("تخزين ذاكرة الرفع", () => {
     await recordUpload({ fingerprint: "b", plates: [], fileName: "جديد.xlsx", rowCount: 0,
       uploadedAt: "2026-08-14T00:00:00.000Z", dataFileName: "د", insertedAfter: "" });
     expect((await getUploadHistory())[0].fileName).toBe("جديد.xlsx");
+  });
+});
+
+/**
+ * الذاكرة متشاركة بين كل الأدمنز والأجهزة عبر Supabase. المندوب ممكن يرفع
+ * من تليفون وزميله يحاول يرفع نفس الشيت من تليفون تاني — لازم يعرف.
+ *
+ * الدمج لازم يفضل شغال والنت قاطع: اللي على الجهاز بيتحسب برضه.
+ */
+describe("دمج ذاكرة الجهاز مع السحابة", () => {
+  const r = (fp: string, at: string, over: Partial<UploadRecord> = {}): UploadRecord => ({
+    fingerprint: fp, plates: ["ابج1234"], fileName: `${fp}.xlsx`, rowCount: 1,
+    uploadedAt: at, dataFileName: "د.xlsx", insertedAfter: "", ...over,
+  });
+
+  it("بيجمع الاتنين من غير تكرار", () => {
+    const out = mergeHistories([r("a", "2026-08-01T00:00:00.000Z")], [r("b", "2026-08-02T00:00:00.000Z")]);
+    expect(out.map((x) => x.fingerprint).sort()).toEqual(["a", "b"]);
+  });
+
+  it("نفس الشيت في الاتنين → سجل واحد بأقدم تاريخ", () => {
+    const out = mergeHistories(
+      [r("a", "2026-08-10T00:00:00.000Z")],
+      [r("a", "2026-08-03T00:00:00.000Z", { fileName: "الأصلي.xlsx" })],
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].uploadedAt).toBe("2026-08-03T00:00:00.000Z");
+    expect(out[0].fileName).toBe("الأصلي.xlsx");
+  });
+
+  it("بيفضّل السجل اللي فيه لوحات لو التاني فاضي", () => {
+    const out = mergeHistories(
+      [r("a", "2026-08-01T00:00:00.000Z", { plates: [] })],
+      [r("a", "2026-08-05T00:00:00.000Z", { plates: ["ابج1234", "دهو5678"] })],
+    );
+    expect(out[0].plates).toHaveLength(2);
+    expect(out[0].uploadedAt).toBe("2026-08-01T00:00:00.000Z");   // أقدم تاريخ برضه
+  });
+
+  it("السحابة فاضية (النت قاطع) → اللي على الجهاز زي ما هو", () => {
+    expect(mergeHistories([r("a", "2026-08-01T00:00:00.000Z")], [])).toHaveLength(1);
+  });
+
+  it("الأحدث الأول", () => {
+    const out = mergeHistories([r("a", "2026-08-01T00:00:00.000Z")], [r("b", "2026-08-09T00:00:00.000Z")]);
+    expect(out[0].fingerprint).toBe("b");
+  });
+
+  it("اسم اللي رفع بيتحفظ عشان نعرف مين", () => {
+    const out = mergeHistories([], [r("a", "2026-08-01T00:00:00.000Z", { uploadedByName: "أحمد" })]);
+    expect(out[0].uploadedByName).toBe("أحمد");
   });
 });

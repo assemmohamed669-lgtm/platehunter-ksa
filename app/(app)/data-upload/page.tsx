@@ -31,8 +31,9 @@ import {
 import { detectArabicPlateColumn, detectPlateColumn } from "@/lib/plateParser";
 import {
   matchPreviousUpload, describeMatch, sheetFingerprint, platesOf,
-  getUploadHistory, recordUpload, type UploadMatch, type UploadRecord,
+  recordUpload, type UploadMatch, type UploadRecord,
 } from "@/lib/uploadHistory";
+import { syncUploadHistory, pushUpload } from "@/lib/uploadHistorySync";
 
 /** فوق العدد ده بنوري الأدمن إن الفتح هياخد شوية — مش بنمنعه. */
 const SLOW_ROWS = 150_000;
@@ -63,7 +64,7 @@ export default function DataUploadPage() {
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setAllowed(true);
     })();
-    getUploadHistory().then(setHistory).catch(() => {});
+    syncUploadHistory().then(setHistory).catch(() => {});
   }, [router]);
 
   /** يقرا ملف بالقارئ المتدفّق (خفيف على الذاكرة) ويرجّع جدوله. */
@@ -188,7 +189,7 @@ export default function DataUploadPage() {
   async function markUploaded() {
     if (!sheetTable || !sheetPlateCol || !merged) return;
     try {
-      await recordUpload({
+      const rec = {
         fingerprint: sheetFingerprint(sheetTable.rows, sheetPlateCol),
         plates: platesOf(sheetTable.rows, sheetPlateCol),
         fileName: sheetName,
@@ -197,8 +198,10 @@ export default function DataUploadPage() {
         dataFileName: dataName,
         insertedAfter: insertAfter !== null && dataTable && dataLocCol
           ? String(dataTable.rows[insertAfter]?.[dataLocCol] ?? "") : "",
-      });
-      setHistory(await getUploadHistory());
+      };
+      await recordUpload(rec);
+      await pushUpload(rec);                       // يوصل لباقي الأدمنز والأجهزة
+      setHistory(await syncUploadHistory());
     } catch { /* الذاكرة مش متاحة — مانوقفش الشغل */ }
   }
 
@@ -282,7 +285,10 @@ export default function DataUploadPage() {
             <p className={`text-xs font-bold ${dupMatch.kind === "same" ? "text-danger" : "text-alert"}`}>
               {dupMatch.kind === "same" ? "الشيت ده مرفوع قبل كده" : "انتبه — فيه شبه برفعة قديمة"}
             </p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-ink">{describeMatch(dupMatch)}</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-ink">
+              {describeMatch(dupMatch)}
+              {dupMatch.previous.uploadedByName ? ` رفعه: ${dupMatch.previous.uploadedByName}.` : ""}
+            </p>
             <p className="mt-1 text-[10px] text-muted">
               لو متأكد إنك عايز ترفعه تاني كمّل عادي — البرنامج مش هيمنعك.
             </p>
