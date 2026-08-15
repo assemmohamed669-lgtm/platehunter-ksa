@@ -17,7 +17,7 @@ import { Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, Refresh
 import { supabase } from "@/lib/supabaseClient";
 import { readAllSheetsRawStream } from "@/lib/xlsxStream";
 import {
-  buildTableFromAoa, buildExcelBlob, buildCsvBlob, openExcelBlob, shareExcelBlob,
+  buildTableFromAoa, buildExcelBlob, buildBigExcelBlob, openExcelBlob, shareExcelBlob,
   type ExcelTable,
 } from "@/lib/excel";
 import { importRowsToData } from "@/lib/dataStore";
@@ -27,8 +27,8 @@ import {
   type ColumnMapping, type LocationInfo,
 } from "@/lib/dataMerge";
 
-/** فوق العدد ده بنطلّع CSV بدل xlsx — الكتابة بتاخد ثواني و~٢ جيجا ذاكرة. */
-const XLSX_ROW_LIMIT = 150_000;
+/** فوق العدد ده بنوري الأدمن إن الفتح هياخد شوية — مش بنمنعه. */
+const SLOW_ROWS = 150_000;
 
 export default function DataUploadPage() {
   const router = useRouter();
@@ -136,14 +136,18 @@ export default function DataUploadPage() {
     finally { setBusy(null); }
   }
 
-  /** الملف الكامل: xlsx لو يقدر، وإلا CSV — الـ xlsx على نص مليون صف بيوقّع الموبايل. */
+  /**
+   * الملف الكامل — **الداتا كلها إكسيل**، مهما كبرت (الأدمن طلب كده صراحة).
+   * بنستخدم الكاتب الخفيف: الـ buildExcelBlob العادية بتلف على كل خلية
+   * وبتفجّر الذاكرة على نص مليون صف.
+   */
   function buildFullBlob(): { blob: Blob; name: string } {
     if (!merged || !dataTable) throw new Error("مافيش نتيجة.");
     const stamp = new Date().toISOString().slice(0, 10);
-    if (merged.rows.length > XLSX_ROW_LIMIT) {
-      return { blob: buildCsvBlob(merged.rows, dataTable.headers), name: `داتا-محدّثة-${stamp}.csv` };
-    }
-    return { blob: buildExcelBlob(merged.rows, "داتا"), name: `داتا-محدّثة-${stamp}.xlsx` };
+    return {
+      blob: buildBigExcelBlob(merged.rows, dataTable.headers, "داتا"),
+      name: `داتا-محدّثة-${stamp}.xlsx`,
+    };
   }
 
   /** شيت المراجعة: الجديد ومعاه اللي قبله وبعده — xlsx صغير بيفتح في لحظة. */
@@ -333,30 +337,25 @@ export default function DataUploadPage() {
           <p className="mb-2 text-[10px] text-muted">الصفوف المميّزة هي الجديدة.</p>
 
           <div className="flex flex-col gap-2">
-            <button onClick={openReview} disabled={!!busy}
-              className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition disabled:opacity-50">
-              <Eye size={15} /> {busy ?? "افتح شيت المراجعة (إكسيل)"}
+            <button onClick={openFull} disabled={!!busy}
+              className="flex items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night transition disabled:opacity-50">
+              <ArrowDownToLine size={16} /> {busy ?? "افتح الداتا كلها (إكسيل)"}
             </button>
             <p className="-mt-1 text-center text-[10px] text-muted">
-              شيت صغير فيه الجديد ومعاه اللي قبله واللي بعده — بيفتح في لحظة
+              {merged.rows.length.toLocaleString("en")} صف كاملين، ملف إكسيل بيفتح من اليمين
+              {merged.rows.length > SLOW_ROWS ? " — التجهيز بياخد شوية ثواني، استنى" : ""}
             </p>
 
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={openFull} disabled={!!busy}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition disabled:opacity-50">
-                <ArrowDownToLine size={14} /> افتح الملف الكامل
-              </button>
               <button onClick={shareFull} disabled={!!busy}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition disabled:opacity-50">
-                <Share2 size={14} /> شارك الملف
+                <Share2 size={14} /> شارك الداتا
+              </button>
+              <button onClick={openReview} disabled={!!busy}
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2.5 text-xs font-bold text-ink transition disabled:opacity-50">
+                <Eye size={14} /> شيت المراجعة
               </button>
             </div>
-            {merged.rows.length > XLSX_ROW_LIMIT && (
-              <p className="-mt-1 text-center text-[10px] text-alert">
-                الملف الكامل ({merged.rows.length.toLocaleString("en")} صف) هيطلع CSV —
-                إكسيل بيفتحه عادي، بس الـ xlsx بالحجم ده بيوقّع الموبايل
-              </p>
-            )}
 
             <button onClick={updateAppData} disabled={!!busy}
               className="flex items-center justify-center gap-2 rounded-xl border border-primary/50 bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-50">

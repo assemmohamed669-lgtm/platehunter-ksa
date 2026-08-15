@@ -683,6 +683,30 @@ export interface WatermarkInfo {
   userId: string;
 }
 
+/**
+ * Excel blob for VERY large tables (the merged data file — half a million rows).
+ *
+ * buildExcelBlob walks every cell looking for URLs to turn into hyperlinks;
+ * at 1.9M cells that allocation storm runs out of memory (measured: OOM even
+ * with a 6GB heap). This writes straight through instead — 6s and ~480MB on
+ * the real 481k-row file — and pins the column order so a row missing a key
+ * cannot shift the sheet.
+ */
+export function buildBigExcelBlob(
+  rows: Record<string, unknown>[],
+  headerOrder: string[],
+  sheetName: string,
+): Blob {
+  const ws = XLSX.utils.json_to_sheet(rows, { header: headerOrder });
+  const wb = XLSX.utils.book_new();
+  setWorkbookRtl(wb);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const out = XLSX.write(wb, { bookType: "xlsx", type: "array", compression: true });
+  return new Blob([out], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
 export function buildExcelBlob(
   rows: Record<string, unknown>[],
   sheetName: string,
