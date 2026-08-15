@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ListFilter, Mic, MapPin, ScanLine, Crosshair } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { visibleTabs } from "@/lib/navTabs";
 
 const TABS = [
   { href: "/sorting", label: "الفرز", icon: ListFilter },
@@ -13,37 +14,42 @@ const TABS = [
   { href: "/registration", label: "التسجيل", icon: Mic, superOnly: true },
   { href: "/maps", label: "الخرائط", icon: MapPin },
   { href: "/wanted", label: "المطلوب", icon: Crosshair },
+  // «رفع للداتا» للأدمن فقط (adminOnly) — تجربة قبل ما تتفتح للمناديب.
+  { href: "/data-upload", label: "رفع داتا", icon: FileUp, adminOnly: true },
 ] as const;
 
 export default function BottomNav() {
   const pathname = usePathname();
   const [isSuper, setIsSuper] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  // هل المستخدم الحالي سوبر أدمن؟ (يحدد ظهور تبويب التسجيل).
+  // صلاحية المستخدم — بتحدد ظهور تبويب التسجيل (سوبر) و«رفع داتا» (أدمن).
   useEffect(() => {
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
+        const { data: prof } = await supabase.from("profiles")
+          .select("is_super, role").eq("id", data.user.id).single();
         setIsSuper(!!prof?.is_super);
+        setIsAdmin(prof?.role === "admin");
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
 
-  const tabs = TABS.filter((t) => !("superOnly" in t && t.superOnly) || isSuper);
+  const tabs = visibleTabs(TABS, { isSuper, isAdmin });
 
   return (
     // الشريط أسود ثابت في الوضعين (فاتح/غامق) بطلب المندوب — والكلام أبيض.
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-black/95 backdrop-blur">
-      <div className="mx-auto flex max-w-md justify-between px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
+      <div className="mx-auto flex max-w-md justify-between px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
         {tabs.map(({ href, label, icon: Icon }) => {
           const active = pathname?.startsWith(href);
           return (
             <Link
               key={href}
               href={href}
-              className={`flex flex-1 flex-col items-center gap-1 rounded-xl py-2 text-xs transition ${
+              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] transition ${
                 active ? "text-white" : "text-white/60 hover:text-white"
               }`}
             >
@@ -52,7 +58,7 @@ export default function BottomNav() {
                 strokeWidth={active ? 2.5 : 2}
                 className={active ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
               />
-              <span className={active ? "font-bold" : ""}>{label}</span>
+              <span className={`w-full truncate text-center ${active ? "font-bold" : ""}`}>{label}</span>
             </Link>
           );
         })}
