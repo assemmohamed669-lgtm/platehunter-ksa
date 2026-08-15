@@ -220,3 +220,58 @@ export async function iterateRows(
     db.close();
   }
 }
+
+/**
+ * يستورد صفوف **جاهزة في الذاكرة** لقاعدة الداتا على الجهاز — من غير ما نعيد
+ * كتابة وقراءة ملف. بتستخدمها صفحة «رفع للداتا» بعد الدمج: الصفوف موجودة
+ * أصلاً، فكتابة ملف ضخم وإعادة قراءته هدر كبير (٦ ثواني و~٢ جيجا ذاكرة على
+ * ٤٨٠ ألف صف).
+ *
+ * بيمسح الـslot الأول وبعدين يكتب على دفعات — نفس شكل التخزين بالظبط اللي
+ * `importLargeDataFile` بتعمله، فالفرز وباقي الصفحات مايفرقش معاهم.
+ */
+export async function importRowsToData(
+  rows: DataRow[],
+  headers: string[],
+  opts: { slot?: string; fileName?: string; sheetName?: string; onProgress?: (n: number) => void } = {},
+): Promise<DataMeta> {
+  const slot = opts.slot ?? "data";
+  await clearData(slot);
+  const db = await openDataDB();
+
+  const writeChunk = (batch: DataRow[]): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const tx = db.transaction(CHUNKS, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(CHUNKS).put({ rows: batch } as ChunkRec);
+    });
+
+  try {
+    for (let i = 0; i < rows.length; i += CHUNK_ROWS) {
+      await writeChunk(rows.slice(i, i + CHUNK_ROWS));
+      opts.onProgress?.(Math.min(i + CHUNK_ROWS, rows.length));
+    }
+
+    const plateCol =
+      detectArabicPlateColumn(headers) ?? detectPlateColumn(headers, rows.slice(0, 200)) ?? headers[0] ?? "";
+    const dataMeta: DataMeta = {
+      slot,
+      headers,
+      sheetName: opts.sheetName ?? "داتا",
+      rowCount: rows.length,
+      plateCol,
+      fileName: opts.fileName ?? "داتا-محدّثة.xlsx",
+      importedAt: new Date().toISOString(),
+    };
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(META, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(META).put(dataMeta);
+    });
+    return dataMeta;
+  } finally {
+    db.close();
+  }
+}

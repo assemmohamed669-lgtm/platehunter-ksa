@@ -2,7 +2,7 @@
 import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach } from "vitest";
 import * as XLSX from "xlsx";
-import { importLargeDataFile, iterateRows, getSampleRows, getDataMeta, clearData } from "@/lib/dataStore";
+import { importLargeDataFile, importRowsToData, iterateRows, getSampleRows, getDataMeta, clearData } from "@/lib/dataStore";
 import { tokenizePastedPlates, matchTokensAgainstRows } from "@/lib/plateParser";
 
 function xlsxFile(aoa: unknown[][], name = "big.xlsx"): File {
@@ -153,5 +153,58 @@ describe("dataStore (IndexedDB على الجهاز — dep دفعات)", () => {
     expect(total).toBe(12000);
     expect(bases[0]).toBe(0);
     expect(bases.length).toBeGreaterThanOrEqual(2); // اتقسّمت لأكتر من دفعة
+  });
+});
+
+/**
+ * زرار «حدّث داتا البرنامج» في صفحة «رفع للداتا» — بيكتب الصفوف المدموجة
+ * اللي في الذاكرة على طول، من غير ما يكتب ملف ويقراه تاني (ده كان بياخد
+ * ٦ ثواني و٢.٤ جيجا على ملف الـ ٤٨١ ألف صف).
+ */
+describe("importRowsToData — تحديث داتا البرنامج", () => {
+  beforeEach(async () => { await clearData(); });
+
+  const H = ["رقم اللوحة", "نوع السيارة", "الحى"];
+  const mk = (n: number) => Array.from({ length: n }, (_, i) => ({
+    "رقم اللوحة": `ا ب ج ${1000 + i}`, "نوع السيارة": "ونيت", "الحى": "الصفا",
+  }));
+
+  it("بيكتب كل الصفوف ويقدر يقراها تاني", async () => {
+    const meta = await importRowsToData(mk(25_000), H);
+    expect(meta.rowCount).toBe(25_000);
+    expect(meta.headers).toEqual(H);
+
+    let seen = 0;
+    let first = "";
+    await iterateRows((batch) => { if (!seen) first = String(batch[0]["رقم اللوحة"]); seen += batch.length; });
+    expect(seen).toBe(25_000);
+    expect(first).toBe("ا ب ج 1000");
+  });
+
+  it("بيكتشف عمود اللوحة", async () => {
+    expect((await importRowsToData(mk(10), H)).plateCol).toBe("رقم اللوحة");
+  });
+
+  it("بيمسح القديم الأول — مافيش خلط بين استيرادين", async () => {
+    await importRowsToData(mk(30), H);
+    await importRowsToData(mk(7), H);
+    let seen = 0;
+    await iterateRows((b) => { seen += b.length; });
+    expect(seen).toBe(7);
+    expect((await getDataMeta())?.rowCount).toBe(7);
+  });
+
+  it("صفوف فاضية → مافيش داتا (مش داتا بايظة)", async () => {
+    const meta = await importRowsToData([], H);
+    expect(meta.rowCount).toBe(0);
+    let seen = 0;
+    await iterateRows((b) => { seen += b.length; });
+    expect(seen).toBe(0);
+  });
+
+  it("بيسجّل اسم الملف عشان المندوب يعرف داتا مين اللي عنده", async () => {
+    const meta = await importRowsToData(mk(3), H, { fileName: "داتا-محدّثة-اختبار.xlsx" });
+    expect(meta.fileName).toBe("داتا-محدّثة-اختبار.xlsx");
+    expect((await getDataMeta())?.fileName).toBe("داتا-محدّثة-اختبار.xlsx");
   });
 });

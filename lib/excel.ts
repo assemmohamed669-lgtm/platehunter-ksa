@@ -749,8 +749,13 @@ export function buildExcelBlob(
 // UTF-8 BOM (﻿) makes Excel read the Arabic text correctly, and Excel
 // opens .csv natively into columns. Used as a guaranteed fallback when the
 // xlsx build fails on-device.
-export function buildCsvBlob(rows: Record<string, unknown>[]): Blob {
-  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+export function buildCsvBlob(
+  rows: Record<string, unknown>[],
+  // Pin the column order when the caller knows it (a huge merged data file must
+  // not shift columns because one row happens to be missing a key).
+  headerOrder?: string[],
+): Blob {
+  const headers = headerOrder ?? (rows.length > 0 ? Object.keys(rows[0]) : []);
   const esc = (v: unknown) => {
     const s = v == null ? "" : String(v);
     // Quote if it contains a comma, quote, or newline; double interior quotes.

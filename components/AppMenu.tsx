@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
   Type as TypeIcon, Palette, RotateCcw, KeyRound, ChevronLeft,
-  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload,
+  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp,
 } from "lucide-react";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -46,6 +46,7 @@ export default function AppMenu({
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [isAdminUser, setIsAdminUser] = useState(false);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -160,6 +161,7 @@ export default function AppMenu({
           const { data: prof } = await supabase.from("profiles")
             .select("role, subscription_end").eq("id", data.user.id).single();
           if (prof?.role === "agent") setSubEnd(prof.subscription_end ?? null);
+          setIsAdminUser(prof?.role === "admin");
         }
       } catch { /* offline */ }
       setStats({ field: fieldEntries.length, wanted, rec });
@@ -309,6 +311,13 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Download size={16} className="text-brand" /> نسخة احتياطية
             </Link>
+            {/* «رفع للداتا» — للأدمن بس دلوقتي (تجربة قبل ما تتفتح للمناديب) */}
+            {isAdminUser && (
+              <Link href="/data-upload" onClick={() => onOpenChange(false)}
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+                <FileUp size={16} className="text-alert" /> رفع للداتا
+              </Link>
+            )}
             <button onClick={() => refreshAppNow()}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <RefreshCw size={16} className="text-primary" /> تحديث التطبيق (آخر نسخة)

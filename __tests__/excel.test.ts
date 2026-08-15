@@ -174,3 +174,33 @@ describe("toSafeCacheFilename", () => {
     expect(toSafeCacheFilename(".xlsx")).toBe("xlsx.dat");
   });
 });
+
+/**
+ * «رفع للداتا» بيطلّع CSV للملفات الضخمة (فوق ١٥٠ ألف صف — الـ xlsx بياخد
+ * ٦ ثواني و٢.٤ جيجا ذاكرة). ترتيب الأعمدة لازم يبقى مربوط بعناوين الداتا،
+ * مش مستنتج من أول صف — عشان صف ناقصه عمود مايزحزحش الملف كله.
+ */
+describe("buildCsvBlob بعناوين محدّدة", () => {
+  it("بيلتزم بترتيب العناوين المطلوب", async () => {
+    const blob = buildCsvBlob(
+      [{ "ب": "2", "ا": "1" }],
+      ["ا", "ب"],
+    );
+    const text = await blob.text();
+    expect(text.replace(/^\uFEFF/, "").split("\r\n")).toEqual(["ا,ب", "1,2"]);
+  });
+
+  it("صف ناقصه عمود بيطلع فاضي مش مزحزح", async () => {
+    const blob = buildCsvBlob(
+      [{ "ا": "1", "ب": "2" }, { "ا": "3" }],
+      ["ا", "ب"],
+    );
+    const rows = (await blob.text()).replace(/^\uFEFF/, "").split("\r\n");
+    expect(rows[2]).toBe("3,");
+  });
+
+  it("من غير عناوين بيفضل زي ما كان (أول صف)", async () => {
+    const text = await buildCsvBlob([{ "ا": "1", "ب": "2" }]).text();
+    expect(text.replace(/^\uFEFF/, "").split("\r\n")[0]).toBe("ا,ب");
+  });
+});
