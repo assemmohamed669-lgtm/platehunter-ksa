@@ -2,12 +2,18 @@
 
 /**
  * قائمة اختيار نوع السيارة بحروف مختصرة (المندوب بيعرفها):
- *   و = ونيت • ف = فان • ت = تاكسي • م = ملاكي
+ *   و = ونيت • ف = فان • ت = تاكسي • م = ملاكي • ش = شاص …
  * بتظهر كـ«سهم» في عمود النوع؛ المندوب يختار الحرف، فيتخزّن الحرف قدام السيارة
  * ويطلع زي ما هو في التصدير. المنطق الخالص في lib/vehicleType.
  */
 
 import { VEHICLE_TYPE_LABELS, typeToCode } from "@/lib/vehicleType";
+
+// التلميح بيتولّد من نفس القايمة — كان مكتوب بالإيد وفضل قديم لما اتضاف
+// «مو (موتوسيكل)»، فأي نوع جديد دلوقتي بيظهر فيه لوحده.
+const TYPES_HINT = VEHICLE_TYPE_LABELS
+  .map(([code, name]) => (code === name ? code : `${code} = ${name}`))
+  .join(" • ");
 
 export default function VehicleTypeSelect({
   value,
@@ -22,7 +28,7 @@ export default function VehicleTypeSelect({
     <select
       value={typeToCode(value)}
       onChange={(e) => onChange(e.target.value)}
-      title="و = ونيت • ن = نقل • ف = فان • ت = تاكسي • دي = دينه • د = دباب • ب = باص • م = ملاكي • H1"
+      title={TYPES_HINT}
       style={{ direction: "rtl" }}
       className={className ?? "rounded border border-border bg-surface-2 px-2 py-1 text-ink outline-none focus:border-primary"}
     >

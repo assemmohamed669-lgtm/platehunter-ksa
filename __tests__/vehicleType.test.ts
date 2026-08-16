@@ -50,7 +50,8 @@ describe("vehicleTypeLabel — شكل العرض في القايمة", () => {
   });
 
   it("الترتيب زي ما المالك طلبه", () => {
-    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "H1"]);
+    // «ش» اتضاف بعد «مو» بطلب المالك — الترتيب القديم قبله زي ما هو
+    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "H1"]);
   });
 
   it("حرف مش في القايمة بيرجع زي ما هو", () => {
@@ -140,5 +141,38 @@ describe("موتوسيكل", () => {
     expect(typeToCode("ملاكي")).toBe("م");
     expect(typeToCode("دباب")).toBe("د");
     expect(typeToCode("د")).toBe("د");
+  });
+});
+
+/**
+ * «ش = شاص» — نوع بيتكرر كتير في الميدان السعودي (وانيت الشاص). المندوب
+ * لازم يلاقيه في قايمة النوع، ولازم الصوت اللي يسمع «شاص» يحوّله للحرف.
+ */
+describe("ش = شاص", () => {
+  it("موجود في القايمة باسمه", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("ش");
+    expect(VEHICLE_TYPE_LABELS.find(([c]) => c === "ش")?.[1]).toBe("شاص");
+    expect(vehicleTypeLabel("ش")).toBe("ش (شاص)");
+  });
+
+  it("الحرف بيرجع زي ما هو", () => {
+    expect(typeToCode("ش")).toBe("ش");
+  });
+
+  it("الكلمة المنطوقة بتتحوّل للحرف", () => {
+    expect(typeToCode("شاص")).toBe("ش");
+    expect(typeToCode("الشاص")).toBe("ش");
+    expect(typeToCode("شاصي")).toBe("ش");
+  });
+
+  it("ماتتلخبطش مع الأنواع التانية", () => {
+    expect(typeToCode("ونيت")).toBe("و");
+    expect(typeToCode("نقل")).toBe("ن");
+    expect(typeToCode("موتوسيكل")).toBe("مو");
+    expect(typeToCode("شاحنة")).not.toBe("ش");
+  });
+
+  it("الأنواع القديمة وترتيبها مالمستش", () => {
+    expect(VEHICLE_TYPE_CODES.slice(0, 9)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو"]);
   });
 });
