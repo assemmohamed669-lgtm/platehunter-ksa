@@ -875,10 +875,15 @@ export function toSafeCacheFilename(filename: string): string {
 // The MIME type must match the ACTUAL file, not always xlsx — the export now
 // falls back to .csv on devices where xlsx-building fails, and telling the
 // opener a .csv is an xlsx makes the spreadsheet app report it as corrupt.
-function contentTypeForFilename(filename: string): string {
+export function contentTypeForFilename(filename: string): string {
   const ext = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
   if (ext === "csv") return "text/csv";
   if (ext === "xls") return "application/vnd.ms-excel";
+  // الحالة الرسمية للحروف (macroEnabled بـ E كبيرة) — أندرويد وبعض التطبيقات
+  // بيقارنوا النوع حرف بحرف.
+  if (ext === "xlsb") return "application/vnd.ms-excel.sheet.binary.macroEnabled.12";
+  if (ext === "xlsm") return "application/vnd.ms-excel.sheet.macroEnabled.12";
+  if (ext === "ods") return "application/vnd.oasis.opendocument.spreadsheet";
   return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 }
 

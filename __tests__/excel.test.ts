@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, blobToBase64, buildRowSummaryText, buildColoredSortExcel } from "@/lib/excel";
+import { toSafeCacheFilename, buildCsvBlob, buildSpreadsheetBlob, bytesToBase64, blobToBase64, buildRowSummaryText, buildColoredSortExcel, contentTypeForFilename } from "@/lib/excel";
 
 describe("buildColoredSortExcel — hyperlink الـGPS جوّه الملف قابل للفتح", () => {
   it("يكتب Target نضيف (بدون &amp;) للرابط المشفّر مزدوجاً — round-trip", { timeout: 30_000 }, async () => {
@@ -202,5 +202,47 @@ describe("buildCsvBlob بعناوين محدّدة", () => {
   it("من غير عناوين بيفضل زي ما كان (أول صف)", async () => {
     const text = await buildCsvBlob([{ "ا": "1", "ب": "2" }]).text();
     expect(text.replace(/^\uFEFF/, "").split("\r\n")[0]).toBe("ا,ب");
+  });
+});
+
+/**
+ * لما البرنامج بيسلّم ملف لتطبيق تاني (زرار «فتح» / «شارك») بيقوله نوعه إيه.
+ * كنا بنقول «xlsx» على أي حاجة مش csv ولا xls — يعني محفظة .xlsb بتتسلّم
+ * على إنها xlsx. إكسيل بيشم المحتوى وبيفتحها، لكن **جوجل شيتس بيصدّق النوع
+ * وبيقول فيه مشكلة**.
+ *
+ * نفس عيلة مشكلة الـ .xlsb في «فتح بواسطة»: إحنا بنكدب على النظام في نوع
+ * الملف، والتطبيق الصارم بيرفض.
+ */
+describe("نوع المحتوى وقت التسليم لتطبيق تاني", () => {
+  const t = (name: string) => contentTypeForFilename(name);
+
+  it("xlsx", () => {
+    expect(t("a.xlsx")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  });
+
+  it("xlsb بنوعه هو — مش xlsx", () => {
+    expect(t("محفظة.xlsb")).toBe("application/vnd.ms-excel.sheet.binary.macroEnabled.12");
+  });
+
+  it("xlsm بنوعه هو", () => {
+    expect(t("a.xlsm")).toBe("application/vnd.ms-excel.sheet.macroEnabled.12");
+  });
+
+  it("ods بنوعه هو", () => {
+    expect(t("a.ods")).toBe("application/vnd.oasis.opendocument.spreadsheet");
+  });
+
+  it("csv و xls زي ما كانوا", () => {
+    expect(t("a.csv")).toBe("text/csv");
+    expect(t("a.xls")).toBe("application/vnd.ms-excel");
+  });
+
+  it("الامتداد بأي حالة حروف", () => {
+    expect(t("A.XLSB")).toBe("application/vnd.ms-excel.sheet.binary.macroEnabled.12");
+  });
+
+  it("من غير امتداد → xlsx (الافتراضي زي ما كان)", () => {
+    expect(t("file")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   });
 });
