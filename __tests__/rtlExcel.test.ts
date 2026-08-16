@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { rtlAlignXlsxBytes, rtlAlignBlob } from "@/lib/rtlExcel";
+import { rtlAlignXlsxBytes, rtlAlignBlob, patchSheetXml } from "@/lib/rtlExcel";
 
 /**
  * كل شيت بيطلع من البرنامج (فرز / مطلوب / سجلات / تشييك / شاص) لازم يفتح عند
@@ -124,5 +124,64 @@ describe("rtlAlignXlsxBytes — الشيت يفتح من اليمين وكله �
     expect(out.type).toBe(type);
     const wb = XLSX.read(new Uint8Array(await out.arrayBuffer()), { type: "array" });
     expect(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]])).toEqual(ROWS);
+  });
+});
+
+/**
+ * ترتيب عناصر الورقة في مواصفة OOXML **مُلزِم**:
+ *   sheetPr → dimension → sheetViews → sheetFormatPr → cols → sheetData
+ *
+ * كنا بنضيف <sheetViews> قبل <sheetData> على طول، فلو الورقة فيها
+ * <sheetFormatPr> أو <cols> بتقع بعدهم — ملف مخالف للمواصفة. إكسيل بيصلّحه
+ * في صمت، لكن **جوجل شيتس بيرفضه ويقول فيه مشكلة**، والمندوب مايقدرش يفتح
+ * الشيت اللي البرنامج طلّعهوله.
+ */
+describe("مكان sheetViews لازم يطابق المواصفة", () => {
+  const SPEC = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData"];
+  const orderOf = (xml: string) =>
+    (xml.match(/<(sheetPr|dimension|sheetViews|sheetFormatPr|cols|sheetData)\b/g) ?? []).map((t) => t.slice(1));
+  const inSpecOrder = (xml: string) => {
+    const idx = orderOf(xml).map((t) => SPEC.indexOf(t));
+    return idx.every((v, i) => i === 0 || idx[i - 1] <= v);
+  };
+  const sheet = (inner: string) =>
+    `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${inner}</worksheet>`;
+
+  it("بتتحط بعد dimension وقبل sheetFormatPr و cols", () => {
+    const out = patchSheetXml(sheet(
+      `<dimension ref="A1:B2"/><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="20"/></cols><sheetData/>`,
+    ));
+    expect(orderOf(out)).toEqual(["dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData"]);
+    expect(inSpecOrder(out)).toBe(true);
+  });
+
+  it("بتتحط بعد sheetPr لو مافيش dimension", () => {
+    const out = patchSheetXml(sheet(`<sheetPr filterMode="0"/><cols><col min="1" max="1" width="9"/></cols><sheetData/>`));
+    expect(orderOf(out)).toEqual(["sheetPr", "sheetViews", "cols", "sheetData"]);
+  });
+
+  it("sheetPr المفتوح (بعناصر جوّه) مابيتكسرش", () => {
+    const out = patchSheetXml(sheet(`<sheetPr><tabColor rgb="FF00FF00"/></sheetPr><sheetData/>`));
+    expect(out).toContain("<tabColor");
+    expect(orderOf(out)).toEqual(["sheetPr", "sheetViews", "sheetData"]);
+  });
+
+  it("مافيش sheetPr ولا dimension → في أول الورقة", () => {
+    const out = patchSheetXml(sheet(`<sheetFormatPr defaultRowHeight="15"/><sheetData/>`));
+    expect(orderOf(out)).toEqual(["sheetViews", "sheetFormatPr", "sheetData"]);
+  });
+
+  it("الورقة اللي فيها sheetViews أصلاً بتتعلّم بس ومكانها مايتغيّرش", () => {
+    const out = patchSheetXml(sheet(
+      `<dimension ref="A1"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><cols/><sheetData/>`,
+    ));
+    expect(out).toContain('rightToLeft="1"');
+    expect(orderOf(out)).toEqual(["dimension", "sheetViews", "cols", "sheetData"]);
+    expect(out.match(/<sheetViews/g)).toHaveLength(1);   // مافيش تكرار
+  });
+
+  it("الورقة المرقّعة قبل كده ماتتلمسش", () => {
+    const already = sheet(`<sheetViews><sheetView rightToLeft="1"/></sheetViews><sheetData/>`);
+    expect(patchSheetXml(already)).toBe(already);
   });
 });

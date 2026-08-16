@@ -31,9 +31,25 @@ export function patchSheetXml(xml: string): string {
   if (/<sheetView[\s/>]/.test(xml)) {
     return xml.replace(/<sheetView\b/g, '<sheetView rightToLeft="1"');
   }
-  // ورقة بلا sheetViews خالص — نضيف واحدة بعد <dimension .../> أو قبل <sheetData>
+  // ورقة بلا sheetViews خالص — لازم تتحط في **مكانها الصح** بالمواصفة:
+  //   sheetPr → dimension → sheetViews → sheetFormatPr → cols → sheetData
+  //
+  // كنا بنحطها قبل <sheetData> على طول، فكانت تقع بعد <sheetFormatPr> و<cols>.
+  // إكسيل بيصلّح الترتيب في صمت، لكن **جوجل شيتس بيرفض الملف** ويقول فيه
+  // مشكلة — فالمندوب مايقدرش يفتح الشيت اللي البرنامج طلّعهوله.
   const view = '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews>';
-  if (/<sheetData[\s/>]/.test(xml)) return xml.replace(/<sheetData[\s/>]/, (m) => view + m);
+
+  // بعد <dimension .../> لو موجود
+  const dim = xml.match(/<dimension\b[^>]*\/>/);
+  if (dim) return xml.replace(dim[0], dim[0] + view);
+
+  // وإلا بعد <sheetPr> — سواء مقفول على نفسه أو فيه عناصر جوّه
+  const pr = xml.match(/<sheetPr\b[^>]*\/>|<sheetPr\b[^>]*>[\s\S]*?<\/sheetPr>/);
+  if (pr) return xml.replace(pr[0], pr[0] + view);
+
+  // وإلا في أول الورقة على طول
+  const open = xml.match(/<worksheet\b[^>]*>/);
+  if (open) return xml.replace(open[0], open[0] + view);
   return xml;
 }
 
