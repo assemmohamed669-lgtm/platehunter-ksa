@@ -185,6 +185,26 @@ async function decryptViaServer(file: File, password: string): Promise<File> {
   return new File([buf], file.name, { type: file.type });
 }
 
+/**
+ * Reads a spreadsheet in whatever format the bank sent it.
+ *
+ * The streaming reader is far lighter on memory (it is what makes the half-
+ * million-row data file usable on a phone), but it only understands the XML
+ * inside .xlsx — a .xlsb keeps its sheets as binary parts, and .xls/.ods are
+ * different containers entirely. Those fall back to SheetJS, which reads them
+ * all. Bank wallets do arrive as .xlsb, so refusing them is not an option.
+ */
+export async function parseAnySpreadsheet(file: File): Promise<ExcelTable> {
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const sheets = await readAllSheetsRawStream(buf, { raw: true });
+    const visible = sheets.filter((s) => !s.hidden && s.aoa.length > 0);
+    const pick = (visible.length ? visible : sheets.filter((s) => s.aoa.length > 0))[0];
+    if (pick) return buildTableFromAoa(pick.aoa, pick.name, sheets.map((s) => s.name));
+  } catch { /* مش xlsx من جوّه — نجرّب القارئ العام */ }
+  return parseExcelFile(file);
+}
+
 export async function parseExcelFile(file: File, password?: string, forcedSheet?: string): Promise<ExcelTable> {
   // ملف محمي: نفكّ تشفيره على السيرفر أولاً ثم نقرأ النسخة المفكوكة محلياً
   // (بدون تمرير الباسوورد للقارئ لأن الملف بقى غير مشفّر).

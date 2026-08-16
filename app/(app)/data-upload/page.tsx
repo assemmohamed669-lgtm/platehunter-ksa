@@ -18,9 +18,8 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { readAllSheetsRawStream } from "@/lib/xlsxStream";
 import {
-  buildTableFromAoa, buildExcelBlob, buildBigExcelBlob, openExcelBlob, shareExcelBlob,
+  parseAnySpreadsheet, buildExcelBlob, buildBigExcelBlob, openExcelBlob, shareExcelBlob,
   type ExcelTable,
 } from "@/lib/excel";
 import { importRowsToData } from "@/lib/dataStore";
@@ -69,15 +68,12 @@ export default function DataUploadPage() {
     syncUploadHistory().then(setHistory).catch(() => {});
   }, [router]);
 
-  /** يقرا ملف بالقارئ المتدفّق (خفيف على الذاكرة) ويرجّع جدوله. */
-  async function readFile(file: File): Promise<ExcelTable> {
-    const buf = new Uint8Array(await file.arrayBuffer());
-    const sheets = await readAllSheetsRawStream(buf, { raw: true });
-    const visible = sheets.filter((s) => !s.hidden && s.aoa.length > 0);
-    const pick = (visible.length ? visible : sheets.filter((s) => s.aoa.length > 0))[0];
-    if (!pick) throw new Error("الملف مافيهوش بيانات.");
-    return buildTableFromAoa(pick.aoa, pick.name, sheets.map((s) => s.name));
-  }
+  /**
+   * يقرا الملف بأي صيغة — القارئ الخفيف للـ xlsx (ده اللي بيخلّي نص مليون
+   * صف ينفع على الموبايل)، وبيرجع للقارئ العام للـ xlsb و xls و ods.
+   * محافظ البنوك بتيجي xlsb فعلاً، فمينفعش نرفضها.
+   */
+  const readFile = (file: File): Promise<ExcelTable> => parseAnySpreadsheet(file);
 
   async function pickData(file: File) {
     setBusy("جاري قراءة ملف الداتا…"); setError(null); setMerged(null);
@@ -528,7 +524,7 @@ function FileBox({ label, icon, name, info, onPick }: {
       ) : (
         <span className="text-[11px] text-muted">دوس عشان تختار الملف</span>
       )}
-      <input type="file" accept=".xlsx,.xls,.xlsm,.csv" className="hidden"
+      <input type="file" accept=".xlsx,.xlsb,.xls,.xlsm,.ods,.csv" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = ""; }} />
     </label>
   );
