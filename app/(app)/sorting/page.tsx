@@ -16,6 +16,7 @@ import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
+import { combinedDupColorMap } from "@/lib/dupColors";
 import { buildCombinedShareRows, tashyeekShareRow } from "@/lib/combinedShare";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
@@ -1567,6 +1568,34 @@ export default function SortingPage() {
     return { rowsData, hasBank, hasDate, hasSrc };
   }
 
+  /** مفتاح اللوحة لصف نتيجة الداتا (زي اللي التلوين بيستخدمه). */
+  function dataRowKey(r: MatchResult): string {
+    return r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+  }
+
+  /** مفتاح اللوحة لصف نتيجة السجلات — من صف الإحالة اللي طابقه، فيتقارن بنفس المقياس. */
+  function tashRowKey(r: TashyeekResultRow): string {
+    return normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+  }
+
+  /**
+   * ألوان صفوف المشاركة — **محسوبة على النافذتين مع بعض**.
+   *
+   * المشاركة بتحط نتيجة الداتا ونتيجة السجلات في نفس الإكسيل، فاللوحة اللي
+   * ظهرت في الاتنين لازم تتلوّن — دي أهم حالة للمندوب وكانت بتفوت بلا لون
+   * لأن صفوف السجلات كانت بتاخد null.
+   */
+  function shareRowColors(src: MatchResult[], tash: TashyeekResultRow[]): (string | null)[] {
+    const dataKeys = src.map(dataRowKey);
+    const tashKeys = tash.map(tashRowKey);
+    const map = combinedDupColorMap([dataKeys, tashKeys], DUPE_COLORS.length);
+    const hex = (k: string) => {
+      const i = map.get(k);
+      return i !== undefined ? DUPE_COLORS[i].hex : null;
+    };
+    return [...dataKeys.map(hex), ...tashKeys.map(hex)];
+  }
+
   function shareSubtitle(): string {
     const now = new Date();
     const p2 = (n: number) => String(n).padStart(2, "0");
@@ -1583,14 +1612,7 @@ export default function SortingPage() {
     // الترتيب وأعمدة «المصدر»/البنك/التاريخ بتتحدد في lib/combinedShare (متغطّاة
     // باختبارات) — عشان الصورة والإكسيل يطلعوا بنفس الشكل بالظبط.
     const { columns, imageRows: rows } = buildCombinedShareRows(rowsData, []);
-    const rowColors = [
-      ...src.map((r) => {
-        const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-        const idx = plateColorMap.get(k);
-        return idx !== undefined ? DUPE_COLORS[idx].hex : null;
-      }),
-      ...tash.map(() => null),   // صفوف السجلات بلا تلوين مكرّرات
-    ];
+    const rowColors = shareRowColors(src, tash);
     return { columns, rows, subtitle: shareSubtitle(), rowColors };
   }
 
@@ -1695,14 +1717,7 @@ export default function SortingPage() {
       "الملاحظات": x.notes,
     }));
     try {
-      const rowColors = [
-        ...src.map((r) => {
-          const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-          const idx = plateColorMap.get(k);
-          return idx !== undefined ? DUPE_COLORS[idx].hex : null;
-        }),
-        ...tash.map(() => null),   // صفوف السجلات بلا تلوين مكرّرات
-      ];
+      const rowColors = shareRowColors(src, tash);
       return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
     } catch {
       return { blob: buildCsvBlob(rowObjects), ext: "csv" };
