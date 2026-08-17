@@ -194,13 +194,16 @@ async function decryptViaServer(file: File, password: string): Promise<File> {
  * different containers entirely. Those fall back to SheetJS, which reads them
  * all. Bank wallets do arrive as .xlsb, so refusing them is not an option.
  */
-export async function parseAnySpreadsheet(file: File): Promise<ExcelTable> {
+export async function parseAnySpreadsheet(
+  file: File,
+  opts: { keepUnnamedColumns?: boolean } = {},
+): Promise<ExcelTable> {
   try {
     const buf = new Uint8Array(await file.arrayBuffer());
     const sheets = await readAllSheetsRawStream(buf, { raw: true });
     const visible = sheets.filter((s) => !s.hidden && s.aoa.length > 0);
     const pick = (visible.length ? visible : sheets.filter((s) => s.aoa.length > 0))[0];
-    if (pick) return buildTableFromAoa(pick.aoa, pick.name, sheets.map((s) => s.name));
+    if (pick) return buildTableFromAoa(pick.aoa, pick.name, sheets.map((s) => s.name), opts);
   } catch { /* مش xlsx من جوّه — نجرّب القارئ العام */ }
   return parseExcelFile(file);
 }
@@ -606,6 +609,7 @@ export function buildTableFromAoa(
   raw2d: unknown[][],
   sheetName: string | undefined,
   allSheetNames: string[],
+  opts: { keepUnnamedColumns?: boolean } = {},
 ): ExcelTable {
   {
     if (raw2d.length === 0) throw new Error("empty");
@@ -677,6 +681,27 @@ export function buildTableFromAoa(
       headerCols = [];
       rawHeaderCells.forEach((name, col) => { if (name) headerCols.push({ name, col }); });
       dataStartRow = headerRowIdx + 1;
+
+      // شيت التفريغ بيحط **رابط الخريطة في عمود بلا عنوان**، والرمي الافتراضي
+      // كان بيضيّعه قبل ما يوصل لجدول ربط الأعمدة — فسيارات المندوب الجديدة
+      // كانت تطلع في الفرز بلا خريطة. لما الصفحة تطلب، بنحتفظ بالعمود ده باسم
+      // واضح («عمود C») عشان الأدمن يربطه بإيده.
+      //
+      // بس **اللي فيه داتا بس** — العمود الفاضي (من دمج خلايا أو فراغ) بيفضل
+      // مرمي زي ما كان، عشان مانزحمش الجدول بأعمدة مالهاش لازمة.
+      if (opts.keepUnnamedColumns) {
+        const named = new Set(headerCols.map((h) => h.col));
+        const width = raw2d.reduce((m, r) => Math.max(m, (r as unknown[]).length), 0);
+        for (let col = 0; col < width; col++) {
+          if (named.has(col)) continue;
+          let hasData = false;
+          for (let i = dataStartRow; i < raw2d.length && !hasData; i++) {
+            if (cellToStr((raw2d[i] as unknown[])[col]).trim()) hasData = true;
+          }
+          if (hasData) headerCols.push({ name: `عمود ${XLSX.utils.encode_col(col)}`, col });
+        }
+        headerCols.sort((a, b) => a.col - b.col);
+      }
     }
     const headers = headerCols.map((hc) => hc.name);
     if (headers.length === 0) throw new Error("empty");

@@ -73,7 +73,10 @@ export default function DataUploadPage() {
    * صف ينفع على الموبايل)، وبيرجع للقارئ العام للـ xlsb و xls و ods.
    * محافظ البنوك بتيجي xlsb فعلاً، فمينفعش نرفضها.
    */
-  const readFile = (file: File): Promise<ExcelTable> => parseAnySpreadsheet(file);
+  const readFile = (file: File): Promise<ExcelTable> =>
+    // بنحتفظ بالأعمدة اللي بلا عنوان: شيت التفريغ بيحط رابط الخريطة في عمود
+    // بلا اسم، والرمي الافتراضي كان بيضيّعه فسيارات المندوب تطلع بلا خريطة.
+    parseAnySpreadsheet(file, { keepUnnamedColumns: true });
 
   async function pickData(file: File) {
     setBusy("جاري قراءة ملف الداتا…"); setError(null); setMerged(null);
@@ -101,7 +104,10 @@ export default function DataUploadPage() {
   // ربط الأعمدة المقترح — بيتحسب أول ما الملفين يجهزوا، والأدمن يعدّله
   useEffect(() => {
     if (!dataTable || !sheetTable) { setMapping([]); return; }
-    setMapping(suggestColumnMapping(sheetTable.headers, dataTable.headers));
+    setMapping(suggestColumnMapping(
+      sheetTable.headers, dataTable.headers,
+      columnSamples(sheetTable), columnSamples(dataTable),
+    ));
   }, [dataTable, sheetTable]);
 
   /**
@@ -488,6 +494,26 @@ export default function DataUploadPage() {
       )}
     </div>
   );
+}
+
+/**
+ * عيّنة قيم **غير فاضية** لكل عمود — بيتقارن بيها المحتوى وقت الربط.
+ *
+ * بندوّر في **الملف كله** لحد ما نلاقي ٥٠ قيمة، مش أول شوية صفوف: في داتا
+ * المندوب الحقيقية أول ٤٣ ألف صف منطقة مالهاش دبابيس خالص، فأي عيّنة من أول
+ * الملف بترجع فاضية وعمود الروابط مايتعرفش. اللفّة بتقف أول ما تكمّل العدد.
+ */
+function columnSamples(t: ExcelTable): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const h of t.headers) {
+    const vals: string[] = [];
+    for (let i = 0; i < t.rows.length && vals.length < 50; i++) {
+      const v = String(t.rows[i]?.[h] ?? "").trim();
+      if (v) vals.push(v);
+    }
+    out[h] = vals;
+  }
+  return out;
 }
 
 /** أول قيمة فعلية في العمود ده — عشان الأدمن يشوف بعينه إن الربط صح. */

@@ -315,3 +315,47 @@ describe("شيت المراجعة", () => {
     expect(r.some((x) => String(x["الحالة"]).includes("..."))).toBe(true);   // سطر بيقول إن فيه محذوف
   });
 });
+
+/**
+ * شيت التفريغ بيحط **رابط الخريطة في عمود بلا عنوان**. الاسم لوحده مايعرّفوش،
+ * فالربط بيتم **بالمحتوى**: عمود قيمه روابط = عمود موقع، ويتربط بعمود الـGPS
+ * في الداتا. من غير ده كل سيارة يضيفها المندوب بتطلع في الفرز بلا خريطة.
+ */
+describe("ربط عمود الرابط اللي بلا عنوان بالمحتوى", () => {
+  const DATA = ["رقم اللوحة", "نوع السيارة", "الشارع", "تاريخ التسجيل", "الموقع"];
+
+  it("عمود بلا عنوان قيمه روابط → بيتربط بـ«الموقع»", () => {
+    const m = suggestColumnMapping(
+      ["اللوحة", "النوع", "عمود E", "الشارع"], DATA,
+      { "عمود E": ["https://maps.app.goo.gl/AAA", "https://goo.gl/maps/BBB"] },
+      { "الموقع": ["https://maps.app.goo.gl/OLD"] },
+    );
+    expect(m.find((x) => x.source === "عمود E")?.target).toBe("الموقع");
+  });
+
+  it("وباقي الأعمدة مابتتأثرش", () => {
+    const m = suggestColumnMapping(
+      ["اللوحة", "النوع", "عمود E", "الشارع"], DATA,
+      { "عمود E": ["https://maps.app.goo.gl/AAA"] },
+      { "الموقع": ["https://maps.app.goo.gl/OLD"] },
+    );
+    const by = (s: string) => m.find((x) => x.source === s)?.target;
+    expect(by("اللوحة")).toBe("رقم اللوحة");
+    expect(by("النوع")).toBe("نوع السيارة");
+    expect(by("الشارع")).toBe("الشارع");
+  });
+
+  it("عمود بلا عنوان قيمه نص عادي مابيتحسبش موقع", () => {
+    const m = suggestColumnMapping(
+      ["اللوحة", "عمود C"], DATA,
+      { "عمود C": ["ونيت", "فان", "نقل"] },
+    );
+    expect(m.find((x) => x.source === "عمود C")?.target).not.toBe("الموقع");
+  });
+
+  it("من غير عيّنات بيشتغل زي ما كان", () => {
+    const m = suggestColumnMapping(["اللوحة", "الشارع"], DATA);
+    expect(m[0].target).toBe("رقم اللوحة");
+    expect(m[1].target).toBe("الشارع");
+  });
+});

@@ -161,14 +161,31 @@ export function detectLocationColumn(headers: string[]): string | null {
 export function suggestColumnMapping(
   sourceHeaders: string[],
   targetHeaders: string[],
+  /** عيّنة قيم لكل عمود مصدر — بتُستخدم لما الاسم مايكفيش (عمود بلا عنوان). */
+  sourceSamples: Record<string, string[]> = {},
+  /** وعيّنة أعمدة الداتا — «الموقع» اسمه يقول «موقع» بس جواه روابط. */
+  targetSamples: Record<string, string[]> = {},
 ): ColumnMapping[] {
   const usedTargets = new Set<string>();
   const out: ColumnMapping[] = sourceHeaders.map((s) => ({ source: s, target: null }));
-  const targetKinds = targetHeaders.map((t) => ({ name: t, kind: headerKind(t) }));
+  // المحتوى بيغلب الاسم على الطرفين: عمود قيمه روابط = GPS مهما كان اسمه.
+  // «الموقع» في داتا المندوب اسمه يقول «موقع» (فيتصنّف حي) بس جواه روابط
+  // خرائط — فمن غير الفحص ده مافيش عمود GPS في الداتا يتربط بيه أصلاً.
+  const looksLikeLinks = (vals?: string[]) => {
+    const v = (vals ?? []).map((x) => String(x ?? "").trim()).filter(Boolean).slice(0, 50);
+    return v.length > 0 && v.filter((x) => /^https?:\/\//i.test(x)).length >= v.length / 2;
+  };
+  const targetKinds = targetHeaders.map((t) => ({
+    name: t,
+    kind: looksLikeLinks(targetSamples[t]) ? "gps" : headerKind(t),
+  }));
 
-  // ١) بالنوع
+  // ١) بالنوع — بالاسم، وإلا **بالمحتوى** لو العمود بلا عنوان مفهوم.
+  //
+  // عمود بلا اسم فيه روابط خرائط ده اللي بيوصل في شيتات التفريغ، والاسم لوحده
+  // مايعرّفوش. المحتوى بيعرّفه على طول.
   sourceHeaders.forEach((s, i) => {
-    const kind = headerKind(s);
+    const kind = looksLikeLinks(sourceSamples[s]) ? "gps" : headerKind(s);
     if (!kind) return;
     const hit = targetKinds.find((t) => t.kind === kind && !usedTargets.has(t.name));
     if (hit) { out[i].target = hit.name; usedTargets.add(hit.name); }
