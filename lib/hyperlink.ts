@@ -58,3 +58,36 @@ export function resolveHyperlinkCells(ws: any): void {
     }
   }
 }
+
+/**
+ * تتبّع المعادلات المشتركة (`<f t="shared" si="N">`) جوّه ورقة إكسيل.
+ *
+ * إكسيل بيضغط المعادلات المتكررة: الخلية الأولى في المجموعة بتكتب المعادلة
+ * كاملة ومعاها `si`، وباقي الخلايا بتكتب `<f t="shared" si="N"/>` **فاضية**.
+ * فالقارئ اللي بيدوّر على نص المعادلة مايلاقيش حاجة، ويرجع للقيمة المحفوظة —
+ * وهي كلمة «خريطة» مش الرابط.
+ *
+ * ده بيحصل **أول ما المندوب يفتح ملف الداتا في إكسيل ويحفظه**: اتقاس على
+ * ملفه إن ٥,٨٩٧ رابط بس فضلوا مكتوبين و٢٠١,١٨١ بقوا إشارات لمجموعات.
+ *
+ * النسخ ده صح هنا لأن `HYPERLINK("رابط ثابت","خريطة")` مافيهاش مراجع نسبية
+ * تتغيّر حسب مكان الخلية.
+ */
+export function resolveSharedFormulas() {
+  const bySi = new Map<string, string>();
+  return {
+    /** يحفظ معادلة مجموعة ويرجّعها. */
+    remember(si: string | undefined, formula: string): string {
+      if (si && formula && !bySi.has(si)) bySi.set(si, formula);
+      return formula;
+    },
+    lookup(si: string | undefined): string {
+      return (si && bySi.get(si)) || "";
+    },
+    /** المعادلة المكتوبة لو موجودة، وإلا بتاعة المجموعة. */
+    resolve(formula: string, si: string | undefined): string {
+      if (formula) { this.remember(si, formula); return formula; }
+      return this.lookup(si);
+    },
+  };
+}

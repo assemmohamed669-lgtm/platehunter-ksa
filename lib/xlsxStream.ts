@@ -15,7 +15,7 @@
 import JSZip from "jszip";
 import { SaxesParser } from "saxes";
 import * as XLSX from "xlsx";
-import { hyperlinkFormulaUrl } from "./hyperlink";
+import { hyperlinkFormulaUrl, resolveSharedFormulas } from "./hyperlink";
 
 export interface XlsxStreamMeta {
   headers: string[];
@@ -355,6 +355,9 @@ function streamSheetAoa(
     let row: unknown[] | null = null;
     let curCol = -1, curType: string | null = null, curStyle: number | null = null;
     let inV = false, inT = false, inF = false, valBuf = "", fBuf = "";
+    // المعادلات المشتركة: كل ورقة ليها جدول si خاص بيها.
+    let fSi: string | undefined;
+    const shared = resolveSharedFormulas();
     let emptyRun = 0;
     let done = false;
     const finish = () => {
@@ -375,7 +378,11 @@ function streamSheetAoa(
         curStyle = s != null ? parseInt(s, 10) : null;
         valBuf = ""; fBuf = "";
       } else if (n === "v") { inV = true; valBuf = ""; }
-      else if (n === "f") { inF = true; fBuf = ""; }
+      else if (n === "f") {
+        inF = true; fBuf = "";
+        // المعادلة المشتركة: الخلية الأولى بس بتكتب النص، والباقي بيشيروا بـsi.
+        fSi = (t.attributes.si as string | undefined) ?? undefined;
+      }
       else if (n === "t") inT = true;
     });
     parser.on("text", (txt) => {
@@ -387,7 +394,7 @@ function streamSheetAoa(
       if (done) return;
       const n = localName(t.name);
       if (n === "v") inV = false;
-      else if (n === "f") inF = false;
+      else if (n === "f") { inF = false; fBuf = shared.resolve(fBuf, fSi); fSi = undefined; }
       else if (n === "t") inT = false;
       else if (n === "c") {
         if (row && curCol >= 0) row[curCol] = decodeCell(curType, valBuf, curStyle, fBuf);
@@ -531,6 +538,8 @@ export async function streamXlsxToBatches(
     // القيمة المخزّنة كلمة «خريطة» والرابط جوّه الصيغة. من غير ما نقرا الصيغة،
     // عمود GPS بيوصل للتطبيق كنص مش لينك (ولا في الجدول ولا في المشاركة).
     let inF = false, fBuf = "";
+    let fSi: string | undefined;
+    const shared = resolveSharedFormulas();
 
     const stream = internalStreamOf(zip, path);
     let flushing = false;
@@ -576,7 +585,11 @@ export async function streamXlsxToBatches(
         valBuf = "";
         fBuf = "";
       } else if (n === "v") { inV = true; valBuf = ""; }
-      else if (n === "f") { inF = true; fBuf = ""; }
+      else if (n === "f") {
+        inF = true; fBuf = "";
+        // المعادلة المشتركة: الخلية الأولى بس بتكتب النص، والباقي بيشيروا بـsi.
+        fSi = (t.attributes.si as string | undefined) ?? undefined;
+      }
       else if (n === "t") inT = true;
     });
     parser.on("text", (txt) => {
@@ -586,7 +599,7 @@ export async function streamXlsxToBatches(
     parser.on("closetag", (t) => {
       const n = localName(t.name);
       if (n === "v") inV = false;
-      else if (n === "f") inF = false;
+      else if (n === "f") { inF = false; fBuf = shared.resolve(fBuf, fSi); fSi = undefined; }
       else if (n === "t") inT = false;
       else if (n === "c") {
         const val = decodeCell(curType, valBuf, curStyle, fBuf);
