@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState } from "react";
 import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download, ExternalLink } from "lucide-react";
-import { parseExcelFile, openExcelBlob, type ExcelTable } from "@/lib/excel";
+import { parseExcelFile, decryptExcelFile, openExcelBlob, type ExcelTable } from "@/lib/excel";
 
 interface Props {
   title: string;
@@ -102,12 +102,15 @@ export default function FileUploadBox({
     setError(null);
     setLoading(true);
     try {
-      const table = await parseExcelFile(pendingFile, password);
-      setLastFile(pendingFile);
-      setFilePassword(password);
+      // بنفك التشفير **مرة واحدة** ونكمّل بالنسخة المفكوكة: التخزين وتبديل
+      // الورقات و«فتح الشيت» كلهم بيشتغلوا بعدها فوراً من غير رحلة للسيرفر.
+      const plain = await decryptExcelFile(pendingFile, password);
+      const table = await parseExcelFile(plain);
+      setLastFile(plain);
+      setFilePassword(undefined);
       setAllSheets(table.allSheetNames ?? []);
       setActiveSheet(table.sheetName ?? null);
-      onParsed(table, pendingFile);
+      onParsed(table, plain);
       setPendingFile(null);
       setNeedsPassword(false);
       setPassword("");
@@ -279,7 +282,9 @@ export default function FileUploadBox({
         <div className="mt-2.5 flex flex-col gap-2">
           <div className="flex items-center gap-1.5 text-xs text-alert">
             <Lock size={13} />
-            هذا الملف يبدو محميًا — أدخل كلمة المرور
+            {loading
+              ? "جاري فك تشفير الملف… ثواني وبيتفتح (مرة واحدة بس)"
+              : "هذا الملف يبدو محميًا — أدخل كلمة المرور"}
           </div>
           <div className="flex gap-2">
             <input
@@ -287,6 +292,8 @@ export default function FileUploadBox({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="كلمة مرور الملف"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter" && password && !loading) handlePasswordConfirm(); }}
               className="flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary"
             />
             <button
@@ -294,7 +301,7 @@ export default function FileUploadBox({
               disabled={loading || !password}
               className="rounded-lg bg-primary px-3 py-2 text-sm font-bold text-night disabled:opacity-50"
             >
-              {loading ? "..." : "تأكيد"}
+              {loading ? "جاري الفتح…" : "تأكيد"}
             </button>
           </div>
         </div>

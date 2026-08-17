@@ -160,6 +160,20 @@ export interface ExcelTable {
  * يفكّ تشفير ملف محمي بكلمة مرور على السيرفر (SheetJS المجانية لا تفكّ التشفير).
  * يعيد File بعد فك التشفير — جاهز للقراءة المحلية بدون باسوورد.
  */
+/**
+ * بيفك تشفير الملف **مرة واحدة** ويرجّع نسخة مفكوكة تتخزّن وتتقرا بعد كده
+ * من غير أي رحلة للسيرفر.
+ *
+ * ليه: فك التشفير بياخد ثواني (١٠٠ ألف دورة SHA-512 — إكسيل بيعملها كده عمداً
+ * ضد تخمين كلمة السر)، وكان بيتكرر مع كل تبديل ورقة أو فتح شيت لأن اللي
+ * بيتخزّن كان الملف المشفّر. النسخة المفكوكة بتخلّي كل ده فوري.
+ *
+ * التخزين المحلي مش بيزيد خطر: صفوف الملف بتتحفظ مفكوكة أصلاً في نفس القاعدة.
+ */
+export async function decryptExcelFile(file: File, password: string): Promise<File> {
+  return decryptViaServer(file, password);
+}
+
 async function decryptViaServer(file: File, password: string): Promise<File> {
   const fd = new FormData();
   fd.append("file", file);
