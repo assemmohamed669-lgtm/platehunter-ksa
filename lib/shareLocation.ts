@@ -14,10 +14,17 @@
  * سطر — آخر سطر عشان واتساب بيعمل معاينة لآخر رابط في الرسالة.
  */
 
-import { gpsCellToLink } from "./gps";
+import { gpsCellCoords, gpsCellToLink } from "./gps";
 
 /** أعمدة ممكن تحمل موقع: GPS / رابط / موقع / خريطة / إحداثيات. */
 const GPS_HEADER_RE = /GPS|رابط|موقع|خريطة|احداثيات|إحداثيات|lat|lng|location|link/i;
+
+/**
+ * رابط خرائط تحديداً — مش أي رابط. بيتستخدم لما بندوّر في أعمدة **مالهاش**
+ * اسم موقع، فلازم نتأكد من المحتوى بدل ما نمسك رابط بنك أو إعلان.
+ */
+const MAPS_URL_RE =
+  /(^|\/\/)(www\.)?(google\.[a-z.]+\/maps|maps\.google\.|goo\.gl\/maps|maps\.app\.goo\.gl|地図|openstreetmap\.org|waze\.com)|[?&](q|ll|daddr|destination)=-?\d+\.\d+,-?\d+\.\d+/i;
 
 /**
  * أول لينك خرائط **يتقرا فعلاً** من صف — بنلفّ على الأعمدة اللي اسمها يشبه
@@ -36,6 +43,23 @@ export function pickMapsLink(
   for (const h of cols) {
     if (!GPS_HEADER_RE.test(h)) continue;
     const link = gpsCellToLink(String(row[h] ?? ""));
+    if (link) return link;
+  }
+
+  // مالقيناش في الأعمدة المسمّاة → ندوّر في **أي عمود**.
+  //
+  // ليه: المندوب بيلصق شغله اليومي بإيده، وشيت التفريغ بيحط رابط الخريطة في
+  // عمود بلا عنوان — فالرابط بيقع في عمود تاني (أو يتساب بلا اسم) والسيارة
+  // تطلع في الفرز بلا خريطة رغم إن الرابط قدام عينك في الصف.
+  //
+  // وهنا بنشترط إنه **رابط خرائط** تحديداً: لو دوّرنا على أي رابط ممكن نمسك
+  // رابط بنك أو موقع شركة ونعرضه على إنه موقع السيارة.
+  for (const h of cols) {
+    const raw = String(row[h] ?? "").trim();
+    // رابط خرائط، أو إحداثيات مكتوبة زي «24.7136,46.6753» (دي مالهاش لبس).
+    if (!raw) continue;
+    if (!MAPS_URL_RE.test(raw) && !gpsCellCoords(raw)) continue;
+    const link = gpsCellToLink(raw);
     if (link) return link;
   }
   return "";
