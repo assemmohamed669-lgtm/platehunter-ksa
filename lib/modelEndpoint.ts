@@ -44,3 +44,32 @@ export function pickModelBase(
   if (nowMs - at > MODEL_URL_MAX_AGE_MS) return null;
   return r;
 }
+
+// ── القراءة من الإعدادات ───────────────────────────────────────────────────
+
+/**
+ * بيجيب العنوان المسجّل من الإعدادات (عبر RPC — الجدول مالوش سياسة قراءة
+ * للمناديب)، ويرجّع `null` بهدوء لو الدالة مش موجودة أو النت قاطع.
+ *
+ * الفشل هنا **مش خطأ**: معناه بس إن الخدمة مش متاحة، والتفريغ بيروح على
+ * البديل زي ما هو.
+ */
+export async function fetchRegisteredModelUrl(): Promise<RegisteredModelUrl | null> {
+  try {
+    const { supabase } = await import("@/lib/supabaseClient");
+    const { data, error } = await supabase.rpc("get_plate_model_endpoint");
+    if (error) return null;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
+    return { url: (row as { url?: string }).url, at: (row as { at?: string }).at };
+  } catch {
+    return null;
+  }
+}
+
+/** أساس عنوان الخدمة الجاهز للاستخدام — المسجّل أو اليدوي أو `null`. */
+export async function resolveModelBase(manual?: string | null): Promise<string | null> {
+  const m = String(manual ?? "").trim();
+  if (m) return pickModelBase(null, m);          // اليدوي بيغلب — مانضربش نداء
+  return pickModelBase(await fetchRegisteredModelUrl(), null);
+}

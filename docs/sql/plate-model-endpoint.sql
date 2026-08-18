@@ -22,3 +22,39 @@ comment on column public.app_settings.plate_model_url is
   'أساس رابط خدمة الموديل (بدون /transcribe) — الخدمة بتكتبه أول ما تشتغل';
 comment on column public.app_settings.plate_model_at is
   'آخر مرة الخدمة سجّلت نفسها — التطبيق بيتجاهل الرابط لو قديم';
+
+-- ── دالة القراءة للمناديب ──────────────────────────────────────────────────
+-- الجدول ده **مالوش سياسة قراءة** للمناديب (كل إعداد بيتقرا بدالة خاصة زي
+-- get_app_notice و get_shared_deepgram_key). فالتطبيق محتاج الدالة دي عشان
+-- يعرف عنوان الخدمة.
+--
+-- SECURITY DEFINER عشان تتخطّى RLS، وبترجّع **العنوان والتاريخ بس** — مافيش
+-- أي إعداد تاني بيتسرّب.
+create or replace function public.get_plate_model_endpoint()
+returns table (url text, at timestamptz)
+language sql
+security definer
+set search_path = public
+as $$
+  select plate_model_url, plate_model_at
+    from public.app_settings
+   where id = true
+     and coalesce(plate_judge_enabled, false) = true   -- مقفولة؟ مايرجعش عنوان
+$$;
+
+grant execute on function public.get_plate_model_endpoint() to authenticated;
+
+-- ── دالة التسجيل (اختيارية) ────────────────────────────────────────────────
+-- الخدمة بتسجّل بمفتاح secret (بيتخطّى RLS أصلاً)، فمش محتاجة دالة. لكن لو
+-- حبيت تسجّل بمفتاح أقل صلاحية، دي بتقفل الكتابة على العمودين دول بس.
+create or replace function public.set_plate_model_endpoint(p_url text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.app_settings
+     set plate_model_url = nullif(btrim(p_url), ''),
+         plate_model_at  = now()
+   where id = true
+$$;
