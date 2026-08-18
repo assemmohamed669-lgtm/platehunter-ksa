@@ -13,12 +13,12 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Mic, Square, Upload, FileAudio, Loader2, AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { Mic, Square, Upload, FileAudio, Loader2, AlertTriangle, CheckCircle2, X, Cpu, Check } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { runBatchTranscription, type MergedPlate, type BatchProgress } from "@/lib/batchTranscript";
 import { transcribeWithEngine, readPlateSliceWithModel } from "@/lib/batchAudio";
 import { resolveModelBase } from "@/lib/modelEndpoint";
-import { readJudgeEndpoint } from "@/lib/plateJudgeGate";
+import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import { getGroqKey } from "@/lib/voiceKeys";
 import PlateBadge from "@/components/PlateBadge";
 
@@ -36,6 +36,12 @@ export default function RegistrationV2Page() {
   const [plates, setPlates] = useState<MergedPlate[] | null>(null);
   const [usedModel, setUsedModel] = useState(false);
 
+  // عنوان خدمة الموديل + توكنها. مكانهم هنا **بالقصد**: ده إعداد بتاع الصفحة
+  // دي لوحدها، فمالوش لازمة يتحط في صفحة تانية والمندوب شغّال عليها.
+  const [modelUrl, setModelUrl] = useState("");
+  const [modelToken, setModelToken] = useState("");
+  const [savedAt, setSavedAt] = useState(false);
+
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -46,6 +52,8 @@ export default function RegistrationV2Page() {
       if (!data.user) { router.replace("/login"); return; }
       const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
       if (!prof?.is_super) { router.replace("/instant-check"); return; }
+      const saved = readJudgeEndpoint();
+      if (saved) { setModelUrl(saved.base); setModelToken(saved.token); }
       setAllowed(true);
     })();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
@@ -231,6 +239,48 @@ export default function RegistrationV2Page() {
           )}
         </section>
       )}
+
+      {/* إعداد خدمة الموديل — للسوبر أدمن، ومكانه هنا مش في صفحة تانية.
+          العنوان بيتغيّر كل مرة الخدمة تشتغل (نفق مؤقت)، فالمربّع لازم
+          يفضل موجود لحد ما التسجيل التلقائي يشتغل. */}
+      <details className="rounded-xl border border-border bg-surface p-3">
+        <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-bold text-muted">
+          <Cpu size={14} /> إعداد موديلنا
+          <span className={"mr-auto text-[10px] font-bold " + (modelUrl && modelToken ? "text-brand" : "text-alert")}>
+            {modelUrl && modelToken ? "محفوظ" : "محتاج إعداد"}
+          </span>
+        </summary>
+        <p className="mt-2 text-[11px] leading-relaxed text-muted">
+          من غير الإعداد ده التفريغ بيشتغل بالمحرك العام لوحده — شغّال، بس من
+          غير مراجعة موديلنا لكل لوحة.
+        </p>
+        <div className="mt-2 flex flex-col gap-1.5">
+          <input
+            dir="ltr" inputMode="url" autoComplete="off" spellCheck={false}
+            value={modelUrl}
+            onChange={(e) => { setModelUrl(e.target.value); setSavedAt(false); }}
+            placeholder="https://xxx.trycloudflare.com"
+            className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
+          />
+          <input
+            dir="ltr" autoComplete="off" spellCheck={false}
+            value={modelToken}
+            onChange={(e) => { setModelToken(e.target.value); setSavedAt(false); }}
+            placeholder="التوكن"
+            className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
+          />
+          <button
+            onClick={() => {
+              const ok = saveJudgeEndpoint(modelUrl, modelToken);
+              setSavedAt(ok);
+              if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
+            }}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
+          >
+            {savedAt ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ"}
+          </button>
+        </div>
+      </details>
     </div>
   );
 }
