@@ -166,3 +166,77 @@ export function mergePlateReadings(
     };
   });
 }
+
+// ── خط التفريغ الكامل ──────────────────────────────────────────────────────
+
+export interface BatchProgress {
+  phase: "transcribing" | "reading" | "done";
+  /** كام لوحة خلصت من كام (في مرحلة القراءة بالموديل). */
+  done?: number;
+  total?: number;
+}
+
+export interface BatchOptions {
+  /** بيحوّل الصوت لمقاطع بتوقيتاتها (Groq/Whisper في التطبيق). */
+  transcribe: (audio: Blob) => Promise<TimedSegment[]>;
+  /** أساس عنوان خدمة الموديل، أو null يعني مافيش موديل. */
+  modelBase: string | null;
+  token?: string;
+  /** بيقرا لوحة واحدة من مقطعها بالموديل المدرّب. */
+  readSlice?: (audio: Blob, startSec: number, base: string, token: string) => Promise<ModelReading | null>;
+  onProgress?: (p: BatchProgress) => void;
+}
+
+export interface BatchResult {
+  plates: MergedPlate[];
+  /** الموديل المدرّب شارك فعلاً؟ (لو مقفول أو واقع → false). */
+  usedModel: boolean;
+}
+
+/**
+ * التسجيل الكامل → ليستة لوحات نهائية.
+ *
+ * المندوب بيسجّل كلامه كله (أو يرفع ملف) ويدوس «تفريغ» مرة واحدة. الخط ده
+ * بيفرّغ، يقسّم للوحات بتوقيتاتها، وبعدين — **لو الموديل متاح** — بيعيد قراءة
+ * كل لوحة من مقطعها ويدمج القرارين.
+ *
+ * الموديل شغال على جهاز الأدمن عبر نفق، فممكن يكون مقفول في أي لحظة. لو وقع
+ * أو رفض، **بنكمّل بالمحرك** ومابنوقفش المندوب — وما بنعلّمش اللوحة للمراجعة
+ * لأن العطل مالوش علاقة بيه.
+ */
+export async function runBatchTranscription(
+  audio: Blob,
+  opts: BatchOptions,
+): Promise<BatchResult> {
+  const notify = (p: BatchProgress) => { try { opts.onProgress?.(p); } catch { /* العرض مش بيوقف الشغل */ } };
+
+  notify({ phase: "transcribing" });
+  const segments = await opts.transcribe(audio);     // الفشل هنا بيطلع للمنادي — مافيش اختراع
+  const plates = splitTranscriptIntoPlates(segments ?? []);
+
+  if (!plates.length) { notify({ phase: "done" }); return { plates: [], usedModel: false }; }
+
+  const canModel = !!(opts.modelBase && opts.token && opts.readSlice);
+  if (!canModel) {
+    notify({ phase: "done" });
+    return { plates: mergePlateReadings(plates, plates.map(() => null)), usedModel: false };
+  }
+
+  notify({ phase: "reading", done: 0, total: plates.length });
+  const readings: (ModelReading | null)[] = [];
+  let answered = 0;
+  for (let i = 0; i < plates.length; i++) {
+    let r: ModelReading | null = null;
+    try {
+      r = await opts.readSlice!(audio, plates[i].startSec, opts.modelBase!, opts.token!);
+      if (r) answered++;
+    } catch {
+      r = null;                                       // الخدمة وقعت — نكمّل بالمحرك
+    }
+    readings.push(r);
+    notify({ phase: "reading", done: i + 1, total: plates.length });
+  }
+
+  notify({ phase: "done" });
+  return { plates: mergePlateReadings(plates, readings), usedModel: answered > 0 };
+}
