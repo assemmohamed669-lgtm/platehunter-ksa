@@ -256,16 +256,24 @@ export async function POST(req: NextRequest) {
     // false positives here (keeping a hallucination) are far less costly
     // than false negatives (silently dropping a genuine plate).
     const NO_SPEECH_THRESHOLD = 0.7;
-    const segments: Array<{ text: string; no_speech_prob?: number }> = data.segments ?? [];
+    const segments: Array<{ text: string; start?: number; end?: number; no_speech_prob?: number }> =
+      data.segments ?? [];
+    const kept = segments.filter((s) => (s.no_speech_prob ?? 0) <= NO_SPEECH_THRESHOLD);
     const text = segments.length > 0
-      ? segments
-          .filter((s) => (s.no_speech_prob ?? 0) <= NO_SPEECH_THRESHOLD)
-          .map((s) => s.text)
-          .join(" ")
-          .trim()
+      ? kept.map((s) => s.text).join(" ").trim()
       : (data.text ?? "");
 
-    return NextResponse.json({ text });
+    // التوقيتات كمان: التفريغ بالدفعة محتاج يعرف **كل لوحة اتقالت في الثانية
+    // الكام** — منها بييجي موقعها من مسار المندوب، ومنها نقطة القص لو أعدنا
+    // قراءتها بالموديل المدرّب. `text` سايبينه زي ما هو عشان النداءات القديمة
+    // تفضل شغالة.
+    const timed = kept.map((s) => ({
+      text: String(s.text ?? "").trim(),
+      start: Number(s.start ?? 0),
+      end: Number(s.end ?? s.start ?? 0),
+    })).filter((s) => s.text);
+
+    return NextResponse.json({ text, segments: timed });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("transcribe error:", msg);
