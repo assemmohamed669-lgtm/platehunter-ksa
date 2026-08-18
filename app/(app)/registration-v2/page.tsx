@@ -40,7 +40,9 @@ export default function RegistrationV2Page() {
   // دي لوحدها، فمالوش لازمة يتحط في صفحة تانية والمندوب شغّال عليها.
   const [modelUrl, setModelUrl] = useState("");
   const [modelToken, setModelToken] = useState("");
-  const [savedAt, setSavedAt] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probe, setProbe] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -120,7 +122,56 @@ export default function RegistrationV2Page() {
     }
   }
 
+  /**
+   * اختبار حقيقي — رحلة كاملة للخدمة بالتوكن، مش مجرد «فيه حاجة متخزّنة».
+   *
+   * `/health` بالذات لأنه بيتحقق من **الاتنين مرة واحدة**: العنوان (النفق
+   * لازم يرد) والتوكن (بيرجع ٤٠١ لو غلط). `/ping` كان هيقول «واصل» حتى
+   * والتوكن غلط — ودي بالظبط الغلطة اللي ضيّعت جلسة كاملة قبل كده.
+   */
+  async function probeModel() {
+    setProbing(true);
+    setProbe(null);
+    const base = modelUrl.trim().replace(/\/+$/, "");
+    try {
+      // AbortSignal.timeout مش موجود في WebView قديم — من غير الحارس ده
+      // الاختبار كان هيرمي ويقول «مافيش رد» والخدمة شغالة فعلاً.
+      const timeout = typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+        ? AbortSignal.timeout(20000) : undefined;
+      const res = await fetch(base + "/health", {
+        headers: { "X-Plate-Token": modelToken.trim() },
+        signal: timeout,
+      });
+      if (res.status === 401) {
+        setProbe({ ok: false, msg: "النفق واصل بس التوكن مرفوض — راجع التوكن." });
+      } else if (!res.ok) {
+        setProbe({ ok: false, msg: "الخدمة ردّت بكود " + res.status + "." });
+      } else {
+        const body = await res.json() as { model?: string; device?: string };
+        setProbe({
+          ok: true,
+          msg: "واصل — " + (body.model ?? "الموديل") + " على " + (body.device === "cuda" ? "كارت الشاشة" : body.device ?? "الجهاز"),
+        });
+      }
+    } catch {
+      // مافيش رد خالص: النفق واقع، أو الجهاز مقفول، أو الأصل مرفوض في CORS.
+      setProbe({ ok: false, msg: "مافيش رد — الخدمة مقفولة أو عنوان النفق اتغيّر." });
+    } finally {
+      setProbing(false);
+    }
+  }
+
   if (allowed === null) return <div className="py-16 text-center text-sm text-muted">جارٍ التحقق…</div>;
+
+  const configured = !!modelUrl && !!modelToken;
+  const statusLabel = !configured ? "محتاج إعداد"
+    : probe?.ok ? "واصل ✓"
+    : probe ? "مش واصل ✗"
+    : "محفوظ (مش متجرَّب)";
+  const statusTone = !configured ? "text-alert"
+    : probe?.ok ? "text-brand"
+    : probe ? "text-danger"
+    : "text-amber-500";
 
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
@@ -240,47 +291,60 @@ export default function RegistrationV2Page() {
         </section>
       )}
 
-      {/* إعداد خدمة الموديل — للسوبر أدمن، ومكانه هنا مش في صفحة تانية.
-          العنوان بيتغيّر كل مرة الخدمة تشتغل (نفق مؤقت)، فالمربّع لازم
-          يفضل موجود لحد ما التسجيل التلقائي يشتغل. */}
-      <details className="rounded-xl border border-border bg-surface p-3">
-        <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-bold text-muted">
-          <Cpu size={14} /> إعداد موديلنا
-          <span className={"mr-auto text-[10px] font-bold " + (modelUrl && modelToken ? "text-brand" : "text-alert")}>
-            {modelUrl && modelToken ? "محفوظ" : "محتاج إعداد"}
-          </span>
-        </summary>
-        <p className="mt-2 text-[11px] leading-relaxed text-muted">
+      {/* إعداد خدمة الموديل — ظاهر على طول بالقصد (مش مطوي): العنوان نفق
+          مؤقت بيتغيّر كل مرة الخدمة تشتغل، فده إعداد بتتفقده كل يوم مش
+          مرة واحدة وتنساه. ومكانه هنا مش في صفحة شغل المناديب. */}
+      <section className="rounded-xl border border-border bg-surface p-3">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Cpu size={14} className="shrink-0 text-muted" />
+          <h2 className="text-xs font-bold text-ink">إعداد موديلنا</h2>
+          <span className={"mr-auto text-[10px] font-bold " + statusTone}>{statusLabel}</span>
+        </div>
+        <p className="mb-2 text-[11px] leading-relaxed text-muted">
           من غير الإعداد ده التفريغ بيشتغل بالمحرك العام لوحده — شغّال، بس من
           غير مراجعة موديلنا لكل لوحة.
         </p>
-        <div className="mt-2 flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5">
           <input
             dir="ltr" inputMode="url" autoComplete="off" spellCheck={false}
             value={modelUrl}
-            onChange={(e) => { setModelUrl(e.target.value); setSavedAt(false); }}
+            onChange={(e) => { setModelUrl(e.target.value); setSaved(false); setProbe(null); }}
             placeholder="https://xxx.trycloudflare.com"
             className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
           />
           <input
             dir="ltr" autoComplete="off" spellCheck={false}
             value={modelToken}
-            onChange={(e) => { setModelToken(e.target.value); setSavedAt(false); }}
+            onChange={(e) => { setModelToken(e.target.value); setSaved(false); setProbe(null); }}
             placeholder="التوكن"
             className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
           />
-          <button
-            onClick={() => {
-              const ok = saveJudgeEndpoint(modelUrl, modelToken);
-              setSavedAt(ok);
-              if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
-            }}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
-          >
-            {savedAt ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ"}
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => {
+                const ok = saveJudgeEndpoint(modelUrl, modelToken);
+                setSaved(ok);
+                if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
+              }}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
+            >
+              {saved ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ"}
+            </button>
+            <button
+              onClick={probeModel}
+              disabled={probing || !modelUrl || !modelToken}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night disabled:opacity-50"
+            >
+              {probing ? <><Loader2 size={14} className="animate-spin" /> بجرّب…</> : "اختبار"}
+            </button>
+          </div>
+          {probe && (
+            <p className={"text-[11px] leading-relaxed " + (probe.ok ? "text-brand" : "text-danger")}>
+              {probe.ok ? "✓ " : "✗ "}{probe.msg}
+            </p>
+          )}
         </div>
-      </details>
+      </section>
     </div>
   );
 }
