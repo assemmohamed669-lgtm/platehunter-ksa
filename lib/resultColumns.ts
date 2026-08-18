@@ -9,7 +9,7 @@
  * الدوال نقية وقابلة للاختبار.
  */
 import { looksLikeGps, looksLikeDate, looksLikeDistrict } from "./headerlessColumns";
-import { looksLikeCarName } from "./sortingCols";
+import { looksLikeCarName, guessDefaultColumns } from "./sortingCols";
 import { inferVehicleType } from "./wantedColumns";
 
 // ── كاشفات محتوى إضافية ──────────────────────────────────────────────────────
@@ -51,6 +51,33 @@ export function looksLikeVehicleType(v: string): boolean {
   if (!s || s.length > 20) return false;
   if (VEHICLE_TYPE_WORDS.some((t) => s === t || s.includes(t))) return true;
   return !!inferVehicleType(v);
+}
+
+/**
+ * أعمدة الداتا المختارة افتراضياً في الفرز = المفضّلة بالاسم (guessDefaultColumns)
+ * + **أي عمود قيَمه نوع سيارة** (ونيت/فان/دباب/صالون...) مهما كان اسم العمود.
+ *
+ * بطلب المندوب: «نوع السيارة» بتاع الداتا يظهر تلقائي من غير ما يدوس يحدده — حتى
+ * لو اسم العمود مش في المفضّلة (الكشف بالمحتوى بيمسك الحالة دي: عمود بأغلب قيَمه
+ * أنواع مركبات). إضافة بس — مابيشيلش أي عمود كانت المفضّلة بتختاره.
+ */
+export function defaultDataCols(
+  headers: string[],
+  rows: Record<string, string>[],
+  plateCol?: string | null,
+): string[] {
+  const cols = new Set(guessDefaultColumns(headers, plateCol));
+  const sample = rows.slice(0, 50);
+  if (sample.length >= 3) {
+    for (const h of headers) {
+      if (!h || h === plateCol || cols.has(h)) continue;
+      const vals = sample.map((r) => String(r[h] ?? "").trim()).filter(Boolean);
+      if (vals.length >= 3 && vals.filter(looksLikeVehicleType).length / vals.length >= 0.5) {
+        cols.add(h);
+      }
+    }
+  }
+  return [...cols];
 }
 
 // ── الأعمدة المستهدفة (بالترتيب الثابت) ───────────────────────────────────────

@@ -20,7 +20,7 @@ import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
@@ -437,7 +437,7 @@ export default function SortingPage() {
           setDataFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
           setDataPlateColOverride(null);
           setResults(null); setSorted(false);
-          setOutputCols(new Set(guessDefaultColumns(rec.headers, detectPlateColumn(rec.headers, rec.rows))));
+          setOutputCols(new Set(defaultDataCols(rec.headers, rec.rows, detectPlateColumn(rec.headers, rec.rows))));
         });
       } else if (slot.startsWith("referral-")) {
         // إحالة إضافية اتضافت من مربع «فتح الإكسيل» — أعد قراءة كل الإحالات الإضافية
@@ -501,7 +501,7 @@ export default function SortingPage() {
   useEffect(() => {
     if (dataTable) {
       const p = detectPlateColumn(dataTable.headers, dataTable.rows);
-      setOutputCols(new Set(guessDefaultColumns(dataTable.headers, p)));
+      setOutputCols(new Set(defaultDataCols(dataTable.headers, dataTable.rows, p)));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataTable]);
@@ -934,7 +934,7 @@ export default function SortingPage() {
       // ملف صغير عادي → نلغي أي وضع «داتا كبيرة» سابق (ونمسح قاعدتها على الجهاز).
       setDataStreamed(false); setDataStreamMeta(null); void clearBigData("data");
       setDataTable(table); setDataFile(file); setDataPlateColOverride(null);
-      setOutputCols(new Set(guessDefaultColumns(table.headers, detectPlateColumn(table.headers, table.rows))));
+      setOutputCols(new Set(defaultDataCols(table.headers, table.rows, detectPlateColumn(table.headers, table.rows))));
       setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
     } else {
       setReferralTable(table); setReferralFile(file); setReferralPlateColOverride(null);
