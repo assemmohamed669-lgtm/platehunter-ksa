@@ -171,7 +171,9 @@ export interface ExcelTable {
  * التخزين المحلي مش بيزيد خطر: صفوف الملف بتتحفظ مفكوكة أصلاً في نفس القاعدة.
  */
 export async function decryptExcelFile(file: File, password: string): Promise<File> {
-  return decryptViaServer(file, password);
+  // فكّ التشفير على الجهاز أولاً (فوري) ونرجع للسيرفر لو مش متاح. باسوورد غلط بيترمي.
+  const local = await decryptClientSide(file, password);
+  return local ?? decryptViaServer(file, password);
 }
 
 async function decryptViaServer(file: File, password: string): Promise<File> {
@@ -222,10 +224,49 @@ export async function parseAnySpreadsheet(
   return parseExcelFile(file);
 }
 
+/**
+ * يفكّ تشفير الملف **على الجهاز نفسه** بمكتبة officecrypto-tool (نفس مكتبة السيرفر)
+ * فيفتح فوري بدون رحلة رفع/تنزيل ولا cold start. المكتبة بتتحمّل بـ dynamic import
+ * عشان تتقسّم في chunk منفصل (مش بتكبّر البندل الأساسي).
+ *
+ * بترجّع:
+ *  - File مفكوك عند النجاح
+ *  - null لو فكّ التشفير على الجهاز غير متاح (بيئة/بولي‑فيل) → المتصل يرجع للسيرفر
+ * وبترمي Error("كلمة مرور الملف غير صحيحة.") لو الباسوورد غلط (مانرجعش للسيرفر ساعتها).
+ */
+async function decryptClientSide(file: File, password: string): Promise<File | null> {
+  try {
+    const { Buffer } = await import("buffer");
+    const mod = await import("officecrypto-tool");
+    const officeCrypto = (mod as unknown as { default?: typeof mod }).default ?? mod;
+    const buf = Buffer.from(await file.arrayBuffer());
+    if (!officeCrypto.isEncrypted(buf)) return file; // مش مشفّر أصلاً
+    let out: Buffer;
+    try {
+      out = await officeCrypto.decrypt(buf, { password });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (/incorrect|password|wrong/i.test(msg)) {
+        throw new Error("كلمة مرور الملف غير صحيحة.");
+      }
+      return null; // فشل تاني (مش باسوورد) → نرجع للسيرفر
+    }
+    return new File([new Uint8Array(out)], file.name, { type: file.type });
+  } catch (e) {
+    // باسوورد غلط بيتمرّر لفوق؛ أي فشل تاني (import/بولي‑فيل/بيئة) → fallback للسيرفر
+    if (e instanceof Error && e.message === "كلمة مرور الملف غير صحيحة.") throw e;
+    return null;
+  }
+}
+
 export async function parseExcelFile(file: File, password?: string, forcedSheet?: string): Promise<ExcelTable> {
-  // ملف محمي: نفكّ تشفيره على السيرفر أولاً ثم نقرأ النسخة المفكوكة محلياً
-  // (بدون تمرير الباسوورد للقارئ لأن الملف بقى غير مشفّر).
-  const workFile = password ? await decryptViaServer(file, password) : file;
+  // ملف محمي: نفكّ تشفيره على الجهاز أولاً (فوري) ونرجع للسيرفر لو مش متاح، ثم نقرأ
+  // النسخة المفكوكة محلياً (بدون تمرير الباسوورد للقارئ لأن الملف بقى غير مشفّر).
+  let workFile = file;
+  if (password) {
+    const local = await decryptClientSide(file, password); // بترمي لو الباسوورد غلط
+    workFile = local ?? (await decryptViaServer(file, password));
+  }
   const buffer = await workFile.arrayBuffer();
 
   // Try Web Worker first — parsing runs off the main thread so the UI stays responsive
