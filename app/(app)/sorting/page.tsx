@@ -17,7 +17,6 @@ import {
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
-import { buildCombinedShareRows, tashyeekShareRow } from "@/lib/combinedShare";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
@@ -1508,66 +1507,6 @@ export default function SortingPage() {
     return ref || data;
   }
 
-  // يحلّ حقول المشاركة (صورة + إكسيل) لكل صف نتيجة، بالترتيب اللي طلبه المستخدم:
-  // المطلوب (اللوحة) › نوع السيارة (داتا) › العنوان › الحي › الماركة (موديل
-  // الإحالة) › البنك (لو موجود) › GPS › اللون (المحفظة) › الملاحظات (الداتا).
-  // rows = صفوف النافذة اللي بتشارك منها (نافذة لكل ملف داتا)؛ الافتراضي كل النتايج.
-  function buildSortShareData(rows: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []) {
-    const find = (key: string, source?: "data" | "referral") =>
-      resultCols.find((c) => c.key === key && (source ? c.source === source : true));
-    const dataType = find("type", "data");
-    // موديل/ماركة السيارة من الإحالة — ممكن يكون في «الماركة» (→ brand) أو «نوع
-    // السيارة/type of car» (→ type). بنسحب الاتنين ونجمّعهم.
-    const refBrand = find("brand", "referral") ?? find("brand");
-    const refType = find("type", "referral");
-    const dist = find("district");
-    const addr = find("address");
-    const dateCol = find("date", "data") ?? find("date"); // تاريخ التسجيل من الداتا
-    const color = find("color", "referral") ?? find("color");
-    const gps = find("gps");
-    const notesCol = dataTable?.headers.find((h) => /ملاح/.test(h)) ?? null;
-    // عمود البنك من كل شيتات الإحالة (الأساسية + الإضافية) — كل محفظة ممكن تكون بنك
-    // مختلف، فبنجمّع كل أعمدة «بنك» ونقرا من أي واحدة فيها قيمة للصف.
-    const bankCols = [
-      ...(referralTable ? referralTable.headers.filter((h) => /بنك/.test(h)) : []),
-      ...extraReferrals.flatMap((er) => (er.table ? er.table.headers.filter((h) => /بنك/.test(h)) : [])),
-    ].filter((h, i, a) => a.indexOf(h) === i);
-    const valOf = (r: MatchResult, c: ReturnType<typeof find>) =>
-      c ? cellValue(c.source === "data" ? r.dataRow : r.referralRow, c) : "";
-
-    const rowsData = rows.map((r) => {
-      const model = [valOf(r, refBrand), valOf(r, refType)].filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i).join(" ");
-      return {
-        src: "",
-        plate: plateForRow(r),
-        type: valOf(r, dataType),
-        model,
-        bank: bankCols.length ? cellValue(r.referralRow, { sourceCol: bankCols[0], sourceCols: bankCols }) : "",
-        dist: valOf(r, dist),
-        addr: valOf(r, addr),
-        date: valOf(r, dateCol),
-        // رابط جاهز مش إحداثيات خام — عشان خانة الموقع في الإكسيل المشارَك
-        // تتنسخ كرابط شغّال لما المندوب يبعتها على واتساب.
-        gps: rawGpsOf(r) || valOf(r, gps),
-        color: valOf(r, color),
-        notes: notesCol ? String(r.dataRow?.[notesCol] ?? "").trim() : "",
-      };
-    });
-
-    // سيارات **السجلات** بتتلحق معلّم قدامها «سجلات»، وبتتملّى من **نفس الصف
-    // اللي المندوب شايفه في نافذة السجلات** — عشان كل تفاصيل السيارة تطلع في
-    // المشاركة زي ما هي. (المنطق في lib/combinedShare ومتغطّى باختبارات.)
-    for (const r of tash) {
-      rowsData.push(tashyeekShareRow(buildTashyeekRowObj(r), rawGpsOfTashyeek(r)));
-    }
-
-    const hasBank = rowsData.some((x) => x.bank);
-    const hasDate = rowsData.some((x) => x.date);
-    const hasSrc = rowsData.some((x) => x.src);
-    return { rowsData, hasBank, hasDate, hasSrc };
-  }
-
   /** مفتاح اللوحة لصف نتيجة الداتا (زي اللي التلوين بيستخدمه). */
   function dataRowKey(r: MatchResult): string {
     return r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
@@ -1605,15 +1544,44 @@ export default function SortingPage() {
     return `تاريخ ووقت الإرسال: ${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()} - ${p2(hh)}:${p2(now.getMinutes())} ${ampm}`;
   }
 
-  // صورة الفرز كجدول (بدون GPS — الصورة مش بتحمل لينك). اللوحات المكررة كل مجموعة
-  // بلون واحد (نفس ألوان الإكسيل) عشان تتميّز.
+  // ── مصدر واحد لكل المشاركة (صورة + إكسيل) = **نفس أعمدة العرض بالظبط** ─────────
+  // buildRowObject/buildTashyeekRowObj بيستخدموا allResultCols/tashyeekResultCols
+  // (نفس اللي المندوب شايفه)، فأي عمود قدامه — سنة الصنع، عمود إضافي اختاره — بيطلع
+  // في المشاركة. buildColoredSortExcel بياخد أعمدة أول صف بس، فبنبني اتحاد الأعمدة
+  // («الحالة» آخراً) ونوحّد كل صف عليه عشان مفيش عمود بيضيع لما نخلط نافذتين.
+  function buildDisplayShareObjects(src: MatchResult[], tash: TashyeekResultRow[]): { columns: string[]; rowObjects: Record<string, unknown>[] } {
+    const dataObjs = src.map((r) => {
+      const o = buildRowObject(r);
+      const g = rawGpsOf(r);                 // GPS كرابط خريطة شغّال (مش إحداثيات خام)
+      if ("GPS" in o && g) o["GPS"] = g;
+      return o;
+    });
+    const tashObjs = tash.map((r) => {
+      const o = buildTashyeekRowObj(r);
+      const g = rawGpsOfTashyeek(r);
+      if ("GPS" in o && g) o["GPS"] = g;
+      return o;
+    });
+    const allObjs = [...dataObjs, ...tashObjs];
+    const keys: string[] = [];
+    for (const o of allObjs) for (const k of Object.keys(o)) if (!keys.includes(k)) keys.push(k);
+    const columns = [...keys.filter((k) => k !== "الحالة"), ...(keys.includes("الحالة") ? ["الحالة"] : [])];
+    const rowObjects = allObjs.map((o) => {
+      const row: Record<string, unknown> = {};
+      for (const k of columns) row[k] = o[k] ?? "";
+      return row;
+    });
+    return { columns, rowObjects };
+  }
+
+  // صورة الفرز كجدول = نفس أعمدة العرض، **بدون عمود GPS** (الصورة مش بتحمل رابط
+  // قابل للنقر — بيبقى URL طويل يبوّظ الجدول). اللوحات المكررة كل مجموعة بلون واحد.
   function buildSortImageTable(src: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
-    const { rowsData } = buildSortShareData(src, tash);
-    // الترتيب وأعمدة «المصدر»/البنك/التاريخ بتتحدد في lib/combinedShare (متغطّاة
-    // باختبارات) — عشان الصورة والإكسيل يطلعوا بنفس الشكل بالظبط.
-    const { columns, imageRows: rows } = buildCombinedShareRows(rowsData, []);
+    const { columns, rowObjects } = buildDisplayShareObjects(src, tash);
+    const imgCols = columns.filter((c) => c !== "GPS");
+    const rows = rowObjects.map((o) => imgCols.map((c) => String(o[c] ?? "")));
     const rowColors = shareRowColors(src, tash);
-    return { columns, rows, subtitle: shareSubtitle(), rowColors };
+    return { columns: imgCols, rows, subtitle: shareSubtitle(), rowColors };
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {
@@ -1701,21 +1669,9 @@ export default function SortingPage() {
   // Colored xlsx, but falls back to a plain CSV if the xlsx build crashes on
   // the device WebView (loses the row colors, but the data always comes out).
   async function buildSortExcelBlob(src: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
-    // نفس ترتيب الصورة + عمود GPS (لينك الخريطة) + البنك لو موجود.
-    const { rowsData, hasBank, hasDate, hasSrc } = buildSortShareData(src, tash);
-    const rowObjects = rowsData.map((x) => ({
-      ...(hasSrc ? { "المصدر": x.src } : {}),
-      "المطلوب": x.plate,
-      "نوع السيارة": x.type,
-      "الماركة": x.model,
-      ...(hasBank ? { "البنك": x.bank } : {}),
-      "الحي": x.dist,
-      "العنوان": x.addr,
-      ...(hasDate ? { "تاريخ التسجيل": x.date } : {}),
-      "GPS": x.gps,
-      "اللون": x.color,
-      "الملاحظات": x.notes,
-    }));
+    // **المشاركة = العرض بالظبط** — نفس مصدر الصورة (buildDisplayShareObjects) عشان
+    // كل عمود قدام المندوب يطلع في الإكسيل بنفس الترتيب.
+    const { rowObjects } = buildDisplayShareObjects(src, tash);
     try {
       const rowColors = shareRowColors(src, tash);
       return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
