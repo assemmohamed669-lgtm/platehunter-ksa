@@ -15,7 +15,7 @@ import { useState, useRef, useEffect } from "react";
 import { Mic, Square, Upload, FileAudio, Loader2, AlertTriangle, CheckCircle2, X, Cpu, Check } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { runBatchTranscription, type MergedPlate, type BatchProgress } from "@/lib/batchTranscript";
-import { transcribeWithEngine, readPlateSliceWithModel } from "@/lib/batchAudio";
+import { transcribeWithEngine, makeSliceReader } from "@/lib/batchAudio";
 import { resolveModelBase } from "@/lib/modelEndpoint";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import { getGroqKey } from "@/lib/voiceKeys";
@@ -110,13 +110,17 @@ export default function RegistrationV2Page() {
       const token = manual?.token ?? "";
 
       const out = await runBatchTranscription(audio, {
-        transcribe: (a) => transcribeWithEngine(a, apiKey),
+        // التسجيل الطويل بيتبعت أجزاء — العدّاد بيبيّن الجزء الحالي عشان
+        // التسجيل الكبير مايبانش وكأنه واقف.
+        transcribe: (a) => transcribeWithEngine(a, apiKey, (done, total) => {
+          setBusy(total > 1 ? "جاري تفريغ التسجيل… جزء " + (done || 1) + " من " + total : "جاري تفريغ التسجيل…");
+        }),
         modelBase: base && token ? base : null,
         token,
-        readSlice: readPlateSliceWithModel,
+        // بيبعت نافذة اللوحة بس للموديل، مش التسجيل كله مع كل لوحة
+        readSlice: makeSliceReader(audio),
         onProgress: (p: BatchProgress) => {
-          if (p.phase === "transcribing") setBusy("جاري تفريغ التسجيل…");
-          else if (p.phase === "reading") setBusy("جاري قراءة اللوحات… " + p.done + " من " + p.total);
+          if (p.phase === "reading") setBusy("جاري قراءة اللوحات… " + p.done + " من " + p.total);
         },
       });
       setPlates(out.plates);
