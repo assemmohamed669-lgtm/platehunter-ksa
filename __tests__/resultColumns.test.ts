@@ -135,6 +135,28 @@ describe("resultColumns — نوع السيارة والموقع من الدات
     const cols = resolveMergedResultColumns([both, refSrc]);
     expect(cols.slice(0, 3).map((c) => c.label)).toEqual(["نوع السيارة", "العنوان", "الحي"]);
   });
+
+  // باج ميداني: «نوع السيارة» في المحفظة (الإحالة) والداتا مفيهاش عمود نوع —
+  // كان بيتأخّر لآخر الأعمدة لأن إعادة الترتيب بتحط أعمدة **الداتا** بس بعد اللوحة.
+  // المطلوب: نوع السيارة يظهر بعد اللوحة على طول مهما كان مصدره (داتا/محفظة).
+  it("«نوع السيارة» من المحفظة يظهر بعد اللوحة على طول (والداتا مفيهاش نوع)", () => {
+    const dataNoType = {
+      kind: "data" as const,
+      headers: ["رقم اللوحة", "الحي", "GPS", "اللون"],
+      rows: [{ "رقم اللوحة": "دحر1234", "الحي": "العليا", "GPS": "https://maps.google.com/x", "اللون": "أبيض" }],
+      plateCol: "رقم اللوحة",
+    };
+    const refType = {
+      kind: "referral" as const,
+      headers: ["رقماللوحة", "نوع السيارة"],
+      rows: [{ "رقماللوحة": "د ح ر 1234", "نوع السيارة": "ونيت" }],
+      plateCol: "رقماللوحة",
+    };
+    const cols = resolveMergedResultColumns([dataNoType, refType]);
+    // أول عمود بعد اللوحة = نوع السيارة (من المحفظة)، مش متأخر بعد الحي/اللون.
+    expect(cols[0].key).toBe("type");
+    expect(cols[0].label).toBe("نوع السيارة");
+  });
 });
 
 describe("resultColumns — تحليل بالاسم", () => {
