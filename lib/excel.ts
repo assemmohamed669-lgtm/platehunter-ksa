@@ -224,17 +224,59 @@ export async function parseAnySpreadsheet(
   return parseExcelFile(file);
 }
 
+// رسالة خطأ الباسورد الغلط — ثابتة عشان المتصل يفرّقها عن أعطال الـ fallback.
+const WRONG_PASSWORD_MSG = "كلمة مرور الملف غير صحيحة.";
+
+/**
+ * يفكّ التشفير في Web Worker (خارج الـ main thread) عشان الواجهة ماتجمّدش أثناء
+ * الـ ١٠٠ ألف دورة SHA-512. بيرجّع File مفكوك، أو null لو الـ worker مش متاح
+ * (المتصل يرجع للفكّ على الـ main thread أو السيرفر). باسوورد غلط بيترمي.
+ */
+async function decryptViaWorker(file: File, password: string): Promise<File | null> {
+  if (typeof Worker === "undefined") return null;
+  const buffer = await file.arrayBuffer();
+  return new Promise<File | null>((resolve, reject) => {
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./decryptWorker.ts", import.meta.url));
+    } catch {
+      resolve(null); // الـ worker مش متاح → fallback
+      return;
+    }
+    const timer = setTimeout(() => { worker.terminate(); resolve(null); }, 120_000);
+    worker.onmessage = (e: MessageEvent) => {
+      clearTimeout(timer);
+      worker.terminate();
+      const d = e.data as { ok: boolean; bytes?: ArrayBuffer; wrongPassword?: boolean };
+      if (d.ok && d.bytes) {
+        resolve(new File([d.bytes], file.name, { type: file.type }));
+      } else if (d.wrongPassword) {
+        reject(new Error(WRONG_PASSWORD_MSG));
+      } else {
+        resolve(null); // فشل تاني → fallback
+      }
+    };
+    worker.onerror = () => { clearTimeout(timer); worker.terminate(); resolve(null); };
+    worker.postMessage({ buffer, password }, [buffer]);
+  });
+}
+
 /**
  * يفكّ تشفير الملف **على الجهاز نفسه** بمكتبة officecrypto-tool (نفس مكتبة السيرفر)
  * فيفتح فوري بدون رحلة رفع/تنزيل ولا cold start. المكتبة بتتحمّل بـ dynamic import
  * عشان تتقسّم في chunk منفصل (مش بتكبّر البندل الأساسي).
  *
- * بترجّع:
+ * بيجرّب الـ worker الأول (الواجهة ماتجمّدش)، وبعدين الـ main thread، وأخيراً بيرجّع:
  *  - File مفكوك عند النجاح
  *  - null لو فكّ التشفير على الجهاز غير متاح (بيئة/بولي‑فيل) → المتصل يرجع للسيرفر
- * وبترمي Error("كلمة مرور الملف غير صحيحة.") لو الباسوورد غلط (مانرجعش للسيرفر ساعتها).
+ * وبترمي Error(WRONG_PASSWORD_MSG) لو الباسوورد غلط (مانرجعش للسيرفر ساعتها).
  */
 async function decryptClientSide(file: File, password: string): Promise<File | null> {
+  // (1) الـ worker — أسرع إحساساً (الواجهة تفضل سلسة).
+  const viaWorker = await decryptViaWorker(file, password); // بيرمي لو الباسورد غلط
+  if (viaWorker) return viaWorker;
+
+  // (2) fallback على الـ main thread (لو الـ worker مش متاح).
   try {
     const { Buffer } = await import("buffer");
     const mod = await import("officecrypto-tool");
@@ -247,14 +289,14 @@ async function decryptClientSide(file: File, password: string): Promise<File | n
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       if (/incorrect|password|wrong/i.test(msg)) {
-        throw new Error("كلمة مرور الملف غير صحيحة.");
+        throw new Error(WRONG_PASSWORD_MSG);
       }
       return null; // فشل تاني (مش باسوورد) → نرجع للسيرفر
     }
     return new File([new Uint8Array(out)], file.name, { type: file.type });
   } catch (e) {
     // باسوورد غلط بيتمرّر لفوق؛ أي فشل تاني (import/بولي‑فيل/بيئة) → fallback للسيرفر
-    if (e instanceof Error && e.message === "كلمة مرور الملف غير صحيحة.") throw e;
+    if (e instanceof Error && e.message === WRONG_PASSWORD_MSG) throw e;
     return null;
   }
 }
