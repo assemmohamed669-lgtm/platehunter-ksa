@@ -113,3 +113,56 @@ export function splitTranscriptIntoPlates(segments: TimedSegment[]): BatchPlate[
   }
   return out.sort((a, b) => a.startSec - b.startSec);
 }
+
+/** قراءة الموديل المدرّب لمقطع لوحة واحدة (رد `/transcribe`). */
+export interface ModelReading {
+  normalized: string;
+  accepted: boolean;
+  meanLogprob?: number | null;
+}
+
+export interface MergedPlate extends BatchPlate {
+  /** مين اللي النتيجة النهائية جت منه. */
+  source: "agreed" | "model" | "engine";
+}
+
+/** شكل اللوحة السعودية: ٢-٣ حروف + ٤ أرقام. */
+function looksLikePlate(norm: string): boolean {
+  return /^[\u0600-\u06FF]{2,3}[0-9]{4}$/.test(String(norm ?? "").trim());
+}
+
+/**
+ * بيدمج قراءة المحرك العام مع قراءة الموديل المدرّب لنفس اللوحة.
+ *
+ * القاعدة: **اللي مش متأكدين منه يتعلّم، مايتخترعش.** شفنا بعينينا منتج
+ * منافس بيطلّع لوحة كاملة وشكلها سليم من ١٨ ثانية صمت — والمندوب مايقدرش
+ * يكتشفها. فلوحة مكتوب عليها «راجعها» أنفع بمراحل من لوحة مخترعة.
+ *
+ * الترتيب: اتفقوا → مؤكدة. اختلفوا والموديل واثق وشكله سليم → بتاع الموديل
+ * **متعلّمة**. غير كده → بتاع المحرك، ومتعلّمة لو الموديل مااتأكدش.
+ */
+export function mergePlateReadings(
+  engine: BatchPlate[],
+  model: (ModelReading | null | undefined)[],
+): MergedPlate[] {
+  return (engine ?? []).map((e, i) => {
+    const mr = model?.[i];
+    const modelOk = !!mr && mr.accepted && looksLikePlate(mr.normalized);
+
+    if (modelOk && mr!.normalized === e.normalized) {
+      return { ...e, source: "agreed" as const };
+    }
+    if (modelOk) {
+      return { ...e, normalized: mr!.normalized, needsReview: true, source: "model" as const };
+    }
+    // الموديل رفض أو مارَدّش أو شكله غلط → بتاع المحرك.
+    // بنعلّمها بس لو الموديل **رد ورفض** — لو مارَدّش خالص (سيرفر مقفول)
+    // مانعاقبش المندوب على حاجة مالهاش علاقة بيه.
+    const modelAnswered = mr !== null && mr !== undefined;
+    return {
+      ...e,
+      needsReview: e.needsReview || modelAnswered,
+      source: "engine" as const,
+    };
+  });
+}
