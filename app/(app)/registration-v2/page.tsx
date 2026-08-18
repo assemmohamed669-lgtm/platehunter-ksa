@@ -12,7 +12,6 @@
  */
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Mic, Square, Upload, FileAudio, Loader2, AlertTriangle, CheckCircle2, X, Cpu, Check } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { runBatchTranscription, type MergedPlate, type BatchProgress } from "@/lib/batchTranscript";
@@ -23,8 +22,8 @@ import { getGroqKey } from "@/lib/voiceKeys";
 import PlateBadge from "@/components/PlateBadge";
 
 export default function RegistrationV2Page() {
-  const router = useRouter();
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [denied, setDenied] = useState<string | null>(null);
 
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
@@ -50,16 +49,23 @@ export default function RegistrationV2Page() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
-      if (!prof?.is_super) { router.replace("/instant-check"); return; }
+      // القفل بيقول **ليه** رفض، ومابيحوّلش بصمت.
+      //
+      // كان بيعمل router.replace ساكت: الصفحة بتختفي وإنت في صفحة تانية
+      // فاكر نفسك في التسجيل، وتدوّر على مربّع مش موجود لأنك أصلاً مش هنا.
+      // التحويل الصامت بيخفي السبب ويخلّي الغلط يبان وكأنه «الميزة مااترفعتش».
+      const { data, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !data.user) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
+      const { data: prof, error: profErr } = await supabase
+        .from("profiles").select("is_super").eq("id", data.user.id).single();
+      if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
+      if (!prof?.is_super) { setDenied("الصفحة دي للسوبر أدمن بس، وحسابك الحالي مش سوبر أدمن."); return; }
       const saved = readJudgeEndpoint();
       if (saved) { setModelUrl(saved.base); setModelToken(saved.token); }
       setAllowed(true);
     })();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [router]);
+  }, []);
 
   async function startRecording() {
     setError(null);
@@ -159,6 +165,18 @@ export default function RegistrationV2Page() {
     } finally {
       setProbing(false);
     }
+  }
+
+  if (denied) {
+    return (
+      <div className="flex flex-col gap-3 py-10">
+        <h1 className="text-xl font-black text-ink">التسجيل الجديد</h1>
+        <div className="flex items-start gap-2 rounded-xl border border-alert/40 bg-alert/10 px-3 py-3">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-alert" />
+          <p className="flex-1 text-xs leading-relaxed text-ink">{denied}</p>
+        </div>
+      </div>
+    );
   }
 
   if (allowed === null) return <div className="py-16 text-center text-sm text-muted">جارٍ التحقق…</div>;
