@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
   Type as TypeIcon, Palette, RotateCcw, KeyRound, ChevronLeft,
-  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp,
+  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp, Mic,
 } from "lucide-react";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -46,6 +46,9 @@ export default function AppMenu({
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // مدخل مؤقّت لصفحة التسجيل الجديدة اللي بتتجرَّب. الافتراضي **مقفول**: أي
+  // فشل في القراءة = الرابط مايظهرش، فالمندوب مايشوفهوش بأي حال.
+  const [isSuper, setIsSuper] = useState(false);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -158,8 +161,9 @@ export default function AppMenu({
         if (data.user) {
           rec = (await getAllRecordings(data.user.id)).length;
           const { data: prof } = await supabase.from("profiles")
-            .select("role, subscription_end").eq("id", data.user.id).single();
+            .select("role, subscription_end, is_super").eq("id", data.user.id).single();
           if (prof?.role === "agent") setSubEnd(prof.subscription_end ?? null);
+          setIsSuper(!!prof?.is_super);   // مزوّدة على نفس الطلب — مافيش رحلة زيادة
         }
       } catch { /* offline */ }
       setStats({ field: fieldEntries.length, wanted, rec });
@@ -313,6 +317,12 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <FileUp size={16} className="text-alert" /> رفع للداتا
             </Link>
+            {isSuper && (
+              <Link href="/registration-v2" onClick={() => onOpenChange(false)}
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+                <Mic size={16} className="text-brand" /> التسجيل الجديد (تجربة)
+              </Link>
+            )}
             <button onClick={() => refreshAppNow()}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <RefreshCw size={16} className="text-primary" /> تحديث التطبيق (آخر نسخة)
