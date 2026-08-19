@@ -35,6 +35,16 @@ describe("typeToCode — تحويل نوع السيارة للحرف المخت�
     expect(typeToCode("دينه")).toBe("دي");
   });
 
+  it("مصدومة (مص) — موجودة في القائمة وبتترجم من الكلمة", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("مص");
+    expect(typeToCode("مص")).toBe("مص");
+    expect(typeToCode("مصدومة")).toBe("مص");
+    expect(typeToCode("مصدوم")).toBe("مص");
+    expect(typeToCode("مصدومه")).toBe("مص");
+    expect(vehicleTypeLabel("مص")).toBe("مص (مصدومة)");
+    expect(typeToCode("ملاكي")).toBe("م"); // مايتلغبطش مع مصدومة
+  });
+
   it("غير معروف أو فاضي → فاضي (فيفضل النص الأصلي عند التصدير)", () => {
     expect(typeToCode("")).toBe("");
     expect(typeToCode("مركونة")).toBe("");
@@ -50,8 +60,8 @@ describe("vehicleTypeLabel — شكل العرض في القايمة", () => {
   });
 
   it("الترتيب زي ما المالك طلبه", () => {
-    // «ش» اتضاف بعد «مو» بطلب المالك — الترتيب القديم قبله زي ما هو
-    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "H1"]);
+    // «ش» اتضاف بعد «مو»، و«مص» (مصدومة) بعد «ش» بطلب المالك — الباقي زي ما هو
+    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "مص", "H1"]);
   });
 
   it("حرف مش في القايمة بيرجع زي ما هو", () => {
