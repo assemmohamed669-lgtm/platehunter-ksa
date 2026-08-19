@@ -41,19 +41,40 @@ export const MANDATORY_COLS = [
   "district", "area", "neighborhood", "neighbourhood", "city", "region",
 ];
 
+/**
+ * يطبّع اسم عمود عربي للمطابقة: بيوحّد صيغ الحروف اللي المستخدمين بيكتبوها بأشكال
+ * مختلفة — ة↔ه، أ/إ/آ/ٱ→ا، ى→ي، ؤ→و، ئ→ي — ويشيل التطويل والتشكيل والفراغات
+ * الزيادة. من غيره «نوع السياره» (ه) ماكانش بيطابق «نوع السيارة» (ة) فالعمود يختفي.
+ * (ملف مندوب حقيقي: عناوينه «نوع السياره»/«رقم الوحه».)
+ */
+export function normalizeArabicKey(s: string): string {
+  return s
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ـ/g, "")                 // تطويل
+    .replace(/[ً-ْ]/g, "")   // تشكيل
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 export function isMandatory(header: string): boolean {
-  const h = header.trim().toLowerCase();
+  const h = normalizeArabicKey(header);
+  if (!h) return false;
   return MANDATORY_COLS.some((m) => {
-    const mm = m.toLowerCase();
+    const mm = normalizeArabicKey(m);
     return h === mm || h.includes(mm) || mm.includes(h);
   });
 }
 
 export function matchesPreferred(header: string): boolean {
-  const h = header.trim().toLowerCase();
+  const h = normalizeArabicKey(header);
   if (!h) return false;
   return PREFERRED_COLS.some((p) => {
-    const pp = p.toLowerCase();
+    const pp = normalizeArabicKey(p);
     return h === pp || h.includes(pp) || pp.includes(h);
   });
 }

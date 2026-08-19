@@ -9,7 +9,7 @@
  * الدوال نقية وقابلة للاختبار.
  */
 import { looksLikeGps, looksLikeDate, looksLikeDistrict } from "./headerlessColumns";
-import { looksLikeCarName, guessDefaultColumns } from "./sortingCols";
+import { looksLikeCarName, guessDefaultColumns, normalizeArabicKey } from "./sortingCols";
 import { inferVehicleType } from "./wantedColumns";
 
 // ── كاشفات محتوى إضافية ──────────────────────────────────────────────────────
@@ -151,11 +151,16 @@ export const RESULT_TARGETS: TargetColumn[] = [
 ];
 
 function nameMatches(header: string, aliases: string[]): boolean {
-  const h = header.trim().toLowerCase();
+  // تطبيع عربي (ة↔ه، أ/ا، ى/ي...) عشان «نوع السياره» يطابق «نوع السيارة» —
+  // عناوين المستخدمين بتتكتب بصيغ مختلفة، وبدون التطبيع العمود بيختفي من النتيجة.
+  const h = normalizeArabicKey(header);
   if (!h) return false;
   // المطابقة العكسية (اسم العمود جوه المرادف) بس للأسماء ٣ حروف فأكتر — عشان أعمدة
   // قصيرة زي «م» و«#» و«##» و«*» ماتطابقش «ماركة»/«اسم المركبة» بالغلط.
-  return aliases.some((a) => h === a || h.includes(a) || (h.length >= 3 && a.includes(h)));
+  return aliases.some((a) => {
+    const aa = normalizeArabicKey(a);
+    return h === aa || h.includes(aa) || (h.length >= 3 && aa.includes(h));
+  });
 }
 
 function contentMatches(rows: Record<string, string>[], header: string, pred: (v: string) => boolean): number {
