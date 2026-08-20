@@ -157,6 +157,56 @@ export interface ExcelTable {
 }
 
 /**
+ * بيدمج ورقات المحفظة الواحدة في جدول واحد.
+ *
+ * محافظ البنوك بتيجي أحياناً على أكتر من ورقة (مثلاً «٧٦» و«اليمنيه» في نفس
+ * الملف)، والبرنامج كان بيختار **ورقة واحدة بس** — اللي فيها أكتر لوحات —
+ * فباقي اللوحات ماكانتش تدخل الفرز خالص وتبان وكأنها مش مطلوبة.
+ *
+ * الأعمدة بتتوحّد بالاسم (بعد إزالة المسافات الزيادة) عشان «رقم اللوحه» في
+ * الورقتين يبقى عمود واحد؛ لو اتقسم لعمودين، كشف اللوحات هيلاقي نص العدد بس.
+ * الصف اللي عمود مش موجود في ورقته بياخد نص فاضي — مش undefined — عشان باقي
+ * الكود بيقرا القيم كنصوص على طول.
+ */
+export function mergeExcelTables(tables: ExcelTable[]): ExcelTable {
+  const usable = tables.filter((t) => t && t.headers.length > 0);
+  if (usable.length === 0) return { headers: [], rows: [] };
+  if (usable.length === 1) return usable[0];
+
+  const headers: string[] = [];
+  const byKey = new Map<string, string>();      // اسم مطبّع → الاسم المعتمد
+  for (const t of usable) {
+    for (const h of t.headers) {
+      const key = h.trim();
+      if (!byKey.has(key)) {
+        byKey.set(key, h);
+        headers.push(h);
+      }
+    }
+  }
+
+  const rows: Record<string, string>[] = [];
+  for (const t of usable) {
+    // خريطة من عمود الورقة → العمود المعتمد في الجدول المدموج
+    const map = new Map<string, string>();
+    for (const h of t.headers) map.set(h, byKey.get(h.trim()) ?? h);
+    for (const r of t.rows) {
+      const out: Record<string, string> = {};
+      for (const h of headers) out[h] = "";
+      for (const h of t.headers) out[map.get(h) ?? h] = r[h] ?? "";
+      rows.push(out);
+    }
+  }
+
+  return {
+    headers,
+    rows,
+    sheetName: usable[0].sheetName,
+    allSheetNames: usable[0].allSheetNames,
+  };
+}
+
+/**
  * يفكّ تشفير ملف محمي بكلمة مرور على السيرفر (SheetJS المجانية لا تفكّ التشفير).
  * يعيد File بعد فك التشفير — جاهز للقراءة المحلية بدون باسوورد.
  */
@@ -338,6 +388,7 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
             aoa?: unknown[][];
             sheetName?: string;
             allSheetNames?: string[];
+            extraSheets?: { aoa: unknown[][]; name: string }[];
             error?: string;
           };
           // القارئ المتدفّق بيرجّع صفوف خام — بناء الجدول منها رخيص (آلاف
@@ -345,7 +396,18 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
           // الـworker. كده الـworker يفضل مستقل مايستوردش من الملف ده.
           if (d.success && d.aoa) {
             try {
-              resolve(buildTableFromAoa(d.aoa, d.sheetName, d.allSheetNames ?? []));
+              const main = buildTableFromAoa(d.aoa, d.sheetName, d.allSheetNames ?? []);
+              // محفظة على أكتر من ورقة → ندمجهم في جدول واحد عشان لوحات
+              // الورقة التانية تدخل الفرز. ورقة بتفشل في البناء بتتخطى
+              // بهدوء — أحسن من إن المحفظة كلها ترفض.
+              const extra = (d.extraSheets ?? []).flatMap((s) => {
+                try {
+                  return [buildTableFromAoa(s.aoa, s.name, d.allSheetNames ?? [])];
+                } catch {
+                  return [];
+                }
+              });
+              resolve(extra.length ? mergeExcelTables([main, ...extra]) : main);
             } catch (err) {
               reject(err instanceof Error && err.message === "empty"
                 ? new Error("الملف فارغ أو لا يحتوي على بيانات.")
@@ -597,7 +659,22 @@ export async function parseExcelStream(data: Uint8Array): Promise<ExcelTable> {
       if (kw) chosen = kw;
     }
   }
-  return buildTableFromAoa(chosen.aoa, chosen.name, allSheetNames);
+  const main = buildTableFromAoa(chosen.aoa, chosen.name, allSheetNames);
+
+  // محفظة على أكتر من ورقة → ندمج كل ورقة فيها لوحات. من غير كده لوحات
+  // الورقة التانية ماكانتش تدخل الفرز خالص («مجمع الجبر»: ٧ لوحات ضاعوا).
+  // ورقة «تشييك» استثناء — لها معنى محدد فبتفضل لوحدها.
+  const hasCheckSheet = sheets.some((s) => s.name.trim() === "تشييك");
+  const extras: ExcelTable[] = [];
+  if (!hasCheckSheet) {
+    for (const s of withRows) {
+      if (s === chosen || _plateCountInAoa(s.aoa) === 0 || s.aoa.length < 2) continue;
+      try {
+        extras.push(buildTableFromAoa(s.aoa, s.name, allSheetNames));
+      } catch { /* ورقة مكسورة — نتخطاها بدل ما نرفض المحفظة كلها */ }
+    }
+  }
+  return extras.length ? mergeExcelTables([main, ...extras]) : main;
 }
 
 // يبقى احتياطي قديم لو فشل اكتشاف المحتوى تماماً (ملفات غريبة الشكل)
@@ -642,11 +719,13 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
 
   // Multi-sheet detection: score every sheet by plate-like content and pick
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
+  const platesPerSheet = new Map<string, number>();
   if (allSheetNames.length > 1) {
     let bestCount = 0;
     let bestName: string | undefined;
     for (const name of allSheetNames) {
       const count = _sheetPlateCount(data, name, password);
+      platesPerSheet.set(name, count);
       if (count > bestCount) { bestCount = count; bestName = name; }
     }
     if (bestCount > 0) {
@@ -688,7 +767,31 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
       raw: true,
       defval: null,
     });
-    return buildTableFromAoa(raw2d, finalSheet, allSheetNames);
+    const main = buildTableFromAoa(raw2d, finalSheet, allSheetNames);
+
+    // نفس منطق الـworker: المحفظة اللي على أكتر من ورقة بتتدمج، عشان النتيجة
+    // تبقى واحدة سواء الجهاز شغّل الـworker أو لأ. ورقة «تشييك» بتفضل لوحدها.
+    const hasCheckSheet = allSheetNames.some((n) => n.trim() === "تشييك");
+    const extraNames = hasCheckSheet ? [] : allSheetNames.filter(
+      (n) => n !== finalSheet && (platesPerSheet.get(n) ?? 0) > 0,
+    );
+    if (extraNames.length === 0) return main;
+
+    const extras: ExcelTable[] = [];
+    for (const name of extraNames) {
+      try {
+        const eOpts = { ...opts } as Record<string, unknown>;
+        eOpts.sheets = [name];
+        const eWb = XLSX.read(data, eOpts as XLSX.ParsingOptions);
+        const eWs = eWb.Sheets[name];
+        if (!eWs) continue;
+        trimSheetToData(eWs);
+        resolveHyperlinkCells(eWs);
+        const eRaw = XLSX.utils.sheet_to_json<unknown[]>(eWs, { header: 1, raw: true, defval: null });
+        extras.push(buildTableFromAoa(eRaw, name, allSheetNames));
+      } catch { /* ورقة مكسورة — نتخطاها بدل ما نرفض المحفظة كلها */ }
+    }
+    return extras.length ? mergeExcelTables([main, ...extras]) : main;
   } catch (err) {
     if (err instanceof Error && err.message === "empty") {
       throw new Error("الملف فارغ أو لا يحتوي على بيانات.");

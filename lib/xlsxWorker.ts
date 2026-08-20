@@ -126,18 +126,31 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
         const withRows = visible.length > 0 ? visible : sheets.filter((s) => s.aoa.length > 0);
         if (withRows.length > 0) {
           let chosen = withRows[0];
+          const plateCount = new Map<string, number>();
           if (withRows.length > 1) {
             let best = 0;
             for (const s of withRows) {
               const c = countPlatesInBestColumn(s.aoa as any[][]);
+              plateCount.set(s.name, c);
               if (c > best) { best = c; chosen = s; }
             }
           }
+          // محفظة على أكتر من ورقة: كنا بنختار **ورقة واحدة** (الأكبر) والباقي
+          // يتلغي، فلوحاته ماكانتش تدخل الفرز خالص وتبان كأنها مش مطلوبة —
+          // «مجمع الجبر» مثال: ورقة «٧٦» ١٠٣ لوحات وورقة «اليمنيه» ٧ ضاعوا.
+          // دلوقتي بنبعت كل ورقة فيها لوحات والصفحة بتدمجهم.
+          //
+          // ورقة «تشييك» استثناء: لها معنى محدد (ملف التشييك) فبتفضل لوحدها.
+          const hasCheckSheet = sheets.some((s) => s.name.trim() === "تشييك");
+          const extras = hasCheckSheet ? [] : withRows.filter(
+            (s) => s !== chosen && (plateCount.get(s.name) ?? 0) > 0 && s.aoa.length > 1,
+          );
           postMessage({
             success: true,
             aoa: chosen.aoa,
             sheetName: chosen.name,
             allSheetNames: sheets.map((s) => s.name),
+            extraSheets: extras.map((s) => ({ aoa: s.aoa, name: s.name })),
           });
           return;
         }
