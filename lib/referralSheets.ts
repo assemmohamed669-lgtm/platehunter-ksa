@@ -191,7 +191,11 @@ export function defaultSelection(sheets: SheetInfo[]): Set<string> {
   const counts = withPlates.map((s) => s.plateCount).sort((a, b) => b - a);
   const total = counts.reduce((a, b) => a + b, 0);
   const [biggest, second = 0] = counts;
-  const hasDominant = biggest >= total * 0.6 && biggest >= second * 3;
+  // ⚠️ النمط بيحتاج **٣ ورقات على الأقل**: أسطول + مباعة + مسروقة… ورقتين بس
+  //    مافيش فيهم دليل كفاية إن الكبيرة مرجع مش مطلوبين — ومحفظة «مجمع الجبر»
+  //    (١٠٣ + ٧ والاتنين مطلوبين) كانت بتتقص فيها الكبيرة، فالمندوب يفرز على
+  //    ٧ لوحات ويعيد الباقي بإيده. تفويت مطلوب أخطر من إن الفرز يكبر شوية.
+  const hasDominant = withPlates.length >= 3 && biggest >= total * 0.6 && biggest >= second * 3;
 
   const keep = withPlates.filter((s) => {
     if (s.hidden) return false;                                   // ورقة عمل مخفية
