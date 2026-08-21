@@ -72,7 +72,9 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "خطأ غير معروف.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // مانرجّعش رسالة الخطأ الداخلية للعميل — ممكن تسرّب مسارات السيرفر أو
+    // تفاصيل المكتبة. العميل بيتجاهلها أصلاً (lib/excel.ts) ويعرض رسالته.
+    console.error("excel/decrypt failed:", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "تعذّر معالجة الملف." }, { status: 500 });
   }
 }

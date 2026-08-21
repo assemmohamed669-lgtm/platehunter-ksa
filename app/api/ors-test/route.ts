@@ -1,12 +1,26 @@
 /**
  * POST /api/ors-test  { apiKey }
  * يختبر مفتاح OpenRouteService بطلب توجيه بسيط بين نقطتين (على السيرفر لتفادي CORS).
+ *
+ * **مقفول على المناديب المسجّلين فقط** — زي groq-test و elevenlabs-test. لو مفتوح
+ * للعامة يبقى (١) كل طلب بيخلّي السيرفر يعمل نداء خارجي = استهلاك على حسابنا،
+ * (٢) آلة فحص مجانية لأي مفاتيح OpenRouteService مسروقة، بتشغّل على IP بتاعنا.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { verifySession, rateLimit } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  // البوابة قبل أي شغل — عشان طلب مش مصادق مايستهلكش ولا نداء خارجي واحد.
+  const userId = await verifySession(req.headers.get("authorization"));
+  if (!userId) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  if (!rateLimit(`ors-test:${userId}`, 20, 60_000)) {
+    return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
+  }
+
   let apiKey = "";
   try {
     const body = await req.json();

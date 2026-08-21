@@ -36,6 +36,7 @@ const TABLES = [
   { name: "plate_corrections", why: "التعلّم المشترك" },
   { name: "subscription_events", why: "تاريخ الاشتراكات" },
   { name: "training_samples", why: "عيّنات التدريب (بيانات فقط)" },
+  { name: "data_uploads", why: "سجل رفع الشيتات" },
 ];
 
 /**

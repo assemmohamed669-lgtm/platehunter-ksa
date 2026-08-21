@@ -1,6 +1,29 @@
 /** @type {import('next').NextConfig} */
+
+// رؤوس أمان على كل المسارات. مقصود إن القايمة دي **محافظة**:
+//  • مافيش Content-Security-Policy — التطبيق بيتصل بـSupabase (WebSocket) و
+//    Groq و Deepgram و OpenRouteService، وبيستخدم blob:/data: للصوت والصور.
+//    سياسة غلط = تطبيق مكسور على كل المناديب. تتضاف لاحقاً بـReport-Only أول
+//    وتتراقب قبل ما تتفرض.
+//  • مافيش Permissions-Policy — التطبيق محتاج camera و microphone و geolocation
+//    فعلاً؛ صياغة غلط بتقفلهم. تتضاف بعد تجربة على جهاز حقيقي.
+const securityHeaders = [
+  // نمنع تحميل التطبيق جوّه iframe (clickjacking). Capacitor بيحمّله كصفحة
+  // رئيسية في الـWebView مش داخل iframe، فمش متأثر.
+  { key: "X-Frame-Options", value: "DENY" },
+  // نمنع المتصفح من تخمين نوع المحتوى (تنفيذ ملف مرفوع كأنه سكربت).
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  // مانسرّبش الرابط الكامل (وفيه معرّفات) لأي موقع خارجي.
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // HTTPS إلزامي. بلا preload — دي التزام دائم مش هنعمله بلا قرار.
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+];
+
 const nextConfig = {
   reactStrictMode: true,
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
   // Phase 2 will add a service worker (next-pwa or custom) for full
   // offline-first behaviour (IndexedDB queue + background sync).
   experimental: {
