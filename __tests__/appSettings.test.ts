@@ -43,12 +43,22 @@ describe("loadAppearance / saveAppearance", () => {
   });
 
   it("round-trips saved settings", () => {
-    saveAppearance({ fontScale: 1.2, bgColor: "#000000" });
-    expect(loadAppearance()).toEqual({ fontScale: 1.2, bgColor: "#000000" });
+    saveAppearance({ fontScale: 1.2, bgColor: "#000000", inkColor: null });
+    expect(loadAppearance()).toEqual({ fontScale: 1.2, bgColor: "#000000", inkColor: null });
+  });
+
+  it("round-trips a manual text (ink) colour", () => {
+    saveAppearance({ fontScale: 1, bgColor: "#000000", inkColor: "#ffcc00" });
+    expect(loadAppearance()).toEqual({ fontScale: 1, bgColor: "#000000", inkColor: "#ffcc00" });
+  });
+
+  it("defaults inkColor to null (auto from background)", () => {
+    expect(DEFAULT_APPEARANCE.inkColor).toBe(null);
+    expect(loadAppearance().inkColor).toBe(null);
   });
 
   it("clamps a stored font scale on load", () => {
-    saveAppearance({ fontScale: 9 as number, bgColor: null });
+    saveAppearance({ fontScale: 9 as number, bgColor: null, inkColor: null });
     expect(loadAppearance().fontScale).toBe(1.3);
   });
 

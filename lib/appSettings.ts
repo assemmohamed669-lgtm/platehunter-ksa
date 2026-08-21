@@ -13,9 +13,15 @@
 export interface Appearance {
   fontScale: number;        // 1.0 – 1.6
   bgColor: string | null;   // null = theme default (light / وضع التوفير)
+  /**
+   * لون الخط اليدوي. null = تلقائي من الخلفية (أبيض على الغامق، غامق على الفاتح).
+   * لو المستخدم اختار خلفية والخط اختفى (تلقائي مش مناسب لعينه)، يقدر يحدده يدوي هنا
+   * فيتغلّب على التلقائي.
+   */
+  inkColor: string | null;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null };
+export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null, inkColor: null };
 
 const KEY = "ph:appearance";
 const LIGHT_INK = "#F3F5F7"; // text on a dark background
@@ -51,6 +57,7 @@ export function loadAppearance(): Appearance {
     return {
       fontScale: clampFontScale(Number(p.fontScale) || 1),
       bgColor: p.bgColor ?? null,
+      inkColor: typeof p.inkColor === "string" ? p.inkColor : null,
     };
   } catch {
     return { ...DEFAULT_APPEARANCE };
@@ -74,12 +81,19 @@ export function applyAppearance(a: Appearance): void {
   if (a.bgColor) {
     root.style.setProperty("--c-night", a.bgColor);
     root.style.setProperty("--c-night-oled", a.bgColor);
-    // Auto-pick a readable text colour for that background.
-    root.style.setProperty("--c-ink", isDarkColor(a.bgColor) ? LIGHT_INK : DARK_INK);
   } else {
-    // Back to the theme's own colours (light mode / وضع التوفير black).
+    // Back to the theme's own background (light mode / وضع التوفير black).
     root.style.removeProperty("--c-night");
     root.style.removeProperty("--c-night-oled");
+  }
+
+  // لون الخط: يدوي لو المستخدم اختاره (يتغلّب على التلقائي) — يحل مشكلة اختفاء الخط
+  // على خلفية معيّنة؛ وإلا تلقائي من الخلفية؛ وإلا لون الثيم الافتراضي.
+  if (a.inkColor) {
+    root.style.setProperty("--c-ink", a.inkColor);
+  } else if (a.bgColor) {
+    root.style.setProperty("--c-ink", isDarkColor(a.bgColor) ? LIGHT_INK : DARK_INK);
+  } else {
     root.style.removeProperty("--c-ink");
   }
 }
