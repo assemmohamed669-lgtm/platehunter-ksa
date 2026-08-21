@@ -36,17 +36,35 @@ export function clampFontScale(n: number): number {
   return Math.min(MAX_FONT_SCALE, Math.max(1, Math.round(n * 100) / 100));
 }
 
-/** True when a hex colour is dark enough to need light text on top of it. */
-export function isDarkColor(hex: string): boolean {
-  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return false;
+/** يفكّ لون hex (3 أو 6 خانات) لـ RGB، أو null لو مش صالح. */
+function parseHex(hex: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return null;
   let h = m[1];
   if (h.length === 3) h = h.split("").map((c) => c + c).join("");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+/** True when a hex colour is dark enough to need light text on top of it. */
+export function isDarkColor(hex: string): boolean {
+  const c = parseHex(hex);
+  if (!c) return false;
   // Perceived luminance (0–255); < 140 reads as "dark".
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 140;
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b < 140;
+}
+
+/** يمزج لونين hex بنسبة t (0 = a، 1 = b). دالة نقية للاختبار. */
+export function mixHex(a: string, b: string, t: number): string {
+  const pa = parseHex(a), pb = parseHex(b);
+  if (!pa || !pb) return a;
+  const k = Math.max(0, Math.min(1, t));
+  const ch = (x: number, y: number) => Math.round(x + (y - x) * k);
+  const hx = (n: number) => n.toString(16).padStart(2, "0");
+  return `#${hx(ch(pa.r, pb.r))}${hx(ch(pa.g, pb.g))}${hx(ch(pa.b, pb.b))}`;
 }
 
 export function loadAppearance(): Appearance {
@@ -78,23 +96,30 @@ export function applyAppearance(a: Appearance): void {
   const root = document.documentElement;
   root.style.fontSize = `${Math.round(clampFontScale(a.fontScale) * 100)}%`;
 
+  // ── الخلفية: نفس اللون على **كل الأسطح** (الصفحة + الكروت + الشريط الجانبي) ──
+  // مع تدرّج بسيط للكروت (surface-2) والحدود (border) عشان مايبقاش كله مسطّح.
+  const bgVars = ["--c-night", "--c-night-oled", "--c-surface", "--c-surface-2", "--c-border"];
   if (a.bgColor) {
+    const toward = isDarkColor(a.bgColor) ? "#FFFFFF" : "#000000"; // ناحية التباين
     root.style.setProperty("--c-night", a.bgColor);
     root.style.setProperty("--c-night-oled", a.bgColor);
+    root.style.setProperty("--c-surface", a.bgColor);
+    root.style.setProperty("--c-surface-2", mixHex(a.bgColor, toward, 0.08));
+    root.style.setProperty("--c-border", mixHex(a.bgColor, toward, 0.22));
   } else {
-    // Back to the theme's own background (light mode / وضع التوفير black).
-    root.style.removeProperty("--c-night");
-    root.style.removeProperty("--c-night-oled");
+    for (const v of bgVars) root.style.removeProperty(v); // رجوع لألوان الثيم
   }
 
-  // لون الخط: يدوي لو المستخدم اختاره (يتغلّب على التلقائي) — يحل مشكلة اختفاء الخط
-  // على خلفية معيّنة؛ وإلا تلقائي من الخلفية؛ وإلا لون الثيم الافتراضي.
-  if (a.inkColor) {
-    root.style.setProperty("--c-ink", a.inkColor);
-  } else if (a.bgColor) {
-    root.style.setProperty("--c-ink", isDarkColor(a.bgColor) ? LIGHT_INK : DARK_INK);
+  // ── لون الخط: يدوي (يتغلّب على التلقائي) → تلقائي من الخلفية → افتراضي الثيم. ──
+  // والنص الثانوي (muted) بيتبع لون الخط كنسخة أخفت عشان يفضل واضح على نفس الخلفية.
+  const ink = a.inkColor ?? (a.bgColor ? (isDarkColor(a.bgColor) ? LIGHT_INK : DARK_INK) : null);
+  if (ink) {
+    const bgRef = a.bgColor ?? (isDarkColor(ink) ? "#000000" : "#FFFFFF");
+    root.style.setProperty("--c-ink", ink);
+    root.style.setProperty("--c-muted", mixHex(ink, bgRef, 0.4));
   } else {
     root.style.removeProperty("--c-ink");
+    root.style.removeProperty("--c-muted");
   }
 }
 
