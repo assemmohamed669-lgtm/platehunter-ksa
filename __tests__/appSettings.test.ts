@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { clampFontScale, isDarkColor, loadAppearance, saveAppearance, DEFAULT_APPEARANCE } from "@/lib/appSettings";
+import { clampFontScale, isDarkColor, mixHex, loadAppearance, saveAppearance, DEFAULT_APPEARANCE } from "@/lib/appSettings";
 
 describe("clampFontScale", () => {
   it("keeps values within 1.0–1.3", () => {
@@ -32,6 +32,18 @@ describe("isDarkColor", () => {
     expect(isDarkColor("#000")).toBe(true);
     expect(isDarkColor("#fff")).toBe(false);
     expect(isDarkColor("nope")).toBe(false);
+  });
+});
+
+describe("mixHex", () => {
+  it("mixes two colours at ratio t", () => {
+    expect(mixHex("#000000", "#ffffff", 0.5)).toBe("#808080");
+    expect(mixHex("#000000", "#ffffff", 0)).toBe("#000000");
+    expect(mixHex("#000000", "#ffffff", 1)).toBe("#ffffff");
+  });
+  it("clamps t and tolerates junk input", () => {
+    expect(mixHex("#ff0000", "#00ff00", 2)).toBe("#00ff00");
+    expect(mixHex("nope", "#fff", 0.5)).toBe("nope");
   });
 });
 
