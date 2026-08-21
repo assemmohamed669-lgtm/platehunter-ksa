@@ -12,8 +12,6 @@
  *    `device_fingerprint = null` in Supabase (see supabase/schema.sql).
  */
 
-const STORAGE_KEY = "pk_device_id";
-
 function simpleHash(input: string): string {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
@@ -23,20 +21,15 @@ function simpleHash(input: string): string {
   return Math.abs(hash).toString(36);
 }
 
-function getOrCreatePersistentId(): string {
-  if (typeof window === "undefined") return "server";
-
-  let id = window.localStorage.getItem(STORAGE_KEY);
-  if (!id) {
-    id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    window.localStorage.setItem(STORAGE_KEY, id);
-  }
-  return id;
-}
-
+/**
+ * توقيع مبني على مواصفات الجهاز/المتصفّح — **مش محفوظ في localStorage**، فبيتحسب
+ * من جديد كل مرة وبيفضل ثابت حتى لو اتمسح التخزين (زي سفاري آيفون اللي بيمسح
+ * localStorage كل خروج). ده اللي كان يخلّي الآيفون يطلب ربط جهاز كل تسجيل دخول.
+ *
+ * ملاحظة: نفس خوارزمية التوقيع القديمة بالظبط — عشان الحسابات المربوطة قبل كده
+ * (بصمتها القديمة `uuid.<sig>`) تفضل تطابق عبر مقارنة جزء التوقيع في الدالة
+ * `handle_device_login` (شوف docs/sql/device-signature-match.sql).
+ */
 function getCoarseDeviceSignature(): string {
   if (typeof window === "undefined") return "server";
 
@@ -54,14 +47,13 @@ function getCoarseDeviceSignature(): string {
 }
 
 /**
- * Returns a stable identifier for this device + browser install.
- * This value is sent to `handle_device_login` and stored in
- * `profiles.device_fingerprint` on first login.
+ * بصمة الجهاز اللي بتتبعت لـ `handle_device_login` وتتخزّن في
+ * `profiles.device_fingerprint` أول دخول. بقت = توقيع الجهاز فقط (بدون UUID
+ * محفوظ) عشان تفضل ثابتة على الآيفون بعد مسح التخزين — فمفيش «الحساب مرتبط
+ * بجهاز» كل تسجيل دخول، ومع ذلك تفضل مختلفة بين جهاز وجهاز.
  */
 export function getDeviceFingerprint(): string {
-  const persistentId = getOrCreatePersistentId();
-  const signature = getCoarseDeviceSignature();
-  return `${persistentId}.${signature}`;
+  return getCoarseDeviceSignature();
 }
 
 const SESSION_TOKEN_KEY = "pk_session_token";
