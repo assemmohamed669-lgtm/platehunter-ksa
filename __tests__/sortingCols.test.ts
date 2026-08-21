@@ -74,6 +74,13 @@ describe("matchesPreferred — English headers (case-insensitive)", () => {
     expect(matchesPreferred("الحي")).toBe(true);
     expect(matchesPreferred("سنة الصنع")).toBe(true);
   });
+  it("الملاحظات تظهر تلقائياً في نتيجة الفرز (بطلب المالك)", () => {
+    expect(matchesPreferred("ملاحظات")).toBe(true);
+    expect(matchesPreferred("الملاحظات")).toBe(true);
+    expect(matchesPreferred("ملاحظة")).toBe(true);
+    // فبتتحدد افتراضياً من guessDefaultColumns
+    expect(guessDefaultColumns(["رقم اللوحة", "ملاحظات", "الحي"], "رقم اللوحة")).toContain("ملاحظات");
+  });
 });
 
 // ─── Columns from actual uploaded files ──────────────────────────────────────
@@ -161,9 +168,9 @@ describe("guessDefaultColumns — data file", () => {
     expect(result).toContain("الحي");
     expect(result).toContain("نوع السيارة");
     expect(result).toContain("تاريخ التسجيل"); // التاريخ بقى بيظهر (بطلب المستخدم)
+    expect(result).toContain("ملاحظات");        // الملاحظات بقت تظهر تلقائياً (بطلب المالك)
     expect(result).not.toContain("الشارع");
     expect(result).not.toContain("اسم المسجّل");
-    expect(result).not.toContain("ملاحظات");
   });
 });
 
