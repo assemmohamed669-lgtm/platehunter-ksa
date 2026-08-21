@@ -16,9 +16,9 @@ const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await verifySession(req.headers.get("authorization"));
+    const userId = await verifySession(req.headers.get("authorization"), req);
     if (!userId) return NextResponse.json({ rows: null, error: "unauthorized" }, { status: 401 });
-    if (!rateLimit(`structure:${userId}`, 60, 60_000)) {
+    if (!rateLimit(`structure:${userId}`, 60, 60_000, req)) {
       return NextResponse.json({ rows: null, error: "rate_limited" }, { status: 429 });
     }
 

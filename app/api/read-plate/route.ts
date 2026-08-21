@@ -66,9 +66,9 @@ export async function POST(req: NextRequest) {
   try {
     // Auth: only signed-in agents may call — blocks anonymous abuse of the
     // server API key. Rate-limit per agent as a second layer.
-    const userId = await verifySession(req.headers.get("authorization"));
+    const userId = await verifySession(req.headers.get("authorization"), req);
     if (!userId) return NextResponse.json({ plate: null, error: "unauthorized" }, { status: 401 });
-    if (!rateLimit(`read-plate:${userId}`, 60, 60_000)) {
+    if (!rateLimit(`read-plate:${userId}`, 60, 60_000, req)) {
       return NextResponse.json({ plate: null, error: "rate_limited" }, { status: 429 });
     }
 

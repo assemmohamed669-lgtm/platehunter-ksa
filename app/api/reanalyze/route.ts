@@ -119,9 +119,9 @@ async function structure(transcript: string, groqKey: string): Promise<ReturnTyp
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await verifySession(req.headers.get("authorization"));
+    const userId = await verifySession(req.headers.get("authorization"), req);
     if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    if (!rateLimit(`reanalyze:${userId}`, 30, 60_000)) {
+    if (!rateLimit(`reanalyze:${userId}`, 30, 60_000, req)) {
       return NextResponse.json({ error: "rate_limited" }, { status: 429 });
     }
 

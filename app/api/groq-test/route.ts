@@ -7,9 +7,9 @@ import { verifySession, rateLimit } from "@/lib/apiAuth";
 // than discovering a bad key only after they finish talking.
 export async function POST(req: NextRequest) {
   try {
-    const userId = await verifySession(req.headers.get("authorization"));
+    const userId = await verifySession(req.headers.get("authorization"), req);
     if (!userId) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-    if (!rateLimit(`groq-test:${userId}`, 20, 60_000)) {
+    if (!rateLimit(`groq-test:${userId}`, 20, 60_000, req)) {
       return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
     }
 

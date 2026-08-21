@@ -71,7 +71,13 @@ describe("/api/ors-test — بوابة الجلسة", () => {
 
     await POST(post({ apiKey: "any-key" }, "Bearer good"));
 
-    expect(rateLimit).toHaveBeenCalledWith(expect.stringContaining("agent-1"), expect.any(Number), expect.any(Number));
+    // المعامل الرابع = الطلب نفسه، بيوصل للسجل الأمني (IP + المسار).
+    expect(rateLimit).toHaveBeenCalledWith(
+      expect.stringContaining("agent-1"),
+      expect.any(Number),
+      expect.any(Number),
+      expect.anything()
+    );
   });
 
   it("بيكمّل عادي للمندوب المسجّل تحت الحد", async () => {

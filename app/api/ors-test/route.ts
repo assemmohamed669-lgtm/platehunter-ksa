@@ -13,11 +13,11 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   // البوابة قبل أي شغل — عشان طلب مش مصادق مايستهلكش ولا نداء خارجي واحد.
-  const userId = await verifySession(req.headers.get("authorization"));
+  const userId = await verifySession(req.headers.get("authorization"), req);
   if (!userId) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
-  if (!rateLimit(`ors-test:${userId}`, 20, 60_000)) {
+  if (!rateLimit(`ors-test:${userId}`, 20, 60_000, req)) {
     return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
   }
 

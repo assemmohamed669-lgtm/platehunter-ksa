@@ -1,4 +1,5 @@
 import { clearNoticeDismissals } from "./appNotice";
+import { reportSecurityEvent } from "./reportSecurityEvent";
 import { supabase } from "./supabaseClient";
 import {
   getDeviceFingerprint,
@@ -73,14 +74,20 @@ export async function loginAgent(
   );
 
   if (rpcError) {
+    const code = (rpcError.message?.match(
+      /DEVICE_MISMATCH|ACCOUNT_DISABLED|PROFILE_NOT_FOUND/
+    )?.[0] ?? "UNKNOWN") as LoginErrorCode;
+
+    // نبلّغ **قبل** تسجيل الخروج — بعده مافيش توكن نبعت بيه. الجلسة صالحة
+    // هنا (كلمة السر صحّت) بس الجهاز أو الحساب مرفوض، وده بالظبط اللي
+    // السوبر أدمن عايز يعرفه.
+    if (code === "DEVICE_MISMATCH") await reportSecurityEvent("login_device_mismatch");
+    else if (code === "ACCOUNT_DISABLED") await reportSecurityEvent("login_account_disabled");
+
     // Any failure past this point must not leave an authenticated
     // session sitting on a device that isn't allowed to use it.
     await supabase.auth.signOut();
     clearStoredSessionToken();
-
-    const code = (rpcError.message?.match(
-      /DEVICE_MISMATCH|ACCOUNT_DISABLED|PROFILE_NOT_FOUND/
-    )?.[0] ?? "UNKNOWN") as LoginErrorCode;
 
     return {
       ok: false,

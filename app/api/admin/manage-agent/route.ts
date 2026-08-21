@@ -11,6 +11,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
+import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
 const SUPER_ONLY = new Set(["delete", "setActive", "setRole"]);
@@ -37,9 +38,11 @@ export async function POST(req: NextRequest) {
   // Look up the target so a non-super admin can't touch destructive actions
   // or manage another ADMIN's account (which would allow takeover/lockout).
   const { data: target } = await supabaseAdmin
-    .from("profiles").select("role, is_super").eq("id", agentId).single();
+    .from("profiles").select("role, is_super, username").eq("id", agentId).single();
 
   if (SUPER_ONLY.has(action) && !admin.isSuper) {
+    logSecurityEvent({ type: "admin_action", agentId: adminId, targetId: agentId,
+      detail: `DENIED super_only:${action}`, ...requestMeta(req) });
     return NextResponse.json({ error: "الإجراء ده للسوبر-أدمن فقط." }, { status: 403 });
   }
   // Prevent the super admin from destroying / demoting / disabling their own
@@ -62,6 +65,17 @@ export async function POST(req: NextRequest) {
   if (target?.is_super && agentId !== adminId) {
     return NextResponse.json({ error: "مايصحّش تعدّل حساب السوبر-أدمن." }, { status: 403 });
   }
+
+  logSecurityEvent({
+    type: "admin_action",
+    agentId: adminId,
+    targetId: agentId,
+    targetLabel: (target as { username?: string } | null)?.username ?? null,
+    detail: action,
+    ...requestMeta(req),
+    // كل إجراء يتسجّل لوحده — مانخنقش سجل التدقيق.
+    throttleKey: `admin:${adminId}:${agentId}:${action}:${Date.now()}`,
+  });
 
   try {
     switch (action) {

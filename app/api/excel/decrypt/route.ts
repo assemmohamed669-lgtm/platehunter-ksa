@@ -21,12 +21,12 @@ const MAX_BYTES = 30 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await verifySession(req.headers.get("authorization"));
+    const userId = await verifySession(req.headers.get("authorization"), req);
     // كود مميّز: العميل بيفرّق بينه وبين 401 بتاعة «كلمة مرور الملف غلط».
     if (!userId) {
       return NextResponse.json({ error: "NO_SESSION" }, { status: 401 });
     }
-    if (!rateLimit(`excel-decrypt:${userId}`, 20, 60_000)) {
+    if (!rateLimit(`excel-decrypt:${userId}`, 20, 60_000, req)) {
       return NextResponse.json({ error: "محاولات كتير — استنى دقيقة وجرّب تاني." }, { status: 429 });
     }
 

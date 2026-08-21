@@ -69,9 +69,9 @@ function classify(status: number, bodyText: string): Classified {
 }
 
 export async function POST(req: NextRequest) {
-  const userId = await verifySession(req.headers.get("authorization"));
+  const userId = await verifySession(req.headers.get("authorization"), req);
   if (!userId) return NextResponse.json({ ok: false, category: "unauthorized", reason: "unauthorized" }, { status: 401 });
-  if (!rateLimit(`el-test:${userId}`, 20, 60_000)) {
+  if (!rateLimit(`el-test:${userId}`, 20, 60_000, req)) {
     return NextResponse.json({ ok: false, category: "rate_limit", reason: "rate_limited" }, { status: 429 });
   }
 

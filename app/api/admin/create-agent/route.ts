@@ -9,6 +9,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
+import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
 import { classifyAgentCreateError } from "@/lib/adminErrors";
 
 function normalizeEmail(raw: string): string {
@@ -53,6 +54,15 @@ export async function POST(req: NextRequest) {
   if (role === "admin" && !admin.isSuper) {
     return NextResponse.json({ error: "إنشاء أدمن للسوبر-أدمن فقط." }, { status: 403 });
   }
+
+  logSecurityEvent({
+    type: "admin_action",
+    agentId: adminId,
+    detail: `create_agent role=${role}${trial ? " trial" : ""}`,
+    targetLabel: rawId.trim().toLowerCase() || null,
+    ...requestMeta(req),
+    throttleKey: `create:${adminId}:${Date.now()}`,
+  });
 
   if (!rawId.trim() || !password || password.length < 6) {
     return NextResponse.json(

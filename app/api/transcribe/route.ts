@@ -117,9 +117,9 @@ async function cleanAudio(input: Buffer, inputExt: string): Promise<Buffer> {
 export async function POST(req: NextRequest) {
   try {
     // Auth: signed-in agents only. Rate-limit per agent.
-    const userId = await verifySession(req.headers.get("authorization"));
+    const userId = await verifySession(req.headers.get("authorization"), req);
     if (!userId) return NextResponse.json({ text: null, error: "unauthorized" }, { status: 401 });
-    if (!rateLimit(`transcribe:${userId}`, 120, 60_000)) {
+    if (!rateLimit(`transcribe:${userId}`, 120, 60_000, req)) {
       return NextResponse.json({ text: null, error: "rate_limited" }, { status: 429 });
     }
 
