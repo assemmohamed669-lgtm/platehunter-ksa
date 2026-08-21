@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
-  Type as TypeIcon, Palette, RotateCcw, KeyRound, ChevronLeft,
+  Type as TypeIcon, Palette, Baseline, RotateCcw, KeyRound, ChevronLeft,
   RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp, Mic,
 } from "lucide-react";
 import Link from "next/link";
@@ -19,6 +19,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 
 const DEFAULT_BG = "#F3F5F7";
+const DEFAULT_INK = "#FFFFFF";
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -260,13 +261,26 @@ export default function AppMenu({
               <p className="text-[10px] text-muted">حرّك لتكبير أو تصغير كل النصوص في التطبيق.</p>
             </div>
 
-            {/* لون الخلفية (لون الخط يتظبط تلقائياً عشان يفضل واضح) */}
+            {/* لون الخلفية */}
             <label className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
               <span className="flex items-center gap-1.5"><Palette size={13} /> لون الخلفية</span>
               <input type="color" value={appr.bgColor ?? DEFAULT_BG} onChange={(e) => update({ bgColor: e.target.value })}
                 className="h-6 w-8 rounded border border-border bg-transparent" />
             </label>
-            <p className="text-[10px] text-muted">لون الخط بيتظبط تلقائياً حسب الخلفية (أبيض على الغامق، غامق على الفاتح). ألوان الحالة (مطلوبة/غير مطلوبة) ثابتة.</p>
+
+            {/* لون الخط — يدوي لو التلقائي مش واضح على الخلفية المختارة */}
+            <label className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
+              <span className="flex items-center gap-1.5"><Baseline size={13} /> لون الخط</span>
+              <div className="flex items-center gap-2">
+                {appr.inkColor && (
+                  <button type="button" onClick={() => update({ inkColor: null })}
+                    className="text-[10px] font-normal text-muted underline hover:text-ink">تلقائي</button>
+                )}
+                <input type="color" value={appr.inkColor ?? DEFAULT_INK} onChange={(e) => update({ inkColor: e.target.value })}
+                  className="h-6 w-8 rounded border border-border bg-transparent" />
+              </div>
+            </label>
+            <p className="text-[10px] text-muted">لون الخط بيتظبط تلقائياً حسب الخلفية. لو الخط اختفى أو مش واضح، غيّر لون الخط يدوياً — و«تلقائي» يرجّعه. ألوان الحالة (مطلوبة/غير مطلوبة) ثابتة.</p>
 
             <button onClick={resetAppearance}
               className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2 text-xs font-bold text-muted hover:text-ink transition">
