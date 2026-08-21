@@ -210,7 +210,7 @@ export default function AgentDetail() {
               <div className="flex items-center gap-1.5 text-muted" style={goldDim}><KeyRound size={13} /> <span className="text-ink" style={goldText}>••••••••</span> <span className="text-[10px]">(مشفّر — للتغيير اضغط «تعديل»)</span></div>
               <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Phone size={13} /> <span className="text-ink" dir="ltr" style={goldText}>{p.phone || "بدون تليفون"}</span></div>
               <div className="mt-1 flex items-center gap-1.5 text-muted" style={goldDim}><Clock size={12} /> آخر ظهور: {daysAgo(p.last_seen)}</div>
-              <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Smartphone size={12} /> {p.device_fingerprint ? "مرتبط بجهاز" : "غير مرتبط بجهاز"}</div>
+              <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Smartphone size={12} /> {p.device_lock_exempt ? "🔓 يدخل من أي جهاز (معفي من القفل)" : p.device_fingerprint ? "مرتبط بجهاز واحد" : "لسه مادخلش — هيتربط بأول جهاز"}</div>
             </div>
           ) : (
             /* ── وضع التعديل ── */

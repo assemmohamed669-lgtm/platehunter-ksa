@@ -22,6 +22,7 @@ interface AgentProfile {
   is_trial: boolean;
   is_active: boolean;
   device_fingerprint: string | null;
+  device_lock_exempt: boolean;
   last_seen: string | null;
   subscription_end: string | null;
   subscription_amount: number | null;
@@ -68,6 +69,7 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "expiring", label: "قرب ينتهي" },
   { key: "grace", label: "في السماح" },
   { key: "expired", label: "مقطوع" },
+  { key: "any-device", label: "🔓 يدخل من أي جهاز" },
 ];
 
 export default function AdminDashboard() {
@@ -302,6 +304,8 @@ export default function AdminDashboard() {
       .filter(({ a, sub }) => {
         if (q && !(a.username?.toLowerCase().includes(q) || a.email?.toLowerCase().includes(q) || a.phone?.includes(q))) return false;
         if (filter === "all") return true;
+        // المناديب المعفيين من قفل الجهاز (بيدخلوا بإيميلهم من أي جهاز).
+        if (filter === "any-device") return a.role === "agent" && a.device_lock_exempt === true;
         if (a.role === "admin") return false;
         return sub.status === (filter as SubStatus);
       })
@@ -607,6 +611,15 @@ export default function AdminDashboard() {
                         ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-500">أحدث نسخة</span>
                         : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-500" title={`المندوب على ${a.app_version} — الأحدث ${APP_VERSION}`}>نسخة قديمة {a.app_version}</span>)
                     : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted">نسخة غير معروفة</span>}
+                  {/* حالة ربط الجهاز — المعفي (يدخل من أي جهاز) متلوّن تحذيري عشان
+                      تلاقيه بسرعة وتقفله على جهاز واحد لو حابب. */}
+                  {a.role === "agent" && (
+                    a.device_lock_exempt
+                      ? <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-500" title="الحساب معفي من القفل — يدخل بإيميله من أي جهاز">🔓 أي جهاز</span>
+                      : a.device_fingerprint
+                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-600" title="مربوط بجهاز واحد">📱 جهاز واحد</span>
+                        : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted" title="لسه مادخلش — هيتربط بأول جهاز يدخل منه">جهاز؟</span>
+                  )}
                 </div>
                 <p className="truncate text-[11px]" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>
                   <span className={act.online ? "font-bold text-green-500" : "text-muted"}>{act.label}</span>
