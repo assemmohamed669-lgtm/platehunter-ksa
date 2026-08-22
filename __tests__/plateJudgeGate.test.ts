@@ -54,9 +54,12 @@ describe("PILOT_OWNER_ID — الثابت نفسه لازم يكون UUID حقي
 });
 
 describe("isPilotOwner — الحالات الأساسية", () => {
-  it("معرّف المالك (حروف صغيرة، زي ما Supabase بيرجّعه) → true", () => {
-    expect(isPilotOwner(OWNER)).toBe(true);
-    expect(isPilotOwner(PILOT_OWNER_ID)).toBe(true);
+  // ⛔ الطيّار متوقّف حالياً بمفتاح رئيسي (PILOT_ENABLED=false) بطلب المالك —
+  // فـisPilotOwner بترجّع false للكل حتى المالك (اللي لسه في القايمة). لإعادة
+  // التشغيل: خلّي PILOT_ENABLED=true وارجّع التأكيدات دي لـtrue.
+  it("معرّف المالك → false (الطيّار متوقّف بمفتاح رئيسي)", () => {
+    expect(isPilotOwner(OWNER)).toBe(false);
+    expect(isPilotOwner(PILOT_OWNER_ID)).toBe(false);
   });
 
   it("null / undefined (هوية لسه ماتحلّتش أو أوفلاين) → false", () => {
@@ -148,7 +151,7 @@ describe("PILOT_ALLOWED_IDS — قايمة المسموح لهم مقصودة ب
     }
     expect(PILOT_ALLOWED_IDS[0]).toBe(OWNER);
     expect(isPilotOwner(INTRUDER)).toBe(false);
-    expect(isPilotOwner(OWNER)).toBe(true);
+    expect(isPilotOwner(OWNER)).toBe(false); // الطيّار متوقّف (PILOT_ENABLED=false)
   });
 
   // مراجعة معادية عدّت **٧ أشكال** للتلاعب، كل واحد فيهم كان بيخلّي هوية رابعة
@@ -181,23 +184,24 @@ describe("PILOT_ALLOWED_IDS — قايمة المسموح لهم مقصودة ب
       // عنصر كبير كان دخل، `includes` كان هيطابق uid كبير بنفس الحالة.
       expect(isPilotOwner(IN), name).toBe(false);
       expect(isPilotOwner(IN.toUpperCase()), name).toBe(false);
-      // والتلاتة الأصليين لسه داخلين (التلاعب مافقدهمش وصولهم).
-      expect(isPilotOwner(OWNER), name).toBe(true);
-      expect(isPilotOwner(BROTHER), name).toBe(true);
-      expect(isPilotOwner(THIRD_TESTER), name).toBe(true);
+      // الطيّار متوقّف بمفتاح رئيسي، فالكل false — والمهم هنا إن التلاعب مانجحش
+      // (القايمة مجمّدة زي ما هي فوق)، والدخيل مرفوض في كل الأحوال.
+      expect(isPilotOwner(OWNER), name).toBe(false);
+      expect(isPilotOwner(BROTHER), name).toBe(false);
+      expect(isPilotOwner(THIRD_TESTER), name).toBe(false);
     }
   });
 });
 
-describe("isPilotOwner — المجرِّب التالت مسموح له", () => {
-  it("معرّف المجرِّب التالت → true", () => {
-    expect(isPilotOwner(THIRD_TESTER)).toBe(true);
-    expect(isPilotOwner("7b4bc404-50e7-46ad-935f-aa65e293d6b8")).toBe(true);
+describe("isPilotOwner — المجرِّب التالت (الطيّار متوقّف حالياً)", () => {
+  it("معرّف المجرِّب التالت → false (الطيّار متوقّف بمفتاح رئيسي)", () => {
+    expect(isPilotOwner(THIRD_TESTER)).toBe(false);
+    expect(isPilotOwner("7b4bc404-50e7-46ad-935f-aa65e293d6b8")).toBe(false);
   });
 
-  it("والمالك وأخوه لسه مسموح لهم (الإضافة مافتحتش ومازوّدتش حاجة)", () => {
-    expect(isPilotOwner(OWNER)).toBe(true);
-    expect(isPilotOwner(BROTHER)).toBe(true);
+  it("والمالك وأخوه برضه false طول ما الطيّار متوقّف", () => {
+    expect(isPilotOwner(OWNER)).toBe(false);
+    expect(isPilotOwner(BROTHER)).toBe(false);
   });
 
   it("نفس التضييق على المجرِّب التالت: كبير/مسافات/جزئي → false", () => {
