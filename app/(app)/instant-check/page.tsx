@@ -181,6 +181,7 @@ interface PttRow {
   similarity?: number;
   row?: Record<string, string>;
   vehicleType?: string;          // نوع السيارة spoken after the plate (ونيت/فان/…)
+  notes?: string;                // ملاحظة المندوب اليدوية (بتتكتب بالقلم، وتتدفّق للتصدير/الفرز/المشاركة)
   needsReview?: boolean;         // الشكل مكسور (أرقام بس/حرف غريب) → محتاجة مراجعة
   /** (مهجور) اسم موقع كان بيتكتب بإيد المندوب — اتشال، «الحي-الشارع» بيغني عنه. */
   locationName?: string;
@@ -2805,6 +2806,8 @@ export default function InstantCheckPage() {
         "النوع": r.vehicleType ?? "",
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
+      // ملاحظة المندوب (لو كتبها) تكسب، وإلا ملاحظة شيت المطلوبين — تطلع في الصورة/الإكسيل.
+      obj[NOTES_KEY] = r.notes ?? r.row?.[NOTES_KEY] ?? "";
       obj["التاريخ"] = formatDate(r.checkedAt);   // التاريخ يفضل مع اللوحة في الصورة كمان
       return objToPlateRow(obj);
     });
@@ -2814,6 +2817,7 @@ export default function InstantCheckPage() {
   async function exportPttRowToField(r: PttRow) {
     const mergedRow = { ...(r.row ?? {}) };
     if (r.vehicleType) mergedRow["النوع"] = r.vehicleType;
+    if (r.notes) mergedRow[NOTES_KEY] = r.notes;   // ملاحظة المندوب تكسب على ملاحظة شيت المطلوبين
     const result: PlateResult = { plate: r.plate, normalized: "", found: r.found, matchType: r.matchType, similarity: r.similarity, row: mergedRow };
     const gps = (r.lat != null && r.lng != null) ? { lat: r.lat, lng: r.lng } : undefined;
     await exportToFieldCheck(result, "ptt", gps);
@@ -2823,6 +2827,12 @@ export default function InstantCheckPage() {
   function setPttType(id: string, code: string) {
     setPttResults((prev) => prev.map((r) => (r.id === id ? { ...r, vehicleType: code || undefined } : r)));
     void editExportedEntry(id, { type: code });   // لو الصف اتصدّر خلاص، عدّل السجل كمان
+  }
+
+  // ملاحظة المندوب لصف صوتي (بالقلم) — بتتخزّن في الصف وتتدفّق للتصدير/الفرز/المشاركة.
+  function setPttNote(id: string, note: string) {
+    setPttResults((prev) => prev.map((r) => (r.id === id ? { ...r, notes: note || undefined } : r)));
+    void editExportedEntry(id, { notes: note });  // لو الصف اتصدّر خلاص، عدّل السجل كمان
   }
 
   // Remove a single voice row.
@@ -2841,7 +2851,11 @@ export default function InstantCheckPage() {
     const lines = [`🚗 اللوحة: ${r.plate}`];
     lines.push(r.found ? (r.matchType === "fuzzy" ? `الحالة: مطلوبة؟ ${r.similarity}%` : "الحالة: مطلوبة") : "الحالة: غير مطلوبة");
     if (r.vehicleType) lines.push(`النوع: ${r.vehicleType}`);
-    for (const [k, v] of Object.entries(r.row ?? {})) { if (String(v).trim()) lines.push(`${k}: ${v}`); }
+    // نطبع كل أعمدة صف المطابقة ما عدا الملاحظات — الملاحظة بتتحط مرة واحدة تحت
+    // (ملاحظة المندوب تكسب على ملاحظة شيت المطلوبين) عشان ماتتكررش.
+    for (const [k, v] of Object.entries(r.row ?? {})) { if (k !== NOTES_KEY && String(v).trim()) lines.push(`${k}: ${v}`); }
+    const note = r.notes ?? r.row?.[NOTES_KEY];
+    if (note && String(note).trim()) lines.push(`${NOTES_KEY}: ${note}`);
     if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
     return lines.join("\n");
   }
@@ -4756,7 +4770,7 @@ export default function InstantCheckPage() {
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} /></td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.["ملاحظات"] || "—"}</td>
+                              <td className="min-w-[90px] border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
                               {dynCols.map((h) => (
                                 <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
                               ))}
