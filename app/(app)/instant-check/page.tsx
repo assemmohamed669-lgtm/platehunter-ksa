@@ -3241,6 +3241,10 @@ export default function InstantCheckPage() {
             // startMs/endMs/wordConfidenceOk في **كل** صف لكل مستخدم والتعلّم
             // مقفول — والصفوف دي بتتخزّن في localStorage وبتغذّي
             // collectTrainingFrom، يعني تغيير سلوك عابر للمستخدمين.
+            // قياس التدريب/الطيّار **مايمنعش التفريغ أبداً**: أي خطأ هنا (بيشتغل
+            // للمالك وحده) كان بيتصاد في الـcatch الخارجي فيتخطّى processWhisperText
+            // وتختفي اللوحات — بينما المناديب (البلوك متخطّي عندهم) شغّالين.
+            try {
             if (learningGateRef.current || judgeArmedRef.current) {
               const words: DgWord[] = readDeepgramWords(msg);
               if (words.length > 0) {
@@ -3335,6 +3339,7 @@ export default function InstantCheckPage() {
                 }
               }
             }
+            } catch { /* قياس التدريب/الطيّار فشل — مايمنعش التفريغ */ }
             processWhisperText(text, false);
           }
         } catch { /* رسالة مش JSON — تجاهل */ }
