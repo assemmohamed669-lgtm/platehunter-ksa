@@ -45,9 +45,23 @@ describe("typeToCode — تحويل نوع السيارة للحرف المخت�
     expect(typeToCode("ملاكي")).toBe("م"); // مايتلغبطش مع مصدومة
   });
 
+  it("متربة (مت) ومركونة (مر) — في القائمة وبتترجموا من الكلمة", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("مت");
+    expect(VEHICLE_TYPE_CODES).toContain("مر");
+    expect(typeToCode("مت")).toBe("مت");
+    expect(typeToCode("متربة")).toBe("مت");
+    expect(typeToCode("مترب")).toBe("مت");
+    expect(typeToCode("متربه")).toBe("مت");
+    expect(typeToCode("مر")).toBe("مر");
+    expect(typeToCode("مركونة")).toBe("مر");
+    expect(typeToCode("مركونه")).toBe("مر");
+    expect(vehicleTypeLabel("مت")).toBe("مت (متربة)");
+    expect(vehicleTypeLabel("مر")).toBe("مر (مركونة)");
+  });
+
   it("غير معروف أو فاضي → فاضي (فيفضل النص الأصلي عند التصدير)", () => {
     expect(typeToCode("")).toBe("");
-    expect(typeToCode("مركونة")).toBe("");
+    expect(typeToCode("طيارة")).toBe("");   // مش نوع في القائمة
   });
 });
 
@@ -60,8 +74,8 @@ describe("vehicleTypeLabel — شكل العرض في القايمة", () => {
   });
 
   it("الترتيب زي ما المالك طلبه", () => {
-    // «ش» اتضاف بعد «مو»، و«مص» (مصدومة) بعد «ش» بطلب المالك — الباقي زي ما هو
-    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "مص", "H1"]);
+    // «ش» بعد «مو»، وحالات السيارة (مصدومة/متربة/مركونة) بعدها بطلب المالك.
+    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "مص", "مت", "مر", "H1"]);
   });
 
   it("حرف مش في القايمة بيرجع زي ما هو", () => {
