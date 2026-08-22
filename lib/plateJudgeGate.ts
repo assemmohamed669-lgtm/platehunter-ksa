@@ -55,6 +55,12 @@ export const PILOT_ALLOWED_IDS: readonly string[] = Object.freeze([
   "7b4bc404-50e7-46ad-935f-aa65e293d6b8",   // مجرِّب تالت — صوت تالت للقياس
 ]);
 
+// ⛔ مفتاح إيقاف رئيسي للطيّار (بطلب المالك ٢٠٢٦/٠٨). كان بيعطّل التشييك الصوتي عند
+// المالك (المسار الوحيد اللي بيشغّله) ومالوش لازمة حالياً. false ⇒ `isPilotOwner`
+// بترجّع false للكل ⇒ لوحة «الرأي التاني» تختفي والطيّار مايشتغلش، فصوت المالك يرجع
+// زي المناديب بالظبط. القايمة فوق سايبة زي ما هي — لإعادة التشغيل: خلّي ده true.
+export const PILOT_ENABLED = false;
+
 /**
  * هل المستخدم ده مسموح له بالطيّار؟ **فشل مغلق** في كل الحالات الملتبسة:
  * فاضي، null، undefined، مسافات، هوية لسه ماتحلّتش، أوفلاين، خطأ كتابة،
@@ -63,6 +69,7 @@ export const PILOT_ALLOWED_IDS: readonly string[] = Object.freeze([
  * الاسم فضل `isPilotOwner` عشان كل نداءات الاستدعاء تفضل زي ما هي.
  */
 export function isPilotOwner(uid: string | null | undefined): boolean {
+  if (!PILOT_ENABLED) return false;            // ← مفتاح الإيقاف الرئيسي (متوقّف حالياً)
   if (typeof uid !== "string" || !UUID_RE.test(uid)) return false;
   if (!Array.isArray(PILOT_ALLOWED_IDS)) return false;
   // الفلترة قبل المقارنة: عنصر مش سترنج أو مش UUID مايشاركش في القرار خالص.
