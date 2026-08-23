@@ -453,7 +453,7 @@ export async function parseExcelFile(file: File, password?: string, forcedSheet?
   }
 
   // Synchronous fallback (main-thread; may briefly freeze UI on very large files)
-  return _parseExcelSync(new Uint8Array(buffer));
+  return _parseExcelSync(new Uint8Array(buffer), password, forcedSheet);
 }
 
 /**
@@ -723,7 +723,7 @@ function cellToStr(v: unknown): string {
   return String(v);
 }
 
-function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
+function _parseExcelSync(data: Uint8Array, password?: string, forcedSheet?: string): ExcelTable {
   let sheetName: string | undefined;
   let allSheetNames: string[] = [];
   try {
@@ -731,10 +731,14 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
     allSheetNames = wbMeta.SheetNames;
   } catch { /* password-protected */ }
 
+  // ورقة مفروضة (forcedSheet): نقراها لوحدها بلا اكتشاف تلقائي ولا دمج — عشان
+  // استيراد ملف متعدد الورقات (importMultiSheetData) يجيب كل ورقة على حدة.
+  if (forcedSheet && allSheetNames.includes(forcedSheet)) sheetName = forcedSheet;
+
   // Multi-sheet detection: score every sheet by plate-like content and pick
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
   const platesPerSheet = new Map<string, number>();
-  if (allSheetNames.length > 1) {
+  if (!forcedSheet && allSheetNames.length > 1) {
     let bestCount = 0;
     let bestName: string | undefined;
     for (const name of allSheetNames) {
