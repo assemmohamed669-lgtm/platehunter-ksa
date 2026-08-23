@@ -241,9 +241,11 @@ export async function importMultiSheetData(
       for (let i = start; i < aoa.length; i++) {
         const raw = aoa[i] as unknown[];
         if (!raw || !raw.some((v) => String(v ?? "").trim() !== "")) continue;   // صف فاضي
+        // بنخزّن **كل** صف فيه بيانات (زي importLargeDataFile بالظبط) — مش بس اللي
+        // شكله لوحة — عشان مانفقدش أي لوحة ممكن الكاشف يشوفها غير مطابقة. المطابقة
+        // وقت الفرز هي اللي بتقرّر. plateCount للعرض بس (لوحات فريدة واضحة).
         const plate = String(raw[shape.plateCol] ?? "").trim();
-        if (!isPlateLike(plate)) continue;                                       // صف بلا لوحة
-        unique.add(normalizeForCount(plate));
+        if (isPlateLike(plate)) unique.add(normalizeForCount(plate));
         const obj: DataRow = {};
         for (let c = 0; c < shape.headers.length; c++) obj[shape.headers[c]] = String(raw[c] ?? "").trim();
         batch.push(obj);

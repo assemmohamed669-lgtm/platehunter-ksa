@@ -122,6 +122,30 @@ describe("importMultiSheetData + iterateRows(sheets) — اختيار ورقات
     expect(both.every((m) => m.idx >= 0 && m.idx < 5)).toBe(true);
   });
 
+  it("بيخزّن كل الصفوف (مش بس اللي شكلها لوحة) — مافيش لوحة بتتفوّت", async () => {
+    // ورقة فيها صف لوحته واضحة + صف لوحته بصيغة غريبة الكاشف ممكن مايعتبرهاش
+    // لوحة — لازم الاتنين يتخزّنوا عشان الفرز يقرر مش الكاشف.
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["رقم اللوحه", "الحي"],
+      ["ابح1234", "النسيم"],
+      ["دمم5012", "الملز"],
+      ["١٢٣٤٥٦٧", "رقم عقد مش لوحة"], // مش شكل لوحة — بس بيتخزّن برضه
+    ]), "داتا");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["رقم اللوحه", "الحي"],
+      ["قدم1111", "قديم"],
+    ]), "داتا قديمه");
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    const meta = await importMultiSheetData(new File([out], "x.xlsx"), { slot: "data" });
+    const dataSheet = (meta.sheets ?? []).find((s) => s.name === "داتا")!;
+    expect(dataSheet.rowCount).toBe(3);   // كل الصفوف اتخزّنت
+    expect(dataSheet.plateCount).toBe(2); // اللوحات الواضحة بس في العدّاد
+    const rows: Record<string, string>[] = [];
+    await iterateRows((b) => { rows.push(...b); }, { slot: "data", sheets: new Set(["داتا"]) });
+    expect(rows.length).toBe(3);
+  });
+
   it("meta.sheetName والعناوين من أول ورقة فيها لوحات", async () => {
     const meta = await importMultiSheetData(multiSheetFile(), { slot: "data" });
     expect(meta.sheetName).toBe("داتا");
