@@ -131,6 +131,33 @@ function buildHeaders(headerCells: string[], width: number): string[] {
   return out;
 }
 
+/**
+ * شكل الورقة (صف الهيدر + عمود اللوحة + الأعمدة) **من غير** بناء كل الصفوف.
+ * ضروري لاستيراد ملف داتا ضخم (مليون صف/ورقة): بنكتشف الشكل بمرور خفيف،
+ * وبعدين بنبني الصفوف على دفعات في dataStore بدل ما نحمّلها كلها في الذاكرة.
+ * plateCol = -1 معناها الورقة مفيهاش عمود لوحات.
+ */
+export function analyzeSheetShape(
+  aoa: unknown[][]
+): { headerRow: number; plateCol: number; plateColName: string; headers: string[] } {
+  const width = widthOf(aoa);
+  if (width === 0) return { headerRow: -1, plateCol: -1, plateColName: "", headers: [] };
+
+  const { col: plateCol } = findPlateColumn(aoa, width);
+  if (plateCol < 0) {
+    return {
+      headerRow: -1, plateCol: -1, plateColName: "",
+      headers: buildHeaders((aoa[0] ?? []).map((v) => String(v ?? "")), width),
+    };
+  }
+
+  const headerRow = findHeaderRow(aoa, plateCol);
+  const headerCells = headerRow >= 0 ? (aoa[headerRow] ?? []).map((v) => String(v ?? "")) : [];
+  const headers = buildHeaders(headerCells, width);
+  const plateColName = headerRow >= 0 ? headers[plateCol] : "";
+  return { headerRow, plateCol, plateColName, headers };
+}
+
 /** يحلّل ورقة واحدة (صفوفها كمصفوفات خام). */
 export function analyzeSheet(name: string, aoa: unknown[][], hidden = false): SheetInfo {
   const width = widthOf(aoa);
@@ -140,16 +167,11 @@ export function analyzeSheet(name: string, aoa: unknown[][], hidden = false): Sh
   };
   if (width === 0) return empty;
 
-  const { col: plateCol } = findPlateColumn(aoa, width);
+  const { headerRow, plateCol, plateColName, headers } = analyzeSheetShape(aoa);
   if (plateCol < 0) {
     // مفيش لوحات — بنرجّع الورقة بهيدرها عشان تفضل معروضة بعدد صفر.
-    return { ...empty, headers: buildHeaders((aoa[0] ?? []).map((v) => String(v ?? "")), width) };
+    return { ...empty, headers };
   }
-
-  const headerRow = findHeaderRow(aoa, plateCol);
-  const headerCells = headerRow >= 0 ? (aoa[headerRow] ?? []).map((v) => String(v ?? "")) : [];
-  const headers = buildHeaders(headerCells, width);
-  const plateColName = headerRow >= 0 ? headers[plateCol] : "";
 
   const rows: Record<string, string>[] = [];
   const unique = new Set<string>();

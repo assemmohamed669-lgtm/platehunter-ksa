@@ -11,13 +11,31 @@
  * قاعدة **منفصلة تماماً** ("platehunter-bigdata") — مابتلمسش قاعدة التطبيق
  * الرئيسية ("platehunter") ولا داتا المناديب. كله على الجهاز — مفيش سيرفر.
  */
+import * as XLSX from "xlsx";
 import { streamXlsxToBatches, NotXlsxWorksheetError, type XlsxStreamMeta } from "./xlsxStream";
 import { detectPlateColumn, detectArabicPlateColumn } from "./plateParser";
+import { analyzeSheetShape, isPlateLike, normalizeForCount } from "./referralSheets";
 
 const DB_NAME = "platehunter-bigdata";
 const DB_VERSION = 2; // v2: تخزين كدفعات (chunks) بدل صف-بصف بفهرس
 const CHUNKS = "chunks";
 const META = "meta";
+
+/**
+ * ورقة واحدة داخل ملف داتا متعدد الورقات — عشان المندوب يختار يفرز على أنهي
+ * ورقة/ورقات. كل ورقة بتتخزّن كدفعات موسومة باسمها، والفرز بيقرا المختار بس.
+ */
+export interface DataSheetMeta {
+  name: string;
+  /** مفتاح عمود اللوحة في صفوف الورقة (اسم الهيدر). */
+  plateCol: string;
+  /** اسم عمود اللوحة المعروض (فاضي لو الورقة بلا هيدر). */
+  plateColName: string;
+  headers: string[];
+  rowCount: number;
+  /** عدد اللوحات الفريدة في الورقة (للعرض في الاختيار). */
+  plateCount: number;
+}
 
 export interface DataMeta {
   slot: string;
@@ -27,10 +45,13 @@ export interface DataMeta {
   plateCol: string;
   fileName: string;
   importedAt: string;
+  /** موجودة فقط لو الملف متعدد الورقات (استيراد importMultiSheetData). */
+  sheets?: DataSheetMeta[];
 }
 
 export type DataRow = Record<string, string>;
-interface ChunkRec { rows: DataRow[] }
+/** الدفعة موسومة باسم ورقتها (sheet) في ملفات الداتا متعددة الورقات فقط. */
+interface ChunkRec { rows: DataRow[]; sheet?: string }
 
 function openDataDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -161,6 +182,121 @@ export async function importLargeDataFile(
   return dataMeta;
 }
 
+/**
+ * يستورد ملف داتا **متعدد الورقات** — كل ورقة فيها لوحات بتتخزّن كدفعات موسومة
+ * باسمها، فالمندوب يقدر بعد كده يختار يفرز على أي ورقة/ورقات (الفرز بيقرا
+ * الدفعات الموسومة بالورقات المختارة بس عبر iterateRows({sheets})).
+ *
+ * الذاكرة: بنقرا **ورقة واحدة في المرة** (`sheets:[name]`) وبنبني صفوفها على
+ * دفعات ونكتبها ونحرّرها قبل الورقة اللي بعدها — يعني الذروة = ورقة واحدة (زي
+ * الاستيراد العادي بالظبط)، مش الملف كله. الورقات الفاضية/بلا لوحات بتتجاهل.
+ */
+export async function importMultiSheetData(
+  file: File,
+  opts: { slot?: string; onProgress?: (rows: number) => void } = {}
+): Promise<DataMeta> {
+  const slot = opts.slot ?? "data";
+  await clearData(slot);
+  const db = await openDataDB();
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+
+    // أسماء الورقات بس (سريع — من غير قراءة خلايا).
+    let sheetNames: string[] = [];
+    try {
+      sheetNames = XLSX.read(buf, { type: "array", bookSheets: true }).SheetNames;
+    } catch { /* ملف مقفول/غريب — هيتعامل معاه المستدعي */ }
+
+    const writeTagged = (rows: DataRow[], sheet: string): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(CHUNKS, "readwrite");
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.objectStore(CHUNKS).put({ rows, sheet } as ChunkRec);
+      });
+
+    const sheetsMeta: DataSheetMeta[] = [];
+    let totalWritten = 0;
+
+    for (const name of sheetNames) {
+      let aoa: unknown[][];
+      try {
+        const opt: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+        (opt as Record<string, unknown>).dense = true;
+        const wb = XLSX.read(buf, opt);
+        const ws = wb.Sheets[name];
+        if (!ws) continue;
+        aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
+      } catch { continue; }
+
+      const shape = analyzeSheetShape(aoa);
+      if (shape.plateCol < 0) { aoa = []; continue; }   // ورقة بلا لوحات — نتجاهلها
+      const plateKey = shape.headers[shape.plateCol];
+
+      // نبني الصفوف على دفعات (مش كلها مرة واحدة) ونكتبها موسومة باسم الورقة.
+      let batch: DataRow[] = [];
+      const unique = new Set<string>();
+      let rowCount = 0;
+      const start = shape.headerRow >= 0 ? shape.headerRow + 1 : 0;
+      for (let i = start; i < aoa.length; i++) {
+        const raw = aoa[i] as unknown[];
+        if (!raw || !raw.some((v) => String(v ?? "").trim() !== "")) continue;   // صف فاضي
+        const plate = String(raw[shape.plateCol] ?? "").trim();
+        if (!isPlateLike(plate)) continue;                                       // صف بلا لوحة
+        unique.add(normalizeForCount(plate));
+        const obj: DataRow = {};
+        for (let c = 0; c < shape.headers.length; c++) obj[shape.headers[c]] = String(raw[c] ?? "").trim();
+        batch.push(obj);
+        rowCount++;
+        if (batch.length >= CHUNK_ROWS) {
+          await writeTagged(batch, name);
+          totalWritten += batch.length; batch = [];
+          opts.onProgress?.(totalWritten);
+        }
+      }
+      if (batch.length) {
+        await writeTagged(batch, name);
+        totalWritten += batch.length; batch = [];
+        opts.onProgress?.(totalWritten);
+      }
+      aoa = [];   // حرّر ذاكرة الورقة قبل اللي بعدها
+
+      if (rowCount > 0) {
+        sheetsMeta.push({
+          name, plateCol: plateKey, plateColName: shape.plateColName,
+          headers: shape.headers, rowCount, plateCount: unique.size,
+        });
+      }
+    }
+
+    if (sheetsMeta.length === 0) {
+      await clearData(slot);
+      throw new Error("الملف فارغ أو لا يحتوي على بيانات.");
+    }
+
+    const first = sheetsMeta[0];
+    const dataMeta: DataMeta = {
+      slot,
+      headers: first.headers,
+      sheetName: first.name,
+      rowCount: totalWritten,
+      plateCol: first.plateCol,
+      fileName: file.name,
+      importedAt: new Date().toISOString(),
+      sheets: sheetsMeta,
+    };
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(META, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(META).put(dataMeta);
+    });
+    return dataMeta;
+  } finally {
+    db.close();
+  }
+}
+
 /** ميتاداتا slot لو موجود (يعني فيه داتا كبيرة مستوردة). */
 export async function getDataMeta(slot = "data"): Promise<DataMeta | null> {
   const db = await openDataDB();
@@ -191,10 +327,14 @@ export async function getSampleRows(n = 50): Promise<DataRow[]> {
 }
 
 /** يلفّ على كل صفوف الداتا دفعة-بدفعة (للفرز/المسح الكامل) — بذاكرة دفعة واحدة.
- *  كل استدعاء onBatch بياخد دفعة صفوف بترتيب ملف الداتا الأصلي. */
+ *  كل استدعاء onBatch بياخد دفعة صفوف بترتيب ملف الداتا الأصلي + اسم ورقتها.
+ *
+ *  opts.sheets (اختياري): لو اتبعتت، بنتخطّى دفعات الورقات اللي **مش** في المجموعة
+ *  دي — عشان المندوب يفرز على الورقات اللي اختارها بس في ملف متعدد الورقات.
+ *  الدفعات القديمة (بلا وسم ورقة) بتتقري دايماً (توافق مع الاستيراد أحادي الورقة). */
 export async function iterateRows(
-  onBatch: (rows: DataRow[], baseIndex: number) => void | Promise<void>,
-  opts: { slot?: string } = {}
+  onBatch: (rows: DataRow[], baseIndex: number, sheet: string) => void | Promise<void>,
+  opts: { slot?: string; sheets?: Set<string> | null } = {}
 ): Promise<void> {
   const db = await openDataDB();
   try {
@@ -206,15 +346,20 @@ export async function iterateRows(
       req.onsuccess = () => resolve(req.result as IDBValidKey[]);
       req.onerror = () => reject(req.error);
     });
+    const filter = opts.sheets ?? null;
     let base = 0;
     for (const key of keys) {
-      const rows = await new Promise<DataRow[]>((resolve, reject) => {
+      const rec = await new Promise<ChunkRec | undefined>((resolve, reject) => {
         const tx = db.transaction(CHUNKS, "readonly");
         const req = tx.objectStore(CHUNKS).get(key);
-        req.onsuccess = () => resolve(((req.result as ChunkRec)?.rows) ?? []);
+        req.onsuccess = () => resolve(req.result as ChunkRec | undefined);
         req.onerror = () => reject(req.error);
       });
-      if (rows.length) { await onBatch(rows, base); base += rows.length; }
+      const rows = rec?.rows ?? [];
+      const sheet = rec?.sheet ?? "";
+      // فلتر الورقات: نتخطّى ورقة موسومة مش مختارة. الدفعات بلا وسم بتعدّي دايماً.
+      if (filter && sheet && !filter.has(sheet)) continue;
+      if (rows.length) { await onBatch(rows, base, sheet); base += rows.length; }
     }
   } finally {
     db.close();
