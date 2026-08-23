@@ -2,7 +2,8 @@
 import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach } from "vitest";
 import * as XLSX from "xlsx";
-import { importMultiSheetData, iterateRows, getDataMeta, clearData } from "@/lib/dataStore";
+import { importMultiSheetData, iterateRows, getDataMeta, clearData, type DataMeta } from "@/lib/dataStore";
+import { normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 
 // ملف داتا فيه أكتر من ورقة (زي «داتا حازم»: ورقة حالية + ورقة قديمة) + ورقة
 // فرز فاضية. المندوب لازم يقدر يختار يفرز على أي ورقة أو الاتنين.
@@ -84,6 +85,41 @@ describe("importMultiSheetData + iterateRows(sheets) — اختيار ورقات
     const seen = new Set<string>();
     await iterateRows((_b, _base, sheet) => { if (sheet) seen.add(sheet); }, { slot: "data" });
     expect([...seen].sort()).toEqual(["داتا", "داتا قديمه"]);
+  });
+
+  // نفس منطق حلقة الفرز المتدفّق في صفحة الفرز بالظبط: refIndex في الذاكرة +
+  // iterateRows({sheets}) مع عمود لوحة كل ورقة — عشان نتأكد إن الفرز فعلاً
+  // بيطلّع مطابقات الورقات المختارة بس.
+  async function streamedSort(meta: DataMeta, refPlates: string[], selected: Set<string> | null) {
+    const refIndex = new Set(refPlates.map((p) => normalizePlate(bankPlateToArabic(p))));
+    const sheetPlateColMap = new Map((meta.sheets ?? []).map((s) => [s.name, s.plateCol]));
+    const matches: { plate: string; sheet: string; idx: number }[] = [];
+    let gj = 0;
+    await iterateRows((batch, _base, sheet) => {
+      const pc = (sheet && sheetPlateColMap.get(sheet)) || meta.plateCol;
+      for (const row of batch) {
+        const idx = gj++;
+        const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
+        if (n && refIndex.has(n)) matches.push({ plate: n, sheet, idx });
+      }
+    }, { slot: "data", sheets: selected });
+    return matches;
+  }
+
+  it("فرز على ورقة واحدة يطابق لوحاتها بس (مطابقة إحالة فعلية)", async () => {
+    const meta = await importMultiSheetData(multiSheetFile(), { slot: "data" });
+    // إحالة فيها لوحة من كل ورقة
+    const refs = ["دمم5012", "قدم1111"];
+    const onlyNew = await streamedSort(meta, refs, new Set(["داتا"]));
+    expect(onlyNew.map((m) => m.plate)).toEqual([normalizePlate("دمم5012")]);
+
+    const onlyOld = await streamedSort(meta, refs, new Set(["داتا قديمه"]));
+    expect(onlyOld.map((m) => m.plate)).toEqual([normalizePlate("قدم1111")]);
+
+    const both = await streamedSort(meta, refs, new Set(["داتا", "داتا قديمه"]));
+    expect(both.length).toBe(2);
+    // dataIdx متتابع عبر الورقتين (0..4) وبترتيب الورقات
+    expect(both.every((m) => m.idx >= 0 && m.idx < 5)).toBe(true);
   });
 
   it("meta.sheetName والعناوين من أول ورقة فيها لوحات", async () => {
