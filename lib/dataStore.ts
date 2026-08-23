@@ -11,10 +11,9 @@
  * قاعدة **منفصلة تماماً** ("platehunter-bigdata") — مابتلمسش قاعدة التطبيق
  * الرئيسية ("platehunter") ولا داتا المناديب. كله على الجهاز — مفيش سيرفر.
  */
-import * as XLSX from "xlsx";
 import { streamXlsxToBatches, NotXlsxWorksheetError, type XlsxStreamMeta } from "./xlsxStream";
 import { detectPlateColumn, detectArabicPlateColumn } from "./plateParser";
-import { analyzeSheetShape, isPlateLike, normalizeForCount } from "./referralSheets";
+import { isPlateLike, normalizeForCount } from "./referralSheets";
 
 const DB_NAME = "platehunter-bigdata";
 const DB_VERSION = 2; // v2: تخزين كدفعات (chunks) بدل صف-بصف بفهرس
@@ -199,13 +198,11 @@ export async function importMultiSheetData(
   await clearData(slot);
   const db = await openDataDB();
   try {
-    const buf = new Uint8Array(await file.arrayBuffer());
-
-    // أسماء الورقات بس (سريع — من غير قراءة خلايا).
-    let sheetNames: string[] = [];
-    try {
-      sheetNames = XLSX.read(buf, { type: "array", bookSheets: true }).SheetNames;
-    } catch { /* ملف مقفول/غريب — هيتعامل معاه المستدعي */ }
+    // parseExcelFile بيشتغل في **worker** (بعيد عن الـmain thread فالشاشة ماتتجمّدش)
+    // وبيرجّع صفوف ورقة واحدة بس لو forcedSheet متحدد (مش بيدمج). readSheetNames
+    // بيجيب أسماء الورقات (ميتاداتا سريعة). كده بنقرا ورقة-ورقة بذاكرة ورقة واحدة.
+    const { parseExcelFile, readSheetNames } = await import("./excel");
+    const sheetNames = await readSheetNames(file);
 
     const writeTagged = (rows: DataRow[], sheet: string): Promise<void> =>
       new Promise((resolve, reject) => {
@@ -219,56 +216,40 @@ export async function importMultiSheetData(
     let totalWritten = 0;
 
     for (const name of sheetNames) {
-      let aoa: unknown[][];
+      let table: Awaited<ReturnType<typeof parseExcelFile>> | null;
       try {
-        const opt: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
-        (opt as Record<string, unknown>).dense = true;
-        const wb = XLSX.read(buf, opt);
-        const ws = wb.Sheets[name];
-        if (!ws) continue;
-        aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: null });
-      } catch { continue; }
+        table = await parseExcelFile(file, undefined, name);   // ورقة واحدة، في الـworker
+      } catch { continue; }                                    // ورقة فاضية/مكسورة
+      if (!table.rows.length) continue;
 
-      const shape = analyzeSheetShape(aoa);
-      if (shape.plateCol < 0) { aoa = []; continue; }   // ورقة بلا لوحات — نتجاهلها
-      const plateKey = shape.headers[shape.plateCol];
+      // عمود اللوحة بنفس كشف باقي مسارات الداتا (عربي أولاً، وإلا بالمحتوى).
+      const plateKey = detectArabicPlateColumn(table.headers) ?? detectPlateColumn(table.headers, table.rows) ?? "";
+      if (!plateKey) { table = null; continue; }               // مش ورقة داتا (مفيش عمود لوحة)
 
-      // نبني الصفوف على دفعات (مش كلها مرة واحدة) ونكتبها موسومة باسم الورقة.
-      let batch: DataRow[] = [];
+      // plateCount = لوحات فريدة واضحة. لو الورقة مفيهاش ولا لوحة واحدة (ورقة
+      // ملخّص/فرز مثلاً) نتجاهلها — detectPlateColumn ساعات بيرجّع عمود تخمين
+      // حتى لو مفيش لوحات، فالبوابة الحقيقية هي: فيه لوحات فعلاً؟
       const unique = new Set<string>();
-      let rowCount = 0;
-      const start = shape.headerRow >= 0 ? shape.headerRow + 1 : 0;
-      for (let i = start; i < aoa.length; i++) {
-        const raw = aoa[i] as unknown[];
-        if (!raw || !raw.some((v) => String(v ?? "").trim() !== "")) continue;   // صف فاضي
-        // بنخزّن **كل** صف فيه بيانات (زي importLargeDataFile بالظبط) — مش بس اللي
-        // شكله لوحة — عشان مانفقدش أي لوحة ممكن الكاشف يشوفها غير مطابقة. المطابقة
-        // وقت الفرز هي اللي بتقرّر. plateCount للعرض بس (لوحات فريدة واضحة).
-        const plate = String(raw[shape.plateCol] ?? "").trim();
-        if (isPlateLike(plate)) unique.add(normalizeForCount(plate));
-        const obj: DataRow = {};
-        for (let c = 0; c < shape.headers.length; c++) obj[shape.headers[c]] = String(raw[c] ?? "").trim();
-        batch.push(obj);
-        rowCount++;
-        if (batch.length >= CHUNK_ROWS) {
-          await writeTagged(batch, name);
-          totalWritten += batch.length; batch = [];
-          opts.onProgress?.(totalWritten);
-        }
+      for (const r of table.rows) {
+        const p = String(r[plateKey] ?? "").trim();
+        if (isPlateLike(p)) unique.add(normalizeForCount(p));
       }
-      if (batch.length) {
+      if (unique.size === 0) { table = null; continue; }       // مش ورقة داتا (بلا لوحات)
+
+      // بنخزّن **كل** صفوف الورقة (زي importLargeDataFile) على دفعات موسومة باسمها.
+      const rowCount = table.rows.length;
+      for (let i = 0; i < table.rows.length; i += CHUNK_ROWS) {
+        const batch = table.rows.slice(i, i + CHUNK_ROWS) as DataRow[];
         await writeTagged(batch, name);
-        totalWritten += batch.length; batch = [];
+        totalWritten += batch.length;
         opts.onProgress?.(totalWritten);
       }
-      aoa = [];   // حرّر ذاكرة الورقة قبل اللي بعدها
 
-      if (rowCount > 0) {
-        sheetsMeta.push({
-          name, plateCol: plateKey, plateColName: shape.plateColName,
-          headers: shape.headers, rowCount, plateCount: unique.size,
-        });
-      }
+      sheetsMeta.push({
+        name, plateCol: plateKey, plateColName: plateKey,
+        headers: table.headers, rowCount, plateCount: unique.size,
+      });
+      table = null;   // حرّر ذاكرة الورقة قبل اللي بعدها
     }
 
     if (sheetsMeta.length === 0) {
