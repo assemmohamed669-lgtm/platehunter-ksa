@@ -539,6 +539,20 @@ function readAllSheetsRawSync(data: Uint8Array): { name: string; aoa: unknown[][
   });
 }
 
+/**
+ * أسماء ورقات الملف بس (بدون قراءة أي خلايا) — سريع وخفيف على الذاكرة.
+ * بيستخدمه الفرز عشان يقرّر: ملف بورقة واحدة (المسار العادي) ولا متعدد الورقات
+ * (استيراد importMultiSheetData بحيث المندوب يختار الورقات). بيرجّع [] لو فشل.
+ */
+export async function readSheetNames(file: File): Promise<string[]> {
+  try {
+    const buf = await file.arrayBuffer();
+    return XLSX.read(new Uint8Array(buf), { type: "array", bookSheets: true }).SheetNames ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function readAllSheets(
   file: File
 ): Promise<{ sheetName: string; headers: string[]; rows: Record<string, string>[] }[]> {
