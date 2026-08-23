@@ -10,7 +10,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import {
   type ExcelTable, buildSpreadsheetBlob, buildCsvBlob,
-  openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw,
+  openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw, readSheetNames,
 } from "@/lib/excel";
 import {
   detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
@@ -27,7 +27,7 @@ import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
-import { importLargeDataFile, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
+import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, sheetFingerprint, describeHistory, isClosedStatus,
   newHistoryMap, pruneDetail, type HistoryMap, type PlateStatus,
@@ -164,6 +164,11 @@ export default function SortingPage() {
   // المطابقة الفعلية بتقرا الداتا الكاملة من القاعدة. الملفات الصغيرة زي ماهي.
   const [dataStreamed, setDataStreamed] = useState(false);
   const [dataStreamMeta, setDataStreamMeta] = useState<DataMeta | null>(null);
+  // ── ملف داتا متعدد الورقات ("داتا" + "داتا قديمه"...) ──
+  // كل ورقة فيها لوحات بتتخزّن على الجهاز موسومة باسمها، والمندوب يعلّم على اللي
+  // عايز يفرز عليه (ورقة/أكتر). الاختيار بيتحفظ مربوط باسم الملف.
+  const [dataSheetSel, setDataSheetSel] = useState<Set<string>>(new Set());
+  const DATA_SHEETS_KEY = "ph:sorting:dataSheetSel";
 
   // ── Referral file (single, shared between new/full sort) ──
   const [referralTable, setReferralTable] = useState<ExcelTable | null>(null);
@@ -289,6 +294,8 @@ export default function SortingPage() {
             setDataTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
             setDataFile(new File([new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
             setOutputCols(new Set(guessDefaultColumns(bigMeta.headers, bigMeta.plateCol)));
+            // ملف متعدد الورقات؟ استرجع اختيار الورقات المحفوظ (أو الافتراضي).
+            if (bigMeta.sheets && bigMeta.sheets.length > 1) applyDataSheetSelection(bigMeta, bigMeta.fileName);
           }
         }
         if (refRec) {
@@ -539,6 +546,61 @@ export default function SortingPage() {
     [refSheets, refSheetSel]
   );
   const isMultiSheetRef = refSheets.filter((s) => s.plateCount > 0).length > 1;
+
+  // ── ورقات ملف الداتا (متعدد الورقات) ───────────────────────────────────────
+  // الميتا بتيجي من dataStreamMeta.sheets (استيراد importMultiSheetData). بنبنيها
+  // كـ SheetInfo خفيفة (بلا صفوف — الصفوف على القرص) عشان نعيد استخدام نفس
+  // مكوّن الاختيار بتاع الإحالة.
+  const dataSheetMetas = useMemo(() => dataStreamMeta?.sheets ?? [], [dataStreamMeta]);
+  const isMultiSheetData = dataSheetMetas.length > 1;
+  const dataSheetInfos = useMemo<SheetInfo[]>(
+    () => dataSheetMetas.map((s) => ({
+      name: s.name, headerRow: 0, plateCol: 0, plateColName: s.plateColName,
+      plateCount: s.plateCount, headers: s.headers, rows: [], hidden: false,
+    })),
+    [dataSheetMetas]
+  );
+  // الورقات المختارة اللي الفرز يقرا منها (null = مش متعدد → اقرا الكل).
+  const selectedDataSheetFilter = useMemo(
+    () => (isMultiSheetData ? new Set([...dataSheetSel].filter((n) => dataSheetMetas.some((s) => s.name === n))) : null),
+    [isMultiSheetData, dataSheetSel, dataSheetMetas]
+  );
+  const selectedDataPlateCount = useMemo(
+    () => dataSheetMetas.filter((s) => dataSheetSel.has(s.name)).reduce((a, s) => a + s.plateCount, 0),
+    [dataSheetMetas, dataSheetSel]
+  );
+  // اسم الورقة → مفتاح عمود لوحتها (لأن الورقات ممكن يكون فيها أعمدة لوحة مختلفة).
+  const sheetPlateColMap = useMemo(
+    () => new Map(dataSheetMetas.map((s) => [s.name, s.plateCol])),
+    [dataSheetMetas]
+  );
+  // كل ورقات الداتا فيها لوحات؟ (جاهزية الفرز في وضع متعدد الورقات = ورقة مختارة).
+  const dataSheetsReady = !isMultiSheetData || (selectedDataSheetFilter?.size ?? 0) > 0;
+
+  // يطبّق الاختيار الافتراضي/المحفوظ لورقات الداتا (الافتراضي = أكبر ورقة لوحات،
+  // زي سلوك اليوم اللي بيختار ورقة واحدة). مربوط باسم الملف زي الإحالة بالظبط.
+  const applyDataSheetSelection = useCallback((meta: DataMeta, fileName: string) => {
+    const metas = meta.sheets ?? [];
+    if (metas.length <= 1) { setDataSheetSel(new Set(metas.map((s) => s.name))); return; }
+    let saved: string[] | null = null;
+    try {
+      const j = JSON.parse(localStorage.getItem(DATA_SHEETS_KEY) ?? "null");
+      if (j && j.file === fileName && Array.isArray(j.sheets)) saved = j.sheets;
+    } catch { /* تخزين معطّل */ }
+    const valid = new Set(metas.map((s) => s.name));
+    const biggest = metas.reduce((a, b) => (b.plateCount > a.plateCount ? b : a), metas[0]);
+    const picked = saved ? saved.filter((n) => valid.has(n)) : [biggest.name];
+    setDataSheetSel(new Set(picked.length ? picked : metas.map((s) => s.name)));
+  }, []);
+
+  // يحفظ اختيار ورقات الداتا (مربوط باسم الملف) + يصفّر النتيجة القديمة.
+  const setDataSheetSelection = useCallback((next: Set<string>) => {
+    setDataSheetSel(next);
+    try {
+      localStorage.setItem(DATA_SHEETS_KEY, JSON.stringify({ file: dataFile?.name ?? "", sheets: [...next] }));
+    } catch { /* تخزين معطّل */ }
+    setResults(null); setSorted(false); wipeSortResults();
+  }, [dataFile]);
 
   // أعمدة قايمة الاختيار تحت مربع الإحالة — من الورقات المختارة (مش من الورقة
   // اللي parseExcelFile اختارها)، وإلا المندوب يشوف أعمدة ورقة مش بيفرز عليها.
@@ -919,8 +981,8 @@ export default function SortingPage() {
     : !!referralTable && !!effectiveReferralPlateCol;
 
   const canSort = sortMode === "new"
-    ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol
-    : !!dataTable && referralReady && !!effectiveDataPlateCol;
+    ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol && dataSheetsReady
+    : !!dataTable && referralReady && !!effectiveDataPlateCol && dataSheetsReady;
 
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
@@ -945,9 +1007,29 @@ export default function SortingPage() {
     }
   }, [analyzeReferralFile]);
 
+  // ملف داتا **متعدد الورقات**: كل ورقة بتتخزّن على الجهاز موسومة باسمها، والمندوب
+  // يعلّم على اللي عايز يفرز عليه. بنخزّن عيّنة كـ dataTable للأعمدة/المعاينة زي
+  // مسار الداتا الكبيرة بالظبط (dataStreamed).
+  const handleMultiSheetData = useCallback(async (file: File, onProgress?: (rows: number) => void) => {
+    const meta = await importMultiSheetData(file, { slot: "data", onProgress });
+    const sample = await getSampleRows(50);
+    await deleteUploadedFile("local", "data"); // شيل أي ملف صغير قديم في نفس الـslot
+    setDataStreamed(true);
+    setDataStreamMeta(meta);
+    setDataTable({ headers: meta.headers, rows: sample, sheetName: meta.sheetName });
+    setDataFile(file);
+    setDataPlateColOverride(null);
+    setOutputCols(new Set(guessDefaultColumns(meta.headers, meta.plateCol)));
+    setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
+    applyDataSheetSelection(meta, file.name);
+  }, [applyDataSheetSelection]);
+
   // استيراد ملف داتا كبير: يقراه على دفعات ويخزّنه على الجهاز، ويحط عيّنة صغيرة
-  // كـ dataTable عشان كشف الأعمدة/المعاينة/الجاهزية يشتغلوا زي ما هم.
+  // كـ dataTable عشان كشف الأعمدة/المعاينة/الجاهزية يشتغلوا زي ما هم. لو الملف
+  // فيه أكتر من ورقة → مسار الورقات المتعددة (المندوب يختار الورقات).
   const handleLargeData = useCallback(async (file: File, onProgress: (rows: number) => void) => {
+    const names = await readSheetNames(file);
+    if (names.length > 1) { await handleMultiSheetData(file, onProgress); return; }
     const meta = await importLargeDataFile(file, { slot: "data", onProgress });
     const sample = await getSampleRows(50);
     await deleteUploadedFile("local", "data"); // شيل أي ملف صغير قديم في نفس الـslot
@@ -958,13 +1040,16 @@ export default function SortingPage() {
     setDataPlateColOverride(null);
     setOutputCols(new Set(guessDefaultColumns(meta.headers, meta.plateCol)));
     setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
-  }, []);
+    setDataSheetSel(new Set()); // ملف بورقة واحدة → مفيش اختيار ورقات
+  }, [handleMultiSheetData]);
 
   async function clearSlot(slot: "data" | "referral") {
     await deleteUploadedFile("local", slot);
     if (slot === "data") {
       setDataStreamed(false); setDataStreamMeta(null); await clearBigData("data");
       setDataTable(null); setDataFile(null); setDataPlateColOverride(null); setOutputCols(new Set());
+      setDataSheetSel(new Set());
+      try { localStorage.removeItem(DATA_SHEETS_KEY); } catch { /* ignore */ }
     } else {
       setReferralTable(null); setReferralFile(null); setReferralPlateColOverride(null); setReferralExtraCols(new Set());
       setRefSheets([]); setRefSheetSel(new Set());
@@ -1276,9 +1361,9 @@ export default function SortingPage() {
       // الداتا الكبيرة (streamed): نلفّ عليها من القاعدة على الجهاز على دفعات
       // بدل الذاكرة — نفس منطق المطابقة بالظبط، بس مصدر الصفوف مختلف.
       if (dataStreamed && dataStreamMeta) {
-        const pc = dataStreamMeta.plateCol;
         let gj = 0;
-        await iterateRows(async (batch) => {
+        await iterateRows(async (batch, _base, sheet) => {
+          const pc = (sheet && sheetPlateColMap.get(sheet)) || dataStreamMeta.plateCol;
           for (const dataRow of batch) {
             const idx = gj++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
@@ -1287,7 +1372,7 @@ export default function SortingPage() {
             if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx, srcIdx: 0 });
           }
           await new Promise<void>((r) => setTimeout(r, 0));
-        }, { slot: "data" });
+        }, { slot: "data", sheets: selectedDataSheetFilter });
         dataBase = gj;
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية. في وضع streamed
@@ -1355,6 +1440,9 @@ export default function SortingPage() {
       // (أ) الداتا الكبيرة (streamed): مرور واحد على الدفعات من القرص، وكل صف
       // بنطابقه على خريطة اللوحات الجديدة (في الذاكرة، صغيرة) — بدل ما نبني فهرس
       // ٧٤٠ ألف صف في الذاكرة، وبدل بحث لكل لوحة (بطيء).
+      // عدد صفوف الداتا الكبيرة اللي **فعلاً** اتلفّ عليها (الورقات المختارة بس في
+      // ملف متعدد الورقات) — يبقى أساس dataIdx لملفات الذاكرة اللي بعدها.
+      let streamedCount = 0;
       if (dataStreamed && dataStreamMeta) {
         const newIndex = new Map<string, { row: Record<string, string>; norm: string }>();
         for (const e of newEntries) {
@@ -1364,9 +1452,9 @@ export default function SortingPage() {
             if (rev !== e.norm && !newIndex.has(rev)) newIndex.set(rev, { row: e.row, norm: e.norm });
           }
         }
-        const pc = dataStreamMeta.plateCol;
         let gj = 0;
-        await iterateRows(async (batch) => {
+        await iterateRows(async (batch, _base, sheet) => {
+          const pc = (sheet && sheetPlateColMap.get(sheet)) || dataStreamMeta.plateCol;
           for (const dataRow of batch) {
             const idx = gj++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
@@ -1375,14 +1463,15 @@ export default function SortingPage() {
             if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm, srcIdx: 0 });
           }
           await new Promise<void>((r) => setTimeout(r, 0));
-        }, { slot: "data" });
+        }, { slot: "data", sheets: selectedDataSheetFilter });
+        streamedCount = gj;
       }
       // (ب) ملفات الداتا في الذاكرة (الأساسي لو مش streamed + الإضافية) — فهرس صغير.
       const srcBase = dataStreamed ? 1 : 0;
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
       if (memSources.length) {
         const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>>();
-        let gIdx = dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : 0;
+        let gIdx = streamedCount;
         for (let si = 0; si < memSources.length; si++) {
           const pc = memSources[si].plateCol;
           for (const row of memSources[si].rows) {
@@ -1716,12 +1805,12 @@ export default function SortingPage() {
       // الداتا الكبيرة (streamed): لفّ على الدفعات من القرص وطابق كل دفعة — بدل
       // ما نطابق على عيّنة العرض بس (كانت بتخلّي اللصق مايطلّعش نتايج).
       if (dataStreamed && dataStreamMeta) {
-        const pc = dataStreamMeta.plateCol;
         // بنسيب الشاشة تتنفّس **بالوقت** مش بعد كل دفعة. الدفعة ٥٠٠٠ صف بتخلص
         // في أجزاء من الملّي، وكل setTimeout(0) بيكلّف ٤ ملّي على الأقل في
         // متصفّح الموبايل — يعني ٩٧ دفعة كانت بتضيّع وقت من غير أي فايدة.
         let lastYield = Date.now();
-        await iterateRows(async (batch) => {
+        await iterateRows(async (batch, _b, sheet) => {
+          const pc = (sheet && sheetPlateColMap.get(sheet)) || dataStreamMeta.plateCol;
           for (const m of matchTokensAgainstRows(tokens, batch, pc)) {
             matches.push({ ...m, dataIdx: m.dataIdx + base });
           }
@@ -1730,7 +1819,7 @@ export default function SortingPage() {
             await new Promise<void>((r) => setTimeout(r, 0));
             lastYield = Date.now();
           }
-        }, { slot: "data" });
+        }, { slot: "data", sheets: selectedDataSheetFilter });
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية.
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
@@ -1922,11 +2011,20 @@ export default function SortingPage() {
         hint="بيانات التفريغ الميداني"
         parsedFile={dataFile}
         parsedRowCount={dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : (dataTable?.rows.length ?? null)}
-        onParsed={(table, file) => persistAndSet("data", table, file)}
+        onParsed={(table, file) => ((table.allSheetNames?.length ?? 0) > 1
+          ? handleMultiSheetData(file)
+          : persistAndSet("data", table, file))}
         onClear={() => clearSlot("data")}
         showReplaceButtons
         largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
         onLargeFile={handleLargeData}
+      />
+      {/* ملف داتا فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه */}
+      <ReferralSheetPicker
+        sheets={dataSheetInfos}
+        selected={dataSheetSel}
+        onChange={setDataSheetSelection}
+        total={selectedDataPlateCount}
       />
       {dataTable && (
         <div className="rounded-xl border border-border bg-surface">
