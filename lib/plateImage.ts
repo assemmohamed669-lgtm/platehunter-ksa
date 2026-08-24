@@ -188,15 +188,18 @@ export interface TableImageOptions {
   perImage?: number;    // أقصى عدد صفوف في الصورة قبل التقسيم
 }
 
-const T_PAD = 20;
-const T_CELL_PAD = 8;
-const T_LINE_H = 22;
-const T_MAX_COL_W = 210;
-const T_MIN_COL_W = 56;
-const T_TITLE_H = 52;
-const T_SUB_H = 26;
-const T_CELL_FONT = "15px system-ui, 'Segoe UI', Tahoma, sans-serif";
-const T_HEAD_FONT = "bold 15px system-ui, 'Segoe UI', Tahoma, sans-serif";
+// خطوط أكبر عشان بيانات اللوحة تبقى واضحة للمندوب في الصورة المشاركة (كانت
+// صغيرة). العرض الأقصى للعمود بيتزاد شوية بس عشان الصورة ماتتوسّعش أكتر من
+// اللازم — فالخط أكبر نسبةً للصورة (أوضح حتى في معاينة واتساب قبل الزوم).
+const T_PAD = 22;
+const T_CELL_PAD = 11;
+const T_LINE_H = 30;
+const T_MAX_COL_W = 240;
+const T_MIN_COL_W = 72;
+const T_TITLE_H = 64;
+const T_SUB_H = 32;
+const T_CELL_FONT = "21px system-ui, 'Segoe UI', Tahoma, sans-serif";
+const T_HEAD_FONT = "bold 21px system-ui, 'Segoe UI', Tahoma, sans-serif";
 
 function renderTableChunk(
   rows: string[][], opts: TableImageOptions, colW: number[], tableW: number, pageInfo: string,
@@ -241,10 +244,10 @@ function renderTableChunk(
   ctx.fillStyle = COL.headerBg;
   ctx.fillRect(0, 0, totalW, titleBlock);
   ctx.fillStyle = COL.headerText;
-  ctx.font = "bold 20px system-ui, 'Segoe UI', Tahoma, sans-serif";
+  ctx.font = "bold 26px system-ui, 'Segoe UI', Tahoma, sans-serif";
   ctx.fillText(opts.title, T_PAD + tableW, T_TITLE_H / 2);
   if (opts.subtitle) {
-    ctx.font = "13px system-ui, 'Segoe UI', Tahoma, sans-serif";
+    ctx.font = "17px system-ui, 'Segoe UI', Tahoma, sans-serif";
     ctx.fillText(opts.subtitle, T_PAD + tableW, T_TITLE_H + T_SUB_H / 2 - 2);
   }
 
@@ -269,7 +272,7 @@ function renderTableChunk(
     if (dup) { ctx.fillStyle = dup; ctx.fillRect(T_PAD, y, tableW, h); }
     row.forEach((_, ci) => {
       // العمود الأول (اللوحة/المطلوب) بولد وغامق للتمييز.
-      ctx.font = ci === 0 ? "bold 16px system-ui, 'Segoe UI', Tahoma, sans-serif" : T_CELL_FONT;
+      ctx.font = ci === 0 ? "bold 22px system-ui, 'Segoe UI', Tahoma, sans-serif" : T_CELL_FONT;
       ctx.fillStyle = ci === 0 ? COL.plate : COL.detail;
       let ly = y + T_CELL_PAD + T_LINE_H / 2;
       for (const line of cellLines[i][ci]) { ctx.fillText(line, colRight[ci] - T_CELL_PAD, ly); ly += T_LINE_H; }
@@ -292,7 +295,7 @@ function renderTableChunk(
 
   // الفوتر
   ctx.fillStyle = COL.footer;
-  ctx.font = "13px system-ui, 'Segoe UI', Tahoma, sans-serif";
+  ctx.font = "17px system-ui, 'Segoe UI', Tahoma, sans-serif";
   ctx.fillText(pageInfo, T_PAD + tableW, height - FOOTER_H / 2);
 
   return canvas.toDataURL("image/png");
