@@ -66,35 +66,35 @@ describe("buildChassisIndex + matchChassis", () => {
     expect(m.matchType).toBe("exact");
     expect(m.row?.["المالك"]).toBe("أحمد");
   });
-  it("tolerates a single OCR slip (0↔O) as fuzzy", () => {
-    const m = matchChassis("WAUBHCFC8DNO29594", idx); // O instead of 0
-    expect(m.found).toBe(true);
-    expect(m.matchType).toBe("fuzzy");
-  });
   it("does not match an unrelated VIN", () => {
     const m = matchChassis("3KPA241A5JE017513", idx);
     expect(m.found).toBe(false);
   });
 });
 
-describe("matchChassis — partial (trailing digits only)", () => {
-  it("matches when the sheet stored only the last digits", () => {
-    // Sheet has just "1061458"; camera reads the full VIN.
+// المطابقة تامة فقط — لا تقريب (حرف OCR واحد) ولا مطابقة بآخر الأرقام.
+describe("matchChassis — تام فقط (no fuzzy / no partial)", () => {
+  it("لا يطابق مع اختلاف حرف واحد (كان fuzzy قبل كده)", () => {
+    const idx = buildChassisIndex([{ "رقم الهيكل": "WAUBHCFC8DN029594" }], "رقم الهيكل");
+    expect(matchChassis("WAUBHCFC8DNO29594", idx).found).toBe(false); // O بدل 0
+  });
+
+  it("لا يطابق بآخر الأرقام (كان partial قبل كده)", () => {
     const idx = buildChassisIndex([{ "رقم الشاص": "1061458", "اللوحة": "حبك1234" }], "رقم الشاص");
-    const m = matchChassis("MHFBA8FS5N1061458", idx);
-    expect(m.found).toBe(true);
-    expect(m.matchType).toBe("partial");
-    expect(m.row?.["اللوحة"]).toBe("حبك1234");
+    expect(matchChassis("MHFBA8FS5N1061458", idx).found).toBe(false);
+    const idx2 = buildChassisIndex([{ "رقم الهيكل": "MHFBA8FS5N1061458" }], "رقم الهيكل");
+    expect(matchChassis("1061458", idx2).found).toBe(false);
   });
-  it("matches full VIN stored, partial digits typed manually", () => {
-    const idx = buildChassisIndex([{ "رقم الهيكل": "MHFBA8FS5N1061458" }], "رقم الهيكل");
-    const m = matchChassis("1061458", idx);
-    expect(m.found).toBe(true);
-    expect(m.matchType).toBe("partial");
+
+  // الباج الحقيقي: رقما هيكل مختلفان تماماً بيشتركوا في آخر ٥ أرقام «03256»
+  // كانوا بيتطابقوا partial ويطلّعوا «مطلوب» كاذب. لازم مايتطابقوش.
+  it("لا يطابق رقمي هيكل مختلفين يشتركان في آخر الأرقام فقط", () => {
+    const idx = buildChassisIndex([{ "الشاص": "LFP82APE2N1D03256", "اللوحة": "غير مطلوب" }], "الشاص");
+    expect(matchChassis("L10DA4299L0103256", idx).found).toBe(false);
   });
-  it("does not partial-match on a too-short/unrelated tail", () => {
-    const idx = buildChassisIndex([{ "رقم الشاص": "MHFBA8FS5N1061458" }], "رقم الشاص");
-    expect(matchChassis("999", idx).found).toBe(false);
-    expect(matchChassis("WAUZZZ8V0JA200324", idx).found).toBe(false);
+
+  it("يطابق نفس الهيكل بالظبط (بغضّ النظر عن الفراغات/الشرطات)", () => {
+    const idx = buildChassisIndex([{ "الشاص": "L10DA4299L0103256" }], "الشاص");
+    expect(matchChassis("l10da4299 l0103256", idx).found).toBe(true);
   });
 });

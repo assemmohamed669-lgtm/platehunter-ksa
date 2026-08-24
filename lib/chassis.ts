@@ -5,13 +5,12 @@
  * it and look it up in the chassis column of the loaded check file — the same
  * مطلوب/غير مطلوب flow the plate camera uses, just against the VIN column.
  *
- * VINs are ASCII (A–Z, 0–9): uppercase, no spaces. Kept free of I/O I/O logic
- * on purpose — real referral data isn't always clean, so we normalise loosely
- * (strip everything non-alphanumeric) and lean on a light fuzzy pass for the
- * one common OCR slip (0↔O, 1↔I …).
+ * VINs are ASCII (A–Z, 0–9): uppercase, no spaces. المطابقة **تامة فقط**
+ * (بعد التطبيع: uppercase + شيل أي حرف غير أبجدي-رقمي). التطبيق كان بيعمل
+ * تقريب/مطابقة جزئية بآخر الأرقام، وده كان بيطلّع تطابقات **كاذبة** بين أرقام
+ * هيكل مختلفة بتشترك في آخر كام رقم (مثلاً L10DA4299L0103256 مع
+ * LFP82APE2N1D03256 لاشتراكهما في «03256») — فاتشالت، والهيكل بيتطابق تام بس.
  */
-
-import { levenshtein } from "./plateParser";
 
 export function normalizeChassis(raw: string): string {
   return String(raw ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -78,12 +77,11 @@ export interface ChassisMatch {
   row?: Record<string, string>;
 }
 
-/** آخر سلسلة أرقام متتالية في النص (الرقم التسلسلي في نهاية الـ VIN). */
-function trailingDigits(s: string): string {
-  const m = s.match(/[0-9]+$/);
-  return m ? m[0] : "";
-}
-
+/**
+ * مطابقة رقم الهيكل **تامة فقط** — بعد التطبيع (uppercase + شيل غير الأبجدي-رقمي)
+ * لازم الرقمين يبقوا متطابقين حرفاً بحرف. مفيش تقريب ولا مطابقة بآخر الأرقام،
+ * عشان أرقام هيكل مختلفة متطلعش «مطلوب» غلط لمجرد تشابه آخر كام رقم.
+ */
 export function matchChassis(
   rawVin: string,
   index: Map<string, Record<string, string>>
@@ -94,31 +92,5 @@ export function matchChassis(
   const exact = index.get(normalized);
   if (exact) return { found: true, matchType: "exact", normalized, row: exact };
 
-  // Light fuzzy for a single OCR slip on an otherwise-correct long code.
-  // High bar (≥ length-1 chars identical) so unrelated VINs never collide.
-  let bestRow: Record<string, string> | undefined;
-  let bestSim = 0;
-  for (const [key, row] of index) {
-    if (Math.abs(key.length - normalized.length) > 1) continue;
-    const dist = levenshtein(key, normalized);
-    const sim = 1 - dist / Math.max(key.length, normalized.length);
-    if (dist <= 1 && sim > bestSim) { bestSim = sim; bestRow = row; }
-  }
-  if (bestRow) {
-    return { found: true, matchType: "fuzzy", similarity: Math.round(bestSim * 100), normalized, row: bestRow };
-  }
-
-  // مطابقة بآخر الأرقام — بعض المدخلين بيكتبوا الرقم التسلسلي في آخر الشاص بس
-  // (زي "1061458" من "MHFBA8FS5N1061458"). نطابق لو آخر أرقام المصوّر = المخزّن
-  // (أو أحدهما لاحقة للتاني). حد أدنى ٥ أرقام عشان نتجنّب تطابق كاذب.
-  const sTail = trailingDigits(normalized);
-  if (sTail.length >= 5) {
-    for (const [key, row] of index) {
-      const kTail = /^[0-9]+$/.test(key) ? key : trailingDigits(key);
-      if (kTail.length >= 5 && (sTail === kTail || sTail.endsWith(kTail) || kTail.endsWith(sTail))) {
-        return { found: true, matchType: "partial", normalized, row };
-      }
-    }
-  }
   return { found: false, normalized };
 }
