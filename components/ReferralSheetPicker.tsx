@@ -17,11 +17,13 @@ interface Props {
   /** أسماء الورقات المختارة. */
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
-  /** إجمالي اللوحات الفريدة في المختار (محسوب في الصفحة). */
+  /** إجمالي العدد في المختار (محسوب في الصفحة). */
   total: number;
+  /** وحدة العدّ المعروضة: «لوحة» للإحالة (لوحات فريدة)، «صف» للداتا (كل الصفوف). */
+  unit?: string;
 }
 
-export default function ReferralSheetPicker({ sheets, selected, onChange, total }: Props) {
+export default function ReferralSheetPicker({ sheets, selected, onChange, total, unit = "لوحة" }: Props) {
   const [open, setOpen] = useState(false);   // مطويّة افتراضياً — القايمة بتملى الشاشة
   const withPlates = sheets.filter((s) => s.plateCount > 0);
   if (withPlates.length <= 1) return null;   // ورقة واحدة → مفيش داعي للاختيار
@@ -49,7 +51,7 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total 
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span className="text-sm font-black text-primary">
-            {total.toLocaleString("en-US")} لوحة
+            {total.toLocaleString("en-US")} {unit}
           </span>
           <ChevronDown size={16} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
         </span>

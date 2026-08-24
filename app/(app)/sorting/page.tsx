@@ -570,10 +570,13 @@ export default function SortingPage() {
   // مكوّن الاختيار بتاع الإحالة.
   const dataSheetMetas = useMemo(() => dataStreamMeta?.sheets ?? [], [dataStreamMeta]);
   const isMultiSheetData = dataSheetMetas.length > 1;
+  // ملحوظة: للداتا بنعرض **عدد الصفوف** (كل اللي بيتقري ويتفرز فعلاً) بدل اللوحات
+  // الفريدة — عشان ملف التفريغ فيه نفس اللوحة متكررة كتير، فاللوحات الفريدة أقل من
+  // الصفوف وكانت بتلخبط («مش قاري الكل»). الرقم هنا بيطابق «عدد الصفوف» فوق المربع.
   const dataSheetInfos = useMemo<SheetInfo[]>(
     () => dataSheetMetas.map((s) => ({
       name: s.name, headerRow: 0, plateCol: 0, plateColName: s.plateColName,
-      plateCount: s.plateCount, headers: s.headers, rows: [], hidden: false,
+      plateCount: s.rowCount, headers: s.headers, rows: [], hidden: false,
     })),
     [dataSheetMetas]
   );
@@ -582,8 +585,9 @@ export default function SortingPage() {
     () => (isMultiSheetData ? new Set([...dataSheetSel].filter((n) => dataSheetMetas.some((s) => s.name === n))) : null),
     [isMultiSheetData, dataSheetSel, dataSheetMetas]
   );
-  const selectedDataPlateCount = useMemo(
-    () => dataSheetMetas.filter((s) => dataSheetSel.has(s.name)).reduce((a, s) => a + s.plateCount, 0),
+  // إجمالي الصفوف اللي هيتفرز عليها (كل صفوف الورقات المختارة) — بيطابق أعلى المربع.
+  const selectedDataRowTotal = useMemo(
+    () => dataSheetMetas.filter((s) => dataSheetSel.has(s.name)).reduce((a, s) => a + s.rowCount, 0),
     [dataSheetMetas, dataSheetSel]
   );
   // اسم الورقة → مفتاح عمود لوحتها (لأن الورقات ممكن يكون فيها أعمدة لوحة مختلفة).
@@ -2041,7 +2045,8 @@ export default function SortingPage() {
         sheets={dataSheetInfos}
         selected={dataSheetSel}
         onChange={setDataSheetSelection}
-        total={selectedDataPlateCount}
+        total={selectedDataRowTotal}
+        unit="صف"
       />
       {dataTable && (
         <div className="rounded-xl border border-border bg-surface">
