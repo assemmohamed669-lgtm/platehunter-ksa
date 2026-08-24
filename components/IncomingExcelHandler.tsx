@@ -13,8 +13,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, FileSpreadsheet, ListFilter, CheckCircle2, Lock } from "lucide-react";
-import { parseExcelFile } from "@/lib/excel";
-import { saveUploadedFile, getUploadedFile, type UploadedFileRecord } from "@/lib/idb";
+import { parseExcelFile, readSheetNames } from "@/lib/excel";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
+import { importMultiSheetData } from "@/lib/dataStore";
 
 interface PendingFile {
   name: string;
@@ -93,6 +94,28 @@ export default function IncomingExcelHandler() {
     setError(null);
     try {
       const { file, blob } = await buildFile(pending);
+
+      // ملف داتا فيه أكتر من ورقة → نستورده بنفس مسار صفحة الفرز (ورقة-ورقة، في
+      // الـworker) عشان صندوق اختيار الورقات يظهر زي ما بيظهر لما ترفع من الجهاز.
+      // (readSheetNames بيرجّع [] للملف المحمي بكلمة مرور فبيعدّي للمسار العادي
+      // اللي بيتعامل مع الباسوورد.)
+      if (slot === "data") {
+        const names = await readSheetNames(file);
+        if (names.length > 1) {
+          await importMultiSheetData(file, { slot: "data" });
+          // شيل أي ملف صغير قديم في نفس الـslot — صفحة الفرز بتفضّل local:data لو موجود،
+          // فلازم يتشال عشان تقرا النسخة المتدفّقة (متعددة الورقات) اللي لسه اتخزّنت.
+          await deleteUploadedFile("local", "data");
+          window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: { slot } }));
+          setPending(null);
+          setNeedsPassword(false);
+          setPassword("");
+          setPendingSlot(null);
+          router.push("/sorting");
+          return;
+        }
+      }
+
       const table = await parseExcelFile(file, pwd);
 
       const record: UploadedFileRecord = {

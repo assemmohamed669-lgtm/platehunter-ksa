@@ -438,14 +438,31 @@ export default function SortingPage() {
           if (rec.fileBlob) void analyzeReferralFile(rf);
         });
       } else if (slot === "data") {
-        getUploadedFile("local", "data").then((rec) => {
-          if (!rec) return;
-          setDataTable({ headers: rec.headers, rows: rec.rows });
-          setDataFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+        (async () => {
+          const rec = await getUploadedFile("local", "data");
+          if (rec) {
+            // ملف صغير عادي
+            setDataStreamed(false); setDataStreamMeta(null); setDataSheetSel(new Set());
+            setDataTable({ headers: rec.headers, rows: rec.rows });
+            setDataFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+            setDataPlateColOverride(null);
+            setResults(null); setSorted(false);
+            setOutputCols(new Set(defaultDataCols(rec.headers, rec.rows, detectPlateColumn(rec.headers, rec.rows))));
+            return;
+          }
+          // مفيش ملف صغير → داتا متدفّقة (كبيرة/متعددة الورقات) اتخزّنت من «الملف الوارد».
+          const bigMeta = await getDataMeta("data");
+          if (!bigMeta) return;
+          const sample = await getSampleRows(50);
+          setDataStreamed(true); setDataStreamMeta(bigMeta);
+          setDataTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
+          setDataFile(new File([new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
           setDataPlateColOverride(null);
+          setOutputCols(new Set(guessDefaultColumns(bigMeta.headers, bigMeta.plateCol)));
           setResults(null); setSorted(false);
-          setOutputCols(new Set(defaultDataCols(rec.headers, rec.rows, detectPlateColumn(rec.headers, rec.rows))));
-        });
+          if (bigMeta.sheets && bigMeta.sheets.length > 1) applyDataSheetSelection(bigMeta, bigMeta.fileName);
+          else setDataSheetSel(new Set());
+        })();
       } else if (slot.startsWith("referral-")) {
         // إحالة إضافية اتضافت من مربع «فتح الإكسيل» — أعد قراءة كل الإحالات الإضافية
         // (لو الصفحة مفتوحة أصلاً؛ فتح جديد بيقراهم في الـ bootstrap).
