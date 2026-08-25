@@ -59,6 +59,14 @@ describe("typeToCode — تحويل نوع السيارة للحرف المخت�
     expect(vehicleTypeLabel("مر")).toBe("مر (مركونة)");
   });
 
+  it("جراج — في القائمة، بتترجم من الكلمة (جراج/كراج)، وبتتعرض من غير قوسين", () => {
+    expect(VEHICLE_TYPE_CODES).toContain("جراج");
+    expect(typeToCode("جراج")).toBe("جراج");
+    expect(typeToCode("الجراج")).toBe("جراج");
+    expect(typeToCode("كراج")).toBe("جراج");
+    expect(vehicleTypeLabel("جراج")).toBe("جراج"); // المختصر = الاسم → بلا قوسين
+  });
+
   it("غير معروف أو فاضي → فاضي (فيفضل النص الأصلي عند التصدير)", () => {
     expect(typeToCode("")).toBe("");
     expect(typeToCode("طيارة")).toBe("");   // مش نوع في القائمة
@@ -75,7 +83,7 @@ describe("vehicleTypeLabel — شكل العرض في القايمة", () => {
 
   it("الترتيب زي ما المالك طلبه", () => {
     // «ش» بعد «مو»، وحالات السيارة (مصدومة/متربة/مركونة) بعدها بطلب المالك.
-    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "مص", "مت", "مر", "H1"]);
+    expect(VEHICLE_TYPE_LABELS.map(([c]) => c)).toEqual(["و", "ن", "ف", "ت", "دي", "د", "ب", "م", "مو", "ش", "مص", "مت", "مر", "جراج", "H1"]);
   });
 
   it("حرف مش في القايمة بيرجع زي ما هو", () => {
