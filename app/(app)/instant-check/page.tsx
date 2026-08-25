@@ -1676,6 +1676,10 @@ export default function InstantCheckPage() {
       if (code) row["النوع"] = code; else delete row["النوع"];
       return { ...e, row };
     }));
+    // بعد اختيار النوع رجّع التركيز لخانة اللوحة (الكيبورد يظهر) عشان المندوب
+    // يكتب اللوحة اللي بعدها على طول من غير ما يطلع فوق ويدوس على الخانة.
+    // الاستدعاء جوّه لمسة المندوب (اختيار النوع) فالكيبورد بيفتح على الموبايل.
+    if (code) manualInputRef.current?.focus();
   }
 
   function draftRowText(e: FieldCheckEntry): string {
