@@ -47,6 +47,7 @@ import { typeToCode } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
 import { setMicBusy } from "@/lib/micBusy";
 import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
+import { plateKeyboardMode, readSmartKeyboard, writeSmartKeyboard } from "@/lib/keyboardMode";
 import { PAGE_STEP, pageSlice, hasMore, growShown } from "@/lib/pagedRows";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
@@ -519,6 +520,24 @@ export default function InstantCheckPage() {
 
   // Manual
   const [manualInput, setManualInput] = useState("");
+  // ── الكيبورد الذكي (اختياري) — يقلب أرقام تلقائي بعد ٣ حروف في التشييك اليدوي.
+  //    الافتراضي مقفول = السلوك الحالي (حروف دايماً). التفضيل يتحفظ على الجهاز.
+  const [smartKb, setSmartKb] = useState(false);
+  const manualInputRef = useRef<HTMLInputElement>(null);
+  const prevKbModeRef = useRef<"text" | "numeric">("text");
+  const manualKbMode = plateKeyboardMode(manualInput, smartKb);
+  useEffect(() => { setSmartKb(readSmartKeyboard()); }, []);
+  // عند **لحظة التحوّل بس** (text↔numeric): خروج ودخول سريع للخانة عشان الكيبورد
+  // المفتوح يعيد الرسم — تغيير inputMode لوحده مايقلبش كيبورد مفتوح (النظام بيقراه
+  // عند التركيز بس). لو الخانة مش مركّز عليها مانعملش حاجة.
+  useEffect(() => {
+    if (prevKbModeRef.current === manualKbMode) return;
+    prevKbModeRef.current = manualKbMode;
+    const el = manualInputRef.current;
+    if (!el || document.activeElement !== el) return;
+    el.blur();
+    requestAnimationFrame(() => el.focus());
+  }, [manualKbMode]);
   /** قفل ضد الدوس المتكرر على «تشييك»/إنتر (كان بيكرّر اللوحة). */
   const manualBusyRef = useRef(false);
   /** مؤقّت التشييك التلقائي لما اللوحة تكمل. */
@@ -3891,8 +3910,9 @@ export default function InstantCheckPage() {
               {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
               <div className="flex gap-2">
                 <input
+                  ref={manualInputRef}
                   type="text"
-                  inputMode="text"
+                  inputMode={manualKbMode}
                   placeholder="مثال: ق ن ص 1 2 3 4"
                   value={manualInput}
                   onChange={(e) => handleManualChange(e.target.value)}
@@ -3912,6 +3932,17 @@ export default function InstantCheckPage() {
                   تشييك
                 </button>
               </div>
+
+              {/* خيار المندوب: الكيبورد يقلب أرقام تلقائي بعد ٣ حروف (الافتراضي مقفول) */}
+              <label className="flex select-none items-center gap-2 self-start text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={smartKb}
+                  onChange={(e) => { setSmartKb(e.target.checked); writeSmartKeyboard(e.target.checked); }}
+                  className="h-4 w-4 accent-brand"
+                />
+                الكيبورد يقلب للأرقام تلقائي بعد الحروف
+              </label>
 
               {/* Error with dismiss button */}
               {manualError && (
