@@ -1602,6 +1602,17 @@ describe("matchTokensAgainstRows", () => {
     const results = matchTokensAgainstRows(["ABD1234"], rows, "رقم اللوحة");
     expect(results[0].converted).toBe("ابد1234");
   });
+
+  // enableFuzzy=false → تام فقط (للداتا الكبيرة streamed — أسرع، مفيش مرور تقريبي).
+  it("exact-only (enableFuzzy=false): يمسك التام ويتجاهل التقريبي", () => {
+    // تام لسه شغّال
+    const exact = matchTokensAgainstRows(["ABD1234"], rows, "رقم اللوحة", 88, false);
+    expect(exact).toHaveLength(1);
+    expect(exact[0].status).toBe("exact");
+    // التقريبي (اللي كان بيتمسك عند threshold=80) مبقاش يتمسك
+    const fuzzy = matchTokensAgainstRows(["ابد1235"], rows, "رقم اللوحة", 80, false);
+    expect(fuzzy).toHaveLength(0);
+  });
 });
 
 describe("tokenizePastedPlates", () => {

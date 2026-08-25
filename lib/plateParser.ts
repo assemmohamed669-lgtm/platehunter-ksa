@@ -2478,6 +2478,10 @@ export function matchTokensAgainstRows(
   dataRows: Record<string, string>[],
   dataPlateCol: string,
   fuzzyThreshold = 88,
+  // enableFuzzy=false → تطابق **تام فقط** (أسرع بكتير). بنستخدمه للداتا الكبيرة
+  // (streamed) اللي بتتطابق دفعة-بدفعة: المرور التقريبي كان بيتكرر على كل دفعة
+  // عبر ملايين الصفوف فبيبطّئ الفرز جداً، والصق لوحات نظيفة أصلاً محتاج تام بس.
+  enableFuzzy = true,
 ): TokenMatch[] {
   // بنفهرس **التوكنات** (عددها عشرات) مش صفوف الداتا (عددها مئات الآلاف).
   // الطريقة القديمة كانت بتبني لكل دفعة داتا خريطتين وكائن لكل صف — يعني مئات
@@ -2510,7 +2514,7 @@ export function matchTokensAgainstRows(
   // البطء القديمة: فوق ٥٠ ألف لوحة مختلفة مافيش تقريبي).
   const rowNorms: string[] = [];
   const seen = new Set<string>();
-  let fuzzyOff = false;
+  let fuzzyOff = !enableFuzzy;   // تام فقط لو المرور التقريبي متعطّل
   for (let i = 0; i < dataRows.length; i++) {
     const norm = normalizePlate(bankPlateToArabic(String(dataRows[i][dataPlateCol] ?? "")));
     if (!fuzzyOff) {

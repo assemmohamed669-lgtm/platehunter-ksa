@@ -1846,7 +1846,9 @@ export default function SortingPage() {
         let lastYield = Date.now();
         await iterateRows(async (batch, _b, sheet) => {
           const pc = (sheet && sheetPlateColMap.get(sheet)) || dataStreamMeta.plateCol;
-          for (const m of matchTokensAgainstRows(tokens, batch, pc)) {
+          // تام فقط (enableFuzzy=false): الداتا الكبيرة بتتطابق دفعة-بدفعة، والمرور
+          // التقريبي كان بيتكرر على كل دفعة عبر الملايين فيبطّئ الفرز جداً.
+          for (const m of matchTokensAgainstRows(tokens, batch, pc, 88, false)) {
             matches.push({ ...m, dataIdx: m.dataIdx + base });
           }
           base += batch.length;
