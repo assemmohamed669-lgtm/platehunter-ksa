@@ -277,6 +277,16 @@ export default function SortingPage() {
     });
   }, [pasteText]);
   const pasteLatinCount = pastePreview.filter((p) => p.hasLatin).length;
+  // نص اللوحات المتعرَّبة فقط (بدون الإنجليزي) — لأزرار النسخ/المشاركة تحت المعاينة.
+  const pasteArabicText = useMemo(() => pastePreview.map((p) => p.ar).join("\n"), [pastePreview]);
+  const [pasteArCopied, setPasteArCopied] = useState(false);
+  async function copyPasteArabic() {
+    try {
+      await navigator.clipboard.writeText(pasteArabicText);
+      setPasteArCopied(true);
+      setTimeout(() => setPasteArCopied(false), 1500);
+    } catch { alert("تعذّر النسخ."); }
+  }
 
   // ── سجل السيارات (هيستوري) — خاص بكل مندوب على جهازه ──────────────────────
   // بيتحمّل مرة عند فتح الصفحة، وبيتحدّث بعد كل فرز (ظهور جديد) وبعد كل إجراء
@@ -2824,6 +2834,18 @@ export default function SortingPage() {
                   )}
                 </span>
               ))}
+            </div>
+            {/* نسخ/مشاركة اللوحات المتعرَّبة فقط (بدون الإنجليزي) */}
+            <div className="mt-2 flex gap-2 border-t border-primary/20 pt-2">
+              <button onClick={() => void copyPasteArabic()}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface py-2 text-xs font-bold text-ink transition active:scale-95">
+                {pasteArCopied ? <Check size={14} className="text-primary" /> : <Copy size={14} />}
+                {pasteArCopied ? "اتنسخت" : "نسخ العربي"}
+              </button>
+              <button onClick={() => void shareTextViaChooser(pasteArabicText, "مشاركة اللوحات")}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night transition active:scale-95">
+                <Share2 size={14} /> مشاركة العربي
+              </button>
             </div>
           </div>
         )}
