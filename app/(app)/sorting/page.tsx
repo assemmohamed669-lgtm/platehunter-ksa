@@ -264,6 +264,20 @@ export default function SortingPage() {
   const [pasteRan, setPasteRan] = useState(false);
   const [pasteBusy, setPasteBusy] = useState(false); // بحث اللصق شغّال (الملف الكبير بياخد ثواني)
 
+  // معاينة تحويل اللوحات الملصوقة للعربي — كل لوحة إنجليزي بتتحوّل زي ما الفرز
+  // بيعمل بالظبط (bankPlateToArabic)، فالمندوب يتأكد إن التحويل صح قبل ما يفرز.
+  const pastePreview = useMemo(() => {
+    if (!pasteText.trim()) return [];
+    return tokenizePastedPlates(pasteText).map((raw) => {
+      const hasLatin = /[A-Za-z]/.test(raw);
+      const ar = bankPlateToArabic(raw);
+      // مسافة بين الحروف والأرقام للقراءة (عرض فقط — الفرز بيستخدم الملتصق).
+      const arDisplay = ar.replace(/^([^\d]+)(\d.*)$/, "$1 $2");
+      return { raw, ar: arDisplay, hasLatin };
+    });
+  }, [pasteText]);
+  const pasteLatinCount = pastePreview.filter((p) => p.hasLatin).length;
+
   // ── سجل السيارات (هيستوري) — خاص بكل مندوب على جهازه ──────────────────────
   // بيتحمّل مرة عند فتح الصفحة، وبيتحدّث بعد كل فرز (ظهور جديد) وبعد كل إجراء
   // (سحبها / ملقيتهاش). مايأثرش على منطق الفرز — عمود عرض + تسجيل إجراء فقط.
@@ -2787,6 +2801,30 @@ export default function SortingPage() {
             className="rtl-text w-full rounded-xl border border-border bg-surface-2 p-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </div>
+
+        {/* معاينة تحويل اللوحات الإنجليزية للعربي — عشان المندوب يتأكد إن التحويل
+            صح قبل الفرز. بتظهر تلقائي أول ما يلصق لوحات فيها حروف إنجليزي. */}
+        {pasteLatinCount > 0 && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-2.5">
+            <p className="mb-1.5 text-[11px] font-bold text-primary">
+              تحويل اللوحات الإنجليزية للعربي ({pasteLatinCount.toLocaleString("en-US")}) — راجعها قبل الفرز
+            </p>
+            <div className="flex max-h-44 flex-wrap gap-1.5 overflow-auto">
+              {pastePreview.map((p, i) => (
+                <span key={i} dir="ltr"
+                  className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${p.hasLatin ? "border-primary/30 bg-surface" : "border-border bg-surface-2"}`}>
+                  <span className="font-mono text-muted">{p.raw}</span>
+                  {p.hasLatin && (
+                    <>
+                      <span className="text-muted">⟵</span>
+                      <span dir="rtl" className="font-bold text-ink">{p.ar}</span>
+                    </>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <button onClick={() => { if (!pasteBusy) void runPasteSort(); }} disabled={!pasteText.trim() || !dataTable || pasteBusy}
           className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night disabled:opacity-50">
