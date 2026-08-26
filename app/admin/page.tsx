@@ -1,5 +1,6 @@
 "use client";
 
+import { deviceBindingState } from "@/lib/deviceBinding";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -625,7 +626,7 @@ export default function AdminDashboard() {
                       ? <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-500" title="الحساب معفي من القفل — يدخل بإيميله من أي جهاز">🔓 أي جهاز</span>
                       : a.device_fingerprint
                         ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-600" title="مربوط بجهاز واحد">📱 جهاز واحد</span>
-                        : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted" title="لسه مادخلش — هيتربط بأول جهاز يدخل منه">جهاز؟</span>
+                        : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted" title={deviceBindingState(a.device_fingerprint, a.last_seen) === "reset" ? "اتعمله إعادة ضبط — هيترتبط بأول جهاز يدخل منه" : "لسه مادخلش — هيترتبط بأول جهاز يدخل منه"}>جهاز؟</span>
                   )}
                 </div>
                 <p className="truncate text-[11px]" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>

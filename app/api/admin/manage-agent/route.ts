@@ -12,6 +12,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
+import { resetDevicePatch } from "@/lib/deviceBinding";
+import { randomUUID } from "node:crypto";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
 const SUPER_ONLY = new Set(["delete", "setActive", "setRole"]);
@@ -130,8 +132,11 @@ export async function POST(req: NextRequest) {
       }
 
       case "resetDevice": {
+        // بيفكّ الربط **ويدوّر توكن الجلسة** — التوكن الجديد بيخلّي SessionGuard
+        // يقفل الجلسة المفتوحة على الجهاز القديم. تصفيره لـNULL كان بيسيبها
+        // شغّالة (SessionGuard بيتجاهل الـNULL)، وده عكس الغرض من الزر.
         const { error } = await supabaseAdmin.from("profiles")
-          .update({ device_fingerprint: null, session_token: null }).eq("id", agentId);
+          .update(resetDevicePatch(randomUUID())).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         return NextResponse.json({ ok: true });
       }
@@ -142,7 +147,8 @@ export async function POST(req: NextRequest) {
         // تفعيل الإعفاء بيفكّ أي ربط جهاز حالي عشان الدخول ينجح فوراً.
         const exempt = !!body.exempt;
         const patch: Record<string, unknown> = { device_lock_exempt: exempt };
-        if (exempt) { patch.device_fingerprint = null; patch.session_token = null; }
+        // نفس منطق resetDevice: توكن جديد مش NULL عشان الجهاز القديم يتقفل.
+        if (exempt) Object.assign(patch, resetDevicePatch(randomUUID()));
         const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         return NextResponse.json({ ok: true });
