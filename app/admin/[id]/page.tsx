@@ -1,6 +1,6 @@
 "use client";
 
-import { deviceBindingState } from "@/lib/deviceBinding";
+import { deviceBindingState, canResetDevice } from "@/lib/deviceBinding";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
@@ -280,7 +280,9 @@ export default function AgentDetail() {
                   className="mt-1 rounded-lg border border-border py-1 text-primary">نسخ الاتنين</button>
               </div>
             )}
-            <button onClick={async () => { if (await call("resetDevice")) { setMsg("✅ اتفكّ ربط الجهاز."); load(); } }} disabled={!p.device_fingerprint || busy}
+            <button onClick={async () => { if (await call("resetDevice")) { setMsg("✅ اتفكّ ربط الجهاز واتقفلت جلسته — هيترتبط أول ما يدخل."); load(); } }}
+              disabled={!canResetDevice(p.device_fingerprint, undefined, p.last_seen) || busy}
+              title="بيفكّ ربط الجهاز ويقفل الجلسة المفتوحة — يدخل تاني فيترتبط بجهازه الجديد"
               className="flex items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs text-muted hover:text-primary disabled:opacity-40">
               <Smartphone size={13} /> إعادة ضبط الجهاز
             </button>

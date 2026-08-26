@@ -45,3 +45,23 @@ export function deviceBindingState(
   if (fingerprint && fingerprint.trim()) return "bound";
   return lastSeen && String(lastSeen).trim() ? "reset" : "never";
 }
+
+/**
+ * هل زر «إعادة ضبط الجهاز» ينفع يتضغط؟
+ *
+ * الزر بقى بيعمل حاجتين: يفكّ ربط الجهاز **ويقفل الجلسة الحالية** (بتوكن
+ * جديد). فهو مفيد كمان للحساب اللي **مالوش ربط** لكن جلسته شغّالة — وده
+ * بالظبط اللي كان الشرط القديم (`!device_fingerprint`) بيقفل الزر فيه، يعني
+ * بيمنعه في الحالة اللي محتاجاه.
+ *
+ * الحالة الوحيدة اللي مافيش فيها حاجة تتعمل: حساب **مادخلش أبداً** — لا بصمة
+ * ولا توكن ولا ظهور.
+ */
+export function canResetDevice(
+  fingerprint: string | null | undefined,
+  sessionToken: string | null | undefined,
+  lastSeen: string | null | undefined
+): boolean {
+  const has = (v: string | null | undefined) => !!(v && String(v).trim());
+  return has(fingerprint) || has(sessionToken) || has(lastSeen);
+}

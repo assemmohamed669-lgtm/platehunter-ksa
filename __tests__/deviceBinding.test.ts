@@ -12,7 +12,7 @@
  *    «مادخلش أبداً» و«اتعمله ريسِت».
  */
 import { describe, it, expect } from "vitest";
-import { resetDevicePatch, deviceBindingState } from "@/lib/deviceBinding";
+import { resetDevicePatch, deviceBindingState, canResetDevice } from "@/lib/deviceBinding";
 
 describe("resetDevicePatch", () => {
   it("بيفكّ ربط الجهاز", () => {
@@ -49,5 +49,26 @@ describe("deviceBindingState", () => {
   it("بيتعامل مع النص الفاضي زي المفقود", () => {
     expect(deviceBindingState("", "2026-08-26T16:56:07Z")).toBe("reset");
     expect(deviceBindingState("   ", null)).toBe("never");
+  });
+});
+
+describe("canResetDevice", () => {
+  it("مسموح للمرتبط بجهاز — الحالة الأصلية", () => {
+    expect(canResetDevice("sig-abc", "tok", "2026-08-26T10:00:00Z")).toBe(true);
+  });
+
+  it("**مسموح للي اتعمله ريسِت قبل كده** — مافيش بصمة لكنه ظهر", () => {
+    // دي الحالة اللي كان الزر مقفول فيها بالغلط: ٦ مناديب بلا ربط وجلساتهم
+    // شغّالة، والزر اللي بيحلّ مشكلتهم كان باهت.
+    expect(canResetDevice(null, null, "2026-08-26T16:56:07Z")).toBe(true);
+  });
+
+  it("مسموح لو فيه توكن جلسة حتى بلا بصمة — فيه جلسة تتقفل", () => {
+    expect(canResetDevice(null, "tok-1", null)).toBe(true);
+  });
+
+  it("**ممنوع** لحساب جديد مادخلش أبداً — مافيش حاجة تتعمل", () => {
+    expect(canResetDevice(null, null, null)).toBe(false);
+    expect(canResetDevice("", "", "")).toBe(false);
   });
 });
