@@ -50,6 +50,8 @@ export default function AppMenu({
   // مدخل مؤقّت لصفحة التسجيل الجديدة اللي بتتجرَّب. الافتراضي **مقفول**: أي
   // فشل في القراءة = الرابط مايظهرش، فالمندوب مايشوفهوش بأي حال.
   const [isSuper, setIsSuper] = useState(false);
+  // إيميل المندوب — بيظهر فوق في القائمة عشان كل مندوب يعرف هو داخل بأنهي حساب.
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -160,6 +162,7 @@ export default function AppMenu({
       try {
         const { data } = await supabase.auth.getUser();
         if (data.user) {
+          setUserEmail(data.user.email ?? null);
           rec = (await getAllRecordings(data.user.id)).length;
           const { data: prof } = await supabase.from("profiles")
             .select("role, subscription_end, is_super").eq("id", data.user.id).single();
@@ -235,8 +238,14 @@ export default function AppMenu({
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <span className="text-sm font-bold text-ink">القائمة</span>
-          <button onClick={() => onOpenChange(false)} className="rounded-lg p-1 text-muted hover:text-ink" aria-label="إغلاق">
+          <div className="min-w-0">
+            <span className="text-sm font-bold text-ink">القائمة</span>
+            {/* إيميل المندوب — عشان يعرف هو داخل بأنهي حساب */}
+            {userEmail && (
+              <p dir="ltr" className="mt-0.5 truncate text-start text-[11px] text-muted">{userEmail}</p>
+            )}
+          </div>
+          <button onClick={() => onOpenChange(false)} className="shrink-0 rounded-lg p-1 text-muted hover:text-ink" aria-label="إغلاق">
             <X size={18} />
           </button>
         </div>
