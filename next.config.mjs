@@ -21,6 +21,12 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
+  // معرّف بناء يتغيّر مع **كل نشر** (SHA الكوميت على Vercel، وإلا وقت البناء محلياً).
+  // بيتضمّن في جافاسكريبت العميل وفي /api/version — فلو الجهاز شغّال بندل قديم،
+  // معرّفه هيختلف عن اللي على السيرفر → التطبيق يحدّث نفسه تلقائياً.
+  env: {
+    NEXT_PUBLIC_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) || `dev-${Date.now()}`,
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
