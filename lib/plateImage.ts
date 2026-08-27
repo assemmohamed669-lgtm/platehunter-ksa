@@ -202,11 +202,14 @@ const T_CELL_FONT = "34px system-ui, 'Segoe UI', Tahoma, sans-serif";
 const T_HEAD_FONT = "bold 33px system-ui, 'Segoe UI', Tahoma, sans-serif";
 
 // كثافة رسم الكانفاس (بيتضاعف بيها العرض والارتفاع بالبكسل).
-const T_SCALE = 2;
+// كثافة رسم أقل (١.٥ بدل ٢) = صورة أخف فبتشيل صفوف أكتر قبل ما توصل حد آيفون،
+// **من غير ما حجم الخط يتغيّر** (الكثافة بتأثّر على حدّة البكسل وقت الزوم بس،
+// مش على شكل الخط نسبةً للصورة). فالمندوب بيلاقي لوحات أكتر في الصورة الواحدة.
+const T_SCALE = 1.5;
 // حدود كانفاس آيفون/iOS Safari: فوق ~١٦.٧ مليون بكسل مساحة (أو بُعد كبير جداً)
 // بيرجّع صورة **فاضية** فالمشاركة بتفشل. بنقصّ كل صورة تحت الحدود دي بأمان —
 // لما الخط كبر (نسخ أحدث) الصورة بـ٢٨ صف بقت تعدّي الحد على آيفون فمابتتشاركش.
-const IOS_MAX_CANVAS_AREA = 12_000_000; // بكسل² (هامش أمان تحت ١٦.٧M)
+const IOS_MAX_CANVAS_AREA = 14_000_000; // بكسل² (هامش أمان تحت حد آيفون ~١٦.٧M)
 const IOS_MAX_CANVAS_DIM = 8192;        // أقصى بُعد بالبكسل
 
 function renderTableChunk(
@@ -231,8 +234,8 @@ function renderTableChunk(
 
   const canvas = document.createElement("canvas");
   const scale = T_SCALE;
-  canvas.width = totalW * scale;
-  canvas.height = height * scale;
+  canvas.width = Math.ceil(totalW * scale);
+  canvas.height = Math.ceil(height * scale);
   const ctx = canvas.getContext("2d")!;
   ctx.scale(scale, scale);
   ctx.textBaseline = "middle";
