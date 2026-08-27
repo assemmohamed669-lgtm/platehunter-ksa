@@ -201,6 +201,14 @@ const T_SUB_H = 42;
 const T_CELL_FONT = "34px system-ui, 'Segoe UI', Tahoma, sans-serif";
 const T_HEAD_FONT = "bold 33px system-ui, 'Segoe UI', Tahoma, sans-serif";
 
+// كثافة رسم الكانفاس (بيتضاعف بيها العرض والارتفاع بالبكسل).
+const T_SCALE = 2;
+// حدود كانفاس آيفون/iOS Safari: فوق ~١٦.٧ مليون بكسل مساحة (أو بُعد كبير جداً)
+// بيرجّع صورة **فاضية** فالمشاركة بتفشل. بنقصّ كل صورة تحت الحدود دي بأمان —
+// لما الخط كبر (نسخ أحدث) الصورة بـ٢٨ صف بقت تعدّي الحد على آيفون فمابتتشاركش.
+const IOS_MAX_CANVAS_AREA = 12_000_000; // بكسل² (هامش أمان تحت ١٦.٧M)
+const IOS_MAX_CANVAS_DIM = 8192;        // أقصى بُعد بالبكسل
+
 function renderTableChunk(
   rows: string[][], opts: TableImageOptions, colW: number[], tableW: number, pageInfo: string,
   rowColors?: (string | null)[],
@@ -222,7 +230,7 @@ function renderTableChunk(
   const height = titleBlock + headH + bodyH + FOOTER_H;
 
   const canvas = document.createElement("canvas");
-  const scale = 2;
+  const scale = T_SCALE;
   canvas.width = totalW * scale;
   canvas.height = height * scale;
   const ctx = canvas.getContext("2d")!;
@@ -313,7 +321,6 @@ export function renderTableImages(opts: TableImageOptions): string[] {
       rows: opts.rows.map((r) => r.filter((_, ci) => keep[ci])),
     };
   }
-  const perImage = opts.perImage && opts.perImage > 0 ? opts.perImage : 28;
   // عرض كل عمود = أعرض محتوى فيه (رأس أو خانة) محصور بين حد أدنى وأقصى.
   const measure = document.createElement("canvas").getContext("2d")!;
   const colW = opts.columns.map((h, ci) => {
@@ -324,14 +331,41 @@ export function renderTableImages(opts: TableImageOptions): string[] {
     return Math.min(T_MAX_COL_W, Math.max(T_MIN_COL_W, Math.ceil(w) + T_CELL_PAD * 2));
   });
   const tableW = colW.reduce((a, b) => a + b, 0);
+  const totalW = tableW + T_PAD * 2;
+
+  // ── تقسيم آمن على آيفون: بدل عدد صفوف ثابت، بنقيس ارتفاع كل صف ونعبّي الصور
+  //    بحيث كل كانفاس يفضل تحت حدود iOS (مساحة/بُعد) — وإلا آيفون بيرجّع صورة فاضية.
+  const innerW = colW.map((w) => w - T_CELL_PAD * 2);
+  measure.font = T_HEAD_FONT;
+  const headH = T_CELL_PAD * 2 + Math.max(1, ...opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci]).length)) * T_LINE_H;
+  measure.font = T_CELL_FONT;
+  const rowHeights = opts.rows.map((row) =>
+    T_CELL_PAD * 2 + Math.max(1, ...opts.columns.map((_, ci) => wrapText(measure, String(row[ci] ?? ""), innerW[ci]).length)) * T_LINE_H,
+  );
+  const overhead = T_TITLE_H + (opts.subtitle ? T_SUB_H : 0) + headH + FOOTER_H;
+  // أقصى ارتفاع كانفاس (بكسل) يفضل تحت حدّ المساحة وحدّ البُعد على آيفون.
+  const maxCanvasH = Math.min(IOS_MAX_CANVAS_DIM, Math.floor(IOS_MAX_CANVAS_AREA / (totalW * T_SCALE)));
+  // أقصى ارتفاع صفوف (bodyH) لكل صورة بالوحدات المنطقية.
+  const maxBodyH = Math.max(1, Math.floor(maxCanvasH / T_SCALE) - overhead);
+  // احترام perImage لو المستخدم حدّده (سقف إضافي)، وإلا بلا سقف عددي.
+  const maxRows = opts.perImage && opts.perImage > 0 ? opts.perImage : Infinity;
 
   const chunks: string[][][] = [];
   const colorChunks: (string | null)[][] = [];
-  for (let i = 0; i < opts.rows.length; i += perImage) {
-    chunks.push(opts.rows.slice(i, i + perImage));
-    colorChunks.push((opts.rowColors ?? []).slice(i, i + perImage));
+  let cur: string[][] = [];
+  let curColors: (string | null)[] = [];
+  let curH = 0;
+  for (let i = 0; i < opts.rows.length; i++) {
+    const h = rowHeights[i];
+    if (cur.length && (curH + h > maxBodyH || cur.length >= maxRows)) {
+      chunks.push(cur); colorChunks.push(curColors);
+      cur = []; curColors = []; curH = 0;
+    }
+    cur.push(opts.rows[i]);
+    curColors.push((opts.rowColors ?? [])[i] ?? null);
+    curH += h;
   }
-  if (chunks.length === 0) { chunks.push([]); colorChunks.push([]); }
+  if (cur.length || chunks.length === 0) { chunks.push(cur); colorChunks.push(curColors); }
   const total = chunks.length;
   return chunks.map((chunk, idx) => {
     const pageInfo = total > 1
