@@ -10,6 +10,8 @@
  * font-size and Tailwind's rem-based text sizes follow it.
  */
 
+import { getTemplate } from "./themePresets";
+
 export interface Appearance {
   fontScale: number;        // 1.0 – 1.6
   bgColor: string | null;   // null = theme default (light / وضع التوفير)
@@ -19,9 +21,11 @@ export interface Appearance {
    * فيتغلّب على التلقائي.
    */
   inkColor: string | null;
+  /** قالب مظهر جاهز (خلفية ميش + زجاج) — null/غير موجود = بدون قالب (ألوان عادية). */
+  template?: string | null;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null, inkColor: null };
+export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null, inkColor: null, template: null };
 
 const KEY = "ph:appearance";
 const LIGHT_INK = "#F3F5F7"; // text on a dark background
@@ -76,6 +80,7 @@ export function loadAppearance(): Appearance {
       fontScale: clampFontScale(Number(p.fontScale) || 1),
       bgColor: p.bgColor ?? null,
       inkColor: typeof p.inkColor === "string" ? p.inkColor : null,
+      template: typeof p.template === "string" ? p.template : null,
     };
   } catch {
     return { ...DEFAULT_APPEARANCE };
@@ -95,6 +100,29 @@ export function applyAppearance(a: Appearance): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.style.fontSize = `${Math.round(clampFontScale(a.fontScale) * 100)}%`;
+
+  // ── قالب جاهز (خلفية ميش + أسطح زجاجية + لون مميّز) — بيتغلّب على اللون اليدوي ──
+  const tpl = getTemplate(a.template);
+  if (tpl) {
+    root.style.setProperty("--app-bg", tpl.bg);          // body بيستخدمها كخلفية
+    root.setAttribute("data-glass", "1");                // يفعّل الـblur في globals.css
+    root.style.setProperty("--c-night", "transparent");  // الصفحة شفافة عشان الميش يبان
+    root.style.setProperty("--c-night-oled", "transparent");
+    root.style.setProperty("--c-surface", tpl.surface);
+    root.style.setProperty("--c-surface-2", tpl.surface2);
+    root.style.setProperty("--c-border", tpl.border);
+    root.style.setProperty("--c-primary", tpl.primary);
+    root.style.setProperty("--c-primary-dark", tpl.primaryDark);
+    const ink = a.inkColor ?? tpl.ink;                    // لون خط يدوي يتغلّب لو المستخدم حدده
+    root.style.setProperty("--c-ink", ink);
+    root.style.setProperty("--c-muted", a.inkColor ? mixHex(a.inkColor, "#000000", 0.4) : tpl.muted);
+    return;
+  }
+  // مفيش قالب — امسح آثاره ورجّع الافتراضي.
+  root.style.removeProperty("--app-bg");
+  root.removeAttribute("data-glass");
+  root.style.removeProperty("--c-primary");
+  root.style.removeProperty("--c-primary-dark");
 
   // ── الخلفية: نفس اللون على **كل الأسطح** (الصفحة + الكروت + الشريط الجانبي) ──
   // مع تدرّج بسيط للكروت (surface-2) والحدود (border) عشان مايبقاش كله مسطّح.

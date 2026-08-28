@@ -56,12 +56,12 @@ describe("loadAppearance / saveAppearance", () => {
 
   it("round-trips saved settings", () => {
     saveAppearance({ fontScale: 1.2, bgColor: "#000000", inkColor: null });
-    expect(loadAppearance()).toEqual({ fontScale: 1.2, bgColor: "#000000", inkColor: null });
+    expect(loadAppearance()).toEqual({ fontScale: 1.2, bgColor: "#000000", inkColor: null, template: null });
   });
 
   it("round-trips a manual text (ink) colour", () => {
     saveAppearance({ fontScale: 1, bgColor: "#000000", inkColor: "#ffcc00" });
-    expect(loadAppearance()).toEqual({ fontScale: 1, bgColor: "#000000", inkColor: "#ffcc00" });
+    expect(loadAppearance()).toEqual({ fontScale: 1, bgColor: "#000000", inkColor: "#ffcc00", template: null });
   });
 
   it("defaults inkColor to null (auto from background)", () => {
