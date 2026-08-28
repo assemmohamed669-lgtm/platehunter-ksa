@@ -12,6 +12,7 @@
  * الرئيسية ("platehunter") ولا داتا المناديب. كله على الجهاز — مفيش سيرفر.
  */
 import { streamXlsxToBatches, NotXlsxWorksheetError, type XlsxStreamMeta } from "./xlsxStream";
+import { canFullParseFallback, largeFileFallbackMessage } from "./largeFileFallback";
 import { detectPlateColumn, detectArabicPlateColumn } from "./plateParser";
 import { isPlateLike, normalizeForCount } from "./referralSheets";
 
@@ -147,6 +148,16 @@ export async function importLargeDataFile(
   // احتياطي: القارئ العادي (SheetJS) — لصيغة مختلفة أو بنية غريبة أو صفر صفوف
   // (مثلاً أول ورقة فاضية وSheetJS بيختار الورقة اللي فيها اللوحات).
   if (!meta || meta.rowCount === 0) {
+    // الاحتياطي بيقرا الملف **كامل** في الذاكرة. على آيفون بملف كبير ده
+    // بيقتل الصفحة عند صفر بالمية بدل ما ينقذ المندوب — فبنرفض برسالة واضحة.
+    if (!canFullParseFallback(file.size)) {
+      db.close();
+      await clearData(slot);
+      // خطأ قارئ الدفعات أوضح لو بيسمّي الصيغة الحقيقية؛ غير كده رسالتنا.
+      throw streamErr instanceof NotXlsxWorksheetError
+        ? streamErr
+        : new Error(largeFileFallbackMessage(file.size));
+    }
     try {
       const { parseExcelFile } = await import("./excel");
       const table = await parseExcelFile(file);
