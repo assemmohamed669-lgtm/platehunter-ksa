@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ShieldCheck, Menu, MessageCircle, LogOut, CalendarClock } from "lucide-react";
+import { ShieldCheck, Menu, MessageCircle, LogOut, CalendarClock, RefreshCw } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import SessionGuard from "@/components/SessionGuard";
 import BottomNav from "@/components/BottomNav";
@@ -19,7 +19,7 @@ import { fetchSharedDeepgramKey } from "@/lib/sharedVoiceKey";
 import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, isCutOff, GRACE_DAYS, subscriptionNotice, type SubInfo } from "@/lib/subscription";
-import { APP_VERSION } from "@/lib/appVersion";
+import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -133,10 +133,30 @@ export default function AppShellLayout({
     <SessionGuard>
       <div className="min-h-screen bg-night pb-24 overflow-x-hidden w-full">
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
             {!isHome && <BackButton />}
             <PlateIcon size={56} />
-            <span className="text-sm font-bold text-ink">قناص اللوحات</span>
+            <span className="shrink-0 text-sm font-bold text-ink">قناص اللوحات</span>
+            {/* عدد الأيام الباقية في اشتراك المندوب — ثابت فوق في كل الصفحات */}
+            {sub && sub.status !== "none" && (
+              <span
+                className="flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold leading-none"
+                style={{ color: sub.color, borderColor: `${sub.color}66` }}
+                title="أيام الاشتراك المتبقية"
+              >
+                <CalendarClock size={11} />
+                {sub.daysLeft >= 0 ? `${sub.daysLeft} يوم` : "منتهي"}
+              </span>
+            )}
+            {/* زر تحديث البرنامج — ثابت فوق عشان المندوب يحدّث من أي مكان */}
+            <button
+              onClick={() => void refreshAppNow()}
+              className="flex shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 p-1.5 text-ink transition hover:text-primary"
+              title="تحديث البرنامج"
+              aria-label="تحديث البرنامج"
+            >
+              <RefreshCw size={14} />
+            </button>
           </div>
           <div className="flex items-center gap-2">
             {isAdmin && (
