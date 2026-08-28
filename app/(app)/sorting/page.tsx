@@ -67,7 +67,13 @@ type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Rec
 // localStorage عشان الفرز مايضيعش لمجرد إنك رحت صفحة تانية ورجعت.
 // فوق الحجم ده: ملف الداتا يتقرا على دفعات ويتخزّن على الجهاز (بدل الذاكرة) عشان
 // مايعملش crash على iOS. تحته: نفس المسار القديم بالظبط (الملفات الصغيرة مش متأثرة).
-const LARGE_DATA_THRESHOLD_BYTES = 12 * 1024 * 1024; // ~12MB
+//
+// ⚠️ الحد كان ١٢ ميجا وده كان عالي جداً على الآيفون: ملف xlsx أقل من ١٢ ميجا ممكن
+// يفك لمئات الآلاف من الصفوف، وSheetJS بيحمّلهم كلهم في الذاكرة مرة واحدة → الآيفون
+// بيقتل الصفحة (رسالة «حدثت مشكلة بشكل متكرر»). نزّلناه لـ٣ ميجا فأي ملف داتا حقيقي
+// بيتقرا على دفعات (ذاكرة قليلة) والملفات الصغيرة الحقيقية بس هي اللي تفضل بالمسار
+// العادي. مسار الدفعات كامل الوظائف للفرز (بحث/لصق/تام) فمفيش خسارة مميّزات.
+const LARGE_DATA_THRESHOLD_BYTES = 3 * 1024 * 1024; // ~3MB (كان 12MB — عالي جداً على iOS)
 
 type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number };
 type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string };
