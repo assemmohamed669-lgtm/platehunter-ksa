@@ -65,6 +65,14 @@ export interface UploadedFileRecord {
   rows: Record<string, string>[];
   uploadedAt: string;
   fileBlob?: Blob;                   // original bytes, so "download" still works after a refresh
+  /**
+   * ملف داتا إضافي **كبير** متخزّن على دفعات (streamed) في قاعدة dataStore
+   * المنفصلة بدل ما صفوفه كلها هنا في الذاكرة — عشان مايعملش crash على iOS.
+   * لو موجودة: `rows` هنا = عيّنة صغيرة للمعاينة/الأعمدة بس، والصفوف الكاملة
+   * بتتقري من dataStore بالـ`streamSlot`. (الملفات الصغيرة تفضل بلا الحقول دي.)
+   */
+  streamed?: boolean;
+  streamSlot?: string;               // slot الداتا الكبيرة في dataStore (مثلاً "xdata-...")
 }
 
 /**

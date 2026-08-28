@@ -52,9 +52,20 @@ export type DataRow = Record<string, string>;
 /** الدفعة موسومة باسم ورقتها (sheet) في ملفات الداتا متعددة الورقات فقط. */
 interface ChunkRec { rows: DataRow[]; sheet?: string }
 
-function openDataDB(): Promise<IDBDatabase> {
+/**
+ * اسم قاعدة الـslot. الـslot الافتراضي "data" (الملف الأساسي) بيفضل على **نفس
+ * الاسم القديم** بالظبط عشان داتا المستخدمين المخزّنة قبل كده ماتضيعش. أي slot
+ * تاني (ملفات الداتا الإضافية: xdata-*) بياخد **قاعدة منفصلة تماماً** — فكل ملف
+ * داتا مبطّن لوحده، وclearData بيمسح ملف واحد بس مش الكل. ده اللي بيخلّي أكتر من
+ * ملف داتا كبير يتخزّن على الجهاز مع بعض بأمان (مايكراشش على iOS).
+ */
+function dbNameForSlot(slot: string): string {
+  return slot === "data" ? DB_NAME : `${DB_NAME}::${slot}`;
+}
+
+function openDataDB(slot = "data"): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(dbNameForSlot(slot), DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       // نسخة قديمة (صف-بصف بفهرس) → شيلها ونعيد البناء كدفعات.
@@ -70,7 +81,7 @@ function openDataDB(): Promise<IDBDatabase> {
 
 /** يمسح كل دفعات الداتا + ميتاداتاها — فوري (store.clear). */
 export async function clearData(slot = "data"): Promise<void> {
-  const db = await openDataDB();
+  const db = await openDataDB(slot);
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction([CHUNKS, META], "readwrite");
     tx.oncomplete = () => resolve();
@@ -99,7 +110,7 @@ export async function importLargeDataFile(
 ): Promise<DataMeta> {
   const slot = opts.slot ?? "data";
   await clearData(slot);
-  const db = await openDataDB();
+  const db = await openDataDB(slot);
 
   let plateCol = "";
   let headers: string[] = [];
@@ -196,7 +207,7 @@ export async function importMultiSheetData(
 ): Promise<DataMeta> {
   const slot = opts.slot ?? "data";
   await clearData(slot);
-  const db = await openDataDB();
+  const db = await openDataDB(slot);
   try {
     // parseExcelFile بيشتغل في **worker** (بعيد عن الـmain thread فالشاشة ماتتجمّدش)
     // وبيرجّع صفوف ورقة واحدة بس لو forcedSheet متحدد (مش بيدمج). readSheetNames
@@ -282,7 +293,7 @@ export async function importMultiSheetData(
 
 /** ميتاداتا slot لو موجود (يعني فيه داتا كبيرة مستوردة). */
 export async function getDataMeta(slot = "data"): Promise<DataMeta | null> {
-  const db = await openDataDB();
+  const db = await openDataDB(slot);
   const out = await new Promise<DataMeta | null>((resolve, reject) => {
     const tx = db.transaction(META, "readonly");
     const req = tx.objectStore(META).get(slot);
@@ -294,8 +305,8 @@ export async function getDataMeta(slot = "data"): Promise<DataMeta | null> {
 }
 
 /** أول n صف (لكشف الأعمدة والمعاينة) — بيقرا أول دفعة بس. */
-export async function getSampleRows(n = 50): Promise<DataRow[]> {
-  const db = await openDataDB();
+export async function getSampleRows(n = 50, slot = "data"): Promise<DataRow[]> {
+  const db = await openDataDB(slot);
   const out = await new Promise<DataRow[]>((resolve, reject) => {
     const tx = db.transaction(CHUNKS, "readonly");
     const req = tx.objectStore(CHUNKS).openCursor();
@@ -319,7 +330,7 @@ export async function iterateRows(
   onBatch: (rows: DataRow[], baseIndex: number, sheet: string) => void | Promise<void>,
   opts: { slot?: string; sheets?: Set<string> | null } = {}
 ): Promise<void> {
-  const db = await openDataDB();
+  const db = await openDataDB(opts.slot ?? "data");
   try {
     // اقرا مفاتيح الدفعات بالترتيب، وبعدين هات كل دفعة لوحدها ونفّذ onBatch —
     // كده مفيش أكتر من دفعة واحدة في الذاكرة في المرة.
@@ -365,7 +376,7 @@ export async function importRowsToData(
 ): Promise<DataMeta> {
   const slot = opts.slot ?? "data";
   await clearData(slot);
-  const db = await openDataDB();
+  const db = await openDataDB(slot);
 
   const writeChunk = (batch: DataRow[]): Promise<void> =>
     new Promise((resolve, reject) => {
