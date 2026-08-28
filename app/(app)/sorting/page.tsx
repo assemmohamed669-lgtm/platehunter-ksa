@@ -203,10 +203,27 @@ export default function SortingPage() {
   // ── ملفات داتا إضافية (زر "+ إضافة ملف داتا") — كل ملف بيشتغل زي الأول، وكل
   // الفرز (جديد/كلي/مطلوب/لصق) بيتم على كل ملفات الداتا مدموجة. تتخزّن في slots
   // data-2, data-3... فتفضل بعد إعادة فتح التطبيق. صندوق فاضي عادي — بيتخطّى.
-  type ExtraDataFile = { id: string; table: ExcelTable | null; file: File | null };
+  // table = عيّنة معاينة (نفس مسار الأساسي streamed). لو streamed: الصفوف الكاملة
+  // على الجهاز في dataStore بالـstreamSlot (مايتحملوش في الذاكرة → مفيش crash iOS).
+  type ExtraDataFile = {
+    id: string; table: ExcelTable | null; file: File | null;
+    streamed?: boolean; streamSlot?: string; streamMeta?: DataMeta | null;
+  };
   const [extraData, setExtraData] = useState<ExtraDataFile[]>([]);
   const extraDataIdRef = useRef(1);
   const extraDataHighWaterRef = useRef(1);
+
+  // slot فريد وثابت لكل ملف داتا إضافي كبير (streamed). عدّاد دائم في localStorage
+  // عشان مايتكررش عبر إعادة فتح التطبيق (لو استخدمنا معرّف المربع كان يتصادم لأن
+  // عدّاد المعرّفات بيتصفّر عند كل فتح) — فمافيش ملف بيمسح ملف تاني بالغلط.
+  function nextStreamSlot(): string {
+    let seq = 1;
+    try {
+      seq = (parseInt(localStorage.getItem("ph:sorting:xdataSeq") || "0", 10) || 0) + 1;
+      localStorage.setItem("ph:sorting:xdataSeq", String(seq));
+    } catch { seq = Math.floor(Math.random() * 1e9); }
+    return `xdata-${seq}`;
+  }
 
   // اختيار أعمدة النتائج لكل مربع إضافي (داتا أو إحالة) — مفهرس بمعرّف المربع.
   // كل مربع إضافي بقى ليه قسم «الأعمدة» بتاعه زي المربعات الأساسية.
@@ -367,11 +384,25 @@ export default function SortingPage() {
           for (let n = 2; n < 100; n++) {
             const rec = await getUploadedFile("local", `data-${n}`);
             if (!rec) break;
-            extras.push({
-              id: `data-b${n}`,
-              table: { headers: rec.headers, rows: rec.rows },
-              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-            });
+            if (rec.streamed && rec.streamSlot) {
+              // ملف إضافي كبير: الصفوف على الجهاز في dataStore — نسترجع الميتا +
+              // عيّنة معاينة بس (مايتحملش في الذاكرة). لو قاعدته اختفت نتخطّاه.
+              const meta = await getDataMeta(rec.streamSlot);
+              if (!meta) continue;
+              const sample = await getSampleRows(50, rec.streamSlot);
+              extras.push({
+                id: `data-b${n}`,
+                table: { headers: meta.headers, rows: sample, sheetName: meta.sheetName },
+                file: new File([new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+                streamed: true, streamSlot: rec.streamSlot, streamMeta: meta,
+              });
+            } else {
+              extras.push({
+                id: `data-b${n}`,
+                table: { headers: rec.headers, rows: rec.rows },
+                file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+              });
+            }
             extraDataHighWaterRef.current = n;
           }
           if (extras.length > 0) {
@@ -521,11 +552,25 @@ export default function SortingPage() {
           for (let n = 2; n < 100; n++) {
             const rec = await getUploadedFile("local", `data-${n}`);
             if (!rec) break;
-            extras.push({
-              id: `data-b${n}`,
-              table: { headers: rec.headers, rows: rec.rows },
-              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-            });
+            if (rec.streamed && rec.streamSlot) {
+              // ملف إضافي كبير: الصفوف على الجهاز في dataStore — نسترجع الميتا +
+              // عيّنة معاينة بس (مايتحملش في الذاكرة). لو قاعدته اختفت نتخطّاه.
+              const meta = await getDataMeta(rec.streamSlot);
+              if (!meta) continue;
+              const sample = await getSampleRows(50, rec.streamSlot);
+              extras.push({
+                id: `data-b${n}`,
+                table: { headers: meta.headers, rows: sample, sheetName: meta.sheetName },
+                file: new File([new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+                streamed: true, streamSlot: rec.streamSlot, streamMeta: meta,
+              });
+            } else {
+              extras.push({
+                id: `data-b${n}`,
+                table: { headers: rec.headers, rows: rec.rows },
+                file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+              });
+            }
             extraDataHighWaterRef.current = n;
           }
           setExtraData(extras);
@@ -1169,17 +1214,35 @@ export default function SortingPage() {
   // ── ملفات الداتا الإضافية (نفس منطق الإحالات الإضافية، بس slots data-2, ...) ──
   async function persistExtraDataSlots(arr: ExtraDataFile[]) {
     const filled = arr.filter((e) => e.table && e.file);
+    // slots الداتا الكبيرة اللي لسه حيّة (مؤشّر ليها موجود) — عشان ما نمسحش قاعدتها
+    // بالغلط وقت إعادة الترقيم (مؤشّر اتنقل من data-3 لـdata-2 وقاعدته نفسها).
+    const liveStreamSlots = new Set(filled.filter((e) => e.streamed && e.streamSlot).map((e) => e.streamSlot!));
     for (let i = 0; i < filled.length; i++) {
       const slot = `data-${i + 2}`;
       const e = filled[i];
-      await saveUploadedFile({
-        key: `local:${slot}`, agentId: "local", slot,
-        fileName: e.file!.name, headers: e.table!.headers, rows: e.table!.rows,
-        uploadedAt: new Date().toISOString(), fileBlob: e.file!,
-      });
+      if (e.streamed && e.streamSlot) {
+        // ملف كبير: مؤشّر خفيف بس (عيّنة معاينة + streamSlot) — الصفوف الكاملة على
+        // الجهاز في dataStore. مافيش fileBlob (الملف كبير، مش هنخزّن بايتاته في الذاكرة).
+        await saveUploadedFile({
+          key: `local:${slot}`, agentId: "local", slot,
+          fileName: e.file!.name, headers: e.table!.headers, rows: e.table!.rows,
+          uploadedAt: new Date().toISOString(), streamed: true, streamSlot: e.streamSlot,
+        });
+      } else {
+        await saveUploadedFile({
+          key: `local:${slot}`, agentId: "local", slot,
+          fileName: e.file!.name, headers: e.table!.headers, rows: e.table!.rows,
+          uploadedAt: new Date().toISOString(), fileBlob: e.file!,
+        });
+      }
     }
     const lastWritten = filled.length + 1;
     for (let n = lastWritten + 1; n <= extraDataHighWaterRef.current; n++) {
+      // المؤشّر المحذوف كان بيشاور على داتا كبيرة مش مستخدمة تاني؟ امسح قاعدتها كمان.
+      try {
+        const rec = await getUploadedFile("local", `data-${n}`);
+        if (rec?.streamed && rec.streamSlot && !liveStreamSlots.has(rec.streamSlot)) await clearBigData(rec.streamSlot);
+      } catch { /* ignore */ }
       await deleteUploadedFile("local", `data-${n}`);
     }
     extraDataHighWaterRef.current = Math.max(lastWritten, 1);
@@ -1188,7 +1251,10 @@ export default function SortingPage() {
   function onExtraDataParsed(i: number, table: ExcelTable, file: File) {
     const id = extraData[i]?.id;
     setExtraData((prev) => {
-      const next = prev.map((e, idx) => (idx === i ? { ...e, table, file } : e));
+      const old = prev[i];
+      // كان فيه ملف كبير قبل كده؟ حرّر قاعدته (بقى ملف صغير في الذاكرة).
+      if (old?.streamed && old.streamSlot) void clearBigData(old.streamSlot);
+      const next = prev.map((e, idx) => (idx === i ? { ...e, table, file, streamed: false, streamSlot: undefined, streamMeta: null } : e));
       void persistExtraDataSlots(next);
       return next;
     });
@@ -1196,9 +1262,34 @@ export default function SortingPage() {
     setResults(null); setSorted(false); wipeSortResults();
   }
 
+  // ملف داتا **إضافي كبير** (> الحد): يتقرا على دفعات ويتخزّن على الجهاز في slot
+  // خاص بيه (مايتحملش في الذاكرة → مفيش crash iOS)، ونحط عيّنة صغيرة للمعاينة/
+  // الأعمدة. لو متعدد الورقات نمرّ عليه زي الأساسي. نفس أمان مربع الداتا الأساسي.
+  async function handleExtraLargeData(i: number, file: File, onProgress: (rows: number) => void) {
+    const old = extraData[i];
+    if (old?.streamed && old.streamSlot) void clearBigData(old.streamSlot); // حرّر أي قديم
+    const streamSlot = nextStreamSlot();
+    const id = extraData[i]?.id;
+    const names = await readSheetNames(file);
+    const meta = names.length > 1
+      ? await importMultiSheetData(file, { slot: streamSlot, onProgress })
+      : await importLargeDataFile(file, { slot: streamSlot, onProgress });
+    const sample = await getSampleRows(50, streamSlot);
+    const sampleTable: ExcelTable = { headers: meta.headers, rows: sample, sheetName: meta.sheetName };
+    setExtraData((prev) => {
+      const next = prev.map((e, idx) => (idx === i ? { ...e, file, table: sampleTable, streamed: true, streamSlot, streamMeta: meta } : e));
+      void persistExtraDataSlots(next);
+      return next;
+    });
+    if (id) setExtraColsSel((cs) => ({ ...cs, [id]: defaultExtraCols("data", sampleTable) }));
+    setResults(null); setSorted(false); wipeSortResults();
+  }
+
   function clearExtraDataFile(i: number) {
     setExtraData((prev) => {
-      const next = prev.map((e, idx) => (idx === i ? { ...e, table: null, file: null } : e));
+      const old = prev[i];
+      if (old?.streamed && old.streamSlot) void clearBigData(old.streamSlot); // حرّر قاعدة الداتا الكبيرة
+      const next = prev.map((e, idx) => (idx === i ? { ...e, table: null, file: null, streamed: false, streamSlot: undefined, streamMeta: null } : e));
       void persistExtraDataSlots(next);
       return next;
     });
@@ -1207,6 +1298,8 @@ export default function SortingPage() {
 
   function clearExtraDataBox(i: number) {
     setExtraData((prev) => {
+      const old = prev[i];
+      if (old?.streamed && old.streamSlot) void clearBigData(old.streamSlot);
       const next = prev.filter((_, idx) => idx !== i);
       void persistExtraDataSlots(next);
       return next;
@@ -1223,13 +1316,26 @@ export default function SortingPage() {
 
   // كل مصادر الداتا (الأساسية + الإضافية) — كل مصدر بعمود لوحته. تُستخدم في كل
   // مسارات الفرز عشان الفرز يتم على كل ملفات الداتا مدموجة.
-  function collectDataSources(): Array<{ rows: Record<string, string>[]; plateCol: string }> {
-    const srcs: Array<{ rows: Record<string, string>[]; plateCol: string }> = [];
+  // مصدر داتا: إمّا صفوف في الذاكرة (rows) أو ملف كبير على الجهاز (slot + rowCount)
+  // بيتقري على دفعات وقت الفرز بدل ما يتحمّل في الذاكرة.
+  type DataSource = { rows: Record<string, string>[]; plateCol: string; slot?: string; rowCount?: number };
+  function collectDataSources(): DataSource[] {
+    const srcs: DataSource[] = [];
     if (dataTable && effectiveDataPlateCol) {
       srcs.push({ rows: dataTable.rows, plateCol: effectiveDataPlateCol });
     }
     for (const ed of extraData) {
       if (!ed.table) continue;
+      // ملف إضافي كبير (streamed): صفوفه على الجهاز — نحط علامة slot بدل الصفوف،
+      // والفرز بيقرا من الجهاز على دفعات (بذاكرة دفعة واحدة).
+      if (ed.streamed && ed.streamSlot && ed.streamMeta) {
+        const pc = ed.streamMeta.plateCol
+          || detectArabicPlateColumn(ed.table.headers)
+          || detectPlateColumn(ed.table.headers, ed.table.rows);
+        if (!pc) continue;
+        srcs.push({ rows: [], plateCol: pc, slot: ed.streamSlot, rowCount: ed.streamMeta.rowCount });
+        continue;
+      }
       const arabicCol = detectArabicPlateColumn(ed.table.headers);
       const plateCol = arabicCol ?? detectPlateColumn(ed.table.headers, ed.table.rows);
       if (!plateCol) continue;
@@ -1433,8 +1539,24 @@ export default function SortingPage() {
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
       for (let si = 0; si < memSources.length; si++) {
         const src = memSources[si];
-        const rows = src.rows;
         const pc = src.plateCol;
+        // ملف داتا إضافي كبير (streamed): اقرا من الجهاز على دفعات — نفس المطابقة.
+        if (src.slot) {
+          let gj = 0;
+          await iterateRows(async (batch) => {
+            for (const dataRow of batch) {
+              const idx = dataBase + gj; gj++;
+              const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
+              if (!n) continue;
+              const hit = refIndex.get(n);
+              if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx, srcIdx: srcBase + si });
+            }
+            await new Promise<void>((r) => setTimeout(r, 0));
+          }, { slot: src.slot });
+          dataBase += gj;
+          continue;
+        }
+        const rows = src.rows;
         for (let i = 0; i < rows.length; i += CHUNK) {
           const end = Math.min(i + CHUNK, rows.length);
           for (let j = i; j < end; j++) {
@@ -1493,9 +1615,13 @@ export default function SortingPage() {
       // ٧٤٠ ألف صف في الذاكرة، وبدل بحث لكل لوحة (بطيء).
       // عدد صفوف الداتا الكبيرة اللي **فعلاً** اتلفّ عليها (الورقات المختارة بس في
       // ملف متعدد الورقات) — يبقى أساس dataIdx لملفات الذاكرة اللي بعدها.
-      let streamedCount = 0;
-      if (dataStreamed && dataStreamMeta) {
-        const newIndex = new Map<string, { row: Record<string, string>; norm: string }>();
+      const srcBase = dataStreamed ? 1 : 0;
+      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      // فهرس اللوحات الجديدة (صغير) — نبنيه لو فيه أي مصدر داتا كبير (streamed،
+      // أساسي أو إضافي) عشان نطابق كل صف من القرص عليه بدل بناء فهرس ملايين الصفوف.
+      const anyStreamed = (dataStreamed && dataStreamMeta) || memSources.some((s) => s.slot);
+      const newIndex = new Map<string, { row: Record<string, string>; norm: string }>();
+      if (anyStreamed) {
         for (const e of newEntries) {
           if (!newIndex.has(e.norm)) newIndex.set(e.norm, { row: e.row, norm: e.norm });
           if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
@@ -1503,11 +1629,16 @@ export default function SortingPage() {
             if (rev !== e.norm && !newIndex.has(rev)) newIndex.set(rev, { row: e.row, norm: e.norm });
           }
         }
-        let gj = 0;
+      }
+      // gIdx = فهرس عام متتابع عبر كل مصادر الداتا (أساسي + إضافي) بالترتيب — عشان
+      // dataIdx يفضل مطابق لترتيب الملفات بعد الفرز النهائي.
+      let gIdx = 0;
+      // (أ) الداتا الأساسية الكبيرة (streamed): مرور واحد على الدفعات من القرص.
+      if (dataStreamed && dataStreamMeta) {
         await iterateRows(async (batch, _base, sheet) => {
           const pc = (sheet && sheetPlateColMap.get(sheet)) || dataStreamMeta.plateCol;
           for (const dataRow of batch) {
-            const idx = gj++;
+            const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
             const hit = newIndex.get(n);
@@ -1515,17 +1646,28 @@ export default function SortingPage() {
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data", sheets: selectedDataSheetFilter });
-        streamedCount = gj;
       }
-      // (ب) ملفات الداتا في الذاكرة (الأساسي لو مش streamed + الإضافية) — فهرس صغير.
-      const srcBase = dataStreamed ? 1 : 0;
-      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      // (ب) ملفات الداتا الإضافية بالترتيب: الكبيرة تُقرا من الجهاز على دفعات
+      // (وتطابق على فهرس الجديد مباشرة)، والصغيرة عبر فهرس صغير في الذاكرة.
       if (memSources.length) {
         const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>>();
-        let gIdx = streamedCount;
         for (let si = 0; si < memSources.length; si++) {
-          const pc = memSources[si].plateCol;
-          for (const row of memSources[si].rows) {
+          const src = memSources[si];
+          const pc = src.plateCol;
+          if (src.slot) {
+            await iterateRows(async (batch) => {
+              for (const dataRow of batch) {
+                const idx = gIdx++;
+                const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
+                if (!n) continue;
+                const hit = newIndex.get(n);
+                if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm, srcIdx: srcBase + si });
+              }
+              await new Promise<void>((r) => setTimeout(r, 0));
+            }, { slot: src.slot });
+            continue;
+          }
+          for (const row of src.rows) {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
             if (!n) continue;
@@ -1877,6 +2019,19 @@ export default function SortingPage() {
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية.
       const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
       for (const src of memSources) {
+        // ملف إضافي كبير (streamed): لفّ على دفعاته من القرص وطابق كل دفعة (تام
+        // فقط زي الأساسي — التقريبي على الملايين بطيء)، مع إزاحة dataIdx.
+        if (src.slot) {
+          let lastYield = Date.now();
+          await iterateRows(async (batch) => {
+            for (const m of matchTokensAgainstRows(tokens, batch, src.plateCol, 88, false)) {
+              matches.push({ ...m, dataIdx: m.dataIdx + base });
+            }
+            base += batch.length;
+            if (Date.now() - lastYield >= 50) { await new Promise<void>((r) => setTimeout(r, 0)); lastYield = Date.now(); }
+          }, { slot: src.slot });
+          continue;
+        }
         for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol)) {
           matches.push({ ...m, dataIdx: m.dataIdx + base });
         }
@@ -2129,8 +2284,10 @@ export default function SortingPage() {
             title={`ملف الداتا ${i + 2}`}
             hint="داتا إضافية تُدمج مع الأولى في نفس الفرز"
             parsedFile={ed.file}
-            parsedRowCount={ed.table?.rows.length ?? null}
+            parsedRowCount={ed.streamed && ed.streamMeta ? ed.streamMeta.rowCount : (ed.table?.rows.length ?? null)}
             onParsed={(table, file) => onExtraDataParsed(i, table, file)}
+            largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
+            onLargeFile={(file, onProgress) => handleExtraLargeData(i, file, onProgress)}
             onClear={() => clearExtraDataFile(i)}
             showReplaceButtons
           />

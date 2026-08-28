@@ -141,6 +141,34 @@ describe("dataStore (IndexedDB على الجهاز — dep دفعات)", () => {
     expect(await getDataMeta("data")).toBeNull();
   });
 
+  // ── عزل الـslots: كل ملف داتا في قاعدة منفصلة على الجهاز عشان أكتر من ملف
+  //    داتا كبير (الأساسي + الإضافية) يتخزّنوا مع بعض بأمان بدون ما يمسحوا بعض. ──
+  it("slots منفصلة: استيراد slot تاني مايمسحش الأساسي (كل ملف لوحده)", async () => {
+    await importLargeDataFile(xlsxFile([["رقم اللوحه", "الحي"], ["اول1111", "حي أ"]]), { slot: "data" });
+    await importLargeDataFile(
+      xlsxFile([["رقم اللوحه", "الحي"], ["تان2222", "حي ب"], ["تان3333", "حي ج"]]),
+      { slot: "xdata-2" },
+    );
+    // الأساسي زي ما هو (ماتمسحش لمّا اتكتب التاني)
+    expect((await getDataMeta("data"))?.rowCount).toBe(1);
+    const primary: Record<string, string>[] = [];
+    await iterateRows((b) => { primary.push(...b); }, { slot: "data" });
+    expect(primary.map((r) => r["رقم اللوحه"])).toEqual(["اول1111"]);
+    // التاني في قاعدته لوحده
+    expect((await getDataMeta("xdata-2"))?.rowCount).toBe(2);
+    const second: Record<string, string>[] = [];
+    await iterateRows((b) => { second.push(...b); }, { slot: "xdata-2" });
+    expect(second.map((r) => r["رقم اللوحه"])).toEqual(["تان2222", "تان3333"]);
+    // العيّنة كمان لكل slot لوحدها
+    expect((await getSampleRows(50, "xdata-2")).length).toBe(2);
+
+    // مسح slot واحد مايأثّرش على التاني
+    await clearData("xdata-2");
+    expect(await getDataMeta("xdata-2")).toBeNull();
+    expect((await getDataMeta("data"))?.rowCount).toBe(1); // الأساسي لسه موجود
+    await clearData("data");
+  });
+
   it("لفّ على دفعات متعددة (baseIndex متتابع)", async () => {
     // ملف أكبر من حجم الدفعة (10000) عشان يتخزّن في أكتر من chunk
     const aoa: unknown[][] = [["رقم اللوحه", "الحي"]];
