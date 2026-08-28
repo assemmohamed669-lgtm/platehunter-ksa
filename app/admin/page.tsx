@@ -307,6 +307,8 @@ export default function AdminDashboard() {
         // المناديب المعفيين من قفل الجهاز (بيدخلوا بإيميلهم من أي جهاز).
         if (filter === "any-device") return a.role === "agent" && a.device_lock_exempt === true;
         if (a.role === "admin") return false;
+        // «تحذير» في كروت الملخّص = قرب ينتهي + في السماح مع بعض.
+        if (filter === "warn") return sub.status === "expiring" || sub.status === "grace";
         return sub.status === (filter as SubStatus);
       })
       .sort((x, y) => rank(x.a) - rank(y.a) || (x.a.username ?? "").localeCompare(y.a.username ?? ""));
@@ -346,19 +348,29 @@ export default function AdminDashboard() {
           </button>
         </div>
 
-        {/* Summary */}
+        {/* Summary — كل كارت زر بيفلتر القايمة على حالته (تحذير = قرب ينتهي +
+            في السماح). الضغط تاني على نفس الكارت بيرجّع «الكل». */}
         <div className="grid grid-cols-4 gap-2 text-center">
           {[
-            { label: "الكل", val: stat.total, c: "text-ink" },
-            { label: "نشط", val: stat.active, c: "text-brand" },
-            { label: "تحذير", val: stat.warn, c: "text-alert" },
-            { label: "مقطوع", val: stat.cut, c: "text-danger" },
-          ].map((s) => (
-            <div key={s.label} className="rounded-xl border border-border bg-surface p-2.5">
-              <p className={`text-xl font-black ${s.c}`}>{s.val}</p>
-              <p className="text-[11px] text-muted">{s.label}</p>
-            </div>
-          ))}
+            { label: "الكل", val: stat.total, c: "text-ink", filterKey: "all" },
+            { label: "نشط", val: stat.active, c: "text-brand", filterKey: "active" },
+            { label: "تحذير", val: stat.warn, c: "text-alert", filterKey: "warn" },
+            { label: "مقطوع", val: stat.cut, c: "text-danger", filterKey: "expired" },
+          ].map((s) => {
+            const on = filter === s.filterKey;
+            return (
+              <button
+                key={s.label}
+                onClick={() => setFilter(on && s.filterKey !== "all" ? "all" : s.filterKey)}
+                className={`rounded-xl border p-2.5 text-center transition active:scale-95 ${
+                  on ? "border-primary bg-primary/10 ring-1 ring-primary" : "border-border bg-surface"
+                }`}
+              >
+                <p className={`text-xl font-black ${s.c}`}>{s.val}</p>
+                <p className="text-[11px] text-muted">{s.label}</p>
+              </button>
+            );
+          })}
         </div>
 
         {/* بحث + فلترة — فوق كل حاجة عشان توصل للمندوب بسرعة بالاسم/الإيميل/التليفون */}
