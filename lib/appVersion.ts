@@ -5,7 +5,7 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.0.2";
+export const APP_VERSION = "1.1.0";
 
 /**
  * معرّف البناء — بيتغيّر مع **كل نشر** (SHA الكوميت). بيتقارن بين الجهاز والسيرفر
@@ -14,7 +14,7 @@ export const APP_VERSION = "1.0.2";
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
-  "التطبيق بقى بيحدّث نفسه تلقائياً — بعد التحديثة دي مش هتحتاج تدوس «تحديث» تاني، أي نسخة جديدة بتنزل لوحدها.";
+  "إصلاح توقّف صفحة الفرز على الآيفون عند رفع ملفات الداتا الكبيرة، وتحسين سرعة القراءة والتخزين على كل الأجهزة.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
