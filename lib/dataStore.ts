@@ -12,6 +12,8 @@
  * الرئيسية ("platehunter") ولا داتا المناديب. كله على الجهاز — مفيش سيرفر.
  */
 import { streamXlsxToBatches, NotXlsxWorksheetError, type XlsxStreamMeta } from "./xlsxStream";
+import { runDataImport } from "./dataImportRunner";
+import { verifyImportCounts } from "./importVerify";
 import { encodeChunk, decodeChunk } from "./chunkCodec";
 import { canFullParseFallback, largeFileFallbackMessage } from "./largeFileFallback";
 import { detectPlateColumn, detectArabicPlateColumn } from "./plateParser";
@@ -138,11 +140,15 @@ export async function importLargeDataFile(
   let meta: XlsxStreamMeta | null = null;
   let streamErr: unknown = null;
   try {
-    meta = await streamXlsxToBatches(
+    // الـWorker بيقرا برّه الخيط الرئيسي (الآيفون بيقتل الصفحة لو قرت جوّاها)،
+    // والاحتياطي هو الطريقة الحالية بالظبط لو الـWorker مش متاح.
+    meta = await runDataImport(
       file,
-      async (batch) => { takeHeaders(batch); await writeChunk(batch); },
-      { onProgress: opts.onProgress, batchSize: CHUNK_ROWS }
+      async (batch) => { takeHeaders(batch); await writeChunk(batch); opts.onProgress?.(written); },
+      { batchSize: CHUNK_ROWS }
     );
+    // حماية من الداتا الناقصة الصامتة: اللي اتقرا لازم يساوي اللي اتكتب.
+    verifyImportCounts(meta.rowCount, written);
   } catch (e) {
     if (written > 0) { db.close(); throw e; } // اتكتبت صفوف بالفعل → مش مشكلة صيغة
     streamErr = e;
