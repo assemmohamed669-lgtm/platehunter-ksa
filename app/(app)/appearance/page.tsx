@@ -65,21 +65,19 @@ export default function AppearancePage() {
                 style={{ background: t.bg }}
                 title={t.name}
               >
-                {/* شريحة زجاجية مصغّرة — معاينة شكل الكروت في القالب */}
-                <span
-                  className="absolute bottom-2 right-2 rounded-lg px-2 py-1 text-[11px] font-bold"
-                  style={{
-                    background: t.surface,
-                    color: t.ink,
-                    border: `1px solid ${t.border}`,
-                    backdropFilter: "blur(6px)",
-                    WebkitBackdropFilter: "blur(6px)",
-                  }}
+                {/* معاينة مصغّرة لشكل الكارت الصلب + اللون المميّز في القالب */}
+                <div
+                  className="absolute inset-x-2 bottom-2 rounded-xl p-2"
+                  style={{ background: t.surface, border: `1px solid ${t.border}`, boxShadow: t.shadow }}
                 >
-                  {t.name}
-                </span>
+                  <p className="text-[11px] font-bold leading-tight" style={{ color: t.ink }}>{t.name}</p>
+                  <div className="mt-1.5 flex items-center gap-1">
+                    <span className="h-1.5 flex-1 rounded-full" style={{ background: t.muted, opacity: 0.35 }} />
+                    <span className="rounded-md px-1.5 py-0.5 text-[9px] font-bold text-white" style={{ background: t.primary }}>زر</span>
+                  </div>
+                </div>
                 {on && (
-                  <span className="absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-night">
+                  <span className="absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full text-white" style={{ background: t.primary }}>
                     <Check size={12} />
                   </span>
                 )}
@@ -87,7 +85,7 @@ export default function AppearancePage() {
             );
           })}
         </div>
-        <p className="text-[10px] text-muted">القوالب بتحط خلفية وراء المحتوى وأسطح زجاجية. «بدون قالب» يرجّع الشكل العادي.</p>
+        <p className="text-[10px] text-muted">كل قالب بيغيّر الخلفية والكروت واللون المميّز — كروت واضحة القراءة. «بدون قالب» يرجّع الشكل العادي.</p>
       </section>
 
       {/* ── تخصيص يدوي ── */}
