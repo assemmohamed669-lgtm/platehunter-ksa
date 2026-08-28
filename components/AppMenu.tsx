@@ -3,12 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
-  Type as TypeIcon, Palette, Baseline, RotateCcw, KeyRound, ChevronLeft,
+  Palette, KeyRound, ChevronLeft,
   RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp, Mic,
 } from "lucide-react";
 import Link from "next/link";
-import ThemeToggle from "@/components/ThemeToggle";
-import { type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance } from "@/lib/appSettings";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
@@ -18,8 +16,6 @@ import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 
-const DEFAULT_BG = "#F3F5F7";
-const DEFAULT_INK = "#FFFFFF";
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -42,7 +38,6 @@ export default function AppMenu({
   // frac: 0 = fully open, 1 = fully closed. Drives the drawer transform.
   const [frac, setFrac] = useState(1);
   const [dragging, setDragging] = useState(false);
-  const [appr, setAppr] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
@@ -61,7 +56,6 @@ export default function AppMenu({
   const axisRef = useRef<"?" | "x" | "y">("?");
   const dragBlockedRef = useRef(false); // true when the drag started on a control (slider/button/link)
 
-  useEffect(() => { setAppr(loadAppearance()); }, []);
 
   // Sync drawer position to the controlled `open` when not mid-drag.
   useEffect(() => {
@@ -124,18 +118,6 @@ export default function AppMenu({
     setFracBoth(clamp01(dx / widthRef.current));
   }
 
-  // ── Appearance controls ─────────────────────────────────────────────────────
-  function update(patch: Partial<Appearance>) {
-    const next = { ...appr, ...patch };
-    setAppr(next);
-    saveAppearance(next);
-    applyAppearance(next);
-  }
-  function resetAppearance() {
-    setAppr(DEFAULT_APPEARANCE);
-    saveAppearance(DEFAULT_APPEARANCE);
-    applyAppearance(DEFAULT_APPEARANCE);
-  }
 
   // While the drawer is open, the hardware back button closes it (instead of
   // navigating away / exiting the app).
@@ -251,56 +233,17 @@ export default function AppMenu({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4">
-          {/* ── الإعدادات: المظهر ── */}
+          {/* ── الخلفية والنمط — بتفتح صفحة مستقلة (قوالب + تخصيص) ── */}
           <section className="flex flex-col gap-3">
             <h3 className="flex items-center gap-1.5 text-xs font-bold text-muted"><Settings size={14} /> الإعدادات</h3>
-
-            {/* حجم الخط */}
-            <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-2 p-3">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-xs font-bold text-ink"><TypeIcon size={13} /> حجم الخط</span>
-                <span className="text-[11px] text-muted">{Math.round(appr.fontScale * 100)}%</span>
-              </div>
-              <input
-                type="range" min={100} max={130} step={5}
-                value={Math.round(appr.fontScale * 100)}
-                onChange={(e) => update({ fontScale: Number(e.target.value) / 100 })}
-                className="w-full accent-primary"
-              />
-              <p className="text-[10px] text-muted">حرّك لتكبير أو تصغير كل النصوص في التطبيق.</p>
-            </div>
-
-            {/* لون الخلفية */}
-            <label className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
-              <span className="flex items-center gap-1.5"><Palette size={13} /> لون الخلفية</span>
-              <input type="color" value={appr.bgColor ?? DEFAULT_BG} onChange={(e) => update({ bgColor: e.target.value })}
-                className="h-6 w-8 rounded border border-border bg-transparent" />
-            </label>
-
-            {/* لون الخط — يدوي لو التلقائي مش واضح على الخلفية المختارة */}
-            <label className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-xs font-bold text-ink">
-              <span className="flex items-center gap-1.5"><Baseline size={13} /> لون الخط</span>
-              <div className="flex items-center gap-2">
-                {appr.inkColor && (
-                  <button type="button" onClick={() => update({ inkColor: null })}
-                    className="text-[10px] font-normal text-muted underline hover:text-ink">تلقائي</button>
-                )}
-                <input type="color" value={appr.inkColor ?? DEFAULT_INK} onChange={(e) => update({ inkColor: e.target.value })}
-                  className="h-6 w-8 rounded border border-border bg-transparent" />
-              </div>
-            </label>
-            <p className="text-[10px] text-muted">لون الخط بيتظبط تلقائياً حسب الخلفية. لو الخط اختفى أو مش واضح، غيّر لون الخط يدوياً — و«تلقائي» يرجّعه. ألوان الحالة (مطلوبة/غير مطلوبة) ثابتة.</p>
-
-            <button onClick={resetAppearance}
-              className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2 text-xs font-bold text-muted hover:text-ink transition">
-              <RotateCcw size={13} /> استعادة الافتراضي
-            </button>
-
-            {/* الوضع الليلي */}
-            <div className="flex items-center justify-between rounded-xl border border-border bg-surface-2 p-3">
-              <span className="text-xs font-bold text-ink">الوضع الليلي / التوفير</span>
-              <ThemeToggle />
-            </div>
+            <Link
+              href="/appearance"
+              onClick={() => onOpenChange(false)}
+              className="flex items-center justify-between rounded-xl border border-border bg-surface-2 p-3 text-sm font-bold text-ink transition hover:border-primary/40 hover:bg-primary/5"
+            >
+              <span className="flex items-center gap-2"><Palette size={16} className="text-primary" /> الخلفية والنمط</span>
+              <span className="flex items-center gap-1 text-[11px] font-normal text-muted">قوالب + ألوان + وضع ليلي <ChevronLeft size={15} /></span>
+            </Link>
           </section>
 
           {/* ── إحصائيات سريعة ── */}
