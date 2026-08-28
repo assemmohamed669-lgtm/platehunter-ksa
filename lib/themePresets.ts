@@ -1,20 +1,19 @@
 /**
- * themePresets — قوالب مظهر جاهزة **حديثة** بتغيّر شكل التطبيق بالكامل:
- * خلفية ميش (mesh gradient) ورا كل المحتوى + أسطح زجاجية شفافة (glass/blur) +
- * لون مميّز. كله CSS نقي (مفيش صور خارجية) عشان يشتغل أوفلاين وخفيف.
+ * themePresets — قوالب مظهر احترافية بتغيّر شكل التطبيق:
+ * **كروت صلبة واضحة القراءة** + خلفية خفيفة راقية وراها + لون مميّز قوي + ظلال
+ * ناعمة. مفيش شفافية تغطّي النص (ده كان بيبهّت الكلام). تنوّع فاتح وغامق.
  *
- * التطبيق بيتم في applyAppearance: القالب بيحط --app-bg (الخلفية) + يخلّي الأسطح
- * (--c-surface...) شفافة، ويفعّل الـblur عبر data-glass على <html>.
- *
- * ملاحظة: الألوان الدلالية (مطلوب أخضر / مقطوع أحمر) مابتتغيّرش — بس اللون
- * المميّز (--c-primary) بيتبع القالب.
+ * التطبيق في applyAppearance: القالب بيحط --app-bg (الخلفية الخفيفة) + ألوان
+ * الأسطح الصلبة + اللون المميّز + --app-shadow (ظل الكروت). الألوان الدلالية
+ * (مطلوب أخضر / مقطوع أحمر) مابتتغيّرش.
  */
 export interface ThemeTemplate {
   id: string;
   name: string;
-  /** قيمة `background` كاملة للخلفية (ميش + لون أساس). */
+  dark: boolean;
+  /** خلفية الصفحة الخفيفة (تدرّج هادي) — ورا الكروت، مش بتغطّيها. */
   bg: string;
-  /** rgba شفافة للأسطح (كروت/شريط) — عشان الخلفية تبان من وراها = زجاج. */
+  /** لون الكارت **الصلب** (مقروء تماماً). */
   surface: string;
   surface2: string;
   border: string;
@@ -23,61 +22,96 @@ export interface ThemeTemplate {
   primary: string;
   /** خلفية خفيفة للون المميّز (شرائح/أزرار مختارة). */
   primaryDark: string;
+  /** ظل الكروت — بيدّي إحساس «مرفوع» احترافي. */
+  shadow: string;
 }
 
-/**
- * كل قالب = base color + طبقتين/تلاتة radial-gradient (ميش) — ده الستايل اللي
- * بتستخدمه التطبيقات الاحترافية (Stripe/Linear...). كلها غامقة عشان الزجاج
- * والنص الفاتح يبانوا أحسن.
- */
 export const THEME_TEMPLATES: ThemeTemplate[] = [
+  // ── فاتحة (كروت بيضا صلبة + خلفية خفيفة ملوّنة) ──
   {
-    id: "midnight-glass",
-    name: "زجاجي غامق",
-    bg: "radial-gradient(1200px 820px at 12% 6%, rgba(56,189,248,0.28), transparent 60%), radial-gradient(1100px 780px at 90% 92%, rgba(37,99,235,0.26), transparent 58%), radial-gradient(900px 700px at 80% 8%, rgba(129,140,248,0.16), transparent 55%), #070b16",
-    surface: "rgba(17,24,42,0.72)",
-    surface2: "rgba(28,37,60,0.66)",
-    border: "rgba(148,180,255,0.18)",
+    id: "royal-purple",
+    name: "بنفسجي راقي",
+    dark: false,
+    bg: "linear-gradient(165deg, #f4ebff 0%, #fbf7ff 55%, #fdf2fb 100%)",
+    surface: "#ffffff",
+    surface2: "#f7f1ff",
+    border: "#eaddff",
+    ink: "#1f1533",
+    muted: "#6c5b8c",
+    primary: "#8b3dff",
+    primaryDark: "#f0e6ff",
+    shadow: "0 8px 24px rgba(124,58,237,0.12), 0 2px 6px rgba(124,58,237,0.06)",
+  },
+  {
+    id: "fresh-green",
+    name: "أخضر نضِر",
+    dark: false,
+    bg: "linear-gradient(165deg, #e6f7ee 0%, #f4fbf7 60%, #eefaf3 100%)",
+    surface: "#ffffff",
+    surface2: "#eefaf2",
+    border: "#cdeede",
+    ink: "#0f261b",
+    muted: "#4f7563",
+    primary: "#16a34a",
+    primaryDark: "#e2f7ea",
+    shadow: "0 8px 24px rgba(22,163,74,0.12), 0 2px 6px rgba(22,163,74,0.06)",
+  },
+  {
+    id: "rose-elegant",
+    name: "وردي أنيق",
+    dark: false,
+    bg: "linear-gradient(165deg, #ffe9f1 0%, #fff4f8 60%, #fff0f5 100%)",
+    surface: "#ffffff",
+    surface2: "#fff0f5",
+    border: "#ffd6e4",
+    ink: "#2c101c",
+    muted: "#8c5c6c",
+    primary: "#e11d69",
+    primaryDark: "#ffe4ef",
+    shadow: "0 8px 24px rgba(225,29,105,0.12), 0 2px 6px rgba(225,29,105,0.06)",
+  },
+  {
+    id: "sky-clean",
+    name: "سماوي نضيف",
+    dark: false,
+    bg: "linear-gradient(165deg, #e7f2ff 0%, #f4faff 60%, #eef6ff 100%)",
+    surface: "#ffffff",
+    surface2: "#eef6ff",
+    border: "#cfe4fb",
+    ink: "#0f1e2e",
+    muted: "#557089",
+    primary: "#0a84ff",
+    primaryDark: "#e2f0ff",
+    shadow: "0 8px 24px rgba(10,132,255,0.12), 0 2px 6px rgba(10,132,255,0.06)",
+  },
+  // ── غامقة (كروت غامقة صلبة + خلفية غامقة بلمعة خفيفة) ──
+  {
+    id: "midnight-royal",
+    name: "ليلي فاخر",
+    dark: true,
+    bg: "radial-gradient(1100px 720px at 18% -5%, #17224e 0%, transparent 55%), radial-gradient(900px 600px at 100% 100%, #142046 0%, transparent 50%), #0a0f22",
+    surface: "#131a30",
+    surface2: "#1b2440",
+    border: "#2b3559",
     ink: "#eaf1ff",
     muted: "#9db0d6",
-    primary: "#38bdf8",
-    primaryDark: "rgba(56,189,248,0.16)",
+    primary: "#4f9dff",
+    primaryDark: "#1a2748",
+    shadow: "0 10px 28px rgba(0,0,0,0.45), 0 0 0 1px rgba(120,150,255,0.06)",
   },
   {
-    id: "aurora",
-    name: "شفق قطبي",
-    bg: "radial-gradient(1100px 800px at 10% 8%, rgba(167,139,250,0.30), transparent 58%), radial-gradient(1000px 760px at 88% 20%, rgba(45,212,191,0.24), transparent 55%), radial-gradient(1200px 820px at 60% 100%, rgba(244,114,182,0.24), transparent 60%), #0c0a1e",
-    surface: "rgba(26,20,44,0.70)",
-    surface2: "rgba(40,30,64,0.64)",
-    border: "rgba(196,168,255,0.20)",
-    ink: "#f3ecff",
-    muted: "#c0b2df",
-    primary: "#a78bfa",
-    primaryDark: "rgba(167,139,250,0.18)",
-  },
-  {
-    id: "cyber-neon",
-    name: "نيون سايبر",
-    bg: "radial-gradient(1000px 720px at 8% 10%, rgba(34,224,161,0.24), transparent 56%), radial-gradient(1100px 760px at 92% 88%, rgba(255,46,151,0.24), transparent 56%), radial-gradient(900px 640px at 90% 6%, rgba(0,209,255,0.16), transparent 52%), #05070f",
-    surface: "rgba(11,16,26,0.72)",
-    surface2: "rgba(18,26,40,0.66)",
-    border: "rgba(34,224,161,0.22)",
-    ink: "#daffee",
-    muted: "#89b4b0",
-    primary: "#22e0a1",
-    primaryDark: "rgba(34,224,161,0.15)",
-  },
-  {
-    id: "luxe-gold",
-    name: "معدني فاخر",
-    bg: "radial-gradient(1100px 800px at 14% 8%, rgba(224,176,99,0.22), transparent 56%), radial-gradient(1000px 760px at 88% 94%, rgba(120,90,45,0.30), transparent 58%), radial-gradient(900px 680px at 80% 10%, rgba(255,214,140,0.10), transparent 52%), #11100b",
-    surface: "rgba(28,24,17,0.74)",
-    surface2: "rgba(42,35,24,0.66)",
-    border: "rgba(224,176,99,0.22)",
+    id: "dark-gold",
+    name: "ذهبي داكن",
+    dark: true,
+    bg: "radial-gradient(1000px 700px at 82% -5%, #2a2114 0%, transparent 52%), radial-gradient(800px 560px at 0% 100%, #241d10 0%, transparent 48%), #14110b",
+    surface: "#1c1810",
+    surface2: "#282216",
+    border: "#3b3120",
     ink: "#f6edd9",
-    muted: "#c3b291",
-    primary: "#e0b063",
-    primaryDark: "rgba(224,176,99,0.16)",
+    muted: "#b8a684",
+    primary: "#d4a544",
+    primaryDark: "#2a2214",
+    shadow: "0 10px 28px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,165,68,0.10)",
   },
 ];
 

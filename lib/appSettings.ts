@@ -104,23 +104,26 @@ export function applyAppearance(a: Appearance): void {
   // ── قالب جاهز (خلفية ميش + أسطح زجاجية + لون مميّز) — بيتغلّب على اللون اليدوي ──
   const tpl = getTemplate(a.template);
   if (tpl) {
-    root.style.setProperty("--app-bg", tpl.bg);          // body بيستخدمها كخلفية
-    root.setAttribute("data-glass", "1");                // يفعّل الـblur في globals.css
-    root.style.setProperty("--c-night", "transparent");  // الصفحة شفافة عشان الميش يبان
+    // كروت صلبة (مقروءة) + خلفية خفيفة وراها + ظل ناعم. مفيش شفافية على النص.
+    root.style.setProperty("--app-bg", tpl.bg);          // body بيستخدمها كخلفية الصفحة
+    root.style.setProperty("--app-shadow", tpl.shadow);  // ظل الكروت (globals.css)
+    root.setAttribute("data-template", "1");
+    root.style.setProperty("--c-night", "transparent");  // الصفحة شفافة عشان --app-bg يبان
     root.style.setProperty("--c-night-oled", "transparent");
     root.style.setProperty("--c-surface", tpl.surface);
     root.style.setProperty("--c-surface-2", tpl.surface2);
     root.style.setProperty("--c-border", tpl.border);
     root.style.setProperty("--c-primary", tpl.primary);
     root.style.setProperty("--c-primary-dark", tpl.primaryDark);
-    const ink = a.inkColor ?? tpl.ink;                    // لون خط يدوي يتغلّب لو المستخدم حدده
+    const ink = a.inkColor ?? tpl.ink;                   // لون خط يدوي يتغلّب لو المستخدم حدده
     root.style.setProperty("--c-ink", ink);
-    root.style.setProperty("--c-muted", a.inkColor ? mixHex(a.inkColor, "#000000", 0.4) : tpl.muted);
+    root.style.setProperty("--c-muted", a.inkColor ? mixHex(a.inkColor, tpl.dark ? "#000000" : "#ffffff", 0.35) : tpl.muted);
     return;
   }
   // مفيش قالب — امسح آثاره ورجّع الافتراضي.
   root.style.removeProperty("--app-bg");
-  root.removeAttribute("data-glass");
+  root.style.removeProperty("--app-shadow");
+  root.removeAttribute("data-template");
   root.style.removeProperty("--c-primary");
   root.style.removeProperty("--c-primary-dark");
 
