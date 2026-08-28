@@ -125,11 +125,17 @@ export function applyAppearance(a: Appearance): void {
       root.style.setProperty("--c-brand-glow", "#3fb950");
       root.style.setProperty("--c-brand-dark", "#12261a");
       root.style.setProperty("--c-danger", "#f85149");
+      // الأصفر/الكهرماني (تنبيه) لازم يتلمّع على الغامق زي الوضع الليلي، وإلا
+      // ذهبي غامق على خلفية غامقة = باهت (أيقونات القائمة «المفاتيح/رفع للداتا»).
+      root.style.setProperty("--c-alert", "#d29922");
+      root.style.setProperty("--c-glow", "#58a6ff");
     } else {
       root.style.removeProperty("--c-brand");
       root.style.removeProperty("--c-brand-glow");
       root.style.removeProperty("--c-brand-dark");
       root.style.removeProperty("--c-danger");
+      root.style.removeProperty("--c-alert");
+      root.style.removeProperty("--c-glow");
     }
     const ink = a.inkColor ?? tpl.ink;                   // لون خط يدوي يتغلّب لو المستخدم حدده
     root.style.setProperty("--c-ink", ink);
@@ -148,6 +154,8 @@ export function applyAppearance(a: Appearance): void {
   root.style.removeProperty("--c-brand-glow");
   root.style.removeProperty("--c-brand-dark");
   root.style.removeProperty("--c-danger");
+  root.style.removeProperty("--c-alert");
+  root.style.removeProperty("--c-glow");
 
   // ── الخلفية: نفس اللون على **كل الأسطح** (الصفحة + الكروت + الشريط الجانبي) ──
   // مع تدرّج بسيط للكروت (surface-2) والحدود (border) عشان مايبقاش كله مسطّح.
