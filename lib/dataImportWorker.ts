@@ -1,48 +1,57 @@
 /**
- * Web Worker — يقرا ملف الداتا على دفعات **برّه الخيط الرئيسي**.
+ * Web Worker — يقرا ملف الداتا **ويكتبه في تخزين الجهاز**، كله برّه الخيط
+ * الرئيسي. الصفحة بتستقبل **رقم التقدّم بس** — ولا صف واحد بيعدّي عليها.
  *
- * ليه: آيفون بيحاسب صفحة الويب على سقف ذاكرة صارم. قراءة ملف فيه ٧٧٩ ألف صف
- * بتوصل لذروة ~١٧٥ ميجا، ولو دي جوّه الصفحة WebKit بيقتلها («حدثت مشكلة بشكل
- * متكرر»). الـWorker ليه مساحته المنفصلة — ولذلك مربّع الإحالة (اللي بيستخدم
- * worker) بينجح على نفس الملف اللي بيقتل مربّع الداتا.
+ * ليه: آيفون بيحاسب صفحة الويب على سقف ذاكرة صارم. ملف ٧٧٩ ألف صف ذروته
+ * ~١٧٥ ميجا، ومنها ١٧٢ في التجهيز قبل أول صف. أول محاولة نقلنا **القراءة**
+ * بس والكتابة فضلت في الصفحة — والكراش فضل عند صفر. فنقلنا الكتابة كمان.
  *
- * الضغط الخلفي: بنبعت دفعة وبنستنى «ack» من الصفحة قبل ما نكمّل. من غير كده
- * الـWorker بيسبق الكتابة وبتتكدّس الدفعات في الذاكرة — يعني نرجع لنفس
- * المشكلة من باب تاني.
+ * مصافحة "ready": بنبعتها أول ما الـWorker يتحمّل. من غيرها الصفحة مش قادرة
+ * تفرّق بين «الـWorker شغّال وبيجهّز» و«الـWorker ماشتغلش خالص» — وده اللي
+ * خلّى المحاولة الأولى غامضة.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { streamXlsxToBatches } from "./xlsxStream";
+import { openDataDB, clearChunks, writeChunk } from "./dataStoreDb";
 
-type StartMsg = { type: "start"; file: File; batchSize: number; preferSheet?: string };
-type AckMsg = { type: "ack" };
-type InMsg = StartMsg | AckMsg;
+type StartMsg = { type: "start"; file: File; batchSize: number; slot: string; preferSheet?: string };
 
-let ackResolve: (() => void) | null = null;
+const post = (m: unknown) => (self as any).postMessage(m);
 
-self.onmessage = async (e: MessageEvent<InMsg>) => {
+// بنقول للصفحة إننا اتحمّلنا فعلاً — ده اللي بيثبت إن الـWorker شغّال.
+post({ type: "ready" });
+
+self.onmessage = async (e: MessageEvent<StartMsg>) => {
   const msg = e.data;
-
-  if (msg?.type === "ack") { const r = ackResolve; ackResolve = null; r?.(); return; }
   if (msg?.type !== "start") return;
 
+  let db: IDBDatabase | null = null;
   try {
+    db = await openDataDB(msg.slot);
+    await clearChunks(db);
+
+    let written = 0;
+    let headers: string[] = [];
+
     const meta = await streamXlsxToBatches(
       msg.file,
-      async (rows, firstIndex) => {
-        (self as any).postMessage({ type: "batch", rows, firstIndex });
-        // نستنى تأكيد الكتابة قبل الدفعة اللي بعدها.
-        await new Promise<void>((res) => { ackResolve = res; });
+      async (rows) => {
+        if (!headers.length && rows.length) headers = Object.keys(rows[0]);
+        await writeChunk(db!, rows);       // الانتظار هنا = ضغط خلفي طبيعي
+        written += rows.length;
+        post({ type: "progress", written });
       },
       { batchSize: msg.batchSize, preferSheet: msg.preferSheet }
     );
-    (self as any).postMessage({ type: "done", meta });
+
+    post({ type: "done", meta, written, headers });
   } catch (err) {
-    // بنبعت اسم الصنف كمان عشان الصفحة تفرّق NotXlsxWorksheetError (ليها
-    // رسالة بتسمّي الصيغة الحقيقية) عن أي خطأ تاني.
-    (self as any).postMessage({
+    post({
       type: "error",
-      name: err instanceof Error ? err.constructor.name : "Error",
       message: err instanceof Error ? err.message : String(err),
+      name: err instanceof Error ? err.constructor.name : "Error",
     });
+  } finally {
+    try { db?.close(); } catch { /* اتقفلت خلاص */ }
   }
 };

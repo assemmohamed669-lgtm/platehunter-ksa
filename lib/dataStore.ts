@@ -116,13 +116,32 @@ export async function importLargeDataFile(
 ): Promise<DataMeta> {
   const slot = opts.slot ?? "data";
   await clearData(slot);
+
+  let meta: XlsxStreamMeta | null = null;
+  let written = 0;
+  let streamErr: unknown = null;
+
+  try {
+    // الـWorker بيقرا **ويكتب في التخزين** برّه الخيط الرئيسي — الصفحة بتاخد
+    // رقم التقدّم بس، فولا صف بيعدّي عليها. لازم على آيفون: سقف ذاكرة الصفحة
+    // صارم، وملف ٧٧٩ ألف صف ذروته ~١٧٥ ميجا.
+    const res = await runDataImport(file, {
+      slot,
+      batchSize: CHUNK_ROWS,
+      onProgress: opts.onProgress,
+    });
+    meta = res.meta;
+    written = res.written;
+    // حماية من الداتا الناقصة الصامتة: اللي اتقرا لازم يساوي اللي اتكتب.
+    verifyImportCounts(meta.rowCount, written);
+  } catch (e) {
+    if (written > 0) throw e; // اتكتبت صفوف بالفعل → مش مشكلة صيغة
+    streamErr = e;
+  }
+
   const db = await openDataDB(slot);
 
-  let plateCol = "";
-  let headers: string[] = [];
-  let written = 0;
-
-  const writeChunk = (rows: DataRow[]): Promise<void> =>
+  const writeChunkTo = (rows: DataRow[]): Promise<void> =>
     new Promise((resolve, reject) => {
       const tx = db.transaction(CHUNKS, "readwrite");
       tx.oncomplete = () => { written += rows.length; resolve(); };
@@ -130,52 +149,22 @@ export async function importLargeDataFile(
       tx.objectStore(CHUNKS).put(encodeChunk(rows));
     });
 
-  const takeHeaders = (batch: DataRow[]) => {
-    if (!plateCol && batch.length) {
-      headers = Object.keys(batch[0]);
-      plateCol = detectArabicPlateColumn(headers) ?? detectPlateColumn(headers, batch) ?? "";
-    }
-  };
-
-  let meta: XlsxStreamMeta | null = null;
-  let streamErr: unknown = null;
-  try {
-    // الـWorker بيقرا برّه الخيط الرئيسي (الآيفون بيقتل الصفحة لو قرت جوّاها)،
-    // والاحتياطي هو الطريقة الحالية بالظبط لو الـWorker مش متاح.
-    meta = await runDataImport(
-      file,
-      async (batch) => { takeHeaders(batch); await writeChunk(batch); opts.onProgress?.(written); },
-      { batchSize: CHUNK_ROWS }
-    );
-    // حماية من الداتا الناقصة الصامتة: اللي اتقرا لازم يساوي اللي اتكتب.
-    verifyImportCounts(meta.rowCount, written);
-  } catch (e) {
-    if (written > 0) { db.close(); throw e; } // اتكتبت صفوف بالفعل → مش مشكلة صيغة
-    streamErr = e;
-  }
-
-  // احتياطي: القارئ العادي (SheetJS) — لصيغة مختلفة أو بنية غريبة أو صفر صفوف
-  // (مثلاً أول ورقة فاضية وSheetJS بيختار الورقة اللي فيها اللوحات).
+  // احتياطي: القارئ العادي (SheetJS) — لصيغة مختلفة أو أول ورقة فاضية.
   if (!meta || meta.rowCount === 0) {
-    // الاحتياطي بيقرا الملف **كامل** في الذاكرة. على آيفون بملف كبير ده
-    // بيقتل الصفحة عند صفر بالمية بدل ما ينقذ المندوب — فبنرفض برسالة واضحة.
+    // بيقرا الملف **كامل** في الذاكرة — على آيفون بملف كبير ده كراش مضمون،
+    // فرسالة مفهومة أنفع. ولو الخطأ الأصلي بيشرح السبب، بنفضّله.
     if (!canFullParseFallback(file.size)) {
       db.close();
       await clearData(slot);
-      // خطأ قارئ الدفعات أوضح لو بيسمّي الصيغة الحقيقية؛ غير كده رسالتنا.
-      throw streamErr instanceof NotXlsxWorksheetError
-        ? streamErr
-        : new Error(largeFileFallbackMessage(file.size));
+      throw streamErr instanceof Error ? streamErr : new Error(largeFileFallbackMessage(file.size));
     }
     try {
       const { parseExcelFile } = await import("./excel");
       const table = await parseExcelFile(file);
       if (!table.rows.length) throw new Error("الملف فارغ أو لا يحتوي على بيانات.");
-      plateCol = ""; headers = [];
+      written = 0;
       for (let i = 0; i < table.rows.length; i += CHUNK_ROWS) {
-        const batch = table.rows.slice(i, i + CHUNK_ROWS) as DataRow[];
-        takeHeaders(batch);
-        await writeChunk(batch);
+        await writeChunkTo(table.rows.slice(i, i + CHUNK_ROWS) as DataRow[]);
         opts.onProgress?.(written);
       }
       meta = {
@@ -187,18 +176,25 @@ export async function importLargeDataFile(
     } catch (e) {
       db.close();
       await clearData(slot);
-      // رسالة قارئ الدفعات أوضح **بس** لما تكون بتسمّي الصيغة؛ غير كده (زي خطأ
-      // jszip الإنجليزي للملف اللي مش zip) رسالة القارئ العادي أنفع للمندوب.
       throw streamErr instanceof NotXlsxWorksheetError ? streamErr : e;
     }
   }
 
+  // عمود اللوحة من عيّنة **متخزّنة** — نفس النتيجة سواء قرا الـWorker ولا
+  // الاحتياطي، ومن غير ما نمرّر الصفوف على الخيط الرئيسي.
+  const headers = meta.headers;
+  let plateCol = detectArabicPlateColumn(headers) ?? "";
+  if (!plateCol) {
+    const sample = await getSampleRows(50, slot);
+    plateCol = detectPlateColumn(headers, sample) ?? "";
+  }
+
   const dataMeta: DataMeta = {
     slot,
-    headers: meta.headers,
+    headers,
     sheetName: meta.sheetName,
     rowCount: meta.rowCount,
-    plateCol: plateCol || (meta.headers[0] ?? ""),
+    plateCol: plateCol || (headers[0] ?? ""),
     fileName: file.name,
     importedAt: new Date().toISOString(),
   };
