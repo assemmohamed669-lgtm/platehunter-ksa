@@ -12,6 +12,7 @@
  * الرئيسية ("platehunter") ولا داتا المناديب. كله على الجهاز — مفيش سيرفر.
  */
 import { streamXlsxToBatches, NotXlsxWorksheetError, type XlsxStreamMeta } from "./xlsxStream";
+import { encodeChunk, decodeChunk } from "./chunkCodec";
 import { canFullParseFallback, largeFileFallbackMessage } from "./largeFileFallback";
 import { detectPlateColumn, detectArabicPlateColumn } from "./plateParser";
 import { isPlateLike, normalizeForCount } from "./referralSheets";
@@ -93,7 +94,9 @@ export async function clearData(slot = "data"): Promise<void> {
   db.close();
 }
 
-const CHUNK_ROWS = 10000;
+// ٣٠٠٠ بدل ١٠٠٠٠: الدفعة الأصغر = ذروة ذاكرة أقل وقت الكتابة في تخزين
+// الجهاز. الآيفون بيقتل الصفحة عند الدفعات الكبيرة مع ملف ٧٧٩ ألف صف.
+const CHUNK_ROWS = 3000;
 
 /**
  * يستورد ملف داتا كبير: يقراه على دفعات ويكتب كل دفعة كسجل واحد (بيمسح القديم
@@ -122,7 +125,7 @@ export async function importLargeDataFile(
       const tx = db.transaction(CHUNKS, "readwrite");
       tx.oncomplete = () => { written += rows.length; resolve(); };
       tx.onerror = () => reject(tx.error);
-      tx.objectStore(CHUNKS).put({ rows } as ChunkRec);
+      tx.objectStore(CHUNKS).put(encodeChunk(rows));
     });
 
   const takeHeaders = (batch: DataRow[]) => {
@@ -231,7 +234,7 @@ export async function importMultiSheetData(
         const tx = db.transaction(CHUNKS, "readwrite");
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
-        tx.objectStore(CHUNKS).put({ rows, sheet } as ChunkRec);
+        tx.objectStore(CHUNKS).put(encodeChunk(rows, sheet));
       });
 
     const sheetsMeta: DataSheetMeta[] = [];
@@ -323,7 +326,7 @@ export async function getSampleRows(n = 50, slot = "data"): Promise<DataRow[]> {
     const req = tx.objectStore(CHUNKS).openCursor();
     req.onsuccess = () => {
       const c = req.result;
-      resolve(c ? ((c.value as ChunkRec).rows ?? []).slice(0, n) : []);
+      resolve(c ? decodeChunk(c.value).rows.slice(0, n) : []);
     };
     req.onerror = () => reject(req.error);
   });
@@ -354,14 +357,15 @@ export async function iterateRows(
     const filter = opts.sheets ?? null;
     let base = 0;
     for (const key of keys) {
-      const rec = await new Promise<ChunkRec | undefined>((resolve, reject) => {
+      const rec = await new Promise<unknown>((resolve, reject) => {
         const tx = db.transaction(CHUNKS, "readonly");
         const req = tx.objectStore(CHUNKS).get(key);
-        req.onsuccess = () => resolve(req.result as ChunkRec | undefined);
+        req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
-      const rows = rec?.rows ?? [];
-      const sheet = rec?.sheet ?? "";
+      const decoded = decodeChunk(rec);
+      const rows = decoded.rows;
+      const sheet = decoded.sheet;
       // فلتر الورقات: نتخطّى ورقة موسومة مش مختارة. الدفعات بلا وسم بتعدّي دايماً.
       if (filter && sheet && !filter.has(sheet)) continue;
       if (rows.length) { await onBatch(rows, base, sheet); base += rows.length; }
@@ -394,7 +398,7 @@ export async function importRowsToData(
       const tx = db.transaction(CHUNKS, "readwrite");
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
-      tx.objectStore(CHUNKS).put({ rows: batch } as ChunkRec);
+      tx.objectStore(CHUNKS).put(encodeChunk(batch));
     });
 
   try {
