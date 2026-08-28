@@ -124,10 +124,16 @@ function unescapeXlsxText(s: string): string {
   );
 }
 
-// يبني مصفوفة sharedStrings من نصّها (يدعم rich text: يجمع كل <t>).
-function parseSharedStrings(xml: string | null): string[] {
+/**
+ * مصرف يبني مصفوفة sharedStrings **على دفعات** — النص الكامل عمره ما يتجمّع.
+ *
+ * ليه: على ملف مندوب حقيقي (٤٦٢ ألف نص مشترك) تحميل النص كامل قبل التحليل
+ * كلّف +١٢١ ميجا، والآيفون بيقتل الصفحة **قبل قراءة صف واحد** — ولذلك الكراش
+ * كان بيظهر عند صفر بالمية. saxes بيتعامل مع حدود الدفع صح، فالقطع وسط وسم
+ * أو وسط كلمة عربية مايفرقش.
+ */
+export function createSharedStringsSink() {
   const arr: string[] = [];
-  if (!xml) return arr;
   const p = new SaxesParser();
   let cur: string | null = null;
   let inT = false;
@@ -138,8 +144,33 @@ function parseSharedStrings(xml: string | null): string[] {
     if (n === "t") inT = false;
     else if (n === "si") { arr.push(unescapeXlsxText(cur ?? "")); cur = null; }
   });
-  p.write(xml).close();
-  return arr;
+  // ملف بلا جدول نصوص مشترك حالة صحيحة (كل النصوص مضمّنة في الورقة). قفل
+  // المحلّل بلا أي مدخل بيرمي «document must contain a root element»، فبنرجّع
+  // فاضي زي القارئ القديم بالظبط.
+  let wrote = false;
+  return {
+    write(chunk: string) { if (chunk) { wrote = true; p.write(chunk); } },
+    end(): string[] { if (wrote) p.close(); return arr; },
+  };
+}
+
+/**
+ * يقرا جدول النصوص المشترك **على دفعات** من الأرشيف — من غير ما نحمّل نصّه
+ * كامل. ده أكبر توفير في التجهيز: على ملف ٤٦٢ ألف نص، التحميل الكامل كان
+ * بياكل +١٢١ ميجا قبل قراءة أول صف.
+ */
+async function readSharedStringsStreamed(zip: ZipLike): Promise<string[]> {
+  const name = "xl/sharedStrings.xml";
+  if (!zip.file(name)) return [];
+  const sink = createSharedStringsSink();
+  await new Promise<void>((resolve, reject) => {
+    const st = internalStreamOf(zip, name);
+    st.on("data", (chunk) => { try { sink.write(chunk); } catch (e) { reject(e as Error); } });
+    st.on("error", (e) => reject(e instanceof Error ? e : new Error(String(e))));
+    st.on("end", () => resolve());
+    st.resume();
+  });
+  return sink.end();
 }
 
 // يبني خريطة styleIndex → numFmt (id مدمج أو formatCode مخصّص) من styles.xml.
@@ -307,7 +338,7 @@ export async function readAllSheetsRawStream(
   opts: { raw?: boolean } = {},
 ): Promise<{ name: string; aoa: unknown[][]; hidden: boolean }[]> {
   const zip = await JSZip.loadAsync(input as ArrayBuffer);
-  const sst = parseSharedStrings(await readEntryText(zip, "xl/sharedStrings.xml"));
+  const sst = await readSharedStringsStreamed(zip);
   const { styleToFmt, customFmts } = parseStyles(await readEntryText(zip, "xl/styles.xml"));
   const decodeCell = opts.raw
     ? makeCellDecoder(sst, styleToFmt, customFmts, true)
@@ -511,7 +542,7 @@ export async function streamXlsxToBatches(
 ): Promise<XlsxStreamMeta> {
   const batchSize = opts.batchSize ?? 5000;
   const zip = await JSZip.loadAsync(input as ArrayBuffer);
-  const sst = parseSharedStrings(await readEntryText(zip, "xl/sharedStrings.xml"));
+  const sst = await readSharedStringsStreamed(zip);
   const { styleToFmt, customFmts } = parseStyles(await readEntryText(zip, "xl/styles.xml"));
   const { path, sheetName, allSheetNames } = await resolveSheet(zip, opts.preferSheet);
   if (!path || !zip.file(path)) {
