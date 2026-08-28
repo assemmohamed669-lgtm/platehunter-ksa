@@ -115,6 +115,22 @@ export function applyAppearance(a: Appearance): void {
     root.style.setProperty("--c-border", tpl.border);
     root.style.setProperty("--c-primary", tpl.primary);
     root.style.setProperty("--c-primary-dark", tpl.primaryDark);
+    // نص الأزرار اللي على اللون المميّز/البراند (كلاس text-night) — عكس لمعة اللون
+    // عشان النص يبان تماماً (--c-night بقى transparent فكان النص يختفي). globals.css
+    // بيوجّه .text-night للـ--c-on-accent ده في وضع القالب. القوالب الغامقة بنلمّع
+    // فيها البراند الأخضر (زي الوضع الليلي) عشان النص الغامق يتقرا على الأخضر.
+    root.style.setProperty("--c-on-accent", tpl.dark ? "#0d1117" : "#ffffff");
+    if (tpl.dark) {
+      root.style.setProperty("--c-brand", "#3fb950");
+      root.style.setProperty("--c-brand-glow", "#3fb950");
+      root.style.setProperty("--c-brand-dark", "#12261a");
+      root.style.setProperty("--c-danger", "#f85149");
+    } else {
+      root.style.removeProperty("--c-brand");
+      root.style.removeProperty("--c-brand-glow");
+      root.style.removeProperty("--c-brand-dark");
+      root.style.removeProperty("--c-danger");
+    }
     const ink = a.inkColor ?? tpl.ink;                   // لون خط يدوي يتغلّب لو المستخدم حدده
     root.style.setProperty("--c-ink", ink);
     root.style.setProperty("--c-muted", a.inkColor ? mixHex(a.inkColor, tpl.dark ? "#000000" : "#ffffff", 0.35) : tpl.muted);
@@ -126,6 +142,12 @@ export function applyAppearance(a: Appearance): void {
   root.removeAttribute("data-template");
   root.style.removeProperty("--c-primary");
   root.style.removeProperty("--c-primary-dark");
+  // رجّع ألوان الأزرار/البراند لو كنا خارجين من قالب (خصوصاً قالب غامق).
+  root.style.removeProperty("--c-on-accent");
+  root.style.removeProperty("--c-brand");
+  root.style.removeProperty("--c-brand-glow");
+  root.style.removeProperty("--c-brand-dark");
+  root.style.removeProperty("--c-danger");
 
   // ── الخلفية: نفس اللون على **كل الأسطح** (الصفحة + الكروت + الشريط الجانبي) ──
   // مع تدرّج بسيط للكروت (surface-2) والحدود (border) عشان مايبقاش كله مسطّح.

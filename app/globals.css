@@ -72,6 +72,14 @@ html[data-template="1"] [class*="rounded-xl"] {
   box-shadow: var(--app-shadow, none);
 }
 
+/* نص الأزرار على اللون المميّز/البراند: في وضع القالب --c-night بقى شفاف (عشان
+   خلفية القالب تبان ورا الكروت)، فكلاس text-night كان بيبقى نصّه شفاف = مختفي.
+   هنا بنوجّهه للون on-accent (عكس لمعة اللون المميّز) فأسماء الأزرار تفضل واضحة
+   تماماً على كل قالب. الانتقائية أعلى من كلاس Tailwind العادي فبيتغلّب عليه. */
+html[data-template="1"] .text-night {
+  color: var(--c-on-accent, #ffffff);
+}
+
 /* In dark mode, cards follow the dark surface/border tokens (this rule used
    to force them white for the old brightest-white variant). body already goes
    black via the bg-night token, so no body override is needed. */
