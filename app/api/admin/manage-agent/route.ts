@@ -16,7 +16,9 @@ import { resetDevicePatch } from "@/lib/deviceBinding";
 import { randomUUID } from "node:crypto";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
-const SUPER_ONLY = new Set(["delete", "setActive", "setRole"]);
+// setActive (قفل/فتح مؤقت) متاح للأدمن العادي كمان — بطلب المالك — لكن الحماية
+// تحت بتمنعه من إنه يقفل حساب أدمن/سوبر (بيقدر يقفل المناديب بس).
+const SUPER_ONLY = new Set(["delete", "setRole"]);
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");

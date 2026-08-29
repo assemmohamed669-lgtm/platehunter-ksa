@@ -22,7 +22,7 @@ import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/sh
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
-import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
+import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
@@ -2060,6 +2060,26 @@ export default function SortingPage() {
    * الميداني)، وإلا من الإحالة. بنقراها **مستقلة عن الأعمدة الظاهرة** عشان
    * لينك الموقع يوصل للمندوب حتى لو مخفي عمود GPS من «أعمدة النتيجة».
    */
+  // رابط خرائط جوجل لموقع السيارة **باسم السيارة على الدبوس**: اللوحة · الماركة ·
+  // اللون. كده لما المندوب يفتح الموقع في خرائط جوجل يلاقي الدبوس مسمّى ببيانات
+  // السيارة بدل إحداثيات مجرّدة. لو مش قادرين نطلّع إحداثيات نسيب اللينك زي ما هو.
+  function labeledGpsLink(link: string, rows: Array<Record<string, string> | null | undefined>, plate: string): string {
+    const c = extractLatLngFromMapsLink(link) ?? gpsCellCoords(link);
+    if (!c) return link;
+    const pick = (re: RegExp): string => {
+      for (const row of rows) {
+        if (!row) continue;
+        const k = Object.keys(row).find((h) => re.test(h) && String(row[h] ?? "").trim());
+        if (k) return String(row[k]).trim();
+      }
+      return "";
+    };
+    const make = pick(/ماركة|صانع|طراز|make|model|vehicle/i);
+    const color = pick(/لون|colou?r/i);
+    const label = [plate, make, color].filter(Boolean).join(" · ");
+    return `https://www.google.com/maps?q=${c.lat},${c.lng}${label ? `(${encodeURIComponent(label)})` : ""}`;
+  }
+
   function rawGpsOf(r: MatchResult): string {
     if (gpsCol) {
       const direct = gpsCellToLink(String(r.dataRow?.[gpsCol] ?? ""));
@@ -2592,7 +2612,7 @@ export default function SortingPage() {
                               {(() => {
                                 const v = String(val).trim();
                                 const link = gpsCellToLink(v);
-                                if (link) return <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
+                                if (link) return <a href={labeledGpsLink(link, [r.dataRow, r.referralRow], plate)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary">📍 خريطة</a>;
                                 return <>{v || "—"}</>;
                               })()}
                             </td>
@@ -3138,7 +3158,7 @@ export default function SortingPage() {
                           return (
                             <td key={col} className="border-l border-border px-3 py-1.5 whitespace-nowrap">
                               {link ? (
-                                <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
+                                <a href={labeledGpsLink(link, [p.row], p.converted)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary underline">📍 خريطة</a>
                               ) : v.trim() ? (
                                 <span className="text-ink">{v}</span>
                               ) : (
