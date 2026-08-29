@@ -2075,8 +2075,9 @@ export default function SortingPage() {
       return "";
     };
     const make = pick(/ماركة|صانع|طراز|make|model|vehicle/i);
-    const color = pick(/لون|colou?r/i);
-    const label = [plate, make, color].filter(Boolean).join(" · ");
+    // اسم الدبوس في خرائط جوجل = رقم اللوحة + الماركة (اسم قصير ونضيف عشان جوجل
+    // يعرضه على الموبايل — الأسماء الطويلة/الرموز أحياناً بيتجاهلها).
+    const label = [plate, make].filter(Boolean).join(" ").trim();
     return `https://www.google.com/maps?q=${c.lat},${c.lng}${label ? `(${encodeURIComponent(label)})` : ""}`;
   }
 
