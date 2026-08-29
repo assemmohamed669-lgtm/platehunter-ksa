@@ -41,6 +41,7 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
   const mapRef = useRef<any>(null);
   const LRef = useRef<any>(null);
   const markersLayerRef = useRef<any>(null);
+  const rendererRef = useRef<any>(null);   // كانفاس واحد لكل النقط — أسرع بكتير من DOM markers
   const userMarkerRef = useRef<any>(null);
   const followRef = useRef(true);          // نتبع الموقع لحد ما المستخدم يحرّك الخريطة بنفسه
   const didInitialFitRef = useRef(false);
@@ -55,6 +56,9 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
       LRef.current = L;
       const map = L.map(containerRef.current, { zoomControl: true }).setView(center, 12);
       mapRef.current = map;
+      // كل النقط بترسم على كانفاس واحد (مش عنصر DOM لكل نقطة) — ده اللي بيخلّي
+      // الخريطة سلسة حتى مع آلاف النقط بدل ما تتجمّد.
+      rendererRef.current = L.canvas({ padding: 0.5 });
       markersLayerRef.current = L.layerGroup().addTo(map);
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -103,12 +107,6 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
 
     points.forEach((p) => {
       const color = p.color ?? "#1FAE6E";
-      const icon = L.divIcon({
-        html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2.5px solid #fff;box-shadow:0 0 6px ${color}88;"></div>`,
-        className: "",
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
-      });
       const link = safeHttps(p.mapsLink);
       const popup = `
         <div dir="rtl" style="font-family:Tahoma,sans-serif;min-width:160px">
@@ -117,7 +115,11 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
           ${p.when ? `<span style="color:#999;font-size:11px">${esc(p.when)}</span><br/>` : ""}
           ${link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
         </div>`;
-      const marker = L.marker([p.lat, p.lng], { icon }).addTo(layer).bindPopup(popup, { maxWidth: 220 });
+      // circleMarker على الكانفاس المشترك — سريع مع آلاف النقط. البوب-أب lazy فمابيتبنيش
+      // إلا عند الفتح.
+      const marker = L.circleMarker([p.lat, p.lng], {
+        renderer: rendererRef.current, radius: 7, color: "#ffffff", weight: 2, fillColor: color, fillOpacity: 1,
+      }).addTo(layer).bindPopup(popup, { maxWidth: 220 });
       const key = `${p.lat},${p.lng}|${p.plate}`;
       (marker as any)._phKey = key;
       if (openKey && key === openKey) marker.openPopup();

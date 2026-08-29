@@ -200,6 +200,35 @@ export async function getAllRecordings(agentId: string): Promise<RecordingEntry[
   });
 }
 
+/**
+ * زي getAllRecordings بس **من غير الصوت** (audioBlobBase64/audioMimeType) —
+ * للصفحات اللي محتاجة الميتاداتا والموقع بس (زي الخرائط). بيلفّ بـcursor فمابيحملش
+ * كل الأصوات في الذاكرة مرة واحدة (تسجيل واحد فيه صوت ممكن يكون مئات الكيلوبايت،
+ * ومئات التسجيلات = عشرات الميجا كانت بتتحمّل وتتجمّد الصفحة).
+ */
+export async function getAllRecordingsLite(agentId: string): Promise<RecordingEntry[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const out: RecordingEntry[] = [];
+    const req = tx.objectStore(STORE).index("agentId").openCursor(agentId);
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (cur) {
+        const v = { ...(cur.value as RecordingEntry) };
+        delete v.audioBlobBase64;   // مانحتفظش بالصوت (مش محتاجينه للخريطة)
+        delete v.audioMimeType;
+        out.push(v);
+        cur.continue();
+      } else {
+        out.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+        resolve(out);
+      }
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export async function getPendingSync(agentId: string): Promise<RecordingEntry[]> {
   const all = await getAllRecordings(agentId);
   return all.filter((r) => !r.synced);
