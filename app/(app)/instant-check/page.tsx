@@ -498,7 +498,6 @@ let icPttExportedCache: string[] | null = null;
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
-  const [checkColsOpen, setCheckColsOpen] = useState(false);
   // حالة الـ GPS (منقولة من صفحة التسجيل) — تظهر فوق مربع ملف التشييك عشان
   // المندوب يتأكد إن الموقع شغّال بدقّة قبل التشييك (الموقع مهم لكل صف).
   const [gps, setGps] = useState<GpsCoords | null>(null);
@@ -1189,7 +1188,7 @@ export default function InstantCheckPage() {
               type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             }));
             const plate = detectPlateColumn(rec.headers);
-            setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate && matchesPreferred(h))));
+            setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate))); // كل الأعمدة تلقائياً
           }
         })
         .catch(() => {});
@@ -1325,14 +1324,6 @@ export default function InstantCheckPage() {
       }
     }
     return Object.entries(merged);
-  }
-
-  function toggleCheckCol(col: string) {
-    setSelectedCheckCols((prev) => {
-      const next = new Set(prev);
-      next.has(col) ? next.delete(col) : next.add(col);
-      return next;
-    });
   }
 
   // تفاصيل السيارة من صف التشييك (بالأعمدة المختارة) — تظهر في تنبيه المطلوبة الموحّد.
@@ -3724,8 +3715,7 @@ export default function InstantCheckPage() {
     setCheckTable(table);
     setCheckFile(file);
     const plate = detectPlateColumn(table.headers);
-    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate && matchesPreferred(h))));
-    setCheckColsOpen(false);
+    setSelectedCheckCols(new Set(table.headers.filter((h) => h !== plate))); // كل الأعمدة تلقائياً
     clearAutoCheck();
     setManualInput("");
     setManualError(null);
@@ -3752,10 +3742,21 @@ export default function InstantCheckPage() {
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-xl font-black text-ink">التشييك</h1>
-        <p className="text-xs text-muted">فحص لوحات السيارات مقابل ملف الإحالة</p>
       </div>
 
-      {/* ── حالة الـ GPS (فوق مربع ملف التشييك) ── */}
+      {/* ── ملف التشييك (أول الصفحة — بيبان اسم الشيت وعدد اللوحات) ── */}
+      <FileUploadBox
+        title="ملف التشييك"
+        hint="القائمة المرجعية للبحث"
+        parsedFile={checkFile}
+        parsedRowCount={checkTable?.rows.length ?? null}
+        plateCount={checkIndex.size}
+        onParsed={handleParsed}
+        onClear={handleClear}
+        showReplaceButtons
+      />
+
+      {/* ── حالة الـ GPS (تحت ملف التشييك — مصغّرة، من غير رسالة التحذير الحمرا) ── */}
       <div className="flex flex-col gap-1.5">
         <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
           حالة الـ GPS
@@ -3766,10 +3767,10 @@ export default function InstantCheckPage() {
         </button>
         {gpsBoxOpen && (
           <>
-          <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
-            <MapPin size={16} className={gps ? "text-primary" : "text-danger"} />
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
+            <MapPin size={15} className={gps ? "text-primary" : "text-danger"} />
             <div className="flex-1 min-w-0">
-              <p className={`truncate text-sm ${gps ? "text-ink" : "text-danger font-bold"}`}>
+              <p className={`truncate text-xs ${gps ? "text-ink" : "text-danger font-bold"}`}>
                 {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
               </p>
               {gps && (() => {
@@ -3779,7 +3780,7 @@ export default function InstantCheckPage() {
                   : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
                   : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
                 return (
-                  <p className="text-xs text-muted">
+                  <p className="text-[11px] text-muted">
                     {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className={`font-bold ${cls}`}>±{Math.round(gps.accuracy)}م</span>
                     <span className={`block ${cls}`}>{hint}</span>
                   </p>
@@ -3788,7 +3789,7 @@ export default function InstantCheckPage() {
             </div>
             <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
               className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
-              <RefreshCw size={15} className={gpsRefreshing ? "animate-spin" : ""} />
+              <RefreshCw size={14} className={gpsRefreshing ? "animate-spin" : ""} />
             </button>
           </div>
           {/* سبب فشل «تحديث» — لازم يبان، وإلا الزرار يبان كأنه مايعملش حاجة. */}
@@ -3797,73 +3798,7 @@ export default function InstantCheckPage() {
               {gpsMsg}
             </p>
           )}
-          <p className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-danger" dir="rtl">
-            ⚠️ اتأكد إن خانة الـ GPS شغّالة كويس وبدقّة عالية قبل ما تبدأ — الموقع الدقيق مهم جداً في التشييك الصوتي واليدوي.
-          </p>
           </>
-        )}
-      </div>
-
-      {/* ── ملف التشييك ── */}
-      <div className="flex flex-col gap-2">
-        <FileUploadBox
-          title="ملف التشييك"
-          hint="القائمة المرجعية للبحث"
-          parsedFile={checkFile}
-          parsedRowCount={checkTable?.rows.length ?? null}
-          plateCount={checkIndex.size}
-          onParsed={handleParsed}
-          onClear={handleClear}
-          showReplaceButtons
-        />
-        {checkTable && (
-          <div className="rounded-xl border border-border bg-surface">
-            <button
-              onClick={() => setCheckColsOpen((v) => !v)}
-              className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink"
-            >
-              <span>الأعمدة ({checkTable.headers.length})</span>
-              <ChevronDown
-                size={14}
-                className={`text-muted transition-transform duration-200 ${checkColsOpen ? "rotate-180" : ""}`}
-              />
-            </button>
-            {checkColsOpen && (
-              <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
-                {/* Fixed plate search col */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] text-muted shrink-0">عمود البحث:</span>
-                  <span className="rounded-full border border-primary bg-primary/20 px-2.5 py-0.5 text-xs font-bold text-primary">
-                    {checkPlateCol ?? "—"}
-                  </span>
-                  {!checkPlateCol && (
-                    <span className="text-[11px] text-danger">لم يُعثر تلقائياً</span>
-                  )}
-                </div>
-                {/* Multi-select display cols */}
-                <div>
-                  <p className="mb-1.5 text-[11px] text-muted">أعمدة النتيجة — اضغط لإظهار/إخفاء:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {checkTable.headers
-                      .filter((h) => h !== checkPlateCol)
-                      .map((h) => (
-                        <button
-                          key={h}
-                          onClick={() => toggleCheckCol(h)}
-                          className={`rounded-full border px-3 py-1 text-xs transition ${
-                            selectedCheckCols.has(h)
-                              ? "bg-primary text-night font-bold border-primary"
-                              : "border-border text-muted"
-                          }`}
-                        >
-                          {h}
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
         )}
       </div>
 
@@ -3877,17 +3812,8 @@ export default function InstantCheckPage() {
       {/* ── Mode tabs + content (only shown when file is loaded) ── */}
       {checkTable && (
         <>
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-sm font-bold text-ink">التشييك</h2>
-            {/* زر المزامنة — يرفع سجلات التشييك للسيرفر (تدريجي: الجديد بس) */}
-            <button onClick={handleSyncRecords} disabled={syncingRecords}
-              className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
-              <RefreshCw size={13} className={syncingRecords ? "animate-spin" : ""} />
-              {syncingRecords ? "جارٍ..." : "مزامنة"}
-            </button>
-          </div>
-          {/* Tabs */}
-          <div className="grid grid-cols-5 gap-1 rounded-xl border border-border bg-surface-2 p-1">
+          {/* Tabs — مربع أكبر ومحدّد بظل عشان يبان للمناديب */}
+          <div className="grid grid-cols-5 gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg">
             {(
               [
                 { key: "manual", Icon: Type, label: "يدوي" },
@@ -3900,15 +3826,26 @@ export default function InstantCheckPage() {
               <button
                 key={key}
                 onClick={() => setMode(key)}
-                className={`flex items-center justify-center gap-1 rounded-lg py-2.5 text-xs font-bold transition ${
-                  mode === key ? "bg-primary text-night" : "text-muted"
+                className={`flex flex-col items-center justify-center gap-1 rounded-xl py-3.5 text-xs font-bold transition ${
+                  mode === key ? "bg-primary text-night shadow-md" : "text-muted"
                 }`}
               >
-                <Icon size={14} />
+                <Icon size={17} />
                 {label}
               </button>
             ))}
           </div>
+
+          {/* «مزامنة» — تظهر فقط في تبويب السجلات (بترفع سجلات التشييك للسيرفر) */}
+          {mode === "sheet" && (
+            <div className="flex justify-end">
+              <button onClick={handleSyncRecords} disabled={syncingRecords}
+                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
+                <RefreshCw size={13} className={syncingRecords ? "animate-spin" : ""} />
+                {syncingRecords ? "جارٍ..." : "مزامنة"}
+              </button>
+            </div>
+          )}
 
           {/* ── Manual ── */}
           {mode === "manual" && (
@@ -3939,16 +3876,17 @@ export default function InstantCheckPage() {
                 </button>
               </div>
 
-              {/* خيار المندوب: الكيبورد يقلب أرقام تلقائي بعد ٣ حروف (الافتراضي مقفول) */}
-              <label className="flex select-none items-center gap-2 self-start text-xs text-muted">
-                <input
-                  type="checkbox"
-                  checked={smartKb}
-                  onChange={(e) => { setSmartKb(e.target.checked); writeSmartKeyboard(e.target.checked); }}
-                  className="h-4 w-4 accent-brand"
-                />
-                الكيبورد يقلب للأرقام تلقائي بعد الحروف
-              </label>
+              {/* زر تشغيل/إيقاف: الكيبورد يقلب أرقام تلقائي بعد الحروف — بينوّر لما يشتغل */}
+              <button
+                type="button"
+                onClick={() => { const v = !smartKb; setSmartKb(v); writeSmartKeyboard(v); }}
+                className={`flex select-none items-center gap-2 self-start rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                  smartKb ? "border-brand bg-brand/15 text-brand" : "border-border bg-surface-2 text-muted"
+                }`}
+              >
+                <span className={`h-2.5 w-2.5 rounded-full transition ${smartKb ? "bg-brand shadow-[0_0_6px] shadow-brand" : "bg-muted/40"}`} />
+                قلب الأرقام تلقائي {smartKb ? "(مشغّل)" : "(متوقف)"}
+              </button>
 
               {/* Error with dismiss button */}
               {manualError && (
@@ -3960,9 +3898,6 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              <p className="text-xs text-muted" dir="rtl">
-                يدعم الحروف العربية والإنجليزية (A→ا، B→ب، G→ق، ...) — كل لوحة تتشيّك ضد المطلوبين وتتضاف للقائمة تحت. تقدر تعدّل النوع والموقع والملاحظات من علامة القلم، وتصدّرهم للسجلات لما تخلّص.
-              </p>
 
               {manualResult?.found && (
                 <ResultCard result={manualResult} plateCol={checkPlateCol} selectedCols={selectedCheckCols} priorCheck={findDuplicateEntry(fieldEntries, manualResult.plate)} />
