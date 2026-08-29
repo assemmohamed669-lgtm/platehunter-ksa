@@ -1451,33 +1451,14 @@ export default function InstantCheckPage() {
     void fetchGpsForHit(hitId);
   }
 
-  // Read the current position. Prefers the warm coordinate from the always-on
-  // watch (gpsService) so stamping a plate is INSTANT — the old per-plate
-  // getCurrentPosition() call took seconds each. Falls back to a fresh lookup
-  // only when the watch hasn't produced a fix yet.
+  // موقع اللوحة عند التشييك: بياخد **أدق فيكس دلوقتي** عبر gpsService.getFreshFix —
+  // لو الفيكس المخزّن من المراقب حديث ودقيق يرجّعه فوراً (التشييك يفضل لحظي)، وإلا
+  // يطلب قراءة عالية الدقة جديدة عشان كل لوحة تاخد موقعها الحالي مش نسخة قديمة
+  // متكرّرة (المندوب ممكن يشيّك كذا لوحة في ثواني). الختم أصلاً غير متزامن — نتيجة
+  // التشييك بتظهر فوراً والدبوس بيتحدّث لما الفيكس يجهز.
   async function getCurrentGps(): Promise<{ lat: number; lng: number } | null> {
-    const warm = gpsService.getLastCoords();
-    if (warm) return { lat: warm.lat, lng: warm.lng };
-
-    try {
-      const { Capacitor } = await import("@capacitor/core");
-      if (Capacitor.isNativePlatform()) {
-        const { Geolocation } = await import("@capacitor/geolocation");
-        await Geolocation.requestPermissions();
-        const pos = await Geolocation.getCurrentPosition({ timeout: 12000, enableHighAccuracy: false });
-        return { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      }
-    } catch { /* not native or plugin error — fall through to web API */ }
-
-    try {
-      if (!navigator.geolocation) return null;
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 12000, maximumAge: 60000, enableHighAccuracy: false })
-      );
-      return { lat: pos.coords.latitude, lng: pos.coords.longitude };
-    } catch {
-      return null;
-    }
+    const fix = await gpsService.getFreshFix();
+    return fix ? { lat: fix.lat, lng: fix.lng } : null;
   }
 
   // «الأقرب»: يجيب موقع المندوب الحالي ويفعّل ترتيب القوائم بالمسافة. لو مفعّل
