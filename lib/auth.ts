@@ -35,7 +35,7 @@ const ERROR_MESSAGES: Record<LoginErrorCode, string> = {
   INVALID_CREDENTIALS: "اسم المستخدم أو كلمة المرور غير صحيحة.",
   DEVICE_MISMATCH:
     "هذا الحساب مرتبط بجهاز آخر. تواصل مع الإدارة لإعادة ضبط الجهاز.",
-  ACCOUNT_DISABLED: "تم تعطيل هذا الحساب. تواصل مع الإدارة.",
+  ACCOUNT_DISABLED: "اشتراكك خلص، برجاء التواصل مع الأدمن لتمديد الاشتراك.",
   PROFILE_NOT_FOUND: "لم يتم العثور على حساب لهذا المستخدم. تواصل مع الإدارة.",
   UNKNOWN: "حدث خطأ غير متوقع. حاول مرة أخرى.",
 };
@@ -95,6 +95,21 @@ export async function loginAgent(
       errorMessage: ERROR_MESSAGES[code],
     };
   }
+
+  // حارس إضافي: لو الحساب متقفل (is_active=false) نمنع الدخول برسالة واضحة —
+  // حتى لو الـRPC ماردّش ACCOUNT_DISABLED لأي سبب. مايتخزّنش توكن لحساب مقفول.
+  try {
+    const { data: udata } = await supabase.auth.getUser();
+    if (udata?.user) {
+      const { data: prof } = await supabase.from("profiles").select("is_active").eq("id", udata.user.id).single();
+      if (prof && prof.is_active === false) {
+        await reportSecurityEvent("login_account_disabled");
+        await supabase.auth.signOut();
+        clearStoredSessionToken();
+        return { ok: false, errorCode: "ACCOUNT_DISABLED", errorMessage: ERROR_MESSAGES.ACCOUNT_DISABLED };
+      }
+    }
+  } catch { /* لو تعذّر الفحص، نكمّل — الحارس داخل التطبيق (SessionGuard) بيمسك الباقي */ }
 
   if (data) {
     setStoredSessionToken(data as string);
