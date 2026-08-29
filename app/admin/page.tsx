@@ -675,9 +675,9 @@ export default function AdminDashboard() {
               {a.role === "agent" && (
                 <button
                   onClick={(e) => toggleActive(a, e)}
-                  title={a.is_active ? "قفل المندوب مؤقتاً" : "فتح المندوب (يرجع بنفس تواريخ الاشتراك)"}
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${a.is_active ? "bg-danger/15 text-danger hover:bg-danger/30" : "bg-primary/15 text-primary hover:bg-primary/30"}`}>
-                  {a.is_active ? <Lock size={15} /> : <LockOpen size={15} />}
+                  title={a.is_active ? "مفتوح — دوس للقفل المؤقت" : "مقفول — دوس للفتح (يرجع بنفس تواريخ الاشتراك)"}
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${a.is_active ? "bg-green-500/15 text-green-600 hover:bg-green-500/30" : "bg-danger/15 text-danger hover:bg-danger/30"}`}>
+                  {a.is_active ? <LockOpen size={15} /> : <Lock size={15} />}
                 </button>
               )}
               {/* علامة واتساب — تفتح شات المندوب على رقمه (لو ليه تليفون). */}
