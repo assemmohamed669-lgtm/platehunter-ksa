@@ -8,7 +8,7 @@ import {
   ChevronDown, Minimize2, Maximize2, ClipboardList, X, Download,
 } from "lucide-react";
 import {
-  getAllRecordings, getAllFieldCheckEntries, getUploadedFile,
+  getAllRecordingsLite, getAllFieldCheckEntries, getUploadedFile,
   deleteRecording, deleteFieldCheckEntry,
   type RecordingEntry, type FieldCheckEntry,
 } from "@/lib/idb";
@@ -112,7 +112,7 @@ export default function MapsPage() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       const [recs, fields, check] = await Promise.all([
-        data.user ? getAllRecordings(data.user.id) : Promise.resolve([]),
+        data.user ? getAllRecordingsLite(data.user.id) : Promise.resolve([]),
         getAllFieldCheckEntries(data.user?.id),
         getUploadedFile("local", "check"),
       ]);
