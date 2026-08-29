@@ -22,6 +22,8 @@ interface Props {
   recenterKey?: number;
   /** ارتفاع الحاوية بالبكسل — نافذة الخريطة المستقلة تتحكم في حجمها بيه. */
   heightPx?: number;
+  /** نتيجة بحث مكان بالاسم — الخريطة تطير له وتحط دبوس مميّز. null = امسح الدبوس. */
+  searchPin?: { lat: number; lng: number; label?: string } | null;
 }
 
 // Escape any value going into popup HTML — plate/notes are user/OCR content.
@@ -36,13 +38,14 @@ function safeHttps(url: unknown): string | null {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export default function MapView({ points, center = [24.7136, 46.6753], userLocation, recenterKey, heightPx = 420 }: Props) {
+export default function MapView({ points, center = [24.7136, 46.6753], userLocation, recenterKey, heightPx = 420, searchPin }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const LRef = useRef<any>(null);
   const markersLayerRef = useRef<any>(null);
   const rendererRef = useRef<any>(null);   // كانفاس واحد لكل النقط — أسرع بكتير من DOM markers
   const userMarkerRef = useRef<any>(null);
+  const searchMarkerRef = useRef<any>(null);
   const followRef = useRef(true);          // نتبع الموقع لحد ما المستخدم يحرّك الخريطة بنفسه
   const didInitialFitRef = useRef(false);
 
@@ -150,6 +153,27 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
 
   useEffect(() => { renderMarkers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [points]);
   useEffect(() => { renderUser(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userLocation]);
+
+  // بحث مكان بالاسم: الخريطة تطير للنتيجة وتحط دبوس مميّز (📍) وتفتح اسمه.
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current;
+    if (!L || !map) return;
+    if (!searchPin) {
+      if (searchMarkerRef.current) { searchMarkerRef.current.remove(); searchMarkerRef.current = null; }
+      return;
+    }
+    followRef.current = false; // عشان مايرجعش لموقع المندوب بعد الطيران للنتيجة
+    const icon = L.divIcon({
+      html: `<div style="font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">📍</div>`,
+      className: "", iconSize: [30, 30], iconAnchor: [15, 30],
+    });
+    if (searchMarkerRef.current) searchMarkerRef.current.setLatLng([searchPin.lat, searchPin.lng]);
+    else searchMarkerRef.current = L.marker([searchPin.lat, searchPin.lng], { icon, zIndexOffset: 2000 }).addTo(map);
+    if (searchPin.label) searchMarkerRef.current.bindPopup(`<div dir="rtl" style="font-family:Tahoma,sans-serif">${esc(searchPin.label)}</div>`, { maxWidth: 260 });
+    map.setView([searchPin.lat, searchPin.lng], 16, { animate: true });
+    searchMarkerRef.current.openPopup?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchPin?.lat, searchPin?.lng]);
 
   // لما نافذة الخريطة تتكبّر/تتصغّر بتغيير heightPx، الحاوية بتاخد وقت CSS
   // قصير لتطبّق الارتفاع الجديد — نستنى شوية بعدها ونعمل invalidateSize عشان

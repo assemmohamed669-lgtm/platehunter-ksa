@@ -15,6 +15,7 @@ import {
 import { detectPlateColumn, detectPlateColumnByContent } from "@/lib/plateParser";
 import { plateKey } from "@/lib/fieldCheck";
 import { buildSpreadsheetBlob, openExcelBlob } from "@/lib/excel";
+import { searchPlace, type PlaceResult } from "@/lib/geocoding";
 import { supabase } from "@/lib/supabaseClient";
 import {
   gpsService, haversineKm, estimateDriveMinutes, formatDistanceKm, formatDurationMin,
@@ -78,6 +79,11 @@ export default function MapsPage() {
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [recenterKey, setRecenterKey] = useState(0);
   const [pointsHidden, setPointsHidden] = useState(false);
+  // بحث مكان/شارع بالاسم — الخريطة تطير للنتيجة (زي بحث جوجل).
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [placeResults, setPlaceResults] = useState<PlaceResult[]>([]);
+  const [placePin, setPlacePin] = useState<{ lat: number; lng: number; label?: string } | null>(null);
+  const [placeSearching, setPlaceSearching] = useState(false);
   const [nearest, setNearest] = useState(false);
 
   // نافذة الخريطة مستقلة تماماً عن نافذة قائمة اللوحات — حجمها وحالة طيّها يتحفظوا.
@@ -278,6 +284,22 @@ export default function MapsPage() {
 
   const allSel = selected.size === filtered.length && filtered.length > 0;
 
+  // بحث عن شارع/مكان بالاسم → الخريطة تطير لأول نتيجة وتحط دبوس (بايّس بموقع المندوب).
+  async function runPlaceSearch() {
+    const q = placeQuery.trim();
+    if (q.length < 2) return;
+    setPlaceSearching(true);
+    try {
+      const res = await searchPlace(q, userLoc);
+      setPlaceResults(res);
+      if (res.length > 0) setPlacePin({ lat: res[0].lat, lng: res[0].lng, label: res[0].label });
+      else alert("مفيش نتيجة بالاسم ده. جرّب اسم أوضح أو ضيف الحي/المدينة.");
+    } finally {
+      setPlaceSearching(false);
+    }
+  }
+  function clearPlaceSearch() { setPlaceQuery(""); setPlaceResults([]); setPlacePin(null); }
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -334,7 +356,47 @@ export default function MapsPage() {
             </div>
             {pointsHidden && <p className="text-[11px] text-muted">النقاط متخفية من العرض فقط — السجلات محفوظة زي ما هي.</p>}
 
-            <MapView points={allPoints} userLocation={userLoc} recenterKey={recenterKey} heightPx={MAP_HEIGHTS[mapSize]} />
+            {/* ── بحث عن شارع/مكان بالاسم — الخريطة تطير له زي بحث جوجل ── */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input
+                    value={placeQuery}
+                    onChange={(e) => setPlaceQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void runPlaceSearch(); } }}
+                    placeholder="ابحث عن شارع أو مكان…"
+                    dir="rtl"
+                    className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-8 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+                  />
+                  {placeQuery && (
+                    <button onClick={clearPlaceSearch} title="مسح" className="absolute left-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+                <button onClick={() => void runPlaceSearch()} disabled={placeSearching || placeQuery.trim().length < 2}
+                  className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-night transition disabled:opacity-40 active:scale-95">
+                  {placeSearching ? "..." : "بحث"}
+                </button>
+              </div>
+              {/* نتايج إضافية لو أكتر من واحدة — دوس تختار */}
+              {placeResults.length > 1 && (
+                <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-2 p-1">
+                  {placeResults.map((r, i) => {
+                    const on = placePin?.lat === r.lat && placePin?.lng === r.lng;
+                    return (
+                      <button key={i} onClick={() => setPlacePin({ lat: r.lat, lng: r.lng, label: r.label })} dir="rtl" title={r.label}
+                        className={`truncate rounded-lg px-2.5 py-1.5 text-right text-xs transition ${on ? "bg-primary/15 font-bold text-primary" : "text-muted hover:bg-surface"}`}>
+                        <MapPin size={11} className="ml-1 inline" /> {r.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <MapView points={allPoints} userLocation={userLoc} recenterKey={recenterKey} heightPx={MAP_HEIGHTS[mapSize]} searchPin={placePin} />
           </div>
         )}
       </div>
