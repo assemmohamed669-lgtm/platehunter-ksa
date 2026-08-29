@@ -3740,11 +3740,33 @@ export default function InstantCheckPage() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-xl font-black text-ink">التشييك</h1>
-      </div>
+      {/* ── شريط التبويبات — أول حاجة فوق في الصفحة (فوق مربع رفع الشيت) ── */}
+      {checkTable && (
+        <div className="grid grid-cols-5 gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg">
+          {(
+            [
+              { key: "manual", Icon: Type, label: "يدوي" },
+              { key: "camera", Icon: Camera, label: "كاميرا" },
+              { key: "ptt", Icon: Mic, label: "صوتي" },
+              { key: "chassis", Icon: Barcode, label: "شاص" },
+              { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
+            ] as const
+          ).map(({ key, Icon, label }) => (
+            <button
+              key={key}
+              onClick={() => setMode(key)}
+              className={`flex flex-col items-center justify-center gap-1 rounded-xl py-3.5 text-xs font-bold transition ${
+                mode === key ? "bg-primary text-night shadow-md" : "text-muted"
+              }`}
+            >
+              <Icon size={17} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* ── ملف التشييك (أول الصفحة — بيبان اسم الشيت وعدد اللوحات) ── */}
+      {/* ── ملف التشييك (سماوي بحواف مظلّلة — بيبان اسم الشيت وعدد اللوحات) ── */}
       <FileUploadBox
         title="ملف التشييك"
         hint="القائمة المرجعية للبحث"
@@ -3754,6 +3776,7 @@ export default function InstantCheckPage() {
         onParsed={handleParsed}
         onClear={handleClear}
         showReplaceButtons
+        sky
       />
 
       {/* ── حالة الـ GPS (تحت ملف التشييك — مصغّرة، من غير رسالة التحذير الحمرا) ── */}
@@ -3809,33 +3832,9 @@ export default function InstantCheckPage() {
         </div>
       )}
 
-      {/* ── Mode tabs + content (only shown when file is loaded) ── */}
+      {/* ── محتوى التبويب (الشريط نفسه اتنقل فوق الصفحة) ── */}
       {checkTable && (
         <>
-          {/* Tabs — مربع أكبر ومحدّد بظل عشان يبان للمناديب */}
-          <div className="grid grid-cols-5 gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg">
-            {(
-              [
-                { key: "manual", Icon: Type, label: "يدوي" },
-                { key: "camera", Icon: Camera, label: "كاميرا" },
-                { key: "ptt", Icon: Mic, label: "صوتي" },
-                { key: "chassis", Icon: Barcode, label: "شاص" },
-                { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
-              ] as const
-            ).map(({ key, Icon, label }) => (
-              <button
-                key={key}
-                onClick={() => setMode(key)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-xl py-3.5 text-xs font-bold transition ${
-                  mode === key ? "bg-primary text-night shadow-md" : "text-muted"
-                }`}
-              >
-                <Icon size={17} />
-                {label}
-              </button>
-            ))}
-          </div>
-
           {/* «مزامنة» — تظهر فقط في تبويب السجلات (بترفع سجلات التشييك للسيرفر) */}
           {mode === "sheet" && (
             <div className="flex justify-end">
