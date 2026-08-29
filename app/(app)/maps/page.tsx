@@ -284,16 +284,33 @@ export default function MapsPage() {
 
   const allSel = selected.size === filtered.length && filtered.length > 0;
 
-  // بحث عن شارع/مكان بالاسم → الخريطة تطير لأول نتيجة وتحط دبوس (بايّس بموقع المندوب).
+  // لوحة ليها دبوس على الخريطة (من تسجيلات/سجلات المندوب) — للبحث الذكي.
+  function findPlatePoint(qk: string): { lat: number; lng: number; plate: string } | null {
+    for (const r of recordings)
+      if (r.lat != null && r.lng != null && plateKey(r.plate).includes(qk)) return { lat: r.lat, lng: r.lng, plate: r.plate };
+    for (const e of fieldEntries)
+      if (e.lat != null && e.lng != null && plateKey(e.plate).includes(qk)) return { lat: e.lat, lng: e.lng, plate: e.plate };
+    return null;
+  }
+
+  // بحث ذكي: (١) لو اللي اتكتب لوحة ليها دبوس على الخريطة → يطير لها. (٢) وإلا
+  // يبحث عنه كاسم شارع/مكان (بايّس بموقع المندوب) ويطير لأول نتيجة.
   async function runPlaceSearch() {
     const q = placeQuery.trim();
     if (q.length < 2) return;
+    // (١) لوحة؟
+    const qk = plateKey(q);
+    if (qk.length >= 3) {
+      const hit = findPlatePoint(qk);
+      if (hit) { setPlaceResults([]); setPlacePin({ lat: hit.lat, lng: hit.lng, label: hit.plate }); return; }
+    }
+    // (٢) شارع/مكان
     setPlaceSearching(true);
     try {
       const res = await searchPlace(q, userLoc);
       setPlaceResults(res);
       if (res.length > 0) setPlacePin({ lat: res[0].lat, lng: res[0].lng, label: res[0].label });
-      else alert("مفيش نتيجة بالاسم ده. جرّب اسم أوضح أو ضيف الحي/المدينة.");
+      else alert("مفيش نتيجة بالاسم ده — لا لوحة على الخريطة ولا مكان. جرّب اسم أوضح أو ضيف الحي/المدينة.");
     } finally {
       setPlaceSearching(false);
     }
@@ -365,7 +382,7 @@ export default function MapsPage() {
                     value={placeQuery}
                     onChange={(e) => setPlaceQuery(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void runPlaceSearch(); } }}
-                    placeholder="ابحث عن شارع أو مكان…"
+                    placeholder="ابحث عن لوحة أو شارع أو مكان…"
                     dir="rtl"
                     className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-8 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none"
                   />
