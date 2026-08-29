@@ -43,6 +43,43 @@ export function parseNominatimAddress(addr: Record<string, any>): GeoAddress {
   return { street, district };
 }
 
+/** نتيجة بحث مكان/شارع بالاسم (بحث أمامي — اسم → إحداثيات). */
+export interface PlaceResult { label: string; lat: number; lng: number; }
+
+/**
+ * بحث عن مكان/شارع بالاسم (زي بحث خرائط جوجل) — بيرجّع لحد ٦ نتايج بإحداثياتها.
+ * بيستخدم Nominatim (نفس خدمة العناوين)، مقيّد للسعودية، وبيبايّس النتايج ناحية
+ * موقع المندوب (لو متوفّر) عشان الشارع الأقرب يطلع الأول. بيرجّع [] عند أي فشل.
+ */
+export async function searchPlace(
+  query: string,
+  near?: { lat: number; lng: number } | null,
+): Promise<PlaceResult[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  try {
+    const params = new URLSearchParams({
+      q, format: "json", limit: "6", "accept-language": "ar", countrycodes: "sa",
+    });
+    if (near) {
+      // صندوق حوالين موقع المندوب لترجيح النتايج القريبة (مش مقيّد — لسه بيلاقي البعيد).
+      const d = 0.4;
+      params.set("viewbox", `${near.lng - d},${near.lat + d},${near.lng + d},${near.lat - d}`);
+      params.set("bounded", "0");
+    }
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+      headers: { "User-Agent": "PlateHunterKSA/2.0" },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<{ display_name: string; lat: string; lon: string }>;
+    return data
+      .map((r) => ({ label: r.display_name, lat: parseFloat(r.lat), lng: parseFloat(r.lon) }))
+      .filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng));
+  } catch {
+    return [];
+  }
+}
+
 export async function reverseGeocode(
   lat: number,
   lng: number
