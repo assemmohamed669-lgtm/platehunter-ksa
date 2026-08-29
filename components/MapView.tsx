@@ -32,10 +32,6 @@ function esc(s: unknown): string {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)
   );
 }
-function safeHttps(url: unknown): string | null {
-  const u = String(url ?? "");
-  return /^https:\/\//i.test(u) ? u : null;
-}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function MapView({ points, center = [24.7136, 46.6753], userLocation, recenterKey, heightPx = 420, searchPin }: Props) {
@@ -110,13 +106,17 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
 
     points.forEach((p) => {
       const color = p.color ?? "#1FAE6E";
-      const link = safeHttps(p.mapsLink);
+      // رابط خرائط جوجل باللوحة كـ**عنوان للدبوس**: q=lat,lng(اللوحة …) — كده لما
+      // المندوب يفتحه، جوجل بيسمّي الدبوس باللوحة (والوقت) بدل إحداثيات مجرّدة.
+      // (جوجل مابيعرضش كارت بيانات كامل زي التطبيق — بس العنوان ده أقصى المتاح.)
+      const gLabel = [p.plate, p.when].filter(Boolean).join(" · ");
+      const gmaps = `https://www.google.com/maps?q=${p.lat},${p.lng}${gLabel ? `(${encodeURIComponent(gLabel)})` : ""}`;
       const popup = `
         <div dir="rtl" style="font-family:Tahoma,sans-serif;min-width:160px">
           <b style="color:${color};font-size:15px">${esc(p.plate)}</b><br/>
           ${p.subtitle ? `<span style="color:#666">${esc(p.subtitle)}</span><br/>` : ""}
           ${p.when ? `<span style="color:#999;font-size:11px">${esc(p.when)}</span><br/>` : ""}
-          ${link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>` : ""}
+          <a href="${esc(gmaps)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>
         </div>`;
       // circleMarker على الكانفاس المشترك — سريع مع آلاف النقط. البوب-أب lazy فمابيتبنيش
       // إلا عند الفتح.
