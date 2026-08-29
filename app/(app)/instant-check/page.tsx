@@ -1494,15 +1494,37 @@ export default function InstantCheckPage() {
     } catch { return ""; }
   }
 
-  // Fetch GPS for a hit and stamp it (or mark gpsError on failure)
-  async function fetchGpsForHit(hitId: string) {
-    const gps = await getCurrentGps();
-    if (gps) {
-      const region = await regionTextFor(gps.lat, gps.lng);
-      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...h.row, "الحي-الشارع": region } : h.row } : h));
+  // يختم موقع صف (يدوي/صوت) **لحظي ثم أدق**: يحط الموقع الحالي من المراقب فوراً
+  // (الدبوس يظهر على طول = لحظي)، وبعدها بلحظة يجيب **أدق قراءة GPS ممكنة** في
+  // الخلفية ويحدّثه لو اتحسّن — من غير ما يعطّل ظهور نتيجة التشييك. الحي بيتحسب
+  // مرة واحدة على أدق إحداثيات (تقليل نداءات العنوان).
+  async function stampGpsFreshest(
+    apply: (lat: number, lng: number, region: string) => void,
+    onFail: () => void,
+  ) {
+    const warm = gpsService.getLastCoords();
+    if (warm) apply(warm.lat, warm.lng, "");            // لحظي (الحي يتملّي بعد التحسين)
+    // حسّن لأدق قراءة: getFreshFix بيرجّع المخزّن فوراً لو ممتاز (≤١.٥ث و≤١٥م)،
+    // وإلا يطلب قراءة عالية الدقة جديدة (maximumAge:0).
+    const fresh = await gpsService.getFreshFix({ maxAgeMs: 1500, maxAccuracyM: 15 });
+    const best: GpsCoords | null =
+      fresh && (!warm || fresh.accuracy <= warm.accuracy || fresh.timestamp > warm.timestamp) ? fresh : warm;
+    if (best) {
+      const region = await regionTextFor(best.lat, best.lng);
+      apply(best.lat, best.lng, region);                // أدق + الحي
     } else {
-      setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h));
+      onFail();
     }
+  }
+
+  // Fetch GPS for a hit and stamp it (لحظي ثم أدق) — or mark gpsError on failure
+  async function fetchGpsForHit(hitId: string) {
+    await stampGpsFreshest(
+      (lat, lng, region) => setManualHits((prev) => prev.map((h) => h.id === hitId
+        ? { ...h, lat, lng, mapsLink: toMapsLink(lat, lng), gpsError: false, row: region ? { ...h.row, "الحي-الشارع": region } : h.row }
+        : h)),
+      () => setManualHits((prev) => prev.map((h) => h.id === hitId ? { ...h, gpsError: true } : h)),
+    );
   }
 
   // Retry GPS for a specific hit (user taps 📍 button)
@@ -1511,15 +1533,14 @@ export default function InstantCheckPage() {
     await fetchGpsForHit(hitId);
   }
 
-  // GPS for a voice (PTT) row — stamps its coords, or marks gpsError on failure.
+  // GPS for a voice (PTT) row — لحظي ثم أدق، أو gpsError عند الفشل.
   async function fetchGpsForPttRow(id: string) {
-    const gps = await getCurrentGps();
-    if (gps) {
-      const region = await regionTextFor(gps.lat, gps.lng);
-      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...(r.row ?? {}), "الحي-الشارع": region } : r.row } : r));
-    } else {
-      setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r));
-    }
+    await stampGpsFreshest(
+      (lat, lng, region) => setPttResults((prev) => prev.map((r) => r.id === id
+        ? { ...r, lat, lng, mapsLink: toMapsLink(lat, lng), gpsError: false, row: region ? { ...(r.row ?? {}), "الحي-الشارع": region } : r.row }
+        : r)),
+      () => setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r)),
+    );
   }
 
   async function retryGpsForPttRow(id: string) {
