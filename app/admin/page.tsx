@@ -617,78 +617,69 @@ export default function AdminDashboard() {
             const act = activityStatus(a.last_seen);
             return (
             <div key={a.id} role="button" tabIndex={0} onClick={() => router.push(`/admin/${a.id}`)}
-              className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-right transition ${
+              className={`flex cursor-pointer items-center gap-2.5 rounded-xl border p-2.5 text-right transition ${
                 a.is_super ? "border-2 bg-black hover:opacity-90" : "border-border bg-surface hover:border-primary/50"
               }`}
               style={a.is_super ? { borderColor: "#D4AF37" } : undefined}>
-              <CircleUserRound size={30} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {/* نقطة حالة النشاط قدام الاسم — أخضر = نشط، رمادي = مش فاتح */}
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${act.online ? "bg-green-500 animate-pulse" : "bg-muted/40"}`}
-                    title={act.label} />
-                  {/* الاسم كامل — يلتفّ لو طويل بدل ما يتقصّ */}
-                  <span className="text-sm font-bold text-ink break-words" style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
+              <CircleUserRound size={26} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
+              <div className="min-w-0 flex-1 leading-tight">
+                {/* السطر ١: نقطة النشاط + الاسم (يتقصّ بلُطف) + الدور/تجربة/مقفول */}
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${act.online ? "bg-green-500 animate-pulse" : "bg-muted/40"}`} title={act.label} />
+                  <span className="truncate text-sm font-bold text-ink" title={a.username} style={a.is_super ? { color: "#F4D160" } : undefined}>{a.username}</span>
                   {a.role === "admin" && (
-                    a.is_super ? (
-                      <span className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}>
-                        <Gem size={10} /> سوبر أدمن
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">أدمن</span>
-                    )
+                    a.is_super
+                      ? <span className="flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold" style={{ color: "#0a0a0a", background: "#D4AF37" }}><Gem size={9} /> سوبر</span>
+                      : <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">أدمن</span>
                   )}
                   {a.is_trial && a.role === "agent" && (
-                    <span className="flex items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand"><Clock size={10} /> تجربة</span>
+                    <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[9px] font-bold text-brand"><Clock size={9} /> تجربة</span>
                   )}
-                  {!a.is_active && <span className="rounded-full bg-danger/10 px-1.5 py-0.5 text-[10px] text-danger">معطّل</span>}
-                  {/* نسخة البرنامج اللي المندوب شغّال بيها — أخضر=أحدث، برتقالي=قديمة، رمادي=غير معروفة */}
+                  {!a.is_active && <span className="shrink-0 rounded-full bg-danger/10 px-1.5 py-0.5 text-[9px] font-bold text-danger">مقفول</span>}
+                </div>
+                {/* السطر ٢: النسخة + الجهاز + حالة الاشتراك */}
+                <div className="mt-1 flex flex-wrap items-center gap-1">
                   {a.app_version
                     ? (a.app_version === APP_VERSION
-                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-500">أحدث نسخة</span>
-                        : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-500" title={`المندوب على ${a.app_version} — الأحدث ${APP_VERSION}`}>نسخة قديمة {a.app_version}</span>)
-                    : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted">نسخة غير معروفة</span>}
-                  {/* حالة ربط الجهاز — المعفي (يدخل من أي جهاز) متلوّن تحذيري عشان
-                      تلاقيه بسرعة وتقفله على جهاز واحد لو حابب. */}
+                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-500">أحدث نسخة</span>
+                        : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[9px] font-bold text-orange-500" title={`المندوب على ${a.app_version} — الأحدث ${APP_VERSION}`}>نسخة {a.app_version}</span>)
+                    : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[9px] text-muted">نسخة غير معروفة</span>}
                   {a.role === "agent" && (
                     a.device_lock_exempt
-                      ? <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-500" title="الحساب معفي من القفل — يدخل بإيميله من أي جهاز">🔓 أي جهاز</span>
+                      ? <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[9px] font-bold text-orange-500" title="يدخل من أي جهاز">🔓 أي جهاز</span>
                       : a.device_fingerprint
-                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-600" title="مربوط بجهاز واحد">📱 جهاز واحد</span>
-                        : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted" title={deviceBindingState(a.device_fingerprint, a.last_seen) === "reset" ? "اتعمله إعادة ضبط — هيترتبط بأول جهاز يدخل منه" : "لسه مادخلش — هيترتبط بأول جهاز يدخل منه"}>جهاز؟</span>
+                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-600" title="مربوط بجهاز واحد">📱 جهاز واحد</span>
+                        : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[9px] text-muted" title={deviceBindingState(a.device_fingerprint, a.last_seen) === "reset" ? "اتعمله إعادة ضبط" : "لسه مادخلش"}>جهاز؟</span>
+                  )}
+                  {a.role === "agent" && (
+                    <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>{sub.label}</span>
                   )}
                 </div>
-                <p className="truncate text-[11px]" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>
-                  <span className={act.online ? "font-bold text-green-500" : "text-muted"}>{act.label}</span>
-                </p>
-                {/* رقم التليفون + الإيميل — كل واحد في سطر مستقل تحت الاسم (واضحين) */}
-                <p className="truncate text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
-                {a.email && <p className="truncate text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.email}</p>}
+                {/* السطر ٣: آخر ظهور (كامل، بلا قصّ) */}
+                <p className="mt-1 text-[11px]"><span className={act.online ? "font-bold text-green-500" : (a.is_super ? "" : "text-muted")} style={a.is_super && !act.online ? { color: "#D4AF37AA" } : undefined}>{act.label}</span></p>
+                {/* التليفون + الإيميل — كاملين بلا قصّ */}
+                <p className="text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
+                {a.email && <p className="break-all text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.email}</p>}
               </div>
-              {a.role === "agent" && (
-                <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>
-                  {sub.label}
-                </span>
-              )}
-              {/* زر قفل/فتح المندوب مؤقتاً (للأدمن والسوبر أدمن) — بيقفل الوصول من
-                  غير ما يلمس تواريخ الاشتراك، فالفتح بيرجّعه بنفس اليوم المحدّد. */}
-              {a.role === "agent" && (
-                <button
-                  onClick={(e) => toggleActive(a, e)}
-                  title={a.is_active ? "مفتوح — دوس للقفل المؤقت" : "مقفول — دوس للفتح (يرجع بنفس تواريخ الاشتراك)"}
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${a.is_active ? "bg-green-500/15 text-green-600 hover:bg-green-500/30" : "bg-danger/15 text-danger hover:bg-danger/30"}`}>
-                  {a.is_active ? <LockOpen size={15} /> : <Lock size={15} />}
-                </button>
-              )}
-              {/* علامة واتساب — تفتح شات المندوب على رقمه (لو ليه تليفون). */}
-              {waLink(a.phone) && (
-                <a href={waLink(a.phone)!} target="_blank" rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()} title="مراسلة على واتساب"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-500/15 text-green-500 transition hover:bg-green-500/30">
-                  <MessageCircle size={16} />
-                </a>
-              )}
-              <ArrowRight size={16} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
+              {/* أزرار مدمجة عمودياً عشان ماتاخدش عرض من بيانات المندوب */}
+              <div className="flex shrink-0 flex-col items-center gap-1.5">
+                {a.role === "agent" && (
+                  <button
+                    onClick={(e) => toggleActive(a, e)}
+                    title={a.is_active ? "مفتوح — دوس للقفل المؤقت" : "مقفول — دوس للفتح (يرجع بنفس تواريخ الاشتراك)"}
+                    className={`flex h-7 w-7 items-center justify-center rounded-full transition ${a.is_active ? "bg-green-500/15 text-green-600 hover:bg-green-500/30" : "bg-danger/15 text-danger hover:bg-danger/30"}`}>
+                    {a.is_active ? <LockOpen size={14} /> : <Lock size={14} />}
+                  </button>
+                )}
+                {waLink(a.phone) && (
+                  <a href={waLink(a.phone)!} target="_blank" rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()} title="مراسلة على واتساب"
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-green-500/15 text-green-500 transition hover:bg-green-500/30">
+                    <MessageCircle size={14} />
+                  </a>
+                )}
+              </div>
+              <ArrowRight size={15} className={`shrink-0 ${a.is_super ? "" : "text-muted"}`} style={a.is_super ? { color: "#D4AF37" } : undefined} />
             </div>
             );
           })}
