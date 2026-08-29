@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
@@ -291,6 +291,23 @@ export default function AdminDashboard() {
       loadAgents();
     } catch { setCError("تعذّر الاتصال بالخادم."); }
     finally { setCreating(false); }
+  }
+
+  // قفل/فتح مؤقت للمندوب — بيغيّر is_active بس، **من غير ما يلمس تواريخ الاشتراك**.
+  // فلما تفتحه تاني، اشتراكه بيرجع بنفس اليوم اللي كنت محدّده. القفل بيمنعه من
+  // استخدام البرنامج فوراً (SessionGuard بيطبّقه لايف).
+  async function toggleActive(a: AgentProfile, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (a.is_active && !confirm(`تقفل «${a.username}» مؤقتاً؟\nمش هيقدر يستخدم البرنامج لحد ما تفتحه تاني — واشتراكه هيفضل بنفس التواريخ.`)) return;
+    try {
+      const res = await fetch("/api/admin/manage-agent", {
+        method: "POST", headers: await authHeaders(),
+        body: JSON.stringify({ agentId: a.id, action: "setActive", active: !a.is_active }),
+      });
+      const json = await res.json();
+      if (!res.ok) { alert(json.error ?? "تعذّر تنفيذ العملية."); return; }
+      loadAgents();
+    } catch { alert("تعذّر الاتصال بالخادم."); }
   }
 
   const enriched = useMemo(() => agents.map((a) => ({ a, sub: subStatus(a.subscription_end) })), [agents]);
@@ -652,6 +669,16 @@ export default function AdminDashboard() {
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: sub.color, background: `${sub.color}22` }}>
                   {sub.label}
                 </span>
+              )}
+              {/* زر قفل/فتح المندوب مؤقتاً (للسوبر أدمن) — بيقفل الوصول من غير ما
+                  يلمس تواريخ الاشتراك، فالفتح بيرجّعه بنفس اليوم المحدّد. */}
+              {isSuper && a.role === "agent" && (
+                <button
+                  onClick={(e) => toggleActive(a, e)}
+                  title={a.is_active ? "قفل المندوب مؤقتاً" : "فتح المندوب (يرجع بنفس تواريخ الاشتراك)"}
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${a.is_active ? "bg-danger/15 text-danger hover:bg-danger/30" : "bg-primary/15 text-primary hover:bg-primary/30"}`}>
+                  {a.is_active ? <Lock size={15} /> : <LockOpen size={15} />}
+                </button>
               )}
               {/* علامة واتساب — تفتح شات المندوب على رقمه (لو ليه تليفون). */}
               {waLink(a.phone) && (
