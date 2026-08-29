@@ -99,7 +99,7 @@ class GpsService {
             this.notifyListeners(this.lastCoords);
           }
         );
-        this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 5000);
+        this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 2000);
         return;
       }
     } catch (e) {
@@ -142,9 +142,9 @@ class GpsService {
         console.warn("GPS error:", err.message);
         if (!this.lastCoords) this.notifyListeners(null);
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
     );
-    this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 5000);
+    this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 2000);
   }
 
   stopTracking() {
@@ -177,6 +177,48 @@ class GpsService {
 
   getLastCoords(): GpsCoords | null {
     return this.lastCoords;
+  }
+
+  /**
+   * أدق فيكس ممكن **دلوقتي** — للتشييك اليدوي/الصوت عشان كل لوحة تاخد موقع طازة
+   * ودقيق، مش قراءة متكرّرة كل ثواني. لو الفيكس المخزّن من المراقب حديث (≤ maxAgeMs)
+   * ودقيق (≤ maxAccuracyM) يرجّعه **فوراً** (مفيش طلب زيادة ولا بطارية). وإلا يطلب
+   * قراءة عالية الدقة جديدة (maximumAge:0)، يدمجها عبر pickBetterFix ويرجّع الأحسن.
+   * لو الطلب الجديد فشل يرجّع المخزّن (أحسن من لا شيء) — مبيرميش أبداً. المندوب ممكن
+   * يشيّك ٤ لوحات في ثواني، فده بيضمن كل واحدة موقعها الحالي بدل نسخة واحدة قديمة.
+   */
+  async getFreshFix(opts: { maxAgeMs?: number; maxAccuracyM?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
+    const maxAge = opts.maxAgeMs ?? 4000;
+    const maxAcc = opts.maxAccuracyM ?? 35;
+    const timeout = opts.timeoutMs ?? 9000;
+    const warm = this.lastCoords;
+    if (warm && Date.now() - warm.timestamp <= maxAge && warm.accuracy <= maxAcc) return warm;
+
+    const apply = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords | null => {
+      this.lastCoords = pickBetterFix(this.lastCoords, {
+        lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp,
+      });
+      this.notifyListeners(this.lastCoords);
+      return this.lastCoords;
+    };
+
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (Capacitor.isNativePlatform()) {
+        const { Geolocation } = await import("@capacitor/geolocation");
+        return apply(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout, maximumAge: 0 }));
+      }
+    } catch { /* أقمار فشلت/مش native — نجرّب web تحت وإلا نرجّع المخزّن */ }
+
+    try {
+      if (navigator.geolocation) {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, maximumAge: 0, timeout }));
+        return apply(pos);
+      }
+    } catch { /* فشل — نرجّع المخزّن */ }
+
+    return warm;
   }
 
   /**
