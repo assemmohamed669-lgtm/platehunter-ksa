@@ -21,6 +21,7 @@ import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
+import { loadColumnOrder, saveColumnOrder, orderedLabels, optionalAvailable, toggleColumn, FIXED_LEADING_LABELS } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
@@ -826,36 +827,39 @@ export default function SortingPage() {
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
   // (عرض + تصدير + واتساب).
-  /**
-   * إخفاء أعمدة النتيجة بطلب المندوب — بالاسم المعروض (label).
-   * الافتراضي فاضي = كل حاجة ظاهرة زي دلوقتي بالظبط؛ المندوب يخفي اللي مش عايزه
-   * من قايمة «أعمدة النتيجة» ويرجّعه في أي وقت.
-   */
-  const [hiddenResultCols, setHiddenResultCols] = useState<Set<string>>(new Set());
-  const HIDDEN_COLS_KEY = "ph:sorting:hiddenCols";
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(HIDDEN_COLS_KEY);
-      if (raw) setHiddenResultCols(new Set(JSON.parse(raw) as string[]));
-    } catch { /* تخزين معطّل */ }
-  }, []);
-  function toggleHiddenCol(label: string) {
-    setHiddenResultCols((prev) => {
-      const next = new Set(prev);
-      if (next.has(label)) next.delete(label); else next.add(label);
-      try { localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify([...next])); } catch { /* تخزين معطّل */ }
-      return next;
-    });
+  // ترتيب أعمدة النتيجة اللي المندوب يختاره — يتحفظ على الجهاز ويطبّق على العرض
+  // والإكسيل والصورة وكل أنواع الفرز وصفحة المطلوب. رقم اللوحة دايماً أول عمود،
+  // بعده الثابت (نوع السيارة › الماركة)، بعدهم اللي المندوب اختاره بترتيبه. مفيش
+  // اختيار = الثابت بس.
+  const [colOrder, setColOrder] = useState<string[]>([]);
+  useEffect(() => { setColOrder(loadColumnOrder()); }, []);
+  function toggleOrderCol(label: string) {
+    setColOrder((prev) => { const next = toggleColumn(prev, label); saveColumnOrder(next); return next; });
   }
+  function clearColOrder() { setColOrder([]); saveColumnOrder([]); }
 
-  // كل الأعمدة اللي البرنامج قدر يطلّعها (قبل الإخفاء) — لقايمة الإظهار/الإخفاء
+  // كل الأعمدة اللي البرنامج قدر يطلّعها (قبل اختيار/ترتيب المندوب).
   const allResultColsRaw = useMemo(
     () => [...resultCols, ...extraDataResultCols, ...extraReferralResultCols],
     [resultCols, extraDataResultCols, extraReferralResultCols]
   );
-  const allResultCols = useMemo(
-    () => allResultColsRaw.filter((c) => !hiddenResultCols.has(c.label)),
-    [allResultColsRaw, hiddenResultCols]
+  // الأعمدة المعروضة فعلاً بترتيب المندوب.
+  const allResultCols = useMemo(() => {
+    const labels = orderedLabels(allResultColsRaw.map((c) => c.label), colOrder);
+    const byLabel = new Map(allResultColsRaw.map((c) => [c.label, c] as const));
+    return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+  }, [allResultColsRaw, colOrder]);
+  // نفس ترتيب المندوب على أعمدة نتيجة السجلات كمان (اتساق عبر كل أنواع الفرز).
+  const orderedTashyeekCols = useMemo(() => {
+    const labels = orderedLabels(tashyeekResultCols.map((c) => c.label), colOrder);
+    const byLabel = new Map(tashyeekResultCols.map((c) => [c.label, c] as const));
+    return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+  }, [tashyeekResultCols, colOrder]);
+  // كل الأعمدة المتاحة للاختيار في «ترتيب الأعمدة» = اتحاد أعمدة الداتا والسجلات
+  // (ناقص الثابت ورقم اللوحة)، بلا تكرار.
+  const orderableCols = useMemo(
+    () => optionalAvailable([...new Set([...allResultColsRaw, ...tashyeekResultCols].map((c) => c.label))]),
+    [allResultColsRaw, tashyeekResultCols]
   );
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
@@ -1895,7 +1899,7 @@ export default function SortingPage() {
     const obj: Record<string, unknown> = { "رقم اللوحة": plate };
     // نفس أعمدة العرض وبنفس الترتيب — عشان الواتساب والإكسيل والصورة يطلعوا
     // زي اللي المندوب شايفه في النافذة بالظبط.
-    for (const c of tashyeekResultCols) {
+    for (const c of orderedTashyeekCols) {
       obj[c.label] = c.source === "referral"
         ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
         : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
@@ -2482,33 +2486,49 @@ export default function SortingPage() {
             </div>
           </div>
 
-          {/* أعمدة النتيجة — المندوب يخفي أي عمود ويرجّعه في أي وقت. الافتراضي
-              كل حاجة ظاهرة، والاختيار بيتحفظ على الجهاز. */}
-          {allResultColsRaw.length > 0 && (
+          {/* ترتيب الأعمدة — رقم اللوحة/نوع السيارة/الماركة ثابتين في الأول،
+              والباقي المندوب يدوس عليه بالترتيب اللي عايزه (رقم بيبان جنبه). لو
+              ماختارش حاجة → الثابت بس. الاختيار بيتحفظ ويطبّق على النتيجة والإكسيل
+              والصورة وكل أنواع الفرز وصفحة المطلوب. */}
+          {(orderableCols.length > 0 || allResultColsRaw.length > 0) && (
             <div className="rounded-xl border border-border bg-surface">
               <button onClick={() => setResultColsPickerOpen((v) => !v)}
                 className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
-                <span>أعمدة النتيجة ({allResultColsRaw.length - hiddenResultCols.size} من {allResultColsRaw.length})</span>
+                <span>ترتيب الأعمدة {colOrder.length > 0 ? `(${colOrder.length} مختار)` : "(الثابت بس)"}</span>
                 <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${resultColsPickerOpen ? "rotate-180" : ""}`} />
               </button>
               {resultColsPickerOpen && (
-                <div className="border-t border-border px-3 pb-3 pt-2">
-                  <p className="mb-1.5 text-[11px] text-muted">دوس على العمود عشان تخفيه أو ترجّعه:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {allResultColsRaw.map((c) => {
-                      const shown = !hiddenResultCols.has(c.label);
-                      return (
-                        <button key={c.id} onClick={() => toggleHiddenCol(c.label)}
-                          className={`rounded-full px-3 py-1 text-xs transition ${shown ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
-                          {c.label}
-                        </button>
-                      );
-                    })}
+                <div className="space-y-2.5 border-t border-border px-3 pb-3 pt-2">
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">📌 ثابت في الأول (مايتغيّرش):</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {["رقم اللوحة", ...FIXED_LEADING_LABELS].map((l) => (
+                        <span key={l} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 {l}</span>
+                      ))}
+                    </div>
                   </div>
-                  {hiddenResultCols.size > 0 && (
-                    <button onClick={() => { setHiddenResultCols(new Set()); try { localStorage.removeItem(HIDDEN_COLS_KEY); } catch { /* تخزين معطّل */ } }}
-                      className="mt-2 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
-                      إظهار الكل
+                  {orderableCols.length > 0 && (
+                    <div>
+                      <p className="mb-1 text-[11px] text-muted">دوس بالترتيب اللي عايزه — الرقم بيبان جنب العمود (دوس تاني يشيله):</p>
+                      <div className="flex flex-wrap gap-2">
+                        {orderableCols.map((label) => {
+                          const idx = colOrder.indexOf(label);
+                          const on = idx >= 0;
+                          return (
+                            <button key={label} onClick={() => toggleOrderCol(label)}
+                              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
+                              {on && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-black">{idx + 1}</span>}
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {colOrder.length > 0 && (
+                    <button onClick={clearColOrder}
+                      className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
+                      مسح الاختيار (الثابت بس)
                     </button>
                   )}
                 </div>
@@ -2825,7 +2845,7 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {tashyeekResultCols.map((c) => (
+                    {orderedTashyeekCols.map((c) => (
                       <th key={c.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c.label}</th>
                     ))}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
@@ -2856,7 +2876,7 @@ export default function SortingPage() {
                           </div>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        {tashyeekResultCols.map((c) => {
+                        {orderedTashyeekCols.map((c) => {
                           // عمود من شيت السجلات → يتقرا من صف السجل؛ من المحفظة →
                           // من صف الإحالة. وبنسيب الاحتياطي على المصدر التاني.
                           const val = c.source === "referral"
