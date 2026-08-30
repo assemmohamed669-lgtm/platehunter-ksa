@@ -64,6 +64,13 @@ export function clearChassisRecords(): void {
   persist([]);
 }
 
+/** يستبدل القائمة كلها ويحفظها — للحفظ الجماعي بعد التعديل بوضع «تعديل» (draft). */
+export function replaceChassisRecords(list: ChassisRecord[]): ChassisRecord[] {
+  const all = list.map((r) => ({ ...r }));
+  persist(all);
+  return all;
+}
+
 /**
  * يدمج سجلات جاية من السيرفر مع المحلي — بالـid (الموجود محلياً مايتكررش، السيرفر
  * بيكمّل الناقص). النتيجة مرتّبة بالأحدث. يُستخدم في استرجاع الشاص من Supabase.

@@ -8,7 +8,7 @@ import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAll
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
-import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
+import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -44,7 +44,7 @@ import { syncTrainingData } from "@/lib/trainingSync";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
-import { typeToCode } from "@/lib/vehicleType";
+import { typeToCode, vehicleTypeLabel } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
 import { setMicBusy } from "@/lib/micBusy";
 import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
@@ -582,6 +582,25 @@ export default function InstantCheckPage() {
   const [chLocLink, setChLocLink] = useState<string | null>(null);
   const [chassisRecords, setChassisRecords] = useState<ChassisRecord[]>([]);
   useEffect(() => { setChassisRecords(getChassisRecords()); }, []);
+  // مربع الشاص: يعرض ٢ بس افتراضياً، والباقي يفتح بزر. والتعديل بوضع «تعديل»
+  // على نسخة draft — التغيير/الحذف مايتحفظش إلا لما يدوس «حفظ» ويأكّد.
+  const [chassisExpanded, setChassisExpanded] = useState(false);
+  const [chassisEditMode, setChassisEditMode] = useState(false);
+  const [chassisDraft, setChassisDraft] = useState<ChassisRecord[]>([]);
+  function enterChassisEdit() {
+    setChassisDraft(chassisRecords.map((r) => ({ ...r })));
+    setChassisEditMode(true);
+    setChassisExpanded(true);   // نعرض الكل وقت التعديل
+  }
+  function cancelChassisEdit() { setChassisEditMode(false); setChassisDraft([]); }
+  function saveChassisEdit() {
+    if (!window.confirm("هل تريد حفظ البيانات؟")) return;
+    setChassisRecords(replaceChassisRecords(chassisDraft));
+    setChassisEditMode(false);
+    setChassisDraft([]);
+  }
+  // مشاركة شيت التسجيلات: زر واحد يفتح خيار (واتساب / صورة).
+  const [showFieldShareChooser, setShowFieldShareChooser] = useState(false);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chassisCamInputRef = useRef<HTMLInputElement>(null);
   const chassisGalInputRef = useRef<HTMLInputElement>(null);
@@ -2186,23 +2205,6 @@ export default function InstantCheckPage() {
     void pushOneChassis(agentIdRef.current, rec); // رفع الجديد للسيرفر على طول
   }
 
-  // تصدير كل سجلات الشاصي لشيت «شيت رقم الشاص».
-  async function exportChassisSheet() {
-    const recs = getChassisRecords();
-    if (!recs.length) { alert("مفيش سجلات شاصي بعد."); return; }
-    const rows = recs.map((r) => ({
-      "رقم الشاص": r.chassis,
-      "نوع السيارة": r.vehicleType ?? "",
-      "ملاحظات": r.notes ?? "",
-      "اسم المنطقة": r.region ?? "",
-      "GPS": r.mapsLink ?? (r.lat != null && r.lng != null ? `${r.lat},${r.lng}` : ""),
-      "التاريخ": formatDate(r.checkedAt),
-      "الحالة": r.found ? "مطلوب" : "غير مطلوب",
-    }));
-    const blob = buildExcelBlob(rows, "شيت رقم الشاص");
-    await shareExcelBlob(blob, `شيت-رقم-الشاص-${Date.now()}.xlsx`, "شيت رقم الشاص");
-  }
-
   // مشاركة شيت رقم الشاص كنص على واتساب.
   function shareChassisWhatsApp() {
     const recs = getChassisRecords();
@@ -3789,7 +3791,8 @@ export default function InstantCheckPage() {
         sky
       />
 
-      {/* ── حالة الـ GPS (تحت ملف التشييك — مصغّرة، من غير رسالة التحذير الحمرا) ── */}
+      {/* ── حالة الـ GPS — تظهر في كل التبويبات ما عدا «السجلات» (تنظيم الصفحة) ── */}
+      {mode !== "sheet" && (
       <div className="flex flex-col gap-1.5">
         <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
           حالة الـ GPS
@@ -3834,6 +3837,7 @@ export default function InstantCheckPage() {
           </>
         )}
       </div>
+      )}
 
       {/* ── No file notice ── */}
       {!checkTable && (
@@ -5010,7 +5014,9 @@ export default function InstantCheckPage() {
             <span className="text-sm font-bold text-ink">شيت رقم الشاص</span>
             <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand">{chassisRecords.length}</span>
           </div>
-          <p className="mt-1 text-[11px] text-muted">اضغط على أي خانة (نوع/ملاحظات/منطقة) لتعديلها ✏️ — والتغيير بيتحفظ تلقائياً.</p>
+          <p className="mt-1 text-[11px] text-muted">
+            {chassisEditMode ? "عدّل الخانات أو احذف، وبعدين دوس «حفظ»." : "بيعرض ٢ — دوس «تعديل» عشان تعدّل أو تحذف، و«إظهار الباقي» عشان تشوف الكل."}
+          </p>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full border-collapse text-xs" dir="rtl">
               <thead>
@@ -5026,13 +5032,25 @@ export default function InstantCheckPage() {
                 </tr>
               </thead>
               <tbody>
-                {chassisRecords.slice(0, 200).map((r) => (
+                {(chassisEditMode ? chassisDraft : chassisRecords).slice(0, chassisExpanded ? 200 : 2).map((r) => (
                   <tr key={r.id} title={dupeBgByKey(chassisPlateKeyOf(r)) ? DUPE_TITLE : undefined} className={`border-t border-border ${dupeBgByKey(chassisPlateKeyOf(r)) || (r.found ? "bg-danger/10" : "")}`}>
                     <td className="whitespace-nowrap px-2 py-1.5 font-mono" dir="ltr">{r.chassis}</td>
                     <td className={`whitespace-nowrap px-2 py-1.5 text-center font-bold ${r.found ? "text-danger" : ""}`}>{r.found ? "مطلوب" : ""}</td>
-                    <td className="min-w-[80px] px-2 py-1.5"><VehicleTypeSelect value={r.vehicleType || ""} onChange={(code) => setChassisRecords(updateChassisRecord(r.id, { vehicleType: code }))} /></td>
-                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.region || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { region: v }))} /></td>
-                    <td className="min-w-[80px] px-2 py-1.5"><EditableCell value={r.notes || ""} onSave={(v) => setChassisRecords(updateChassisRecord(r.id, { notes: v }))} /></td>
+                    <td className="min-w-[80px] px-2 py-1.5">
+                      {chassisEditMode
+                        ? <VehicleTypeSelect value={r.vehicleType || ""} onChange={(code) => setChassisDraft((d) => d.map((x) => (x.id === r.id ? { ...x, vehicleType: code } : x)))} />
+                        : <span className="text-ink">{r.vehicleType ? vehicleTypeLabel(r.vehicleType) : "—"}</span>}
+                    </td>
+                    <td className="min-w-[80px] px-2 py-1.5">
+                      {chassisEditMode
+                        ? <EditableCell value={r.region || ""} onSave={(v) => setChassisDraft((d) => d.map((x) => (x.id === r.id ? { ...x, region: v } : x)))} />
+                        : <span className="text-ink">{r.region || "—"}</span>}
+                    </td>
+                    <td className="min-w-[80px] px-2 py-1.5">
+                      {chassisEditMode
+                        ? <EditableCell value={r.notes || ""} onSave={(v) => setChassisDraft((d) => d.map((x) => (x.id === r.id ? { ...x, notes: v } : x)))} />
+                        : <span className="text-ink">{r.notes || "—"}</span>}
+                    </td>
                     <td className="px-2 py-1.5 text-center">
                       {(r.mapsLink || (r.lat != null && r.lng != null)) ? (
                         <a href={r.mapsLink || toMapsLink(r.lat as number, r.lng as number)} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><MapPin size={15} /></a>
@@ -5040,17 +5058,35 @@ export default function InstantCheckPage() {
                     </td>
                     <td className="whitespace-nowrap px-2 py-1.5 text-center text-muted">{formatDate(r.checkedAt)}</td>
                     <td className="px-2 py-1.5 text-center">
-                      <button onClick={() => { if (window.confirm("متأكد إنك عايز تحذف الشاصي ده؟")) setChassisRecords(deleteChassisRecord(r.id)); }} className="text-muted hover:text-danger transition" aria-label="حذف"><Trash2 size={13} /></button>
+                      {chassisEditMode && (
+                        <button onClick={() => setChassisDraft((d) => d.filter((x) => x.id !== r.id))} className="text-muted hover:text-danger transition" aria-label="حذف"><Trash2 size={13} /></button>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {/* خيارات تحت الشيت: مشاركة واتساب + تصدير Excel */}
+          {/* إظهار الباقي / إخفاء — يظهر بس لو فيه أكتر من ٢ ومش في وضع تعديل */}
+          {!chassisEditMode && chassisRecords.length > 2 && (
+            <button onClick={() => setChassisExpanded((v) => !v)}
+              className="mt-2 w-full rounded-lg border border-border bg-surface-2 py-1.5 text-xs font-bold text-primary transition hover:bg-surface">
+              {chassisExpanded ? "إخفاء" : `إظهار الباقي (${chassisRecords.length - 2})`}
+            </button>
+          )}
+          {/* خيارات تحت الشيت: مشاركة واتساب + تعديل (أو حفظ/إلغاء وقت التعديل) */}
           <div className="mt-3 flex gap-2">
-            <button onClick={shareChassisWhatsApp} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Share2 size={14} /> مشاركة واتساب</button>
-            <button onClick={exportChassisSheet} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><Download size={14} /> فتح في إكسيل</button>
+            {chassisEditMode ? (
+              <>
+                <button onClick={saveChassisEdit} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Check size={14} /> حفظ</button>
+                <button onClick={cancelChassisEdit} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><X size={14} /> إلغاء</button>
+              </>
+            ) : (
+              <>
+                <button onClick={shareChassisWhatsApp} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Share2 size={14} /> مشاركة واتساب</button>
+                <button onClick={enterChassisEdit} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><Pencil size={14} /> تعديل</button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -5093,17 +5129,7 @@ export default function InstantCheckPage() {
               <ClipboardCheck size={15} className="text-brand shrink-0" />
               <h2 className="text-sm font-bold text-ink truncate">شيت التسجيلات (صوتي+يدوي)</h2>
               <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
-              <PlateImagesButton title="شيت التسجيلات"
-                build={() => fieldEntryImgRows(sortNear(visible))}
-                className="ml-auto flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs shrink-0 text-muted hover:text-primary transition" />
-              <button onClick={handleNearestIC} disabled={icLocating} title="ترتيب حسب الأقرب لموقعك"
-                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs shrink-0 transition ${icNearest ? "bg-primary text-night font-bold" : "border border-border bg-surface-2 text-muted hover:text-primary"}`}>
-                <Navigation size={13} /> {icLocating ? "..." : "الأقرب"}
-              </button>
             </div>
-            <p className="text-[11px] text-muted" dir="rtl">
-              سجل محفوظ على الجهاز — للتحميل والمشاركة، والتعديل/الحذف من زر «إظهار وتعديل اللوحات»
-            </p>
 
             {/* عدادات قابلة للضغط — الكل / صوتي / يدوي / مطلوب. الضغط يفلتر العرض للفئة. */}
             <div className="flex flex-wrap gap-2" dir="rtl">
@@ -5178,7 +5204,8 @@ export default function InstantCheckPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pageSlice(sortNear(visible), fieldShown).map((e, i) => {
+                    {/* عرض مصغّر — ٤ سيارات بس؛ الكل + التعديل من «إظهار وتعديل اللوحات» */}
+                    {sortNear(visible).slice(0, 4).map((e, i) => {
                       const dup = dupeBg(e.plate);
                       const rowBg = dup || (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
                       return (
@@ -5234,16 +5261,10 @@ export default function InstantCheckPage() {
                     );})}
                   </tbody>
                 </table>
-                {/* مستشعر آخر الجدول — أول ما يبان بنزوّد دفعة تلقائياً */}
-                {hasMore(visible.length, fieldShown) && (
-                  <div ref={fieldMoreRef} className="flex flex-col items-center gap-1 py-3">
-                    <span className="text-[11px] text-muted">
-                      معروض {Math.min(fieldShown, visible.length)} من {visible.length}
-                    </span>
-                    <button onClick={() => setFieldShown((s) => growShown(visible.length, s))}
-                      className="rounded-lg border border-border bg-surface-2 px-3 py-1 text-xs font-bold text-primary transition hover:bg-surface">
-                      عرض المزيد
-                    </button>
+                {/* عرض مصغّر — لو فيه أكتر من ٤، الكل من زر «إظهار وتعديل اللوحات» */}
+                {visible.length > 4 && (
+                  <div className="py-2 text-center text-[11px] text-muted">
+                    معروض ٤ من {visible.length} — للكل دوس «إظهار وتعديل اللوحات»
                   </div>
                 )}
               </div>
@@ -5262,11 +5283,34 @@ export default function InstantCheckPage() {
                 label="فتح الشيت"
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
               />
-              <button onClick={shareFieldExcel} disabled={shareBusy !== null}
+              <button onClick={() => setShowFieldShareChooser(true)} disabled={shareBusy !== null}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition disabled:opacity-60">
-                <Share2 size={14} /> {shareBusy === "field" ? "جاري التجهيز..." : "مشاركة واتساب"}
+                <Share2 size={14} /> {shareBusy === "field" ? "جاري التجهيز..." : "مشاركة"}
               </button>
             </div>
+
+            {/* خيار المشاركة: واتساب أو صورة */}
+            {showFieldShareChooser && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowFieldShareChooser(false)}>
+                <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-4 text-right shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="mb-3 text-sm font-bold text-ink">مشاركة شيت التسجيلات</h3>
+                  <div className="flex flex-col gap-2">
+                    <button onClick={() => { setShowFieldShareChooser(false); void shareFieldExcel(); }}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
+                      <Share2 size={15} /> واتساب (إكسيل)
+                    </button>
+                    <PlateImagesButton title="شيت التسجيلات"
+                      build={() => fieldEntryImgRows(sortNear(visible))}
+                      label="صورة"
+                      className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10" />
+                  </div>
+                  <button onClick={() => setShowFieldShareChooser(false)}
+                    className="mt-3 w-full rounded-lg border border-border py-2 text-xs font-bold text-muted transition hover:text-ink">
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
