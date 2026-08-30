@@ -10,6 +10,7 @@ import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
+import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -970,6 +971,15 @@ export default function InstantCheckPage() {
   // Recordings sheet (شيت التسجيلات) — persisted in IDB, fixed log the agent
   // can only download or share (no delete / no edit).
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
+  // ربط السجلات كخانة داتا في صفحة الفرز — حالة الزر + نافذة اختيار الوجهة.
+  const [recordsLinkedUi, setRecordsLinkedUi] = useState(false);
+  const [showRecordsChooser, setShowRecordsChooser] = useState(false);
+  useEffect(() => { setRecordsLinkedUi(isRecordsLinked()); }, []);
+  function chooseRecordsTarget(target: RecordsTarget) {
+    linkRecords(target);
+    setRecordsLinkedUi(true);
+    setShowRecordsChooser(false);
+  }
   // أي مشاركة/تصدير شغّالة دلوقتي (لعرض «جاري التجهيز» ومنع الضغط المتكرر).
   const [shareBusy, setShareBusy] = useState<string | null>(null);
   const [fieldZoom, setFieldZoom] = useState(3);
@@ -3835,14 +3845,56 @@ export default function InstantCheckPage() {
       {/* ── محتوى التبويب (الشريط نفسه اتنقل فوق الصفحة) ── */}
       {checkTable && (
         <>
-          {/* «مزامنة» — تظهر فقط في تبويب السجلات (بترفع سجلات التشييك للسيرفر) */}
+          {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
           {mode === "sheet" && (
-            <div className="flex justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
+              {recordsLinkedUi ? (
+                <button onClick={() => { unlinkRecords(); setRecordsLinkedUi(false); }}
+                  className="flex items-center gap-1.5 rounded-lg border border-green-600/40 bg-green-600/10 px-3 py-1.5 text-xs font-bold text-green-700 transition hover:bg-green-600/20"
+                  title="سجلاتك مربوطة بخانة الداتا في الفرز — اضغط للفصل">
+                  <Check size={13} /> مربوطة بالفرز — فصل
+                </button>
+              ) : (
+                <button onClick={() => setShowRecordsChooser(true)} disabled={fieldEntries.length === 0}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50"
+                  title="ضيف شيت السجلات لخانة الداتا في صفحة الفرز عشان تفرز عليه من غير تنزيل ورفع">
+                  <Download size={13} /> أضف لخانة الداتا
+                </button>
+              )}
               <button onClick={handleSyncRecords} disabled={syncingRecords}
                 className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
                 <RefreshCw size={13} className={syncingRecords ? "animate-spin" : ""} />
                 {syncingRecords ? "جارٍ..." : "مزامنة"}
               </button>
+            </div>
+          )}
+
+          {/* نافذة اختيار وجهة السجلات في خانة الداتا (تحمي داتا المندوب المثبّتة) */}
+          {showRecordsChooser && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowRecordsChooser(false)}>
+              <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-4 text-right shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="mb-1 text-sm font-bold text-ink">أضف سجلاتك لخانة الداتا</h3>
+                <p className="mb-3 text-[11px] leading-relaxed text-muted">
+                  هتظهر سجلاتك في صفحة الفرز كخانة داتا وتقدر تفرز عليها أي إحالة، وبتتحدّث
+                  تلقائياً. اختار مكانها:
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => chooseRecordsTarget("extra")}
+                    className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-right transition hover:bg-primary/10">
+                    <span className="block text-xs font-bold text-ink">مربع داتا إضافي</span>
+                    <span className="block text-[11px] text-muted">يتضاف جنب داتاك المثبّتة من غير ما يلغيها (الأأمن).</span>
+                  </button>
+                  <button onClick={() => chooseRecordsTarget("main")}
+                    className="rounded-xl border border-border px-3 py-2.5 text-right transition hover:border-primary/40">
+                    <span className="block text-xs font-bold text-ink">مربع الداتا الأساسي</span>
+                    <span className="block text-[11px] text-muted">لو مفيش عندك داتا مرفوعة. لو عندك، سجلاتك تتضاف من غير ما تلغيها.</span>
+                  </button>
+                </div>
+                <button onClick={() => setShowRecordsChooser(false)}
+                  className="mt-3 w-full rounded-lg border border-border py-2 text-xs font-bold text-muted transition hover:text-ink">
+                  إلغاء
+                </button>
+              </div>
             </div>
           )}
 

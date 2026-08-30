@@ -44,6 +44,7 @@ import {
 } from "@/lib/idb";
 import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
+import { isRecordsLinked, recordsTarget, unlinkRecords, RECORDS_LINK_EVENT, type RecordsTarget } from "@/lib/recordsAsData";
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 const PAGE_SIZE = 50;
@@ -164,6 +165,9 @@ export default function SortingPage() {
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [dataColsOpen, setDataColsOpen] = useState(false);
   const [dataBoxOpen, setDataBoxOpen] = useState(true); // collapse/expand the whole "مربع الداتا"
+  // ربط سجلات المندوب كخانة داتا (من صفحة السجلات) — ربط حي بيتحدّث لوحده.
+  const [recordsLinked, setRecordsLinked] = useState(false);
+  const [recordsTgt, setRecordsTgt] = useState<RecordsTarget>("extra");
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
   // ملف الداتا الكبير: بيتخزّن على دفعات في IndexedDB على الجهاز (بدل الذاكرة) عشان
@@ -732,6 +736,10 @@ export default function SortingPage() {
     if (dataTable) {
       sources.push({ kind: "data", headers: dataTable.headers, rows: dataTable.rows, plateCol: effectiveDataPlateCol });
     }
+    // سجلات المندوب كخانة داتا (ربط حي) — أعمدتها لازم تظهر في نتيجة الفرز زي أي داتا.
+    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
+      sources.push({ kind: "data", headers: tashyeekTable.headers, rows: tashyeekTable.rows, plateCol: tashyeekPlateCol });
+    }
     // **مهم:** لو الملف متعدد الورقات، الأعمدة لازم تتقري من **الورقات المختارة**
     // (نفس اللي المطابقة بتتم عليها في collectRefSources) — مش من الورقة اللي
     // parseExcelFile اختارها لوحدها. من غير كده البرنامج بيطابق على ورقة ويجيب
@@ -753,7 +761,7 @@ export default function SortingPage() {
     }
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals,
-      isMultiSheetRef, selectedRefSheets]);
+      isMultiSheetRef, selectedRefSheets, recordsLinked, tashyeekTable, tashyeekPlateCol]);
 
   // أعمدة الإحالة الإضافية المختارة — من المربع الأساسي (referralExtraCols) +
   // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
@@ -786,9 +794,13 @@ export default function SortingPage() {
       for (const h of ed.table.headers) if (isMandatory(h)) picked.add(h); // إجبارية من الملف الإضافي
       for (const h of extraColsSel[ed.id] ?? []) picked.add(h);
     }
+    // سجلات المندوب المربوطة كداتا — كل أعمدة الشيت تظهر في النتيجة (الشيت بالكامل).
+    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
+      for (const h of tashyeekTable.headers) if (h && h !== tashyeekPlateCol) picked.add(h);
+    }
     return [...picked].filter((h) => !usedData.has(h))
       .map((col, i) => ({ id: `xdata-${i}`, key: `xdata-${col}`, label: col, source: "data" as const, sourceCol: col, sourceCols: [col] }));
-  }, [dataTable, resultCols, effectiveDataPlateCol, outputCols, extraData, extraColsSel]);
+  }, [dataTable, resultCols, effectiveDataPlateCol, outputCols, extraData, extraColsSel, recordsLinked, tashyeekTable, tashyeekPlateCol]);
 
   // أعمدة نتيجة **السجلات** — نفس نظام أعمدة نتيجة الداتا بالظبط: الأعمدة
   // الثابتة بالترتيب (نوع السيارة › العنوان › الحي › الماركة › GPS › اللون ›
@@ -835,6 +847,22 @@ export default function SortingPage() {
   // الوضع: «أساسي» (ترتيب البرنامج الافتراضي — الافتراضي لأي مندوب) أو «مخصّص».
   const [orderMode, setOrderModeState] = useState<OrderMode>("basic");
   useEffect(() => { setColOrder(loadColumnOrder()); setOrderModeState(loadOrderMode()); }, []);
+
+  // حالة ربط السجلات كخانة داتا — تُقرأ عند الفتح، وتتحدّث لو المندوب غيّرها من
+  // صفحة السجلات (حدث مخصّص) أو رجع للتاب (visibilitychange).
+  useEffect(() => {
+    const read = () => { setRecordsLinked(isRecordsLinked()); setRecordsTgt(recordsTarget()); };
+    read();
+    const onVis = () => { if (document.visibilityState === "visible") read(); };
+    window.addEventListener(RECORDS_LINK_EVENT, read);
+    window.addEventListener("storage", read);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener(RECORDS_LINK_EVENT, read);
+      window.removeEventListener("storage", read);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
   function setOrderMode(m: OrderMode) { setOrderModeState(m); saveOrderMode(m); }
   function toggleOrderCol(label: string) {
     setColOrder((prev) => { const next = toggleColumn(prev, label); saveColumnOrder(next); return next; });
@@ -1115,9 +1143,12 @@ export default function SortingPage() {
     ? selectedRefPlateCount > 0
     : !!referralTable && !!effectiveReferralPlateCol;
 
+  // سجلات المندوب مربوطة كداتا وفيها صفوف = مصدر داتا صالح للفرز الكلي حتى من
+  // غير ما يرفع ملف داتا (ده الهدف: يفرز على سجلاته من غير تنزيل/رفع).
+  const recordsAsDataReady = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
   const canSort = sortMode === "new"
     ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol && dataSheetsReady
-    : !!dataTable && referralReady && !!effectiveDataPlateCol && dataSheetsReady;
+    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || recordsAsDataReady);
 
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
@@ -1380,6 +1411,10 @@ export default function SortingPage() {
       if (!plateCol) continue;
       srcs.push({ rows: ed.table.rows, plateCol });
     }
+    // سجلات المندوب كخانة داتا (ربط حي من صفحة السجلات) — تتطابق زي أي ملف داتا.
+    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
+      srcs.push({ rows: tashyeekTable.rows, plateCol: tashyeekPlateCol });
+    }
     return srcs;
   }
 
@@ -1536,7 +1571,9 @@ export default function SortingPage() {
   // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
   // ملف الداتا → نتيجة واحدة مجمّعة.
   async function runFullSort() {
-    if (!dataTable || !referralTable || !effectiveDataPlateCol || !effectiveReferralPlateCol) return;
+    const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
+    const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
+    if (!(hasUploadedData || hasRecordsData) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
@@ -1610,7 +1647,9 @@ export default function SortingPage() {
         dataBase += rows.length;
       }
       let finalTashyeek: TashyeekResultRow[] | null = null;
-      if (tashyeekTable && tashyeekPlateCol) {
+      // لو السجلات مربوطة كخانة داتا، بتظهر في نتيجة الداتا فوق — فمانعملش قسم
+      // «فرز السجلات» المنفصل عشان ماتتكررش نفس السيارات مرتين.
+      if (!recordsLinked && tashyeekTable && tashyeekPlateCol) {
         const tashyeekMatches: TashyeekResultRow[] = [];
         for (const row of tashyeekTable.rows) {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
@@ -1729,7 +1768,8 @@ export default function SortingPage() {
       matches.sort((a, b) => a.dataIdx - b.dataIdx);
       // شيت السجلات (الميداني): طابق اللوحات الجديدة عليه كمان.
       let finalTashyeek: TashyeekResultRow[] | null = null;
-      if (tashyeekTable && tashyeekPlateCol) {
+      // مربوطة كداتا → بتظهر فوق في نتيجة الداتا، فمافيش قسم سجلات منفصل (منع التكرار).
+      if (!recordsLinked && tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
         for (const e of newEntries) {
           if (!tashyeekRefIndex.has(e.norm)) tashyeekRefIndex.set(e.norm, e.row);
@@ -2082,7 +2122,8 @@ export default function SortingPage() {
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
 
     // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
-    const recordMatches = tashyeekTable && tashyeekPlateCol
+    // لو السجلات مربوطة كداتا، بتتطابق فوق مع الداتا فمانعملش قسم منفصل (منع التكرار).
+    const recordMatches = !recordsLinked && tashyeekTable && tashyeekPlateCol
       ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol)
       : [];
     recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);
@@ -2360,6 +2401,24 @@ export default function SortingPage() {
         className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-primary/50 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10">
         <Plus size={16} /> إضافة ملف داتا
       </button>
+
+      {/* سجلات المندوب مربوطة كخانة داتا (من صفحة السجلات) — ربط حي بيتحدّث لوحده */}
+      {recordsLinked && tashyeekTable && (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-primary/40 bg-primary/10 px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-bold text-ink">
+              📋 سجلاتي {recordsTgt === "main" && !dataTable ? "(مربع الداتا الأساسي)" : "(مربع داتا إضافي)"}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted">
+              {tashyeekTable.rows.length} سيارة من صفحة السجلات — بتتحدّث تلقائياً، مش محتاج ترفع ملف.
+            </p>
+          </div>
+          <button onClick={() => { unlinkRecords(); setRecordsLinked(false); }} title="شيل سجلاتي من الفرز"
+            className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger">
+            <X size={13} /> شيل
+          </button>
+        </div>
+      )}
       </>)}
 
       {/* ③ SORT MODE TABS */}
