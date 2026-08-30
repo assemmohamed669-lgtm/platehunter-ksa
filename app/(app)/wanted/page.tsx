@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { Crosshair, Trash2, RefreshCw } from "lucide-react";
 import WantedResultsTable, { wantedDataCols, type WantedRow } from "@/components/WantedResultsTable";
-import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, FIXED_LEADING_LABELS } from "@/lib/columnOrder";
+import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, loadOrderMode, saveOrderMode, FIXED_LEADING_LABELS, type OrderMode } from "@/lib/columnOrder";
 import { ChevronDown } from "lucide-react";
 import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
@@ -55,8 +55,8 @@ function wantedFullRow(r: WantedRow): Record<string, string> {
 
 // صفوف تصدير النافذة بترتيب المندوب — يُستخدم للإكسيل والصورة والمشاركة. رقم
 // اللوحة ثابت أول عمود، بعده الثابت (نوع/ماركة) + اللي المندوب اختاره.
-function toExportRows(rows: WantedRow[], colOrder: string[]): Record<string, unknown>[] {
-  const cols = ["رقم اللوحة", ...wantedDataCols(rows, colOrder)];
+function toExportRows(rows: WantedRow[], colOrder: string[], mode: OrderMode): Record<string, unknown>[] {
+  const cols = ["رقم اللوحة", ...wantedDataCols(rows, colOrder, mode)];
   return rows.map((r) => {
     const f = wantedFullRow(r);
     const o: Record<string, unknown> = {};
@@ -83,9 +83,9 @@ function dupeHexColors(rows: WantedRow[]): (string | null)[] {
 
 // صورة جدول ملوّنة للنافذة (زي الفرز) — بدون عمود GPS (الرابط مالوش لازمة في صورة)،
 // وكل لوحة مكررة بلون (rowColors = dupeHexColors).
-function toImageTable(rows: WantedRow[], colOrder: string[]): { columns: string[]; rows: string[][]; rowColors?: (string | null)[] } {
-  // بترتيب المندوب، وبدون GPS (الرابط مالوش لازمة في الصورة).
-  const columns = ["رقم اللوحة", ...wantedDataCols(rows, colOrder)].filter((c) => c !== "GPS");
+function toImageTable(rows: WantedRow[], colOrder: string[], mode: OrderMode): { columns: string[]; rows: string[][]; rowColors?: (string | null)[] } {
+  // حسب الوضع، وبدون GPS (الرابط مالوش لازمة في الصورة).
+  const columns = ["رقم اللوحة", ...wantedDataCols(rows, colOrder, mode)].filter((c) => c !== "GPS");
   const tableRows = rows.map((r) => { const f = wantedFullRow(r); return columns.map((c) => f[c] ?? ""); });
   return { columns, rows: tableRows, rowColors: dupeHexColors(rows) };
 }
@@ -99,10 +99,11 @@ export default function WantedPage() {
   const [neighborView, setNeighborView] = useState<NeighborsView | null>(null);
   // ترتيب الأعمدة (نفس المحفوظ من الفرز) — يطبّق على جدول المطلوب والإكسيل والصورة.
   const [colOrder, setColOrder] = useState<string[]>([]);
+  const [orderMode, setOrderModeState] = useState<OrderMode>("basic");
   const [colPickerOpen, setColPickerOpen] = useState(false);
-  useEffect(() => { setColOrder(loadColumnOrder()); }, []);
+  useEffect(() => { setColOrder(loadColumnOrder()); setOrderModeState(loadOrderMode()); }, []);
+  function setOrderMode(m: OrderMode) { setOrderModeState(m); saveOrderMode(m); }
   function toggleOrderCol(label: string) { setColOrder((prev) => { const next = toggleColumn(prev, label); saveColumnOrder(next); return next; }); }
-  function clearColOrder() { setColOrder([]); saveColumnOrder([]); }
   const ALL_OPTIONAL = ["العنوان", "الحي", "البنك", "GPS", "اللون", "سنة الصنع", "تاريخ التسجيل"];
   const orderableCols = optionalAvailable(wantedDataCols([...dataRows, ...recordRows], ALL_OPTIONAL));
 
@@ -302,7 +303,7 @@ export default function WantedPage() {
           <span className="text-sm font-bold text-ink">{title}</span>
           <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-bold text-brand">{rows.length} لوحة</span>
         </div>
-        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} colOrder={colOrder} />
+        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} colOrder={colOrder} orderMode={orderMode} />
         {rows.length > 0 && (
           <div className="flex flex-col gap-2 pt-1">
             {/* زرّين تحت بعض: مشاركة النتيجة (قائمة: فتح إكسيل / واتساب / صورة) + مسح.
@@ -310,9 +311,9 @@ export default function WantedPage() {
             <ShareSortButton
               title={title}
               label="مشاركة النتيجة"
-              rows={() => toExportRows(rows, colOrder)}
-              excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows, colOrder), title, dupeHexColors(rows)), ext: "xlsx" })}
-              imageTable={() => toImageTable(rows, colOrder)}
+              rows={() => toExportRows(rows, colOrder, orderMode)}
+              excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows, colOrder, orderMode), title, dupeHexColors(rows)), ext: "xlsx" })}
+              imageTable={() => toImageTable(rows, colOrder, orderMode)}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
             <button onClick={clearAll} className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-3 text-sm font-bold text-danger transition hover:bg-danger/20"><Trash2 size={15} /> مسح نتايج الفرز</button>
@@ -344,39 +345,50 @@ export default function WantedPage() {
       {sorted && orderableCols.length > 0 && (
         <div className="rounded-xl border border-border bg-surface" dir="rtl">
           <button onClick={() => setColPickerOpen((v) => !v)} className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
-            <span>ترتيب الأعمدة {colOrder.length > 0 ? `(${colOrder.length} مختار)` : "(الكل تلقائي)"}</span>
+            <span>ترتيب الأعمدة {orderMode === "custom" ? `(تخصيص · ${colOrder.length})` : "(أساسي)"}</span>
             <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${colPickerOpen ? "rotate-180" : ""}`} />
           </button>
           {colPickerOpen && (
             <div className="space-y-2.5 border-t border-border px-3 pb-3 pt-2">
-              <div>
-                <p className="mb-1 text-[11px] text-muted">📌 ثابت في الأول (مايتغيّرش):</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {["رقم اللوحة", ...FIXED_LEADING_LABELS].map((l) => (
-                    <span key={l} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 {l}</span>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <p className="mb-1 text-[11px] text-muted">لو ماخترتش حاجة كل الأعمدة بتظهر تلقائياً. دوس بالترتيب اللي عايزه لعرض مخصّص (الرقم بيبان جنبه، دوس تاني يشيله):</p>
-                <div className="flex flex-wrap gap-2">
-                  {orderableCols.map((label) => {
-                    const idx = colOrder.indexOf(label);
-                    const on = idx >= 0;
-                    return (
-                      <button key={label} onClick={() => toggleOrderCol(label)}
-                        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
-                        {on && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-black">{idx + 1}</span>}
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {colOrder.length > 0 && (
-                <button onClick={clearColOrder} className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
-                  ↩ رجوع لترتيب البرنامج الأساسي
+              <div className="flex flex-col gap-1.5">
+                <button onClick={() => setOrderMode("basic")}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition ${orderMode === "basic" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted"}`}>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${orderMode === "basic" ? "border-primary" : "border-muted"}`}>{orderMode === "basic" && <span className="h-2 w-2 rounded-full bg-primary" />}</span>
+                  الترتيب الأساسي للأعمدة (زي البرنامج)
                 </button>
+                <button onClick={() => setOrderMode("custom")}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition ${orderMode === "custom" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted"}`}>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${orderMode === "custom" ? "border-primary" : "border-muted"}`}>{orderMode === "custom" && <span className="h-2 w-2 rounded-full bg-primary" />}</span>
+                  تخصيص (رتّب الأعمدة بنفسك)
+                </button>
+              </div>
+              {orderMode === "custom" && (
+                <div className="space-y-2.5 border-t border-border pt-2.5">
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">📌 ثابت في الأول (مايتغيّرش):</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {["رقم اللوحة", ...FIXED_LEADING_LABELS].map((l) => (
+                        <span key={l} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 {l}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">دوس بالترتيب اللي عايزه — الرقم بيبان جنبه (دوس تاني يشيله):</p>
+                    <div className="flex flex-wrap gap-2">
+                      {orderableCols.map((label) => {
+                        const idx = colOrder.indexOf(label);
+                        const on = idx >= 0;
+                        return (
+                          <button key={label} onClick={() => toggleOrderCol(label)}
+                            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
+                            {on && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-black">{idx + 1}</span>}
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           )}
