@@ -344,7 +344,7 @@ export default function WantedPage() {
       {sorted && orderableCols.length > 0 && (
         <div className="rounded-xl border border-border bg-surface" dir="rtl">
           <button onClick={() => setColPickerOpen((v) => !v)} className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
-            <span>ترتيب الأعمدة {colOrder.length > 0 ? `(${colOrder.length} مختار)` : "(الثابت بس)"}</span>
+            <span>ترتيب الأعمدة {colOrder.length > 0 ? `(${colOrder.length} مختار)` : "(الكل تلقائي)"}</span>
             <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${colPickerOpen ? "rotate-180" : ""}`} />
           </button>
           {colPickerOpen && (
@@ -358,7 +358,7 @@ export default function WantedPage() {
                 </div>
               </div>
               <div>
-                <p className="mb-1 text-[11px] text-muted">دوس بالترتيب اللي عايزه — الرقم بيبان جنب العمود (دوس تاني يشيله):</p>
+                <p className="mb-1 text-[11px] text-muted">لو ماخترتش حاجة كل الأعمدة بتظهر تلقائياً. دوس بالترتيب اللي عايزه لعرض مخصّص (الرقم بيبان جنبه، دوس تاني يشيله):</p>
                 <div className="flex flex-wrap gap-2">
                   {orderableCols.map((label) => {
                     const idx = colOrder.indexOf(label);
