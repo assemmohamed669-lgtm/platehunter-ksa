@@ -21,7 +21,7 @@ import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
-import { loadColumnOrder, saveColumnOrder, orderedLabels, optionalAvailable, toggleColumn, FIXED_LEADING_LABELS } from "@/lib/columnOrder";
+import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, FIXED_LEADING_LABELS } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
@@ -878,12 +878,19 @@ export default function SortingPage() {
     const byLabel = new Map(tashyeekResultCols.map((c) => [c.label, c] as const));
     return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
   }, [tashyeekResultCols, colOrder]);
-  // كل الأعمدة المتاحة للاختيار في «ترتيب الأعمدة» = كل أعمدة الداتا/الإحالة/السجلات
-  // (ناقص الثابت ورقم اللوحة)، بلا تكرار.
-  const orderableCols = useMemo(
-    () => optionalAvailable([...new Set([...pickableColsRaw, ...tashyeekResultCols].map((c) => c.label))]),
-    [pickableColsRaw, tashyeekResultCols]
-  );
+  // الأعمدة المتاحة للاختيار مقسّمة: أعمدة الداتا/السجلات ثم أعمدة الإحالة (فاصل
+  // بينهم في القائمة)، بلا تكرار وناقص الثابت ورقم اللوحة. لو عمود في الاتنين
+  // يتحسب داتا (الأولوية للداتا الميدانية).
+  const orderableGroups = useMemo(() => {
+    const fixed = new Set([...FIXED_LEADING_LABELS, "رقم اللوحة"]);
+    const all = [...pickableColsRaw, ...tashyeekResultCols];
+    const seen = new Set<string>(fixed);
+    const data: string[] = [];
+    for (const c of all) if (c.source !== "referral" && !seen.has(c.label)) { seen.add(c.label); data.push(c.label); }
+    const ref: string[] = [];
+    for (const c of all) if (c.source === "referral" && !seen.has(c.label)) { seen.add(c.label); ref.push(c.label); }
+    return { data, ref };
+  }, [pickableColsRaw, tashyeekResultCols]);
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
 
@@ -2513,7 +2520,7 @@ export default function SortingPage() {
               والباقي المندوب يدوس عليه بالترتيب اللي عايزه (رقم بيبان جنبه). لو
               ماختارش حاجة → الثابت بس. الاختيار بيتحفظ ويطبّق على النتيجة والإكسيل
               والصورة وكل أنواع الفرز وصفحة المطلوب. */}
-          {(orderableCols.length > 0 || allResultColsRaw.length > 0) && (
+          {(orderableGroups.data.length > 0 || orderableGroups.ref.length > 0 || allResultColsRaw.length > 0) && (
             <div className="rounded-xl border border-border bg-surface">
               <button onClick={() => setResultColsPickerOpen((v) => !v)}
                 className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-ink">
@@ -2530,24 +2537,36 @@ export default function SortingPage() {
                       ))}
                     </div>
                   </div>
-                  {orderableCols.length > 0 && (
-                    <div>
-                      <p className="mb-1 text-[11px] text-muted">لو ماخترتش حاجة كل الأعمدة بتظهر تلقائياً. دوس بالترتيب اللي عايزه لعرض مخصّص (الرقم بيبان جنبه، دوس تاني يشيله):</p>
-                      <div className="flex flex-wrap gap-2">
-                        {orderableCols.map((label) => {
-                          const idx = colOrder.indexOf(label);
-                          const on = idx >= 0;
-                          return (
-                            <button key={label} onClick={() => toggleOrderCol(label)}
-                              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
-                              {on && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-black">{idx + 1}</span>}
-                              {label}
-                            </button>
-                          );
-                        })}
+                  {(orderableGroups.data.length > 0 || orderableGroups.ref.length > 0) && (() => {
+                    const chip = (label: string) => {
+                      const idx = colOrder.indexOf(label);
+                      const on = idx >= 0;
+                      return (
+                        <button key={label} onClick={() => toggleOrderCol(label)}
+                          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
+                          {on && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-black">{idx + 1}</span>}
+                          {label}
+                        </button>
+                      );
+                    };
+                    return (
+                      <div className="space-y-2.5">
+                        <p className="text-[11px] text-muted">لو ماخترتش حاجة كل الأعمدة بتظهر تلقائياً. دوس بالترتيب اللي عايزه لعرض مخصّص (الرقم بيبان جنبه، دوس تاني يشيله):</p>
+                        {orderableGroups.data.length > 0 && (
+                          <div>
+                            <p className="mb-1 text-[11px] font-bold text-primary">📄 أعمدة الداتا</p>
+                            <div className="flex flex-wrap gap-2">{orderableGroups.data.map(chip)}</div>
+                          </div>
+                        )}
+                        {orderableGroups.ref.length > 0 && (
+                          <div className="border-t border-dashed border-border pt-2.5">
+                            <p className="mb-1 text-[11px] font-bold text-primary">🏦 أعمدة الإحالة</p>
+                            <div className="flex flex-wrap gap-2">{orderableGroups.ref.map(chip)}</div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                   {colOrder.length > 0 && (
                     <button onClick={clearColOrder}
                       className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
