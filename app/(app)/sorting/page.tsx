@@ -843,23 +843,46 @@ export default function SortingPage() {
     () => [...resultCols, ...extraDataResultCols, ...extraReferralResultCols],
     [resultCols, extraDataResultCols, extraReferralResultCols]
   );
-  // الأعمدة المعروضة فعلاً بترتيب المندوب.
+  // **كل** أعمدة شيت الداتا/الإحالة الخام اللي مش ضمن الأعمدة المفيدة فوق — عشان
+  // المندوب يقدر يختار **أي عمود في ملفه** من قائمة الترتيب (مش المفيدة بس).
+  const rawExtraCols = useMemo<MergedResultColumn[]>(() => {
+    const have = new Set(allResultColsRaw.map((c) => c.label));
+    const out: MergedResultColumn[] = [];
+    const addFrom = (headers: string[] | undefined, plateCol: string | null | undefined, source: "data" | "referral") => {
+      if (!headers) return;
+      for (const h of headers) {
+        if (!h || h === plateCol || have.has(h)) continue;
+        have.add(h);
+        out.push({ id: `raw-${source}-${h}`, key: `raw-${h}`, label: h, source, sourceCol: h, sourceCols: [h] });
+      }
+    };
+    addFrom(dataTable?.headers, effectiveDataPlateCol, "data");
+    addFrom(referralTable?.headers, effectiveReferralPlateCol, "referral");
+    return out;
+  }, [allResultColsRaw, dataTable, effectiveDataPlateCol, referralTable, effectiveReferralPlateCol]);
+  // كل الأعمدة القابلة للاختيار = المفيدة + كل الخام. (للاختيار والعرض عند الاختيار.)
+  const pickableColsRaw = useMemo(() => [...allResultColsRaw, ...rawExtraCols], [allResultColsRaw, rawExtraCols]);
+
+  // الأعمدة المعروضة فعلاً: مفيش اختيار → الافتراضي (المفيدة زي الأول)؛ فيه اختيار →
+  // الثابت + اللي المندوب اختاره (من أي عمود في ملفه).
   const allResultCols = useMemo(() => {
-    const labels = orderedLabels(allResultColsRaw.map((c) => c.label), colOrder);
-    const byLabel = new Map(allResultColsRaw.map((c) => [c.label, c] as const));
+    const byLabel = new Map(pickableColsRaw.map((c) => [c.label, c] as const));
+    const labels = colOrder.length === 0
+      ? allResultColsRaw.map((c) => c.label)
+      : orderedLabels(pickableColsRaw.map((c) => c.label), colOrder);
     return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
-  }, [allResultColsRaw, colOrder]);
+  }, [allResultColsRaw, pickableColsRaw, colOrder]);
   // نفس ترتيب المندوب على أعمدة نتيجة السجلات كمان (اتساق عبر كل أنواع الفرز).
   const orderedTashyeekCols = useMemo(() => {
     const labels = orderedLabels(tashyeekResultCols.map((c) => c.label), colOrder);
     const byLabel = new Map(tashyeekResultCols.map((c) => [c.label, c] as const));
     return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
   }, [tashyeekResultCols, colOrder]);
-  // كل الأعمدة المتاحة للاختيار في «ترتيب الأعمدة» = اتحاد أعمدة الداتا والسجلات
+  // كل الأعمدة المتاحة للاختيار في «ترتيب الأعمدة» = كل أعمدة الداتا/الإحالة/السجلات
   // (ناقص الثابت ورقم اللوحة)، بلا تكرار.
   const orderableCols = useMemo(
-    () => optionalAvailable([...new Set([...allResultColsRaw, ...tashyeekResultCols].map((c) => c.label))]),
-    [allResultColsRaw, tashyeekResultCols]
+    () => optionalAvailable([...new Set([...pickableColsRaw, ...tashyeekResultCols].map((c) => c.label))]),
+    [pickableColsRaw, tashyeekResultCols]
   );
 
   const matchedResults = useMemo(() => (results ? results.filter((r) => r.status !== "none") : []), [results]);
