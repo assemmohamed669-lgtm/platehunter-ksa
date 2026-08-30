@@ -91,6 +91,8 @@ export default function AdminDashboard() {
   const [pollQ, setPollQ] = useState("");
   const [pollOpts, setPollOpts] = useState<string[]>(["", ""]);
   const [pollBusy, setPollBusy] = useState(false);
+  // زرّين فوق البث للمناديب: رسالة عادية ولا استطلاع رأي (سوبر أدمن فقط)
+  const [broadcastTab, setBroadcastTab] = useState<"notice" | "poll">("notice");
   const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
   const [learningBusy, setLearningBusy] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0); // عيّنات متجمّعة على الجهاز
@@ -140,9 +142,9 @@ export default function AdminDashboard() {
       if (prof?.is_super) {
         fetchLearningEnabled().then(setLearningOn);  // حالة مفتاح التعلّم
         import("@/lib/trainingStore").then((m) => m.countTrainingSamples().then(setTrainingCount).catch(() => {}));
+        void fetchAppNotice().then(setNoticeActive); // الرسالة الشغّالة دلوقتي (سوبر فقط)
+        void loadPoll();                              // الاستطلاع الشغّال + نتايجه (سوبر فقط)
       }
-      void fetchAppNotice().then(setNoticeActive);   // الرسالة الشغّالة دلوقتي
-      void loadPoll();                                // الاستطلاع الشغّال + نتايجه
       setAuthorized(true);
       loadAgents();
     })();
@@ -437,11 +439,22 @@ export default function AdminDashboard() {
           </button>
         )}
 
-        {/* رسالة للمناديب — بتظهر في شريط البرنامج في كل الصفحات لمدة تحددها. */}
+        {/* بث للمناديب — رسالة عادية أو استطلاع رأي. سوبر أدمن فقط. */}
+        {isSuper && (
         <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
-          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
-            <Megaphone size={14} /> رسالة للمناديب
+          {/* زرّين جمب بعض — كل واحد يفتح قسمه بس */}
+          <div className="mb-2 flex gap-1.5">
+            <button onClick={() => setBroadcastTab("notice")}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${broadcastTab === "notice" ? "bg-primary text-night" : "bg-surface-2 text-muted"}`}>
+              <Megaphone size={13} /> رسالة للمناديب
+            </button>
+            <button onClick={() => setBroadcastTab("poll")}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${broadcastTab === "poll" ? "bg-primary text-night" : "bg-surface-2 text-muted"}`}>
+              <BarChart3 size={13} /> استطلاع رأي
+            </button>
           </div>
+
+          {broadcastTab === "notice" && (<>
           {noticeActive ? (
             <div className="mb-2 rounded-lg border border-primary/30 bg-surface p-2">
               <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink">{noticeActive.text}</p>
@@ -509,14 +522,9 @@ export default function AdminDashboard() {
               {noticeBusy ? "..." : "انشر"}
             </button>
           </div>
-        </div>
+          </>)}
 
-        {/* استطلاع رأي المناديب — الأدمن ينشئ سؤال + خيارات ويشوف مين اختار إيه. */}
-        <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
-          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
-            <BarChart3 size={14} /> استطلاع رأي المناديب
-          </div>
-
+          {broadcastTab === "poll" && (<>
           {activePoll ? (
             <div className="mb-3 rounded-lg border border-primary/30 bg-surface p-2.5">
               <p className="mb-2 text-[11px] font-bold text-ink">{activePoll.question}</p>
@@ -624,7 +632,9 @@ export default function AdminDashboard() {
               {pollBusy ? "..." : "انشر الاستطلاع"}
             </button>
           </div>
+          </>)}
         </div>
+        )}
 
         {/* مفتاح جمع/تعلّم الصوت + تنزيل الداتا — سوبر أدمن فقط. الافتراضي متوقّف. */}
         {isSuper && (

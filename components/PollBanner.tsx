@@ -6,7 +6,7 @@ import { fetchActivePoll, submitVote, type Poll } from "@/lib/polls";
 
 /** كل قد إيه نسأل السيرفر عن استطلاع جديد (المندوب ممكن يفضل فاتح ساعات). */
 const POLL_MS = 60_000;
-/** مفتاح الاستطلاعات اللي المندوب قفلها (بيتمسح كل تسجيل دخول زي الإشعار). */
+/** مفتاح الاستطلاعات اللي المندوب قفلها بـ✕ (بيتمسح كل تسجيل دخول زي الإشعار). */
 const DISMISS_KEY = "ph:pollDismissed";
 
 function isDismissed(id: string): boolean {
@@ -23,22 +23,25 @@ function dismiss(id: string): void {
 
 /**
  * كارت استطلاع الرأي — بيظهر في **كل صفحات المندوب** (متركّب في شِلّ التطبيق)
- * تحت رسالة الأدمن. الأدمن بينشره من لوحة الأدمن. المندوب يختار خيار واحد
- * بضغطة، ويقدر يغيّره طول ما الاستطلاع نشط. زر ✕ بيقفله للجلسة — بيرجع في
- * أول تسجيل دخول جديد طول ما هو نشط.
+ * تحت رسالة الأدمن. المندوب يختار خياره ثم يضغط **تأكيد** — وبعد التأكيد صوته
+ * **نهائي** والكارت **مايظهرلوش تاني أبداً** (عشان ماننزعجش الناس). لو المندوب
+ * ماصوّتش، زر ✕ بيقفله للجلسة بس وبيرجع في أول تسجيل دخول عشان يفكّره يصوّت.
  */
 export default function PollBanner() {
   const [poll, setPoll] = useState<Poll | null>(null);
+  const [sel, setSel] = useState<number | null>(null);   // اختيار محلي قبل التأكيد
   const [busy, setBusy] = useState(false);
+  const [thanks, setThanks] = useState(false);            // رسالة شكر قصيرة بعد التأكيد
 
   useEffect(() => {
     let alive = true;
     async function load() {
       const p = await fetchActivePoll();
       if (!alive) return;
-      if (!p || isDismissed(p.id)) { setPoll(null); return; }
-      // مانكسحش اختيار المندوب المحلي لو الـpoll نفسه ماتغيّرش
-      setPoll((prev) => (prev && prev.id === p.id ? { ...p, myChoice: prev.myChoice ?? p.myChoice } : p));
+      // بيظهر بس لو: فيه استطلاع نشط + المندوب **ماصوّتش** قبل كده + مقفلوش بـ✕.
+      // لو صوّت خلاص (my_choice موجود) مايظهرش تاني نهائياً.
+      if (!p || p.myChoice != null || isDismissed(p.id)) { setPoll(null); return; }
+      setPoll(p);
     }
     void load();
     const t = setInterval(load, POLL_MS);
@@ -47,19 +50,26 @@ export default function PollBanner() {
     return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
 
+  if (thanks) {
+    return (
+      <div className="flex items-center gap-2 border-b border-primary/30 bg-primary/10 px-3 py-2.5 text-right">
+        <Check size={16} className="shrink-0 text-primary" />
+        <p className="text-xs font-bold text-ink">شكراً لمشاركتك — تم تسجيل صوتك.</p>
+      </div>
+    );
+  }
   if (!poll) return null;
 
-  async function vote(idx: number) {
-    if (!poll || busy || poll.myChoice === idx) return;
+  async function confirm() {
+    if (sel == null || busy || !poll) return;
     setBusy(true);
-    const prev = poll.myChoice;
-    setPoll({ ...poll, myChoice: idx });          // تفاؤلي — استجابة فورية
-    const ok = await submitVote(poll.id, idx);
-    if (!ok) setPoll((p) => (p ? { ...p, myChoice: prev } : p));  // رجّع لو فشل
+    const ok = await submitVote(poll.id, sel);
     setBusy(false);
+    if (!ok) { alert("تعذّر تسجيل صوتك، حاول تاني."); return; }
+    setThanks(true);
+    setPoll(null);                                  // يختفي فوراً ومايرجعش (صوته اتسجّل)
+    setTimeout(() => setThanks(false), 4000);
   }
-
-  const voted = poll.myChoice != null;
 
   return (
     <div className="border-b border-primary/30 bg-primary/10 px-3 py-2.5 text-right">
@@ -69,25 +79,36 @@ export default function PollBanner() {
           <p className="text-xs font-bold leading-relaxed text-ink">{poll.question}</p>
           <div className="mt-2 flex flex-col gap-1.5">
             {poll.options.map((opt, i) => {
-              const mine = poll.myChoice === i;
+              const picked = sel === i;
               return (
                 <button
                   key={i}
-                  onClick={() => vote(i)}
+                  onClick={() => setSel(i)}
                   disabled={busy}
                   className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
-                    mine
+                    picked
                       ? "border-primary bg-primary text-night"
                       : "border-primary/25 bg-surface text-ink hover:border-primary/50"
                   } disabled:opacity-60`}
                 >
                   <span className="flex-1 text-right">{opt}</span>
-                  {mine && <Check size={14} className="shrink-0" />}
+                  {picked && <Check size={14} className="shrink-0" />}
                 </button>
               );
             })}
           </div>
-          {voted && <p className="mt-1.5 text-[11px] text-muted">تم تسجيل صوتك — تقدر تغيّره في أي وقت.</p>}
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-muted">اختار إجابتك واضغط تأكيد — الصوت نهائي.</span>
+            <button
+              onClick={confirm}
+              disabled={sel == null || busy}
+              className={`shrink-0 rounded-full bg-primary px-4 py-1.5 text-[11px] font-bold text-night transition ${
+                sel == null || busy ? "opacity-50" : ""
+              }`}
+            >
+              {busy ? "..." : "تأكيد التصويت"}
+            </button>
+          </div>
         </div>
         <button
           onClick={() => { dismiss(poll.id); setPoll(null); }}
