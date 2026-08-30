@@ -12,6 +12,28 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
+import { orderedLabels } from "@/lib/columnOrder";
+
+// أعمدة بيانات المطلوب: label → قيمة الصف. الترتيب الأساسي لو المندوب ماختارش
+// ترتيب. رقم اللوحة (ثابت أول عمود) وموقعها (عمود إجراء آخر) مش هنا.
+const WANTED_FIELD_GET: Record<string, (r: WantedRow) => string> = {
+  "نوع السيارة": (r) => r.type,
+  "العنوان": (r) => r.address,
+  "الحي": (r) => r.district ?? "",
+  "الماركة": (r) => r.brand,
+  "البنك": (r) => r.bank ?? "",
+  "GPS": (r) => r.mapsLink,
+  "اللون": (r) => r.color,
+  "سنة الصنع": (r) => r.year,
+  "تاريخ التسجيل": (r) => r.date,
+};
+const WANTED_FIELD_ORDER = ["نوع السيارة", "العنوان", "الحي", "الماركة", "البنك", "GPS", "اللون", "سنة الصنع", "تاريخ التسجيل"];
+
+/** أعمدة بيانات المطلوب المعروضة بترتيب المندوب (الثابت + المختار)، والمتاح بس. */
+export function wantedDataCols(rows: WantedRow[], colOrder: string[]): string[] {
+  const available = WANTED_FIELD_ORDER.filter((l) => rows.some((r) => String(WANTED_FIELD_GET[l](r) ?? "").trim()));
+  return orderedLabels(available, colOrder);
+}
 
 // الأعمدة الثابتة المطلوبة: رقم اللوحة › نوع السيارة › الماركة › العنوان › GPS ›
 // اللون › سنة الصنع › تاريخ التسجيل. تتحدّد بالاسم أو بالمحتوى في wanted/page.tsx.
@@ -59,11 +81,16 @@ export default function WantedResultsTable({
   rows,
   onDelete,
   onLocate,
+  colOrder = [],
 }: {
   rows: WantedRow[];
   onDelete: (ids: string[]) => void;
   onLocate?: (r: WantedRow) => void;
+  colOrder?: string[];
 }) {
+  // أعمدة البيانات المعروضة بترتيب المندوب (الثابت + المختار). رقم اللوحة ثابت أول
+  // عمود وموقعها عمود إجراء آخر — الاتنين برّه الترتيب.
+  const dataCols = useMemo(() => wantedDataCols(rows, colOrder), [rows, colOrder]);
   const [zoom, setZoom] = useState(3);
   const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -121,8 +148,6 @@ export default function WantedResultsTable({
   if (rows.length === 0) return <p className="py-4 text-center text-xs text-muted">مفيش نتايج.</p>;
 
   const allSel = selected.size === rows.length;
-  const showBank = rows.some((r) => r.bank && r.bank.trim()); // عمود البنك يظهر لو الشيت فيه بنك
-  const showDistrict = rows.some((r) => r.district && r.district.trim()); // عمود الحي يظهر لو موجود
   const showLocate = !!onLocate; // عمود «موقعها» يظهر لنافذة الداتا بس (الجيران متاحين)
   const px = zoomFontPx(zoom);
   const TH = "border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap";
@@ -152,15 +177,7 @@ export default function WantedResultsTable({
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
-              <th className={TH}>نوع السيارة</th>
-              <th className={TH}>العنوان</th>
-              {showDistrict && <th className={TH}>الحي</th>}
-              <th className={TH}>الماركة</th>
-              {showBank && <th className={TH}>البنك</th>}
-              <th className={TH}>GPS</th>
-              <th className={TH}>اللون</th>
-              <th className={TH}>سنة الصنع</th>
-              <th className={TH}>تاريخ التسجيل</th>
+              {dataCols.map((label) => <th key={label} className={TH}>{label}</th>)}
               {/* آخر الويندو بعد التاريخ بطلب المستخدم */}
               {showLocate && <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>}
             </tr>
@@ -190,19 +207,17 @@ export default function WantedResultsTable({
                     </div>
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
-                  <td className={TD}>{r.type || "—"}</td>
-                  <td className={TD}>{r.address || "—"}</td>
-                  {showDistrict && <td className={TD}>{r.district || "—"}</td>}
-                  <td className={TD}>{r.brand || "—"}</td>
-                  {showBank && <td className={TD}>{r.bank || "—"}</td>}
-                  <td className="border-l border-border px-3 py-2">
-                    {r.mapsLink ? (
-                      <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
-                    ) : "—"}
-                  </td>
-                  <td className={TD}>{r.color || "—"}</td>
-                  <td className={TD}>{r.year || "—"}</td>
-                  <td className={TD}>{r.date || "—"}</td>
+                  {dataCols.map((label) =>
+                    label === "GPS" ? (
+                      <td key={label} className="border-l border-border px-3 py-2">
+                        {r.mapsLink
+                          ? <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
+                          : "—"}
+                      </td>
+                    ) : (
+                      <td key={label} className={TD}>{WANTED_FIELD_GET[label](r) || "—"}</td>
+                    )
+                  )}
                   {/* آخر الويندو: موقعها في الداتا */}
                   {showLocate && (
                     <td className="px-2 py-2 text-center">
