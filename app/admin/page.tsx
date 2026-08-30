@@ -11,6 +11,8 @@ import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
 import { fetchLearningEnabled, setLearningEnabled } from "@/lib/learningSettings";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
+import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
+import { BarChart3 } from "lucide-react";
 
 interface AgentProfile {
   id: string;
@@ -83,6 +85,12 @@ export default function AdminDashboard() {
   const [noticeWa, setNoticeWa] = useState(false);   // زر واتساب مع الرسالة
   const [noticeUrgent, setNoticeUrgent] = useState(false);   // عاجلة: أحمر + صفّارة
   const [noticeBusy, setNoticeBusy] = useState(false);
+  // استطلاع رأي المناديب — الأدمن ينشئ سؤال + خيارات ويشوف مين اختار إيه
+  const [activePoll, setActivePoll] = useState<Poll | null>(null);
+  const [pollResults, setPollResults] = useState<PollVote[]>([]);
+  const [pollQ, setPollQ] = useState("");
+  const [pollOpts, setPollOpts] = useState<string[]>(["", ""]);
+  const [pollBusy, setPollBusy] = useState(false);
   const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
   const [learningBusy, setLearningBusy] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0); // عيّنات متجمّعة على الجهاز
@@ -114,6 +122,13 @@ export default function AdminDashboard() {
     setLoading(false);
   }, []);
 
+  // الاستطلاع الشغّال + نتايجه (مين اختار إيه).
+  const loadPoll = useCallback(async () => {
+    const p = await fetchActivePoll();
+    setActivePoll(p);
+    setPollResults(p ? await fetchPollResults(p.id) : []);
+  }, []);
+
   // Access guard — admins only.
   useEffect(() => {
     (async () => {
@@ -127,6 +142,7 @@ export default function AdminDashboard() {
         import("@/lib/trainingStore").then((m) => m.countTrainingSamples().then(setTrainingCount).catch(() => {}));
       }
       void fetchAppNotice().then(setNoticeActive);   // الرسالة الشغّالة دلوقتي
+      void loadPoll();                                // الاستطلاع الشغّال + نتايجه
       setAuthorized(true);
       loadAgents();
     })();
@@ -491,6 +507,121 @@ export default function AdminDashboard() {
               }}
               className={`shrink-0 rounded-full bg-primary px-4 py-1.5 text-[11px] font-bold text-night transition ${noticeBusy || !noticeText.trim() ? "opacity-50" : ""}`}>
               {noticeBusy ? "..." : "انشر"}
+            </button>
+          </div>
+        </div>
+
+        {/* استطلاع رأي المناديب — الأدمن ينشئ سؤال + خيارات ويشوف مين اختار إيه. */}
+        <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
+            <BarChart3 size={14} /> استطلاع رأي المناديب
+          </div>
+
+          {activePoll ? (
+            <div className="mb-3 rounded-lg border border-primary/30 bg-surface p-2.5">
+              <p className="mb-2 text-[11px] font-bold text-ink">{activePoll.question}</p>
+              {(() => {
+                const total = pollResults.length;
+                return activePoll.options.map((opt, i) => {
+                  const voters = pollResults.filter((v) => v.choice === i);
+                  const pct = total ? Math.round((voters.length / total) * 100) : 0;
+                  return (
+                    <div key={i} className="mb-2">
+                      <div className="mb-0.5 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-semibold text-ink">{opt}</span>
+                        <span className="shrink-0 text-muted">{voters.length} ({pct}%)</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                      </div>
+                      {voters.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {voters.map((v) => (
+                            <span key={v.agentId} className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-ink">
+                              {v.username || "—"}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted">صوّت {pollResults.length} مندوب</span>
+                <div className="flex gap-1.5">
+                  <button
+                    disabled={pollBusy}
+                    onClick={() => { setPollBusy(true); loadPoll().finally(() => setPollBusy(false)); }}
+                    className={`shrink-0 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary transition ${pollBusy ? "opacity-50" : ""}`}>
+                    تحديث
+                  </button>
+                  <button
+                    disabled={pollBusy}
+                    onClick={async () => {
+                      if (!confirm("متأكد تقفل الاستطلاع؟ مش هيقدر حد يصوّت بعد كده.")) return;
+                      setPollBusy(true);
+                      const ok = await closePoll(activePoll.id);
+                      if (ok) await loadPoll();
+                      else alert("تعذّر القفل.");
+                      setPollBusy(false);
+                    }}
+                    className={`shrink-0 rounded-full border border-danger/50 bg-danger/10 px-3 py-1 text-[11px] font-bold text-danger transition ${pollBusy ? "opacity-50" : ""}`}>
+                    اقفل الاستطلاع
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mb-2 text-[11px] text-muted">
+              مفيش استطلاع شغّال. اكتب سؤال وخياراته — هيظهر لكل المناديب، وكل واحد يختار خيار
+              واحد (يقدر يغيّره)، وتشوف هنا مين اختار إيه. نشر استطلاع جديد بيقفل القديم.
+            </p>
+          )}
+
+          <textarea
+            value={pollQ}
+            onChange={(e) => setPollQ(e.target.value)}
+            rows={2}
+            placeholder="اكتب سؤال الاستطلاع…"
+            className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs text-ink outline-none focus:border-primary"
+          />
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {pollOpts.map((opt, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <input
+                  value={opt}
+                  onChange={(e) => setPollOpts((os) => os.map((o, j) => (j === i ? e.target.value : o)))}
+                  placeholder={`خيار ${i + 1}`}
+                  className="flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary"
+                />
+                {pollOpts.length > 2 && (
+                  <button
+                    onClick={() => setPollOpts((os) => os.filter((_, j) => j !== i))}
+                    className="shrink-0 rounded p-1 text-muted transition hover:text-danger" title="حذف الخيار">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            <button
+              onClick={() => setPollOpts((os) => [...os, ""])}
+              className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary transition">
+              + خيار
+            </button>
+            <button
+              disabled={pollBusy || !pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2}
+              onClick={async () => {
+                setPollBusy(true);
+                const id = await createPoll(pollQ, pollOpts);
+                if (id) { setPollQ(""); setPollOpts(["", ""]); await loadPoll(); alert("اتنشر الاستطلاع للمناديب."); }
+                else alert("تعذّر النشر — تأكد من السؤال وخيارين على الأقل.");
+                setPollBusy(false);
+              }}
+              className={`shrink-0 rounded-full bg-primary px-4 py-1.5 text-[11px] font-bold text-night transition ${pollBusy || !pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2 ? "opacity-50" : ""}`}>
+              {pollBusy ? "..." : "انشر الاستطلاع"}
             </button>
           </div>
         </div>

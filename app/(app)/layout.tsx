@@ -11,6 +11,7 @@ import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import AppMenu from "@/components/AppMenu";
 import UpdateBanner from "@/components/UpdateBanner";
 import NoticeBanner from "@/components/NoticeBanner";
+import PollBanner from "@/components/PollBanner";
 import AgentPresenceReporter from "@/components/AgentPresenceReporter";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
@@ -183,6 +184,8 @@ export default function AppShellLayout({
         <UpdateBanner />
         {/* رسالة الأدمن المؤقتة — بتظهر في كل صفحات المندوب */}
         <NoticeBanner />
+        {/* استطلاع رأي الأدمن — بيظهر في كل صفحات المندوب */}
+        <PollBanner />
         <AgentPresenceReporter />
 
         {(() => {
