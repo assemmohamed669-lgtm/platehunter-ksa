@@ -2551,7 +2551,7 @@ export default function SortingPage() {
                   {colOrder.length > 0 && (
                     <button onClick={clearColOrder}
                       className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition">
-                      مسح الاختيار (الثابت بس)
+                      ↩ رجوع لترتيب البرنامج الأساسي
                     </button>
                   )}
                 </div>
