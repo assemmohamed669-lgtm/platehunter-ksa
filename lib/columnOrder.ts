@@ -38,23 +38,31 @@ export function optionalAvailable(availableLabels: string[]): string[] {
 }
 
 /**
- * الترتيب النهائي للأعمدة المعروضة (بالـlabels).
- *
- * • **المندوب ماحددش حاجة** (`order` فاضي) → نرجّع كل الأعمدة المتاحة **زي ما هي**
- *   (الترتيب الافتراضي القديم اللي كان بيظهر قبل ميزة الترتيب) — عشان اللي مش
- *   عايز يظبّط حاجة يفضل شايف كل حاجة زي الأول.
- * • **المندوب حدّد** → الثابت المتاح (نوع السيارة › الماركة) + اللي اختاره بترتيبه،
- *   وبس (اللي ماختارهوش مايظهرش). رقم اللوحة مش هنا — بيتعرض منفصل قبلهم.
+ * ترتيب أعمدة النتيجة في **الوضع المخصّص**: الثابت المتاح (نوع السيارة › الماركة)
+ * + اللي المندوب اختاره بترتيبه، وبس (اللي ماختارهوش مايظهرش). رقم اللوحة مش هنا
+ * — بيتعرض منفصل قبلهم. (الوضع «الأساسي» بيتعامل معاه المستدعي مباشرة بكل الأعمدة
+ * الافتراضية، مش من هنا.)
  */
 export function orderedLabels(availableLabels: string[], order: string[]): string[] {
-  const seen = new Set<string>();
-  const dedup = (arr: string[]) => arr.filter((l) => (seen.has(l) ? false : (seen.add(l), true)));
-  if (order.length === 0) return dedup(availableLabels); // الافتراضي القديم = كل الأعمدة
   const avail = new Set(availableLabels);
   const fixed = FIXED_LEADING_LABELS.filter((l) => avail.has(l));
   const fixedSet = new Set(fixed);
   const optional = order.filter((l) => avail.has(l) && !fixedSet.has(l));
-  return dedup([...fixed, ...optional]);
+  const seen = new Set<string>();
+  return [...fixed, ...optional].filter((l) => (seen.has(l) ? false : (seen.add(l), true)));
+}
+
+/** وضع عرض الأعمدة: «أساسي» = ترتيب البرنامج الافتراضي (كل الأعمدة المفيدة زي
+ *  الأول)؛ «مخصّص» = اللي المندوب اختاره ورتّبه بإيده. */
+export type OrderMode = "basic" | "custom";
+const MODE_KEY = "ph:sorting:colMode";
+
+/** الوضع المحفوظ — الافتراضي «أساسي» لأي مندوب جديد أو مالمسش الإعداد. */
+export function loadOrderMode(): OrderMode {
+  try { return localStorage.getItem(MODE_KEY) === "custom" ? "custom" : "basic"; } catch { return "basic"; }
+}
+export function saveOrderMode(m: OrderMode): void {
+  try { localStorage.setItem(MODE_KEY, m); } catch { /* storage unavailable */ }
 }
 
 /** بدّل ظهور عمود في الترتيب: مش موجود → يتضاف آخر القائمة؛ موجود → يتشال. */

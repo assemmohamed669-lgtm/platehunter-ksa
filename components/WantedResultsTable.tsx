@@ -12,7 +12,7 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
-import { orderedLabels } from "@/lib/columnOrder";
+import { orderedLabels, type OrderMode } from "@/lib/columnOrder";
 
 // أعمدة بيانات المطلوب: label → قيمة الصف. الترتيب الأساسي لو المندوب ماختارش
 // ترتيب. رقم اللوحة (ثابت أول عمود) وموقعها (عمود إجراء آخر) مش هنا.
@@ -29,10 +29,11 @@ const WANTED_FIELD_GET: Record<string, (r: WantedRow) => string> = {
 };
 const WANTED_FIELD_ORDER = ["نوع السيارة", "العنوان", "الحي", "الماركة", "البنك", "GPS", "اللون", "سنة الصنع", "تاريخ التسجيل"];
 
-/** أعمدة بيانات المطلوب المعروضة بترتيب المندوب (الثابت + المختار)، والمتاح بس. */
-export function wantedDataCols(rows: WantedRow[], colOrder: string[]): string[] {
+/** أعمدة بيانات المطلوب المعروضة: أساسي = كلها زي البرنامج؛ مخصّص = الثابت +
+ *  اختيار المندوب. المتاح (اللي فيه بيانات) بس. */
+export function wantedDataCols(rows: WantedRow[], colOrder: string[], mode: OrderMode = "custom"): string[] {
   const available = WANTED_FIELD_ORDER.filter((l) => rows.some((r) => String(WANTED_FIELD_GET[l](r) ?? "").trim()));
-  return orderedLabels(available, colOrder);
+  return mode === "basic" ? available : orderedLabels(available, colOrder);
 }
 
 // الأعمدة الثابتة المطلوبة: رقم اللوحة › نوع السيارة › الماركة › العنوان › GPS ›
@@ -82,15 +83,17 @@ export default function WantedResultsTable({
   onDelete,
   onLocate,
   colOrder = [],
+  orderMode = "custom",
 }: {
   rows: WantedRow[];
   onDelete: (ids: string[]) => void;
   onLocate?: (r: WantedRow) => void;
   colOrder?: string[];
+  orderMode?: OrderMode;
 }) {
-  // أعمدة البيانات المعروضة بترتيب المندوب (الثابت + المختار). رقم اللوحة ثابت أول
-  // عمود وموقعها عمود إجراء آخر — الاتنين برّه الترتيب.
-  const dataCols = useMemo(() => wantedDataCols(rows, colOrder), [rows, colOrder]);
+  // أعمدة البيانات المعروضة (حسب الوضع). رقم اللوحة ثابت أول عمود وموقعها عمود
+  // إجراء آخر — الاتنين برّه الترتيب.
+  const dataCols = useMemo(() => wantedDataCols(rows, colOrder, orderMode), [rows, colOrder, orderMode]);
   const [zoom, setZoom] = useState(3);
   const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());

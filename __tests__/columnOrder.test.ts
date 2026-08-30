@@ -4,8 +4,8 @@ import { orderedLabels, optionalAvailable, toggleColumn, FIXED_LEADING_LABELS } 
 const AVAIL = ["نوع السيارة", "الماركة", "ملاحظة", "العنوان", "الحي", "GPS", "اللون", "سنة الصنع"];
 
 describe("columnOrder", () => {
-  it("مفيش اختيار → كل الأعمدة زي ما هي (الافتراضي القديم)", () => {
-    expect(orderedLabels(AVAIL, [])).toEqual(AVAIL);
+  it("الوضع المخصّص بلا اختيار → الثابت بس (نوع السيارة ثم الماركة)", () => {
+    expect(orderedLabels(AVAIL, [])).toEqual(["نوع السيارة", "الماركة"]);
   });
 
   it("الاختيار بيظهر بترتيبه بعد الثابت", () => {
