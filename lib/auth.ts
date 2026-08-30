@@ -1,4 +1,5 @@
 import { clearNoticeDismissals } from "./appNotice";
+import { clearPollDismissals } from "./polls";
 import { reportSecurityEvent } from "./reportSecurityEvent";
 import { supabase } from "./supabaseClient";
 import {
@@ -118,6 +119,7 @@ export async function loginAgent(
   // تسجيل دخول جديد → رسالة الأدمن السارية تظهر من جديد حتى لو المندوب قفلها
   // قبل كده (بطلب المندوب: تظهرله كل مرة يسجّل دخول طول مدة الرسالة).
   clearNoticeDismissals();
+  clearPollDismissals();
 
   return { ok: true };
 }
