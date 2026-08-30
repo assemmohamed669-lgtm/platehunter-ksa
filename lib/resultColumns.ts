@@ -126,6 +126,13 @@ export const RESULT_TARGETS: TargetColumn[] = [
       "الشركة", "شركة", "make", "manufacturer", "brand"],
     content: looksLikeCarName,
   },
+  // ── الملاحظات بتيجي **بعد الماركة** على طول (بطلب المندوب) — لو موجودة في شيت
+  //    الداتا بتظهر تلقائي في نتيجة الفرز جنب الماركة. نص حر فمفيش كاشف محتوى. ──
+  {
+    key: "notes", label: "ملاحظة",
+    aliases: ["ملاحظة", "ملاحظات", "الملاحظات", "الملاحظة", "ملاحظه", "ملحوظة",
+      "notes", "note", "remark", "remarks", "comment", "comments"],
+  },
   {
     key: "gps", label: "GPS",
     aliases: ["gps", "الموقع", "موقع", "جي بي اس", "رابط", "خريطة", "location", "maps"],
