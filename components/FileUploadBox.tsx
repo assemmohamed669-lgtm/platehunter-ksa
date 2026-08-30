@@ -26,6 +26,13 @@ interface Props {
   onLargeFile?: (file: File, onProgress: (rows: number) => void) => Promise<void>;
   /** مظهر سماوي (أزرق فاتح) بحواف مظلّلة — لتمييز مربع رفع شيت التشييك. */
   sky?: boolean;
+  /**
+   * لون إطار المربع **لما يتحمّل فيه شيت** (تمييز بصري سريع للمندوب):
+   *  • "data"     → إطار أحمر منوّر بظل.
+   *  • "referral" → إطار أخضر منوّر بظل.
+   * من غيره → الإطار الافتراضي. (لا يؤثّر على المربع الفاضي.)
+   */
+  loadedAccent?: "data" | "referral";
 }
 
 export default function FileUploadBox({
@@ -41,10 +48,17 @@ export default function FileUploadBox({
   largeFileThresholdBytes,
   onLargeFile,
   sky = false,
+  loadedAccent,
 }: Props) {
   // إطار المربع: سماوي بظل واضح لو sky. بنستخدم صبغة سماوية فوق سطح الثيم (مش لون
   // ثابت) عشان النص يفضل مقروء في الوضع الفاتح والغامق.
   const skyBox = "rounded-xl border-2 border-sky-400/70 bg-sky-500/12 shadow-lg shadow-sky-500/25";
+  // إطار المربع لما يتحمّل شيت: أحمر منوّر للداتا، أخضر منوّر للإحالة (تمييز سريع).
+  const loadedBox = loadedAccent === "data"
+    ? "rounded-xl border-2 border-red-500/70 bg-red-500/10 shadow-lg shadow-red-500/30"
+    : loadedAccent === "referral"
+      ? "rounded-xl border-2 border-green-500/70 bg-green-500/10 shadow-lg shadow-green-500/30"
+      : "rounded-xl border border-primary/40 bg-primary/5";
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -148,7 +162,7 @@ export default function FileUploadBox({
 
   if (parsedFile && parsedRowCount !== null) {
     return (
-      <div className={`p-3 flex flex-col gap-2 ${sky ? skyBox : "rounded-xl border border-primary/40 bg-primary/5"}`}>
+      <div className={`p-3 flex flex-col gap-2 ${sky ? skyBox : loadedBox}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <FileSpreadsheet size={18} className="shrink-0 text-primary" />

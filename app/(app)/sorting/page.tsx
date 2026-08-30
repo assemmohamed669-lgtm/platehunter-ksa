@@ -2317,6 +2317,7 @@ export default function SortingPage() {
       {dataBoxOpen && (<>
       <FileUploadBox
         title={extraData.length > 0 ? "ملف الداتا 1" : "ملف الداتا"}
+        loadedAccent="data"
         hint="بيانات التفريغ الميداني"
         parsedFile={dataFile}
         parsedRowCount={dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : (dataTable?.rows.length ?? null)}
@@ -2383,6 +2384,7 @@ export default function SortingPage() {
           </div>
           <FileUploadBox
             title={`ملف الداتا ${i + 2}`}
+            loadedAccent="data"
             hint="داتا إضافية تُدمج مع الأولى في نفس الفرز"
             parsedFile={ed.file}
             parsedRowCount={ed.streamed && ed.streamMeta ? ed.streamMeta.rowCount : (ed.table?.rows.length ?? null)}
@@ -2449,6 +2451,7 @@ export default function SortingPage() {
       {referralBoxOpen && (<>
       <FileUploadBox
         title={extraReferrals.length > 0 ? "ملف الإحالة 1" : "ملف الإحالة"}
+        loadedAccent="referral"
         hint={sortMode === "new" ? "إحالة اليوم الجديدة" : "قائمة البنك بالسيارات المطلوبة"}
         parsedFile={referralFile}
         parsedRowCount={referralTable?.rows.length ?? null}
@@ -2506,6 +2509,7 @@ export default function SortingPage() {
           </div>
           <FileUploadBox
             title={`ملف الإحالة ${i + 2}`}
+            loadedAccent="referral"
             hint="إحالة إضافية تُدمج مع الأولى في نفس الفرز"
             parsedFile={er.file}
             parsedRowCount={er.table?.rows.length ?? null}
