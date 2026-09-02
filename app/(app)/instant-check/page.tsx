@@ -522,6 +522,12 @@ export default function InstantCheckPage() {
   useEffect(() => {
     try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
   }, [mode]);
+  // فتح تبويب السجلات مباشرة عبر ?tab=sheet — عشان الصفحة الجانبية توصّل للسجلات
+  // حتى في وضع «الصوت فقط» (اللي بيحجب صفحة /list).
+  useEffect(() => {
+    try { if (new URLSearchParams(window.location.search).get("tab") === "sheet") setMode("sheet"); }
+    catch { /* ignore */ }
+  }, []);
 
   // Manual
   const [manualInput, setManualInput] = useState("");
