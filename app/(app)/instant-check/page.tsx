@@ -3537,6 +3537,7 @@ export default function InstantCheckPage() {
       const ctrl = await startVoicexEngine({
         transcribeUrl: cfg.transcribeUrl,
         token: cfg.token,
+        agentId: agentIdRef.current ?? undefined,   // وسم كل نافذة حصاد باسم المندوب
         onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow"),
         onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
         onSpeech: (active) => setPttMicActive(active),

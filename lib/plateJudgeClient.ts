@@ -206,6 +206,8 @@ export interface PostAudioOptions {
   debug?: boolean;
   /** حقن fetch (للاختبار). الافتراضي fetch العالمي. */
   fetchImpl?: typeof fetch | null;
+  /** هوية المندوب — تتبعت ترويسة X-Agent-Id (عمود ٥ في حصاد السيرفر log.tsv). */
+  agentId?: string | null;
 }
 
 const MAX_PLATE_CHARS = 64;
@@ -979,6 +981,8 @@ export async function postAudioForPlate(
       "X-Plate-Token": token,
       "Content-Type": options.mimeType || blob.type || "application/octet-stream",
     };
+    // هوية المندوب للحصاد (تدريب) — encodeURIComponent يطابق unquote في السيرفر.
+    if (options.agentId) headers["X-Agent-Id"] = encodeURIComponent(String(options.agentId));
 
     for (let attempt = 0; attempt < 2; attempt++) {
       const ctrl = new AbortController();
