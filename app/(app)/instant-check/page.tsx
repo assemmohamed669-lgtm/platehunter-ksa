@@ -645,7 +645,7 @@ export default function InstantCheckPage() {
   const [pttListening, setPttListening] = useState(false);
   const [pttLiveText, setPttLiveText] = useState("");
   // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
-  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local">(null);
+  const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local" | "voicex">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
   // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
   // المناديب ولا الأدمنز العاديين.
@@ -707,6 +707,7 @@ export default function InstantCheckPage() {
   // أقصر مننا ⇒ ساعة كلماته زحفت بمقدار مش معروف ⇒ نرجع لساعة الحقيقة المحكمة.
   const dgAudioDropRef = useRef(0);
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
+  const voicexEngineRef = useRef<import("@/lib/voicexEngine").VoicexEngineController | null>(null); // محرك VoiceX المستقل
   // حارس تكرار الصوت: آخر لوحة اتفرّغت + وقتها — عشان لو نفس النطق اتفرّغ مرتين
   // (Deepgram بيبعت النتيجة النهائية مرتين: نهاية المقطع + نقطة الصمت) مايتكتبش مرتين.
   const lastPttEmitRef = useRef<{ norm: string; at: number } | null>(null);
@@ -2507,7 +2508,9 @@ export default function InstantCheckPage() {
     //    طلع. الاستدعاء `void` بلا انتظار، فمافيش أي ملي ثانية تأخير على الواجهة.
     //    التوقيت بيتصوّر **دلوقتي** لأن أول نتيجة نهائية جديدة بتكتب فوق
     //    judgeTimingRef قبل ما الرد يوصل.
-    if (judgeArmedRef.current) {
+    // الطيّار (رأي تانٍ مبني على توقيت ديبجرام) — للمالك-localStorage بس. مستخدم
+    // VoiceX بياخد محرك مستقل (startVoicexPtt) فمش محتاج الطيّار — وإلا هيبعت مرتين.
+    if (judgeArmedRef.current && judgeSourceRef.current !== "voicex") {
       const t = judgeTimingRef.current;
       void requestSecondOpinion(row, t ? { ...t } : null, judgePausedMsRef.current, seq, emit);
     }
@@ -3504,6 +3507,39 @@ export default function InstantCheckPage() {
     }
   }
 
+  // محرك VoiceX المستقل — بياخد الصوت ويبعت نوافذ ٥ث متداخلة لـVoiceX (بلا
+  // ديبجرام)، يجمّع بالإجماع، ويحط اللوحة المؤكّدة في addOnePttRow (نفس مسار
+  // العرض/المقارنة بالشيت/المطلوبة/التصدير). لو النفق فصل وسط الجلسة بيرجّع
+  // لديبجرام تلقائياً. كل المنطق في lib/voicexEngine (يتحمّل كسول).
+  async function startVoicexPtt(): Promise<boolean> {
+    const cfg = voicexEndpointRef.current;
+    if (!cfg) return false;
+    try {
+      const { startVoicexEngine } = await import("@/lib/voicexEngine");
+      const ctrl = await startVoicexEngine({
+        transcribeUrl: cfg.transcribeUrl,
+        token: cfg.token,
+        onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow"),
+        onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
+        onSpeech: (active) => setPttMicActive(active),
+        onFatal: () => {
+          // النفق فصل وسط الجلسة → وقّف VoiceX وارجع لديبجرام لو فيه مفتاح.
+          try { voicexEngineRef.current?.stop(); } catch { /* ignore */ }
+          voicexEngineRef.current = null;
+          if (!isListeningRef.current) return;
+          const dgKey = getDeepgramKey() || getActiveDeepgramKey();
+          if (dgKey) void startDeepgramPtt(dgKey).then((ok) => { if (ok) setPttEngine("deepgram"); });
+          else setPttError("VoiceX مش واصل ومفيش محرك احتياطي — جرّب تاني.");
+        },
+      });
+      if (!ctrl) return false;   // الميك اترفض (onFatal اتنده جوّه)
+      voicexEngineRef.current = ctrl;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function startPtt() {
     setPttError(null);
     setPttLiveText("");
@@ -3534,6 +3570,14 @@ export default function InstantCheckPage() {
     pttPausedRef.current = false; setPttPaused(false); // جلسة جديدة — مش متوقّفة
     setPttListening(true);
     startPttTimer();
+
+    // (٠) VoiceX المستقل — لو مفتوح للمشترك (voicex_enabled أو سوبر أدمن) والنفق
+    // واصل، هو المحرك **وحده** (بلا ديبجرام). لو الميك اترفض أو النفق مش واصل،
+    // بنكمّل للمسارات التحتية (ديبجرام) = الرجوع التلقائي.
+    if (judgeSourceRef.current === "voicex" && voicexEndpointRef.current) {
+      const ok = await startVoicexPtt();
+      if (ok) { setPttEngine("voicex"); return; }
+    }
 
     // (٠) Speechmatics لو هو المحرك المختار وفيه مفتاح — نفس مسار المحلّل.
     if (getVoiceEngine() === "speechmatics" && getSpeechmaticsKey()) {
@@ -3702,6 +3746,13 @@ export default function InstantCheckPage() {
     setPttEngine(null);
     setPttMicActive(false);
     stopPttTimer();
+
+    // مسار VoiceX المستقل شغّال؟ وقّف المحرك (بيفلّش الإجماع + يقفل الميك).
+    if (voicexEngineRef.current) {
+      try { voicexEngineRef.current.stop(); } catch { /* ignore */ }
+      voicexEngineRef.current = null;
+      return;
+    }
 
     // مسار Speechmatics شغّال؟ وقّفه وفلّش المحلّل.
     if (smHandleRef.current) {
@@ -4645,8 +4696,8 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* مؤشّر السماع (VAD) — لـ Deepgram فقط (هو اللي فيه بوابة كلام) */}
-              {pttListening && pttEngine === "deepgram" && (
+              {/* مؤشّر السماع (VAD) — لـ Deepgram و VoiceX (الاتنين فيهم بوابة كلام) */}
+              {pttListening && (pttEngine === "deepgram" || pttEngine === "voicex") && (
                 <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
                   <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
                   {pttMicActive ? "بيسمع صوتك" : "هدوء"}
@@ -4656,7 +4707,8 @@ export default function InstantCheckPage() {
               {/* اسم المحرك النشط — للسوبر أدمن فقط (تشخيص، مخفي عن المناديب والأدمنز) */}
               {pttListening && isSuper && (
                 <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[10px] font-bold text-primary" dir="ltr">
-                  🎙 {pttEngine === "deepgram" ? "Deepgram (لحظي)"
+                  🎙 {pttEngine === "voicex" ? "VoiceX (بتاعنا)"
+                    : pttEngine === "deepgram" ? "Deepgram (لحظي)"
                     : pttEngine === "speechmatics" ? "Speechmatics (لحظي)"
                     : pttEngine === "whisper" ? "Whisper/Groq (تقطيع ٧ث)"
                     : pttEngine === "local" ? "المحرك المحلي"
