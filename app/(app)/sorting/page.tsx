@@ -233,6 +233,8 @@ export default function SortingPage() {
   // اختيار أعمدة النتائج لكل مربع إضافي (داتا أو إحالة) — مفهرس بمعرّف المربع.
   // كل مربع إضافي بقى ليه قسم «الأعمدة» بتاعه زي المربعات الأساسية.
   const [extraColsSel, setExtraColsSel] = useState<Record<string, Set<string>>>({});
+  // اختيار ورقات كل مربع داتا إضافي متعدد الورقات (id المربع → أسماء الورقات المختارة).
+  const [extraSheetSel, setExtraSheetSel] = useState<Record<string, Set<string>>>({});
   const [extraColsOpen, setExtraColsOpen] = useState<Set<string>>(new Set());
 
   // ── Check file (read from IDB, uploaded in صفحة التشييك) ──
@@ -727,6 +729,27 @@ export default function SortingPage() {
     } catch { /* تخزين معطّل */ }
     setResults(null); setSorted(false); wipeSortResults();
   }, [dataFile]);
+
+  // ── مبدّل ورقات المربعات الإضافية (نفس منطق الأساسي) ──────────────────────
+  /** ورقات مربع إضافي كـSheetInfo للـpicker (بيعرض عدد الصفوف زي الأساسي). */
+  const extraSheetInfos = useCallback((ed: ExtraDataFile): SheetInfo[] =>
+    (ed.streamMeta?.sheets ?? []).map((s) => ({
+      name: s.name, headerRow: 0, plateCol: 0, plateColName: s.plateColName,
+      plateCount: s.rowCount, rowCount: s.rowCount, headers: ed.table?.headers ?? [], rows: [], hidden: false,
+    })), []);
+  /** الاختيار الافتراضي لورقات مربع إضافي: أكبر ورقة (زي الأساسي). */
+  const applyExtraSheetSelection = useCallback((boxId: string, meta: DataMeta) => {
+    const metas = meta.sheets ?? [];
+    const picked = metas.length <= 1
+      ? metas.map((s) => s.name)
+      : [metas.reduce((a, b) => (b.rowCount > a.rowCount ? b : a), metas[0]).name];
+    setExtraSheetSel((s) => ({ ...s, [boxId]: new Set(picked) }));
+  }, []);
+  /** تغيير اختيار ورقات مربع إضافي. */
+  const setExtraSheetSelection = useCallback((boxId: string, next: Set<string>) => {
+    setExtraSheetSel((s) => ({ ...s, [boxId]: next }));
+    setResults(null); setSorted(false); wipeSortResults();
+  }, []);
 
   // أعمدة قايمة الاختيار تحت مربع الإحالة — من الورقات المختارة (مش من الورقة
   // اللي parseExcelFile اختارها)، وإلا المندوب يشوف أعمدة ورقة مش بيفرز عليها.
@@ -1383,6 +1406,7 @@ export default function SortingPage() {
       return next;
     });
     if (id) setExtraColsSel((cs) => ({ ...cs, [id]: defaultExtraCols("data", sampleTable) }));
+    if (id && (meta.sheets?.length ?? 0) > 1) applyExtraSheetSelection(id, meta);
     setResults(null); setSorted(false); wipeSortResults();
   }
 
@@ -1422,7 +1446,7 @@ export default function SortingPage() {
   // مسارات الفرز عشان الفرز يتم على كل ملفات الداتا مدموجة.
   // مصدر داتا: إمّا صفوف في الذاكرة (rows) أو ملف كبير على الجهاز (slot + rowCount)
   // بيتقري على دفعات وقت الفرز بدل ما يتحمّل في الذاكرة.
-  type DataSource = { rows: Record<string, string>[]; plateCol: string; slot?: string; rowCount?: number };
+  type DataSource = { rows: Record<string, string>[]; plateCol: string; slot?: string; rowCount?: number; sheets?: Set<string> | null };
   function collectDataSources(): DataSource[] {
     const srcs: DataSource[] = [];
     if (dataTable && effectiveDataPlateCol) {
@@ -1437,7 +1461,10 @@ export default function SortingPage() {
           || detectArabicPlateColumn(ed.table.headers)
           || detectPlateColumn(ed.table.headers, ed.table.rows);
         if (!pc) continue;
-        srcs.push({ rows: [], plateCol: pc, slot: ed.streamSlot, rowCount: ed.streamMeta.rowCount });
+        // متعدد الورقات → نفرز على الورقات المختارة بس (زي المربع الأساسي).
+        const multi = (ed.streamMeta.sheets?.length ?? 0) > 1;
+        const sheets = multi ? (extraSheetSel[ed.id] ?? null) : null;
+        srcs.push({ rows: [], plateCol: pc, slot: ed.streamSlot, rowCount: ed.streamMeta.rowCount, sheets });
         continue;
       }
       const arabicCol = detectArabicPlateColumn(ed.table.headers);
@@ -1723,7 +1750,7 @@ export default function SortingPage() {
               if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx, srcIdx: srcBase + si });
             }
             await new Promise<void>((r) => setTimeout(r, 0));
-          }, { slot: src.slot });
+          }, { slot: src.slot, sheets: src.sheets ?? undefined });
           dataBase += gj;
           continue;
         }
@@ -1837,7 +1864,7 @@ export default function SortingPage() {
                 if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm, srcIdx: srcBase + si });
               }
               await new Promise<void>((r) => setTimeout(r, 0));
-            }, { slot: src.slot });
+            }, { slot: src.slot, sheets: src.sheets ?? undefined });
             continue;
           }
           for (const row of src.rows) {
@@ -2203,7 +2230,7 @@ export default function SortingPage() {
             }
             base += batch.length;
             if (Date.now() - lastYield >= 50) { await new Promise<void>((r) => setTimeout(r, 0)); lastYield = Date.now(); }
-          }, { slot: src.slot });
+          }, { slot: src.slot, sheets: src.sheets ?? undefined });
           continue;
         }
         for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol)) {
@@ -2484,12 +2511,24 @@ export default function SortingPage() {
             hint="داتا إضافية تُدمج مع الأولى في نفس الفرز"
             parsedFile={ed.file}
             parsedRowCount={ed.streamed && ed.streamMeta ? ed.streamMeta.rowCount : (ed.table?.rows.length ?? null)}
-            onParsed={(table, file) => onExtraDataParsed(i, table, file)}
+            onParsed={(table, file) => ((table.allSheetNames?.length ?? 0) > 1
+              ? handleExtraLargeData(i, file, () => {})   // متعدد الورقات → اقرا كل الورقات
+              : onExtraDataParsed(i, table, file))}
             largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
             onLargeFile={(file, onProgress) => handleExtraLargeData(i, file, onProgress)}
             onClear={() => clearExtraDataFile(i)}
             showReplaceButtons
           />
+          {/* ملف إضافي فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه (زي الأساسي) */}
+          {(ed.streamMeta?.sheets?.length ?? 0) > 1 && (
+            <ReferralSheetPicker
+              sheets={extraSheetInfos(ed)}
+              selected={extraSheetSel[ed.id] ?? new Set()}
+              onChange={(next) => setExtraSheetSelection(ed.id, next)}
+              total={extraSheetInfos(ed).filter((s) => (extraSheetSel[ed.id] ?? new Set()).has(s.name)).reduce((a, s) => a + s.rowCount, 0)}
+              unit="صف"
+            />
+          )}
           {ed.table && extraColsPicker(ed.id, ed.table, "data")}
         </div>
       ))}
