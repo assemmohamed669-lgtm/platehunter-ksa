@@ -35,30 +35,78 @@ export function buildPlateShareText(opts: {
  * تطبيق)؛ على الويب نستخدم Web Share API لو متاح؛ وإلا نرجع لرابط wa.me.
  */
 /**
- * أقصى طول آمن لنص المشاركة.
- * سببان: (١) أندرويد بيرفض نقل بيانات ضخمة بين التطبيقات
- * (TransactionTooLargeException) فالتطبيق بيتجمّد أو بيقف؛ (٢) واتساب نفسه
- * حدّه ٦٥٬٥٣٦ حرف للرسالة. ٦٠ ألف بتقعد تحت الاتنين بأمان.
+ * أقصى حجم آمن لنص المشاركة — **بالبايت مش بالحروف**.
+ *
+ * الحد الحقيقي اللي بيقطع مش حد واتساب (٦٥٬٥٣٦ حرف للرسالة — واسع)، ده حد
+ * **نقل** النص من التطبيق للتطبيق:
+ *  • آيفون (PWA): النص بيعدّي على share sheet بتاعة iOS، وبتقطع عند ~١٦ كيلوبايت
+ *    **بايت** — من غير أي تنبيه. واتساب بيستلم الناقص وهو فاكره كامل.
+ *  • أندرويد (APK): Intent، ميزانيته ~١ ميجا — مابيقطعش عند الأحجام دي.
+ *
+ * ⚠️ ليه بايت: العربي = **٢ بايت للحرف**، فحد الـ١٦ كيلوبايت بيسع ٨ آلاف حرف
+ * عربي بس. الحارس القديم كان بيعدّ **حروف** (٦٠ ألف) فما كانش بيشوف المشكلة:
+ * ٦٧ لوحة = ١٥٬٣٥٢ حرف (عدّت) لكن ٢٣٬٥٢٧ بايت (اتقصّت لـ٤٥ لوحة في صمت).
+ *
+ * ١٥ ألف بايت = هامش ~٨٪ تحت الحيطة.
  */
-export const SAFE_SHARE_TEXT_CHARS = 60_000;
+export const SAFE_SHARE_TEXT_BYTES = 15_000;
+
+/** طول النص بالبايت في UTF-8 (العربي حرفه ٢ بايت، الإنجليزي ١). */
+export function utf8ByteLength(text: string): number {
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
+  return unescape(encodeURIComponent(text)).length;   // احتياطي لبيئة قديمة
+}
+
+/** أكبر عدد **حروف** من بداية النص حجمه لسه تحت `maxBytes`. */
+function charsWithinBytes(text: string, maxBytes: number): number {
+  if (utf8ByteLength(text) <= maxBytes) return text.length;
+  let lo = 0, hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (utf8ByteLength(text.slice(0, mid)) <= maxBytes) lo = mid; else hi = mid - 1;
+  }
+  // ماتقطعش بين زوج بديل (surrogate pair) — الإيموجي بيبقى نص حرف باظ.
+  const prev = text.charCodeAt(lo - 1);
+  if (lo > 0 && prev >= 0xd800 && prev <= 0xdbff) lo -= 1;
+  return lo;
+}
 
 const RECORD_SEPARATOR = "\n\n──────────\n\n";
 
 /**
- * يقصّ نص المشاركة لحد آمن — **عند حدود سجل** مش في نص سجل — ويضيف سطر
- * بيوضّح إن فيه باقي. من غير ده، تحديد آلاف اللوحات كان بيجمّد التطبيق.
+ * يقصّ نص المشاركة لحد آمن **بالبايت** — عند حدود سجل مش في نص سجل — ويضيف
+ * سطر بيقول للمندوب يستخدم «نسخ». من غير ده كان بيوصل ناقص في صمت.
  */
 export function trimShareText(
   text: string,
-  max = SAFE_SHARE_TEXT_CHARS,
+  maxBytes = SAFE_SHARE_TEXT_BYTES,
 ): { text: string; trimmed: boolean } {
-  if (text.length <= max) return { text, trimmed: false };
-  const notice = "\n\n… القائمة أطول من إن واتساب يستحملها — شارك الملف عشان توصل كاملة.";
-  const room = Math.max(0, max - notice.length);
+  if (utf8ByteLength(text) <= maxBytes) return { text, trimmed: false };
+  const notice = "\n\n… القائمة أطول من إن زرار المشاركة يوصّلها كاملة — استخدم «نسخ الكل» والزقها في المحادثة.";
+  const room = Math.max(0, maxBytes - utf8ByteLength(notice));
+  const roomChars = charsWithinBytes(text, room);
   // اقطع عند آخر فاصل سجل جوه المساحة المتاحة؛ لو مفيش فاصل قريب اقطع مباشرة.
-  const sep = text.lastIndexOf(RECORD_SEPARATOR, room);
-  const cut = sep > room * 0.5 ? sep : room;
+  const sep = text.lastIndexOf(RECORD_SEPARATOR, roomChars);
+  const cut = sep > roomChars * 0.5 ? sep : roomChars;
   return { text: text.slice(0, cut).trimEnd() + notice, trimmed: true };
+}
+
+/**
+ * ينسخ نص المشاركة **كامل** للحافظة — بدون أي قص.
+ *
+ * ده الطريق الوحيد اللي بيوصّل قائمة كبيرة في **رسالة واحدة**: الحافظة
+ * مابتعدّيش على share sheet فمالهاش حيطة الـ١٦ كيلوبايت. بيرجع false بدل ما
+ * يرمي لو الحافظة مش متاحة أو المتصفح رفض.
+ */
+export async function copyShareText(text: string): Promise<boolean> {
+  try {
+    const clip = (navigator as Navigator & { clipboard?: { writeText?: (t: string) => Promise<void> } }).clipboard;
+    if (typeof clip?.writeText !== "function") return false;
+    await clip.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function shareTextViaChooser(

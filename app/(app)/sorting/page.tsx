@@ -24,7 +24,7 @@ import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, default
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, FIXED_LEADING_LABELS, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
-import { shareTextViaChooser } from "@/lib/share";
+import { shareTextViaChooser, copyShareText } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
@@ -274,6 +274,15 @@ export default function SortingPage() {
   const visibleOf = (k: number) => visibleByWin[k] ?? PAGE_SIZE;
   const selOf = (k: number) => selectedByWin[k] ?? EMPTY_SEL;
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  // تأكيد «تم النسخ» للشريط الجماعي — النسخ هو الطريق الوحيد اللي بيوصّل
+  // قائمة كبيرة كاملة (زرار المشاركة بيتقص عند ١٦ كيلوبايت على الآيفون).
+  const [bulkCopied, setBulkCopied] = useState<"" | "results" | "tashyeek">("");
+  async function copyBulk(text: string, which: "results" | "tashyeek") {
+    if (await copyShareText(text)) {
+      setBulkCopied(which);
+      setTimeout(() => setBulkCopied(""), 1500);
+    }
+  }
   const [nearestActive, setNearestActive] = useState(false);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
@@ -2016,12 +2025,16 @@ export default function SortingPage() {
     setTashyeekResults((prev) => (prev ? prev.filter((_, idx) => !tashyeekSelected.has(idx)) : prev));
     setTashyeekSelected(new Set());
   }
-  function shareTashyeekSelected() {
+  /** نص المشاركة لصفوف التشييك المحددة — نفس النص للمشاركة وللنسخ. */
+  function tashyeekSelectedShareText(): string {
     const rows = (tashyeekResults ?? []).filter((_, idx) => tashyeekSelected.has(idx));
-    if (!rows.length) return;
-    const text = `*سيارات مطلوبة (${rows.length})*\n\n` +
+    if (!rows.length) return "";
+    return `*سيارات مطلوبة (${rows.length})*\n\n` +
       rows.map((r, i) => `${i + 1}. ${tashyeekShareText(r)}`).join("\n\n──────────\n\n");
-    void shareTextViaChooser(text);
+  }
+  function shareTashyeekSelected() {
+    const text = tashyeekSelectedShareText();
+    if (text) void shareTextViaChooser(text);
   }
 
   // ── Export ──
@@ -2179,11 +2192,15 @@ export default function SortingPage() {
   function shareResultRow(r: MatchResult) {
     void shareTextViaChooser(rowShareText(r));
   }
-  function shareSelectedToWhatsApp(indices: Set<number>) {
+  /** نص المشاركة للصفوف المحددة — نفس النص للمشاركة وللنسخ. */
+  function selectedShareText(indices: Set<number>): string {
     const rows = displayResults
       .filter((_, i) => indices.has(i))
       .map((r) => ({ obj: buildRowObject(r), gps: rawGpsOf(r) }));
-    void shareTextViaChooser(buildSelectedShareText(rows, buildRowSummaryText));
+    return buildSelectedShareText(rows, buildRowSummaryText);
+  }
+  function shareSelectedToWhatsApp(indices: Set<number>) {
+    void shareTextViaChooser(selectedShareText(indices));
   }
 
   /** خلية GPS الخام لصف لصق — نفس عمود موقع الداتا. */
@@ -2852,10 +2869,18 @@ export default function SortingPage() {
           {gSelInWin > 0 && (
             <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
               <span className="text-xs font-bold text-ink">{gSelInWin} محددة</span>
-              <button onClick={() => shareSelectedToWhatsApp(gSel)}
-                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night">
-                <Share2 size={13} /> واتساب
-              </button>
+              <div className="flex gap-2">
+                {/* النسخ بيوصّل القائمة كاملة — الحافظة مالهاش حد الـ١٦ كيلوبايت
+                    اللي بتقصّ عنده share sheet بتاعة الآيفون في صمت. */}
+                <button onClick={() => void copyBulk(selectedShareText(gSel), "results")}
+                  className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary">
+                  {bulkCopied === "results" ? <Check size={13} className="text-primary" /> : <Copy size={13} />} {bulkCopied === "results" ? "تم النسخ" : "نسخ الكل"}
+                </button>
+                <button onClick={() => shareSelectedToWhatsApp(gSel)}
+                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night">
+                  <Share2 size={13} /> واتساب
+                </button>
+              </div>
             </div>
           )}
 
@@ -3034,6 +3059,10 @@ export default function SortingPage() {
               <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
                 <span className="text-xs font-bold text-ink">{tashyeekSelected.size} محددة</span>
                 <div className="flex gap-2">
+                  <button onClick={() => void copyBulk(tashyeekSelectedShareText(), "tashyeek")}
+                    className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary">
+                    {bulkCopied === "tashyeek" ? <Check size={13} className="text-primary" /> : <Copy size={13} />} {bulkCopied === "tashyeek" ? "تم النسخ" : "نسخ الكل"}
+                  </button>
                   <button onClick={shareTashyeekSelected}
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
                     <Share2 size={13} /> واتساب

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, SAFE_SHARE_TEXT_CHARS } from "@/lib/share";
+import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, copyShareText, utf8ByteLength, SAFE_SHARE_TEXT_BYTES } from "@/lib/share";
 
 describe("shareTextViaChooser — قائمة النظام بدل واتساب المباشر", () => {
   const hadShare = "share" in navigator;
@@ -125,7 +125,7 @@ describe("trimShareText — حماية من تجميد المشاركة النص
   it("النص الطويل بيتقصّ لحد آمن", () => {
     const r = trimShareText(many(5000));
     expect(r.trimmed).toBe(true);
-    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_CHARS);
+    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
   });
 
   it("بيضيف سطر بيوضّح إن فيه باقي", () => {
@@ -149,6 +149,83 @@ describe("trimShareText — حماية من تجميد المشاركة النص
   it("نص بلا فواصل سجلات بيتقصّ برضه (مايعلّقش)", () => {
     const r = trimShareText("ا".repeat(200_000));
     expect(r.trimmed).toBe(true);
-    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_CHARS);
+    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  });
+});
+
+// ── الحد الحقيقي بالبايت مش بالحروف ────────────────────────────────────────
+// آيفون (PWA) بيمرّر نص المشاركة عبر share sheet بتاعة iOS، وهي بتقطع عند
+// ~١٦ كيلوبايت **بايت**. العربي = ٢ بايت للحرف، فرسالة ٦٧ لوحة = ١٥٬٣٥٢ حرف
+// (تحت حدنا القديم ٦٠ ألف حرف بكتير) لكن ٢٣٬٥٢٧ بايت — فوق الحيطة.
+// النتيجة: واتساب كان بيستلم ٤٥ لوحة من ٦٧ **من غير ما يعرف إن فيه ناقص**.
+describe("trimShareText — الحد بالبايت (قطع الآيفون الصامت)", () => {
+  const SEP = "\n\n──────────\n\n";
+  // سجل بحجم السجل الحقيقي في نتيجة الفرز (~٣٥٠ بايت: لوحة + ٧ أعمدة + لينك GPS)
+  const rec = (i: number) =>
+    `${i + 1}. 🚗 أبح ${1000 + i}\nالبنك: بنك الراجحي\nطراز المركبة: اكسبلوررر\n` +
+    `صانع المركبة: فورد\nسنة الصنع: 2019\nلون المركبة: ابيض\nالحي: حي النهضة\n` +
+    `نوع السيارة (صالون)\n📍 https://www.google.com/maps/search/?api=1&query=24.713552,46.675297`;
+  const many = (n: number) =>
+    `*السيارات المطلوبة للسحب (${n})*\n\n` + Array.from({ length: n }, (_, i) => rec(i)).join(SEP);
+
+  it("بيعدّ بايت UTF-8 مش حروف — العربي حرفه ٢ بايت", () => {
+    expect(utf8ByteLength("abc")).toBe(3);
+    expect(utf8ByteLength("لوحة")).toBe(8);   // ٤ حروف × ٢ بايت
+  });
+
+  it("حدّ الأمان أقل من حيطة الآيفون ١٦٣٨٤ بايت", () => {
+    expect(SAFE_SHARE_TEXT_BYTES).toBeLessThan(16_384);
+  });
+
+  it("🐞 رسالة ٦٧ لوحة بتتقصّ — كانت بتعدّي صامتة وتوصل ٤٥ بس", () => {
+    const t = many(67);
+    expect(t.length).toBeLessThan(60_000);          // تحت الحد القديم بالحروف
+    expect(utf8ByteLength(t)).toBeGreaterThan(16_384); // بس فوق حيطة الآيفون
+    expect(trimShareText(t).trimmed).toBe(true);
+  });
+
+  it("الناتج المقصوص تحت الحد الآمن بالبايت", () => {
+    expect(utf8ByteLength(trimShareText(many(67)).text)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  });
+
+  it("التنويه بيقول للمندوب يستخدم «نسخ»", () => {
+    expect(trimShareText(many(67)).text).toContain("نسخ");
+  });
+
+  it("مابيقطعش في نص حرف — النص يفضل صالح", () => {
+    const out = trimShareText(many(67)).text;
+    // الإيموجي أزواج surrogate صحيحة — الممنوع هو الفردي (نص حرف مقطوع)
+    expect(out).not.toMatch(/[�-�](?![�-�])|(?<![�-�])[�-�]/);
+    expect(Buffer.from(out, "utf8").toString("utf8")).toBe(out);
+  });
+
+  it("رسالة صغيرة بالعربي بتعدّي زي ما هي", () => {
+    const t = many(5);
+    expect(trimShareText(t)).toEqual({ text: t, trimmed: false });
+  });
+});
+
+// النسخ مابيعدّيش على share sheet خالص — فمالوش حيطة الـ١٦ كيلوبايت.
+// ده الطريق الوحيد اللي بيوصّل الـ٦٧ لوحة **في رسالة واحدة**.
+describe("copyShareText — الطريق الكامل (نسخ ولصق)", () => {
+  const long = "لوحة أبح 1234 مطلوبة للسحب من حي النهضة\n\n".repeat(2000); // ~١٦٠ كيلوبايت
+
+  it("بينسخ النص كامل من غير أي قص", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true, writable: true });
+    expect(utf8ByteLength(long)).toBeGreaterThan(SAFE_SHARE_TEXT_BYTES * 5);
+    await expect(copyShareText(long)).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith(long);   // كامل — مش مقصوص
+  });
+
+  it("بيرجع false لو الحافظة مش متاحة بدل ما يرمي", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true, writable: true });
+    await expect(copyShareText("أي نص")).resolves.toBe(false);
+  });
+
+  it("بيرجع false لو الحافظة رفضت (بدون صلاحية)", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("NotAllowedError"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true, writable: true });
+    await expect(copyShareText("أي نص")).resolves.toBe(false);
   });
 });
