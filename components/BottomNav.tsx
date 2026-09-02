@@ -21,6 +21,9 @@ export default function BottomNav() {
   const pathname = usePathname();
   const [isSuper, setIsSuper] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  // «باقي صفحات البرنامج» — مفتوح افتراضياً. false = المشترك «صوت VoiceX فقط»
+  // فمانعرضش غير تبويب التشييك (اللي فيه الصوت).
+  const [restPages, setRestPages] = useState(true);
   // نخفي الشريط لما الكيبورد يطلع (وإلا بيتزقّ فوق الكيبورد) — نكشف الكيبورد من
   // تركيز خانة كتابة (input نصي/textarea/محرّر)، ده بيشتغل سواء الأندرويد بيصغّر
   // الشاشة أو بيزحلقها. focusout بمهلة صغيرة عشان الانتقال بين خانتين مايرمشش.
@@ -48,21 +51,26 @@ export default function BottomNav() {
     };
   }, []);
 
-  // صلاحية المستخدم — بتحدد ظهور تبويب التسجيل (سوبر) و«رفع داتا» (أدمن).
+  // صلاحية المستخدم — بتحدد ظهور تبويب التسجيل (سوبر) و«رفع داتا» (أدمن) +
+  // هل باقي الصفحات مقفولة (المشترك «صوت VoiceX فقط»).
   useEffect(() => {
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
         const { data: prof } = await supabase.from("profiles")
-          .select("is_super, role").eq("id", data.user.id).single();
+          .select("is_super, role, rest_pages_enabled").eq("id", data.user.id).single();
         setIsSuper(!!prof?.is_super);
         setIsAdmin(prof?.role === "admin");
+        setRestPages((prof as { rest_pages_enabled?: boolean } | null)?.rest_pages_enabled !== false);
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
 
-  const tabs = visibleTabs(TABS, { isSuper, isAdmin });
+  // باقي الصفحات مقفولة (+ VoiceX مفتوح) = «صوت فقط» → تبويب التشييك بس.
+  const tabs = restPages
+    ? visibleTabs(TABS, { isSuper, isAdmin })
+    : TABS.filter((t) => t.href === "/instant-check");
 
   return (
     // الشريط أسود ثابت في الوضعين (فاتح/غامق) بطلب المندوب — والكلام أبيض.
