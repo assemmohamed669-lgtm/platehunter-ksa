@@ -45,6 +45,8 @@ export interface VoicexEngineOpts {
   /** مستوى الصوت اللحظي ٠..١ — للمؤشّر المتحرك اللي بيتحرك مع كلام المندوب */
   onLevel?: (level: number) => void;
   onFatal?: (reason: string) => void;
+  /** هوية المندوب — تتمرّر لـ postAudioForPlate كترويسة X-Agent-Id (وسم الحصاد). */
+  agentId?: string | null;
 }
 
 export interface VoicexEngineController {
@@ -100,7 +102,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     try {
       const resp = await postAudioForPlate(wav, {
         transcribeUrl: opts.transcribeUrl, token: opts.token,
-        mimeType: "audio/wav", timeoutMs: REQ_TIMEOUT_MS,
+        mimeType: "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
       });
       if (!resp) {
         fails += 1;
