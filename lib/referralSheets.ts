@@ -45,8 +45,10 @@ export interface SheetInfo {
   plateCol: number;
   /** اسم عمود اللوحة (فاضي لو الورقة بلا هيدر). */
   plateColName: string;
-  /** عدد اللوحات **الفريدة** في الورقة. */
+  /** عدد اللوحات **الفريدة** في الورقة (للمنطق الداخلي). */
   plateCount: number;
+  /** عدد **الصفوف** اللي فيها لوحة (للعرض — زي مربع الداتا). */
+  rowCount: number;
   /** أسماء الأعمدة (مولّدة «عمود ١، ٢…» لو مفيش هيدر). */
   headers: string[];
   /** صفوف البيانات ككائنات جاهزة للفرز. */
@@ -163,7 +165,7 @@ export function analyzeSheet(name: string, aoa: unknown[][], hidden = false): Sh
   const width = widthOf(aoa);
   const empty: SheetInfo = {
     name, headerRow: -1, plateCol: -1, plateColName: "",
-    plateCount: 0, headers: [], rows: [], hidden,
+    plateCount: 0, rowCount: 0, headers: [], rows: [], hidden,
   };
   if (width === 0) return empty;
 
@@ -186,7 +188,7 @@ export function analyzeSheet(name: string, aoa: unknown[][], hidden = false): Sh
     rows.push(obj);
   }
 
-  return { name, headerRow, plateCol, plateColName, plateCount: unique.size, headers, rows, hidden };
+  return { name, headerRow, plateCol, plateColName, plateCount: unique.size, rowCount: rows.length, headers, rows, hidden };
 }
 
 /** يحلّل كل ورقات الملف. */
