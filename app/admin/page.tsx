@@ -623,9 +623,9 @@ export default function AdminDashboard() {
               disabled={pollBusy || !pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2}
               onClick={async () => {
                 setPollBusy(true);
-                const id = await createPoll(pollQ, pollOpts);
-                if (id) { setPollQ(""); setPollOpts(["", ""]); await loadPoll(); alert("اتنشر الاستطلاع للمناديب."); }
-                else alert("تعذّر النشر — تأكد من السؤال وخيارين على الأقل.");
+                const res = await createPoll(pollQ, pollOpts);
+                if (res.id) { setPollQ(""); setPollOpts(["", ""]); await loadPoll(); alert("اتنشر الاستطلاع للمناديب."); }
+                else alert("تعذّر النشر: " + (res.error ?? "خطأ غير معروف"));
                 setPollBusy(false);
               }}
               className={`shrink-0 rounded-full bg-primary px-4 py-1.5 text-[11px] font-bold text-night transition ${pollBusy || !pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2 ? "opacity-50" : ""}`}>
