@@ -23,6 +23,8 @@ export interface PlateRead {
   plate: string;
   tMs: number;
   conf: number;
+  /** أضعف توكن (min_logprob) — لحاجز الاختراع على القراءة المفردة (اختياري). */
+  minLp?: number;
 }
 
 export type Tier = "green" | "yellow";
@@ -44,6 +46,7 @@ interface Cluster {
   /** إملاء كامل → {عدد مرات ظهوره، مجموع ثقته، أعلى ثقة مفردة} */
   spellings: Map<string, { count: number; confSum: number; maxConf: number }>;
   confs: number[];
+  minLps: number[];
   lastMs: number;
   committed: boolean;
 }
@@ -84,6 +87,14 @@ export interface ConsensusOptions {
    * الواحدة ثقتها ≥٠.٩، والاختراعات ≤٠.٦٢، فالفجوة نضيفة.
    */
   minSoloConf?: number;
+  /**
+   * حاجز الاختراع على القراءة **المفردة** بس: لوحة اتقرت مرة واحدة (mult <
+   * greenMinMult) وأضعف توكن فيها أقل من ده = احتمال تلفيق → تتحجب. اللوحة
+   * اللي اتأكدت في نافذتين+ **تعدّي مهما كانت** (لأن الاتفاق دليل إنها حقيقية).
+   * مقيس: min_logprob للوحات الحقيقية في النوافذ المتداخلة وسيطه -0.5 (مش زي
+   * المقاطع النضيفة)، فالحاجز على الكل بيرمي نص اللوحات الحقيقية؛ عليها مفردة بس آمن.
+   */
+  soloMinLp?: number;
 }
 
 /**
@@ -98,6 +109,7 @@ export class LiveConsensus {
   private readonly greenMinMult: number;
   private readonly greenSoloConf: number;
   private readonly minSoloConf: number;
+  private readonly soloMinLp: number;
 
   constructor(opts: ConsensusOptions = {}) {
     this.windowMs = opts.windowMs ?? 2000;
@@ -105,6 +117,7 @@ export class LiveConsensus {
     this.greenMinMult = opts.greenMinMult ?? 2;
     this.greenSoloConf = opts.greenSoloConf ?? 0.95;
     this.minSoloConf = opts.minSoloConf ?? 0.6;
+    this.soloMinLp = opts.soloMinLp ?? -0.5;
   }
 
   /** أضف قراءة نافذة واحدة (لوحة واحدة). */
@@ -129,6 +142,7 @@ export class LiveConsensus {
         times: [],
         spellings: new Map(),
         confs: [],
+        minLps: [],
         lastMs: read.tMs,
         committed: false,
       };
@@ -142,6 +156,7 @@ export class LiveConsensus {
     cur.maxConf = Math.max(cur.maxConf, read.conf);
     target.spellings.set(read.plate, cur);
     target.confs.push(read.conf);
+    if (typeof read.minLp === "number") target.minLps.push(read.minLp);
     target.lastMs = Math.max(target.lastMs, read.tMs);
   }
 
@@ -234,6 +249,12 @@ export class LiveConsensus {
      * بيشيل الاختراع بلا خسارة لوحة حقيقية.
      */
     if (mult < this.greenMinMult && conf < this.minSoloConf) return [];
+    // حاجز الاختراع على القراءة **المفردة** بس (اللوحة اللي اتأكدت في نافذتين+
+    // تعدّي مهما كانت): أضعف توكن واطي جداً في قراءة مفردة = احتمال تلفيق.
+    if (mult < this.greenMinMult && cl.minLps.length) {
+      const bestMinLp = Math.max(...cl.minLps);
+      if (bestMinLp < this.soloMinLp) return [];
+    }
     const green = mult >= this.greenMinMult || conf >= this.greenSoloConf;
     return [{ plate: best, tier: green ? "green" : "yellow", mult, conf, tMs: cl.tMs }];
   }
