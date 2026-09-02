@@ -95,7 +95,7 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total,
                 </span>
               </span>
               <span className={`shrink-0 text-[12px] font-bold ${on ? "text-primary" : "text-muted"}`}>
-                {s.plateCount.toLocaleString("en-US")}
+                {(s.rowCount || s.plateCount).toLocaleString("en-US")}
               </span>
             </button>
           );
@@ -105,7 +105,7 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total,
       <div className="mt-2.5 flex items-center justify-between border-t border-border pt-2">
         <span className="text-[11px] text-muted">هيتم الفرز على</span>
         <span className="text-sm font-black text-primary">
-          {total.toLocaleString("en-US")} لوحة
+          {total.toLocaleString("en-US")} {unit}
         </span>
       </div>
       {total === 0 && (

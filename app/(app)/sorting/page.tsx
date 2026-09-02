@@ -681,7 +681,7 @@ export default function SortingPage() {
   const dataSheetInfos = useMemo<SheetInfo[]>(
     () => dataSheetMetas.map((s) => ({
       name: s.name, headerRow: 0, plateCol: 0, plateColName: s.plateColName,
-      plateCount: s.rowCount, headers: s.headers, rows: [], hidden: false,
+      plateCount: s.rowCount, rowCount: s.rowCount, headers: s.headers, rows: [], hidden: false,
     })),
     [dataSheetMetas]
   );
@@ -1161,6 +1161,12 @@ export default function SortingPage() {
   const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
 
   const selectedRefPlateCount = useMemo(() => totalPlates(selectedRefSheets), [selectedRefSheets]);
+  // إجمالي **الصفوف** في الورقات المختارة — للعرض في مربع الإحالة زي مربع الداتا
+  // (المندوب بيتلخبط لو شاف لوحات فريدة أقل من عدد الصفوف).
+  const selectedRefRowTotal = useMemo(
+    () => selectedRefSheets.reduce((sum, s) => sum + (s.rowCount || s.plateCount), 0),
+    [selectedRefSheets],
+  );
 
   // في الوضع المتعدد الجاهزية = فيه ورقة مختارة فيها لوحات (مش عمود الورقة الأولى،
   // لأن الورقة الأولى ممكن تكون بشكل غريب أو غير مختارة أصلاً).
@@ -2554,7 +2560,8 @@ export default function SortingPage() {
         sheets={refSheets}
         selected={refSheetSel}
         onChange={setRefSheetSelection}
-        total={selectedRefPlateCount}
+        total={selectedRefRowTotal}
+        unit="صف"
       />
       {referralTable && (
         <div className="rounded-xl border border-border bg-surface">
