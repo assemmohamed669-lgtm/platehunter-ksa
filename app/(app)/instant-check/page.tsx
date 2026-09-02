@@ -1786,6 +1786,27 @@ export default function InstantCheckPage() {
     return checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)));
   }
 
+  // عدّادات السجلات (صوتي/يدوي/مطلوب) + القائمة المفلترة — محفوظة في useMemo عشان
+  // ماتتحسبش من جديد في كل رندر. من غير الحفظ، أي ضغطة (تعديل/مشاركة تفتح نافذة)
+  // كانت بتعيد حساب O(n) على كل السجلات فبيهنّج على iOS مع السجلات الكتير.
+  const fieldCounts = useMemo(() => {
+    let voice = 0, manual = 0, wanted = 0;
+    for (const e of fieldEntries) {
+      if (/صوت/.test(e.method)) voice++;
+      if (/يدوي/.test(e.method)) manual++;
+      if (checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)))) wanted++;
+    }
+    return { voice, manual, wanted };
+  }, [fieldEntries, checkIndex]);
+  const fieldVisible = useMemo(() => {
+    const inCat = (e: FieldCheckEntry) =>
+      fieldFilter === "voice" ? /صوت/.test(e.method)
+      : fieldFilter === "manual" ? /يدوي/.test(e.method)
+      : fieldFilter === "wanted" ? checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)))
+      : true;
+    return filterFieldEntries(fieldEntries, fieldSearch).filter(inCat);
+  }, [fieldEntries, fieldSearch, fieldFilter, checkIndex]);
+
   function toggleManualSel(id: string) {
     setManualSel((prev) => {
       const next = new Set(prev);
@@ -5263,16 +5284,11 @@ export default function InstantCheckPage() {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
         // النوع والملاحظات ليهم أعمدة تعديل خاصة فوق — نستبعدهم من الأعمدة العادية
         const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
-        // عدادات الفئات (على كل السجلات، مش المفلترة)
-        const cVoice = fieldEntries.filter((e) => /صوت/.test(e.method)).length;
-        const cManual = fieldEntries.filter((e) => /يدوي/.test(e.method)).length;
-        const cWanted = fieldEntries.filter(isDraftMatched).length;
-        const matchCat = (e: FieldCheckEntry) =>
-          fieldFilter === "voice" ? /صوت/.test(e.method)
-          : fieldFilter === "manual" ? /يدوي/.test(e.method)
-          : fieldFilter === "wanted" ? isDraftMatched(e)
-          : true;
-        const visible = filterFieldEntries(fieldEntries, fieldSearch).filter(matchCat);
+        // عدادات الفئات + القائمة المفلترة — محفوظة (useMemo) فمابتتحسبش كل رندر.
+        const cVoice = fieldCounts.voice;
+        const cManual = fieldCounts.manual;
+        const cWanted = fieldCounts.wanted;
+        const visible = fieldVisible;
         const catName = fieldFilter === "voice" ? "المسجّل صوتياً" : fieldFilter === "manual" ? "المسجّل يدوياً" : fieldFilter === "wanted" ? "المطلوب" : "كل السجلات";
         return (
           <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
