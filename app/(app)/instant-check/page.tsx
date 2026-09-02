@@ -2880,6 +2880,7 @@ export default function InstantCheckPage() {
         "رقم اللوحة": r.plate,
         "الحي-الشارع": r.row?.["الحي-الشارع"] ?? "",
         "النوع": typeToCode(r.vehicleType ?? "") || (r.vehicleType ?? ""),
+        "مراجعة": r.needsReview ? "راجع" : "",
       };
       for (const h of dynCols) obj[h] = r.row?.[h] ?? "";
       obj["GPS"] = r.mapsLink ?? "";
@@ -4978,6 +4979,13 @@ export default function InstantCheckPage() {
                     <button onClick={exportAllPttToField}
                       className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
                       <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
+                    </button>
+
+                    {/* مشاركة كل لوحات الصوت كملف إكسيل — عبر اختيار التطبيق (واتساب/إيميل/حفظ) */}
+                    <button onClick={() => void sharePttDraftFile()} disabled={shareBusy === "ptt"}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-2.5 text-sm font-bold text-primary transition active:scale-95 disabled:opacity-60">
+                      {shareBusy === "ptt" ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                      {shareBusy === "ptt" ? "جاري التجهيز..." : "مشاركة إكسيل"}
                     </button>
 
                     {/* مسح النتائج — أحمر، بتأكيد */}
