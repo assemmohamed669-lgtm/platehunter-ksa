@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { getDriveAccessToken, driveSearch } from "@/lib/gdrive";
-import { looksLikeChassis, plateDigits, matchCertFiles } from "@/lib/certificateMatch";
+import { looksLikeChassis, looksLikeCertNumber, plateDigits, matchCertFiles } from "@/lib/certificateMatch";
 
 // يهرب علامة التنصيص المفردة في استعلام درايف.
 function esc(s: string): string { return s.replace(/'/g, "\\'"); }
@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
   if (!token) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
 
   let files;
-  if (looksLikeChassis(q)) {
+  if (looksLikeChassis(q) || looksLikeCertNumber(q)) {
+    // هيكل (VIN) أو رقم شهادة (REPO/CRN) — بحث بالمحتوى (بيشمل اسم الملف كمان).
     files = await driveSearch(`fullText contains '${esc(q)}' and mimeType='application/pdf'`, token);
   } else {
     const digits = plateDigits(q);
