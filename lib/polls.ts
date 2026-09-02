@@ -57,14 +57,21 @@ export async function submitVote(pollId: string, choice: number): Promise<boolea
 }
 
 /** إنشاء استطلاع جديد (أدمن) — بيقفل القديم. بيرجّع id أو null. */
-export async function createPoll(question: string, options: string[]): Promise<string | null> {
+export async function createPoll(question: string, options: string[]): Promise<{ id: string | null; error?: string }> {
   try {
     const { supabase } = await import("./supabaseClient");
     const clean = options.map((o) => o.trim()).filter(Boolean);
-    if (!question.trim() || clean.length < 2) return null;
+    if (!question.trim() || clean.length < 2) return { id: null, error: "اكتب السؤال وخيارين على الأقل." };
     const { data, error } = await supabase.rpc("create_poll", { p_question: question, p_options: clean });
-    return error || !data ? null : String(data);
-  } catch { return null; }
+    if (error) {
+      // رسالة مفهومة: لو الدالة مش موجودة يبقى الـSQL (docs/sql/polls.sql) لسه ماتشغّلش.
+      const msg = /function .*create_poll.* does not exist|Could not find the function/i.test(error.message || "")
+        ? "خدمة الاستطلاع مش مفعّلة على السيرفر — شغّل docs/sql/polls.sql على Supabase."
+        : (error.message || "خطأ غير معروف");
+      return { id: null, error: msg };
+    }
+    return { id: data ? String(data) : null };
+  } catch (e) { return { id: null, error: e instanceof Error ? e.message : "خطأ" }; }
 }
 
 /** نتايج استطلاع (أدمن): مين اختار إيه بالاسم. */
