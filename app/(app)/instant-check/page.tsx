@@ -522,12 +522,6 @@ export default function InstantCheckPage() {
   useEffect(() => {
     try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
   }, [mode]);
-  // فتح تبويب السجلات مباشرة عبر ?tab=sheet — عشان الصفحة الجانبية توصّل للسجلات
-  // حتى في وضع «الصوت فقط» (اللي بيحجب صفحة /list).
-  useEffect(() => {
-    try { if (new URLSearchParams(window.location.search).get("tab") === "sheet") setMode("sheet"); }
-    catch { /* ignore */ }
-  }, []);
 
   // Manual
   const [manualInput, setManualInput] = useState("");
@@ -938,14 +932,22 @@ export default function InstantCheckPage() {
   // Keep a live GPS watch running the whole time the page is open, so stamping
   // a plate reads an already-fresh coordinate instantly (see getCurrentGps).
   // Also feed the GPS-status box (coords + reverse-geocoded address).
+  const lastGeocodedRef = useRef<{ lat: number; lng: number } | null>(null);
   useEffect(() => {
     gpsService.startTracking().catch(() => {});
     const unsub = gpsService.subscribe((coords) => {
       setGps(coords);
       if (coords) {
-        reverseGeocode(coords.lat, coords.lng)
-          .then((addr) => setGpsAddress(`${addr.street} • ${addr.district}`))
-          .catch(() => {});
+        // خنق العكس الجغرافي: ننادي Nominatim بس لو اتحرّكنا فعلاً (>~١٥م). المراقب
+        // بيحدّث كل جزء ثانية، والنداء على كل تحديث كان بيخاطر بـ rate-limit فتقع
+        // الخانة على «غير متاح». نفس الحي مش محتاج عكس جغرافي جديد كل لحظة.
+        const last = lastGeocodedRef.current;
+        if (!last || haversineKm(last.lat, last.lng, coords.lat, coords.lng) > 0.015) {
+          lastGeocodedRef.current = { lat: coords.lat, lng: coords.lng };
+          reverseGeocode(coords.lat, coords.lng)
+            .then((addr) => setGpsAddress(`${addr.street} • ${addr.district}`))
+            .catch(() => {});
+        }
       }
     });
     return () => { unsub(); gpsService.stopTracking(); };
@@ -1574,7 +1576,9 @@ export default function InstantCheckPage() {
   async function regionTextFor(lat: number, lng: number): Promise<string> {
     try {
       const a = await reverseGeocode(lat, lng);
-      return [a.street, a.district].filter((s) => s && s !== "غير معروف").join(" - ");
+      // نشيل «غير معروف» و«غير متاح» — لو العكس الجغرافي فشل تفضل الخانة **فاضية**
+      // بدل ما نكتب «غير متاح - غير متاح» فوق حي كان ممكن يتحدّث بعدين.
+      return [a.street, a.district].filter((s) => s && s !== "غير معروف" && s !== "غير متاح").join(" - ");
     } catch { return ""; }
   }
 
@@ -3014,13 +3018,16 @@ export default function InstantCheckPage() {
     if (!rows.length) return;
     void shareTextViaChooser(pttShareText(rows));
   }
-  // نسخ **كل** المحدّد للحافظة — الحافظة مالهاش حد الـ١٦ كيلوبايت، فبتوصّل أي عدد
-  // لوحات في رسالة واحدة (الزقها في واتساب).
+  // نسخ **كل** المحدّد **بالتفاصيل الكاملة** (كل الأعمدة + الموقع) للحافظة —
+  // الحافظة مالهاش حد الـ١٦ كيلوبايت اللي على مشاركة الآيفون، فبتوصّل أي عدد لوحات
+  // بكل تفاصيلها في رسالة واحدة. المندوب ينسخ ويلزق في واتساب.
   async function copyPttSelected() {
     const rows = pttResults.filter((r) => pttSel.has(r.id));
     if (!rows.length) return;
-    const ok = await copyShareText(pttShareText(rows));
-    alert(ok ? `✅ اتنسخت ${rows.length} لوحة — الزقها في واتساب.` : "المتصفح رفض النسخ — جرّب المشاركة.");
+    const text = `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` +
+      rows.map((r, i) => `${i + 1}. ${pttRowText(r)}`).join("\n\n──────────\n\n");
+    const ok = await copyShareText(text);
+    alert(ok ? `✅ اتنسخت ${rows.length} لوحة بالتفاصيل الكاملة — الزقها في واتساب.` : "المتصفح رفض النسخ — جرّب المشاركة.");
   }
   function deletePttSelected() {
     const ids = pttSel;
