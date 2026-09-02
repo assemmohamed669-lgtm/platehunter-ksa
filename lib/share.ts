@@ -49,7 +49,29 @@ export function buildPlateShareText(opts: {
  *
  * ١٥ ألف بايت = هامش ~٨٪ تحت الحيطة.
  */
-export const SAFE_SHARE_TEXT_BYTES = 15_000;
+export const ANDROID_SHARE_MAX_BYTES = 500_000;
+
+/**
+ * حد الجزء الواحد على الآيفون — **بهامش واسع تحت الحيطة**.
+ *
+ * ⚠️ درس اتدفع تمنه: أول مرة حطّيته ١٥ ألف بايت، وده كان **فوق** الحيطة
+ * الحقيقية (~١٣٬٧٠٠ بايت على جهاز المندوب). النتيجة: الجزء الأول اتبنى فيه ٤٩
+ * سجل، آيفون قصّه عند ٤٥، والجزء التاني بدأ من ٥٠ — فضاعت ٤ لوحات في نص
+ * القائمة من غير ما حد ياخد باله. الحيطة دي مقدَّرة بالرصد مش موثّقة، فممنوع
+ * نلزق فيها: ٨ آلاف = أقل من نصّها.
+ */
+export const IOS_SHARE_PART_BYTES = 8_000;
+
+/**
+ * أقصى عدد سجلات في الجزء الواحد — حزام أمان تاني جنب حد البايت.
+ * لو طلع إن الحيطة بتُحسب بعدد مختلف عن اللي إحنا فاهمينه، ده بيحمينا برضه.
+ */
+export const IOS_SHARE_PART_RECORDS = 25;
+
+/** حد النقل للجهاز الحالي: الآيفون ضيّق، والأندرويد واسع (Intent ~١ ميجا). */
+export function shareLimitBytes(): number {
+  return isIosDevice() ? IOS_SHARE_PART_BYTES : ANDROID_SHARE_MAX_BYTES;
+}
 
 /** طول النص بالبايت في UTF-8 (العربي حرفه ٢ بايت، الإنجليزي ١). */
 export function utf8ByteLength(text: string): number {
@@ -79,7 +101,7 @@ const RECORD_SEPARATOR = "\n\n──────────\n\n";
  */
 export function trimShareText(
   text: string,
-  maxBytes = SAFE_SHARE_TEXT_BYTES,
+  maxBytes = shareLimitBytes(),
 ): { text: string; trimmed: boolean } {
   if (utf8ByteLength(text) <= maxBytes) return { text, trimmed: false };
   const notice = "\n\n… القائمة أطول من إن زرار المشاركة يوصّلها كاملة — استخدم «نسخ الكل» والزقها في المحادثة.";
@@ -242,8 +264,12 @@ function arabicDigits(n: number): string {
  * سجل واحد لوحده أكبر من الحد (نادر) بيتقطّع كآخر حل عشان مايكسرش الحد.
  * عنوان «جزء ن من م» بيتحط في **أول** الجزء عشان الرسالة تفضل منتهية بسجل كامل.
  */
-export function splitShareText(text: string, maxBytes = SAFE_SHARE_TEXT_BYTES): string[] {
-  if (utf8ByteLength(text) <= maxBytes) return [text];
+export function splitShareText(
+  text: string,
+  maxBytes = IOS_SHARE_PART_BYTES,
+  maxRecords = IOS_SHARE_PART_RECORDS,
+): string[] {
+  if (utf8ByteLength(text) <= maxBytes && text.split(RECORD_SEPARATOR).length <= maxRecords) return [text];
   const LABEL_ROOM = 60;                                  // مساحة «— جزء ن من م —»
   const room = Math.max(1, maxBytes - LABEL_ROOM);
 
@@ -263,10 +289,13 @@ export function splitShareText(text: string, maxBytes = SAFE_SHARE_TEXT_BYTES): 
   // (٢) نلمّ السجلات في أجزاء — كل جزء بيمتلي لحد الحد وبعدين يبدأ جزء جديد.
   const parts: string[] = [];
   let cur = "";
+  let curRecords = 0;
   for (const piece of pieces) {
     const merged = cur ? cur + RECORD_SEPARATOR + piece : piece;
-    if (cur && utf8ByteLength(merged) > room) { parts.push(cur); cur = piece; }
-    else cur = merged;
+    // الجزء بيقفل لو عدّى **أي** من الحدّين — البايت أو عدد السجلات.
+    const full = utf8ByteLength(merged) > room || curRecords + 1 > maxRecords;
+    if (cur && full) { parts.push(cur); cur = piece; curRecords = 1; }
+    else { cur = merged; curRecords++; }
   }
   if (cur) parts.push(cur);
 

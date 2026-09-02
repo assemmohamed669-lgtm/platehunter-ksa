@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, copyShareText, utf8ByteLength, splitShareText, isIosDevice, SAFE_SHARE_TEXT_BYTES } from "@/lib/share";
+import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, copyShareText, utf8ByteLength, splitShareText, isIosDevice, ANDROID_SHARE_MAX_BYTES, IOS_SHARE_PART_BYTES, IOS_SHARE_PART_RECORDS } from "@/lib/share";
 
 describe("shareTextViaChooser — قائمة النظام بدل واتساب المباشر", () => {
   const hadShare = "share" in navigator;
@@ -125,7 +125,7 @@ describe("trimShareText — حماية من تجميد المشاركة النص
   it("النص الطويل بيتقصّ لحد آمن", () => {
     const r = trimShareText(many(5000));
     expect(r.trimmed).toBe(true);
-    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+    expect(r.text.length).toBeLessThanOrEqual(ANDROID_SHARE_MAX_BYTES);
   });
 
   it("بيضيف سطر بيوضّح إن فيه باقي", () => {
@@ -145,11 +145,10 @@ describe("trimShareText — حماية من تجميد المشاركة النص
     expect(r.text.length).toBeLessThanOrEqual(1000);
     expect(r.trimmed).toBe(true);
   });
-
   it("نص بلا فواصل سجلات بيتقصّ برضه (مايعلّقش)", () => {
-    const r = trimShareText("ا".repeat(200_000));
+    const r = trimShareText("ا".repeat(200_000), IOS_SHARE_PART_BYTES);
     expect(r.trimmed).toBe(true);
-    expect(r.text.length).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+    expect(utf8ByteLength(r.text)).toBeLessThanOrEqual(IOS_SHARE_PART_BYTES);
   });
 });
 
@@ -158,13 +157,12 @@ describe("trimShareText — حماية من تجميد المشاركة النص
 // ~١٦ كيلوبايت **بايت**. العربي = ٢ بايت للحرف، فرسالة ٦٧ لوحة = ١٥٬٣٥٢ حرف
 // (تحت حدنا القديم ٦٠ ألف حرف بكتير) لكن ٢٣٬٥٢٧ بايت — فوق الحيطة.
 // النتيجة: واتساب كان بيستلم ٤٥ لوحة من ٦٧ **من غير ما يعرف إن فيه ناقص**.
-describe("trimShareText — الحد بالبايت (قطع الآيفون الصامت)", () => {
+describe("trimShareText — الحد بالبايت وبيفرّق بين الأجهزة", () => {
   const SEP = "\n\n──────────\n\n";
-  // سجل بحجم السجل الحقيقي في نتيجة الفرز (~٣٥٠ بايت: لوحة + ٧ أعمدة + لينك GPS)
   const rec = (i: number) =>
-    `${i + 1}. 🚗 أبح ${1000 + i}\nالبنك: بنك الراجحي\nطراز المركبة: اكسبلوررر\n` +
-    `صانع المركبة: فورد\nسنة الصنع: 2019\nلون المركبة: ابيض\nالحي: حي النهضة\n` +
-    `نوع السيارة (صالون)\n📍 https://www.google.com/maps/search/?api=1&query=24.713552,46.675297`;
+    `${i + 1}. 🚗 أبح ${1000 + i}\nالبنك: بنك الراجحي\nطراز المركبة: اكسبلورر\n` +
+    `سنة الصنع: 2019\nلون المركبة: ابيض\nالحي: حي النهضة\n` +
+    `📍 https://www.google.com/maps/search/?api=1&query=24.713552,46.675297`;
   const many = (n: number) =>
     `*السيارات المطلوبة للسحب (${n})*\n\n` + Array.from({ length: n }, (_, i) => rec(i)).join(SEP);
 
@@ -173,35 +171,53 @@ describe("trimShareText — الحد بالبايت (قطع الآيفون ال�
     expect(utf8ByteLength("لوحة")).toBe(8);   // ٤ حروف × ٢ بايت
   });
 
-  it("حدّ الأمان أقل من حيطة الآيفون ١٦٣٨٤ بايت", () => {
-    expect(SAFE_SHARE_TEXT_BYTES).toBeLessThan(16_384);
+  // الحيطة المرصودة على جهاز المندوب: ٤٥ سجل (~١٣٬٧٠٠ بايت). حدّنا لازم يقعد
+  // تحتها بهامش واسع — أول مرة حطّيته ١٥ ألف (فوقها) فضاعت ٤ لوحات في صمت.
+  it("حدّ الآيفون تحت الحيطة المرصودة بهامش، مش لازق فيها", () => {
+    expect(IOS_SHARE_PART_BYTES).toBeLessThan(13_700 * 0.7);
   });
 
-  it("🐞 رسالة ٦٧ لوحة بتتقصّ — كانت بتعدّي صامتة وتوصل ٤٥ بس", () => {
+  it("🐞 على الآيفون رسالة ٦٧ لوحة بتتقصّ (فـبنقسّمها بدل ما نبعتها)", () => {
     const t = many(67);
-    expect(t.length).toBeLessThan(60_000);          // تحت الحد القديم بالحروف
-    expect(utf8ByteLength(t)).toBeGreaterThan(16_384); // بس فوق حيطة الآيفون
-    expect(trimShareText(t).trimmed).toBe(true);
+    expect(utf8ByteLength(t)).toBeGreaterThan(IOS_SHARE_PART_BYTES);
+    expect(trimShareText(t, IOS_SHARE_PART_BYTES).trimmed).toBe(true);
   });
 
-  it("الناتج المقصوص تحت الحد الآمن بالبايت", () => {
-    expect(utf8ByteLength(trimShareText(many(67)).text)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  // 🐞 انحدار من 1.2.0: خلّيت حدّ القص ١٥ ألف بايت **لكل الأجهزة**، والأندرويد
+  // حده ~١ ميجا — فرسالة كانت بتوصل كاملة عنده بقت تتقص عند ٤٨ سجل.
+  it("🐞 على الأندرويد نفس الرسالة مابتتقصّش — حده ~١ ميجا", () => {
+    const t = many(67);
+    expect(utf8ByteLength(t)).toBeLessThan(ANDROID_SHARE_MAX_BYTES);
+    expect(trimShareText(t, ANDROID_SHARE_MAX_BYTES)).toEqual({ text: t, trimmed: false });
+  });
+
+  it("حدّ الأندرويد لسه بيحمي من الانهيار مع قوائم ضخمة", () => {
+    const huge = many(20_000);                       // ملايين البايتات
+    expect(utf8ByteLength(huge)).toBeGreaterThan(ANDROID_SHARE_MAX_BYTES);
+    const r = trimShareText(huge, ANDROID_SHARE_MAX_BYTES);
+    expect(r.trimmed).toBe(true);
+    expect(utf8ByteLength(r.text)).toBeLessThanOrEqual(ANDROID_SHARE_MAX_BYTES);
+  });
+
+  it("الناتج المقصوص تحت الحد المطلوب", () => {
+    expect(utf8ByteLength(trimShareText(many(67), IOS_SHARE_PART_BYTES).text))
+      .toBeLessThanOrEqual(IOS_SHARE_PART_BYTES);
   });
 
   it("التنويه بيقول للمندوب يستخدم «نسخ»", () => {
-    expect(trimShareText(many(67)).text).toContain("نسخ");
+    expect(trimShareText(many(67), IOS_SHARE_PART_BYTES).text).toContain("نسخ");
   });
 
   it("مابيقطعش في نص حرف — النص يفضل صالح", () => {
-    const out = trimShareText(many(67)).text;
+    const out = trimShareText(many(67), IOS_SHARE_PART_BYTES).text;
     // الإيموجي أزواج surrogate صحيحة — الممنوع هو الفردي (نص حرف مقطوع)
-    expect(out).not.toMatch(/[�-�](?![�-�])|(?<![�-�])[�-�]/);
+    expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
     expect(Buffer.from(out, "utf8").toString("utf8")).toBe(out);
   });
 
   it("رسالة صغيرة بالعربي بتعدّي زي ما هي", () => {
     const t = many(5);
-    expect(trimShareText(t)).toEqual({ text: t, trimmed: false });
+    expect(trimShareText(t, IOS_SHARE_PART_BYTES)).toEqual({ text: t, trimmed: false });
   });
 });
 
@@ -213,7 +229,7 @@ describe("copyShareText — الطريق الكامل (نسخ ولصق)", () => 
   it("بينسخ النص كامل من غير أي قص", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true, writable: true });
-    expect(utf8ByteLength(long)).toBeGreaterThan(SAFE_SHARE_TEXT_BYTES * 5);
+    expect(utf8ByteLength(long)).toBeGreaterThan(IOS_SHARE_PART_BYTES * 5);
     await expect(copyShareText(long)).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledWith(long);   // كامل — مش مقصوص
   });
@@ -236,53 +252,69 @@ describe("copyShareText — الطريق الكامل (نسخ ولصق)", () => 
 // عشان مانحوّلش رسالة واحدة شغّالة لرسالتين من غير سبب.
 describe("splitShareText — القائمة الكبيرة على أجزاء", () => {
   const SEP = "\n\n──────────\n\n";
+  // ~٣٠٤ بايت للسجل — نفس مقاس سجل المندوب الحقيقي (اتحسب من بلاغه).
   const rec = (i: number) =>
-    `${i + 1}. 🚗 أبح ${1000 + i}\nالبنك: بنك الراجحي\nطراز المركبة: اكسبلوررر\n` +
-    `صانع المركبة: فورد\nسنة الصنع: 2019\nلون المركبة: ابيض\nالحي: حي النهضة\n` +
-    `نوع السيارة (صالون)\n📍 https://www.google.com/maps/search/?api=1&query=24.713552,46.675297`;
+    `${i + 1}. 🚗 أبح ${1000 + i}\nالبنك: بنك الراجحي\nطراز المركبة: اكسبلورر\n` +
+    `سنة الصنع: 2019\nلون المركبة: ابيض\nالحي: حي النهضة\n` +
+    `📍 https://www.google.com/maps/search/?api=1&query=24.713552,46.675297`;
   const many = (n: number) =>
     `*السيارات المطلوبة للسحب (${n})*\n\n` + Array.from({ length: n }, (_, i) => rec(i)).join(SEP);
+  /** أرقام السجلات اللي فعلاً موجودة في نص (زي «12. 🚗 أبح 1011»). */
+  const nums = (t: string) => [...t.matchAll(/(?:^|\n)(\d+)\. 🚗/g)].map((m) => Number(m[1]));
 
   it("النص اللي داخل في رسالة واحدة مابيتقسّمش", () => {
     const t = many(5);
     expect(splitShareText(t)).toEqual([t]);
   });
 
-  it("🐞 ٦٧ لوحة بتتقسّم لجزئين، كل جزء تحت الحد", () => {
-    const parts = splitShareText(many(67));
-    expect(parts.length).toBe(2);
-    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  // 🐞 البلاغ الحقيقي: الجزء ١ اتبنى فيه ٤٩ سجل، بس آيفون قصّه عند ٤٥ — فالجزء
+  // ٢ بدأ من ٥٠ و٤ لوحات ضاعوا في النص من غير ما حد ياخد باله. السبب إن حدّنا
+  // كان ١٥ ألف بايت وهو **فوق** الحيطة الحقيقية (~١٣٬٧٠٠). الدرس: مانلزقش في
+  // رقم إحنا أصلاً مقدّرينه بالتقريب — نسيب هامش كبير.
+  it("🐞 كل جزء بعيد عن الحيطة بهامش كبير (مش لازق فيها)", () => {
+    const OBSERVED_WALL_RECORDS = 45;      // اللي المندوب شافه مرتين
+    for (const p of splitShareText(many(67))) {
+      expect(nums(p).length).toBeLessThanOrEqual(OBSERVED_WALL_RECORDS * 0.6);
+    }
   });
 
-  it("مفيش ولا لوحة بتضيع — الـ٦٧ كلهم موجودين", () => {
-    const parts = splitShareText(many(67));
-    const joined = parts.join("\n");
-    for (let i = 1; i <= 67; i++) expect(joined).toContain(`أبح ${999 + i}`);
+  it("🐞 مفيش لوحة بتضيع بين الأجزاء — ١ لـ٦٧ بالترتيب بلا فجوات", () => {
+    const all = splitShareText(many(67)).flatMap(nums);
+    expect(all).toEqual(Array.from({ length: 67 }, (_, i) => i + 1));
+  });
+
+  it("كل جزء تحت الحدّين: بايت وعدد سجلات", () => {
+    for (const p of splitShareText(many(67))) {
+      expect(utf8ByteLength(p)).toBeLessThanOrEqual(IOS_SHARE_PART_BYTES);
+      expect(nums(p).length).toBeLessThanOrEqual(IOS_SHARE_PART_RECORDS);
+    }
+  });
+
+  it("سجلات ضخمة: عدد السجلات يقلّ عشان الحد بالبايت", () => {
+    const fat = (i: number) => `${i + 1}. 🚗 أبح ${1000 + i}\n` + "تفاصيل طويلة جداً ".repeat(40);
+    const t = `*السيارات*\n\n` + Array.from({ length: 40 }, (_, i) => fat(i)).join(SEP);
+    const parts = splitShareText(t);
+    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(IOS_SHARE_PART_BYTES);
+    expect(parts.flatMap(nums)).toEqual(Array.from({ length: 40 }, (_, i) => i + 1));
   });
 
   it("مفيش سجل بيتقطع في نصّه بين جزئين", () => {
     for (const p of splitShareText(many(67))) {
-      // كل جزء لازم ينتهي بسجل كامل (آخر سطر فيه = سطر الموقع)
       expect(p.trimEnd().endsWith("46.675297")).toBe(true);
     }
   });
 
   it("كل جزء مكتوب عليه رقمه", () => {
     const parts = splitShareText(many(67));
-    expect(parts[0]).toContain("١ من ٢");
-    expect(parts[1]).toContain("٢ من ٢");
-  });
-
-  it("قائمة ضخمة بتتقسّم لأجزاء كتير وكلها تحت الحد", () => {
-    const parts = splitShareText(many(400));
-    expect(parts.length).toBeGreaterThan(5);
-    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+    expect(parts[0]).toContain(`١ من ${["", "١", "٢", "٣", "٤", "٥"][parts.length]}`);
+    expect(parts[parts.length - 1]).toContain("من ");
   });
 
   it("سجل واحد أكبر من الحد لوحده مابيكسرش الحد", () => {
-    const huge = "ا".repeat(20_000);            // ٤٠ ألف بايت في سجل واحد
-    const parts = splitShareText(huge + SEP + "سجل صغير");
-    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+    const huge = "ا".repeat(20_000);
+    for (const p of splitShareText(huge + SEP + "سجل صغير")) {
+      expect(utf8ByteLength(p)).toBeLessThanOrEqual(IOS_SHARE_PART_BYTES);
+    }
   });
 });
 
