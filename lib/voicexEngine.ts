@@ -1,32 +1,31 @@
 /**
- * محرك VoiceX المستقل — بلا ديبجرام. **نسخة طبق الأصل من معمل الصوت** (LivePage
- * «موديل المقاطع») اللي المناديب جرّبوه ودقّته كويسة:
- *   • MicEngine: التقاط PCM + سلسلة معالجة + ذاكرة دوّارة ٩٠ث + `sliceWav`
- *     **معلّى** (normalizePeak) — التعلية دي بالذات هي اللي بترفع الدقة.
- *   • Vad: كشف كلام بأرضية ضوضاء متكيّفة → نبعت **بس أثناء/بعد الكلام**.
- *   • كل ~١.٥ث نقصّ نافذة ٥ث (WAV خام معلّى) ونبعتها لـVoiceX عبر postAudioForPlate.
- *   • بوابة جودة (audioPregate على الخام) + حاجز اختراع (min_logprob) + فكّ إجماع
- *     (نافذتين+ = مؤكّدة).
- *   • أي فشل نفق متكرر → onFatal (المنادي يرجّع لديبجرام).
+ * محرك VoiceX المستقل — بلا ديبجرام.
+ * =============================================================================
+ * الالتقاط من المعمل (دقّة): MicEngine — PCM + سلسلة معالجة + ذاكرة دوّارة ٩٠ث +
+ * `sliceWav` **معلّى** (normalizePeak = دقة أعلى). بلا إعادة تشغيل مسجّل.
  *
- * ⚠️ مفيش إعادة تشغيل مسجّل (الذاكرة الدوّارة بتكفي) — ده اللي كان بيوقّف الطريقة
- *    القديمة (webm) بعد ~٢٠ث على الجهاز.
+ * بوابة الكلام **بسيطة وموثوقة** (RMS على الصوت الخام) — زي النسخة اللي اشتغلت
+ * فعلاً على الجهاز. (الـVAD المتكيّف + بوابة الجودة audioPregate كانوا بيرفضوا
+ * صوت المندوب على جهازه — ٣ نوافذ بس — فشِلناهم؛ السيرفر أصلاً بيرجّع فاضي على
+ * السكوت بإصلاح begin_suppress، فمش محتاجين بوابة سكوت صارمة في العميل.)
+ *
+ * كل ~١.٣ث نقصّ نافذة ٥ث WAV خام معلّى ونبعتها لـVoiceX. فكّ إجماع (نافذتين+ =
+ * مؤكّدة) + حاجز اختراع (min_logprob). أي فشل نفق متكرر → onFatal (ارجع لديبجرام).
  */
 import { postAudioForPlate } from "./plateJudgeClient";
 import { LiveConsensus } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
-import { Vad } from "./vad";
-import { audioPregate } from "./audioPregate";
 
 const WELL = /^[ء-ي]{3}\d{4}$/;
 export const VOICEX_MIN_TOKEN_LOGPROB = -0.5;
 
-const WIN_S = 5;              // طول نافذة القصّ (WAV كامل، بلا قصّ سيرفر)
-const STEP_MS = 1500;         // كل قد إيه نبعت نافذة
-const DRAIN_MS = 500;         // كل قد إيه نصرّف الإجماع
-const SPEECH_TAIL_S = 1.5;    // نكمّل نبعت لحد ١.٥ث بعد آخر كلام
+const WIN_S = 5;
+const STEP_MS = 1300;
+const DRAIN_MS = 500;
+const SPEECH_RMS = 0.01;       // عتبة «فيه كلام» على الصوت الخام (زي النسخة اللي اشتغلت)
+const SPEECH_TAIL_S = 1.5;     // نكمّل نبعت لحد ١.٥ث بعد آخر كلام
 const MAX_INFLIGHT = 2;
-const FATAL_FAILS = 6;        // فشل متتالي كده = النفق فصل → ارجع لديبجرام
+const FATAL_FAILS = 8;
 const REQ_TIMEOUT_MS = 9000;
 
 export interface VoicexPlateMeta { tier: "green" | "yellow"; conf: number; mult: number; }
@@ -49,16 +48,19 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   let stopped = false;
   let inflight = 0;
   let fails = 0;
-  let speaking = false;
-  let lastSpokeSec = 0;
-  let vad: Vad | null = null;
+  let lastSpeechSec = -1e9;
 
   const consensus = new LiveConsensus({ windowMs: 2000, stableMs: 2500, greenMinMult: 2 });
   const emit = (p: string, meta: VoicexPlateMeta) => { if (WELL.test(p)) opts.onPlate(p, meta); };
 
+  // بوابة الكلام: RMS على الصوت **الخام** (ديناميكية سليمة — الضاغط بيسطّح الفرق).
   const mic = new MicEngine({
     mode: "live",
-    onChunk: (pcm, startSec) => { try { vad?.push(pcm, startSec); } catch { /* ignore */ } },
+    onRawChunk: (pcm) => {
+      let s = 0;
+      for (let i = 0; i < pcm.length; i++) s += pcm[i] * pcm[i];
+      if (Math.sqrt(s / pcm.length) > SPEECH_RMS) lastSpeechSec = mic.elapsedSec;
+    },
   });
 
   try {
@@ -68,23 +70,10 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     return null;
   }
 
-  vad = new Vad({
-    sampleRate: mic.sampleRate,
-    silenceMs: 700,
-    minSpeechMs: 300,
-    maxSpeechMs: 60000,
-    onSpeechStart: () => { speaking = true; opts.onSpeech?.(true); },
-    onUtterance: (u) => { speaking = false; lastSpokeSec = u.endSec; opts.onSpeech?.(false); },
-  });
-
   async function processWindow(fromSec: number, toSec: number) {
     if (stopped || toSec - fromSec < 0.6) return;
     if (inflight >= MAX_INFLIGHT) return;
-    // بوابة السكوت على الخام (تحسين حمل — السيرفر أصلاً بيرجّع فاضي على السكوت).
-    const q = mic.sliceQuality(fromSec, toSec, 0.2);
-    if (q && !audioPregate(q).accept) return;
-    // نافذة WAV **خام معلّى** — زي ما الموديل اتدرّب (raw=true + normalizePeak).
-    const wav = mic.sliceWav(fromSec, toSec, 0.2, true);
+    const wav = mic.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى (raw=true)
     if (!wav) return;
     inflight += 1;
     opts.onStatus?.("processing");
@@ -111,15 +100,16 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     }
   }
 
-  // كل ١.٥ث: نافذة ٥ث — بس أثناء الكلام أو خلال ١.٥ث بعده (بلاش نقرا سكوت).
   const segTimer = setInterval(() => {
     if (stopped) return;
     const elapsed = mic.elapsedSec;
-    if (!speaking && elapsed - lastSpokeSec > SPEECH_TAIL_S) return;
+    // مؤشّر السماع + بوابة الإرسال: بس لو فيه كلام في آخر ١.٥ث.
+    const speaking = elapsed - lastSpeechSec < SPEECH_TAIL_S;
+    opts.onSpeech?.(speaking);
+    if (!speaking) return;
     void processWindow(Math.max(0, elapsed - WIN_S), elapsed);
   }, STEP_MS);
 
-  // تصريف الإجماع — بزمن التسجيل (نفس وحدة add) مش Date.now().
   const drainTimer = setInterval(() => {
     if (stopped) return;
     for (const c of consensus.drain(mic.elapsedSec * 1000)) {
@@ -136,7 +126,6 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       stopped = true;
       clearInterval(segTimer);
       clearInterval(drainTimer);
-      try { vad?.flush(mic.elapsedSec); } catch { /* ignore */ }
       for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult });
       try { mic.stop(); } catch { /* ignore */ }
       opts.onSpeech?.(false);
