@@ -29,7 +29,7 @@ import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
-import { shareImageWithText, buildPlateShareText, shareTextViaChooser } from "@/lib/share";
+import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyShareText } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { readDeepgramWords, type DgWord, type DgFinal } from "@/lib/deepgramWords";
 import { fetchLearningEnabled } from "@/lib/learningSettings";
@@ -2994,11 +2994,27 @@ export default function InstantCheckPage() {
   function togglePttSelAll() {
     setPttSel((prev) => (prev.size === pttResults.length ? new Set() : new Set(pttResults.map((r) => r.id))));
   }
+  // نص مشاركة **مختصر** — سطر لكل لوحة (رقم + علامة مطلوبة بس). النص المفصّل
+  // (كل الأعمدة + الموقع) كان بيملا حد الـ١٦ كيلوبايت بتاع الآيفون بسرعة فمكانش
+  // بيطلع غير ~٢٠ لوحة. المختصر بيوصّل ١٠٠+ لوحة في رسالة واحدة. التفاصيل الكاملة
+  // في زر «مشاركة إكسيل» أو نسخ صف واحد.
+  function pttShareText(rows: PttRow[]): string {
+    const line = (r: PttRow, i: number) =>
+      `${i + 1}. ${r.plate}${r.found ? (r.matchType === "fuzzy" ? ` 🔴 مطلوبة؟ ${r.similarity}%` : " 🔴 مطلوبة") : ""}`;
+    return `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` + rows.map(line).join("\n");
+  }
   function sharePttSelected() {
     const rows = pttResults.filter((r) => pttSel.has(r.id));
     if (!rows.length) return;
-    const text = `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` + rows.map((r, i) => `${i + 1}. ${pttRowText(r)}`).join("\n\n──────────\n\n");
-    void shareTextViaChooser(text);
+    void shareTextViaChooser(pttShareText(rows));
+  }
+  // نسخ **كل** المحدّد للحافظة — الحافظة مالهاش حد الـ١٦ كيلوبايت، فبتوصّل أي عدد
+  // لوحات في رسالة واحدة (الزقها في واتساب).
+  async function copyPttSelected() {
+    const rows = pttResults.filter((r) => pttSel.has(r.id));
+    if (!rows.length) return;
+    const ok = await copyShareText(pttShareText(rows));
+    alert(ok ? `✅ اتنسخت ${rows.length} لوحة — الزقها في واتساب.` : "المتصفح رفض النسخ — جرّب المشاركة.");
   }
   function deletePttSelected() {
     const ids = pttSel;
@@ -4992,6 +5008,7 @@ export default function InstantCheckPage() {
                         <span className="text-xs font-bold text-ink">{pttSel.size} محددة</span>
                         <div className="flex gap-2">
                           <button onClick={sharePttSelected} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={13} /> واتساب</button>
+                          <button onClick={copyPttSelected} className="flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/15"><Copy size={13} /> نسخ الكل</button>
                           <button onClick={deletePttSelected} className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={13} /> مسح</button>
                         </div>
                       </div>
