@@ -32,6 +32,19 @@ export function looksLikeCertNumber(input: string): boolean {
   return t.replace(/\D/g, "").length >= 6;            // رقم طويل = شهادة (مش أرقام لوحة الأربعة)
 }
 
+/**
+ * توكن البحث في درايف لرقم شهادة. جوجل بيخزّن الرقم مفصول (`REPO-211-00265929`)،
+ * فالأرقام الملزوقة (`21100265929`) مش بتتطابق كـtoken. الحل: لو المدخل فيه حروف
+ * أو شرطة/مسافة (REPO-211-00265929 / 211-00265929) نبحث بيه زي ما هو؛ لو أرقام
+ * ملزوقة نبحث بآخر ٨ أرقام (لاحقة الشهادة الفريدة، بتتطابق كـtoken).
+ */
+export function certSearchToken(input: string): string {
+  const t = input.trim();
+  if (/[A-Za-z]/.test(t) || /[-\s]/.test(t)) return t;
+  const digits = t.replace(/\D/g, "");
+  return digits.length > 8 ? digits.slice(-8) : digits;
+}
+
 /** أرقام اللوحة (للبحث في درايف باسم الملف). آخر جروب أرقام في المدخل. */
 export function plateDigits(input: string): string {
   const runs = toLatinDigits(input).match(/[0-9]{2,4}/g);
