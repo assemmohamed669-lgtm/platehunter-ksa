@@ -20,7 +20,7 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
 export const VOICEX_MIN_TOKEN_LOGPROB = -0.5;
 
 const WIN_S = 5;
-const STEP_MS = 1300;
+const STEP_MS = 1500;          // زي المعمل بالظبط
 const DRAIN_MS = 500;
 const SPEECH_RMS = 0.01;       // عتبة «فيه كلام» على الصوت الخام (زي النسخة اللي اشتغلت)
 const SPEECH_TAIL_S = 1.5;     // نكمّل نبعت لحد ١.٥ث بعد آخر كلام
@@ -91,7 +91,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       if (typeof resp.minLogprob === "number" && resp.minLogprob < VOICEX_MIN_TOKEN_LOGPROB) return;
       if (!resp.accepted) return;
       const conf = typeof resp.meanLogprob === "number" ? Math.min(1, Math.exp(resp.meanLogprob)) : 0.6;
-      const tMs = toSec * 1000;
+      // زمن الإجماع = **مركز النافذة** (زي المعمل بالظبط). آخر النافذة كان بيأخّر
+      // العرض ٢.٥ث ويلخبط التجميع (سبب اللوحات المتأخرة/الغلط). المركز = عرض فوري ~٢.٥ث.
+      const tMs = ((fromSec + toSec) / 2) * 1000;
       for (const p of String(resp.plate || "").trim().split(/\s+/)) {
         if (WELL.test(p)) consensus.add({ plate: p, tMs, conf });
       }
