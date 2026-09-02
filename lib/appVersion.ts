@@ -5,7 +5,7 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.2.0";
+export const APP_VERSION = "1.2.1";
 
 /**
  * معرّف البناء — بيتغيّر مع **كل نشر** (SHA الكوميت). بيتقارن بين الجهاز والسيرفر
@@ -14,7 +14,7 @@ export const APP_VERSION = "1.2.0";
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
-  "زرار «نسخ الكل» في نتائج الفرز والتشييك — القائمة الكبيرة توصل واتساب كاملة في رسالة واحدة. قبل كده زرار المشاركة كان بيقص اللوحات على الآيفون من غير تنبيه.";
+  "زرار «موقعها» بقى يشتغل مع ملفات الداتا الكبيرة — كان بيقول «تعذّر تحديد موقع السيارة» دايماً لأن صفوف الملف الكبير على الجهاز مش في الذاكرة.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {

@@ -25,7 +25,7 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser, copyShareText } from "@/lib/share";
-import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
+import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
@@ -1392,6 +1392,9 @@ export default function SortingPage() {
   }
 
   const [neighborView, setNeighborView] = useState<NeighborsView | null>(null);
+  // ملف الداتا الكبير بيتقرا من الجهاز — مرور كامل بياخد لحظات، فبنوضّح إننا بندوّر
+  // بدل ما الزرار يبان ميت.
+  const [neighborsLoading, setNeighborsLoading] = useState(false);
 
   // كل مصادر الداتا (الأساسية + الإضافية) — كل مصدر بعمود لوحته. تُستخدم في كل
   // مسارات الفرز عشان الفرز يتم على كل ملفات الداتا مدموجة.
@@ -1437,9 +1440,70 @@ export default function SortingPage() {
     return [...new Set([type, address].filter((h): h is string => !!h && h !== plateCol))];
   }
 
-  function showNeighbors(r: MatchResult) {
+  /**
+   * مصدر الصف لو كان **على الجهاز** (ملف كبير) بدل الذاكرة — أو null لو في الذاكرة.
+   * صفوف الملف الكبير مش محمّلة (الذاكرة فيها عيّنة ٥٠ صف بس)، فلازم نقراها
+   * من الجهاز زي ما الفرز بيعمل.
+   */
+  function streamedNeighborSource(r: MatchResult, sources: DataSource[]):
+    { slot: string; plateCol: string; headers: string[]; sheets: Set<string> | null; primary: boolean } | null {
+    // الملف الأساسي الكبير: دايماً أول مصدر، فالفهرس العام = الفهرس المحلّي.
+    if (dataStreamed && dataStreamMeta && (r.srcIdx == null || r.srcIdx === 0)) {
+      return { slot: "data", plateCol: dataStreamMeta.plateCol, headers: dataStreamMeta.headers,
+               sheets: selectedDataSheetFilter, primary: true };
+    }
+    const src = r.srcIdx != null ? sources[r.srcIdx] : undefined;
+    if (!src?.slot) return null;
+    const ed = extraData.find((e) => e.streamSlot === src.slot);
+    return { slot: src.slot, plateCol: src.plateCol,
+             headers: ed?.table?.headers ?? Object.keys(r.dataRow ?? {}), sheets: null, primary: false };
+  }
+
+  /** «موقعها» لصف جاي من ملف على الجهاز — مرور على الدفعات بذاكرة دفعة واحدة. */
+  async function showNeighborsStreamed(
+    r: MatchResult,
+    src: { slot: string; plateCol: string; headers: string[]; sheets: Set<string> | null; primary: boolean },
+  ) {
+    const locCol = detectLocationColumn(src.headers);
+    if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
+    const iterate = (onBatch: (rows: Record<string, string>[], base: number) => void | Promise<void>) =>
+      iterateRows((rows, base) => onBatch(rows, base), { slot: src.slot, sheets: src.sheets });
+    const plateOf = (row: Record<string, string> | null) =>
+      row ? normalizePlate(bankPlateToArabic(String(row[src.plateCol] ?? ""))) : "";
+
+    setNeighborsLoading(true);
+    try {
+      // (١) الفهرس المخزّن وقت الفرز — بيشتغل للملف الأساسي (أول مصدر فالفهرس محلّي).
+      let res: Awaited<ReturnType<typeof neighborsFromStream>> | null = null;
+      if (src.primary && r.dataIdx != null && r.dataIdx >= 0) {
+        const byIdx = await neighborsFromStream(iterate, r.dataIdx, locCol);
+        if (byIdx.target) res = byIdx;
+      }
+      // (٢) لو الفهرس مالقاش الصف الصح (نتيجة قديمة، أو مربع إضافي فهرسه عام) —
+      //     ندوّر باللوحة نفسها: أدق من أي حسابات إزاحة.
+      const want = r.refPlateNorm ?? plateOf(r.dataRow ?? null);
+      if ((!res || (want && plateOf(res.target) !== want)) && want) {
+        const idx = await findIndexByPlate(iterate, src.plateCol, want);
+        // مانرجعش لنتيجة أسوأ: لو البحث باللوحة فشل نسيب اللي لقيناه بالفهرس.
+        if (idx >= 0) {
+          const byPlate = await neighborsFromStream(iterate, idx, locCol);
+          if (byPlate.target) res = byPlate;
+        }
+      }
+      if (!res?.target) { alert("مالقيناش السيارة دي في ملف الداتا. يمكن الملف اتغيّر بعد الفرز — ارفعه تاني واعمل «فرز»."); return; }
+      setNeighborView({ ...res.ctx, target: res.target, plateCol: src.plateCol,
+                        detailCols: pickNeighborDetailCols(src.headers, src.plateCol, locCol) });
+    } finally {
+      setNeighborsLoading(false);
+    }
+  }
+
+  async function showNeighbors(r: MatchResult) {
     if (r.dataIdx == null && !r.dataRow) { alert("مفيش بيانات موقع لهذه السيارة في ملف الداتا (اتطابقت من السجلات مش الداتا)."); return; }
     const sources = collectDataSources();
+    // ملف كبير: صفوفه على الجهاز — مسار مختلف تماماً عن الذاكرة.
+    const streamed = streamedNeighborSource(r, sources);
+    if (streamed) { await showNeighborsStreamed(r, streamed); return; }
     // نبني قائمة مرتّبة واحدة من كل ملفات الداتا (نفس ترتيب التفريغ).
     const orderedRows: Record<string, string>[] = [];
     const bounds: { start: number; plateCol: string }[] = [];
@@ -2791,9 +2855,10 @@ export default function SortingPage() {
                         )}
                         {/* آخر الويندو: موقعها في الداتا › الحالة › السجل */}
                         <td className="border-l border-border px-2 py-2 text-center">
-                          <button onClick={() => showNeighbors(r)} title="شوف موقعها بين الجيران في نفس الشارع"
-                            className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
-                            <MapPin size={12} /> موقعها
+                          <button onClick={() => void showNeighbors(r)} disabled={neighborsLoading}
+                            title="شوف موقعها بين الجيران في نفس الشارع"
+                            className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition disabled:opacity-50">
+                            <MapPin size={12} /> {neighborsLoading ? "بندوّر…" : "موقعها"}
                           </button>
                         </td>
                         {/* الحالة: زرين تسجيل سريع (ضغطة واحدة تحفظ)، أو الحالة المسجّلة */}
