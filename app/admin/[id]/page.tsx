@@ -349,7 +349,7 @@ export default function AgentDetail() {
                   if (await call("setVoicexEnabled", { enabled: on })) { setMsg(on ? "✅ اتفعّل صوت VoiceX للمشترك." : "✅ رجع لصوت ديبجرام."); load(); }
                 }}
                 disabled={busy || autoVx}
-                className={`flex items-center justify-center gap-1.5 rounded-lg border py-2.5 text-xs font-bold transition disabled:opacity-60 ${vx ? "border-primary/50 bg-primary/10 text-primary hover:bg-primary/15" : "border-border text-muted hover:text-primary"}`}>
+                className={`flex items-center justify-center gap-1.5 rounded-lg border border-transparent py-2.5 text-xs font-bold transition disabled:opacity-70 ${vx ? "bg-brand text-night hover:bg-brand/90" : "bg-danger text-white hover:bg-danger/90"}`}>
                 <Mic size={13} /> {autoVx ? "صوت VoiceX مفعّل تلقائياً (سوبر أدمن)" : vx ? "صوت VoiceX مفعّل — إيقاف" : "تفعيل صوت VoiceX"}
               </button>
 
@@ -361,7 +361,7 @@ export default function AgentDetail() {
                   if (await call("setRestPages", { enabled: on })) { setMsg(on ? "✅ اتفتحت باقي صفحات البرنامج." : "✅ اتقفلت — صوت VoiceX فقط."); load(); }
                 }}
                 disabled={busy}
-                className={`flex items-center justify-center gap-1.5 rounded-lg border py-2.5 text-xs font-bold transition ${rest ? "border-border text-muted hover:text-primary" : "border-alert/50 bg-alert/5 text-alert hover:bg-alert/10"}`}>
+                className={`flex items-center justify-center gap-1.5 rounded-lg border border-transparent py-2.5 text-xs font-bold transition disabled:opacity-70 ${rest ? "bg-brand text-night hover:bg-brand/90" : "bg-danger text-white hover:bg-danger/90"}`}>
                 {rest ? <><LayoutGrid size={13} /> باقي الصفحات: مفتوحة — قفلها (صوت فقط)</> : <><Lock size={13} /> مقفولة (صوت VoiceX فقط) — فتحها</>}
               </button>
 
