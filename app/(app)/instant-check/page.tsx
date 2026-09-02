@@ -647,6 +647,7 @@ export default function InstantCheckPage() {
   // أي محرك تفريغ شغّال دلوقتي (عشان المستخدم يعرف مش بيخمّن) + هل بيسمع فعلاً (VAD).
   const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local" | "voicex">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
+  const [pttLevel, setPttLevel] = useState(0);   // مستوى الصوت اللحظي ٠..١ (مؤشّر VoiceX المتحرك)
   // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
   // المناديب ولا الأدمنز العاديين.
   const [isSuper, setIsSuper] = useState(false);
@@ -3522,6 +3523,7 @@ export default function InstantCheckPage() {
         onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow"),
         onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
         onSpeech: (active) => setPttMicActive(active),
+        onLevel: (lvl) => setPttLevel(lvl),
         onFatal: () => {
           // النفق فصل وسط الجلسة → وقّف VoiceX وارجع لديبجرام لو فيه مفتاح.
           try { voicexEngineRef.current?.stop(); } catch { /* ignore */ }
@@ -4701,6 +4703,24 @@ export default function InstantCheckPage() {
                 <span className={`flex items-center gap-1 text-[11px] font-bold ${pttMicActive ? "text-brand" : "text-muted"}`}>
                   <span className={`h-2 w-2 rounded-full ${pttMicActive ? "animate-pulse bg-brand" : "bg-muted"}`} />
                   {pttMicActive ? "بيسمع صوتك" : "هدوء"}
+                </span>
+              )}
+
+              {/* مؤشّر الصوت المتحرك — بيتحرك مع كلام المندوب (VoiceX بيوفّر المستوى) */}
+              {pttListening && pttEngine === "voicex" && (
+                <span className="flex items-center gap-0.5" aria-hidden dir="ltr" title="مستوى الصوت">
+                  {[0.12, 0.3, 0.5, 0.72, 0.9].map((thresh, i) => {
+                    const on = pttLevel >= thresh;
+                    // كل عمود بيعلى لو المستوى عدّى عتبته — فبيرقص مع الكلام
+                    const h = 6 + i * 3;
+                    return (
+                      <span
+                        key={i}
+                        className={`w-1 rounded-full transition-all duration-100 ${on ? "bg-brand" : "bg-surface-2"}`}
+                        style={{ height: `${h}px`, opacity: on ? 1 : 0.4 }}
+                      />
+                    );
+                  })}
                 </span>
               )}
 
