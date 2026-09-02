@@ -18,10 +18,10 @@ import { resetDevicePatch } from "@/lib/deviceBinding";
 import { randomUUID } from "node:crypto";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
-// setActive (قفل/فتح مؤقت) متاح للأدمن العادي كمان — بطلب المالك — لكن الحماية
-// تحت بتمنعه من إنه يقفل حساب أدمن/سوبر (بيقدر يقفل المناديب بس).
-// VoiceX toggles: المالك (السوبر) وحده بيقرّر مين يشوف VoiceX ومين «صوت فقط».
-const SUPER_ONLY = new Set(["delete", "setRole", "setVoicexEnabled", "setRestPages"]);
+// setActive/setVoicexEnabled/setRestPages متاحين للأدمن العادي كمان — بطلب المالك —
+// لكن الحماية تحت (target.role === "admin" && !isSuper) بتمنعه من إنه يعملها على
+// حساب أدمن/سوبر، فبيقدر يفتح/يقفل صوت VoiceX وباقي الصفحات **للمناديب بس**.
+const SUPER_ONLY = new Set(["delete", "setRole"]);
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
