@@ -11,6 +11,7 @@ import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
+import CertificateBadge from "@/components/CertificateBadge";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -408,6 +409,10 @@ function ResultCard({ result, plateCol, selectedCols, onExport, onShare, priorCh
       {/* Plate badge */}
       <div className="flex justify-center mb-3">
         <PlateBadge value={result.plate} size="md" />
+      </div>
+      {/* شهادة السحب — بحث تلقائي في Drive؛ لو لقاها تظهر «شهادة» للتحميل/المشاركة */}
+      <div className="mb-3 flex justify-center">
+        <CertificateBadge plate={result.plate} />
       </div>
       {/* Extra details */}
       {extras.length > 0 && (
