@@ -230,7 +230,7 @@ export default function AppShellLayout({
 
         <BottomNav />
         <WantedAlertOverlay />
-        <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} />
+        <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} voiceOnly={!restPagesEnabled} />
       </div>
     </SessionGuard>
   );

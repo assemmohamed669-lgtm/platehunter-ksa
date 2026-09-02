@@ -30,10 +30,13 @@ export default function AppMenu({
   open,
   onOpenChange,
   onLogout,
+  voiceOnly = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onLogout: () => void;
+  /** المندوب في وضع «الصوت فقط»؟ وقتها روابط /list محجوبة — نوجّه السجلات لتبويبها. */
+  voiceOnly?: boolean;
 }) {
   // frac: 0 = fully open, 1 = fully closed. Drives the drawer transform.
   const [frac, setFrac] = useState(1);
@@ -250,7 +253,7 @@ export default function AppMenu({
           <section className="border-t border-border pt-3">
             <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-muted"><BarChart3 size={14} /> إحصائيات</div>
             <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface-2 p-2 text-center">
-              <Link href="/list?type=records" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></Link>
+              <Link href={voiceOnly ? "/instant-check?tab=sheet" : "/list?type=records"} onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></Link>
               <Link href="/list?type=wanted" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></Link>
               <Link href="/list?type=voice" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></Link>
             </div>
