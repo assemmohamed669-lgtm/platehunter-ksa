@@ -21,6 +21,17 @@ export function looksLikeChassis(input: string): boolean {
   return /^[A-Za-z0-9]{11,17}$/.test(t) && /[A-Za-z]/.test(t) && /[0-9]/.test(t);
 }
 
+/**
+ * رقم شهادة/عقد؟ زي `REPO-211-00265929` أو `CRN-...` أو رقم طويل (٦+ أرقام) بدون
+ * حروف عربية. اللوحة السعودية حروفها عربي + ٤ أرقام، فمابتتلغبطش مع ده.
+ */
+export function looksLikeCertNumber(input: string): boolean {
+  const t = input.trim();
+  if (/repo|crn/i.test(t)) return true;
+  if (/[؀-ۿ]/.test(t)) return false;                 // فيه حروف عربية = لوحة مش رقم شهادة
+  return t.replace(/\D/g, "").length >= 6;            // رقم طويل = شهادة (مش أرقام لوحة الأربعة)
+}
+
 /** أرقام اللوحة (للبحث في درايف باسم الملف). آخر جروب أرقام في المدخل. */
 export function plateDigits(input: string): string {
   const runs = toLatinDigits(input).match(/[0-9]{2,4}/g);

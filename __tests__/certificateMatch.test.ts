@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toLatinDigits, looksLikeChassis, plateDigits, plateCertKey, matchCertFiles } from "@/lib/certificateMatch";
+import { toLatinDigits, looksLikeChassis, looksLikeCertNumber, plateDigits, plateCertKey, matchCertFiles } from "@/lib/certificateMatch";
 
 describe("certificateMatch", () => {
   it("يحوّل الأرقام العربية للاتينية", () => {
@@ -13,6 +13,16 @@ describe("certificateMatch", () => {
     expect(looksLikeChassis("د و ا 8403")).toBe(false);   // لوحة سعودية
     expect(looksLikeChassis("8403")).toBe(false);          // أرقام بس
     expect(looksLikeChassis("ABCDEFG")).toBe(false);       // حروف بس
+  });
+
+  it("يكتشف رقم الشهادة (REPO/CRN/رقم طويل)", () => {
+    expect(looksLikeCertNumber("REPO-211-00265929")).toBe(true);
+    expect(looksLikeCertNumber("repo 211 00265929")).toBe(true);
+    expect(looksLikeCertNumber("CRN-211-01645769")).toBe(true);
+    expect(looksLikeCertNumber("00265929")).toBe(true);      // رقم طويل
+    expect(looksLikeCertNumber("211-00265929")).toBe(true);
+    expect(looksLikeCertNumber("د و ا 8403")).toBe(false);   // لوحة
+    expect(looksLikeCertNumber("8403")).toBe(false);          // أرقام لوحة (٤) مش شهادة
   });
 
   it("يطلّع أرقام اللوحة", () => {

@@ -47,7 +47,7 @@ export default function CertificateSearch() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") void search(); }}
-          placeholder="رقم اللوحة أو رقم الهيكل (بأي شكل)"
+          placeholder="رقم اللوحة أو الهيكل أو الشهادة (REPO)"
           dir="rtl"
           className="flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs text-ink outline-none focus:border-primary"
         />
