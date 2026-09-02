@@ -53,7 +53,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // stableMs أقصر = عرض أسرع (اللوحة تستقر وتظهر بعد ١.٣ث بدل ٢.٥ث بلا قراءة جديدة).
   // minSoloConf أوطى = القراءة المفردة (اللوحة السريعة اللي في نافذة واحدة بس) تظهر
   // كـ«راجع» بدل ما تتحجب — حاجز الاختراع min_logprob بيصفّي التلفيق قبلها أصلاً.
-  const consensus = new LiveConsensus({ windowMs: 2000, stableMs: 1300, greenMinMult: 2, minSoloConf: 0.35 });
+  // soloMinLp = -2.0 (متساهل): القياس على تسجيلات المندوب الحقيقية أثبت إن عتبة
+  // -0.5 بتضيّع نص اللوحات (وسيط min_logprob في النوافذ المتداخلة ≈ -0.5)، و-2.0
+  // بترجّع ٨٣٪ وبتفضل بتحجب المفردة الأسوأ (تلفيق واضح). اللوحة المؤكّدة (نافذتين+)
+  // بتعدّي مهما كانت. الاتفاق نفسه هو الحماية الأساسية من التلفيق.
+  const consensus = new LiveConsensus({ windowMs: 2000, stableMs: 1300, greenMinMult: 2, minSoloConf: 0.35, soloMinLp: -2.0 });
   const emit = (p: string, meta: VoicexPlateMeta) => { if (WELL.test(p)) opts.onPlate(p, meta); };
 
   // بوابة الكلام: RMS على الصوت **الخام** (ديناميكية سليمة — الضاغط بيسطّح الفرق).
@@ -91,14 +95,17 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
         return;
       }
       fails = 0;
-      if (typeof resp.minLogprob === "number" && resp.minLogprob < VOICEX_MIN_TOKEN_LOGPROB) return;
       if (!resp.accepted) return;
       const conf = typeof resp.meanLogprob === "number" ? Math.min(1, Math.exp(resp.meanLogprob)) : 0.6;
-      // زمن الإجماع = **مركز النافذة** (زي المعمل بالظبط). آخر النافذة كان بيأخّر
-      // العرض ٢.٥ث ويلخبط التجميع (سبب اللوحات المتأخرة/الغلط). المركز = عرض فوري ~٢.٥ث.
+      // ⚠️ حاجز الاختراع (min_logprob) بقى في الإجماع على **القراءة المفردة بس** —
+      // اتعاير على مقاطع نضيفة، لكن النوافذ المتداخلة قيمتها أوطى طبيعي، فرميه على
+      // الكل كان بيضيّع ~نص اللوحات الحقيقية (مقيس). اللوحة اللي اتأكدت في نافذتين+
+      // تعدّي؛ المفردة الواطية بس هي اللي تتحجب.
+      const minLp = typeof resp.minLogprob === "number" ? resp.minLogprob : undefined;
+      // زمن الإجماع = **مركز النافذة** (زي المعمل بالظبط) = عرض فوري ~٢.٥ث.
       const tMs = ((fromSec + toSec) / 2) * 1000;
       for (const p of String(resp.plate || "").trim().split(/\s+/)) {
-        if (WELL.test(p)) consensus.add({ plate: p, tMs, conf });
+        if (WELL.test(p)) consensus.add({ plate: p, tMs, conf, minLp });
       }
     } finally {
       inflight -= 1;
