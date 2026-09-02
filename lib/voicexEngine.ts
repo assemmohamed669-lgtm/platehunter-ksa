@@ -19,8 +19,8 @@ import { MicEngine } from "./micEngine";
 const WELL = /^[ء-ي]{3}\d{4}$/;
 export const VOICEX_MIN_TOKEN_LOGPROB = -0.5;
 
-const WIN_S = 5;
-const STEP_MS = 1500;          // زي المعمل بالظبط
+const WIN_S = 4;               // أقصر من ٥ = اللوحة تخرج من النافذة أسرع (ظهور أسرع + بلبلة أقل بين اللوحات المتتالية)، ولسه بيسع نطق لوحة كاملة (٣.٣ث مقيس)
+const STEP_MS = 1200;          // تداخل أكتر = كل لوحة تتقرا في ٣ نوافذ+ (تأكيد أحسن + تلحق الكلام السريع)
 const DRAIN_MS = 500;
 const SPEECH_RMS = 0.01;       // عتبة «فيه كلام» على الصوت الخام (زي النسخة اللي اشتغلت)
 const SPEECH_TAIL_S = 1.5;     // نكمّل نبعت لحد ١.٥ث بعد آخر كلام
@@ -50,7 +50,10 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   let fails = 0;
   let lastSpeechSec = -1e9;
 
-  const consensus = new LiveConsensus({ windowMs: 2000, stableMs: 2500, greenMinMult: 2 });
+  // stableMs أقصر = عرض أسرع (اللوحة تستقر وتظهر بعد ١.٣ث بدل ٢.٥ث بلا قراءة جديدة).
+  // minSoloConf أوطى = القراءة المفردة (اللوحة السريعة اللي في نافذة واحدة بس) تظهر
+  // كـ«راجع» بدل ما تتحجب — حاجز الاختراع min_logprob بيصفّي التلفيق قبلها أصلاً.
+  const consensus = new LiveConsensus({ windowMs: 2000, stableMs: 1300, greenMinMult: 2, minSoloConf: 0.35 });
   const emit = (p: string, meta: VoicexPlateMeta) => { if (WELL.test(p)) opts.onPlate(p, meta); };
 
   // بوابة الكلام: RMS على الصوت **الخام** (ديناميكية سليمة — الضاغط بيسطّح الفرق).
