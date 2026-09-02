@@ -53,6 +53,8 @@ export interface VoicexEngineOpts {
   onPlate: (plate: string, meta: VoicexPlateMeta) => void;
   /** تغيّر الحالة (اختياري) — للعرض. */
   onStatus?: (s: "listening" | "processing" | "idle") => void;
+  /** بوابة الكلام (VAD): true = بيسمع صوت، false = هدوء — لمؤشّر السماع. */
+  onSpeech?: (active: boolean) => void;
   /** فشل نفق متكرر أو الميك اترفض — المنادي يرجّع لديبجرام. */
   onFatal?: (reason: string) => void;
   /** حقن (للاختبار). */
@@ -131,12 +133,18 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   analyser.fftSize = 2048;
   srcNode.connect(analyser);
   const vbuf = new Float32Array(analyser.fftSize);
+  let speaking = false;
   const vadTimer = setInterval(() => {
     if (stopped) return;
     analyser.getFloatTimeDomainData(vbuf);
     let s = 0;
     for (let i = 0; i < vbuf.length; i++) s += vbuf[i] * vbuf[i];
-    if (Math.sqrt(s / vbuf.length) > VAD_RMS_ON) lastSpeechRel = now() - segStartMs;
+    const loud = Math.sqrt(s / vbuf.length) > VAD_RMS_ON;
+    const rel = now() - segStartMs;
+    if (loud) lastSpeechRel = rel;
+    // «بيسمع» = صوت دلوقتي أو خلال آخر ٥٠٠ms (يمنع رفرفة المؤشّر بين المقاطع).
+    const active = loud || rel - lastSpeechRel < 500;
+    if (active !== speaking) { speaking = active; opts.onSpeech?.(active); }
   }, VAD_POLL_MS);
 
   // ── إرسال النوافذ المتداخلة (بس أثناء/بعد الكلام) ──
