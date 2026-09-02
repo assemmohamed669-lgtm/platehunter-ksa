@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toLatinDigits, looksLikeChassis, looksLikeCertNumber, plateDigits, plateCertKey, matchCertFiles } from "@/lib/certificateMatch";
+import { toLatinDigits, looksLikeChassis, looksLikeCertNumber, certSearchToken, plateDigits, plateCertKey, matchCertFiles } from "@/lib/certificateMatch";
 
 describe("certificateMatch", () => {
   it("يحوّل الأرقام العربية للاتينية", () => {
@@ -23,6 +23,13 @@ describe("certificateMatch", () => {
     expect(looksLikeCertNumber("211-00265929")).toBe(true);
     expect(looksLikeCertNumber("د و ا 8403")).toBe(false);   // لوحة
     expect(looksLikeCertNumber("8403")).toBe(false);          // أرقام لوحة (٤) مش شهادة
+  });
+
+  it("توكن بحث الشهادة: ملزوق → آخر ٨، وإلا زي ما هو", () => {
+    expect(certSearchToken("REPO-211-00265929")).toBe("REPO-211-00265929");
+    expect(certSearchToken("211-00265929")).toBe("211-00265929");
+    expect(certSearchToken("21100265929")).toBe("00265929");   // ملزوق → آخر ٨
+    expect(certSearchToken("00265929")).toBe("00265929");
   });
 
   it("يطلّع أرقام اللوحة", () => {
