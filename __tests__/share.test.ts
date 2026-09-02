@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, copyShareText, utf8ByteLength, SAFE_SHARE_TEXT_BYTES } from "@/lib/share";
+import { buildPlateShareText, dataUrlToBlob, shareTextViaChooser, trimShareText, copyShareText, utf8ByteLength, splitShareText, isIosDevice, SAFE_SHARE_TEXT_BYTES } from "@/lib/share";
 
 describe("shareTextViaChooser — قائمة النظام بدل واتساب المباشر", () => {
   const hadShare = "share" in navigator;
@@ -227,5 +227,83 @@ describe("copyShareText — الطريق الكامل (نسخ ولصق)", () => 
     const writeText = vi.fn().mockRejectedValue(new Error("NotAllowedError"));
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true, writable: true });
     await expect(copyShareText("أي نص")).resolves.toBe(false);
+  });
+});
+
+// ── تقسيم على أجزاء (آيفون بس) ──────────────────────────────────────────────
+// النسخ ما نفعش مع المندوب، فالحل: نبعت القائمة على رسالتين كل واحدة تحت
+// حيطة الـ١٦ كيلوبايت. الأندرويد مابيحتاجش ده (حده ~١ ميجا) فمانقسّمش عنده
+// عشان مانحوّلش رسالة واحدة شغّالة لرسالتين من غير سبب.
+describe("splitShareText — القائمة الكبيرة على أجزاء", () => {
+  const SEP = "\n\n──────────\n\n";
+  const rec = (i: number) =>
+    `${i + 1}. 🚗 أبح ${1000 + i}\nالبنك: بنك الراجحي\nطراز المركبة: اكسبلوررر\n` +
+    `صانع المركبة: فورد\nسنة الصنع: 2019\nلون المركبة: ابيض\nالحي: حي النهضة\n` +
+    `نوع السيارة (صالون)\n📍 https://www.google.com/maps/search/?api=1&query=24.713552,46.675297`;
+  const many = (n: number) =>
+    `*السيارات المطلوبة للسحب (${n})*\n\n` + Array.from({ length: n }, (_, i) => rec(i)).join(SEP);
+
+  it("النص اللي داخل في رسالة واحدة مابيتقسّمش", () => {
+    const t = many(5);
+    expect(splitShareText(t)).toEqual([t]);
+  });
+
+  it("🐞 ٦٧ لوحة بتتقسّم لجزئين، كل جزء تحت الحد", () => {
+    const parts = splitShareText(many(67));
+    expect(parts.length).toBe(2);
+    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  });
+
+  it("مفيش ولا لوحة بتضيع — الـ٦٧ كلهم موجودين", () => {
+    const parts = splitShareText(many(67));
+    const joined = parts.join("\n");
+    for (let i = 1; i <= 67; i++) expect(joined).toContain(`أبح ${999 + i}`);
+  });
+
+  it("مفيش سجل بيتقطع في نصّه بين جزئين", () => {
+    for (const p of splitShareText(many(67))) {
+      // كل جزء لازم ينتهي بسجل كامل (آخر سطر فيه = سطر الموقع)
+      expect(p.trimEnd().endsWith("46.675297")).toBe(true);
+    }
+  });
+
+  it("كل جزء مكتوب عليه رقمه", () => {
+    const parts = splitShareText(many(67));
+    expect(parts[0]).toContain("١ من ٢");
+    expect(parts[1]).toContain("٢ من ٢");
+  });
+
+  it("قائمة ضخمة بتتقسّم لأجزاء كتير وكلها تحت الحد", () => {
+    const parts = splitShareText(many(400));
+    expect(parts.length).toBeGreaterThan(5);
+    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  });
+
+  it("سجل واحد أكبر من الحد لوحده مابيكسرش الحد", () => {
+    const huge = "ا".repeat(20_000);            // ٤٠ ألف بايت في سجل واحد
+    const parts = splitShareText(huge + SEP + "سجل صغير");
+    for (const p of parts) expect(utf8ByteLength(p)).toBeLessThanOrEqual(SAFE_SHARE_TEXT_BYTES);
+  });
+});
+
+// التقسيم للآيفون بس — الأندرويد حده ~١ ميجا فرسالة واحدة بتوصل عنده عادي.
+describe("isIosDevice — نفرّق الآيفون عن الأندرويد", () => {
+  const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+  const IPAD_OLD = "Mozilla/5.0 (iPad; CPU OS 12_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148";
+  const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120";
+  const ANDROID = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36";
+
+  it("آيفون وآيباد = آيفون", () => {
+    expect(isIosDevice(IPHONE, 5)).toBe(true);
+    expect(isIosDevice(IPAD_OLD, 5)).toBe(true);
+  });
+
+  it("آيباد الجديد بيقول إنه ماك — نكشفه باللمس", () => {
+    expect(isIosDevice(MAC, 5)).toBe(true);    // ماك بلمس = آيباد
+    expect(isIosDevice(MAC, 0)).toBe(false);   // ماك حقيقي
+  });
+
+  it("أندرويد = لأ (مايتقسّمش عنده)", () => {
+    expect(isIosDevice(ANDROID, 5)).toBe(false);
   });
 });

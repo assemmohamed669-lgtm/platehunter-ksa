@@ -24,7 +24,7 @@ import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, default
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, FIXED_LEADING_LABELS, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
-import { shareTextViaChooser, copyShareText } from "@/lib/share";
+import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
@@ -273,6 +273,8 @@ export default function SortingPage() {
   const EMPTY_SEL: Set<number> = useMemo(() => new Set(), []);
   const visibleOf = (k: number) => visibleByWin[k] ?? PAGE_SIZE;
   const selOf = (k: number) => selectedByWin[k] ?? EMPTY_SEL;
+  // تغيير التحديد بيلغي أجزاء مشاركة ناقصة — عشان مايبعتش «جزء ٢» من قائمة قديمة.
+  useEffect(() => { setShareParts(null); }, [selectedByWin, tashyeekSelected]);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   // تأكيد «تم النسخ» للشريط الجماعي — النسخ هو الطريق الوحيد اللي بيوصّل
   // قائمة كبيرة كاملة (زرار المشاركة بيتقص عند ١٦ كيلوبايت على الآيفون).
@@ -282,6 +284,20 @@ export default function SortingPage() {
       setBulkCopied(which);
       setTimeout(() => setBulkCopied(""), 1500);
     }
+  }
+  // على الآيفون القائمة الكبيرة بتتقص وهي رايحة لواتساب — فبنبعتها أجزاء، جزء
+  // مع كل ضغطة، وكل جزء رسالة كاملة. الأندرويد بياخدها رسالة واحدة زي ما هي.
+  const [shareParts, setShareParts] = useState<{ parts: string[]; idx: number; which: "results" | "tashyeek" } | null>(null);
+  async function sendSharePart(parts: string[], idx: number, which: "results" | "tashyeek") {
+    const out = await shareTextViaChooser(parts[idx]);
+    if (out === "cancelled") return;                 // سابها — يفضل على نفس الجزء
+    const next = idx + 1;
+    setShareParts(next >= parts.length ? null : { parts, idx: next, which });
+  }
+  async function shareBulk(text: string, which: "results" | "tashyeek") {
+    const parts = isIosDevice() ? splitShareText(text) : [text];
+    if (parts.length <= 1) { await shareTextViaChooser(text); return; }
+    await sendSharePart(parts, 0, which);
   }
   const [nearestActive, setNearestActive] = useState(false);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
@@ -2096,10 +2112,6 @@ export default function SortingPage() {
     return `*سيارات مطلوبة (${rows.length})*\n\n` +
       rows.map((r, i) => `${i + 1}. ${tashyeekShareText(r)}`).join("\n\n──────────\n\n");
   }
-  function shareTashyeekSelected() {
-    const text = tashyeekSelectedShareText();
-    if (text) void shareTextViaChooser(text);
-  }
 
   // ── Export ──
   const ts = () => new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
@@ -2262,9 +2274,6 @@ export default function SortingPage() {
       .filter((_, i) => indices.has(i))
       .map((r) => ({ obj: buildRowObject(r), gps: rawGpsOf(r) }));
     return buildSelectedShareText(rows, buildRowSummaryText);
-  }
-  function shareSelectedToWhatsApp(indices: Set<number>) {
-    void shareTextViaChooser(selectedShareText(indices));
   }
 
   /** خلية GPS الخام لصف لصق — نفس عمود موقع الداتا. */
@@ -2941,9 +2950,14 @@ export default function SortingPage() {
                   className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary">
                   {bulkCopied === "results" ? <Check size={13} className="text-primary" /> : <Copy size={13} />} {bulkCopied === "results" ? "تم النسخ" : "نسخ الكل"}
                 </button>
-                <button onClick={() => shareSelectedToWhatsApp(gSel)}
+                <button
+                  onClick={() => void (shareParts?.which === "results"
+                    ? sendSharePart(shareParts.parts, shareParts.idx, "results")
+                    : shareBulk(selectedShareText(gSel), "results"))}
                   className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night">
-                  <Share2 size={13} /> واتساب
+                  <Share2 size={13} /> {shareParts?.which === "results"
+                    ? `الجزء ${shareParts.idx + 1} من ${shareParts.parts.length}`
+                    : "واتساب"}
                 </button>
               </div>
             </div>
@@ -3128,9 +3142,14 @@ export default function SortingPage() {
                     className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-ink transition hover:border-primary hover:text-primary">
                     {bulkCopied === "tashyeek" ? <Check size={13} className="text-primary" /> : <Copy size={13} />} {bulkCopied === "tashyeek" ? "تم النسخ" : "نسخ الكل"}
                   </button>
-                  <button onClick={shareTashyeekSelected}
+                  <button
+                    onClick={() => void (shareParts?.which === "tashyeek"
+                      ? sendSharePart(shareParts.parts, shareParts.idx, "tashyeek")
+                      : shareBulk(tashyeekSelectedShareText(), "tashyeek"))}
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90">
-                    <Share2 size={13} /> واتساب
+                    <Share2 size={13} /> {shareParts?.which === "tashyeek"
+                      ? `الجزء ${shareParts.idx + 1} من ${shareParts.parts.length}`
+                      : "واتساب"}
                   </button>
                   <button onClick={deleteTashyeekSelected}
                     className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20">

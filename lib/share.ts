@@ -225,3 +225,67 @@ export async function shareImageWithText(
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   return "whatsapp-text";
 }
+
+/** أرقام عربية-هندية (١٢٣) — عشان عنوان الجزء يبان بلغة الرسالة. */
+function arabicDigits(n: number): string {
+  return String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+}
+
+/**
+ * يقسّم قائمة كبيرة لأجزاء، كل جزء تحت الحد الآمن ويتبعت كرسالة لوحده.
+ *
+ * ليه: على الآيفون القائمة الطويلة بتتقص عند ~١٦ كيلوبايت وهي رايحة لواتساب،
+ * والنسخ ما نفعش مع كل الأجهزة. فبدل ما نوصّل ناقص، نبعت على مرتين (أو أكتر)
+ * وكل رسالة كاملة. **الأندرويد مش محتاج ده** (حده ~١ ميجا) — شوف isIosDevice.
+ *
+ * القص بيحصل **عند حدود السجلات** بس، فمفيش سيارة بتتقسم على رسالتين. لو فيه
+ * سجل واحد لوحده أكبر من الحد (نادر) بيتقطّع كآخر حل عشان مايكسرش الحد.
+ * عنوان «جزء ن من م» بيتحط في **أول** الجزء عشان الرسالة تفضل منتهية بسجل كامل.
+ */
+export function splitShareText(text: string, maxBytes = SAFE_SHARE_TEXT_BYTES): string[] {
+  if (utf8ByteLength(text) <= maxBytes) return [text];
+  const LABEL_ROOM = 60;                                  // مساحة «— جزء ن من م —»
+  const room = Math.max(1, maxBytes - LABEL_ROOM);
+
+  // (١) أي سجل أكبر من المساحة لوحده — نقطّعه (عند حدود حروف كاملة).
+  const pieces: string[] = [];
+  for (const block of text.split(RECORD_SEPARATOR)) {
+    if (utf8ByteLength(block) <= room) { pieces.push(block); continue; }
+    let rest = block;
+    while (utf8ByteLength(rest) > room) {
+      const n = Math.max(1, charsWithinBytes(rest, room));
+      pieces.push(rest.slice(0, n));
+      rest = rest.slice(n);
+    }
+    if (rest) pieces.push(rest);
+  }
+
+  // (٢) نلمّ السجلات في أجزاء — كل جزء بيمتلي لحد الحد وبعدين يبدأ جزء جديد.
+  const parts: string[] = [];
+  let cur = "";
+  for (const piece of pieces) {
+    const merged = cur ? cur + RECORD_SEPARATOR + piece : piece;
+    if (cur && utf8ByteLength(merged) > room) { parts.push(cur); cur = piece; }
+    else cur = merged;
+  }
+  if (cur) parts.push(cur);
+
+  const total = parts.length;
+  return parts.map((part, i) => `— جزء ${arabicDigits(i + 1)} من ${arabicDigits(total)} —
+
+${part}`);
+}
+
+/**
+ * الجهاز آيفون/آيباد؟ التقسيم بيتطبّق عليه بس — الأندرويد حده ~١ ميجا فرسالة
+ * واحدة بتوصل عنده كاملة، ومانحوّلهاش لرسالتين من غير سبب.
+ *
+ * آيباد من iPadOS 13 بيقول في الـuserAgent إنه «Macintosh» — فبنفرّقه باللمس.
+ */
+export function isIosDevice(
+  ua: string = typeof navigator !== "undefined" ? navigator.userAgent : "",
+  maxTouchPoints: number = typeof navigator !== "undefined" ? (navigator.maxTouchPoints ?? 0) : 0,
+): boolean {
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  return /Macintosh/.test(ua) && maxTouchPoints > 1;
+}
