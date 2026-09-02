@@ -22,6 +22,7 @@ import { resolveCheckColumns, inferVehicleType } from "@/lib/wantedColumns";
 import { resolveResultColumns } from "@/lib/resultColumns";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
+import CertificateSearch from "@/components/CertificateSearch";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
@@ -340,6 +341,9 @@ export default function WantedPage() {
       </button>
 
       {error && <p className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-center text-sm text-danger" dir="rtl">{error}</p>}
+
+      {/* بحث عن شهادة السحب — برقم اللوحة أو الهيكل، من Google Drive */}
+      <CertificateSearch />
 
       {/* ترتيب الأعمدة — نفس المحفوظ من الفرز؛ يطبّق على الجدول والإكسيل والصورة. */}
       {sorted && orderableCols.length > 0 && (
