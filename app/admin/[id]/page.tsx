@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
   MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
-  Eye, EyeOff, Pencil, UserRound, X,
+  Eye, EyeOff, Pencil, UserRound, X, Mic, LayoutGrid, Lock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
@@ -17,6 +17,8 @@ interface Profile {
   id: string; username: string; email: string | null; phone: string | null;
   role: "admin" | "agent"; is_super: boolean; is_active: boolean; device_fingerprint: string | null;
   device_lock_exempt?: boolean; // معفي من قفل الجهاز (يدخل من أي جهاز)
+  voicex_enabled?: boolean;      // صوت VoiceX مفعّل لهذا المشترك (افتراضي: مقفول)
+  rest_pages_enabled?: boolean;  // باقي صفحات البرنامج مفتوحة (افتراضي: مفتوحة)
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
   service_keys: ServiceKeys | null;
@@ -319,6 +321,52 @@ export default function AgentDetail() {
             return ok;
           }}
         />
+
+        {/* ── VoiceX — تحكّم لكل مشترك (للمالك/السوبر-أدمن، على أي حساب حتى حسابه) ──
+            زر VoiceX: افتراضي مقفول للكل؛ المالك يفتحه يدوياً. القفل يرجّع المشترك
+            لصوت ديبجرام. زر باقي الصفحات: افتراضي مفتوح؛ قفله + فتح VoiceX =
+            «صفحة صوت VoiceX فقط». */}
+        {isSuper && (() => {
+          // السوبر أدمن (المالك) VoiceX مفتوح له تلقائياً بغضّ النظر عن العلم.
+          const autoVx = !!p.is_super;
+          const vx = !!p.voicex_enabled || autoVx;
+          const rest = p.rest_pages_enabled !== false; // undefined → مفتوح (الافتراضي)
+          const stateLine = autoVx
+            ? "صوت VoiceX (تلقائي للسوبر أدمن) + كل الصفحات"
+            : vx
+            ? (rest ? "صوت VoiceX + كل الصفحات" : "صفحة صوت VoiceX فقط (باقي الصفحات مقفولة)")
+            : (rest ? "صوت ديبجرام + كل الصفحات (الوضع الافتراضي)" : "مقفول — لا صوت VoiceX ولا صفحات");
+          return (
+            <div className="rounded-2xl border border-border bg-surface p-4 flex flex-col gap-2.5">
+              <div className="flex items-center gap-1.5 text-sm font-bold text-ink"><Mic size={16} className="text-primary" /> VoiceX — الصوت</div>
+
+              {/* زر تفعيل/إيقاف VoiceX — معطّل على حساب السوبر أدمن (مفتوح تلقائياً) */}
+              <button
+                onClick={async () => {
+                  const on = !vx;
+                  if (await call("setVoicexEnabled", { enabled: on })) { setMsg(on ? "✅ اتفعّل صوت VoiceX للمشترك." : "✅ رجع لصوت ديبجرام."); load(); }
+                }}
+                disabled={busy || autoVx}
+                className={`flex items-center justify-center gap-1.5 rounded-lg border py-2.5 text-xs font-bold transition disabled:opacity-60 ${vx ? "border-primary/50 bg-primary/10 text-primary hover:bg-primary/15" : "border-border text-muted hover:text-primary"}`}>
+                <Mic size={13} /> {autoVx ? "صوت VoiceX مفعّل تلقائياً (سوبر أدمن)" : vx ? "صوت VoiceX مفعّل — إيقاف" : "تفعيل صوت VoiceX"}
+              </button>
+
+              {/* زر باقي صفحات البرنامج */}
+              <button
+                onClick={async () => {
+                  const on = !rest; // on = فتح باقي الصفحات
+                  if (!on && !confirm(`تقفل باقي صفحات البرنامج على «${p.username}» وتخليه صفحة صوت VoiceX فقط؟`)) return;
+                  if (await call("setRestPages", { enabled: on })) { setMsg(on ? "✅ اتفتحت باقي صفحات البرنامج." : "✅ اتقفلت — صوت VoiceX فقط."); load(); }
+                }}
+                disabled={busy}
+                className={`flex items-center justify-center gap-1.5 rounded-lg border py-2.5 text-xs font-bold transition ${rest ? "border-border text-muted hover:text-primary" : "border-alert/50 bg-alert/5 text-alert hover:bg-alert/10"}`}>
+                {rest ? <><LayoutGrid size={13} /> باقي الصفحات: مفتوحة — قفلها (صوت فقط)</> : <><Lock size={13} /> مقفولة (صوت VoiceX فقط) — فتحها</>}
+              </button>
+
+              <p className="text-[10px] text-muted text-center">الحالة الآن: {stateLine}</p>
+            </div>
+          );
+        })()}
 
         {/* Subscription */}
         {isAgent && (

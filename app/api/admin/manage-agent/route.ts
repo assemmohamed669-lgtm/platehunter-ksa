@@ -7,6 +7,8 @@
  *  - extendSubscription { subscriptionEnd, amount?, months?, note? }
  *  - resetDevice
  *  - setActive        { active }
+ *  - setVoicexEnabled { enabled }   (VoiceX voice engine on/off for this agent)
+ *  - setRestPages     { enabled }   (rest-of-app pages on/off for this agent)
  *  - delete
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -18,7 +20,8 @@ import { randomUUID } from "node:crypto";
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
 // setActive (قفل/فتح مؤقت) متاح للأدمن العادي كمان — بطلب المالك — لكن الحماية
 // تحت بتمنعه من إنه يقفل حساب أدمن/سوبر (بيقدر يقفل المناديب بس).
-const SUPER_ONLY = new Set(["delete", "setRole"]);
+// VoiceX toggles: المالك (السوبر) وحده بيقرّر مين يشوف VoiceX ومين «صوت فقط».
+const SUPER_ONLY = new Set(["delete", "setRole", "setVoicexEnabled", "setRestPages"]);
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -177,6 +180,24 @@ export async function POST(req: NextRequest) {
       case "setActive": {
         const { error } = await supabaseAdmin.from("profiles")
           .update({ is_active: !!body.active }).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      case "setVoicexEnabled": {
+        // فتح/قفل محرّك الصوت VoiceX لهذا المشترك. مقفول افتراضياً للكل (حتى
+        // الأدمنز) — المالك يفتحه يدوياً لكل واحد. القفل يرجّعه لصوت ديبجرام.
+        const { error } = await supabaseAdmin.from("profiles")
+          .update({ voicex_enabled: !!body.enabled }).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      case "setRestPages": {
+        // فتح/قفل «باقي صفحات البرنامج» لهذا المشترك. مفتوح افتراضياً للكل.
+        // قفله مع فتح VoiceX = صفحة صوت VoiceX فقط (بلا باقي الصفحات).
+        const { error } = await supabaseAdmin.from("profiles")
+          .update({ rest_pages_enabled: !!body.enabled }).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         return NextResponse.json({ ok: true });
       }

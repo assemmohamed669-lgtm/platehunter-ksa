@@ -37,6 +37,9 @@ export default function AppShellLayout({
   const [isTrial, setIsTrial] = useState(false);
   const [sub, setSub] = useState<SubInfo | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  // «باقي صفحات البرنامج» — مفتوح افتراضياً. لو المالك قفله لمشترك (VoiceX فقط)
+  // بيتحبس على صفحة الصوت. يبدأ true فمحدش يتأثر لحد ما البروفايل يرجع.
+  const [restPagesEnabled, setRestPagesEnabled] = useState(true);
   const isHome = pathname === "/sorting";
 
   // Apply the saved appearance (font size / colours) app-wide on every load.
@@ -62,10 +65,12 @@ export default function AppShellLayout({
       if (!data.user) return;
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, is_active, subscription_end, is_trial, service_keys")
+        .select("role, is_active, subscription_end, is_trial, service_keys, rest_pages_enabled")
         .eq("id", data.user.id)
         .single();
       setIsAdmin(profile?.role === "admin");
+      // العلم الأب: undefined → مفتوح (الافتراضي). false فقط = «صوت VoiceX فقط».
+      setRestPagesEnabled((profile as { rest_pages_enabled?: boolean } | null)?.rest_pages_enabled !== false);
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).
       if (profile && (profile as { service_keys?: unknown }).service_keys != null) {
         applyServiceKeys((profile as { service_keys?: unknown }).service_keys);
@@ -91,6 +96,16 @@ export default function AppShellLayout({
       );
     });
   }, []);
+
+  // حارس «صوت VoiceX فقط»: لو المالك قفل باقي الصفحات للمشترك، أي مسار غير
+  // صفحة التشييك يترجّع لها. (إخفاء التبويبات في BottomNav تجميلي فقط —
+  // ده الحارس الفعلي اللي بيمنع الوصول بالرابط المباشر.) /admin في مجموعة
+  // مسارات منفصلة فمش متأثّر، والمالك يقدر يرجّع العلم من هناك.
+  useEffect(() => {
+    if (!restPagesEnabled && pathname && !pathname.startsWith("/instant-check")) {
+      router.replace("/instant-check");
+    }
+  }, [restPagesEnabled, pathname, router]);
 
   async function handleLogout() {
     await logoutAgent();
