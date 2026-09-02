@@ -864,11 +864,14 @@ export default function InstantCheckPage() {
         if (!uid) return;
 
         // مسار الإنتاج: هل VoiceX مفتوح للمشترك ده؟ العلم على صفّه (RLS بيسمح له
-        // يقرا صفّه). أي خطأ/أوفلاين = false ⇒ السلوك القديم بالحرف (ديبجرام).
+        // يقرا صفّه). **السوبر أدمن (المالك) مفتوح له تلقائياً** — أي حد تاني (حتى
+        // الأدمنز) لازم المالك يفتحه له بإيده عبر العلم. أي خطأ/أوفلاين = false
+        // ⇒ السلوك القديم بالحرف (ديبجرام).
         let voicexEnabled = false;
         try {
-          const { data: prof } = await supabase.from("profiles").select("voicex_enabled").eq("id", uid).single();
-          voicexEnabled = (prof as { voicex_enabled?: boolean } | null)?.voicex_enabled === true;
+          const { data: prof } = await supabase.from("profiles").select("voicex_enabled, is_super").eq("id", uid).single();
+          const p = prof as { voicex_enabled?: boolean; is_super?: boolean } | null;
+          voicexEnabled = p?.voicex_enabled === true || p?.is_super === true;
         } catch { /* أوفلاين — يفضل ديبجرام */ }
 
         if (voicexEnabled) {
