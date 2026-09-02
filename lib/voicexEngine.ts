@@ -92,21 +92,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     onUtterance: (u) => { speaking = false; lastSpokeSec = u.endSec; opts.onSpeech?.(false); },
   });
 
-  async function processWindow(fromSec: number, toSec: number) {
-    const m = mic;
-    if (stopped || toSec - fromSec < 0.6) return;
-    if (inflight >= MAX_INFLIGHT) return;   // مشغول — النافذة الجاية هتلحق
+  // وعود النوافذ الجارية — عشان الإيقاف يستناها قبل التصريف النهائي (آخر لوحة ماتضيعش).
+  const inflightSet = new Set<Promise<void>>();
 
-    // 🔇 بوابة السكوت **على الصوت الخام قبل التعلية** (زي المعمل): sliceWav
-    // بيعلّي كل نافذة لأقصى مستوى، فالسكوت بيتحوّل صوت عالي والموديل بيخترع لوحة.
-    const q = m.sliceQuality(fromSec, toSec, 0.2);
-    if (q && !audioPregate(q).accept) return;
-
-    const wav = m.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى (raw=true)
-    if (!wav) return;
-
-    inflight += 1;
-    opts.onStatus?.("processing");
+  // يبعت نافذة WAV واحدة، يطبّق حواجز المعمل، يضيف اللوحات للإجماع. مايلمسش المؤقتات.
+  async function sendWav(wav: Blob, tMs: number): Promise<void> {
     try {
       const resp = await postAudioForPlate(wav, {
         transcribeUrl: opts.transcribeUrl, token: opts.token,
@@ -118,37 +108,49 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
         return;
       }
       fails = 0;
-
       // زي المعمل: المرفوضة (accepted=false) ماتظهرش — بلا إسقاط تخمين.
       if (!resp.accepted) return;
-
       // ثقة النافذة = exp(mean_logprob) (زي المعمل) — أعلى ثقة تكسب في التصويت.
       const conf = typeof resp.meanLogprob === "number" ? Math.exp(resp.meanLogprob) : 0.6;
-
       // ⚠️ حاجز الاختراع **مسطّح** (زي المعمل): لو أوطى توكن < -0.5 = النافذة
       // كلها ملفّقة (سكوت/حروف بس) → ترميها، ماتدخلش الإجماع أصلاً.
       const minLp = typeof resp.minLogprob === "number" ? resp.minLogprob : null;
-      const fabricated = minLp !== null && minLp < MIN_TOKEN_LOGPROB;
-      if (fabricated) return;
-
+      if (minLp !== null && minLp < MIN_TOKEN_LOGPROB) return;
       // زمن الإجماع = **مركز النافذة** (زي المعمل) — عرض فوري ~٢.٥ث.
-      const tMs = ((fromSec + toSec) / 2) * 1000;
       for (const p of String(resp.plate || "").trim().split(/\s+/)) {
         const norm = p.replace(/\s+/g, "");
         if (WELL.test(norm)) consensus.add({ plate: norm, tMs, conf });
       }
-    } finally {
+    } catch { /* تجاهل — شبكة/تحليل */ }
+  }
+
+  // يقصّ نافذة [from,to] معلّاة (بعد بوابة السكوت) ويبعتها، ويتتبّع وعدها للإيقاف.
+  function sliceAndSend(fromSec: number, toSec: number): void {
+    if (toSec - fromSec < 0.6) return;
+    // 🔇 بوابة السكوت على الصوت الخام قبل التعلية (زي المعمل).
+    const q = mic.sliceQuality(fromSec, toSec, 0.2);
+    if (q && !audioPregate(q).accept) return;
+    const wav = mic.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى
+    if (!wav) return;
+    const tMs = ((fromSec + toSec) / 2) * 1000;
+    inflight += 1;
+    opts.onStatus?.("processing");
+    const pr = sendWav(wav, tMs);
+    inflightSet.add(pr);
+    void pr.finally(() => {
       inflight -= 1;
+      inflightSet.delete(pr);
       if (!stopped) opts.onStatus?.("listening");
-    }
+    });
   }
 
   const segTimer = setInterval(() => {
     if (stopped) return;
+    if (inflight >= MAX_INFLIGHT) return;   // مشغول — النافذة الجاية هتلحق
     const elapsed = mic.elapsedSec;
     // اقرا بس أثناء الكلام أو بعده بلحظة (١.٥ث) — بلاش نقرا سكوت (زي المعمل).
     if (!speaking && elapsed - lastSpokeSec > 1.5) return;
-    void processWindow(Math.max(0, elapsed - WIN_S), elapsed);
+    sliceAndSend(Math.max(0, elapsed - WIN_S), elapsed);
   }, STEP_MS);
 
   const drainTimer = setInterval(() => {
@@ -160,6 +162,30 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   opts.onStatus?.("listening");
 
+  // إيقاف نظيف — الإصلاح لباج «آخر لوحة مش بتتكتب»:
+  //  (١) نقصّ **نافذة أخيرة** تغطّي آخر ٥ث (لو المندوب وقف قبل ما المؤقّت يبعتها).
+  //  (٢) **نستنى كل النوافذ الجارية** (اللي لسه بترجع من السيرفر) — السباق القديم كان
+  //      flush بيتنفّذ قبل ما نافذة جارية ترجّع، فلوحتها تتضاف للإجماع بعد الفوات = تضيع.
+  //  (٣) بعد ما كله يهدا، نعمل flush **مرة واحدة** ونعرض كل العناقيد المتبقية.
+  async function finalize(finalFrom: number, finalTo: number): Promise<void> {
+    if (finalTo - finalFrom >= 0.6) {
+      const q = mic.sliceQuality(finalFrom, finalTo, 0.2);
+      if (!q || audioPregate(q).accept) {
+        const wav = mic.sliceWav(finalFrom, finalTo, 0.2, true);
+        if (wav) {
+          const tMs = ((finalFrom + finalTo) / 2) * 1000;
+          const fp = sendWav(wav, tMs);
+          inflightSet.add(fp);
+          void fp.finally(() => inflightSet.delete(fp));
+        }
+      }
+    }
+    try { mic.stop(); } catch { /* ignore */ }   // خلاص قصّينا آخر نافذة — نقفل الميك
+    try { await Promise.allSettled([...inflightSet]); } catch { /* ignore */ }
+    for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult });
+    opts.onStatus?.("idle");
+  }
+
   return {
     get stopped() { return stopped; },
     stop() {
@@ -167,11 +193,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       stopped = true;
       clearInterval(segTimer);
       clearInterval(drainTimer);
-      for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult });
-      try { mic.stop(); } catch { /* ignore */ }
       opts.onSpeech?.(false);
       opts.onLevel?.(0);
-      opts.onStatus?.("idle");
+      // حدود النافذة الأخيرة تتحسب **قبل** إيقاف الميك (الـbuffer لسه حيّ جوّه finalize).
+      const end = mic.elapsedSec;
+      void finalize(Math.max(0, end - WIN_S), end);
     },
   };
 }
