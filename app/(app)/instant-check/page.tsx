@@ -711,7 +711,10 @@ export default function InstantCheckPage() {
   const voicexEngineRef = useRef<import("@/lib/voicexEngine").VoicexEngineController | null>(null); // محرك VoiceX المستقل
   // حارس تكرار الصوت: آخر لوحة اتفرّغت + وقتها — عشان لو نفس النطق اتفرّغ مرتين
   // (Deepgram بيبعت النتيجة النهائية مرتين: نهاية المقطع + نقطة الصمت) مايتكتبش مرتين.
-  const lastPttEmitRef = useRef<{ norm: string; at: number } | null>(null);
+  // خريطة اللوحات اللي ظهرت + آخر لحظة (منقولة من seenRef بتاع المعمل): إعادة نطق
+  // نفس اللوحة خلال ٦ث = نفس السيارة اتأكدت تاني → نرقّي صفها لـ«مؤكّد» (نشيل «راجع»)
+  // بدل ما نكرّرها صف تاني. تأكيدان مستقلان = دليل إنها حقيقية (زي المعمل بالظبط).
+  const seenPttRef = useRef<Map<string, { id: string; at: number }>>(new Map());
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -2462,13 +2465,23 @@ export default function InstantCheckPage() {
     const cLetters = corrected.replace(/[0-9٠-٩]/g, "");
     const cDigits = corrected.replace(/[^0-9٠-٩]/g, "");
     if (cLetters.length < 2 || cLetters.length > 3 || cDigits.length < 3 || cDigits.length > 4) return;
-    // حارس التكرار: نفس النطق أحياناً بيتفرّغ مرتين (Deepgram بيبعت النتيجة النهائية
-    // مرتين — نهاية المقطع + نقطة الصمت). لو نفس اللوحة اتضافت خلال ثانيتين (مستحيل
-    // المندوب ينطقها مرتين بالسرعة دي) نتجاهل التكرار.
+    // حارس التكرار + ترقية التأكيد (زي المعمل seenRef + DEDUPE_MS):
+    //   • < ٢ث   = نفس النطق اتفرّغ مرتين (ديبجرام بيبعت النهائي مرتين) → تجاهل بلا ترقية.
+    //   • ٢ث–٦ث  = إعادة نطق فعلية لنفس اللوحة → **نرقّي الصف الموجود لـ«مؤكّد»** (نشيل
+    //             «راجع») بدل ما نكرّر صف. اللوحات فريدة لكل سيارة، فنفس اللوحة تاني =
+    //             نفس السيارة اتأكدت. ده اللي بيخلّي المندوب لما يكرّر اللوحة تتحوّل خضرا.
     const nowMs = Date.now();
-    const le = lastPttEmitRef.current;
-    if (le && le.norm === norm && nowMs - le.at < 2000) return;
-    lastPttEmitRef.current = { norm, at: nowMs };
+    const seen = seenPttRef.current;
+    const already = seen.get(norm);
+    if (already && nowMs - already.at < 6000) {
+      const dt = nowMs - already.at;
+      already.at = nowMs;
+      if (dt >= 2000) {
+        setPttResults((prev) => prev.map((r) =>
+          r.id === already.id && r.needsReview ? { ...r, needsReview: false } : r));
+      }
+      return;
+    }
     const isComplete = cLetters.length === 3 && cDigits.length === 4 && !plateNeedsReview(corrected);
 
     const result = searchInCheck(corrected);
@@ -2500,6 +2513,9 @@ export default function InstantCheckPage() {
     pttRowSeqRef.current.set(id, seq);
     // الصف بقى «موجود» من دلوقتي — قبل أي إعادة رسم، فرد سريع مايتحسبش لصف ممسوح.
     pttRowIdsRef.current.add(id);
+    // سجّل اللوحة عشان أي إعادة نطق ليها خلال ٦ث ترقّي الصف ده بدل ما تكرّره.
+    seen.set(norm, { id, at: nowMs });
+    for (const [k, v] of seen) if (nowMs - v.at > 24000) seen.delete(k); // تنضيف قيود قديمة
     setPttResults((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
     if (result.found) setPttAlert(row);
