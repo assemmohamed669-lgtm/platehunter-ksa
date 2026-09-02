@@ -33,7 +33,7 @@ import { shareImageWithText, buildPlateShareText, shareTextViaChooser } from "@/
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { readDeepgramWords, type DgWord, type DgFinal } from "@/lib/deepgramWords";
 import { fetchLearningEnabled } from "@/lib/learningSettings";
-import { isPilotOwner, fetchPlateJudgeEnabled, readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
+import { isPilotOwner, fetchPlateJudgeEnabled, readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint, type JudgeEndpoint } from "@/lib/plateJudgeGate";
 import type { FusionSource } from "@/lib/plateFusion";
 // أنواع بس (بتتشال وقت البناء) — الدوال نفسها بتتقرا من `judgeModsRef` عشان
 // chunk المالك يفضل كسول ومايتحمّلش على أجهزة باقي المناديب.
@@ -739,6 +739,11 @@ export default function InstantCheckPage() {
   const judgeArmedRef = useRef(false);                   // الهوية + المفتاح المركزي عدّوا
   const judgeOwnerIdRef = useRef<string | null>(null);   // معرّف المالك المتحقَّق منه (وسم السجل)
   const judgeModsRef = useRef<JudgeMods | null>(null);   // الوحدات الكسولة (chunk المالك)
+  // مصدر الطيّار: "owner" (المالك، عنوان من localStorage للتجربة) أو "voicex"
+  // (مشترك مفعّل عليه VoiceX، عنوان من مؤشّر Supabase). VoiceX له الأولوية = مسار
+  // الإنتاج، والمسار القديم (owner) بيفضل بالحرف للتجربة.
+  const judgeSourceRef = useRef<"owner" | "voicex" | null>(null);
+  const voicexEndpointRef = useRef<JudgeEndpoint | null>(null);  // عنوان VoiceX الحالي (من المؤشّر + realtime)
   const judgeInflightRef = useRef(0);                    // طلبات جوّه (سقف JUDGE_MAX_INFLIGHT)
   // مكوّنات نافذة آخر نتيجة نهائية للرأي التاني — **منفصل تماماً** عن
   // `curTimingRef` بتاع التدريب (اللي نافذته الواسعة صح للتدريب وقاتلة للاستنتاج).
@@ -851,10 +856,49 @@ export default function InstantCheckPage() {
   //    مقفول والسلوك زي النهاردة بالحرف.
   useEffect(() => {
     let alive = true;
+    let unsubPointer = () => {};
     (async () => {
       try {
         let uid: string | null = null;
         try { uid = (await supabase.auth.getSession()).data.session?.user?.id ?? null; } catch { /* أوفلاين */ }
+        if (!uid) return;
+
+        // مسار الإنتاج: هل VoiceX مفتوح للمشترك ده؟ العلم على صفّه (RLS بيسمح له
+        // يقرا صفّه). أي خطأ/أوفلاين = false ⇒ السلوك القديم بالحرف (ديبجرام).
+        let voicexEnabled = false;
+        try {
+          const { data: prof } = await supabase.from("profiles").select("voicex_enabled").eq("id", uid).single();
+          voicexEnabled = (prof as { voicex_enabled?: boolean } | null)?.voicex_enabled === true;
+        } catch { /* أوفلاين — يفضل ديبجرام */ }
+
+        if (voicexEnabled) {
+          // VoiceX مفتوح: نفس سبّاكة الطيّار بالحرف، بس العنوان من مؤشّر Supabase
+          // (مش localStorage) + realtime عشان تدوير نفق اللابتوب يوصل لحظياً. أي
+          // فشل جلب عنوان = voicexEndpointRef يفضل null ⇒ رجوع صامت لديبجرام (نفس
+          // عقد الطيّار: النافذة بتتحسب، والطلب بيتسكت not_configured، فيمشي ديبجرام).
+          const [client, fusion, log, ptr] = await Promise.all([
+            import("@/lib/plateJudgeClient"),
+            import("@/lib/plateFusion"),
+            import("@/lib/plateJudgeLog"),
+            import("@/lib/voicexPointer"),
+          ]);
+          if (!alive) return;
+          voicexEndpointRef.current = await ptr.resolveVoicexEndpoint();
+          if (!alive) return;
+          judgeModsRef.current = { client, fusion, log };
+          judgeOwnerIdRef.current = uid;              // وسم السجل = معرّف المشترك نفسه
+          judgeSourceRef.current = "voicex";
+          judgeArmedRef.current = true;
+          // تدوير النفق: اللابتوب بيكتب اللينك الجديد في المؤشّر ⇒ نعيد حسم العنوان.
+          unsubPointer = ptr.subscribeVoicexPointer(async () => {
+            try { voicexEndpointRef.current = await ptr.resolveVoicexEndpoint(); }
+            catch { voicexEndpointRef.current = null; }
+          });
+          return;
+        }
+
+        // مسار المالك القديم (localStorage للتجربة) — بيفضل بالحرف. مقفول افتراضياً
+        // حتى له (isPilotOwner + المفتاح المركزي + إعداد الجهاز).
         if (!isPilotOwner(uid)) return;                          // ← الباب الأول
         if (!(await fetchPlateJudgeEnabled())) return;            // ← الباب التاني
         if (!alive) return;
@@ -866,6 +910,7 @@ export default function InstantCheckPage() {
         if (!alive) return;
         judgeModsRef.current = { client, fusion, log };
         judgeOwnerIdRef.current = uid;
+        judgeSourceRef.current = "owner";
         judgeArmedRef.current = true;
         setJudgeVisible(true);
         const cfg = readJudgeEndpoint();                          // ← الباب التالت
@@ -873,7 +918,7 @@ export default function InstantCheckPage() {
         if (cfg) { setJudgeUrlInput(cfg.base); setJudgeTokenInput(cfg.token); }
       } catch { /* أي فشل = مقفول */ }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; unsubPointer(); };
   }, []);
 
   // Keep a live GPS watch running the whole time the page is open, so stamping
@@ -2567,8 +2612,9 @@ export default function InstantCheckPage() {
       return;
     }
     try {
-      // الإعداد بيتقرا كل نبضة عشان لزق النفق/التوكن وسط الجلسة يشتغل فوراً.
-      const cfg = readJudgeEndpoint();
+      // الإعداد بيتقرا كل نبضة. VoiceX: العنوان من المؤشّر (بيتحدّث بـrealtime وقت
+      // تدوير النفق). المالك: localStorage (لزق النفق/التوكن وسط الجلسة يشتغل فوراً).
+      const cfg = judgeSourceRef.current === "voicex" ? voicexEndpointRef.current : readJudgeEndpoint();
       const all = pttAudioChunksRef.current;
       // كل قرارات السكوت + حساب النافذة في **دالة نقية واحدة** مغطّاة باختبار
       // (`planJudgeSlice`): نفس الأرقام بالحرف، بس كل سبب بقى قابل للوصول
