@@ -169,20 +169,12 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   //  (٢) **نستنى كل النوافذ الجارية** (اللي لسه بترجع من السيرفر) — السباق القديم كان
   //      flush بيتنفّذ قبل ما نافذة جارية ترجّع، فلوحتها تتضاف للإجماع بعد الفوات = تضيع.
   //  (٣) بعد ما كله يهدا، نعمل flush **مرة واحدة** ونعرض كل العناقيد المتبقية.
-  async function finalize(finalFrom: number, finalTo: number): Promise<void> {
-    if (finalTo - finalFrom >= 0.6) {
-      const q = mic.sliceQuality(finalFrom, finalTo, 0.2);
-      if (!q || audioPregate(q).accept) {
-        const wav = mic.sliceWav(finalFrom, finalTo, 0.2, true);
-        if (wav) {
-          const tMs = ((finalFrom + finalTo) / 2) * 1000;
-          const fp = sendWav(wav, tMs);
-          inflightSet.add(fp);
-          void fp.finally(() => inflightSet.delete(fp));
-        }
-      }
-    }
-    try { mic.stop(); } catch { /* ignore */ }   // خلاص قصّينا آخر نافذة — نقفل الميك
+  async function finalize(): Promise<void> {
+    // ⚠️ مابنعيدش قراءة آخر نافذة (كانت بتقرا لوحات ظهرت خلاص بشكل مترفرف = صفوف
+    // مكررة، خصوصاً مع النفق اللي بيقع ويرجع فبيتكرر الإيقاف). آخر لوحة اتقالت
+    // موجودة أصلاً في آخر نافذة دورية (عنقود مفتوح لسه ماستقرّش) والـflush بيطلّعها
+    // بلا إعادة قراءة. فبنكتفي بـ: نقفل الميك، نستنى النوافذ الجارية، ثم flush واحد.
+    try { mic.stop(); } catch { /* ignore */ }
     try { await Promise.allSettled([...inflightSet]); } catch { /* ignore */ }
     for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult });
     opts.onStatus?.("idle");
@@ -197,9 +189,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       clearInterval(drainTimer);
       opts.onSpeech?.(false);
       opts.onLevel?.(0);
-      // حدود النافذة الأخيرة تتحسب **قبل** إيقاف الميك (الـbuffer لسه حيّ جوّه finalize).
-      const end = mic.elapsedSec;
-      void finalize(Math.max(0, end - WIN_S), end);
+      void finalize();   // انتظار النوافذ الجارية + flush (بلا إعادة قراءة = بلا تكرار)
     },
   };
 }
