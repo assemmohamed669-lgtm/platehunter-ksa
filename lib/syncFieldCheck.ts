@@ -6,7 +6,7 @@
  * no audio.
  */
 import { supabase } from "./supabaseClient";
-import { getAllFieldCheckEntries, getPendingFieldChecks, markFieldChecksSynced, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
+import { clearFieldCheckDeletes, getAllFieldCheckEntries, getFieldCheckDeletes, getPendingFieldChecks, markFieldChecksSynced, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
 
 async function upsertFieldCheck(uid: string, e: FieldCheckEntry): Promise<string | null> {
   const { error } = await supabase.from("field_checks").upsert(
@@ -89,6 +89,46 @@ export async function pushPendingFieldChecks(
 }
 
 /**
+ * تنفيذ المسح المحلي على السيرفر — بياخد شواهد المسح (tombstones) اللي في IDB
+ * ويمسح صفوفها من `field_checks`، وبعد النجاح بس بيشيل الشاهدة.
+ *
+ * من غير الخطوة دي المسح بيفضل على الجهاز بس، و`restoreFieldChecks` بيرجّع
+ * الصف من السيرفر أول ما المندوب يفتح الصفحة تاني — ده كان سبب شكوى «بمسح
+ * السجلات وبترجع». سياسة `field_checks_agent_delete` بتسمح للمندوب يمسح صفوفه
+ * هو بس، وإحنا كمان بنقيّد بـ`agent_id` صراحةً.
+ */
+export async function pushFieldCheckDeletes(
+  agentId: string
+): Promise<{ deleted: number; pending: number; error?: string }> {
+  const tombs = await getFieldCheckDeletes(agentId);
+  if (tombs.length === 0) return { deleted: 0, pending: 0 };
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return { deleted: 0, pending: tombs.length, error: "الجهاز أوفلاين" };
+  }
+  const uid = await requireSession(agentId);
+  if (!uid) return { deleted: 0, pending: tombs.length, error: "مفيش جلسة صالحة" };
+
+  // على دفعات — `in(...)` بقائمة ضخمة بتعمل URL أطول من اللازم على الموبايل.
+  const CHUNK = 200;
+  const ids = tombs.map((t) => t.id);
+  let deleted = 0;
+  let firstError: string | undefined;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { error } = await supabase
+      .from("field_checks")
+      .delete()
+      .eq("agent_id", uid)
+      .in("local_id", chunk);
+    if (error) { if (!firstError) firstError = error.message; continue; }
+    // الشاهدة تتشال بعد نجاح المسح بس — لو الشبكة قطعت تفضل وتتنفّذ المرة الجاية.
+    await clearFieldCheckDeletes(chunk);
+    deleted += chunk.length;
+  }
+  return { deleted, pending: ids.length - deleted, error: firstError };
+}
+
+/**
  * Restore this agent's field-check sheet FROM the server INTO IndexedDB.
  *
  * يجيب كل الصفوف **على دفعات** (‎1000/دفعة) — Supabase بيحدّد أي استعلام بـ‎1000
@@ -101,6 +141,10 @@ export async function restoreFieldChecks(
 ): Promise<{ restored: number; error?: string }> {
   const PAGE = 1000;
   const CONCURRENCY = 4;
+
+  // صفوف اتمسحت على الجهاز ولسه المسح ماوصلش السيرفر (أوفلاين/خطأ شبكة) —
+  // الاسترجاع ماينفعش يرجّعها قدام المندوب تاني.
+  const tombstoned = new Set((await getFieldCheckDeletes(agentId)).map((d) => d.id));
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const toEntry = (r: any): FieldCheckEntry => ({
@@ -138,10 +182,11 @@ export async function restoreFieldChecks(
       const { data, error } = await fetchPage(from);
       if (error) return { restored, error: error.message };
       const rows = data ?? [];
-      await saveFieldCheckEntries(rows.map(toEntry));
-      restored += rows.length;
+      const keep = rows.filter((r) => !tombstoned.has(r.local_id));
+      await saveFieldCheckEntries(keep.map(toEntry));
+      restored += keep.length;
       onProgress?.(restored, restored);
-      if (rows.length < PAGE) break;
+      if (rows.length < PAGE) break; // نهاية الصفحات = طول الصفحة الخام مش المفلترة
     }
     return { restored };
   }
@@ -162,7 +207,7 @@ export async function restoreFieldChecks(
     const entries: FieldCheckEntry[] = [];
     for (const p of pages) {
       if (p.error) { if (!firstError) firstError = p.error.message; continue; }
-      for (const r of p.data ?? []) entries.push(toEntry(r));
+      for (const r of p.data ?? []) if (!tombstoned.has(r.local_id)) entries.push(toEntry(r));
     }
     // معاملة واحدة للمجموعة كلها. لو فشلت (مساحة الجهاز مثلاً) بنكمّل باقي
     // المجموعات بدل ما الاسترجاع كله يقف — ومافيش سجل محلي بيتمسح في الحالتين.

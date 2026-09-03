@@ -5,10 +5,13 @@
  */
 
 const DB_NAME = "platehunter";
-const DB_VERSION = 4; // v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions
+// v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions,
+// v5 adds field_check_deletes (شواهد المسح — عشان المسح يوصل السيرفر)
+const DB_VERSION = 5;
 const STORE = "recordings";
 const FILES_STORE = "uploaded_files";
 const FIELD_CHECK_STORE = "field_check";
+const FIELD_CHECK_DELETES_STORE = "field_check_deletes";
 const SESSIONS_STORE = "voice_sessions";
 
 export interface RecordingEntry {
@@ -102,6 +105,17 @@ export interface FieldCheckEntry {
 }
 
 /**
+ * شاهدة مسح — «الصف ده اتمسح محلياً ولسه المسح ماوصلش السيرفر». بتعيش لحد ما
+ * `pushFieldCheckDeletes` ينفّذ المسح على `field_checks`، وفي الوقت ده
+ * `restoreFieldChecks` بيتخطّى الصف فمايرجعش قدام المندوب تاني.
+ */
+export interface FieldCheckDeletion {
+  id: string;                        // نفس id السجل الممسوح (= local_id على السيرفر)
+  agentId?: string;                  // صاحب الصف — عشان جهاز بمندوبين مايتلخبطش
+  deletedAt: string;                 // ISO timestamp
+}
+
+/**
  * جلسة تسجيل صوتي كاملة — النص الخام المتراكم + سجل الأحداث (event log).
  * بتتحفظ عشان أي تحسين مستقبلي في المحلّل يقدر يعيد المعالجة (replay) على
  * جلسات قديمة، وعشان تشخيص «ليه اللوحة دي طلعت كده؟» يبقى ممكن.
@@ -136,6 +150,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(FIELD_CHECK_STORE)) {
         db.createObjectStore(FIELD_CHECK_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(FIELD_CHECK_DELETES_STORE)) {
+        db.createObjectStore(FIELD_CHECK_DELETES_STORE, { keyPath: "id" });
       }
       if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
         const sessionsStore = db.createObjectStore(SESSIONS_STORE, { keyPath: "id" });
@@ -480,12 +497,70 @@ export async function markFieldChecksSynced(ids: string[]): Promise<void> {
   });
 }
 
-/** Delete one field-check entry by id. */
+/** Delete one field-check entry by id (+ شاهدة مسح عشان توصل السيرفر). */
 export async function deleteFieldCheckEntry(id: string): Promise<void> {
+  return deleteFieldCheckEntries([id]);
+}
+
+/**
+ * مسح مجموعة سجلات في **معاملة واحدة** — «تحديد الكل ← مسح» على ٤٥٠٠ سجل كان
+ * بيعمل ٤٥٠٠ معاملة منفصلة على قاعدة الجهاز.
+ *
+ * وبيسيب لكل صف **شاهدة مسح** (tombstone) في `field_check_deletes` بهوية صاحب
+ * الصف. من غيرها المسح بيفضل محلي بس، و`restoreFieldChecks` بيرجّع الصف من
+ * السيرفر تاني أول ما المندوب يفتح صفحة التشييك — ده كان الباج اللي بيخلي
+ * السجلات «ترجع بعد المسح».
+ */
+export async function deleteFieldCheckEntries(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await openDB();
+  const deletedAt = new Date().toISOString();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([FIELD_CHECK_STORE, FIELD_CHECK_DELETES_STORE], "readwrite");
+    const store = tx.objectStore(FIELD_CHECK_STORE);
+    const tombs = tx.objectStore(FIELD_CHECK_DELETES_STORE);
+    for (const id of ids) {
+      // نقرا الصف الأول عشان الشاهدة تتسجّل بهوية صاحبه — جهاز فيه مندوبين
+      // مايبقاش مسح واحد فيهم بيمسح من حساب التاني.
+      const get = store.get(id);
+      get.onsuccess = () => {
+        const e = get.result as FieldCheckEntry | undefined;
+        tombs.put({ id, agentId: e?.agentId, deletedAt } as FieldCheckDeletion);
+      };
+      store.delete(id);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+/**
+ * شواهد المسح اللي لسه ماوصلتش السيرفر. `agentId` بيقصرها على صفوف المندوب ده
+ * (+ الشواهد القديمة اللي مالهاش هوية).
+ */
+export async function getFieldCheckDeletes(agentId?: string): Promise<FieldCheckDeletion[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
-    tx.objectStore(FIELD_CHECK_STORE).delete(id);
+    const tx = db.transaction(FIELD_CHECK_DELETES_STORE, "readonly");
+    const req = tx.objectStore(FIELD_CHECK_DELETES_STORE).getAll();
+    req.onsuccess = () => {
+      let rows = req.result as FieldCheckDeletion[];
+      if (agentId) rows = rows.filter((d) => !d.agentId || d.agentId === agentId);
+      resolve(rows);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** يشيل شواهد المسح اللي اتنفّذت على السيرفر بنجاح. */
+export async function clearFieldCheckDeletes(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FIELD_CHECK_DELETES_STORE, "readwrite");
+    const store = tx.objectStore(FIELD_CHECK_DELETES_STORE);
+    for (const id of ids) store.delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
