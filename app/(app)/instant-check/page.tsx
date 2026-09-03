@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter } from "lucide-react";
+import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, deleteFieldCheckEntries } from "@/lib/idb";
@@ -165,7 +166,9 @@ interface CheckHit {
   checkedAt: string;
 }
 
-type CheckMode = "manual" | "camera" | "ptt" | "sheet" | "chassis";
+// "sort" = تبويب الفرز — يظهر **للمشترك صوت VoiceX فقط** (بديل صفحة الفرز
+// الأساسية اللي مالوش وصول ليها).
+type CheckMode = "manual" | "camera" | "ptt" | "sheet" | "chassis" | "sort";
 
 interface PlateResult {
   plate: string;
@@ -507,6 +510,23 @@ let icPttExportedCache: string[] | null = null;
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
+  /**
+   * المشترك **صوت VoiceX فقط** (`rest_pages_enabled = false`): مالوش صفحة الفرز
+   * الأساسية، فبيشوف تبويبات أقل (صوتي · السجلات · فرز) وتبويب «فرز» بيظهر **له
+   * هو بس**. `null` = لسه بنجيب البروفايل (نعرض الوضع العادي لحد ما يوصل).
+   */
+  const [voiceOnly, setVoiceOnly] = useState<boolean | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        const { data: prof } = await supabase.from("profiles")
+          .select("rest_pages_enabled").eq("id", data.user.id).single();
+        setVoiceOnly((prof as { rest_pages_enabled?: boolean } | null)?.rest_pages_enabled === false);
+      } catch { setVoiceOnly(false); }
+    })();
+  }, []);
   // حالة الـ GPS (منقولة من صفحة التسجيل) — تظهر فوق مربع ملف التشييك عشان
   // المندوب يتأكد إن الموقع شغّال بدقّة قبل التشييك (الموقع مهم لكل صف).
   const [gps, setGps] = useState<GpsCoords | null>(null);
@@ -525,6 +545,16 @@ export default function InstantCheckPage() {
   useEffect(() => {
     try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
   }, [mode]);
+  /**
+   * حارس تبويبات المشترك صوت-فقط: تبويبه المحفوظ ممكن يكون واحد من المخفيين
+   * (يدوي/كاميرا/شاص) من قبل ما يتقفل عنه — من غير ده الصفحة تفضل فاضية لأن
+   * التبويب مش موجود في الشريط. برضه لو حد غير صوت-فقط عنده «فرز» محفوظ.
+   */
+  useEffect(() => {
+    if (voiceOnly === null) return;
+    if (voiceOnly && (mode === "manual" || mode === "camera" || mode === "chassis")) setMode("ptt");
+    if (!voiceOnly && mode === "sort") setMode("manual");
+  }, [voiceOnly, mode]);
 
   // Manual
   const [manualInput, setManualInput] = useState("");
@@ -1964,6 +1994,7 @@ export default function InstantCheckPage() {
     manual: "متشيكة يدوي",
     chassis: "متشيكة بالشاصي",
     sheet: "متشيكة يدوي", // unused (the sheet tab never exports)
+    sort: "متشيكة يدوي",  // unused (تبويب الفرز مابيصدّرش سجلات)
   };
 
   // Collect the extra (selected) detail columns for a matched row.
@@ -4023,15 +4054,27 @@ export default function InstantCheckPage() {
     <div className="flex flex-col gap-4">
       {/* ── شريط التبويبات — أول حاجة فوق في الصفحة (فوق مربع رفع الشيت) ── */}
       {checkTable && (
-        <div className="grid grid-cols-5 gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg">
+        <div
+          className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg ${
+            voiceOnly ? "grid-cols-3" : "grid-cols-5"
+          }`}
+        >
           {(
-            [
-              { key: "manual", Icon: Type, label: "يدوي" },
-              { key: "camera", Icon: Camera, label: "كاميرا" },
-              { key: "ptt", Icon: Mic, label: "صوتي" },
-              { key: "chassis", Icon: Barcode, label: "شاص" },
-              { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
-            ] as const
+            voiceOnly
+              // المشترك صوت-فقط: صوتي + السجلات (مرتبطين ببعض) + فرز (بديل صفحة
+              // الفرز اللي مالوش وصول ليها). بلا يدوي/كاميرا/شاص.
+              ? ([
+                  { key: "ptt", Icon: Mic, label: "صوتي" },
+                  { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
+                  { key: "sort", Icon: ListFilter, label: "فرز" },
+                ] as const)
+              : ([
+                  { key: "manual", Icon: Type, label: "يدوي" },
+                  { key: "camera", Icon: Camera, label: "كاميرا" },
+                  { key: "ptt", Icon: Mic, label: "صوتي" },
+                  { key: "chassis", Icon: Barcode, label: "شاص" },
+                  { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
+                ] as const)
           ).map(({ key, Icon, label }) => (
             <button
               key={key}
@@ -4060,8 +4103,8 @@ export default function InstantCheckPage() {
         sky
       />
 
-      {/* ── حالة الـ GPS — تظهر في كل التبويبات ما عدا «السجلات» (تنظيم الصفحة) ── */}
-      {mode !== "sheet" && (
+      {/* ── حالة الـ GPS — تظهر في كل التبويبات ما عدا «السجلات» و«فرز» ── */}
+      {mode !== "sheet" && mode !== "sort" && (
       <div className="flex flex-col gap-1.5">
         <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
           حالة الـ GPS
@@ -4115,8 +4158,13 @@ export default function InstantCheckPage() {
         </div>
       )}
 
+      {/* ── تبويب «فرز» — للمشترك صوت-فقط بس (بديل صفحة الفرز الأساسية) ── */}
+      {checkTable && voiceOnly && mode === "sort" && (
+        <VoiceOnlySort checkTable={checkTable} />
+      )}
+
       {/* ── محتوى التبويب (الشريط نفسه اتنقل فوق الصفحة) ── */}
-      {checkTable && (
+      {checkTable && mode !== "sort" && (
         <>
           {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
           {mode === "sheet" && (
