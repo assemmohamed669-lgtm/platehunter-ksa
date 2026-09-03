@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen, Mic } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
@@ -78,6 +78,11 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [isSuper, setIsSuper] = useState(false);
+  // فتح/قفل صوت VoiceX لكل المناديب مرة واحدة (سوبر أدمن بس) — بتأكيد قبل التنفيذ
+  // عشان ضغطة غلط ماتقفلش الصوت على الأسطول كله.
+  const [bulkConfirm, setBulkConfirm] = useState<"on" | "off" | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
   // رسالة الأدمن للمناديب — بتظهر في شريط البرنامج في كل الصفحات
   const [noticeActive, setNoticeActive] = useState<AppNotice | null>(null);
   const [noticeText, setNoticeText] = useState("");
@@ -328,6 +333,36 @@ export default function AdminDashboard() {
     } catch { alert("تعذّر الاتصال بالخادم."); }
   }
 
+  /**
+   * فتح/قفل صوت VoiceX لكل **المناديب** مرة واحدة. الفلترة على المناديب بتتم
+   * على السيرفر (`role = 'agent'`) — الأدمن والسوبر أدمن مايتأثروش نهائياً.
+   */
+  async function runVoicexBulk(enabled: boolean) {
+    setBulkBusy(true);
+    setBulkMsg(null);
+    try {
+      const res = await fetch("/api/admin/voicex-bulk", {
+        method: "POST", headers: await authHeaders(),
+        body: JSON.stringify({ enabled }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setBulkMsg({ ok: false, text: json.error ?? "تعذّر تنفيذ العملية." });
+        return;
+      }
+      setBulkMsg({
+        ok: true,
+        text: `تم ${enabled ? "فتح" : "قفل"} الصوت لـ${json.count ?? 0} مندوب.`,
+      });
+      setBulkConfirm(null);
+      loadAgents();
+    } catch {
+      setBulkMsg({ ok: false, text: "تعذّر الاتصال بالخادم." });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   const enriched = useMemo(() => agents.map((a) => ({ a, sub: subStatus(a.subscription_end) })), [agents]);
 
   // Super-admin first, then admins, then agents — alphabetical within each group.
@@ -437,6 +472,60 @@ export default function AdminDashboard() {
             className="flex items-center justify-center gap-2 rounded-xl border border-danger/40 bg-danger/5 py-3 text-sm font-bold text-danger transition hover:bg-danger/10 active:scale-[0.99]">
             <ShieldAlert size={16} /> سجل الأمان — مين حاول يدخل
           </button>
+        )}
+
+        {/* ── صوت VoiceX لكل المناديب مرة واحدة — سوبر أدمن فقط ────────────── */}
+        {isSuper && (
+          <div className="rounded-xl border border-brand/40 bg-brand/5 p-3">
+            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink">
+              <Mic size={15} /> صوت VoiceX — كل المناديب مرة واحدة
+            </div>
+            <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
+              بيأثّر على <b>المناديب بس</b> — الأدمن والسوبر أدمن مايتأثروش.
+            </p>
+
+            {bulkConfirm ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-[12px] font-bold leading-relaxed text-danger">
+                  متأكد إنك عايز {bulkConfirm === "on" ? "تفتح" : "تقفل"} الصوت لكل المناديب؟
+                </p>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => void runVoicexBulk(bulkConfirm === "on")}
+                    disabled={bulkBusy}
+                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold text-white transition disabled:opacity-50 ${
+                      bulkConfirm === "on" ? "bg-emerald-600" : "bg-danger"
+                    }`}
+                  >
+                    {bulkBusy ? "…" : `أيوه، ${bulkConfirm === "on" ? "افتح" : "اقفل"} للكل`}
+                  </button>
+                  <button onClick={() => setBulkConfirm(null)} disabled={bulkBusy}
+                    className="flex-1 rounded-lg border border-border py-2.5 text-xs font-bold text-muted disabled:opacity-50">
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-1.5">
+                <button onClick={() => { setBulkMsg(null); setBulkConfirm("on"); }}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-600/10 py-2.5 text-xs font-bold text-emerald-600 transition hover:bg-emerald-600/20">
+                  <LockOpen size={14} /> افتح للكل
+                </button>
+                <button onClick={() => { setBulkMsg(null); setBulkConfirm("off"); }}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 py-2.5 text-xs font-bold text-danger transition hover:bg-danger/20">
+                  <Lock size={14} /> اقفل للكل
+                </button>
+              </div>
+            )}
+
+            {bulkMsg && (
+              <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold ${
+                bulkMsg.ok ? "bg-emerald-600/10 text-emerald-600" : "bg-danger/10 text-danger"
+              }`}>
+                {bulkMsg.text}
+              </p>
+            )}
+          </div>
         )}
 
         {/* بث للمناديب — رسالة عادية أو استطلاع رأي. سوبر أدمن فقط. */}

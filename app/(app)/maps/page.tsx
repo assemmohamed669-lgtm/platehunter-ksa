@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   getAllRecordingsLite, getAllFieldCheckEntries, getUploadedFile,
-  deleteRecording, deleteFieldCheckEntry,
+  deleteRecording, deleteFieldCheckEntry, deleteFieldCheckEntries,
   type RecordingEntry, type FieldCheckEntry,
 } from "@/lib/idb";
 import { detectPlateColumn, detectPlateColumnByContent } from "@/lib/plateParser";
@@ -17,6 +17,7 @@ import { plateKey } from "@/lib/fieldCheck";
 import { buildSpreadsheetBlob, openExcelBlob } from "@/lib/excel";
 import { searchPlace, type PlaceResult } from "@/lib/geocoding";
 import { supabase } from "@/lib/supabaseClient";
+import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
 import {
   gpsService, haversineKm, estimateDriveMinutes, formatDistanceKm, formatDurationMin,
 } from "@/lib/gps";
@@ -262,21 +263,34 @@ export default function MapsPage() {
       setBusy(false);
     }
   }
+  // المسح المحلي لوحده بيرجع تاني مع أول استرجاع من السيرفر — لازم يتنفّذ فوق.
+  async function propagateFieldDeletes() {
+    try {
+      const uid = (await supabase.auth.getSession()).data.session?.user?.id;
+      if (uid) await pushFieldCheckDeletes(uid);
+    } catch { /* أوفلاين — الشاهدة بتفضل لحد ما الشبكة ترجع */ }
+  }
+
   async function remove(m: Match) {
     if (!confirm(`تحذف اللوحة ${m.plate} من القائمة؟`)) return;
     if (m.source === "rec") { await deleteRecording(m.id); setRecordings((prev) => prev.filter((r) => r.localId !== m.id)); }
-    else { await deleteFieldCheckEntry(m.id); setFieldEntries((prev) => prev.filter((e) => e.id !== m.id)); }
+    else {
+      await deleteFieldCheckEntry(m.id);
+      setFieldEntries((prev) => prev.filter((e) => e.id !== m.id));
+      void propagateFieldDeletes();
+    }
     setSelected((prev) => { const n = new Set(prev); n.delete(m.key); return n; });
   }
   async function deleteSelected() {
     const rows = filtered.filter((m) => selected.has(m.key));
     if (!rows.length || !confirm(`تحذف ${rows.length} لوحة من القائمة؟`)) return;
-    for (const m of rows) {
-      if (m.source === "rec") { await deleteRecording(m.id); }
-      else { await deleteFieldCheckEntry(m.id); }
-    }
     const recIds = new Set(rows.filter((m) => m.source === "rec").map((m) => m.id));
     const fieldIds = new Set(rows.filter((m) => m.source === "field").map((m) => m.id));
+    for (const id of recIds) await deleteRecording(id);
+    if (fieldIds.size > 0) {
+      await deleteFieldCheckEntries([...fieldIds]); // معاملة واحدة + شواهد مسح
+      void propagateFieldDeletes();
+    }
     setRecordings((prev) => prev.filter((r) => !recIds.has(r.localId)));
     setFieldEntries((prev) => prev.filter((e) => !fieldIds.has(e.id)));
     setSelected(new Set());

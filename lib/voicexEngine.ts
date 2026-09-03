@@ -34,7 +34,14 @@ const MAX_INFLIGHT = 2;       // نافذتين متوازيتين بحد أقص
 const FATAL_FAILS = 8;        // فشل نفق متتالي كتير → رجوع لديبجرام
 const REQ_TIMEOUT_MS = 9000;
 
-export interface VoicexPlateMeta { tier: "green" | "yellow"; conf: number; mult: number; }
+/**
+ * `tMs` = **زمن النطق** (مركز نافذة الصوت في تسجيل الجلسة) — مش زمن وصول الرد.
+ * حارس التوأم في صفحة التشييك بيستخدمه عشان يفرّق بين:
+ *   • ترفرف نفس النطق (نوافذ متداخلة، فرقها ~١.٥ث)
+ *   • ولوحتين حقيقيتين ورا بعض (إيقاع النطق ~٣.٤ث)
+ * زمن الوصول مايصلحش للتفرقة دي لأنه بيتأثر بتذبذب الشبكة/الطابور.
+ */
+export interface VoicexPlateMeta { tier: "green" | "yellow"; conf: number; mult: number; tMs: number; }
 
 export interface VoicexEngineOpts {
   transcribeUrl: string;
@@ -169,7 +176,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   const drainTimer = setInterval(() => {
     if (stopped) return;
     for (const c of consensus.drain(mic.elapsedSec * 1000)) {
-      emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult });
+      emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
     }
   }, DRAIN_MS);
 
@@ -187,7 +194,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // بلا إعادة قراءة. فبنكتفي بـ: نقفل الميك، نستنى النوافذ الجارية، ثم flush واحد.
     try { mic.stop(); } catch { /* ignore */ }
     try { await Promise.allSettled([...inflightSet]); } catch { /* ignore */ }
-    for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult });
+    for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
     opts.onStatus?.("idle");
   }
 
