@@ -148,6 +148,14 @@ function formatDate(iso: string) {
   return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 }
 
+/** فرق حرف واحد بالظبط بنفس الطول (Hamming == 1) — لكشف ترفرف الحرف (رعق↔حعق). */
+function oneLetterApart(a: string, b: string): boolean {
+  if (a.length !== b.length || a.length === 0) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++d > 1) return false;
+  return d === 1;
+}
+
 interface CheckHit {
   id: string;
   plate: string;
@@ -718,7 +726,7 @@ export default function InstantCheckPage() {
   // خريطة اللوحات اللي ظهرت + آخر لحظة (منقولة من seenRef بتاع المعمل): إعادة نطق
   // نفس اللوحة خلال ٦ث = نفس السيارة اتأكدت تاني → نرقّي صفها لـ«مؤكّد» (نشيل «راجع»)
   // بدل ما نكرّرها صف تاني. تأكيدان مستقلان = دليل إنها حقيقية (زي المعمل بالظبط).
-  const seenPttRef = useRef<Map<string, { id: string; at: number }>>(new Map());
+  const seenPttRef = useRef<Map<string, { id: string; at: number; mult?: number; digits?: string; letters?: string }>>(new Map());
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -2486,6 +2494,9 @@ export default function InstantCheckPage() {
     // من أنهي سجل في أنهي رسالة. الافتراضي = سجل وحيد بلا ترحيل، وده بالظبط
     // حالة المحرك المحلي (لوحة واحدة لكل نتيجة) ⇒ سلوكه بالحرف زي ما هو.
     emit: { index: number; count: number; fromCarry: boolean } = { index: 0, count: 1, fromCarry: false },
+    // عدد النوافذ المتّفقة من الإجماع (VoiceX فقط): ≥٢ = مؤكّدة، ١ = مفردة. undefined
+    // لكل المصادر التانية (يدوي/كاميرا/Whisper/ديبجرام) ⇒ حارس التوأم يتخطّاها تماماً.
+    mult?: number,
   ) {
     if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي لوحة لحد ما يكمّل
     // التعلّم التلقائي الحي (blend/confusions) **متوقّف** — كان بيلوّث النتايج
@@ -2516,6 +2527,29 @@ export default function InstantCheckPage() {
           r.id === already.id && r.needsReview ? { ...r, needsReview: false } : r));
       }
       return;
+    }
+    // ── حارس التوأم (ترفرف الحرف) — VoiceX فقط (mult معرَّف) ──────────────────────
+    // نفس الأرقام الأربعة + فرق حرف واحد خلال ٦ث = نفس اللوحة اتقرت بشكلين (رعق/حعق).
+    // القاعدة الآمنة (اتفاق-نوافذ، مش ثقة-ضد-ثقة اللي المالك رفضها):
+    //   • وارد مفرد (mult=1) + توأم **مؤكّد** (mult≥2) → ارمِ الوارد (الغلط الأرجح).
+    //   • وارد مؤكّد + توأم **مفرد** → استبدل (امسح صف المفرد).
+    //   • الاتنين مفردين أو الاتنين مؤكّدين → سيبهم (المندوب يقرّر) — **مايترميش مؤكّدة أبداً**.
+    if (mult !== undefined) {
+      for (const [k, v] of seen) {
+        if (v.mult === undefined || nowMs - v.at > 6000) continue;
+        if (v.digits !== cDigits || !oneLetterApart(v.letters ?? "", cLetters)) continue;
+        const twinConfirmed = (v.mult ?? 0) >= 2;
+        if (mult < 2 && twinConfirmed) return;                       // وارد مفرد + توأم مؤكّد → ارمِ
+        if (mult >= 2 && !twinConfirmed) {                           // وارد مؤكّد + توأم مفرد → استبدل
+          pttRowIdsRef.current.delete(v.id);
+          seen.delete(k);
+          setPttResults((prev) => prev.filter((r) => r.id !== v.id));
+          setPttExportedIds((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
+          setPttAlert((a) => (a?.id === v.id ? null : a));
+          setPttSel((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
+        }
+        break;
+      }
     }
     const isComplete = cLetters.length === 3 && cDigits.length === 4 && !plateNeedsReview(corrected);
 
@@ -2549,7 +2583,7 @@ export default function InstantCheckPage() {
     // الصف بقى «موجود» من دلوقتي — قبل أي إعادة رسم، فرد سريع مايتحسبش لصف ممسوح.
     pttRowIdsRef.current.add(id);
     // سجّل اللوحة عشان أي إعادة نطق ليها خلال ٦ث ترقّي الصف ده بدل ما تكرّره.
-    seen.set(norm, { id, at: nowMs });
+    seen.set(norm, { id, at: nowMs, mult, digits: cDigits, letters: cLetters });
     for (const [k, v] of seen) if (nowMs - v.at > 24000) seen.delete(k); // تنضيف قيود قديمة
     setPttResults((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
@@ -3628,7 +3662,7 @@ export default function InstantCheckPage() {
         transcribeUrl: cfg.transcribeUrl,
         token: cfg.token,
         agentId: agentIdRef.current ?? undefined,   // وسم كل نافذة حصاد باسم المندوب
-        onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow"),
+        onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow", undefined, meta.mult),
         onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
         onSpeech: (active) => setPttMicActive(active),
         onLevel: (lvl) => setPttLevel(lvl),
@@ -3685,6 +3719,14 @@ export default function InstantCheckPage() {
     // واصل، هو المحرك **وحده** (بلا ديبجرام). لو الميك اترفض أو النفق مش واصل،
     // بنكمّل للمسارات التحتية (ديبجرام) = الرجوع التلقائي.
     if (judgeSourceRef.current === "voicex" && voicexEndpointRef.current) {
+      const dgKey0 = getDeepgramKey() || getActiveDeepgramKey();
+      // جسّ النفق أول الجلسة (لمن معه احتياطي ديبجرام بس): لو واقع ننزل ديبجرام فوراً
+      // بدل ١٢-٣٦ث نوافذ فاشلة صامتة (كان المندوب يفتكرها بايظة ويوقف/يفتح كذا مرة).
+      // voicex-only يتخطّى الجسّ (سلبي كاذب هيقفل محركه الوحيد) ويلتزم بـVoiceX + الشفاء الذاتي.
+      if (dgKey0 && !(await probeVoicexHealth())) {
+        const okDg = await startDeepgramPtt(dgKey0);
+        if (okDg) { setPttEngine("deepgram"); startVoicexRetry(); return; }
+      }
       const ok = await startVoicexPtt();
       if (ok) { setPttEngine("voicex"); return; }
     }
