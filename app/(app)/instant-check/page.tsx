@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode } from "lucide-react";
+import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
@@ -149,12 +150,6 @@ function formatDate(iso: string) {
 }
 
 /** فرق حرف واحد بالظبط بنفس الطول (Hamming == 1) — لكشف ترفرف الحرف (رعق↔حعق). */
-function oneLetterApart(a: string, b: string): boolean {
-  if (a.length !== b.length || a.length === 0) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++d > 1) return false;
-  return d === 1;
-}
 
 interface CheckHit {
   id: string;
@@ -726,7 +721,7 @@ export default function InstantCheckPage() {
   // خريطة اللوحات اللي ظهرت + آخر لحظة (منقولة من seenRef بتاع المعمل): إعادة نطق
   // نفس اللوحة خلال ٦ث = نفس السيارة اتأكدت تاني → نرقّي صفها لـ«مؤكّد» (نشيل «راجع»)
   // بدل ما نكرّرها صف تاني. تأكيدان مستقلان = دليل إنها حقيقية (زي المعمل بالظبط).
-  const seenPttRef = useRef<Map<string, { id: string; at: number; mult?: number; digits?: string; letters?: string }>>(new Map());
+  const seenPttRef = useRef<Map<string, { id: string; at: number; mult?: number; digits?: string; letters?: string; conf?: number; tMs?: number }>>(new Map());
 
   // Self-learning maps (shared with the registration page). A voice-check edit
   // teaches the same models the recording page uses, and vice versa.
@@ -2497,6 +2492,10 @@ export default function InstantCheckPage() {
     // عدد النوافذ المتّفقة من الإجماع (VoiceX فقط): ≥٢ = مؤكّدة، ١ = مفردة. undefined
     // لكل المصادر التانية (يدوي/كاميرا/Whisper/ديبجرام) ⇒ حارس التوأم يتخطّاها تماماً.
     mult?: number,
+    // ثقة القراءة (٠..١) و**زمن النطق** (مركز نافذة الصوت) — VoiceX فقط.
+    // الاتنين بيستخدمهم حارس التوأم في حالة «الاتنين مفردين» بس (شوف تحت).
+    conf?: number,
+    tMs?: number,
   ) {
     if (pttPausedRef.current) return; // إيقاف مؤقت — نتجاهل أي لوحة لحد ما يكمّل
     // التعلّم التلقائي الحي (blend/confusions) **متوقّف** — كان بيلوّث النتايج
@@ -2528,30 +2527,29 @@ export default function InstantCheckPage() {
       }
       return;
     }
-    // ── حارس التوأم (ترفرف الحرف) — VoiceX فقط (mult معرَّف) ──────────────────────
-    // نفس الأرقام الأربعة + فرق حرف واحد خلال ٦ث = نفس اللوحة اتقرت بشكلين (رعق/حعق).
-    // القاعدة الآمنة (اتفاق-نوافذ، مش ثقة-ضد-ثقة اللي المالك رفضها):
-    //   • وارد مفرد (mult=1) + توأم **مؤكّد** (mult≥2) → ارمِ الوارد (الغلط الأرجح).
-    //   • وارد مؤكّد + توأم **مفرد** → استبدل (امسح صف المفرد).
-    //   • الاتنين مفردين أو الاتنين مؤكّدين → سيبهم (المندوب يقرّر) — **مايترميش مؤكّدة أبداً**.
+    // ── حارس التوأم — VoiceX فقط (mult معرَّف) ────────────────────────────────────
+    // كل قواعد القرار في `lib/twinGuard.ts` (نقية + مغطّاة باختبارات). الصفحة
+    // بتلفّ على اللوحات الأخيرة وتنفّذ القرار بس — مافيش منطق قرار هنا.
     if (mult !== undefined) {
       for (const [k, v] of seen) {
         if (v.mult === undefined || nowMs - v.at > 6000) continue;
-        // توأم = نفس الأرقام + فرق حرف واحد (رعق/حعق)، **أو** نفس الحروف + فرق رقم
-        // واحد (بنح6706/بنح6702، حكن9550/9556). oneLetterApart عام (فرق خانة واحدة).
-        const letterTwin = v.digits === cDigits && oneLetterApart(v.letters ?? "", cLetters);
-        const digitTwin = v.letters === cLetters && oneLetterApart(v.digits ?? "", cDigits);
-        if (!letterTwin && !digitTwin) continue;
-        const twinConfirmed = (v.mult ?? 0) >= 2;
-        if (mult < 2 && twinConfirmed) return;                       // وارد مفرد + توأم مؤكّد → ارمِ
-        if (mult >= 2 && !twinConfirmed) {                           // وارد مؤكّد + توأم مفرد → استبدل
-          pttRowIdsRef.current.delete(v.id);
-          seen.delete(k);
-          setPttResults((prev) => prev.filter((r) => r.id !== v.id));
-          setPttExportedIds((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
-          setPttAlert((a) => (a?.id === v.id ? null : a));
-          setPttSel((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
-        }
+        if (!areTwins(
+          { letters: cLetters, digits: cDigits },
+          { letters: v.letters ?? "", digits: v.digits ?? "" },
+        )) continue;
+        const decision = twinGuardDecision(
+          { letters: cLetters, digits: cDigits, mult, conf, tMs },
+          { letters: v.letters ?? "", digits: v.digits ?? "", mult: v.mult, conf: v.conf, tMs: v.tMs },
+        );
+        if (decision === "none") break;
+        if (decision === "drop-incoming") return;
+        // "drop-twin" — امسح صف التوأم الموجود (والحالات المعلّقة عليه) وكمّل.
+        pttRowIdsRef.current.delete(v.id);
+        seen.delete(k);
+        setPttResults((prev) => prev.filter((r) => r.id !== v.id));
+        setPttExportedIds((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
+        setPttAlert((a) => (a?.id === v.id ? null : a));
+        setPttSel((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
         break;
       }
     }
@@ -2587,7 +2585,7 @@ export default function InstantCheckPage() {
     // الصف بقى «موجود» من دلوقتي — قبل أي إعادة رسم، فرد سريع مايتحسبش لصف ممسوح.
     pttRowIdsRef.current.add(id);
     // سجّل اللوحة عشان أي إعادة نطق ليها خلال ٦ث ترقّي الصف ده بدل ما تكرّره.
-    seen.set(norm, { id, at: nowMs, mult, digits: cDigits, letters: cLetters });
+    seen.set(norm, { id, at: nowMs, mult, digits: cDigits, letters: cLetters, conf, tMs });
     for (const [k, v] of seen) if (nowMs - v.at > 24000) seen.delete(k); // تنضيف قيود قديمة
     setPttResults((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
@@ -3666,7 +3664,7 @@ export default function InstantCheckPage() {
         transcribeUrl: cfg.transcribeUrl,
         token: cfg.token,
         agentId: agentIdRef.current ?? undefined,   // وسم كل نافذة حصاد باسم المندوب
-        onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow", undefined, meta.mult),
+        onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow", undefined, meta.mult, meta.conf, meta.tMs),
         onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
         onSpeech: (active) => setPttMicActive(active),
         onLevel: (lvl) => setPttLevel(lvl),
