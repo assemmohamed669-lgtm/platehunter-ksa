@@ -2537,7 +2537,11 @@ export default function InstantCheckPage() {
     if (mult !== undefined) {
       for (const [k, v] of seen) {
         if (v.mult === undefined || nowMs - v.at > 6000) continue;
-        if (v.digits !== cDigits || !oneLetterApart(v.letters ?? "", cLetters)) continue;
+        // توأم = نفس الأرقام + فرق حرف واحد (رعق/حعق)، **أو** نفس الحروف + فرق رقم
+        // واحد (بنح6706/بنح6702، حكن9550/9556). oneLetterApart عام (فرق خانة واحدة).
+        const letterTwin = v.digits === cDigits && oneLetterApart(v.letters ?? "", cLetters);
+        const digitTwin = v.letters === cLetters && oneLetterApart(v.digits ?? "", cDigits);
+        if (!letterTwin && !digitTwin) continue;
         const twinConfirmed = (v.mult ?? 0) >= 2;
         if (mult < 2 && twinConfirmed) return;                       // وارد مفرد + توأم مؤكّد → ارمِ
         if (mult >= 2 && !twinConfirmed) {                           // وارد مؤكّد + توأم مفرد → استبدل
