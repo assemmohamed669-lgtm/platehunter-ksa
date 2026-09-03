@@ -14,11 +14,12 @@ import { Crosshair, ScanLine, Mic } from "lucide-react";
 import RecordingsTable from "@/components/RecordingsTable";
 import {
   getAllFieldCheckEntries, getAllRecordings, getUploadedFile,
-  deleteFieldCheckEntry, deleteRecording,
+  deleteFieldCheckEntry, deleteFieldCheckEntries, deleteRecording,
   type RecordingEntry, type FieldCheckEntry,
 } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { supabase } from "@/lib/supabaseClient";
+import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
 
 type ListType = "records" | "wanted" | "voice";
 
@@ -83,14 +84,26 @@ export default function ListPage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
+  // المسح لازم يوصل السيرفر كمان — من غير كده `restoreFieldChecks` بيسحب الصف
+  // تاني أول ما المندوب يفتح صفحة التشييك، فالسجلات «بترجع بعد المسح».
+  async function propagateDeletes() {
+    try {
+      const uid = (await supabase.auth.getSession()).data.session?.user?.id;
+      if (uid) await pushFieldCheckDeletes(uid);
+    } catch { /* أوفلاين — الشاهدة بتفضل وتتنفّذ المرة الجاية */ }
+  }
+
   async function handleDelete(id: string) {
     if (type === "voice") await deleteRecording(id); else await deleteFieldCheckEntry(id);
     setRows((prev) => prev.filter((r) => r.localId !== id));
+    if (type !== "voice") void propagateDeletes();
   }
   async function handleDeleteMany(ids: string[]) {
-    for (const id of ids) { if (type === "voice") await deleteRecording(id); else await deleteFieldCheckEntry(id); }
+    if (type === "voice") { for (const id of ids) await deleteRecording(id); }
+    else await deleteFieldCheckEntries(ids); // معاملة واحدة — «تحديد الكل» على آلاف السجلات
     const s = new Set(ids);
     setRows((prev) => prev.filter((r) => !s.has(r.localId)));
+    if (type !== "voice") void propagateDeletes();
   }
 
   const meta = META[type];
