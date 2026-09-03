@@ -709,6 +709,10 @@ export default function InstantCheckPage() {
   const dgAudioDropRef = useRef(0);
   const smHandleRef = useRef<SpeechmaticsHandle | null>(null); // جلسة Speechmatics
   const voicexEngineRef = useRef<import("@/lib/voicexEngine").VoicexEngineController | null>(null); // محرك VoiceX المستقل
+  // شفاء ذاتي: لو النفق وقع ورجعنا لديبجرام، نجسّ VoiceX دورياً ونرجّعله أول ما يرجع
+  // (النفق المجاني بيقع لحظياً — من غير ده الجلسة بتعلق على ديبجرام لحد ما توقف وتشغّل).
+  const voicexRetryRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const voicexSwitchingRef = useRef(false);
   // حارس تكرار الصوت: آخر لوحة اتفرّغت + وقتها — عشان لو نفس النطق اتفرّغ مرتين
   // (Deepgram بيبعت النتيجة النهائية مرتين: نهاية المقطع + نقطة الصمت) مايتكتبش مرتين.
   // خريطة اللوحات اللي ظهرت + آخر لحظة (منقولة من seenRef بتاع المعمل): إعادة نطق
@@ -3579,6 +3583,42 @@ export default function InstantCheckPage() {
   // ديبجرام)، يجمّع بالإجماع، ويحط اللوحة المؤكّدة في addOnePttRow (نفس مسار
   // العرض/المقارنة بالشيت/المطلوبة/التصدير). لو النفق فصل وسط الجلسة بيرجّع
   // لديبجرام تلقائياً. كل المنطق في lib/voicexEngine (يتحمّل كسول).
+  // يجسّ صحة VoiceX عبر النفق (CORS آمن على /health). true = رجع شغّال.
+  async function probeVoicexHealth(): Promise<boolean> {
+    const cfg = voicexEndpointRef.current;
+    if (!cfg) return false;
+    const base = cfg.transcribeUrl.replace(/\/transcribe$/, "");
+    try {
+      const ac = new AbortController();
+      const t = setTimeout(() => { try { ac.abort(); } catch { /* ignore */ } }, 5000);
+      const res = await fetch(`${base}/health`, { cache: "no-store", signal: ac.signal });
+      clearTimeout(t);
+      if (!res.ok) return false;
+      const j = await res.json().catch(() => null);
+      return j?.ok === true;
+    } catch { return false; }
+  }
+  function stopVoicexRetry() {
+    if (voicexRetryRef.current) { clearInterval(voicexRetryRef.current); voicexRetryRef.current = null; }
+  }
+  // يشتغل بعد الرجوع لديبجرام (لمستخدم voicex): كل ٢٠ث يجسّ VoiceX، وأول ما يرجع
+  // يعمل stop+start (مسار مختبَر بيحافظ على اللوحات) فيرجّع VoiceX تلقائياً بدل
+  // ما يعلق على ديبجرام. النفق المجاني بيقع لحظياً فالشفاء الذاتي ده مؤقت لحد السيرفر.
+  function startVoicexRetry() {
+    if (voicexRetryRef.current) return;
+    voicexRetryRef.current = setInterval(async () => {
+      if (!isListeningRef.current || judgeSourceRef.current !== "voicex" || voicexEngineRef.current) {
+        stopVoicexRetry(); return;
+      }
+      if (voicexSwitchingRef.current) return;
+      if (!(await probeVoicexHealth())) return;   // لسه واقع — نكمّل نحاول
+      voicexSwitchingRef.current = true;
+      stopVoicexRetry();
+      try { await stopPtt(); await startPtt(); } catch { /* ignore */ }
+      voicexSwitchingRef.current = false;
+    }, 20000);
+  }
+
   async function startVoicexPtt(): Promise<boolean> {
     const cfg = voicexEndpointRef.current;
     if (!cfg) return false;
@@ -3598,7 +3638,7 @@ export default function InstantCheckPage() {
           voicexEngineRef.current = null;
           if (!isListeningRef.current) return;
           const dgKey = getDeepgramKey() || getActiveDeepgramKey();
-          if (dgKey) void startDeepgramPtt(dgKey).then((ok) => { if (ok) setPttEngine("deepgram"); });
+          if (dgKey) void startDeepgramPtt(dgKey).then((ok) => { if (ok) { setPttEngine("deepgram"); startVoicexRetry(); } });
           else setPttError("VoiceX مش واصل ومفيش محرك احتياطي — جرّب تاني.");
         },
       });
@@ -3810,6 +3850,7 @@ export default function InstantCheckPage() {
 
   async function stopPtt() {
     isListeningRef.current = false;
+    stopVoicexRetry();                                 // إيقاف يدوي يلغي محاولات رجوع VoiceX
     pttPausedRef.current = false; setPttPaused(false); // إيقاف كامل — صفّر الإيقاف المؤقت
     setPttListening(false);
     setPttLiveText("");
