@@ -91,7 +91,18 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     minSpeechMs: 250,
     maxSpeechMs: 60000,
     onSpeechStart: () => { speaking = true; opts.onSpeech?.(true); },
-    onUtterance: (u) => { speaking = false; lastSpokeSec = u.endSec; opts.onSpeech?.(false); },
+    onUtterance: (u) => {
+      speaking = false; lastSpokeSec = u.endSec; opts.onSpeech?.(false);
+      // 🎯 قراءة النطق **الكامل**: نبعت المقطع من بدايته لنهايته بالظبط (زي ما اتقال).
+      // النوافذ الثابتة (٥ث كل ١.٥ث) بتقطع اللوحة **البطيئة** في أماكن مختلفة فتطلع
+      // قراءات جزئية مترفرفة (رعق/حعق). قراءة النطق الكامل بتدّي اللوحة **كلها مرة
+      // واحدة** مهما كان الإيقاع، فتأكّد الشكل الصح (قراءة نضيفة) وحارس التوأم يشيل
+      // الجزئية. بنحدّه بطول معقول (≤٦ث) عشان مانبعتش مقطع ضخم للموديل.
+      const dur = u.endSec - u.startSec;
+      if (!stopped && dur >= 0.6 && dur <= 6 && inflight < MAX_INFLIGHT) {
+        sliceAndSend(Math.max(0, u.startSec - 0.15), u.endSec + 0.15);
+      }
+    },
   });
 
   // وعود النوافذ الجارية — عشان الإيقاف يستناها قبل التصريف النهائي (آخر لوحة ماتضيعش).
