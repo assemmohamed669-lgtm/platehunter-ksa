@@ -279,6 +279,39 @@ html.oled .surface-card {
   will-change: transform;
 }
 
+/* رقم اللوحة — مكتوب كله سطر واحد بخط كبير (مش مربعات لكل حرف) */
+.luxe-plate {
+  direction: rtl;
+  font-weight: 900;
+  font-size: clamp(1.55rem, 7.5vw, 2.15rem);
+  line-height: 1.15;
+  letter-spacing: 0.045em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  background: linear-gradient(180deg, #FFFFFF 0%, #F2E6CE 55%, #D9C79E 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* أزرار صغيرة على وش البطاقة (نسخ · مشاركة · مسح · قلم) */
+.luxe-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 0.6rem;
+  color: var(--lx-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.luxe-act:active { transform: scale(0.92); }
+.luxe-act:hover { color: var(--lx-gold-soft); border-color: var(--lx-gold-dim); }
+.luxe-act--danger:hover { color: #F85149; border-color: rgba(248, 81, 73, 0.45); }
+
 /* لمعة بتعدّي على البطاقة الجديدة مرة واحدة — «وصلت لوحة» */
 .luxe-face::after {
   content: "";
