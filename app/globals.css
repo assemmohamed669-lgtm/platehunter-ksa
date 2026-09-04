@@ -169,3 +169,207 @@ html.oled .surface-card {
 @media (prefers-reduced-motion: reduce) {
   .page-fade { animation: none; }
 }
+
+/* ---------------------------------------------------------------------
+   «الصالة» — ستايل التشييك الصوتي وحده (luxe-*)
+   ------------------------------------------------------------------
+   مقصود إنه **مختلف عن كل صفحات البرنامج**: خلفية أوبسيديان بتدرّج، خيط
+   ذهبي رفيع، وزجاج معتم. الأسماء كلها مبدوءة بـ`luxe-` ومحطوطة على غلاف
+   واحد جوّه صفحة التشييك، فمافيش أي صفحة تانية بتتأثّر.
+   الذهب ثابت في الوضعين (فاتح/OLED) — هو هوية القسم ده.
+--------------------------------------------------------------------- */
+.luxe {
+  --lx-gold: #D9B168;
+  --lx-gold-soft: #F0D9A8;
+  --lx-gold-dim: rgba(217, 177, 104, 0.28);
+  --lx-ink: #F5EFE3;
+  --lx-muted: #A9A196;
+  --lx-panel: linear-gradient(160deg, #14161A 0%, #0B0C0F 55%, #101216 100%);
+  --lx-card: linear-gradient(155deg, rgba(38,41,47,0.92) 0%, rgba(20,22,26,0.96) 100%);
+
+  /* إعادة تعريف رموز الثيم **جوّه الغلاف بس** — فكل عنصر ابن (أزرار، مربعات،
+     نصوص) بيتلوّن بالبالتة الفخمة من غير ما نلمس كلاسّاته، ومن غير أي أثر
+     على باقي الصفحات. */
+  --c-surface: #14161A;
+  --c-surface-2: rgba(255, 255, 255, 0.06);
+  --c-border: rgba(217, 177, 104, 0.22);
+  --c-ink: #F5EFE3;
+  --c-muted: #A9A196;
+  --c-night: #0B0C0F;
+
+  position: relative;
+  border-radius: 1.25rem;
+  padding: 0.9rem;
+  background: var(--lx-panel);
+  border: 1px solid var(--lx-gold-dim);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: var(--lx-ink);
+  overflow: hidden;
+}
+
+/* وهج ذهبي خافت جوّه اللوحة العلوية — بيدّي عمق من غير ما ياكل قراءة النص */
+.luxe::before {
+  content: "";
+  position: absolute;
+  inset: -40% 30% auto -10%;
+  height: 70%;
+  background: radial-gradient(ellipse at top left, rgba(217, 177, 104, 0.16), transparent 65%);
+  pointer-events: none;
+}
+
+.luxe-title {
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  background: linear-gradient(90deg, var(--lx-gold-soft), var(--lx-gold) 55%, #B9904A);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.luxe-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--lx-gold-dim) 20%, var(--lx-gold-dim) 80%, transparent);
+}
+
+.luxe-chip {
+  border: 1px solid var(--lx-gold-dim);
+  background: rgba(217, 177, 104, 0.08);
+  color: var(--lx-gold-soft);
+  border-radius: 999px;
+}
+
+/* ── بطاقة اللوحة ─────────────────────────────────────────────────── */
+.luxe-card {
+  position: relative;
+  overflow: hidden;
+  /* الطبقتان الجوّه absolute، فارتفاع البطاقة بيتحسب بالـJS. الأرضية دي
+     بتضمن إن البطاقة ماتنهارش لو القياس اتأخّر على جهاز بطيء. */
+  min-height: 4.9rem;
+  border-radius: 1rem;
+  background: var(--lx-card);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+
+.luxe-card--selected {
+  border-color: var(--lx-gold);
+  box-shadow: 0 0 0 1px var(--lx-gold), 0 10px 26px rgba(217, 177, 104, 0.20);
+}
+
+/* اللوحة المطلوبة — خيط أخضر على الحافة، ينفع يتقرا بطرف العين */
+.luxe-card--wanted::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 4px;
+  background: linear-gradient(180deg, #3FB950, #1A7F37);
+}
+
+/* وش البطاقة — اللوحة بس، بتتزحزح مع الصباع */
+.luxe-face {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.85rem 0.9rem;
+  background: var(--lx-card);
+  will-change: transform;
+}
+
+/* لمعة بتعدّي على البطاقة الجديدة مرة واحدة — «وصلت لوحة» */
+.luxe-face::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(240, 217, 168, 0.14) 50%, transparent 65%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+.luxe-card--fresh .luxe-face::after {
+  animation: luxe-sheen 900ms ease-out 120ms 1;
+}
+@keyframes luxe-sheen {
+  to { transform: translateX(120%); }
+}
+
+/* دخول البطاقة الجديدة — طلوع ناعم من تحت */
+.luxe-enter {
+  animation: luxe-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes luxe-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* لوح البيانات — مركوب تحت الوش بالظبط (مش تحته في التدفّق)، فالبيانات
+   بتحلّ محلّ اللوحة لما الوش يتزحزح */
+.luxe-details-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  transition: opacity 220ms ease;
+}
+.luxe-details-inner {
+  padding: 0.75rem 0.9rem 0.85rem;
+}
+
+.luxe-kv {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, auto) 1fr;
+  gap: 0.35rem 0.6rem;
+  align-items: center;
+}
+.luxe-k { color: var(--lx-muted); font-size: 11px; font-weight: 700; }
+.luxe-v { color: var(--lx-ink); font-size: 13px; font-weight: 600; }
+
+/* تلميح السحب — سهم ذهبي بينبض بهدوء على البطاقة المقفولة */
+.luxe-hint {
+  color: var(--lx-gold);
+  opacity: 0.55;
+  animation: luxe-nudge 2.4s ease-in-out infinite;
+}
+@keyframes luxe-nudge {
+  0%, 100% { transform: translateX(0); opacity: 0.35; }
+  50%      { transform: translateX(-4px); opacity: 0.75; }
+}
+
+/* ── مؤشّر الصوت ──────────────────────────────────────────────────── */
+.luxe-meter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 40px;
+}
+.luxe-bar {
+  width: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  position: relative;
+  overflow: hidden;
+}
+.luxe-bar-fill {
+  position: absolute;
+  inset: auto 0 0 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--lx-gold-soft), var(--lx-gold) 45%, #8E6B2E);
+  box-shadow: 0 0 8px rgba(217, 177, 104, 0.45);
+  transform-origin: bottom;
+}
+.luxe-peak {
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--lx-gold-soft);
+  box-shadow: 0 0 6px rgba(240, 217, 168, 0.8);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxe-enter, .luxe-hint, .luxe-card--fresh .luxe-face::after { animation: none; }
+  .luxe-card, .luxe-face, .luxe-details-layer { transition: none !important; }
+}
