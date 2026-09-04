@@ -35,11 +35,14 @@ export default function PlateBadge({
   size = "md",
 }: {
   value: string;
-  size?: "xs" | "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg" | "xl";
 }) {
   const cells = buildScreenOrder(value);
   const sizeClasses =
-    size === "xs"
+    // xl = بطاقة التشييك الصوتي الجديدة — اللوحة لازم تتقرا من بعيد
+    size === "xl"
+      ? "min-w-[2.9rem] h-[3.4rem] text-[1.75rem]"
+      : size === "xs"
       ? "min-w-[1.1rem] h-5 text-[10px]"
       : size === "sm"
       ? "min-w-[1.75rem] h-9 text-base"
