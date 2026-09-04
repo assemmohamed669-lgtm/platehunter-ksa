@@ -690,11 +690,10 @@ export default function InstantCheckPage() {
   // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
   // المناديب ولا الأدمنز العاديين.
   const [isSuper, setIsSuper] = useState(false);
-  // شكل «الصالة» (البطاقات + الستايل الفخم + المؤشّر الجديد) **للسوبر أدمن
-  // فقط** دلوقتي — المناديب على الشكل القديم بالحرف لحد ما المالك يجرّبه
-  // ويقول ينزل للكل. `isSuper` بيتحدّد بعد نداء الشبكة، فالافتراضي false
-  // يعني المندوب عمره ما يلمح البطاقات ولا لجزء من ثانية.
-  const luxeVoice = isSuper && pttCardView;
+  // شكل «الصالة» (البطاقات + الستايل الفخم + المؤشّر الجديد) — **للكل**
+  // دلوقتي بعد ما المالك عاينه. زرار «جدول» بيرجّع الشكل القديم بالكامل
+  // (جدول + مؤشّر قديم + بلا الغلاف الفخم) لأي مندوب مش مرتاح ليه.
+  const luxeVoice = pttCardView;
   // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للسوبر أدمن لتشخيص الدقة.
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
@@ -4729,7 +4728,7 @@ export default function InstantCheckPage() {
 
           {/* ── PTT ── */}
           {mode === "ptt" && (
-            <div className={`${isSuper ? "luxe " : ""}flex flex-col items-center gap-4`}>
+            <div className={`${luxeVoice ? "luxe " : ""}flex flex-col items-center gap-4`}>
               {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
               {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
               <div className="flex w-full max-w-xs flex-col items-center gap-1">
@@ -4933,10 +4932,10 @@ export default function InstantCheckPage() {
 
               {/* مؤشّر الصوت — ١٦ عمود بامتلاء جزئي + علامة ذروة (VoiceX بيوفّر المستوى) */}
               {pttListening && pttEngine === "voicex" && (
-                isSuper ? (
+                luxeVoice ? (
                   <VoiceLevelMeter level={pttLevel} active={pttMicActive} />
                 ) : (
-                  /* المؤشّر القديم — زي ما كان بالحرف للمناديب */
+                  /* المؤشّر القديم — بيرجع مع زرار «جدول» */
                   <span className="flex items-center gap-0.5" aria-hidden dir="ltr" title="مستوى الصوت">
                     {[0.12, 0.3, 0.5, 0.72, 0.9].map((thresh, i) => {
                       const on = pttLevel >= thresh;
@@ -5043,13 +5042,13 @@ export default function InstantCheckPage() {
                         <PlateImagesButton title="لوحات التشييك (صوتي)"
                           build={() => pttImgRows(sortNear(pttResults))}
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
-                        {isSuper && <button
+                        <button
                           type="button"
                           onClick={() => { const v = !pttCardView; setPttCardView(v); try { localStorage.setItem("ic-ptt-cardview", v ? "1" : "0"); } catch {} }}
                           title={pttCardView ? "عرض الجدول الكامل" : "عرض البطاقات"}
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted transition hover:text-primary">
                           {pttCardView ? "جدول" : "بطاقات"}
-                        </button>}
+                        </button>
                         {!luxeVoice && <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />}
                       </div>
                     </div>
@@ -5073,11 +5072,47 @@ export default function InstantCheckPage() {
                               className={`${fresh ? "luxe-enter luxe-card--fresh" : ""} ${r.found ? "luxe-card--wanted" : ""}`}
                               face={
                                 <>
-                                  <span className="shrink-0 text-[11px] font-bold" style={{ color: "var(--lx-muted)" }}>{i + 1}</span>
-                                  <div className="flex flex-1 items-center justify-center">
-                                    <PlateBadge value={r.plate} size="xl" />
-                                  </div>
-                                  <span className="flex shrink-0 flex-col items-end gap-1">
+                                  {/* يمين البطاقة — نسخ · مشاركة · مسح (صغيرين) */}
+                                  <span className="flex shrink-0 items-center gap-0.5">
+                                    <button onClick={() => copyPttRow(r)} title="نسخ" className="luxe-act">
+                                      {pttCopiedId === r.id ? <Check size={15} className="text-brand" /> : <Copy size={15} />}
+                                    </button>
+                                    <button onClick={() => void shareTextViaChooser(pttRowText(r))} title="مشاركة" className="luxe-act">
+                                      <Share2 size={15} />
+                                    </button>
+                                    <button onClick={() => deletePttRow(r.id)} title="مسح اللوحة" className="luxe-act luxe-act--danger">
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </span>
+
+                                  {/* اللوحة — مكتوبة كلها سطر واحد بخط كبير + قلم التعديل */}
+                                  <span className="flex min-w-0 flex-1 items-center justify-center gap-2">
+                                    {editingPttId === r.id ? (
+                                      <>
+                                        <input
+                                          dir="rtl"
+                                          value={editPttValue}
+                                          onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                          onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
+                                          autoFocus
+                                          className="w-32 rounded-lg border border-primary bg-surface-2 px-2 py-1 text-center text-lg font-bold text-ink outline-none"
+                                        />
+                                        <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={16} /></button>
+                                        <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={16} /></button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="luxe-plate" dir="rtl">{r.plate}</span>
+                                        <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="luxe-act" title="تعديل اللوحة">
+                                          <Pencil size={14} />
+                                        </button>
+                                      </>
+                                    )}
+                                  </span>
+
+                                  {/* شارات صغيرة — تنبيه مش بيانات */}
+                                  <span className="flex shrink-0 flex-col items-center gap-0.5">
+                                    <span className="text-[10px] font-bold" style={{ color: "var(--lx-muted)" }}>{i + 1}</span>
                                     {r.found && (
                                       <span className="rounded-full bg-brand/20 px-1.5 py-0.5 text-[9px] font-black text-brand whitespace-nowrap">
                                         {r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة"}
@@ -5106,31 +5141,6 @@ export default function InstantCheckPage() {
                                         </button>
                                       )
                                     )}
-                                    {editingPttId === r.id ? (
-                                      <span className="inline-flex items-center gap-1">
-                                        <input
-                                          dir="rtl"
-                                          value={editPttValue}
-                                          onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
-                                          onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
-                                          autoFocus
-                                          className="w-24 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-ink outline-none"
-                                        />
-                                        <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={14} /></button>
-                                        <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={14} /></button>
-                                      </span>
-                                    ) : (
-                                      <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }}
-                                        className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-bold text-muted" title="تعديل اللوحة">
-                                        <Pencil size={12} /> تعديل
-                                      </button>
-                                    )}
-                                    <button onClick={() => copyPttRow(r)} className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-bold text-muted" title="نسخ">
-                                      {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={12} />} نسخ
-                                    </button>
-                                    <button onClick={() => deletePttRow(r.id)} className="inline-flex items-center gap-1 rounded-lg border border-danger/40 px-2.5 py-1 text-[11px] font-bold text-danger" title="مسح اللوحة">
-                                      <Trash2 size={12} /> مسح
-                                    </button>
                                   </div>
 
                                   <div className="luxe-rule" />
