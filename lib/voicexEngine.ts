@@ -14,6 +14,7 @@ import { postAudioForPlate } from "./plateJudgeClient";
 import { LiveConsensus } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
 import { Vad } from "./vad";
+import { tailToSend } from "./voicexTail";
 import { audioPregate } from "./audioPregate";
 
 const WELL = /^[ء-ي]{3}\d{4}$/;
@@ -67,6 +68,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   let fails = 0;
   let speaking = false;        // الـVad بيقول دلوقتي فيه كلام؟
   let lastSpokeSec = 0;        // آخر ثانية اتسمع فيها كلام (نهاية آخر نطق)
+  // آخر ثانية من الصوت **اتبعتت فعلاً** — بيها نعرف وقت الإيقاف إيه اللي
+  // ماتبعتش، فنبعت الذيل ده بس (بلا إعادة قراءة = بلا صفوف مكررة).
+  let lastSentToSec = 0;
 
   // إعدادات الإجماع **زي المعمل بالحرف**: نافذة ٢ث single-linkage (أكبر من خطوة
   // الزحلقة ١.٥ث وأصغر من إيقاع نطق اللوحة ~٣.٤ث فالأسطول يتفصل)، العنقود يفضل
@@ -153,6 +157,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     const wav = mic.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى
     if (!wav) return;
     const tMs = ((fromSec + toSec) / 2) * 1000;
+    lastSentToSec = Math.max(lastSentToSec, toSec);
     inflight += 1;
     opts.onStatus?.("processing");
     const pr = sendWav(wav, tMs);
@@ -192,6 +197,20 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // مكررة، خصوصاً مع النفق اللي بيقع ويرجع فبيتكرر الإيقاف). آخر لوحة اتقالت
     // موجودة أصلاً في آخر نافذة دورية (عنقود مفتوح لسه ماستقرّش) والـflush بيطلّعها
     // بلا إعادة قراءة. فبنكتفي بـ: نقفل الميك، نستنى النوافذ الجارية، ثم flush واحد.
+    // 🔴 إصلاح «آخر لوحة قبل الإيقاف مش بتتكتب»:
+    //  الصوت بيتبعت بطريقتين بس — VAD بعد ٩٠٠ مللي سكوت، أو مؤقّت كل ١.٥ث
+    //  أثناء الكلام. لو المندوب قال اللوحة ودَس إيقاف بسرعة، الاتنين ماحصلوش
+    //  فالصوت ده **عمره ما وصل الموديل**.
+    //  بنبعت هنا **اللي ماتبعتش بس** (من `lastSentToSec` لآخر الصوت) — مش آخر
+    //  ٥ث زي الإصلاح القديم اللي اتشال، لأن ده كان بيعيد قراءة صوت اتبعت خلاص
+    //  فيعمل صفوف مكررة. القرار كله في `lib/voicexTail.ts` متغطّى باختبارات.
+    //  ⚠️ **قبل** `mic.stop()` — بعد ما الميك يقفل مش مضمون نقدر نقصّ الصوت.
+    try {
+      const tail = tailToSend({
+        lastSentToSec, elapsedSec: mic.elapsedSec, lastSpokeSec, speaking,
+      });
+      if (tail) sliceAndSend(tail.fromSec, tail.toSec);
+    } catch { /* ignore — الإيقاف مايفشلش عشان الذيل */ }
     try { mic.stop(); } catch { /* ignore */ }
     try { await Promise.allSettled([...inflightSet]); } catch { /* ignore */ }
     for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
