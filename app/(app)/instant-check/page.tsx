@@ -690,6 +690,11 @@ export default function InstantCheckPage() {
   // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
   // المناديب ولا الأدمنز العاديين.
   const [isSuper, setIsSuper] = useState(false);
+  // شكل «الصالة» (البطاقات + الستايل الفخم + المؤشّر الجديد) **للسوبر أدمن
+  // فقط** دلوقتي — المناديب على الشكل القديم بالحرف لحد ما المالك يجرّبه
+  // ويقول ينزل للكل. `isSuper` بيتحدّد بعد نداء الشبكة، فالافتراضي false
+  // يعني المندوب عمره ما يلمح البطاقات ولا لجزء من ثانية.
+  const luxeVoice = isSuper && pttCardView;
   // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للسوبر أدمن لتشخيص الدقة.
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
@@ -4724,7 +4729,7 @@ export default function InstantCheckPage() {
 
           {/* ── PTT ── */}
           {mode === "ptt" && (
-            <div className="luxe flex flex-col items-center gap-4">
+            <div className={`${isSuper ? "luxe " : ""}flex flex-col items-center gap-4`}>
               {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
               {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
               <div className="flex w-full max-w-xs flex-col items-center gap-1">
@@ -4928,7 +4933,24 @@ export default function InstantCheckPage() {
 
               {/* مؤشّر الصوت — ١٦ عمود بامتلاء جزئي + علامة ذروة (VoiceX بيوفّر المستوى) */}
               {pttListening && pttEngine === "voicex" && (
-                <VoiceLevelMeter level={pttLevel} active={pttMicActive} />
+                isSuper ? (
+                  <VoiceLevelMeter level={pttLevel} active={pttMicActive} />
+                ) : (
+                  /* المؤشّر القديم — زي ما كان بالحرف للمناديب */
+                  <span className="flex items-center gap-0.5" aria-hidden dir="ltr" title="مستوى الصوت">
+                    {[0.12, 0.3, 0.5, 0.72, 0.9].map((thresh, i) => {
+                      const on = pttLevel >= thresh;
+                      const h = 6 + i * 3;
+                      return (
+                        <span
+                          key={i}
+                          className={`w-1 rounded-full transition-all duration-100 ${on ? "bg-brand" : "bg-surface-2"}`}
+                          style={{ height: `${h}px`, opacity: on ? 1 : 0.4 }}
+                        />
+                      );
+                    })}
+                  </span>
+                )
               )}
 
               {/* اسم المحرك النشط — للسوبر أدمن فقط (تشخيص، مخفي عن المناديب والأدمنز) */}
@@ -5021,18 +5043,18 @@ export default function InstantCheckPage() {
                         <PlateImagesButton title="لوحات التشييك (صوتي)"
                           build={() => pttImgRows(sortNear(pttResults))}
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted hover:text-primary transition" />
-                        <button
+                        {isSuper && <button
                           type="button"
                           onClick={() => { const v = !pttCardView; setPttCardView(v); try { localStorage.setItem("ic-ptt-cardview", v ? "1" : "0"); } catch {} }}
                           title={pttCardView ? "عرض الجدول الكامل" : "عرض البطاقات"}
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted transition hover:text-primary">
                           {pttCardView ? "جدول" : "بطاقات"}
-                        </button>
-                        {!pttCardView && <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />}
+                        </button>}
+                        {!luxeVoice && <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />}
                       </div>
                     </div>
                     {/* ── عرض «الصالة»: اللوحة بس بخط كبير، والبيانات ورا سحبة لليسار ── */}
-                    {pttCardView && (
+                    {luxeVoice && (
                       <div
                         className="w-full flex flex-col gap-2 overflow-y-auto"
                         style={{ maxHeight: "28rem" }}
@@ -5170,7 +5192,7 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
-                    {!pttCardView && (
+                    {!luxeVoice && (
                     <div ref={pttPinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${zoomFontPx(pttZoom)}px` }}>
                         <thead className="sticky top-0 z-10">
