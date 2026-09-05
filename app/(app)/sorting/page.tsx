@@ -5,6 +5,7 @@ import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
   ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin, History,
+  Lock, LockOpen,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -165,6 +166,9 @@ export default function SortingPage() {
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [dataColsOpen, setDataColsOpen] = useState(false);
   const [dataBoxOpen, setDataBoxOpen] = useState(true); // collapse/expand the whole "مربع الداتا"
+  // قفل الداتا — لما يبقى true بنخفي أزرار «تغيير/مسح» فمحدش يقدر يمسح أو يبدّل الملف.
+  // بيتحفظ في localStorage فيفضل مقفول بعد إعادة فتح التطبيق.
+  const [dataLocked, setDataLocked] = useState(false);
   // ربط سجلات المندوب كخانة داتا (من صفحة السجلات) — ربط حي بيتحدّث لوحده.
   const [recordsLinked, setRecordsLinked] = useState(false);
   const [recordsTgt, setRecordsTgt] = useState<RecordsTarget>("extra");
@@ -512,6 +516,19 @@ export default function SortingPage() {
       .catch(() => {})
       .finally(() => setHydrated(true));
   }, []);
+
+  // استرجاع حالة قفل الداتا من الجهاز.
+  useEffect(() => {
+    try { setDataLocked(localStorage.getItem("ph:sorting:dataLocked") === "1"); } catch { /* ignore */ }
+  }, []);
+  // زر القفل — بيبدّل الحالة ويحفظها.
+  const toggleDataLock = () => {
+    setDataLocked((v) => {
+      const next = !v;
+      try { localStorage.setItem("ph:sorting:dataLocked", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -2432,11 +2449,26 @@ export default function SortingPage() {
       </div>
 
       {/* ① DATA FILE */}
-      <button onClick={() => setDataBoxOpen((v) => !v)}
-        className="flex w-full items-center justify-between text-sm font-bold text-ink">
-        <span>مربع الداتا</span>
-        <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${dataBoxOpen ? "rotate-180" : ""}`} />
-      </button>
+      <div className="flex w-full items-center justify-between gap-2">
+        <button onClick={() => setDataBoxOpen((v) => !v)}
+          className="flex flex-1 items-center justify-between text-sm font-bold text-ink">
+          <span>مربع الداتا</span>
+          <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${dataBoxOpen ? "rotate-180" : ""}`} />
+        </button>
+        {/* قفل الداتا — لما يبقى مقفول محدش يقدر يمسح أو يبدّل الملف */}
+        <button
+          onClick={toggleDataLock}
+          className={`flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold transition ${
+            dataLocked
+              ? "border-danger/50 bg-danger/10 text-danger"
+              : "border-border bg-surface-2 text-muted hover:text-primary"
+          }`}
+          title={dataLocked ? "الداتا مقفولة — دوس عشان تفتح القفل" : "اقفل الداتا فمحدش يقدر يمسحها"}
+        >
+          {dataLocked ? <Lock size={13} /> : <LockOpen size={13} />}
+          {dataLocked ? "مقفول" : "قفل"}
+        </button>
+      </div>
       {dataBoxOpen && (<>
       <FileUploadBox
         title={extraData.length > 0 ? "ملف الداتا 1" : "ملف الداتا"}
@@ -2449,6 +2481,7 @@ export default function SortingPage() {
           : persistAndSet("data", table, file))}
         onClear={() => clearSlot("data")}
         showReplaceButtons
+        locked={dataLocked}
         largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
         onLargeFile={handleLargeData}
       />
