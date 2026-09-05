@@ -2135,13 +2135,19 @@ export default function SortingPage() {
     for (const rc of allResultCols) {
       row[rc.label] = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
     }
+    // #5 — عمود «المسافة» يظهر في المشاركة كمان لما «الأقرب» مفعّل.
+    if (nearestActive && "_dist" in r) {
+      const d = (r as { _dist: number })._dist;
+      if (Number.isFinite(d)) row["المسافة"] = formatDistanceKm(d);
+    }
     row["الحالة"] = "مطلوبة";
     return row;
   }
 
-  function buildPasteRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
+  function buildPasteRowObject(p: { converted: string; row: Record<string, string>; _dist?: number }): Record<string, unknown> {
     const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
     for (const col of pasteAllCols) obj[col] = p.row[col] ?? "";
+    if (nearestActive && p._dist != null && Number.isFinite(p._dist)) obj["المسافة"] = formatDistanceKm(p._dist);
     return obj;
   }
 
@@ -2152,7 +2158,7 @@ export default function SortingPage() {
   }
 
   // ── نافذة المطلوبين (شيت التشييك) — helpers ──
-  function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
+  function buildTashyeekRowObj(r: TashyeekResultRow, dist?: number): Record<string, unknown> {
     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
     const obj: Record<string, unknown> = { "رقم اللوحة": plate };
     // نفس أعمدة العرض وبنفس الترتيب — عشان الواتساب والإكسيل والصورة يطلعوا
@@ -2162,6 +2168,7 @@ export default function SortingPage() {
         ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
         : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
     }
+    if (nearestActive && dist != null && Number.isFinite(dist)) obj["المسافة"] = formatDistanceKm(dist);
     return obj;
   }
   function removeTashyeekRow(i: number) {
@@ -3296,7 +3303,7 @@ export default function SortingPage() {
 
             {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
             <ShareSortButton title="سيارات مطلوبة من ملف التشييك (السجلات)"
-              rows={() => displayTashyeek.map(({ r }) => buildTashyeekRowObj(r))} />
+              rows={() => displayTashyeek.map(({ r, _dist }) => buildTashyeekRowObj(r, _dist))} />
             <button onClick={clearTashyeekResults}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
               <Trash2 size={15} /> مسح نتايج الفرز
