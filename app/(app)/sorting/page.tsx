@@ -333,6 +333,18 @@ export default function SortingPage() {
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
+  // #6 — لما المندوب يكتب لوحة كاملة (٣ حروف + ٤ أرقام) في آخر سطر، السهم ينزل
+  // تحت تلقائي عشان يكتب اللي بعدها. بيشتغل مع العربي والإنجليزي والأرقام العربية.
+  const handlePasteInput = (val: string) => {
+    const lines = val.split("\n");
+    const last = (lines[lines.length - 1] ?? "").replace(/\s+/g, "");
+    if (/^[A-Za-zء-ي]{3}[0-9٠-٩]{4}$/.test(last)) {
+      setPasteText(val.endsWith("\n") ? val : val + "\n");
+    } else {
+      setPasteText(val);
+    }
+  };
   const [pasteResults, setPasteResults] = useState<TokenMatch[]>([]);
   // تطابق نفس اللوحات الملصوقة مع شيت السجلات (tashyeekTable) — لوحات سبق
   // تشييكها صوت/يدوي قبل كدة، منفصلة عن تطابق ملف الداتا لأن أعمدتها مختلفة.
@@ -3361,20 +3373,19 @@ export default function SortingPage() {
               </button>
             )}
           </div>
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (!pasteBusy) void runPasteSort();
-              }
-            }}
-            placeholder={"كل لوحة في سطر أو مفصولة بفاصلة...\nمثال: أبح1234 أو GUR4560"}
-            rows={5}
-            dir="rtl"
-            className="rtl-text w-full rounded-xl border border-border bg-surface-2 p-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
-          />
+          {/* دوسة في أي مكان فاضي في المربع بترجّع لوحة المفاتيح (بعد ما المندوب
+              يقفلها بزر الرجوع) — بتركّز على مربع الكتابة تاني. */}
+          <div onClick={() => pasteRef.current?.focus()}>
+            <textarea
+              ref={pasteRef}
+              value={pasteText}
+              onChange={(e) => handlePasteInput(e.target.value)}
+              placeholder={"اكتب أو الصق كل لوحة في سطر...\nمثال: أبح1234 أو GUR4560"}
+              rows={6}
+              dir="rtl"
+              className="rtl-text w-full rounded-xl border border-border bg-surface-2 p-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
         </div>
 
         {/* معاينة تحويل اللوحات الإنجليزية للعربي — عشان المندوب يتأكد إن التحويل
