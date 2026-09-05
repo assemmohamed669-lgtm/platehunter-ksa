@@ -4117,53 +4117,62 @@ export default function InstantCheckPage() {
         sky
       />
 
-      {/* ── حالة الـ GPS — تظهر في كل التبويبات ما عدا «السجلات» و«فرز» ── */}
-      {mode !== "sheet" && mode !== "sort" && (
-      <div className="flex flex-col gap-1.5">
-        <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
-          حالة الـ GPS
-          <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
-            {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
-          </span>
-          <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
-        </button>
-        {gpsBoxOpen && (
-          <>
-          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
-            <MapPin size={15} className={gps ? "text-primary" : "text-danger"} />
-            <div className="flex-1 min-w-0">
-              <p className={`truncate text-xs ${gps ? "text-ink" : "text-danger font-bold"}`}>
-                {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
-              </p>
-              {gps && (() => {
-                const lvl = gpsAccuracyLevel(gps.accuracy);
-                const cls = lvl === "good" ? "text-brand" : lvl === "ok" ? "text-alert" : "text-danger";
-                const hint = lvl === "good" ? "دقة ممتازة"
-                  : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
-                  : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
-                return (
-                  <p className="text-[11px] text-muted">
-                    {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className={`font-bold ${cls}`}>±{Math.round(gps.accuracy)}م</span>
-                    <span className={`block ${cls}`}>{hint}</span>
-                  </p>
-                );
-              })()}
-            </div>
-            <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
-              className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
-              <RefreshCw size={14} className={gpsRefreshing ? "animate-spin" : ""} />
+      {/* ── حالة الـ GPS — ثابتة فوق (sticky) واللوحات بتعدّي تحتها. بتظهر في كل
+             التبويبات ما عدا «السجلات» و«فرز». المربع كله ملوّن حسب قوة الإشارة
+             (ممتازة=أخضر · متوسطة=برتقالي · ضعيفة=أحمر) والدوسة في أي مكان فيه
+             بتعمل تحديث. #7/#10/#11/#12/#14 ── */}
+      {mode !== "sheet" && mode !== "sort" && (() => {
+        const lvl = gps ? gpsAccuracyLevel(gps.accuracy) : null;
+        // ألوان المربع كله حسب القوة (بطلب المندوب): ممتازة أخضر، متوسطة برتقالي، ضعيفة/مفيش أحمر.
+        const boxTone = !gps
+          ? "border-red-500/60 bg-red-500/15 text-red-500"
+          : lvl === "good" ? "border-green-500/60 bg-green-500/15 text-green-500"
+          : lvl === "ok" ? "border-orange-500/60 bg-orange-500/15 text-orange-500"
+          : "border-red-500/60 bg-red-500/15 text-red-500";
+        return (
+        <div className="sticky top-20 z-20 -mx-4 flex flex-col gap-1.5 bg-night px-4 pb-1.5 pt-1">
+          <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
+            حالة الـ GPS
+            <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
+              {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
+            </span>
+            <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
+          </button>
+          {gpsBoxOpen && (
+            <>
+            {/* المربع كله زرّ تحديث — دوسة في أي مكان بتحدّث الموقع */}
+            <button onClick={refreshGps} disabled={gpsRefreshing} title="دوس في أي مكان لتحديث الموقع"
+              className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-right transition active:scale-[0.99] disabled:opacity-70 ${boxTone}`}>
+              <MapPin size={15} className="shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className={`truncate text-xs font-bold ${gps ? "text-ink" : ""}`}>
+                  {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
+                </p>
+                {gps && (() => {
+                  const hint = lvl === "good" ? "دقة ممتازة"
+                    : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
+                    : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
+                  return (
+                    <p className="text-[11px]">
+                      {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className="font-bold">±{Math.round(gps.accuracy)}م</span>
+                      <span className="block font-bold">{hint}</span>
+                    </p>
+                  );
+                })()}
+              </div>
+              <RefreshCw size={16} className={`shrink-0 ${gpsRefreshing ? "animate-spin" : ""}`} />
             </button>
-          </div>
-          {/* سبب فشل «تحديث» — لازم يبان، وإلا الزرار يبان كأنه مايعملش حاجة. */}
-          {gpsMsg && (
-            <p className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-warning" dir="rtl">
-              {gpsMsg}
-            </p>
+            {/* سبب فشل «تحديث» — لازم يبان، وإلا الزرار يبان كأنه مايعملش حاجة. */}
+            {gpsMsg && (
+              <p className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-warning" dir="rtl">
+                {gpsMsg}
+              </p>
+            )}
+            </>
           )}
-          </>
-        )}
-      </div>
-      )}
+        </div>
+        );
+      })()}
 
       {/* ── No file notice ── */}
       {!checkTable && (

@@ -99,7 +99,7 @@ class GpsService {
             this.notifyListeners(this.lastCoords);
           }
         );
-        this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 2000);
+        this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 1000);
         return;
       }
     } catch (e) {
@@ -144,7 +144,7 @@ class GpsService {
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
     );
-    this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 2000);
+    this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 1000);
   }
 
   stopTracking() {
