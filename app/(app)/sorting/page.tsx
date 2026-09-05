@@ -157,6 +157,23 @@ function findGpsColumn(headers: string[]): string | null {
   return headers.find((h) => /GPS|رابط|موقع|خريطة/i.test(h)) ?? null;
 }
 
+/**
+ * #2 — ترتيب أعمدة العرض والمشاركة في الوضع **الأساسي** بس (بطلب المندوب):
+ * بعد رقم اللوحة (اللي بيتعرض منفصل) ييجي: نوع السيارة (المحفظة) › نوع السيارة
+ * (الداتا) › الحي › GPS › وبعدهم باقي الأعمدة بترتيبها. الوضع «المخصّص»
+ * مايتأثرش خالص — المندوب رتّب أعمدته بإيده. بيتطبّق على العرض والإكسيل
+ * والواتساب معاً عشان اللي المندوب بيشوفه = اللي بيشاركه.
+ */
+function basicLeadOrder(cols: MergedResultColumn[]): MergedResultColumn[] {
+  const refType = cols.filter((c) => c.key === "type" && c.source === "referral");
+  const dataType = cols.filter((c) => c.key === "type" && c.source === "data");
+  const district = cols.filter((c) => c.key === "district");
+  const gps = cols.filter((c) => c.key === "gps");
+  const lead = [...refType, ...dataType, ...district, ...gps];
+  const leadSet = new Set(lead);
+  return [...lead, ...cols.filter((c) => !leadSet.has(c))];
+}
+
 export default function SortingPage() {
   const [sortMode, setSortMode] = useState<"new" | "full">("new");
   const [hydrated, setHydrated] = useState(false);
@@ -966,7 +983,8 @@ export default function SortingPage() {
     const labels = orderMode === "custom"
       ? orderedLabels(pickableColsRaw.map((c) => c.label), colOrder)
       : allResultColsRaw.map((c) => c.label);
-    return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    const cols = labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    return orderMode === "custom" ? cols : basicLeadOrder(cols);
   }, [allResultColsRaw, pickableColsRaw, colOrder, orderMode]);
   // نفس الوضع على أعمدة نتيجة السجلات كمان (اتساق عبر كل أنواع الفرز).
   const orderedTashyeekCols = useMemo(() => {
@@ -974,7 +992,8 @@ export default function SortingPage() {
       ? orderedLabels(tashyeekResultCols.map((c) => c.label), colOrder)
       : tashyeekResultCols.map((c) => c.label);
     const byLabel = new Map(tashyeekResultCols.map((c) => [c.label, c] as const));
-    return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    const cols = labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    return orderMode === "custom" ? cols : basicLeadOrder(cols);
   }, [tashyeekResultCols, colOrder, orderMode]);
   // الأعمدة المتاحة للاختيار مقسّمة: أعمدة الداتا/السجلات ثم أعمدة الإحالة (فاصل
   // بينهم في القائمة)، بلا تكرار وناقص الثابت ورقم اللوحة. لو عمود في الاتنين
@@ -1530,8 +1549,9 @@ export default function SortingPage() {
     r: MatchResult,
     src: { slot: string; plateCol: string; headers: string[]; sheets: Set<string> | null; primary: boolean },
   ) {
+    // «موقعها» بقت ١٥ قبل + ١٥ بعد **بالموضع** — مش محتاجة عمود موقع؛ لو موجود
+    // بنستخدمه لاسم العنوان بس.
     const locCol = detectLocationColumn(src.headers);
-    if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
     const iterate = (onBatch: (rows: Record<string, string>[], base: number) => void | Promise<void>) =>
       iterateRows((rows, base) => onBatch(rows, base), { slot: src.slot, sheets: src.sheets });
     const plateOf = (row: Record<string, string> | null) =>
@@ -1598,8 +1618,8 @@ export default function SortingPage() {
     }
     if (idx < 0) { alert("تعذّر تحديد موقع السيارة في ملف الداتا. جرّب تعمل «فرز» من جديد."); return; }
     const headers = dataTable?.headers ?? (r.dataRow ? Object.keys(r.dataRow) : Object.keys(orderedRows[idx] ?? {}));
+    // ١٥ قبل + ١٥ بعد بالموضع — عمود الموقع اختياري (للعنوان بس).
     const locCol = detectLocationColumn(headers);
-    if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
     let plateCol = sources[0]?.plateCol ?? "";
     for (const b of bounds) if (b.start <= idx) plateCol = b.plateCol;
     const ctx = neighborsInSameLocation(orderedRows, idx, locCol);

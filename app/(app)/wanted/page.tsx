@@ -108,11 +108,11 @@ export default function WantedPage() {
   const ALL_OPTIONAL = ["العنوان", "الحي", "البنك", "GPS", "اللون", "سنة الصنع", "تاريخ التسجيل"];
   const orderableCols = optionalAvailable(wantedDataCols([...dataRows, ...recordRows], ALL_OPTIONAL));
 
-  // نافذة «موقعها» — جيران السيارة في نفس الشارع من ملف الداتا المرتّب.
+  // نافذة «موقعها» — ١٥ سيارة قبلها و١٥ بعدها بالموضع من ملف الداتا المرتّب.
   function showNeighbors(r: WantedRow) {
     const nd = wantedNeighborData;
     if (!nd) { alert("اعمل «فرز» الأول عشان نحدّد موقع السيارة."); return; }
-    if (!nd.locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
+    // عمود الموقع اختياري — النافذة بقت ١٥+١٥ بالموضع.
     let idx = (r.dataIdx != null && r.dataIdx >= 0 && r.dataIdx < nd.orderedData.length) ? r.dataIdx : -1;
     // احتياطي: نتايج قديمة (مفيش dataIdx) — ندوّر على أول صف داتا بنفس اللوحة.
     if (idx < 0 && r.norm) idx = nd.orderedData.findIndex((row) => normalizePlate(bankPlateToArabic(String(row[nd.plateCol] ?? ""))) === r.norm);
