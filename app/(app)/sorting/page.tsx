@@ -5,7 +5,7 @@ import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
   ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin, History,
-  Lock, LockOpen,
+  Lock, LockOpen, Pencil,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -31,7 +31,7 @@ import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
-  recordAppearances, setPlateStatus, sheetFingerprint, describeHistory, isClosedStatus,
+  recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
   newHistoryMap, pruneDetail, type HistoryMap, type PlateStatus,
 } from "@/lib/plateHistory";
 import { loadHistory, saveHistoryEntries, saveHistoryMap } from "@/lib/plateHistoryStore";
@@ -1119,6 +1119,18 @@ export default function SortingPage() {
     if (historyAgentId && entry) {
       try { await saveHistoryEntries(historyAgentId, [entry]); }
       catch (err) { console.error("history status save failed", err); }
+    }
+  }, [history, historyAgentId]);
+
+  // #4 — حفظ ملاحظة المندوب على لوحة (بتتحفظ فوراً محلياً وتفضل دايماً).
+  const applyPlateNote = useCallback(async (plateNorm: string, note: string) => {
+    if (!plateNorm) return;
+    const next = setPlateNote(history, plateNorm, note, todayStr());
+    setHistory(next);
+    const entry = next.get(plateNorm);
+    if (historyAgentId && entry) {
+      try { await saveHistoryEntries(historyAgentId, [entry]); }
+      catch (err) { console.error("history note save failed", err); }
     }
   }, [history, historyAgentId]);
 
@@ -3023,6 +3035,18 @@ export default function SortingPage() {
                               </button>
                             );
                           })()}
+                          {/* #4 — قلم الملاحظة: بيفتح نافذة السجل على محرر الملاحظة */}
+                          {(() => {
+                            const note = history.get(plateKey)?.note;
+                            return (
+                              <button onClick={() => setHistoryPlate(plateKey)}
+                                title={note || "اكتب ملاحظة على اللوحة دي"}
+                                className={`mt-1 flex w-full items-center justify-center gap-0.5 rounded-lg border px-1.5 py-0.5 text-[10px] transition ${note ? "border-alert/40 bg-alert/10 text-alert" : "border-border text-muted hover:text-primary"}`}>
+                                <Pencil size={10} className="shrink-0" />
+                                {note ? <span className="max-w-[80px] truncate">{note}</span> : "ملاحظة"}
+                              </button>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
@@ -3681,6 +3705,7 @@ export default function SortingPage() {
               location={loc || undefined}
               seenInChecks={seen}
               onSetStatus={(st) => { void applyPlateStatus(historyPlate, st); setHistoryPlate(null); }}
+              onSaveNote={(note) => { void applyPlateNote(historyPlate, note); }}
               onClose={() => setHistoryPlate(null)}
             />
           );
