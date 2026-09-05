@@ -1146,6 +1146,63 @@ export default function SortingPage() {
     }
   }, [history, historyAgentId]);
 
+  // #4 — خلية «الحالة» (سحبتها/ملقيتهاش) لأي جدول نتيجة — بمفتاح اللوحة المطبّع،
+  // فنفس السجل بيشتغل في كل الجداول (جديد/كلي/سجلات/لصق).
+  const renderStatusCell = (plateKey: string) => {
+    const st = history.get(plateKey)?.status ?? "none";
+    const stAt = history.get(plateKey)?.statusAt;
+    if (st === "none") {
+      return (
+        <span className="inline-flex gap-1">
+          <button onClick={() => void applyPlateStatus(plateKey, "taken")} title="سحبتها"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-primary/50 bg-primary/10 px-1.5 py-1 text-[11px] font-bold text-primary transition hover:bg-primary/25">
+            <Check size={11} /> سحبتها
+          </button>
+          <button onClick={() => void applyPlateStatus(plateKey, "notFound")} title="مش في الموقع"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-border px-1.5 py-1 text-[11px] text-muted transition hover:border-alert hover:text-alert">
+            <X size={11} /> ملقيتهاش
+          </button>
+        </span>
+      );
+    }
+    const closed = isClosedStatus(st);
+    const label = st === "taken" ? "مسحوبة" : st === "otherTook" ? "حد تاني سحبها"
+      : st === "paid" ? "العميل سدّد" : st === "excluded" ? "مستبعدة" : "مش في الموقع";
+    return (
+      <button onClick={() => setHistoryPlate(plateKey)}
+        className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${closed ? "bg-primary/15 text-primary" : "bg-alert/15 text-alert"}`}>
+        {closed ? <Check size={11} /> : <X size={11} />}
+        {label}{stAt ? ` · ${stAt.slice(8)}/${stAt.slice(5, 7)}` : ""}
+      </button>
+    );
+  };
+
+  // #4 — خلية «السجل» + قلم الملاحظة لأي جدول نتيجة.
+  const renderLogCell = (plateKey: string) => {
+    const e = history.get(plateKey);
+    const note = e?.note;
+    return (
+      <>
+        {(() => {
+          if (!e || e.count <= 1) {
+            const dd = e ? describeHistory(e, todayStr()) : null;
+            if (!dd || dd.tone === "new") {
+              return <button onClick={() => setHistoryPlate(plateKey)} className="text-[11px] text-muted underline decoration-dotted transition hover:text-primary">جديدة</button>;
+            }
+          }
+          const dd = describeHistory(e!, todayStr());
+          const cls = dd.tone === "danger" ? "bg-danger/15 text-danger" : "bg-alert/15 text-alert";
+          return <button onClick={() => setHistoryPlate(plateKey)} className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${cls}`}><History size={11} /> {dd.text}</button>;
+        })()}
+        <button onClick={() => setHistoryPlate(plateKey)} title={note || "اكتب ملاحظة على اللوحة دي"}
+          className={`mt-1 flex w-full items-center justify-center gap-0.5 rounded-lg border px-1.5 py-0.5 text-[10px] transition ${note ? "border-alert/40 bg-alert/10 text-alert" : "border-border text-muted hover:text-primary"}`}>
+          <Pencil size={10} className="shrink-0" />
+          {note ? <span className="max-w-[80px] truncate">{note}</span> : "ملاحظة"}
+        </button>
+      </>
+    );
+  };
+
   const plateColorMap = useMemo(() => {
     if (!results) return new Map<string, number>();
     const counts = new Map<string, number>();
@@ -3218,7 +3275,9 @@ export default function SortingPage() {
                       <th key={c.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c.label}</th>
                     ))}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
-                    {nearestActive && tashyeekGpsCol && <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                    <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3268,6 +3327,13 @@ export default function SortingPage() {
                         {nearestActive && tashyeekGpsCol && (
                           <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">{formatDurationMin(_min)}</td>
                         )}
+                        {(() => {
+                          const pk = normalizePlate(bankPlateToArabic(String(plate)));
+                          return (<>
+                            <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">{renderStatusCell(pk)}</td>
+                            <td className="px-2 py-2 text-center whitespace-nowrap">{renderLogCell(pk)}</td>
+                          </>);
+                        })()}
                       </tr>
                     );
                   })}
@@ -3496,6 +3562,9 @@ export default function SortingPage() {
                           {col}
                         </th>
                       ))}
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">الحالة</th>
+                      <th className="border-b border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">السجل</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3565,6 +3634,16 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
+                        {/* موقعها في الداتا (لوحات اللصق بتطابق ملف الداتا فليها موضع) */}
+                        <td className="border-l border-border px-2 py-1.5 text-center">
+                          <button onClick={() => void showNeighbors({ dataRow: p.row, refPlateNorm: pasteKey } as unknown as MatchResult)} disabled={neighborsLoading}
+                            title="شوف موقعها بين الجيران في الداتا"
+                            className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition disabled:opacity-50">
+                            <MapPin size={12} /> {neighborsLoading ? "..." : "موقعها"}
+                          </button>
+                        </td>
+                        <td className="border-l border-border px-2 py-1.5 text-center whitespace-nowrap">{renderStatusCell(pasteKey)}</td>
+                        <td className="px-2 py-1.5 text-center whitespace-nowrap">{renderLogCell(pasteKey)}</td>
                       </tr>
                       );
                     })}
