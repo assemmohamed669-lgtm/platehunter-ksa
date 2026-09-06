@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { Crosshair, Trash2, RefreshCw } from "lucide-react";
 import WantedResultsTable, { wantedDataCols, type WantedRow } from "@/components/WantedResultsTable";
-import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, loadOrderMode, saveOrderMode, FIXED_LEADING_LABELS, type OrderMode } from "@/lib/columnOrder";
+import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { ChevronDown } from "lucide-react";
 import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
@@ -371,9 +371,7 @@ export default function WantedPage() {
                   <div>
                     <p className="mb-1 text-[11px] text-muted">📌 ثابت في الأول (مايتغيّرش):</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {["رقم اللوحة", ...FIXED_LEADING_LABELS].map((l) => (
-                        <span key={l} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 {l}</span>
-                      ))}
+                      <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 رقم اللوحة</span>
                     </div>
                   </div>
                   <div>

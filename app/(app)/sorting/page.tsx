@@ -22,7 +22,7 @@ import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
-import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, FIXED_LEADING_LABELS, type OrderMode } from "@/lib/columnOrder";
+import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
@@ -1008,10 +1008,10 @@ export default function SortingPage() {
     return orderMode === "custom" ? cols : basicLeadOrder(cols);
   }, [tashyeekResultCols, colOrder, orderMode]);
   // الأعمدة المتاحة للاختيار مقسّمة: أعمدة الداتا/السجلات ثم أعمدة الإحالة (فاصل
-  // بينهم في القائمة)، بلا تكرار وناقص الثابت ورقم اللوحة. لو عمود في الاتنين
-  // يتحسب داتا (الأولوية للداتا الميدانية).
+  // بينهم في القائمة)، بلا تكرار وناقص رقم اللوحة بس. «نوع السيارة» و«الماركة»
+  // بقوا هنا زي أي عمود بعد ما المالك فكّ قفلهم.
   const orderableGroups = useMemo(() => {
-    const fixed = new Set([...FIXED_LEADING_LABELS, "رقم اللوحة"]);
+    const fixed = new Set(["رقم اللوحة"]);
     const all = [...pickableColsRaw, ...tashyeekResultCols];
     const seen = new Set<string>(fixed);
     const data: string[] = [];
@@ -2861,10 +2861,11 @@ export default function SortingPage() {
             </div>
           </div>
 
-          {/* ترتيب الأعمدة — رقم اللوحة/نوع السيارة/الماركة ثابتين في الأول،
-              والباقي المندوب يدوس عليه بالترتيب اللي عايزه (رقم بيبان جنبه). لو
-              ماختارش حاجة → الثابت بس. الاختيار بيتحفظ ويطبّق على النتيجة والإكسيل
-              والصورة وكل أنواع الفرز وصفحة المطلوب. */}
+          {/* ترتيب الأعمدة — رقم اللوحة ثابت في الأول بس، وكل الباقي (بما فيه
+              نوع السيارة والماركة) المندوب يدوس عليه بالترتيب اللي عايزه (رقم
+              بيبان جنبه). لو ماختارش حاجة → النوع والماركة كافتراضي. الاختيار
+              بيتحفظ ويطبّق على النتيجة والإكسيل والصورة وكل أنواع الفرز وصفحة
+              المطلوب. */}
           {(orderableGroups.data.length > 0 || orderableGroups.ref.length > 0 || allResultColsRaw.length > 0) && (
             <div className="rounded-xl border border-border bg-surface">
               <button onClick={() => setResultColsPickerOpen((v) => !v)}
@@ -2894,9 +2895,7 @@ export default function SortingPage() {
                       <div>
                         <p className="mb-1 text-[11px] text-muted">📌 ثابت في الأول (مايتغيّرش):</p>
                         <div className="flex flex-wrap gap-1.5">
-                          {["رقم اللوحة", ...FIXED_LEADING_LABELS].map((l) => (
-                            <span key={l} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 {l}</span>
-                          ))}
+                          <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-bold text-muted">📌 رقم اللوحة</span>
                         </div>
                       </div>
                       {(orderableGroups.data.length > 0 || orderableGroups.ref.length > 0) && (() => {
