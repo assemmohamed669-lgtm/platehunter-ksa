@@ -33,6 +33,21 @@ function esc(s: unknown): string {
   );
 }
 
+// بناء محتوى البوب-أب لنقطة — بيتنادى **وقت الفتح بس** (lazy) مش لكل نقطة وقت
+// الرسم، عشان آلاف النقط ماتبنيش آلاف السلاسل النصية وتجمّد الخريطة.
+function popupHtml(p: MapPoint): string {
+  const color = p.color ?? "#1FAE6E";
+  const gLabel = [p.plate, p.when].filter(Boolean).join(" · ");
+  const gmaps = `https://www.google.com/maps?q=${p.lat},${p.lng}${gLabel ? `(${encodeURIComponent(gLabel)})` : ""}`;
+  return `
+    <div dir="rtl" style="font-family:Tahoma,sans-serif;min-width:160px">
+      <b style="color:${color};font-size:15px">${esc(p.plate)}</b><br/>
+      ${p.subtitle ? `<span style="color:#666">${esc(p.subtitle)}</span><br/>` : ""}
+      ${p.when ? `<span style="color:#999;font-size:11px">${esc(p.when)}</span><br/>` : ""}
+      <a href="${esc(gmaps)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>
+    </div>`;
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function MapView({ points, center = [24.7136, 46.6753], userLocation, recenterKey, heightPx = 420, searchPin }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -106,23 +121,11 @@ export default function MapView({ points, center = [24.7136, 46.6753], userLocat
 
     points.forEach((p) => {
       const color = p.color ?? "#1FAE6E";
-      // رابط خرائط جوجل باللوحة كـ**عنوان للدبوس**: q=lat,lng(اللوحة …) — كده لما
-      // المندوب يفتحه، جوجل بيسمّي الدبوس باللوحة (والوقت) بدل إحداثيات مجرّدة.
-      // (جوجل مابيعرضش كارت بيانات كامل زي التطبيق — بس العنوان ده أقصى المتاح.)
-      const gLabel = [p.plate, p.when].filter(Boolean).join(" · ");
-      const gmaps = `https://www.google.com/maps?q=${p.lat},${p.lng}${gLabel ? `(${encodeURIComponent(gLabel)})` : ""}`;
-      const popup = `
-        <div dir="rtl" style="font-family:Tahoma,sans-serif;min-width:160px">
-          <b style="color:${color};font-size:15px">${esc(p.plate)}</b><br/>
-          ${p.subtitle ? `<span style="color:#666">${esc(p.subtitle)}</span><br/>` : ""}
-          ${p.when ? `<span style="color:#999;font-size:11px">${esc(p.when)}</span><br/>` : ""}
-          <a href="${esc(gmaps)}" target="_blank" rel="noopener noreferrer" style="color:#1FAE6E">فتح في خرائط Google</a>
-        </div>`;
-      // circleMarker على الكانفاس المشترك — سريع مع آلاف النقط. البوب-أب lazy فمابيتبنيش
-      // إلا عند الفتح.
+      // circleMarker على الكانفاس المشترك — سريع مع آلاف النقط. البوب-أب lazy
+      // (دالة بتتنادى وقت الفتح بس) فمابنبنيش آلاف السلاسل وقت الرسم.
       const marker = L.circleMarker([p.lat, p.lng], {
         renderer: rendererRef.current, radius: 7, color: "#ffffff", weight: 2, fillColor: color, fillOpacity: 1,
-      }).addTo(layer).bindPopup(popup, { maxWidth: 220 });
+      }).addTo(layer).bindPopup(() => popupHtml(p), { maxWidth: 220 });
       const key = `${p.lat},${p.lng}|${p.plate}`;
       (marker as any)._phKey = key;
       if (openKey && key === openKey) marker.openPopup();

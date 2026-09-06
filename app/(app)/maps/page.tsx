@@ -114,6 +114,9 @@ export default function MapsPage() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [windowOpen, setWindowOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // #23 — عرض القائمة على دفعات عشان مايتجمّدش مهما كانت اللوحات كتير.
+  const LIST_STEP = 150;
+  const [listShown, setListShown] = useState(LIST_STEP);
 
   useEffect(() => {
     (async () => {
@@ -213,6 +216,9 @@ export default function MapsPage() {
     }
     return list;
   }, [matches, query, nearest, userLoc]);
+
+  // رجّع العدّاد لأول دفعة كل ما البحث/الترتيب يتغيّر أو النافذة تتفتح.
+  useEffect(() => { setListShown(LIST_STEP); }, [query, nearest, windowOpen]);
 
   function matchText(m: Match): string {
     const lines = [`🚗 لوحة مطلوبة: ${m.plate}`, `الطريقة: ${m.method}`];
@@ -502,7 +508,7 @@ export default function MapsPage() {
             {/* القائمة */}
             <div className="flex-1 overflow-y-auto px-3 py-3">
               <div className="flex flex-col gap-2.5">
-                {filtered.map((m) => {
+                {filtered.slice(0, listShown).map((m) => {
                   const Icon = METHOD_ICON[m.methodIcon];
                   const sel = selected.has(m.key);
                   return (
@@ -552,6 +558,12 @@ export default function MapsPage() {
                   );
                 })}
               </div>
+              {filtered.length > listShown && (
+                <button onClick={() => setListShown((n) => n + LIST_STEP)}
+                  className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-sm text-muted hover:text-ink transition">
+                  <ChevronDown size={15} /> عرض المزيد ({filtered.length - listShown} متبقية)
+                </button>
+              )}
             </div>
           </div>
         </div>
