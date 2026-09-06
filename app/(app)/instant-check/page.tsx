@@ -5149,8 +5149,9 @@ export default function InstantCheckPage() {
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${zoomFontPx(pttZoom)}px` }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
-                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
-                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
+                            <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                            {/* #18 — عمود مسح مضغوط (علامة المسح بس)، الاسم «مسح» */}
+                            <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">مسح</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
@@ -5166,32 +5167,16 @@ export default function InstantCheckPage() {
                         <tbody>
                           {sortNear(pttResults).map((r, i) => (
                             <tr key={r.id} title={dupeBg(r.plate) ? DUPE_TITLE : undefined} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : dupeBg(r.plate) || (r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface")}`}>
-                              <td className="border-l border-border px-2 py-2 text-center">
+                              <td className="border-l border-border px-1.5 py-2 text-center">
                                 <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
                                   {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
                               </td>
-                              {/* ترقيم + تشييك/نسخ/حذف — تاني عمود بعد التحديد */}
-                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[11px] font-bold text-muted">{i + 1}</span>
-                                  {r.found && (
-                                    pttExportedIds.has(r.id) ? (
-                                      <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
-                                    ) : (
-                                      <button
-                                        onClick={async () => { await exportPttRowToField(r); markJudgeExportedIfArmed([r.id]); deletePttRow(r.id); }}
-                                        className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
-                                        title="تصدير للتشييك"
-                                      >
-                                        <ClipboardCheck size={12} /> تشييك
-                                      </button>
-                                    )
-                                  )}
-                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
+                              {/* #18 — علامة المسح بس (التصدير من زر «تصدير الكل» تحت) */}
+                              <td className="border-l border-border px-1.5 py-2 text-center">
+                                <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
+                                  <Trash2 size={14} />
+                                </button>
                               </td>
                               {/* #17 — خط اللوحة أكبر ٤ أضعاف في خيار الجدول */}
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={editingPttId === r.id ? undefined : { fontSize: "4em" }}>
