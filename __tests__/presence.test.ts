@@ -46,9 +46,41 @@ describe("shouldSendLocation", () => {
   it("عدّت المدة (٤٥ث) وهو واقف → يبعت", () => {
     expect(shouldSendLocation(p, { lat: 24.7136, lng: 46.6753 }, NOW + 46000)).toBe(true);
   });
-  it("اتحرك أكتر من ٢٥ متر خلال المدة → يبعت", () => {
-    // ~0.5 كم شمالاً
-    expect(shouldSendLocation(p, { lat: 24.7181, lng: 46.6753 }, NOW + 5000)).toBe(true);
+  // 🐞 ده كان أخطر بق في الحمل: خدمة الـGPS بتنده **كل ثانيتين**، والخانق كان
+  // بيسمح بالإرسال لمجرد إنه اتحرك ٢٥ متر — والعربية بتقطع ٢٥ متر في ثانيتين عند
+  // ٤٥ كم/س. النتيجة: كتابة على الداتابيز كل ثانيتين لكل مندوب بيسوق =
+  // ١٨٠٠ كتابة/ساعة للواحد، و~٤٨ ألف طلب/ساعة خنقوا الداتابيز (Unhealthy).
+  it("🐞 اتحرك كتير بس بعد ثانيتين بس → ما يبعتش (نبضة السواقة)", () => {
+    // ~٥٠٠ متر في ثانيتين — أسرع من أي عربية، ومع ذلك بدري على الإرسال
+    expect(shouldSendLocation(p, { lat: 24.7181, lng: 46.6753 }, NOW + 2000)).toBe(false);
+  });
+
+  it("اتحرك أكتر من ٢٥ متر وعدّى الفاصل الأدنى → يبعت", () => {
+    expect(shouldSendLocation(p, { lat: 24.7181, lng: 46.6753 }, NOW + 16000)).toBe(true);
+  });
+
+  it("🐞 ساعة سواقة = مئات الكتابات مش آلاف", () => {
+    // نحاكي الواقع: نبضة كل ثانيتين، ~٦٠ كم/س (~٣٣ متر بين النبضة والتانية)
+    let prev = { lat: 24.7136, lng: 46.6753, at: NOW };
+    let sends = 0;
+    let lat = 24.7136;
+    for (let t = 2000; t <= 3_600_000; t += 2000) {
+      lat += 0.0003;                                    // ~٣٣ متر كل نبضة
+      const next = { lat, lng: 46.6753 };
+      if (shouldSendLocation(prev, next, NOW + t)) { sends++; prev = { ...next, at: NOW + t }; }
+    }
+    expect(sends).toBeLessThanOrEqual(260);             // كان ١٨٠٠
+  });
+
+  it("الواقف لسه بيبعت نبضة — آخر ظهور يفضل حديث", () => {
+    let prev = { lat: 24.7136, lng: 46.6753, at: NOW };
+    let sends = 0;
+    for (let t = 2000; t <= 3_600_000; t += 2000) {
+      if (shouldSendLocation(prev, { lat: 24.7136, lng: 46.6753 }, NOW + t)) {
+        sends++; prev = { lat: 24.7136, lng: 46.6753, at: NOW + t };
+      }
+    }
+    expect(sends).toBeGreaterThanOrEqual(70);           // ~٨٠ نبضة/ساعة
   });
   it("حركة صغيرة جداً (بضعة أمتار) خلال المدة → ما يبعتش", () => {
     expect(shouldSendLocation(p, { lat: 24.71362, lng: 46.67531 }, NOW + 5000)).toBe(false);

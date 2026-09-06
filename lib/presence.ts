@@ -28,8 +28,18 @@ export function activityStatus(lastSeen: string | null, now: number = Date.now()
 
 /**
  * يقرّر هل نبعت تحديث موقع جديد للسيرفر: نبعت لو (أ) أول مرة، أو (ب) عدّت مدة
- * كافية من آخر إرسال (عشان last_seen يفضل حديث حتى لو المندوب واقف)، أو (ج)
- * المندوب اتحرك مسافة معتبرة. بيقلّل الكتابات على Supabase.
+ * كافية من آخر إرسال (نبضة عشان last_seen يفضل حديث حتى لو المندوب واقف)، أو
+ * (ج) المندوب اتحرك مسافة معتبرة **وعدّى الفاصل الأدنى بين إرسالين**.
+ *
+ * ⚠️ الشرط الأخير ده هو بيت القصيد. خدمة الـGPS بتنده المستمعين **كل ثانيتين**،
+ * وقبل كده كانت قاعدة المسافة لوحدها كافية — والعربية بتقطع ٢٥ متر في ثانيتين
+ * عند ٤٥ كم/س. يعني أي مندوب بيسوق كان بيكتب على الداتابيز **كل ثانيتين**:
+ * ١٨٠٠ كتابة/ساعة للواحد، و~٤٨ ألف طلب/ساعة إجمالاً — وهو اللي خنق الداتابيز
+ * ووداها Unhealthy على كمبيوت NANO (٢٠٢٦-٠٩-٠٦). الخانق كان مكتوب عشان «يقلّل
+ * الكتابات» بس قاعدة المسافة كانت بتلغيه وقت السواقة بالظبط.
+ *
+ * بالفاصل الأدنى: أقصى معدّل = إرسال كل ١٥ث = ٢٤٠ كتابة/ساعة بدل ١٨٠٠ (-٨٧٪)،
+ * والأدمن لسه شايف الموقع لايف بتأخير ١٥ث مالوش أثر عملي.
  */
 export function shouldSendLocation(
   prev: { lat: number; lng: number; at: number } | null,
@@ -37,9 +47,12 @@ export function shouldSendLocation(
   now: number,
   minMoveMeters = 25,
   minIntervalMs = 45000,
+  minMoveGapMs = 15000,
 ): boolean {
   if (!prev) return true;
-  if (now - prev.at >= minIntervalMs) return true;
+  const since = now - prev.at;
+  if (since >= minIntervalMs) return true;      // نبضة: آخر ظهور يفضل حديث
+  if (since < minMoveGapMs) return false;       // اتحرك بس لسه بدري — استنى
   const meters = haversineKm(prev.lat, prev.lng, next.lat, next.lng) * 1000;
   return meters >= minMoveMeters;
 }

@@ -5,7 +5,7 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.3.1";
+export const APP_VERSION = "1.3.2";
 
 /**
  * معرّف البناء — بيتغيّر مع **كل نشر** (SHA الكوميت). بيتقارن بين الجهاز والسيرفر
@@ -14,7 +14,7 @@ export const APP_VERSION = "1.3.1";
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
-  "إصلاح ضياع لوحات في نص القائمة على الآيفون — الأجزاء بقت أصغر بكتير (٢٥ لوحة للرسالة). والأندرويد رجع ياخد القائمة كاملة في رسالة واحدة.";
+  "تخفيف الضغط على السيرفر: تحديث الموقع كان بيتبعت كل ثانيتين وقت السواقة، بقى كل ١٥ث. الخريطة زي ما هي والبرنامج أخف بكتير.";
 
 /** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
 export async function refreshAppNow(): Promise<void> {
