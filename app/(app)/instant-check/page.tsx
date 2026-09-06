@@ -1046,6 +1046,20 @@ export default function InstantCheckPage() {
     return () => setMicBusy(false);
   }, [pttListening]);
 
+  // أول ما التطبيق يروح للخلفية (مكالمة جاية والمندوب فتحها، أو بدّل تطبيق) نفصل
+  // مايك التسجيل فورًا عشان المكالمة تقدر تستخدم الميك — من غير ما المندوب يضطر
+  // يقفل البرنامج كله. لما يرجع، الزر بيبقى أخضر «ابدأ التسجيل» فيبدأ من جديد.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden" && isListeningRef.current) {
+        void stopPtt();   // بيقفل الميك (VoiceX/ديبجرام) ويفلّش أي لوحة مقطوعة
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // يسجّل النص الخام (اللي المحرك سمعه قبل التحليل) في لوحة ديبج الأدمن — آخر ١٥.
   function logRawTranscript(text: string) {
     const t = text.trim();
