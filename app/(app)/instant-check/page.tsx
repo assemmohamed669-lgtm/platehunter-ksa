@@ -590,7 +590,6 @@ export default function InstantCheckPage() {
   const [draftEdit, setDraftEdit] = useState<{ id: string; field: string } | null>(null);
   const [draftEditValue, setDraftEditValue] = useState("");
   const [manualSel, setManualSel] = useState<Set<string>>(new Set());
-  const [manualCopiedId, setManualCopiedId] = useState<string | null>(null);
   const [manualExporting, setManualExporting] = useState(false);
   const [manualZoom, setManualZoom] = useState(3);
   const manualPinchRef = usePinchZoom(manualZoom, setManualZoom);
@@ -710,7 +709,6 @@ export default function InstantCheckPage() {
   const [icLocating, setIcLocating] = useState(false);
   const [pttError, setPttError] = useState<string | null>(null);
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
-  const [pttCopiedId, setPttCopiedId] = useState<string | null>(null);
   // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
@@ -1833,16 +1831,6 @@ export default function InstantCheckPage() {
     }
     if (e.mapsLink) lines.push(`📍 الموقع: ${e.mapsLink}`);
     return lines.join("\n");
-  }
-
-  function shareDraftRow(e: FieldCheckEntry) {
-    void shareTextViaChooser(draftRowText(e));
-  }
-
-  async function copyDraftRow(e: FieldCheckEntry) {
-    try { await navigator.clipboard.writeText(draftRowText(e)); } catch { /* ignore */ }
-    setManualCopiedId(e.id);
-    setTimeout(() => setManualCopiedId(null), 1200);
   }
 
   // هل لوحة القائمة مطلوبة؟ (للتعليم الأخضر)
@@ -3086,11 +3074,6 @@ export default function InstantCheckPage() {
     if (note && String(note).trim()) lines.push(`${NOTES_KEY}: ${note}`);
     if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
     return lines.join("\n");
-  }
-  async function copyPttRow(r: PttRow) {
-    try { await navigator.clipboard.writeText(pttRowText(r)); } catch { /* ignore */ }
-    setPttCopiedId(r.id);
-    setTimeout(() => setPttCopiedId(null), 1200);
   }
   function togglePttSel(id: string) {
     setPttSel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -4367,18 +4350,15 @@ export default function InstantCheckPage() {
                                   {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
                               </td>
-                              {/* ترقيم + نسخ/واتساب/حذف — تاني عمود بعد التحديد */}
+                              {/* #8 — مسح بس (اتشال النسخ والمشاركة بطلب المندوب) */}
                               <td className="border-l border-border px-2 py-2">
                                 <div className="flex items-center gap-2 whitespace-nowrap">
                                   <span className="text-[11px] font-bold text-muted">{i + 1}</span>
-                                  <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
-                                    {manualCopiedId === e.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                  </button>
-                                  <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
-                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="مسح"><Trash2 size={13} /></button>
                                 </div>
                               </td>
-                              <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`}>
+                              {/* #9 — خط اللوحة أكبر ٣ مرات لسهولة القراءة في الميدان */}
+                              <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`} style={{ fontSize: "3em" }}>
                                 {draftCell(e, "plate")}
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-center">
@@ -5081,14 +5061,8 @@ export default function InstantCheckPage() {
                               className={`${fresh ? "luxe-enter luxe-card--fresh" : ""} ${r.found ? "luxe-card--wanted" : ""}`}
                               face={
                                 <>
-                                  {/* يمين البطاقة — نسخ · مشاركة · مسح (صغيرين) */}
+                                  {/* #13 — مسح بس (اتشال النسخ والمشاركة بطلب المندوب) */}
                                   <span className="flex shrink-0 items-center gap-0.5">
-                                    <button onClick={() => copyPttRow(r)} title="نسخ" className="luxe-act">
-                                      {pttCopiedId === r.id ? <Check size={15} className="text-brand" /> : <Copy size={15} />}
-                                    </button>
-                                    <button onClick={() => void shareTextViaChooser(pttRowText(r))} title="مشاركة" className="luxe-act">
-                                      <Share2 size={15} />
-                                    </button>
                                     <button onClick={() => deletePttRow(r.id)} title="مسح اللوحة" className="luxe-act luxe-act--danger">
                                       <Trash2 size={15} />
                                     </button>
@@ -5255,15 +5229,13 @@ export default function InstantCheckPage() {
                                       </button>
                                     )
                                   )}
-                                  <button onClick={() => copyPttRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
-                                    {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                  </button>
                                   <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
                                     <Trash2 size={13} />
                                   </button>
                                 </div>
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
+                              {/* #17 — خط اللوحة أكبر ٤ أضعاف في خيار الجدول */}
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={editingPttId === r.id ? undefined : { fontSize: "4em" }}>
                                 {editingPttId === r.id ? (
                                   <span className="inline-flex items-center gap-1">
                                     <input
