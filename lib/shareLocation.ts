@@ -16,8 +16,13 @@
 
 import { gpsCellCoords, gpsCellToLink } from "./gps";
 
-/** أعمدة ممكن تحمل موقع: GPS / رابط / موقع / خريطة / إحداثيات. */
-const GPS_HEADER_RE = /GPS|رابط|موقع|خريطة|احداثيات|إحداثيات|lat|lng|location|link/i;
+/**
+ * أعمدة ممكن تحمل موقع: GPS / رابط / موقع / خريطة / إحداثيات / نقطة / دبوس.
+ * الصيغتين ة و ه (خريطة/خريطه) لأن ملفات المناديب بتتكتب بالاتنين.
+ * توسيع الاسم آمن هنا لأن القيمة نفسها بتتفحص بعده — الاسم بيرتّب الأولوية بس.
+ */
+const GPS_HEADER_RE =
+  /GPS|رابط|موقع|خريطة|خريطه|احداثي|إحداثي|نقطة|نقطه|دبوس|lat|lng|location|link|map|pin|coord/i;
 
 /**
  * رابط خرائط تحديداً — مش أي رابط. بيتستخدم لما بندوّر في أعمدة **مالهاش**
@@ -63,6 +68,38 @@ export function pickMapsLink(
     if (link) return link;
   }
   return "";
+}
+
+/**
+ * إحداثيات صف — بأي اسم عمود. بندوّر بالاسم الأول (أولوية لعمود اسمه موقع)
+ * وبعدين في **أي عمود** قيمته إحداثيات صالحة.
+ *
+ * ليه: زر «الأقرب» في نتيجة الفرز كان مربوط بكشف **بالاسم بس**، فمندوب ملفه
+ * حاطط الإحداثيات في عمود باسم تاني (أو بلا عنوان — بيحصل كتير في شيتات
+ * التفريغ) كان الزر مايظهرش عنده خالص، مع إن المشاركة كانت بتلاقي اللينك
+ * (لأن `pickMapsLink` بتدوّر في أي عمود). ده وحّد السلوكين.
+ *
+ * المدى بيتفحص (‎lat ≤ 90، lng ≤ 180) عشان رقم فيه فاصلة زي «12,345» (سعر أو
+ * عدّاد) مايتحسبش إحداثيات — `parseLatLngCell` مابتفحصش المدى.
+ */
+export function pickRowCoords(
+  row: Record<string, unknown> | null | undefined,
+  headers: string[] | null | undefined,
+): { lat: number; lng: number } | null {
+  if (!row) return null;
+  const cols = headers?.length ? headers : Object.keys(row);
+
+  const read = (h: string) => {
+    const c = gpsCellCoords(String(row[h] ?? ""));
+    if (!c) return null;
+    if (!isFinite(c.lat) || !isFinite(c.lng)) return null;
+    if (Math.abs(c.lat) > 90 || Math.abs(c.lng) > 180) return null;
+    return c;
+  };
+
+  for (const h of cols) if (GPS_HEADER_RE.test(h)) { const c = read(h); if (c) return c; }
+  for (const h of cols) { const c = read(h); if (c) return c; }
+  return null;
 }
 
 /** بيرجّع النص ومعاه سطر «📍 لينك» لو الخلية فيها موقع يتقرا. */

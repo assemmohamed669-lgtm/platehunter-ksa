@@ -19,7 +19,7 @@ import {
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
-import { withLocationLink, buildSelectedShareText, pickMapsLink } from "@/lib/shareLocation";
+import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
@@ -1233,16 +1233,40 @@ export default function SortingPage() {
 
   const closedCount = matchedResults.length - openResults.length;
 
+  /**
+   * إحداثيات صف النتيجة. عمود الـGPS المسمّى الأول، وبعدين **أي عمود** فيه
+   * إحداثيات (داتا ثم إحالة) — عشان ملف المندوب اللي حاطط الموقع في عمود
+   * باسم تاني أو بلا عنوان يشتغل زي غيره. ده اللي كان بيخفي زر «الأقرب».
+   */
+  const coordsOfRow = useCallback((r: MatchResult) => {
+    if (gpsCol) {
+      const c = gpsCellCoords(String(r.dataRow?.[gpsCol] ?? ""));
+      if (c) return c;
+    }
+    return pickRowCoords(r.dataRow, dataTable?.headers ?? null)
+      ?? pickRowCoords(r.referralRow, referralTable?.headers ?? null);
+  }, [gpsCol, dataTable, referralTable]);
+
+  /**
+   * نقدر نرتّب بالأقرب؟ = فيه صف واحد على الأقل بإحداثيات تتقرا. بنفحص أول
+   * ٥٠٠ صف بس — `some` بتقف عند أول واحد، والسقف بيحمي الملفات الضخمة من
+   * مسح كامل لما مافيش مواقع خالص.
+   */
+  const canSortByNearest = useMemo(
+    () => openResults.slice(0, 500).some((r) => coordsOfRow(r) != null),
+    [openResults, coordsOfRow],
+  );
+
   const displayResults = useMemo(() => {
-    if (!nearestActive || !userLoc || !gpsCol) return openResults;
+    if (!nearestActive || !userLoc) return openResults;
     return [...openResults]
       .map((r) => {
-        const coords = gpsCellCoords(r.dataRow?.[gpsCol] ?? "");
+        const coords = coordsOfRow(r);
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...r, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
       .sort((a, b) => a._dist - b._dist);
-  }, [openResults, nearestActive, userLoc, gpsCol]);
+  }, [openResults, nearestActive, userLoc, coordsOfRow]);
 
   /**
    * نتيجة كل ملف داتا في نافذة لوحدها (بطلب المندوب). المجموعة بتتحدد بـ
@@ -1255,31 +1279,48 @@ export default function SortingPage() {
   // عمود GPS في شيت التسجيلات — لترتيب «الأقرب» + حساب الوقت.
   const tashyeekGpsCol = useMemo(() => (tashyeekTable ? findGpsColumn(tashyeekTable.headers) : null), [tashyeekTable]);
 
+  // إحداثيات صف السجلات — نفس منطق نتيجة الفرز: العمود المسمّى الأول، وبعدين
+  // أي عمود فيه إحداثيات (صف السجلات ثم صف الإحالة).
+  const coordsOfTashyeek = useCallback((x: { tashyeekRow?: Record<string, string>; referralRow?: Record<string, string> }) => {
+    if (tashyeekGpsCol) {
+      const c = gpsCellCoords(String(x.tashyeekRow?.[tashyeekGpsCol] ?? x.referralRow?.[tashyeekGpsCol] ?? ""));
+      if (c) return c;
+    }
+    return pickRowCoords(x.tashyeekRow, tashyeekTable?.headers ?? null)
+      ?? pickRowCoords(x.referralRow, null);
+  }, [tashyeekGpsCol, tashyeekTable]);
+
+  const canSortTashyeekByNearest = useMemo(
+    () => (tashyeekResults ?? []).slice(0, 500).some((r) => coordsOfTashyeek(r) != null),
+    [tashyeekResults, coordsOfTashyeek],
+  );
+
   // نافذة التسجيلات مرتّبة بالأقرب (لو مفعّل) مع الاحتفاظ بالفهرس الأصلي للتحديد.
   const displayTashyeek = useMemo(() => {
     const base = (tashyeekResults ?? []).map((r, idx) => ({ r, idx, _dist: Infinity, _min: Infinity }));
-    if (!nearestActive || !userLoc || !tashyeekGpsCol) return base;
+    if (!nearestActive || !userLoc) return base;
     return base
       .map((x) => {
-        const coords = gpsCellCoords(x.r.tashyeekRow?.[tashyeekGpsCol] ?? x.r.referralRow?.[tashyeekGpsCol] ?? "");
+        const coords = coordsOfTashyeek(x.r);
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...x, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
       .sort((a, b) => a._dist - b._dist);
-  }, [tashyeekResults, nearestActive, userLoc, tashyeekGpsCol]);
+  }, [tashyeekResults, nearestActive, userLoc, coordsOfTashyeek]);
 
-  // نتائج اللصق مرتّبة بالأقرب (لو مفعّل) — لوحات اللصق بتطابق ملف الداتا،
-  // فبنقرأ نفس عمود GPS بتاع الداتا (gpsCol). لو مش مفعّل → نفس الترتيب الأصلي.
+  // نتائج اللصق مرتّبة بالأقرب (لو مفعّل) — عمود GPS بتاع الداتا الأول، وإلا
+  // أي عمود فيه إحداثيات. لو مش مفعّل → نفس الترتيب الأصلي.
   const displayPaste = useMemo(() => {
-    if (!nearestActive || !userLoc || !gpsCol) return pasteResults;
+    if (!nearestActive || !userLoc) return pasteResults;
     return [...pasteResults]
       .map((p) => {
-        const coords = gpsCellCoords(String(p.row?.[gpsCol] ?? ""));
+        const direct = gpsCol ? gpsCellCoords(String(p.row?.[gpsCol] ?? "")) : null;
+        const coords = direct ?? pickRowCoords(p.row, dataTable?.headers ?? null);
         const dist = coords ? haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) : Infinity;
         return { ...p, _dist: dist, _min: estimateDriveMinutes(dist) };
       })
       .sort((a, b) => a._dist - b._dist);
-  }, [pasteResults, nearestActive, userLoc, gpsCol]);
+  }, [pasteResults, nearestActive, userLoc, gpsCol, dataTable]);
 
   const pasteColorMap = useMemo(() => {
     if (!pasteResults.length) return new Map<string, number>();
@@ -2851,7 +2892,7 @@ export default function SortingPage() {
                   {hideClosed ? `مخفي ${closedCount}` : "إخفاء المقفولة"}
                 </button>
               )}
-              {gpsCol && (
+              {canSortByNearest && (
                 <button onClick={handleNearest} disabled={locating}
                   className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
                   <Navigation size={13} />
@@ -3249,7 +3290,7 @@ export default function SortingPage() {
                 <p className="text-xs text-muted mt-0.5">{tashyeekResults.length} سيارة من شيت التسجيلات موجودة في قائمة الإحالة</p>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
-                {tashyeekGpsCol && (
+                {canSortTashyeekByNearest && (
                   <button onClick={handleNearest} disabled={locating}
                     className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs transition ${nearestActive ? "bg-primary text-night font-bold" : "border border-border text-muted hover:text-primary"}`}>
                     <Navigation size={12} /> {locating ? "..." : "الأقرب"}
