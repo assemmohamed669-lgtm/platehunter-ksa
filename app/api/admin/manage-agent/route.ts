@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
+import { buildActionDetail } from "@/lib/securityDescribe";
 import { resetDevicePatch } from "@/lib/deviceBinding";
 import { randomUUID } from "node:crypto";
 
@@ -78,7 +79,10 @@ export async function POST(req: NextRequest) {
     agentId: adminId,
     targetId: agentId,
     targetLabel: (target as { username?: string } | null)?.username ?? null,
-    detail: action,
+    // القيمة بتتسجّل مع الإجراء (setVoicexEnabled=on) عشان السجل يعرف اتفتح
+    // ولا اتقفل — من غيرها الحدثان بيبانوا نفس الحاجة. الإجراءات الحسّاسة
+    // (كلمة المرور/المفاتيح) مابتسجّلش قيمها أبداً — شوف buildActionDetail.
+    detail: buildActionDetail(action, body),
     ...requestMeta(req),
     // كل إجراء يتسجّل لوحده — مانخنقش سجل التدقيق.
     throttleKey: `admin:${adminId}:${agentId}:${action}:${Date.now()}`,

@@ -9,8 +9,10 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ShieldAlert, RefreshCw, Info } from "lucide-react";
+import { ChevronLeft, ShieldAlert, RefreshCw, Info, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { securityRowMatches, type SecurityPerson } from "@/lib/securitySearch";
+import { describeSecurityEvent, formatEventTime } from "@/lib/securityDescribe";
 
 interface EventRow {
   id: number;
@@ -34,16 +36,12 @@ const KIND: Record<string, { label: string; tone: string }> = {
   admin_action: { label: "إجراء أدمن", tone: "text-primary" },
 };
 
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return p(d.getDate()) + "-" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
-}
-
 export default function SecurityLogPage() {
   const router = useRouter();
   const [rows, setRows] = useState<EventRow[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
+  // بيانات كل شخص ظاهر في السجل — الاسم للعرض، والإيميل والتليفون للبحث.
+  const [people, setPeople] = useState<Record<string, SecurityPerson>>({});
+  const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
@@ -73,10 +71,18 @@ export default function SecurityLogPage() {
       new Set(list.flatMap((r) => [r.agent_id, r.target_id]).filter(Boolean) as string[])
     );
     if (ids.length) {
-      const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
-      const m: Record<string, string> = {};
-      for (const p of profs ?? []) m[(p as { id: string }).id] = (p as { username: string }).username;
-      setNames(m);
+      // الإيميل والتليفون مطلوبين للبحث — الأدمن بيدوّر باللي في إيده من شكوى
+      // المندوب، مش بالاسم بالضرورة.
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("id, username, email, phone")
+        .in("id", ids);
+      const m: Record<string, SecurityPerson> = {};
+      for (const row of profs ?? []) {
+        const p = row as { id: string; username?: string; email?: string; phone?: string };
+        m[p.id] = { username: p.username, email: p.email, phone: p.phone };
+      }
+      setPeople(m);
     }
     setLoading(false);
   }, []);
@@ -86,9 +92,12 @@ export default function SecurityLogPage() {
   }, [load]);
 
   const who = (id: string | null, label: string | null) =>
-    (id && names[id]) || label || (id ? id.slice(0, 8) : "—");
+    (id && people[id]?.username) || label || (id ? id.slice(0, 8) : "—");
 
-  const shown = filter === "all" ? rows : rows.filter((r) => r.type === filter);
+  // فلتر النوع (الشرائح) ثم البحث — الاتنين مع بعض.
+  const shown = rows
+    .filter((r) => filter === "all" || r.type === filter)
+    .filter((r) => securityRowMatches(r, people, q));
   const counts = rows.reduce<Record<string, number>>((a, r) => {
     a[r.type] = (a[r.type] ?? 0) + 1;
     return a;
@@ -131,6 +140,27 @@ export default function SecurityLogPage() {
         </div>
       )}
 
+
+      {/* بحث بالاسم أو الإيميل أو رقم التليفون — على الفاعل والهدف. */}
+      <div className="relative">
+        <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="ابحث بالاسم أو الإيميل أو رقم التليفون"
+          className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-9 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+        {q && (
+          <button
+            onClick={() => setQ("")}
+            title="مسح البحث"
+            className="absolute left-2 top-1/2 -translate-y-1/2 rounded-lg p-1 text-muted transition hover:text-danger"
+          >
+            <X size={15} />
+          </button>
+        )}
+      </div>
+
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {chips.map(([k, label]) => (
@@ -154,30 +184,59 @@ export default function SecurityLogPage() {
         </div>
       )}
 
+      {!loading && !err && rows.length > 0 && shown.length === 0 && (
+        <div className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+          مافيش حدث مطابق لـ «{q}» في آخر {rows.length} حدث.
+        </div>
+      )}
+
       <div className="flex flex-col gap-1.5">
-        {shown.map((r) => (
-          <div key={r.id} className="rounded-xl border border-border bg-surface px-3 py-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className={"text-xs font-bold " + (KIND[r.type] ? KIND[r.type].tone : "text-muted")}>
-                {KIND[r.type] ? KIND[r.type].label : r.type}
-              </span>
-              <span className="shrink-0 text-[10px] text-muted">{fmt(r.at)}</span>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
-              <span>الفاعل: <b className="text-ink">{who(r.agent_id, r.actor_label)}</b></span>
-              {(r.target_id || r.target_label) && (
-                <span>الهدف: <b className="text-ink">{who(r.target_id, r.target_label)}</b></span>
-              )}
-              {r.detail && <span dir="ltr" className="font-mono">{r.detail}</span>}
-              {r.ip && <span dir="ltr" className="font-mono">{r.ip}</span>}
-              {r.suppressed > 0 && (
-                <span className="rounded-full bg-alert/15 px-1.5 text-[10px] font-bold text-alert">
-                  +{r.suppressed} مكرر
+        {shown.map((r) => {
+          const desc = describeSecurityEvent(r.type, r.detail);
+          const actor = people[r.agent_id ?? ""];
+          const target = people[r.target_id ?? ""];
+          return (
+            <div key={r.id} className="rounded-xl border border-border bg-surface px-3 py-2.5">
+              {/* السطر الأول: إيه اللي حصل + إمتى */}
+              <div className="flex items-start justify-between gap-2">
+                <span className={"text-xs font-bold leading-relaxed " + (KIND[r.type] ? KIND[r.type].tone : "text-muted")}>
+                  {desc.action}
                 </span>
+                <span className="shrink-0 text-[10px] text-muted">{formatEventTime(r.at)}</span>
+              </div>
+
+              {desc.note && (
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{desc.note}</p>
+              )}
+
+              {/* الطرفان: مين عمل، ولمين — بالاسم والإيميل */}
+              <div className="mt-1.5 flex flex-col gap-0.5 text-[11px] text-muted">
+                <span>
+                  الفاعل: <b className="text-ink">{who(r.agent_id, r.actor_label)}</b>
+                  {actor?.email && <span dir="ltr" className="mr-1 font-mono text-[10px]">{actor.email}</span>}
+                </span>
+                {(r.target_id || r.target_label) && (
+                  <span>
+                    المندوب: <b className="text-ink">{who(r.target_id, r.target_label)}</b>
+                    {target?.email && <span dir="ltr" className="mr-1 font-mono text-[10px]">{target.email}</span>}
+                    {target?.phone && <span dir="ltr" className="mr-1 font-mono text-[10px]">{target.phone}</span>}
+                  </span>
+                )}
+              </div>
+
+              {(r.ip || r.suppressed > 0) && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted">
+                  {r.ip && <span dir="ltr" className="font-mono">{r.ip}</span>}
+                  {r.suppressed > 0 && (
+                    <span className="rounded-full bg-alert/15 px-1.5 font-bold text-alert">
+                      +{r.suppressed} مكرر
+                    </span>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex items-start gap-2 rounded-xl border border-border bg-surface-2 p-3 text-[11px] leading-relaxed text-muted">
