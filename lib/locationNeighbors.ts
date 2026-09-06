@@ -9,11 +9,6 @@ import { normalizePlate, bankPlateToArabic } from "./plateParser";
  * بالظبط من خلال جيرانها. لو السيارة في أول/آخر الموقع بترجّع أقل + علامة.
  */
 
-/** يطبّع قيمة الموقع للمقارنة (يشيل الفراغات الزيادة). */
-function normLoc(v: unknown): string {
-  return String(v ?? "").trim().replace(/\s+/g, " ");
-}
-
 /**
  * يكتشف عمود «اسم الموقع/الشارع» في الداتا للتجميع بيه. الأولوية:
  * «اسم الموقع» → شارع/عنوان → الحي/منطقة. يرجّع null لو مفيش.
@@ -34,28 +29,33 @@ export function detectLocationColumn(headers: string[]): string | null {
   return null;
 }
 
+/** عدد الجيران المعروض قبل السيارة وبعدها في نافذة «موقعها» (بطلب المندوب: ١٥+١٥). */
+export const NEIGHBOR_SPAN = 15;
+
 export interface LocationContext {
-  /** اسم الموقع الخام (زي ما هو في الداتا). */
+  /** اسم الموقع الخام للسيارة المطلوبة (زي ما هو في الداتا) — للعنوان بس. */
   locationName: string;
-  /** حتى ٥ سيارات قبلها بنفس الموقع (بالترتيب من الأبعد للأقرب). */
+  /** حتى ١٥ سيارة قبلها في ترتيب ملف الداتا (بالترتيب الطبيعي). */
   before: Record<string, string>[];
-  /** حتى ٥ سيارات بعدها بنفس الموقع (بالترتيب من الأقرب للأبعد). */
+  /** حتى ١٥ سيارة بعدها في ترتيب ملف الداتا (بالترتيب الطبيعي). */
   after: Record<string, string>[];
-  /** مفيش سيارة قبلها في نفس الموقع (دي أول سيارة في الموقع). */
+  /** دي أول سيارة في ملف الداتا (مفيش قبلها). */
   isFirstInLocation: boolean;
-  /** مفيش سيارة بعدها في نفس الموقع (دي آخر سيارة في الموقع). */
+  /** دي آخر سيارة في ملف الداتا (مفيش بعدها). */
   isLastInLocation: boolean;
 }
 
 /**
- * يجمع جيران الصف رقم `index` في `rows` اللي بنفس قيمة `locCol` — حتى `span`
- * قبله و`span` بعده، ويقف عند أول صف بموقع مختلف (حدود الموقع).
+ * جيران الصف رقم `index` في ملف الداتا المرتّب — `span` سيارة قبله و`span` بعده
+ * **بالموضع** (مش محدودة بنفس الشارع)، بطلب المندوب. ملف الداتا مسجّل بترتيب
+ * القيادة فالجيران دول هم اللي المندوب عدّى عليهم فعلاً قبل/بعد السيارة دي.
+ * `locCol` بيتستخدم لاسم الموقع في العنوان بس (اختياري).
  */
 export function neighborsInSameLocation(
   rows: Record<string, string>[],
   index: number,
-  locCol: string,
-  span = 5,
+  locCol?: string | null,
+  span = NEIGHBOR_SPAN,
 ): LocationContext {
   const empty: LocationContext = {
     locationName: "", before: [], after: [], isFirstInLocation: true, isLastInLocation: true,
@@ -63,24 +63,16 @@ export function neighborsInSameLocation(
   if (!rows.length || index < 0 || index >= rows.length) return empty;
 
   const target = rows[index];
-  const key = normLoc(target[locCol]);
+  const before = rows.slice(Math.max(0, index - span), index);
+  const after = rows.slice(index + 1, index + 1 + span);
 
-  const before: Record<string, string>[] = [];
-  for (let i = index - 1; i >= 0 && before.length < span; i--) {
-    if (normLoc(rows[i][locCol]) !== key) break;
-    before.unshift(rows[i]); // نخليهم بالترتيب الطبيعي (الأبعد أولاً)
-  }
-
-  const after: Record<string, string>[] = [];
-  for (let i = index + 1; i < rows.length && after.length < span; i++) {
-    if (normLoc(rows[i][locCol]) !== key) break;
-    after.push(rows[i]);
-  }
-
-  const isFirstInLocation = index === 0 || normLoc(rows[index - 1][locCol]) !== key;
-  const isLastInLocation = index === rows.length - 1 || normLoc(rows[index + 1][locCol]) !== key;
-
-  return { locationName: String(target[locCol] ?? ""), before, after, isFirstInLocation, isLastInLocation };
+  return {
+    locationName: locCol ? String(target[locCol] ?? "") : "",
+    before,
+    after,
+    isFirstInLocation: index === 0,
+    isLastInLocation: index === rows.length - 1,
+  };
 }
 
 /**
@@ -103,8 +95,8 @@ export async function neighborsFromStream(
     onBatch: (rows: Record<string, string>[], baseIndex: number) => void | Promise<void>,
   ) => Promise<void>,
   index: number,
-  locCol: string,
-  span = 5,
+  locCol?: string | null,
+  span = NEIGHBOR_SPAN,
 ): Promise<{ ctx: LocationContext; target: Record<string, string> | null }> {
   const empty: LocationContext = {
     locationName: "", before: [], after: [], isFirstInLocation: true, isLastInLocation: true,
@@ -112,7 +104,7 @@ export async function neighborsFromStream(
   if (index < 0) return { ctx: empty, target: null };
 
   const prev: Record<string, string>[] = [];   // نافذة متحرّكة: آخر span صف قبل الهدف
-  const next: Record<string, string>[] = [];   // أول span صف بعد الهدف
+  const after: Record<string, string>[] = [];   // أول span صف بعد الهدف
   let target: Record<string, string> | null = null;
   let done = false;
 
@@ -126,36 +118,21 @@ export async function neighborsFromStream(
       } else if (g === index) {
         target = rows[i];
       } else {
-        next.push(rows[i]);
-        if (next.length >= span) { done = true; return; }   // خلصنا — بطّل شغل
+        after.push(rows[i]);
+        if (after.length >= span) { done = true; return; }   // خلصنا — بطّل شغل
       }
     }
   });
 
   if (target === null) return { ctx: empty, target: null };
-  const key = normLoc((target as Record<string, string>)[locCol]);
-
-  // من الهدف للورا: خد اللي بنفس الموقع وقف عند أول اختلاف (حدّ الموقع).
-  const before: Record<string, string>[] = [];
-  for (let i = prev.length - 1; i >= 0; i--) {
-    if (normLoc(prev[i][locCol]) !== key) break;
-    before.unshift(prev[i]);
-  }
-  const after: Record<string, string>[] = [];
-  for (const row of next) {
-    if (normLoc(row[locCol]) !== key) break;
-    after.push(row);
-  }
 
   return {
     ctx: {
-      locationName: String((target as Record<string, string>)[locCol] ?? ""),
-      before,
+      locationName: locCol ? String((target as Record<string, string>)[locCol] ?? "") : "",
+      before: prev,          // آخر span صف قبل الهدف (بالموضع، مش محدودة بالموقع)
       after,
-      // prev فاضية = الهدف أول صف في الملف كله.
-      isFirstInLocation: prev.length === 0 || normLoc(prev[prev.length - 1][locCol]) !== key,
-      // next فاضية = الهدف آخر صف في الملف كله.
-      isLastInLocation: next.length === 0 || normLoc(next[0][locCol]) !== key,
+      isFirstInLocation: prev.length === 0,   // مفيش صف قبله = أول الملف
+      isLastInLocation: after.length === 0,   // مفيش صف بعده = آخر الملف
     },
     target,
   };

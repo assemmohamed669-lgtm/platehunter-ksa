@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 import { Copy, Check, Share2, Trash2, MapPin, Navigation, CheckSquare, Square } from "lucide-react";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
-import { gpsService, haversineKm } from "@/lib/gps";
+import { gpsService, haversineKm, formatDistanceKm } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { orderedLabels, type OrderMode } from "@/lib/columnOrder";
 
@@ -121,6 +121,21 @@ export default function WantedResultsTable({
     return [...rows].sort((a, b) => dist(a) - dist(b));
   }, [rows, nearest, userLoc]);
 
+  // مسافة الصف عن موقع المندوب (كم) — بتظهر في عمود «المسافة» والمشاركة لما «الأقرب» مفعّل.
+  const showDist = nearest && !!userLoc;
+  const distOf = (r: WantedRow): number =>
+    showDist && r.lat != null && r.lng != null && userLoc
+      ? haversineKm(userLoc.lat, userLoc.lng, r.lat, r.lng) : Infinity;
+  const distText = (r: WantedRow): string => {
+    const d = distOf(r);
+    return Number.isFinite(d) ? formatDistanceKm(d) : "—";
+  };
+  // نص المشاركة + سطر المسافة لو «الأقرب» مفعّل.
+  const rowShareText = (r: WantedRow): string => {
+    const base = rowText(r);
+    return showDist && Number.isFinite(distOf(r)) ? `${base}\nالمسافة: ${distText(r)}` : base;
+  };
+
   async function toggleNearest() {
     if (nearest) { setNearest(false); return; }
     setLocating(true);
@@ -139,12 +154,12 @@ export default function WantedResultsTable({
 
   function toggleSel(id: string) { setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; }); }
   function toggleAll() { setSelected((p) => (p.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)))); }
-  async function copyRow(r: WantedRow) { try { await navigator.clipboard.writeText(rowText(r)); setCopiedId(r.id); setTimeout(() => setCopiedId(null), 1200); } catch { /* no clipboard */ } }
-  function shareRow(r: WantedRow) { void shareTextViaChooser(rowText(r)); }
+  async function copyRow(r: WantedRow) { try { await navigator.clipboard.writeText(rowShareText(r)); setCopiedId(r.id); setTimeout(() => setCopiedId(null), 1200); } catch { /* no clipboard */ } }
+  function shareRow(r: WantedRow) { void shareTextViaChooser(rowShareText(r)); }
   function shareSelected() {
     const rs = rows.filter((r) => selected.has(r.id));
     if (!rs.length) return;
-    const text = `*لوحات (${rs.length})*\n\n` + rs.map((r, i) => `${i + 1}. ${rowText(r)}`).join("\n\n──────────\n\n");
+    const text = `*لوحات (${rs.length})*\n\n` + rs.map((r, i) => `${i + 1}. ${rowShareText(r)}`).join("\n\n──────────\n\n");
     void shareTextViaChooser(text);
   }
 
@@ -181,6 +196,8 @@ export default function WantedResultsTable({
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
               {dataCols.map((label) => <th key={label} className={TH}>{label}</th>)}
+              {/* عمود «المسافة» يظهر بس لما «الأقرب» مفعّل */}
+              {showDist && <th className={TH}>المسافة</th>}
               {/* آخر الويندو بعد التاريخ بطلب المستخدم */}
               {showLocate && <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>}
             </tr>
@@ -220,6 +237,9 @@ export default function WantedResultsTable({
                     ) : (
                       <td key={label} className={TD}>{WANTED_FIELD_GET[label](r) || "—"}</td>
                     )
+                  )}
+                  {showDist && (
+                    <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">{distText(r)}</td>
                   )}
                   {/* آخر الويندو: موقعها في الداتا */}
                   {showLocate && (

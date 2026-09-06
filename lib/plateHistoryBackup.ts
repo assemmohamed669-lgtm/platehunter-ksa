@@ -31,12 +31,15 @@ interface SummaryRow {
   s?: string;  // status (لو مش none)
   sa?: string; // statusAt
   nf?: number; // notFoundCount
+  n?: string;  // note (ملاحظة المندوب الدائمة)
+  na?: string; // noteAt
 }
 
 function toSummary(e: PlateHistoryEntry): SummaryRow {
   const r: SummaryRow = { p: e.plate, f: e.firstSeen, l: e.lastSeen, c: e.count };
   if (e.status && e.status !== "none") { r.s = e.status; if (e.statusAt) r.sa = e.statusAt; }
   if (e.notFoundCount) r.nf = e.notFoundCount;
+  if (e.note) { r.n = e.note; if (e.noteAt) r.na = e.noteAt; }
   return r;
 }
 
@@ -47,6 +50,8 @@ function fromSummary(r: SummaryRow): PlateHistoryEntry {
     status: (r.s as PlateHistoryEntry["status"]) ?? "none",
     statusAt: r.sa,
     notFoundCount: r.nf,
+    note: r.n,
+    noteAt: r.na,
   };
 }
 

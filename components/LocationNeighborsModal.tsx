@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * نافذة «موقعها» — بتوري السيارة المطلوبة معلَّمة بلون + ٥ سيارات قبلها و٥ بعدها
- * في نفس الموقع (الشارع/الحي) من ملف الداتا، عشان المندوب يحدد مكانها بالظبط
- * من خلال جيرانها. بتظهر كجدول مضغوط بنفس شكل نافذة نتيجة الفرز.
+ * نافذة «موقعها» — بتوري السيارة المطلوبة معلَّمة بلون + ١٥ سيارة قبلها و١٥ بعدها
+ * **بالموضع** في ملف الداتا (ترتيب التفريغ)، عشان المندوب يحدد مكانها من خلال
+ * الجيران اللي عدّى عليهم قبلها/بعدها. بتظهر كجدول مضغوط بنفس شكل نتيجة الفرز.
  */
 
 import { useEffect } from "react";
@@ -42,7 +42,7 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="min-w-0">
-            <h3 className="flex items-center gap-1.5 text-sm font-bold text-ink"><MapPin size={15} className="text-brand" /> موقعها في الشارع</h3>
+            <h3 className="flex items-center gap-1.5 text-sm font-bold text-ink"><MapPin size={15} className="text-brand" /> موقعها في الداتا</h3>
             {locationName && <p className="truncate text-xs text-muted">{locationName}</p>}
           </div>
           <button onClick={onClose} className="text-muted hover:text-ink"><X size={18} /></button>
@@ -51,10 +51,10 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
         <div className="flex flex-1 flex-col gap-2 overflow-auto p-3">
           {isFirstInLocation ? (
             <p className="flex items-center justify-center gap-1 rounded-lg bg-surface-2 py-1.5 text-[11px] font-bold text-muted">
-              <ArrowUp size={12} /> دي أول سيارة في الموقع — مفيش قبلها
+              <ArrowUp size={12} /> دي أول سيارة في الداتا — مفيش قبلها
             </p>
-          ) : before.length < 5 ? (
-            <p className="text-center text-[11px] text-muted">قبلها {before.length} {before.length === 1 ? "سيارة" : "سيارات"} بس في نفس الموقع</p>
+          ) : before.length < 15 ? (
+            <p className="text-center text-[11px] text-muted">قبلها {before.length} {before.length === 1 ? "سيارة" : "سيارات"} بس</p>
           ) : null}
 
           <div className="overflow-auto rounded-xl border border-border">
@@ -88,10 +88,10 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
 
           {isLastInLocation ? (
             <p className="flex items-center justify-center gap-1 rounded-lg bg-surface-2 py-1.5 text-[11px] font-bold text-muted">
-              <ArrowDown size={12} /> دي آخر سيارة في الموقع — مفيش بعدها
+              <ArrowDown size={12} /> دي آخر سيارة في الداتا — مفيش بعدها
             </p>
-          ) : after.length < 5 ? (
-            <p className="text-center text-[11px] text-muted">بعدها {after.length} {after.length === 1 ? "سيارة" : "سيارات"} بس في نفس الموقع</p>
+          ) : after.length < 15 ? (
+            <p className="text-center text-[11px] text-muted">بعدها {after.length} {after.length === 1 ? "سيارة" : "سيارات"} بس</p>
           ) : null}
         </div>
       </div>

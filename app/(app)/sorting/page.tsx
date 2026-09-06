@@ -5,6 +5,7 @@ import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
   ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin, History,
+  Lock, LockOpen, Pencil,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -30,7 +31,7 @@ import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
-  recordAppearances, setPlateStatus, sheetFingerprint, describeHistory, isClosedStatus,
+  recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
   newHistoryMap, pruneDetail, type HistoryMap, type PlateStatus,
 } from "@/lib/plateHistory";
 import { loadHistory, saveHistoryEntries, saveHistoryMap } from "@/lib/plateHistoryStore";
@@ -156,6 +157,23 @@ function findGpsColumn(headers: string[]): string | null {
   return headers.find((h) => /GPS|رابط|موقع|خريطة/i.test(h)) ?? null;
 }
 
+/**
+ * #2 — ترتيب أعمدة العرض والمشاركة في الوضع **الأساسي** بس (بطلب المندوب):
+ * بعد رقم اللوحة (اللي بيتعرض منفصل) ييجي: نوع السيارة (المحفظة) › نوع السيارة
+ * (الداتا) › الحي › GPS › وبعدهم باقي الأعمدة بترتيبها. الوضع «المخصّص»
+ * مايتأثرش خالص — المندوب رتّب أعمدته بإيده. بيتطبّق على العرض والإكسيل
+ * والواتساب معاً عشان اللي المندوب بيشوفه = اللي بيشاركه.
+ */
+function basicLeadOrder(cols: MergedResultColumn[]): MergedResultColumn[] {
+  const refType = cols.filter((c) => c.key === "type" && c.source === "referral");
+  const dataType = cols.filter((c) => c.key === "type" && c.source === "data");
+  const district = cols.filter((c) => c.key === "district");
+  const gps = cols.filter((c) => c.key === "gps");
+  const lead = [...refType, ...dataType, ...district, ...gps];
+  const leadSet = new Set(lead);
+  return [...lead, ...cols.filter((c) => !leadSet.has(c))];
+}
+
 export default function SortingPage() {
   const [sortMode, setSortMode] = useState<"new" | "full">("new");
   const [hydrated, setHydrated] = useState(false);
@@ -165,6 +183,9 @@ export default function SortingPage() {
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [dataColsOpen, setDataColsOpen] = useState(false);
   const [dataBoxOpen, setDataBoxOpen] = useState(true); // collapse/expand the whole "مربع الداتا"
+  // قفل الداتا — لما يبقى true بنخفي أزرار «تغيير/مسح» فمحدش يقدر يمسح أو يبدّل الملف.
+  // بيتحفظ في localStorage فيفضل مقفول بعد إعادة فتح التطبيق.
+  const [dataLocked, setDataLocked] = useState(false);
   // ربط سجلات المندوب كخانة داتا (من صفحة السجلات) — ربط حي بيتحدّث لوحده.
   const [recordsLinked, setRecordsLinked] = useState(false);
   const [recordsTgt, setRecordsTgt] = useState<RecordsTarget>("extra");
@@ -312,6 +333,18 @@ export default function SortingPage() {
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
+  // #6 — لما المندوب يكتب لوحة كاملة (٣ حروف + ٤ أرقام) في آخر سطر، السهم ينزل
+  // تحت تلقائي عشان يكتب اللي بعدها. بيشتغل مع العربي والإنجليزي والأرقام العربية.
+  const handlePasteInput = (val: string) => {
+    const lines = val.split("\n");
+    const last = (lines[lines.length - 1] ?? "").replace(/\s+/g, "");
+    if (/^[A-Za-zء-ي]{3}[0-9٠-٩]{4}$/.test(last)) {
+      setPasteText(val.endsWith("\n") ? val : val + "\n");
+    } else {
+      setPasteText(val);
+    }
+  };
   const [pasteResults, setPasteResults] = useState<TokenMatch[]>([]);
   // تطابق نفس اللوحات الملصوقة مع شيت السجلات (tashyeekTable) — لوحات سبق
   // تشييكها صوت/يدوي قبل كدة، منفصلة عن تطابق ملف الداتا لأن أعمدتها مختلفة.
@@ -512,6 +545,19 @@ export default function SortingPage() {
       .catch(() => {})
       .finally(() => setHydrated(true));
   }, []);
+
+  // استرجاع حالة قفل الداتا من الجهاز.
+  useEffect(() => {
+    try { setDataLocked(localStorage.getItem("ph:sorting:dataLocked") === "1"); } catch { /* ignore */ }
+  }, []);
+  // زر القفل — بيبدّل الحالة ويحفظها.
+  const toggleDataLock = () => {
+    setDataLocked((v) => {
+      const next = !v;
+      try { localStorage.setItem("ph:sorting:dataLocked", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -949,7 +995,8 @@ export default function SortingPage() {
     const labels = orderMode === "custom"
       ? orderedLabels(pickableColsRaw.map((c) => c.label), colOrder)
       : allResultColsRaw.map((c) => c.label);
-    return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    const cols = labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    return orderMode === "custom" ? cols : basicLeadOrder(cols);
   }, [allResultColsRaw, pickableColsRaw, colOrder, orderMode]);
   // نفس الوضع على أعمدة نتيجة السجلات كمان (اتساق عبر كل أنواع الفرز).
   const orderedTashyeekCols = useMemo(() => {
@@ -957,7 +1004,8 @@ export default function SortingPage() {
       ? orderedLabels(tashyeekResultCols.map((c) => c.label), colOrder)
       : tashyeekResultCols.map((c) => c.label);
     const byLabel = new Map(tashyeekResultCols.map((c) => [c.label, c] as const));
-    return labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    const cols = labels.map((l) => byLabel.get(l)).filter((c): c is MergedResultColumn => !!c);
+    return orderMode === "custom" ? cols : basicLeadOrder(cols);
   }, [tashyeekResultCols, colOrder, orderMode]);
   // الأعمدة المتاحة للاختيار مقسّمة: أعمدة الداتا/السجلات ثم أعمدة الإحالة (فاصل
   // بينهم في القائمة)، بلا تكرار وناقص الثابت ورقم اللوحة. لو عمود في الاتنين
@@ -1085,6 +1133,75 @@ export default function SortingPage() {
       catch (err) { console.error("history status save failed", err); }
     }
   }, [history, historyAgentId]);
+
+  // #4 — حفظ ملاحظة المندوب على لوحة (بتتحفظ فوراً محلياً وتفضل دايماً).
+  const applyPlateNote = useCallback(async (plateNorm: string, note: string) => {
+    if (!plateNorm) return;
+    const next = setPlateNote(history, plateNorm, note, todayStr());
+    setHistory(next);
+    const entry = next.get(plateNorm);
+    if (historyAgentId && entry) {
+      try { await saveHistoryEntries(historyAgentId, [entry]); }
+      catch (err) { console.error("history note save failed", err); }
+    }
+  }, [history, historyAgentId]);
+
+  // #4 — خلية «الحالة» (سحبتها/ملقيتهاش) لأي جدول نتيجة — بمفتاح اللوحة المطبّع،
+  // فنفس السجل بيشتغل في كل الجداول (جديد/كلي/سجلات/لصق).
+  const renderStatusCell = (plateKey: string) => {
+    const st = history.get(plateKey)?.status ?? "none";
+    const stAt = history.get(plateKey)?.statusAt;
+    if (st === "none") {
+      return (
+        <span className="inline-flex gap-1">
+          <button onClick={() => void applyPlateStatus(plateKey, "taken")} title="سحبتها"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-primary/50 bg-primary/10 px-1.5 py-1 text-[11px] font-bold text-primary transition hover:bg-primary/25">
+            <Check size={11} /> سحبتها
+          </button>
+          <button onClick={() => void applyPlateStatus(plateKey, "notFound")} title="مش في الموقع"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-border px-1.5 py-1 text-[11px] text-muted transition hover:border-alert hover:text-alert">
+            <X size={11} /> ملقيتهاش
+          </button>
+        </span>
+      );
+    }
+    const closed = isClosedStatus(st);
+    const label = st === "taken" ? "مسحوبة" : st === "otherTook" ? "حد تاني سحبها"
+      : st === "paid" ? "العميل سدّد" : st === "excluded" ? "مستبعدة" : "مش في الموقع";
+    return (
+      <button onClick={() => setHistoryPlate(plateKey)}
+        className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${closed ? "bg-primary/15 text-primary" : "bg-alert/15 text-alert"}`}>
+        {closed ? <Check size={11} /> : <X size={11} />}
+        {label}{stAt ? ` · ${stAt.slice(8)}/${stAt.slice(5, 7)}` : ""}
+      </button>
+    );
+  };
+
+  // #4 — خلية «السجل» + قلم الملاحظة لأي جدول نتيجة.
+  const renderLogCell = (plateKey: string) => {
+    const e = history.get(plateKey);
+    const note = e?.note;
+    return (
+      <>
+        {(() => {
+          if (!e || e.count <= 1) {
+            const dd = e ? describeHistory(e, todayStr()) : null;
+            if (!dd || dd.tone === "new") {
+              return <button onClick={() => setHistoryPlate(plateKey)} className="text-[11px] text-muted underline decoration-dotted transition hover:text-primary">جديدة</button>;
+            }
+          }
+          const dd = describeHistory(e!, todayStr());
+          const cls = dd.tone === "danger" ? "bg-danger/15 text-danger" : "bg-alert/15 text-alert";
+          return <button onClick={() => setHistoryPlate(plateKey)} className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${cls}`}><History size={11} /> {dd.text}</button>;
+        })()}
+        <button onClick={() => setHistoryPlate(plateKey)} title={note || "اكتب ملاحظة على اللوحة دي"}
+          className={`mt-1 flex w-full items-center justify-center gap-0.5 rounded-lg border px-1.5 py-0.5 text-[10px] transition ${note ? "border-alert/40 bg-alert/10 text-alert" : "border-border text-muted hover:text-primary"}`}>
+          <Pencil size={10} className="shrink-0" />
+          {note ? <span className="max-w-[80px] truncate">{note}</span> : "ملاحظة"}
+        </button>
+      </>
+    );
+  };
 
   const plateColorMap = useMemo(() => {
     if (!results) return new Map<string, number>();
@@ -1513,8 +1630,9 @@ export default function SortingPage() {
     r: MatchResult,
     src: { slot: string; plateCol: string; headers: string[]; sheets: Set<string> | null; primary: boolean },
   ) {
+    // «موقعها» بقت ١٥ قبل + ١٥ بعد **بالموضع** — مش محتاجة عمود موقع؛ لو موجود
+    // بنستخدمه لاسم العنوان بس.
     const locCol = detectLocationColumn(src.headers);
-    if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
     const iterate = (onBatch: (rows: Record<string, string>[], base: number) => void | Promise<void>) =>
       iterateRows((rows, base) => onBatch(rows, base), { slot: src.slot, sheets: src.sheets });
     const plateOf = (row: Record<string, string> | null) =>
@@ -1581,8 +1699,8 @@ export default function SortingPage() {
     }
     if (idx < 0) { alert("تعذّر تحديد موقع السيارة في ملف الداتا. جرّب تعمل «فرز» من جديد."); return; }
     const headers = dataTable?.headers ?? (r.dataRow ? Object.keys(r.dataRow) : Object.keys(orderedRows[idx] ?? {}));
+    // ١٥ قبل + ١٥ بعد بالموضع — عمود الموقع اختياري (للعنوان بس).
     const locCol = detectLocationColumn(headers);
-    if (!locCol) { alert("مفيش عمود «اسم الموقع/الشارع/الحي» في ملف الداتا عشان نعرض الجيران."); return; }
     let plateCol = sources[0]?.plateCol ?? "";
     for (const b of bounds) if (b.start <= idx) plateCol = b.plateCol;
     const ctx = neighborsInSameLocation(orderedRows, idx, locCol);
@@ -2074,13 +2192,19 @@ export default function SortingPage() {
     for (const rc of allResultCols) {
       row[rc.label] = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
     }
+    // #5 — عمود «المسافة» يظهر في المشاركة كمان لما «الأقرب» مفعّل.
+    if (nearestActive && "_dist" in r) {
+      const d = (r as { _dist: number })._dist;
+      if (Number.isFinite(d)) row["المسافة"] = formatDistanceKm(d);
+    }
     row["الحالة"] = "مطلوبة";
     return row;
   }
 
-  function buildPasteRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
+  function buildPasteRowObject(p: { converted: string; row: Record<string, string>; _dist?: number }): Record<string, unknown> {
     const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
     for (const col of pasteAllCols) obj[col] = p.row[col] ?? "";
+    if (nearestActive && p._dist != null && Number.isFinite(p._dist)) obj["المسافة"] = formatDistanceKm(p._dist);
     return obj;
   }
 
@@ -2091,7 +2215,7 @@ export default function SortingPage() {
   }
 
   // ── نافذة المطلوبين (شيت التشييك) — helpers ──
-  function buildTashyeekRowObj(r: TashyeekResultRow): Record<string, unknown> {
+  function buildTashyeekRowObj(r: TashyeekResultRow, dist?: number): Record<string, unknown> {
     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
     const obj: Record<string, unknown> = { "رقم اللوحة": plate };
     // نفس أعمدة العرض وبنفس الترتيب — عشان الواتساب والإكسيل والصورة يطلعوا
@@ -2101,6 +2225,7 @@ export default function SortingPage() {
         ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
         : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
     }
+    if (nearestActive && dist != null && Number.isFinite(dist)) obj["المسافة"] = formatDistanceKm(dist);
     return obj;
   }
   function removeTashyeekRow(i: number) {
@@ -2432,11 +2557,26 @@ export default function SortingPage() {
       </div>
 
       {/* ① DATA FILE */}
-      <button onClick={() => setDataBoxOpen((v) => !v)}
-        className="flex w-full items-center justify-between text-sm font-bold text-ink">
-        <span>مربع الداتا</span>
-        <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${dataBoxOpen ? "rotate-180" : ""}`} />
-      </button>
+      <div className="flex w-full items-center justify-between gap-2">
+        <button onClick={() => setDataBoxOpen((v) => !v)}
+          className="flex flex-1 items-center justify-between text-sm font-bold text-ink">
+          <span>مربع الداتا</span>
+          <ChevronDown size={16} className={`text-muted transition-transform duration-200 ${dataBoxOpen ? "rotate-180" : ""}`} />
+        </button>
+        {/* قفل الداتا — لما يبقى مقفول محدش يقدر يمسح أو يبدّل الملف */}
+        <button
+          onClick={toggleDataLock}
+          className={`flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold transition ${
+            dataLocked
+              ? "border-danger/50 bg-danger/10 text-danger"
+              : "border-border bg-surface-2 text-muted hover:text-primary"
+          }`}
+          title={dataLocked ? "الداتا مقفولة — دوس عشان تفتح القفل" : "اقفل الداتا فمحدش يقدر يمسحها"}
+        >
+          {dataLocked ? <Lock size={13} /> : <LockOpen size={13} />}
+          {dataLocked ? "مقفول" : "قفل"}
+        </button>
+      </div>
       {dataBoxOpen && (<>
       <FileUploadBox
         title={extraData.length > 0 ? "ملف الداتا 1" : "ملف الداتا"}
@@ -2449,6 +2589,7 @@ export default function SortingPage() {
           : persistAndSet("data", table, file))}
         onClear={() => clearSlot("data")}
         showReplaceButtons
+        locked={dataLocked}
         largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
         onLargeFile={handleLargeData}
       />
@@ -2970,6 +3111,18 @@ export default function SortingPage() {
                               </button>
                             );
                           })()}
+                          {/* #4 — قلم الملاحظة: بيفتح نافذة السجل على محرر الملاحظة */}
+                          {(() => {
+                            const note = history.get(plateKey)?.note;
+                            return (
+                              <button onClick={() => setHistoryPlate(plateKey)}
+                                title={note || "اكتب ملاحظة على اللوحة دي"}
+                                className={`mt-1 flex w-full items-center justify-center gap-0.5 rounded-lg border px-1.5 py-0.5 text-[10px] transition ${note ? "border-alert/40 bg-alert/10 text-alert" : "border-border text-muted hover:text-primary"}`}>
+                                <Pencil size={10} className="shrink-0" />
+                                {note ? <span className="max-w-[80px] truncate">{note}</span> : "ملاحظة"}
+                              </button>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
@@ -3122,7 +3275,9 @@ export default function SortingPage() {
                       <th key={c.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c.label}</th>
                     ))}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
-                    {nearestActive && tashyeekGpsCol && <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
+                    {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                    <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3172,6 +3327,13 @@ export default function SortingPage() {
                         {nearestActive && tashyeekGpsCol && (
                           <td className="border-l border-border px-3 py-2 font-bold text-brand whitespace-nowrap">{formatDurationMin(_min)}</td>
                         )}
+                        {(() => {
+                          const pk = normalizePlate(bankPlateToArabic(String(plate)));
+                          return (<>
+                            <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">{renderStatusCell(pk)}</td>
+                            <td className="px-2 py-2 text-center whitespace-nowrap">{renderLogCell(pk)}</td>
+                          </>);
+                        })()}
                       </tr>
                     );
                   })}
@@ -3207,7 +3369,7 @@ export default function SortingPage() {
 
             {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
             <ShareSortButton title="سيارات مطلوبة من ملف التشييك (السجلات)"
-              rows={() => displayTashyeek.map(({ r }) => buildTashyeekRowObj(r))} />
+              rows={() => displayTashyeek.map(({ r, _dist }) => buildTashyeekRowObj(r, _dist))} />
             <button onClick={clearTashyeekResults}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
               <Trash2 size={15} /> مسح نتايج الفرز
@@ -3284,20 +3446,19 @@ export default function SortingPage() {
               </button>
             )}
           </div>
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (!pasteBusy) void runPasteSort();
-              }
-            }}
-            placeholder={"كل لوحة في سطر أو مفصولة بفاصلة...\nمثال: أبح1234 أو GUR4560"}
-            rows={5}
-            dir="rtl"
-            className="rtl-text w-full rounded-xl border border-border bg-surface-2 p-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
-          />
+          {/* دوسة في أي مكان فاضي في المربع بترجّع لوحة المفاتيح (بعد ما المندوب
+              يقفلها بزر الرجوع) — بتركّز على مربع الكتابة تاني. */}
+          <div onClick={() => pasteRef.current?.focus()}>
+            <textarea
+              ref={pasteRef}
+              value={pasteText}
+              onChange={(e) => handlePasteInput(e.target.value)}
+              placeholder={"اكتب أو الصق كل لوحة في سطر...\nمثال: أبح1234 أو GUR4560"}
+              rows={6}
+              dir="rtl"
+              className="rtl-text w-full rounded-xl border border-border bg-surface-2 p-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
         </div>
 
         {/* معاينة تحويل اللوحات الإنجليزية للعربي — عشان المندوب يتأكد إن التحويل
@@ -3401,6 +3562,9 @@ export default function SortingPage() {
                           {col}
                         </th>
                       ))}
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
+                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">الحالة</th>
+                      <th className="border-b border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">السجل</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3470,6 +3634,16 @@ export default function SortingPage() {
                             </td>
                           );
                         })}
+                        {/* موقعها في الداتا (لوحات اللصق بتطابق ملف الداتا فليها موضع) */}
+                        <td className="border-l border-border px-2 py-1.5 text-center">
+                          <button onClick={() => void showNeighbors({ dataRow: p.row, refPlateNorm: pasteKey } as unknown as MatchResult)} disabled={neighborsLoading}
+                            title="شوف موقعها بين الجيران في الداتا"
+                            className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition disabled:opacity-50">
+                            <MapPin size={12} /> {neighborsLoading ? "..." : "موقعها"}
+                          </button>
+                        </td>
+                        <td className="border-l border-border px-2 py-1.5 text-center whitespace-nowrap">{renderStatusCell(pasteKey)}</td>
+                        <td className="px-2 py-1.5 text-center whitespace-nowrap">{renderLogCell(pasteKey)}</td>
                       </tr>
                       );
                     })}
@@ -3628,6 +3802,7 @@ export default function SortingPage() {
               location={loc || undefined}
               seenInChecks={seen}
               onSetStatus={(st) => { void applyPlateStatus(historyPlate, st); setHistoryPlate(null); }}
+              onSaveNote={(note) => { void applyPlateNote(historyPlate, note); }}
               onClose={() => setHistoryPlate(null)}
             />
           );

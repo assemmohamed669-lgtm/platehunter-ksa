@@ -6,7 +6,8 @@
  *
  * مكوّن عرض بحت — كل الحفظ بيتم في الصفحة عبر onSetStatus.
  */
-import { X, Check, MapPinOff, History } from "lucide-react";
+import { useState } from "react";
+import { X, Check, MapPinOff, History, Pencil, Save } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { describeHistory, isClosedStatus, type PlateHistoryEntry, type PlateStatus } from "@/lib/plateHistory";
 
@@ -35,13 +36,17 @@ interface Props {
   /** هل ظهرت في سجلات تشييكه (شافها بعينه) — وتاريخها لو معروف. */
   seenInChecks?: string | null;
   onSetStatus: (status: PlateStatus) => void;
+  /** حفظ ملاحظة المندوب الحرة على اللوحة (نص فاضي = مسح). */
+  onSaveNote?: (note: string) => void;
   onClose: () => void;
 }
 
 export default function PlateHistoryModal({
-  plate, entry, today, subtitle, location, seenInChecks, onSetStatus, onClose,
+  plate, entry, today, subtitle, location, seenInChecks, onSetStatus, onSaveNote, onClose,
 }: Props) {
   const desc = entry ? describeHistory(entry, today) : null;
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteText, setNoteText] = useState(entry?.note ?? "");
   const toneCls = !desc || desc.tone === "new"
     ? "bg-surface-2 text-muted"
     : desc.tone === "warn" ? "bg-alert/15 text-alert" : "bg-danger/15 text-danger";
@@ -73,6 +78,49 @@ export default function PlateHistoryModal({
             {seenInChecks ? `ظهرت في تشييكك بتاريخ ${fmt(seenInChecks)}` : "عمرها ما ظهرت في تشييكك"}
           </p>
         </div>
+
+        {/* #4 — قلم الملاحظة: المندوب بيكتب ملاحظة حرة على اللوحة تفضل دايماً وتظهر مع السجل */}
+        {onSaveNote && (
+          <div className="border-b border-border p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <p className="rtl-text flex items-center gap-1 text-[11px] text-muted">
+                <Pencil size={12} /> ملاحظتي على اللوحة
+              </p>
+              {!editingNote && (
+                <button onClick={() => { setNoteText(entry?.note ?? ""); setEditingNote(true); }}
+                  className="flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted transition hover:text-primary">
+                  <Pencil size={11} /> {entry?.note ? "تعديل" : "إضافة"}
+                </button>
+              )}
+            </div>
+            {editingNote ? (
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  rows={3}
+                  autoFocus
+                  placeholder="اكتب ملاحظتك على السيارة دي… (بتفضل محفوظة معاها دايماً)"
+                  className="rtl-text w-full rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-[13px] text-ink focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <div className="flex gap-1.5">
+                  <button onClick={() => { onSaveNote(noteText); setEditingNote(false); }}
+                    className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-primary py-2 text-[13px] font-bold text-night transition active:scale-95">
+                    <Save size={14} /> حفظ
+                  </button>
+                  <button onClick={() => setEditingNote(false)}
+                    className="rounded-lg border border-border px-3 py-2 text-[13px] text-muted transition hover:text-ink">
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            ) : entry?.note ? (
+              <p className="rtl-text whitespace-pre-wrap rounded-lg bg-alert/10 px-2.5 py-2 text-[13px] text-ink">{entry.note}</p>
+            ) : (
+              <p className="rtl-text text-[11px] text-muted">مفيش ملاحظة — دوس «إضافة» عشان تكتب واحدة.</p>
+            )}
+          </div>
+        )}
 
         {entry && (entry.dates.length > 0 || (entry.actions?.length ?? 0) > 0) && (
           <div className="border-b border-border p-3">

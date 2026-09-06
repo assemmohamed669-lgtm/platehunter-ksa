@@ -35,6 +35,8 @@ export interface PlateHistoryEntry {
   notFoundCount?: number;   // كم مرة روحلها وملقاهاش
   actions?: PlateAction[];  // آخر الإجراءات (للعرض في نافذة السجل)
   lastFp?: string;          // بصمة الشيت اللي احتُسب بها آخر ظهور
+  note?: string;            // ملاحظة المندوب الحرة على اللوحة — دائمة، بتظهر مع السجل
+  noteAt?: string;          // تاريخ آخر تعديل للملاحظة
 }
 
 export type HistoryMap = Map<string, PlateHistoryEntry>;
@@ -182,6 +184,28 @@ export function setPlateStatus(
     notFoundCount: (base.notFoundCount ?? 0) + (status === "notFound" ? 1 : 0),
     actions: [{ date, status }, ...(base.actions ?? [])].slice(0, DETAIL_CAP),
   });
+  return out;
+}
+
+/**
+ * يحفظ/يعدّل ملاحظة المندوب الحرة على لوحة (بينشئ سجل لو مش موجود). الملاحظة
+ * دائمة — بتفضل مع اللوحة وبتظهر مع سجلها. نص فاضي = مسح الملاحظة.
+ */
+export function setPlateNote(
+  map: HistoryMap,
+  plateNorm: string,
+  note: string,
+  date: string,
+): HistoryMap {
+  const plate = (plateNorm ?? "").trim();
+  if (!plate) return map;
+  const out: HistoryMap = new Map(map);
+  const prev = out.get(plate);
+  const base: PlateHistoryEntry = prev ?? {
+    plate, firstSeen: date, lastSeen: date, count: 0, dates: [], status: "none",
+  };
+  const clean = (note ?? "").trim();
+  out.set(plate, { ...base, note: clean || undefined, noteAt: clean ? date : undefined });
   return out;
 }
 

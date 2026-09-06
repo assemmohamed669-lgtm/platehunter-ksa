@@ -19,62 +19,55 @@ describe("detectLocationColumn", () => {
   });
 });
 
-describe("neighborsInSameLocation", () => {
-  // ملف مرتّب: موقع «أ» (٨ سيارات) ثم موقع «ب» (٣ سيارات)
-  const rows = [
-    { "رقم اللوحة": "A1", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A2", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A3", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A4", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A5", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A6", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A7", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "A8", "الشارع": "شارع النهضة" },
-    { "رقم اللوحة": "B1", "الشارع": "شارع الملك" },
-    { "رقم اللوحة": "B2", "الشارع": "شارع الملك" },
-    { "رقم اللوحة": "B3", "الشارع": "شارع الملك" },
-  ];
+describe("neighborsInSameLocation — ١٥ قبل + ١٥ بعد بالموضع", () => {
+  // ملف مرتّب بترتيب القيادة — كل ١٠ صفوف شارع. النافذة بقت بالموضع (مش بالشارع).
+  const rows = Array.from({ length: 40 }, (_, i) => ({
+    "رقم اللوحة": `P${i}`, "الشارع": `شارع ${Math.floor(i / 10)}`,
+  }));
 
-  it("٥ قبل و٥ بعد في نص الموقع (لو متاح)", () => {
-    // A6 (index 5): قبله A1..A5 (٥)، بعده A7,A8 (٢ بس لحد حدود الموقع)
-    const c = neighborsInSameLocation(rows, 5, "الشارع");
-    expect(c.before.map((r) => r["رقم اللوحة"])).toEqual(["A1", "A2", "A3", "A4", "A5"]);
-    expect(c.after.map((r) => r["رقم اللوحة"])).toEqual(["A7", "A8"]);
+  it("١٥ قبل و١٥ بعد في نص الملف (بالموضع، بتعدّي حدود الشارع)", () => {
+    const c = neighborsInSameLocation(rows, 20, "الشارع");
+    expect(c.before).toHaveLength(15);
+    expect(c.after).toHaveLength(15);
+    expect(c.before[0]["رقم اللوحة"]).toBe("P5");     // 20 - 15
+    expect(c.before[14]["رقم اللوحة"]).toBe("P19");
+    expect(c.after[0]["رقم اللوحة"]).toBe("P21");
+    expect(c.after[14]["رقم اللوحة"]).toBe("P35");
     expect(c.isFirstInLocation).toBe(false);
     expect(c.isLastInLocation).toBe(false);
-    expect(c.locationName).toBe("شارع النهضة");
+    expect(c.locationName).toBe("شارع 2");            // floor(20/10)
+    // الجيران بيشملوا شوارع مختلفة (مش محدودة بنفس الشارع)
+    const streets = new Set([...c.before, ...c.after].map((r) => r["الشارع"]));
+    expect(streets.size).toBeGreaterThan(1);
   });
 
-  it("أول سيارة في الموقع → مفيش قبلها + العلامة", () => {
+  it("أول سيارة → مفيش قبلها + العلامة", () => {
     const c = neighborsInSameLocation(rows, 0, "الشارع");
     expect(c.before).toEqual([]);
     expect(c.isFirstInLocation).toBe(true);
-    expect(c.after.map((r) => r["رقم اللوحة"])).toEqual(["A2", "A3", "A4", "A5", "A6"]);
+    expect(c.after).toHaveLength(15);
+    expect(c.after[0]["رقم اللوحة"]).toBe("P1");
   });
 
-  it("آخر سيارة في الموقع → مفيش بعدها + العلامة", () => {
-    // A8 (index 7): آخر واحدة في «شارع النهضة»
-    const c = neighborsInSameLocation(rows, 7, "الشارع");
+  it("آخر سيارة → مفيش بعدها + العلامة", () => {
+    const c = neighborsInSameLocation(rows, 39, "الشارع");
     expect(c.after).toEqual([]);
     expect(c.isLastInLocation).toBe(true);
-    expect(c.before.map((r) => r["رقم اللوحة"])).toEqual(["A3", "A4", "A5", "A6", "A7"]);
+    expect(c.before).toHaveLength(15);
+    expect(c.before[14]["رقم اللوحة"]).toBe("P38");
   });
 
-  it("مايعديش حدود الموقع (موقع مختلف مايتحسبش)", () => {
-    // B1 (index 8): أول «شارع الملك» — مفيش قبله من نفس الموقع، بعده B2,B3
-    const c = neighborsInSameLocation(rows, 8, "الشارع");
-    expect(c.before).toEqual([]);
-    expect(c.isFirstInLocation).toBe(true);
-    expect(c.after.map((r) => r["رقم اللوحة"])).toEqual(["B2", "B3"]);
-    expect(c.isLastInLocation).toBe(false);
+  it("قرب الحافة → بياخد اللي متاح بس", () => {
+    const c = neighborsInSameLocation(rows, 3, "الشارع");
+    expect(c.before.map((r) => r["رقم اللوحة"])).toEqual(["P0", "P1", "P2"]);
+    expect(c.after).toHaveLength(15);
   });
 
-  it("سيارة وسط موقع صغير (سيارتين قبل بس)", () => {
-    // A3 (index 2): قبله A1,A2 (٢)، بعده A4..A8 (٥)
-    const c = neighborsInSameLocation(rows, 2, "الشارع");
-    expect(c.before.map((r) => r["رقم اللوحة"])).toEqual(["A1", "A2"]);
-    expect(c.after.map((r) => r["رقم اللوحة"])).toEqual(["A4", "A5", "A6", "A7"].concat("A8").slice(0, 5));
-    expect(c.after).toHaveLength(5);
+  it("عمود الموقع اختياري (بدونه بيشتغل والعنوان فاضي)", () => {
+    const c = neighborsInSameLocation(rows, 20);
+    expect(c.before).toHaveLength(15);
+    expect(c.after).toHaveLength(15);
+    expect(c.locationName).toBe("");
   });
 
   it("index غير صالح → سياق فاضي", () => {
@@ -87,13 +80,11 @@ describe("neighborsInSameLocation", () => {
 // ── الملف الكبير: الصفوف على الجهاز مش في الذاكرة ──────────────────────────
 // 🐞 زرار «موقعها» كان بيفشل دايماً مع ملف داتا كبير: الفرز بيدّي السيارة رقم
 // صفها في **الملف الكامل** (ممكن ٣١٢ ألف)، لكن الذاكرة فيها **عيّنة ٥٠ صف بس**
-// — فالبحث بيفشل وتطلع «تعذّر تحديد موقع السيارة… جرّب تعمل فرز من جديد»
-// (ونصيحة غلط كمان: إعادة الفرز مابتغيّرش حاجة).
-// الحل: نقرا من الجهاز على دفعات زي ما الفرز بيعمل — بذاكرة دفعة واحدة.
-describe("neighborsFromStream — الجيران من ملف على الجهاز", () => {
+// — فالبحث بيفشل. الحل: نقرا من الجهاز على دفعات بذاكرة نافذة صغيرة (٣١ صف).
+describe("neighborsFromStream — الجيران من ملف على الجهاز (١٥+١٥ بالموضع)", () => {
   const LOC = "اسم الموقع";
-  const mk = (n: number, loc: (i: number) => string) =>
-    Array.from({ length: n }, (_, i) => ({ "رقم اللوحة": `أبح ${1000 + i}`, [LOC]: loc(i) }));
+  const mk = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ "رقم اللوحة": `أبح ${1000 + i}`, [LOC]: `شارع ${Math.floor(i / 10)}` }));
   /** يقلّد iterateRows: بيسلّم الصفوف على دفعات مع فهرس البداية. */
   const streamOf = (rows: Record<string, string>[], batch = 7) =>
     async (onBatch: (rows: Record<string, string>[], base: number) => void | Promise<void>) => {
@@ -101,7 +92,7 @@ describe("neighborsFromStream — الجيران من ملف على الجهاز
     };
 
   it("بيطابق نتيجة النسخة اللي في الذاكرة بالظبط", async () => {
-    const rows = mk(60, (i) => (i < 20 ? "شارع الأمير" : i < 45 ? "شارع الملك" : "شارع النخيل"));
+    const rows = mk(60);
     for (const idx of [0, 1, 19, 20, 30, 44, 45, 59]) {
       const want = neighborsInSameLocation(rows, idx, LOC);
       const got = await neighborsFromStream(streamOf(rows), idx, LOC);
@@ -110,57 +101,49 @@ describe("neighborsFromStream — الجيران من ملف على الجهاز
     }
   });
 
-  it("بيشتغل لو السيارة على حدّ دفعة (مش جوه دفعة واحدة)", async () => {
-    const rows = mk(30, () => "شارع واحد");
-    for (const batch of [1, 2, 3, 7, 30]) {
-      const got = await neighborsFromStream(streamOf(rows, batch), 14, LOC);
-      expect(got.ctx.before, `دفعة ${batch}`).toHaveLength(5);
-      expect(got.ctx.after, `دفعة ${batch}`).toHaveLength(5);
-      expect(got.ctx.before[0]).toEqual(rows[9]);
-      expect(got.ctx.after[4]).toEqual(rows[19]);
+  it("١٥ قبل + ١٥ بعد حتى لو السيارة على حدّ دفعة", async () => {
+    const rows = mk(60);
+    for (const batch of [1, 2, 3, 7, 60]) {
+      const got = await neighborsFromStream(streamOf(rows, batch), 30, LOC);
+      expect(got.ctx.before, `دفعة ${batch}`).toHaveLength(15);
+      expect(got.ctx.after, `دفعة ${batch}`).toHaveLength(15);
+      expect(got.ctx.before[0]).toEqual(rows[15]);
+      expect(got.ctx.after[14]).toEqual(rows[45]);
     }
   });
 
   it("🐞 بيلاقي سيارة في عمق ملف كبير (اللي كان بيفشل)", async () => {
-    const rows = mk(100_000, (i) => `شارع ${Math.floor(i / 50)}`);
+    const rows = mk(100_000);
     const got = await neighborsFromStream(streamOf(rows, 3000), 62_345, LOC);
     expect(got.target).toEqual(rows[62_345]);
-    expect(got.ctx.locationName).toBe("شارع 1246");
-    expect(got.ctx.before).toHaveLength(5);
-    expect(got.ctx.after).toHaveLength(4);      // ٦٢٣٤٦..٦٢٣٤٩ وبعدها موقع تاني
-    expect(got.ctx.isLastInLocation).toBe(false); // لسه فيه سيارات بعدها في نفس الموقع
+    expect(got.ctx.before).toHaveLength(15);
+    expect(got.ctx.after).toHaveLength(15);
+    expect(got.ctx.before[0]).toEqual(rows[62_330]);
+    expect(got.ctx.after[14]).toEqual(rows[62_360]);
   });
 
-  it("مابيحملش الملف كله — ١١ صف بالكتير مهما كبر", async () => {
-    const rows = mk(50_000, () => "شارع واحد");   // كل الملف موقع واحد
+  it("مابيحملش الملف كله — ٣١ صف بالكتير مهما كبر", async () => {
+    const rows = mk(50_000);
     const got = await neighborsFromStream(streamOf(rows, 1000), 25_000, LOC);
     expect(got.target).toEqual(rows[25_000]);
-    // لو كان بيحمّل الموقع كله كان رجّع ٥٠ ألف — المفروض ٥ قبل + الهدف + ٥ بعد
-    expect(got.ctx.before.length + got.ctx.after.length + 1).toBe(11);
-    expect(got.ctx.before[0]).toEqual(rows[24_995]);
-    expect(got.ctx.after[4]).toEqual(rows[25_005]);
+    // ١٥ قبل + الهدف + ١٥ بعد = ٣١ (مش الملف كله)
+    expect(got.ctx.before.length + got.ctx.after.length + 1).toBe(31);
+    expect(got.ctx.before[0]).toEqual(rows[24_985]);
+    expect(got.ctx.after[14]).toEqual(rows[25_015]);
   });
 
-  it("أول الموقع وآخره بيتعلّموا صح", async () => {
-    const rows = mk(20, (i) => (i < 10 ? "أ" : "ب"));
-    const first = await neighborsFromStream(streamOf(rows), 10, LOC);
+  it("أول الملف وآخره بيتعلّموا صح", async () => {
+    const rows = mk(40);
+    const first = await neighborsFromStream(streamOf(rows), 0, LOC);
     expect(first.ctx.isFirstInLocation).toBe(true);
     expect(first.ctx.before).toEqual([]);
-    const last = await neighborsFromStream(streamOf(rows), 9, LOC);
+    const last = await neighborsFromStream(streamOf(rows), 39, LOC);
     expect(last.ctx.isLastInLocation).toBe(true);
     expect(last.ctx.after).toEqual([]);
   });
 
-  it("آخر صف في الملف كله = آخر الموقع", async () => {
-    const rows = mk(12, () => "شارع واحد");
-    const got = await neighborsFromStream(streamOf(rows), 11, LOC);
-    expect(got.ctx.isLastInLocation).toBe(true);
-    expect(got.ctx.after).toEqual([]);
-    expect(got.ctx.before).toHaveLength(5);
-  });
-
   it("فهرس خارج الملف بيرجّع فاضي بدل ما يرمي", async () => {
-    const rows = mk(10, () => "شارع");
+    const rows = mk(10);
     const got = await neighborsFromStream(streamOf(rows), 999, LOC);
     expect(got.target).toBeNull();
     expect(got.ctx.before).toEqual([]);

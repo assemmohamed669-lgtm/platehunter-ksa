@@ -33,6 +33,8 @@ interface Props {
    * من غيره → الإطار الافتراضي. (لا يؤثّر على المربع الفاضي.)
    */
   loadedAccent?: "data" | "referral";
+  /** مقفول؟ لما true بنخفي أزرار «تغيير» و«مسح» فمحدش يقدر يمسح/يبدّل الملف. */
+  locked?: boolean;
 }
 
 export default function FileUploadBox({
@@ -49,6 +51,7 @@ export default function FileUploadBox({
   onLargeFile,
   sky = false,
   loadedAccent,
+  locked = false,
 }: Props) {
   // إطار المربع: سماوي بظل واضح لو sky. بنستخدم صبغة سماوية فوق سطح الثيم (مش لون
   // ثابت) عشان النص يفضل مقروء في الوضع الفاتح والغامق.
@@ -195,6 +198,11 @@ export default function FileUploadBox({
                 <Download size={14} />
               </button>
             ) : showReplaceButtons ? (
+              locked ? (
+                <span className="flex items-center gap-1 rounded-full border border-danger/40 bg-danger/10 px-2.5 py-1 text-xs font-bold text-danger" title="الداتا مقفولة — مايتقدرش تتمسح">
+                  <Lock size={12} /> مقفول
+                </span>
+              ) : (
               <>
                 <label
                   className={`cursor-pointer rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition ${loading ? "pointer-events-none opacity-50" : ""}`}
@@ -220,6 +228,7 @@ export default function FileUploadBox({
                   مسح
                 </button>
               </>
+              )
             ) : (
               <>
                 <button
