@@ -7,9 +7,10 @@ import {
 } from "@/lib/appNotice";
 import { playNoticeTone, stopNoticeTone } from "@/lib/noticeTone";
 import { isMicBusy, onMicBusyChange } from "@/lib/micBusy";
+import { BANNER_POLL_MS } from "@/lib/pollRate";
 
 /** كل قد إيه نسأل السيرفر عن رسالة جديدة (المندوب ممكن يفضل فاتح ساعات). */
-const POLL_MS = 60_000;
+const POLL_MS = BANNER_POLL_MS;
 
 /**
  * شريط رسالة الأدمن — بيظهر في **كل صفحات المندوب** (متركّب في شِلّ التطبيق).

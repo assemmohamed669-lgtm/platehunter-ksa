@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { BarChart3, X, Check } from "lucide-react";
 import { fetchActivePoll, submitVote, type Poll } from "@/lib/polls";
+import { BANNER_POLL_MS } from "@/lib/pollRate";
 
 /** كل قد إيه نسأل السيرفر عن استطلاع جديد (المندوب ممكن يفضل فاتح ساعات). */
-const POLL_MS = 60_000;
+const POLL_MS = BANNER_POLL_MS;
 /** مفتاح الاستطلاعات اللي المندوب قفلها بـ✕ (بيتمسح كل تسجيل دخول زي الإشعار). */
 const DISMISS_KEY = "ph:pollDismissed";
 
