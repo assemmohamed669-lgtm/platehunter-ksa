@@ -109,7 +109,8 @@ export default function AgentDetail() {
   async function saveSubscription() {
     if (!end) { setMsg("اختار تاريخ النهاية."); return; }
     if (await call("extendSubscription", { subscriptionEnd: end, amount: amount || null, note: "تمديد من الأدمن" })) {
-      setMsg("✅ اتحفظ التمديد."); load();
+      // #27 — رسالة واضحة باسم المندوب
+      setMsg(`✅ تم تمديد اشتراك ${p?.username ?? "المندوب"} حتى ${end}.`); load();
     }
   }
   // حفظ بيانات المندوب (اسم/إيميل/تليفون) + باسوورد جديد لو المندوب كتبه.
@@ -152,12 +153,6 @@ export default function AgentDetail() {
     }
   }
 
-  function remindWhatsApp() {
-    const n = waNumber(p?.phone ?? null);
-    if (!n) { setMsg("مفيش رقم تليفون للمندوب."); return; }
-    const text = `مرحباً ${p?.username ?? ""}،\nبرجاء سداد الاشتراك الشهري لتطبيق قناص اللوحات لعدم قطع الخدمة.\nشكراً لتعاونك.`;
-    window.open(`https://wa.me/${n}?text=${encodeURIComponent(text)}`, "_blank");
-  }
   async function del() {
     if (!confirm(`تحذف حساب «${p?.username}» نهائياً؟ ده مايترجعش.`)) return;
     if (await call("delete")) router.replace("/admin");
@@ -379,27 +374,21 @@ export default function AgentDetail() {
               <input type="date" value={end} onChange={(e) => setEnd(e.target.value)}
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
             </label>
+            {/* #27 — «+ شهر» بس (اتشالت ٣ شهور والسنة) */}
             <div className="mb-2 flex gap-1.5">
-              {[["+شهر", 1], ["+٣ شهور", 3], ["+سنة", 12]].map(([lbl, n]) => (
-                <button key={lbl as string} onClick={() => setEnd(addMonthsTo(end || null, n as number))}
-                  className="flex-1 rounded-lg border border-border py-1.5 text-xs text-muted hover:text-primary hover:border-primary transition">{lbl}</button>
-              ))}
+              <button onClick={() => setEnd(addMonthsTo(end || null, 1))}
+                className="flex-1 rounded-lg border border-border py-1.5 text-xs text-muted hover:text-primary hover:border-primary transition">+ شهر</button>
             </div>
             <label className="mb-2 flex items-center justify-between gap-2 text-xs text-muted">
               مبلغ الاشتراك (اختياري):
               <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="numeric" placeholder="0"
                 className="w-24 rounded-lg border border-border bg-surface-2 px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
             </label>
-            <div className="flex gap-2">
-              <button onClick={saveSubscription} disabled={busy}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-50">
-                <Save size={15} /> حفظ التمديد
-              </button>
-              <button onClick={remindWhatsApp}
-                className="flex items-center justify-center gap-1.5 rounded-xl bg-brand px-3 py-2.5 text-sm font-bold text-night">
-                <MessageCircle size={15} /> تذكير السداد
-              </button>
-            </div>
+            {/* #27 — «حفظ التمديد» بس (اتشال زر تذكير السداد) */}
+            <button onClick={saveSubscription} disabled={busy}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-50">
+              <Save size={15} /> حفظ التمديد
+            </button>
           </div>
         )}
 
