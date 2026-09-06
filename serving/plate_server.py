@@ -1170,6 +1170,9 @@ def build_argparser():
                          "متكلّم جديد = داتا تدريب.")
     ap.add_argument("--no-warmup", action="store_true",
                     help="ماتسخّنش (أول طلب هيبقى أبطأ ٢-٤ مرات)")
+    ap.add_argument("--keep-warm", type=float, default=45.0,
+                    help="خيط تسخين دوري كل N ثانية عشان الكارت يفضل صاحي (0 = مقفول). "
+                         "بدونه الكارت يبرد بعد الهدوء وأول طلب من المندوب يتأخّر ويفشل.")
     return ap
 
 
@@ -1229,6 +1232,20 @@ def main(argv=None) -> int:
             model.warmup()
         except Exception as e:
             print(f"⚠️ التسخين فشل (بكمّل): {type(e).__name__}: {e}", flush=True)
+    # 🔥 keep-warm: بعد فترة هدوء (GPU 0%) الكارت بيبرد فأول طلب من المندوب بيتأخّر
+    # ويعدّي المهلة ويفشل — علشان كده المندوب بيضطر يقفل الصوت ويفتحه. خيط بيعمل
+    # تسخينة خفيفة كل --keep-warm ثانية يخلّي الكارت والموديل صاحيين على طول،
+    # فأول لوحة للمندوب تطلع بسرعة من غير أي إعادة تشغيل. الحمل ضئيل (~٣٥٠ms/دقيقة).
+    if not args.no_warmup and getattr(args, "keep_warm", 0) and args.keep_warm > 0:
+        def _keep_warm():
+            while True:
+                time.sleep(args.keep_warm)
+                try:
+                    model.warmup(seconds=1.0, rounds=1)
+                except Exception:
+                    pass  # تسخينة فشلت — مايهمش، الطلبات الحقيقية ليها الأولوية
+        threading.Thread(target=_keep_warm, daemon=True).start()
+        print(f"   🔥 keep-warm كل {args.keep_warm:.0f}ث — الكارت يفضل صاحي (مفيش بدء بارد)")
     cold = time.time() - t_boot
     print(f"✅ الموديل جاهز: {model.name}  جهاز={model.device}  dtype={model.dtype}")
     print(f"   تحميل {t_loaded - t_boot:.2f}ث · تسخين {time.time() - t_loaded:.2f}ث "
