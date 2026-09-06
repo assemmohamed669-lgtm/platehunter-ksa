@@ -5,16 +5,19 @@
  *
  * القاعدة:
  *  • «رقم اللوحة» دايماً أول عمود (بيتعرض منفصل، مش هنا).
- *  • بعده أعمدة **ثابتة** (نوع السيارة › الماركة) — مايتحركوش ومايتشالوش، بيظهروا
- *    لو موجودين في الملف.
- *  • بعدهم الأعمدة اللي المندوب اختار يظهّرها **بترتيب اختياره**. لو ماختارش
- *    حاجة → الثابت بس هو اللي يظهر.
+ *  • كل باقي الأعمدة — **بما فيها نوع السيارة والماركة** — بترتيب المندوب
+ *    بالظبط. كان العمودان دول مقفولين في الأول ومايتحركوش؛ المالك فكّ القفل
+ *    عنهم (٦ سبتمبر ٢٠٢٦) عشان المندوب يحطّهم قبل أو بعد بعض براحته.
+ *  • لو المندوب ماختارش حاجة خالص → بيظهروا هما الاتنين كافتراضي (زي ما كان)،
+ *    فالمندوب الجديد مايلاقيش نتيجة برقم لوحة وبس.
  */
 
-/** الأعمدة الثابتة بعد رقم اللوحة (بالـlabels) — بترتيبها، مايتحركوش. */
-export const FIXED_LEADING_LABELS = ["نوع السيارة", "الماركة"];
+/** الافتراضي اللي بيظهر لو المندوب ماختارش أي عمود — مش مقفول، مجرد بداية. */
+export const LEADING_DEFAULT_LABELS = ["نوع السيارة", "الماركة"];
 
 const KEY = "ph:sorting:colOrder";
+/** علامة ترحيل «فك القفل» — بتتعمل مرة واحدة لكل جهاز. */
+const MIGRATED_KEY = "ph:sorting:colOrder:unlocked";
 
 /** الأعمدة الاختيارية اللي المندوب اختار يظهّرها بترتيبه. [] = مفيش (الثابت بس). */
 export function loadColumnOrder(): string[] {
@@ -22,34 +25,51 @@ export function loadColumnOrder(): string[] {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const arr = JSON.parse(raw) as unknown;
-    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+    const order = Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+
+    // ترحيل مرة واحدة: قبل فك القفل كان النوع والماركة بيتحطّوا في الأول
+    // تلقائياً. من غير الترحيل ده كانوا هيختفوا فجأة من عند أي مندوب مرتّب
+    // أعمدته خلاص — كسر لحاجة شغّالة.
+    if (localStorage.getItem(MIGRATED_KEY) !== "1") {
+      const migrated = migrateColumnOrder(order);
+      localStorage.setItem(MIGRATED_KEY, "1");
+      if (migrated.length !== order.length) { saveColumnOrder(migrated); return migrated; }
+    }
+    return order;
   } catch { return []; }
+}
+
+/**
+ * ترحيل ترتيب متحفوظ من أيام القفل: بيحط النوع والماركة في أوله لو مش موجودين.
+ * الترتيب الفاضي بيفضل فاضي — الافتراضي في `orderedLabels` بيتكفّل بيه.
+ */
+export function migrateColumnOrder(order: string[]): string[] {
+  if (order.length === 0) return [];
+  const have = new Set(order);
+  return [...LEADING_DEFAULT_LABELS.filter((l) => !have.has(l)), ...order];
 }
 
 export function saveColumnOrder(order: string[]): void {
   try { localStorage.setItem(KEY, JSON.stringify(order)); } catch { /* storage unavailable */ }
 }
 
-/** الأعمدة الاختيارية المتاحة للاختيار = كل المتاح ناقص الثابت (وناقص رقم اللوحة). */
+/** الأعمدة المتاحة للترتيب = كل المتاح ناقص رقم اللوحة (بيتعرض منفصل دايماً). */
 export function optionalAvailable(availableLabels: string[]): string[] {
-  const fixed = new Set([...FIXED_LEADING_LABELS, "رقم اللوحة"]);
   const seen = new Set<string>();
-  return availableLabels.filter((l) => !fixed.has(l) && (seen.has(l) ? false : (seen.add(l), true)));
+  return availableLabels.filter((l) => l !== "رقم اللوحة" && (seen.has(l) ? false : (seen.add(l), true)));
 }
 
 /**
- * ترتيب أعمدة النتيجة في **الوضع المخصّص**: الثابت المتاح (نوع السيارة › الماركة)
- * + اللي المندوب اختاره بترتيبه، وبس (اللي ماختارهوش مايظهرش). رقم اللوحة مش هنا
- * — بيتعرض منفصل قبلهم. (الوضع «الأساسي» بيتعامل معاه المستدعي مباشرة بكل الأعمدة
- * الافتراضية، مش من هنا.)
+ * ترتيب أعمدة النتيجة في **الوضع المخصّص**: اللي المندوب اختاره **بترتيبه
+ * بالظبط** وبس — مافيش عمود مفروض في الأول. رقم اللوحة مش هنا (بيتعرض منفصل
+ * قبلهم). لو ماختارش حاجة خالص → الافتراضي (نوع السيارة › الماركة) عشان
+ * النتيجة ماتطلعش لوحة وبس. (الوضع «الأساسي» بيتعامل معاه المستدعي مباشرة.)
  */
 export function orderedLabels(availableLabels: string[], order: string[]): string[] {
   const avail = new Set(availableLabels);
-  const fixed = FIXED_LEADING_LABELS.filter((l) => avail.has(l));
-  const fixedSet = new Set(fixed);
-  const optional = order.filter((l) => avail.has(l) && !fixedSet.has(l));
+  const picked = order.length > 0 ? order : LEADING_DEFAULT_LABELS;
   const seen = new Set<string>();
-  return [...fixed, ...optional].filter((l) => (seen.has(l) ? false : (seen.add(l), true)));
+  return picked.filter((l) => avail.has(l) && (seen.has(l) ? false : (seen.add(l), true)));
 }
 
 /** وضع عرض الأعمدة: «أساسي» = ترتيب البرنامج الافتراضي (كل الأعمدة المفيدة زي
