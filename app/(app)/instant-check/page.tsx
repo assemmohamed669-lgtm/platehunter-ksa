@@ -47,6 +47,7 @@ import { saveTrainingSample, saveTrainingSession, countTrainingToday } from "@/l
 import { syncTrainingData } from "@/lib/trainingSync";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
+import { browserScreenWake } from "@/lib/screenWake";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode, vehicleTypeLabel } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
@@ -1044,6 +1045,29 @@ export default function InstantCheckPage() {
   useEffect(() => {
     setMicBusy(pttListening);
     return () => setMicBusy(false);
+  }, [pttListening]);
+
+  /**
+   * قفل الشاشة طول التسجيل — الشاشة ماتنامش لوحدها.
+   *
+   * من غيره: مهلة الشاشة العادية بتطفيها وهو بيسجّل، وأندرويد بيعتبر إطفاء
+   * الشاشة إخفاءً للصفحة، فالحارس اللي تحت (فصل المايك عند الخلفية) بيوقف
+   * التسجيل. المندوب بيشوفها «التسجيل بيقف لوحده».
+   *
+   * القفل اختياري: لو الويب-ڤيو مش داعم أو النظام رفض، التسجيل بيكمّل عادي.
+   */
+  useEffect(() => {
+    if (!pttListening) return;
+    const wake = browserScreenWake();
+    void wake.acquire();
+    // النظام بيسحب القفل لما الصفحة تتخفي؛ لو المندوب رجع والتسجيل لسه شغّال
+    // (مثلاً الحارس ماوقفوش)، نمسكه تاني.
+    const onVis = () => { if (document.visibilityState === "visible") void wake.acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      void wake.release();
+    };
   }, [pttListening]);
 
   // أول ما التطبيق يروح للخلفية (مكالمة جاية والمندوب فتحها، أو بدّل تطبيق) نفصل
