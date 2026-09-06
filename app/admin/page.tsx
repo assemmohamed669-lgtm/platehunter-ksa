@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen, Mic } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
@@ -23,6 +23,8 @@ interface AgentProfile {
   is_super: boolean;
   is_trial: boolean;
   is_active: boolean;
+  voicex_enabled?: boolean;      // صوت VoiceX مفعّل (افتراضي: مقفول → ديبجرام)
+  rest_pages_enabled?: boolean;  // باقي صفحات البرنامج مفتوحة (افتراضي: مفتوحة)
   device_fingerprint: string | null;
   device_lock_exempt: boolean;
   last_seen: string | null;
@@ -326,6 +328,27 @@ export default function AdminDashboard() {
       const res = await fetch("/api/admin/manage-agent", {
         method: "POST", headers: await authHeaders(),
         body: JSON.stringify({ agentId: a.id, action: "setActive", active: !a.is_active }),
+      });
+      const json = await res.json();
+      if (!res.ok) { alert(json.error ?? "تعذّر تنفيذ العملية."); return; }
+      loadAgents();
+    } catch { alert("تعذّر الاتصال بالخادم."); }
+  }
+
+  // #25 — تبديل سريع لعلم مندوب من القائمة (صوت VoiceX / باقي الصفحات).
+  async function toggleAgentFlag(
+    a: AgentProfile,
+    action: "setVoicexEnabled" | "setRestPages",
+    value: boolean,
+    e: React.MouseEvent,
+  ) {
+    e.stopPropagation();
+    if (action === "setRestPages" && !value &&
+        !confirm(`تقفل باقي صفحات البرنامج على «${a.username}» وتخليه صفحة صوت VoiceX فقط؟`)) return;
+    try {
+      const res = await fetch("/api/admin/manage-agent", {
+        method: "POST", headers: await authHeaders(),
+        body: JSON.stringify({ agentId: a.id, action, enabled: value }),
       });
       const json = await res.json();
       if (!res.ok) { alert(json.error ?? "تعذّر تنفيذ العملية."); return; }
@@ -901,6 +924,27 @@ export default function AdminDashboard() {
                     {a.is_active ? <LockOpen size={14} /> : <Lock size={14} />}
                   </button>
                 )}
+                {/* #25 — أيقونتين سريعتين: الصوت (VoiceX) + باقي صفحات البرنامج */}
+                {a.role === "agent" && (() => {
+                  const vx = !!a.voicex_enabled;
+                  const rest = a.rest_pages_enabled !== false; // undefined → مفتوح
+                  return (
+                    <>
+                      <button
+                        onClick={(e) => toggleAgentFlag(a, "setVoicexEnabled", !vx, e)}
+                        title={vx ? "صوت VoiceX مفعّل — دوس للرجوع لديبجرام" : "صوت ديبجرام — دوس لتفعيل VoiceX"}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full transition ${vx ? "bg-green-500/15 text-green-600 hover:bg-green-500/30" : "bg-danger/15 text-danger hover:bg-danger/30"}`}>
+                        <Mic size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => toggleAgentFlag(a, "setRestPages", !rest, e)}
+                        title={rest ? "باقي الصفحات مفتوحة — دوس لقفلها (صوت فقط)" : "مقفولة (صوت فقط) — دوس لفتحها"}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full transition ${rest ? "bg-green-500/15 text-green-600 hover:bg-green-500/30" : "bg-danger/15 text-danger hover:bg-danger/30"}`}>
+                        <LayoutGrid size={14} />
+                      </button>
+                    </>
+                  );
+                })()}
                 {waLink(a.phone) && (
                   <a href={waLink(a.phone)!} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()} title="مراسلة على واتساب"
@@ -941,7 +985,7 @@ export default function AdminDashboard() {
                 onClick={() => { setCTrial((v) => !v); setCRole("agent"); }}
                 className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-sm transition ${cTrial ? "border-brand bg-brand/15 text-brand font-bold" : "border-border text-muted"}`}
               >
-                <span className="flex items-center gap-2"><Clock size={15} /> تجربة مجانية ١٥ يوم</span>
+                <span className="flex items-center gap-2"><Clock size={15} /> تجربة مجانية ٣ أيام</span>
                 <span className={`flex h-5 w-9 items-center rounded-full p-0.5 transition ${cTrial ? "bg-brand justify-end" : "bg-border justify-start"}`}>
                   <span className="h-4 w-4 rounded-full bg-white" />
                 </span>
@@ -949,7 +993,7 @@ export default function AdminDashboard() {
 
               {cTrial ? (
                 <p className="rounded-lg bg-brand/10 px-3 py-2 text-[11px] leading-relaxed text-brand">
-                  الحساب هيشتغل ١٥ يوم من دلوقتي، وبعدها يتقفل تلقائياً وتظهر رسالة انتهاء التجربة. التليفون اختياري.
+                  الحساب هيشتغل ٣ أيام من دلوقتي، وبعدها يتقفل تلقائياً وتظهر رسالة انتهاء التجربة (بدون فترة سماح). التليفون اختياري.
                 </p>
               ) : (
                 <>

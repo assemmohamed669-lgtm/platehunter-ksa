@@ -29,7 +29,7 @@ function addDays(d: Date, n: number): string {
   return x.toISOString().slice(0, 10);
 }
 
-const TRIAL_DAYS = 15;
+const TRIAL_DAYS = 3;   // #27 — التجربة = ٣ أيام من تاريخ التسجيل (بدون فترة سماح)
 
 export async function POST(req: NextRequest) {
   const admin = await verifyAdminContext(req.headers.get("authorization"));
