@@ -9,8 +9,9 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ShieldAlert, RefreshCw, Info } from "lucide-react";
+import { ChevronLeft, ShieldAlert, RefreshCw, Info, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { securityRowMatches, type SecurityPerson } from "@/lib/securitySearch";
 
 interface EventRow {
   id: number;
@@ -43,7 +44,9 @@ function fmt(iso: string): string {
 export default function SecurityLogPage() {
   const router = useRouter();
   const [rows, setRows] = useState<EventRow[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
+  // بيانات كل شخص ظاهر في السجل — الاسم للعرض، والإيميل والتليفون للبحث.
+  const [people, setPeople] = useState<Record<string, SecurityPerson>>({});
+  const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
@@ -73,10 +76,18 @@ export default function SecurityLogPage() {
       new Set(list.flatMap((r) => [r.agent_id, r.target_id]).filter(Boolean) as string[])
     );
     if (ids.length) {
-      const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
-      const m: Record<string, string> = {};
-      for (const p of profs ?? []) m[(p as { id: string }).id] = (p as { username: string }).username;
-      setNames(m);
+      // الإيميل والتليفون مطلوبين للبحث — الأدمن بيدوّر باللي في إيده من شكوى
+      // المندوب، مش بالاسم بالضرورة.
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("id, username, email, phone")
+        .in("id", ids);
+      const m: Record<string, SecurityPerson> = {};
+      for (const row of profs ?? []) {
+        const p = row as { id: string; username?: string; email?: string; phone?: string };
+        m[p.id] = { username: p.username, email: p.email, phone: p.phone };
+      }
+      setPeople(m);
     }
     setLoading(false);
   }, []);
@@ -86,9 +97,12 @@ export default function SecurityLogPage() {
   }, [load]);
 
   const who = (id: string | null, label: string | null) =>
-    (id && names[id]) || label || (id ? id.slice(0, 8) : "—");
+    (id && people[id]?.username) || label || (id ? id.slice(0, 8) : "—");
 
-  const shown = filter === "all" ? rows : rows.filter((r) => r.type === filter);
+  // فلتر النوع (الشرائح) ثم البحث — الاتنين مع بعض.
+  const shown = rows
+    .filter((r) => filter === "all" || r.type === filter)
+    .filter((r) => securityRowMatches(r, people, q));
   const counts = rows.reduce<Record<string, number>>((a, r) => {
     a[r.type] = (a[r.type] ?? 0) + 1;
     return a;
@@ -131,6 +145,27 @@ export default function SecurityLogPage() {
         </div>
       )}
 
+
+      {/* بحث بالاسم أو الإيميل أو رقم التليفون — على الفاعل والهدف. */}
+      <div className="relative">
+        <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="ابحث بالاسم أو الإيميل أو رقم التليفون"
+          className="w-full rounded-xl border border-border bg-surface-2 py-2.5 pr-9 pl-9 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+        {q && (
+          <button
+            onClick={() => setQ("")}
+            title="مسح البحث"
+            className="absolute left-2 top-1/2 -translate-y-1/2 rounded-lg p-1 text-muted transition hover:text-danger"
+          >
+            <X size={15} />
+          </button>
+        )}
+      </div>
+
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {chips.map(([k, label]) => (
@@ -151,6 +186,12 @@ export default function SecurityLogPage() {
       {!loading && !err && rows.length === 0 && (
         <div className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
           مافيش أحداث مسجّلة — وده الوضع الطبيعي.
+        </div>
+      )}
+
+      {!loading && !err && rows.length > 0 && shown.length === 0 && (
+        <div className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+          مافيش حدث مطابق لـ «{q}» في آخر {rows.length} حدث.
         </div>
       )}
 
