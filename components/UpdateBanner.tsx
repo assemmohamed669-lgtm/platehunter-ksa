@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { Download, X } from "lucide-react";
 import { BUILD_ID, refreshAppNow } from "@/lib/appVersion";
+import { isMicBusy, onMicBusyChange } from "@/lib/micBusy";
+
+// كل قد إيه نفحص وجود نشر جديد والتطبيق مفتوح (بره فتح التطبيق ورجوعه للواجهة).
+const POLL_MS = 7 * 60 * 1000;   // ٧ دقايق
 
 const LS_DISMISSED = "ph:updateDismissedBuild";
 // معرّف البناء اللي عملنا له تحديث تلقائي في الجلسة دي — ضد اللوب لو النشر على
@@ -36,6 +40,9 @@ export default function UpdateBanner() {
         let already = "";
         try { already = sessionStorage.getItem(SS_AUTO) || ""; } catch { /* ignore */ }
         if (already !== server) {
+          // مانعملش reload والتسجيل الصوتي شغّال — نأجّل لحد ما الميك يقفل (بيتفحص
+          // تاني عبر onMicBusyChange) ونعرض البانر عشان المندوب يقدر يحدّث بإيده.
+          if (isMicBusy()) { setLatest(server); setNote(d.note || ""); return; }
           try { sessionStorage.setItem(SS_AUTO, server); } catch { /* ignore */ }
           await refreshAppNow();   // يمسح الكاش + يعيد التحميل بآخر نسخة
           return;
@@ -51,10 +58,19 @@ export default function UpdateBanner() {
     }
 
     void check();
+    // فحص دوري طول ما التطبيق مفتوح (كل ٧ دقايق).
+    const poll = setInterval(() => void check(), POLL_MS);
     // فحص كمان لما التطبيق يرجع للواجهة (المندوب فتحه بعد ما كان في الخلفية).
     const onVis = () => { if (document.visibilityState === "visible") void check(); };
     document.addEventListener("visibilitychange", onVis);
-    return () => { cancelled = true; document.removeEventListener("visibilitychange", onVis); };
+    // أول ما التسجيل الصوتي يقفل، لو كان فيه تحديث مؤجّل نعيد الفحص فيتحدّث تلقائي.
+    const offMic = onMicBusyChange((busy) => { if (!busy) void check(); });
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVis);
+      offMic();
+    };
   }, []);
 
   if (!latest) return null;
