@@ -4,6 +4,7 @@ import {
   detectChassisColumn,
   buildChassisIndex,
   matchChassis,
+  searchChassisBySuffix,
 } from "@/lib/chassis";
 
 describe("normalizeChassis", () => {
@@ -96,5 +97,38 @@ describe("matchChassis — تام فقط (no fuzzy / no partial)", () => {
   it("يطابق نفس الهيكل بالظبط (بغضّ النظر عن الفراغات/الشرطات)", () => {
     const idx = buildChassisIndex([{ "الشاص": "L10DA4299L0103256" }], "الشاص");
     expect(matchChassis("l10da4299 l0103256", idx).found).toBe(true);
+  });
+});
+
+// #22 — البحث اليدوي بآخر الشاص (آخر حرف + آخر أرقام). للبحث اليدوي فقط.
+describe("searchChassisBySuffix — بحث يدوي بلاحقة الشاص", () => {
+  const idx = buildChassisIndex([
+    { "الشاص": "MHFBA8FS5N1061458", "اللوحة": "أ" },
+    { "الشاص": "LFP82APE2N1D03256", "اللوحة": "ب" },
+    { "الشاص": "L10DA4299L0103256", "اللوحة": "ج" },
+  ], "الشاص");
+
+  it("يلاقي الهيكل باللاحقة (آخر حرف + أرقام)", () => {
+    const res = searchChassisBySuffix("N1061458", idx);
+    expect(res).toHaveLength(1);
+    expect(res[0]["اللوحة"]).toBe("أ");
+  });
+
+  it("يرجّع كل المطابقين لو أكتر من واحد بينتهي بنفس اللاحقة", () => {
+    const res = searchChassisBySuffix("03256", idx);
+    expect(res.map((r) => r["اللوحة"]).sort()).toEqual(["ب", "ج"]);
+  });
+
+  it("يتجاهل الفراغات/الحروف الصغيرة", () => {
+    expect(searchChassisBySuffix("n1061458", idx)).toHaveLength(1);
+    expect(searchChassisBySuffix(" 1061458 ", idx)).toHaveLength(1);
+  });
+
+  it("أقل من ٤ خانات = مفيش نتيجة (تقليل التطابق الكاذب)", () => {
+    expect(searchChassisBySuffix("256", idx)).toEqual([]);
+  });
+
+  it("لاحقة مش موجودة = مفيش نتيجة", () => {
+    expect(searchChassisBySuffix("99999", idx)).toEqual([]);
   });
 });

@@ -94,3 +94,20 @@ export function matchChassis(
 
   return { found: false, normalized };
 }
+
+/**
+ * بحث **يدوي** بآخر الشاص: المندوب بيكتب آخر حرف/حروف + آخر الأرقام، فبنرجّع كل
+ * صفوف الشاص اللي قيمتها المطبّعة **بتنتهي** بالمكتوب. ده للبحث اليدوي بس (المندوب
+ * قاصد يكتب لاحقة) — مش للتشييك التلقائي بالكاميرا اللي لازم يفضل تطابق تام عشان
+ * مايطلّعش مطلوب غلط. بنطلب ٤ خانات على الأقل عشان نقلّل التطابق الكاذب.
+ */
+export function searchChassisBySuffix(
+  rawQuery: string,
+  index: Map<string, Record<string, string>>
+): Record<string, string>[] {
+  const q = normalizeChassis(rawQuery);
+  if (q.length < 4) return [];
+  const out: Record<string, string>[] = [];
+  for (const [key, row] of index) if (key.endsWith(q)) out.push(row);
+  return out;
+}

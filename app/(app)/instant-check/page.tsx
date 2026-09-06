@@ -9,7 +9,7 @@ import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFil
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
+import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis, searchChassisBySuffix, type ChassisMatch } from "@/lib/chassis";
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
@@ -4568,11 +4568,27 @@ export default function InstantCheckPage() {
               <div className="flex gap-2 items-center">
                 <input dir="ltr" value={cameraInputPlate}
                   onChange={(e) => setCameraInputPlate(e.target.value.toUpperCase())}
-                  placeholder="أو اكتب رقم الشاصي (VIN) للبحث..."
+                  placeholder="اكتب الشاصي كامل أو آخر حرف + آخر أرقامه..."
                   className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
                 />
                 <button
-                  onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); onChassisResult(v, matchChassis(v, chassisIndex)); }}
+                  onClick={() => {
+                    const v = cameraInputPlate.trim();
+                    if (!v) return;
+                    setCameraError(null);
+                    // #22 — تطابق تام الأول؛ لو مالقاش، بحث بآخر الشاص (آخر حرف + آخر أرقام).
+                    const exact = matchChassis(v, chassisIndex);
+                    if (exact.found) { onChassisResult(v, exact); return; }
+                    const suf = searchChassisBySuffix(v, chassisIndex);
+                    if (suf.length === 1) {
+                      onChassisResult(v, { found: true, matchType: "partial", normalized: normalizeChassis(v), row: suf[0] });
+                    } else if (suf.length > 1) {
+                      setCameraError(`فيه ${suf.length} أرقام هيكل بتنتهي بنفس اللي كتبته — اكتب حروف/أرقام أكتر`);
+                      onChassisResult(v, exact);
+                    } else {
+                      onChassisResult(v, exact);
+                    }
+                  }}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                 >بحث</button>
               </div>
