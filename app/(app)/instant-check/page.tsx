@@ -1863,10 +1863,11 @@ export default function InstantCheckPage() {
     setManualExporting(true);
     try {
       const toSave = [...manualDraft].reverse(); // keep chronological order in the sheet
-      for (const e of toSave) await saveFieldCheckEntry(e);
+      // #19 — تصدير سريع: حفظ بالتوازي. اللوحات بتتمسح من التشييك بعد الحفظ بس.
+      await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
       setFieldEntries((prev) => [...manualDraft, ...prev]);
       setManualDraft([]);
-      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
     } finally {
       setManualExporting(false);
     }
@@ -1945,10 +1946,13 @@ export default function InstantCheckPage() {
       checkedAt: h.checkedAt,
     }));
     try {
-      for (const e of toSave) await saveFieldCheckEntry(e);
+      // #19 — تصدير سريع (بالتوازي) + مسح المُصدَّر من التشييك بعد الحفظ.
+      await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
       setFieldEntries((prev) => [...toSave, ...prev]);
-      setHitsExportedIds((s) => { const n = new Set(s); fresh.forEach((h) => n.add(h.id)); return n; });
-      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      const freshIds = new Set(fresh.map((h) => h.id));
+      setManualHits((prev) => prev.filter((h) => !freshIds.has(h.id)));
+      setHitsSelected((prev) => { const n = new Set(prev); freshIds.forEach((id) => n.delete(id)); return n; });
+      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر تصدير اللوحات.");
     }
@@ -3110,13 +3114,17 @@ export default function InstantCheckPage() {
       };
     });
     try {
-      for (const e of toSave) await saveFieldCheckEntry(e);
+      // #19 — تصدير سريع: نحفظ الكل بالتوازي بدل واحد ورا التاني.
+      await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
       setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
-      // نضيف اللي اتصدّر دلوقتي للمصدَّرين (union) — مش نستبدل، عشان القديم
-      // يفضل متعلّم إنه اتصدّر والجديد بس هو اللي يتصدّر المرة الجاية.
-      setPttExportedIds((s) => { const n = new Set(s); freshRows.forEach((r) => n.add(r.id)); return n; });
       markJudgeExportedIfArmed(freshRows.map((r) => r.id)); // قياس الطيّار: الصف اتصدّر فعلاً
-      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      // #19 — بعد ما اتحفظت في السجلات، تتمسح من صفحة التشييك (مش بس تتعلّم «تم»).
+      const freshIds = new Set(freshRows.map((r) => r.id));
+      freshIds.forEach((id) => pttRowIdsRef.current.delete(id));
+      setPttResults((prev) => prev.filter((r) => !freshIds.has(r.id)));
+      setPttSel((s) => { const n = new Set(s); freshIds.forEach((id) => n.delete(id)); return n; });
+      setPttAlert((a) => (a && freshIds.has(a.id) ? null : a));
+      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
       // جمع داتا التدريب (خلفية، مربوط بالمفتاح) — بعد التصدير الناجح، مايعطّلش المندوب.
       void collectTrainingFrom(freshRows);
     } catch (err: any) {
@@ -5069,7 +5077,7 @@ export default function InstantCheckPage() {
                                         <span className="inline-flex items-center gap-0.5 text-brand text-[11px] font-bold"><Check size={13} /> تم التشييك</span>
                                       ) : (
                                         <button
-                                          onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); markJudgeExportedIfArmed([r.id]); }}
+                                          onClick={async () => { await exportPttRowToField(r); markJudgeExportedIfArmed([r.id]); deletePttRow(r.id); }}
                                           className="inline-flex items-center gap-1 rounded-lg bg-brand/20 px-2.5 py-1 text-[11px] font-bold text-brand">
                                           <ClipboardCheck size={12} /> تشييك
                                         </button>
@@ -5172,7 +5180,7 @@ export default function InstantCheckPage() {
                                       <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
                                     ) : (
                                       <button
-                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); markJudgeExportedIfArmed([r.id]); }}
+                                        onClick={async () => { await exportPttRowToField(r); markJudgeExportedIfArmed([r.id]); deletePttRow(r.id); }}
                                         className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
                                         title="تصدير للتشييك"
                                       >
