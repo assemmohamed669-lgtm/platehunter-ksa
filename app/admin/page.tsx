@@ -120,6 +120,10 @@ export default function AdminDashboard() {
   const [cPhone, setCPhone] = useState("");
   const [cRole, setCRole] = useState<"agent" | "admin">("agent");
   const [cTrial, setCTrial] = useState(false);
+  // صلاحيتا المندوب الجديد — نفس افتراضيات السيرفر: الصوت مقفول (ديبجرام)
+  // وباقي الصفحات مفتوحة. للسوبر أدمن بس (زي الأزرار في القائمة).
+  const [cVoicex, setCVoicex] = useState(false);
+  const [cRestPages, setCRestPages] = useState(true);
   const [cEnd, setCEnd] = useState(addMonths(1));
   const [cError, setCError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -307,12 +311,14 @@ export default function AdminDashboard() {
           email: cEmail, password: cPassword, name: cName, phone: cPhone,
           role: cRole, trial: cTrial,
           subscriptionEnd: cRole === "agent" && !cTrial ? cEnd : null,
+          voicexEnabled: cVoicex, restPagesEnabled: cRestPages,
         }),
       });
       const json = await res.json();
       if (!res.ok) { setCError(json.error ?? "خطأ غير متوقع."); return; }
       setShowCreate(false);
       setCName(""); setCEmail(""); setCPassword(""); setCPhone(""); setCRole("agent"); setCTrial(false); setCEnd(addMonths(1));
+      setCVoicex(false); setCRestPages(true);
       loadAgents();
     } catch { setCError("تعذّر الاتصال بالخادم."); }
     finally { setCreating(false); }
@@ -1013,6 +1019,34 @@ export default function AdminDashboard() {
                     </label>
                   )}
                 </>
+              )}
+
+              {/* صلاحيتا المندوب من أول لحظة — أخضر = شغّال عنده، أحمر = واقف.
+                  نفس زرّي القائمة وصفحة المندوب، عشان المالك مايضطرش ينشئ
+                  الحساب الأول وبعدين يفتح صفحته يظبّطهم. للسوبر أدمن بس. */}
+              {isSuper && cRole === "agent" && (
+                <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2.5">
+                  <p className="text-[11px] font-bold text-muted">اللي هيشتغل عند المندوب:</p>
+                  <button
+                    onClick={() => setCVoicex((v) => !v)}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition ${cVoicex ? "border-green-500 bg-green-500/15 text-green-600 font-bold" : "border-danger/50 bg-danger/10 text-danger"}`}
+                  >
+                    <span className="flex items-center gap-2"><Mic size={15} /> صوت VoiceX</span>
+                    <span className="text-[11px] font-bold">{cVoicex ? "شغّال" : "واقف (ديبجرام)"}</span>
+                  </button>
+                  <button
+                    onClick={() => setCRestPages((v) => !v)}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition ${cRestPages ? "border-green-500 bg-green-500/15 text-green-600 font-bold" : "border-danger/50 bg-danger/10 text-danger"}`}
+                  >
+                    <span className="flex items-center gap-2"><LayoutGrid size={15} /> باقي صفحات البرنامج</span>
+                    <span className="text-[11px] font-bold">{cRestPages ? "مفتوحة" : "مقفولة (صوت فقط)"}</span>
+                  </button>
+                  {!cRestPages && !cVoicex && (
+                    <p className="rounded-lg bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
+                      الاتنين واقفين = الحساب مقفول تماماً، مش هيقدر يفتح أي صفحة.
+                    </p>
+                  )}
+                </div>
               )}
               {cError && (
                 <div className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">

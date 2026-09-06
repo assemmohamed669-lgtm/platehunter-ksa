@@ -1,6 +1,7 @@
 /**
  * POST /api/admin/create-agent
- * Body: { email, password, name?, phone?, role?: 'agent'|'admin', subscriptionEnd?: 'YYYY-MM-DD' }
+ * Body: { email, password, name?, phone?, role?: 'agent'|'admin', subscriptionEnd?: 'YYYY-MM-DD',
+ *         voicexEnabled?: boolean, restPagesEnabled?: boolean }
  * (Back-compat: accepts `username` instead of `email` as the login id.)
  * `name` is the display name (profiles.username); falls back to email when blank.
  *
@@ -11,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
 import { classifyAgentCreateError } from "@/lib/adminErrors";
+import { resolveNewAgentFlags } from "@/lib/adminFlags";
 
 function normalizeEmail(raw: string): string {
   const v = raw.trim().toLowerCase();
@@ -49,6 +51,9 @@ export async function POST(req: NextRequest) {
   // حساب تجربة دائماً مندوب (مش أدمن)
   const role: "agent" | "admin" = trial ? "agent" : (body.role === "admin" ? "admin" : "agent");
   const subscriptionEnd: string | null = body.subscriptionEnd || null;
+  // صلاحيتا الصوت/باقي الصفحات وقت الإنشاء — للسوبر أدمن بس، والافتراضي محفوظ
+  // (صوت مقفول · صفحات مفتوحة). القاعدة في lib/adminFlags.ts ومتغطّاة باختبار.
+  const flags = resolveNewAgentFlags(body, { isSuper: admin.isSuper, role });
 
   // Only a super admin can create other admins.
   if (role === "admin" && !admin.isSuper) {
@@ -114,6 +119,8 @@ export async function POST(req: NextRequest) {
     role,
     is_active: true,
     is_trial: trial,
+    voicex_enabled: flags.voicex_enabled,
+    rest_pages_enabled: flags.rest_pages_enabled,
     subscription_start: role === "admin" ? null : start,
     subscription_end: end,
   }, { onConflict: "id" });
