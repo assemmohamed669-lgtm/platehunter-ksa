@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ShieldAlert, RefreshCw, Info, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { securityRowMatches, type SecurityPerson } from "@/lib/securitySearch";
+import { describeSecurityEvent, formatEventTime } from "@/lib/securityDescribe";
 
 interface EventRow {
   id: number;
@@ -34,12 +35,6 @@ const KIND: Record<string, { label: string; tone: string }> = {
   login_cut_off: { label: "دخول باشتراك منتهي", tone: "text-muted" },
   admin_action: { label: "إجراء أدمن", tone: "text-primary" },
 };
-
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return p(d.getDate()) + "-" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
-}
 
 export default function SecurityLogPage() {
   const router = useRouter();
@@ -196,29 +191,52 @@ export default function SecurityLogPage() {
       )}
 
       <div className="flex flex-col gap-1.5">
-        {shown.map((r) => (
-          <div key={r.id} className="rounded-xl border border-border bg-surface px-3 py-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className={"text-xs font-bold " + (KIND[r.type] ? KIND[r.type].tone : "text-muted")}>
-                {KIND[r.type] ? KIND[r.type].label : r.type}
-              </span>
-              <span className="shrink-0 text-[10px] text-muted">{fmt(r.at)}</span>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
-              <span>الفاعل: <b className="text-ink">{who(r.agent_id, r.actor_label)}</b></span>
-              {(r.target_id || r.target_label) && (
-                <span>الهدف: <b className="text-ink">{who(r.target_id, r.target_label)}</b></span>
-              )}
-              {r.detail && <span dir="ltr" className="font-mono">{r.detail}</span>}
-              {r.ip && <span dir="ltr" className="font-mono">{r.ip}</span>}
-              {r.suppressed > 0 && (
-                <span className="rounded-full bg-alert/15 px-1.5 text-[10px] font-bold text-alert">
-                  +{r.suppressed} مكرر
+        {shown.map((r) => {
+          const desc = describeSecurityEvent(r.type, r.detail);
+          const actor = people[r.agent_id ?? ""];
+          const target = people[r.target_id ?? ""];
+          return (
+            <div key={r.id} className="rounded-xl border border-border bg-surface px-3 py-2.5">
+              {/* السطر الأول: إيه اللي حصل + إمتى */}
+              <div className="flex items-start justify-between gap-2">
+                <span className={"text-xs font-bold leading-relaxed " + (KIND[r.type] ? KIND[r.type].tone : "text-muted")}>
+                  {desc.action}
                 </span>
+                <span className="shrink-0 text-[10px] text-muted">{formatEventTime(r.at)}</span>
+              </div>
+
+              {desc.note && (
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{desc.note}</p>
+              )}
+
+              {/* الطرفان: مين عمل، ولمين — بالاسم والإيميل */}
+              <div className="mt-1.5 flex flex-col gap-0.5 text-[11px] text-muted">
+                <span>
+                  الفاعل: <b className="text-ink">{who(r.agent_id, r.actor_label)}</b>
+                  {actor?.email && <span dir="ltr" className="mr-1 font-mono text-[10px]">{actor.email}</span>}
+                </span>
+                {(r.target_id || r.target_label) && (
+                  <span>
+                    المندوب: <b className="text-ink">{who(r.target_id, r.target_label)}</b>
+                    {target?.email && <span dir="ltr" className="mr-1 font-mono text-[10px]">{target.email}</span>}
+                    {target?.phone && <span dir="ltr" className="mr-1 font-mono text-[10px]">{target.phone}</span>}
+                  </span>
+                )}
+              </div>
+
+              {(r.ip || r.suppressed > 0) && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted">
+                  {r.ip && <span dir="ltr" className="font-mono">{r.ip}</span>}
+                  {r.suppressed > 0 && (
+                    <span className="rounded-full bg-alert/15 px-1.5 font-bold text-alert">
+                      +{r.suppressed} مكرر
+                    </span>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex items-start gap-2 rounded-xl border border-border bg-surface-2 p-3 text-[11px] leading-relaxed text-muted">
