@@ -69,8 +69,6 @@ const FIELD_DUPE_COLORS = [
 // the other — same device, same voice, same mishearings.
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
-// منظّم الإيقاع في التشييك الصوتي — اهتزاز + وميض بين اللوحات (نفس فكرة التسجيل).
-const LS_CHECK_PACER = "ph:check:pacer";
 // لو المندوب بيتكلم ومفيش أي نص من المحرك المدة دي → القناة اتعطّلت، نعيد التشغيل.
 const DG_SILENT_MS = 20000;
 // ── طيّار «الرأي التاني» (موديلنا المدرَّب جنب Deepgram) — للمالك وحده ──
@@ -696,11 +694,6 @@ export default function InstantCheckPage() {
   // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للسوبر أدمن لتشخيص الدقة.
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
-  // منظّم الإيقاع: اهتزاز + وميض بصري كل X ثانية أثناء الاستماع (بدون صوت،
-  // فمايدخلش على الميكروفون ولا يأثّر على التفريغ) — بينظّم المندوب: لوحة كل نبضة.
-  const [pacerOn, setPacerOn] = useState(false);
-  const [pacerSec, setPacerSec] = useState(3);
-  const [pacerPulse, setPacerPulse] = useState(false);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
   // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
@@ -1041,17 +1034,6 @@ export default function InstantCheckPage() {
     })();
   }, []);
 
-  // استرجاع إعداد منظّم الإيقاع المحفوظ.
-  useEffect(() => {
-    try {
-      const p = JSON.parse(localStorage.getItem(LS_CHECK_PACER) || "null");
-      if (p && typeof p === "object") {
-        if (typeof p.on === "boolean") setPacerOn(p.on);
-        if (typeof p.sec === "number" && p.sec >= 2 && p.sec <= 6) setPacerSec(p.sec);
-      }
-    } catch { /* ignore */ }
-  }, []);
-
   // المؤقّت بتاع التشييك التلقائي: بيتلغي لو المندوب خرج من الوضع اليدوي أو
   // من الصفحة — من غير كده كان ممكن يتشيّك وهو في الكاميرا أو الصوت.
   useEffect(() => {
@@ -1065,23 +1047,6 @@ export default function InstantCheckPage() {
     setMicBusy(pttListening);
     return () => setMicBusy(false);
   }, [pttListening]);
-
-  // نبضة الإيقاع: اهتزاز + وميض كل X ثانية أثناء الاستماع — بدون أي صوت.
-  useEffect(() => {
-    if (!pttListening || !pacerOn) { setPacerPulse(false); return; }
-    const ms = Math.max(1500, pacerSec * 1000);
-    const id = setInterval(() => {
-      try { navigator.vibrate?.(90); } catch { /* مايدعمش الاهتزاز */ }
-      setPacerPulse(true);
-      window.setTimeout(() => setPacerPulse(false), 500);
-    }, ms);
-    return () => clearInterval(id);
-  }, [pttListening, pacerOn, pacerSec]);
-
-  function savePacer(on: boolean, sec: number) {
-    setPacerOn(on); setPacerSec(sec);
-    try { localStorage.setItem(LS_CHECK_PACER, JSON.stringify({ on, sec })); } catch { /* ignore */ }
-  }
 
   // يسجّل النص الخام (اللي المحرك سمعه قبل التحليل) في لوحة ديبج الأدمن — آخر ١٥.
   function logRawTranscript(text: string) {
@@ -4719,27 +4684,7 @@ export default function InstantCheckPage() {
           {mode === "ptt" && (
             <div className={`${luxeVoice ? "luxe " : ""}flex flex-col items-center gap-4`}>
               {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
-              {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
-              <div className="flex w-full max-w-xs flex-col items-center gap-1">
-                <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2" dir="rtl">
-                  <span className="text-xs font-bold text-ink">منظّم الإيقاع (اهتزاز)</span>
-                  <button type="button" onClick={() => savePacer(!pacerOn, pacerSec)}
-                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${pacerOn ? "bg-primary text-night" : "border border-border text-muted"}`}>
-                    {pacerOn ? "شغّال" : "مطفي"}
-                  </button>
-                </div>
-                {pacerOn && (
-                  <div className="flex items-center gap-1" dir="rtl">
-                    <span className="text-[10px] text-muted">نبضة كل:</span>
-                    {[2, 3, 4, 5].map((s) => (
-                      <button key={s} type="button" onClick={() => savePacer(true, s)}
-                        className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${pacerSec === s ? "bg-primary text-night" : "border border-border text-muted"}`}>
-                        {s}ث
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* #15 — منظّم الإيقاع اتشال بطلب المندوب. */}
 
               {/* ── الرأي التاني (موديلنا المدرَّب) — **المالك وحده**، والمفتاح المركزي شغّال ──
                   المربّع ده مايظهرش لأي حد تاني: judgeVisible بيتحوّل true بس بعد
@@ -4854,21 +4799,18 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* زر الميكروفون الكبير + زر الإيقاف المؤقت الأصغر جنبه (أثناء التسجيل) */}
-              <div className="flex items-center justify-center gap-3">
-                {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع (مايومضش وقت الإيقاف المؤقت) */}
+              {/* #16 — زر تسجيل مستطيل كبير: أخضر «ابدأ التسجيل» / أحمر «إيقاف التشغيل» */}
+              <div className="flex w-full max-w-sm items-stretch justify-center gap-3">
                 <button
                   onClick={pttListening ? stopPtt : startPtt}
-                  className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 text-white transition active:scale-95 ${
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-2xl border-4 py-4 text-lg font-black text-white transition active:scale-95 ${
                     pttListening
                       ? `border-red-600 bg-red-500 shadow-[0_0_22px_rgba(239,68,68,0.55)] ${pttPaused ? "" : "animate-pulse"}`
                       : "border-emerald-600 bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"
                   }`}
                 >
-                  <Mic size={28} />
-                  <span className="text-xs font-bold">
-                    {pttListening ? "إيقاف" : "ابدأ"}
-                  </span>
+                  <Mic size={26} />
+                  {pttListening ? "إيقاف التشغيل" : "ابدأ التسجيل"}
                 </button>
 
                 {/* إيقاف مؤقت/استئناف — أصغر، جنب زر التسجيل. يوقف العدّاد والمايك
@@ -4890,13 +4832,6 @@ export default function InstantCheckPage() {
                   </button>
                 )}
               </div>
-
-              {/* نبضة منظّم الإيقاع — "قول اللوحة دلوقتي" (اهتزاز + وميض، بدون صوت) */}
-              {pttListening && pacerOn && (
-                <div className={`rounded-full px-5 py-2 text-sm font-black transition-all duration-150 ${pacerPulse ? "scale-110 bg-brand text-night shadow-brand-glow" : "bg-surface-2 text-muted"}`} dir="rtl">
-                  {pacerPulse ? "🔵 قول اللوحة" : "…"}
-                </div>
-              )}
 
               {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع (بيتجمّد وقت الإيقاف المؤقت) */}
               {pttListening && (
