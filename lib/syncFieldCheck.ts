@@ -129,6 +129,37 @@ export async function pushFieldCheckDeletes(
 }
 
 /**
+ * بيحوّل صف جايّ من السيرفر لسجل محلي — **معلّم إنه مرفوع بالفعل**.
+ *
+ * 🐞 السطر ده (`synced: true`) هو إصلاح حلقة كانت بتاكل الداتابيز: الاسترجاع
+ * بيحفظ الصفوف بـ`store.put` اللي بيستبدل الصف بالكامل، فعلامة الرفع القديمة
+ * كانت بتتمسح. وبعد الاسترجاع على طول بننده على المزامنة التدريجية، فبتلاقي كل
+ * السجلات «لسه مترفعتش» وترفعهم تاني — وهي أصلاً جاية من السيرفر لحظتها.
+ *
+ * القياس يوم ٢٠٢٦-٠٩-٠٦: ٦٠٬٨١١ تعديل/ساعة على `field_checks` مقابل ١٬١٢٩ صف
+ * جديد حقيقي — يعني ٥٤ كتابة زيادة مقابل كل كتابة ليها لازمة، و٤٢٪ من الجدول
+ * كله (٣٥٦ ألف صف) بيتعاد كتابته كل ساعتين ونص.
+ *
+ * الصف الجايّ من السيرفر **موجود على السيرفر بحكم التعريف** — فتعليمه مرفوع
+ * مش تفاؤل، ده الوصف الصحيح لحالته.
+ */
+export function serverRowToEntry(row: unknown, agentId: string): FieldCheckEntry {
+  const r = (row ?? {}) as Record<string, unknown>;
+  return {
+    id: String(r.local_id ?? ""),
+    agentId,
+    plate: String(r.plate ?? ""),
+    row: (r.extra as Record<string, string>) ?? {},
+    method: (r.method as string) ?? "",
+    lat: (r.lat as number) ?? undefined,
+    lng: (r.lng as number) ?? undefined,
+    mapsLink: (r.maps_link as string) ?? undefined,
+    checkedAt: String(r.checked_at ?? ""),
+    synced: true,
+  };
+}
+
+/**
  * Restore this agent's field-check sheet FROM the server INTO IndexedDB.
  *
  * يجيب كل الصفوف **على دفعات** (‎1000/دفعة) — Supabase بيحدّد أي استعلام بـ‎1000
@@ -146,18 +177,7 @@ export async function restoreFieldChecks(
   // الاسترجاع ماينفعش يرجّعها قدام المندوب تاني.
   const tombstoned = new Set((await getFieldCheckDeletes(agentId)).map((d) => d.id));
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const toEntry = (r: any): FieldCheckEntry => ({
-    id: r.local_id,
-    agentId,
-    plate: r.plate,
-    row: (r.extra as Record<string, string>) ?? {},
-    method: r.method ?? "",
-    lat: r.lat ?? undefined,
-    lng: r.lng ?? undefined,
-    mapsLink: r.maps_link ?? undefined,
-    checkedAt: r.checked_at,
-  });
+  const toEntry = (r: unknown) => serverRowToEntry(r, agentId);
 
   const fetchPage = (from: number) =>
     supabase
