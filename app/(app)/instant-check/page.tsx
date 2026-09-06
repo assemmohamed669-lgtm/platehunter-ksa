@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
@@ -22,7 +22,6 @@ import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
-import SwipeRevealCard from "@/components/SwipeRevealCard";
 import VoiceLevelMeter from "@/components/VoiceLevelMeter";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
@@ -683,7 +682,6 @@ export default function InstantCheckPage() {
   // عرض «الصالة»: بطاقة لكل لوحة برقمها بخط كبير، وباقي البيانات ورا سحبة
   // لليسار. الجدول القديم لسه موجود بضغطة زرار (مافيش حاجة اتشالت).
   const [pttCardView, setPttCardView] = useState(true);
-  const [pttOpenCardId, setPttOpenCardId] = useState<string | null>(null);
   // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
   // المناديب ولا الأدمنز العاديين.
   const [isSuper, setIsSuper] = useState(false);
@@ -4997,150 +4995,95 @@ export default function InstantCheckPage() {
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted transition hover:text-primary">
                           {pttCardView ? "جدول" : "بطاقات"}
                         </button>
-                        {!luxeVoice && <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />}
+                        <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />{/* #21 — تكبير/تصغير للبطاقات والجدول */}
                       </div>
                     </div>
-                    {/* ── عرض «الصالة»: اللوحة بس بخط كبير، والبيانات ورا سحبة لليسار ── */}
+                    {/* #20 — «بطاقات» بقت جدول أفقي مضغوط: الظاهر مسح · رقم اللوحة · النوع،
+                        والسحب لليسار بيوري باقي البيانات (بعناوين أعمدة). #21 — تكبير/تصغير + بإصبعين. */}
                     {luxeVoice && (
-                      <div
-                        className="w-full flex flex-col gap-2 overflow-y-auto"
-                        style={{ maxHeight: "28rem" }}
-                        dir="rtl"
-                      >
-                        {sortNear(pttResults).map((r, i) => {
-                          const fresh = Date.now() - new Date(r.checkedAt).getTime() < 3000;
-                          const dupe = !!dupeBg(r.plate);
-                          return (
-                            <SwipeRevealCard
-                              key={r.id}
-                              open={pttOpenCardId === r.id}
-                              onOpenChange={(o) => setPttOpenCardId(o ? r.id : null)}
-                              onTap={() => togglePttSel(r.id)}
-                              selected={pttSel.has(r.id)}
-                              className={`${fresh ? "luxe-enter luxe-card--fresh" : ""} ${r.found ? "luxe-card--wanted" : ""}`}
-                              face={
-                                <>
-                                  {/* #13 — مسح بس (اتشال النسخ والمشاركة بطلب المندوب) */}
-                                  <span className="flex shrink-0 items-center gap-0.5">
-                                    <button onClick={() => deletePttRow(r.id)} title="مسح اللوحة" className="luxe-act luxe-act--danger">
-                                      <Trash2 size={15} />
-                                    </button>
-                                  </span>
-
-                                  {/* اللوحة — مكتوبة كلها سطر واحد بخط كبير + قلم التعديل */}
-                                  <span className="flex min-w-0 flex-1 items-center justify-center gap-2">
-                                    {editingPttId === r.id ? (
-                                      <>
-                                        <input
-                                          dir="rtl"
-                                          value={editPttValue}
-                                          onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
-                                          onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
-                                          autoFocus
-                                          className="w-32 rounded-lg border border-primary bg-surface-2 px-2 py-1 text-center text-lg font-bold text-ink outline-none"
-                                        />
-                                        <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={16} /></button>
-                                        <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={16} /></button>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <span className="luxe-plate" dir="rtl">{r.plate}</span>
-                                        <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="luxe-act" title="تعديل اللوحة">
-                                          <Pencil size={14} />
-                                        </button>
-                                      </>
-                                    )}
-                                  </span>
-
-                                  {/* شارات صغيرة — تنبيه مش بيانات */}
-                                  <span className="flex shrink-0 flex-col items-center gap-0.5">
-                                    <span className="text-[10px] font-bold" style={{ color: "var(--lx-muted)" }}>{i + 1}</span>
-                                    {r.found && (
-                                      <span className="rounded-full bg-brand/20 px-1.5 py-0.5 text-[9px] font-black text-brand whitespace-nowrap">
-                                        {r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة"}
-                                      </span>
-                                    )}
-                                    {r.needsReview && (
-                                      <span className="rounded-full bg-alert/20 px-1.5 py-0.5 text-[9px] font-black text-alert whitespace-nowrap">راجع</span>
-                                    )}
-                                    {dupe && (
-                                      <span className="text-[9px] font-bold" title={DUPE_TITLE} style={{ color: "var(--lx-gold)" }}>مكررة</span>
-                                    )}
-                                  </span>
-                                </>
-                              }
-                              details={
-                                <div className="flex flex-col gap-2" dir="rtl">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    {r.found && (
-                                      pttExportedIds.has(r.id) ? (
-                                        <span className="inline-flex items-center gap-0.5 text-brand text-[11px] font-bold"><Check size={13} /> تم التشييك</span>
-                                      ) : (
-                                        <button
-                                          onClick={async () => { await exportPttRowToField(r); markJudgeExportedIfArmed([r.id]); deletePttRow(r.id); }}
-                                          className="inline-flex items-center gap-1 rounded-lg bg-brand/20 px-2.5 py-1 text-[11px] font-bold text-brand">
-                                          <ClipboardCheck size={12} /> تشييك
-                                        </button>
-                                      )
-                                    )}
-                                  </div>
-
-                                  <div className="luxe-rule" />
-
-                                  <div className="luxe-kv">
-                                    <span className="luxe-k">اللوحة</span>
-                                    <span className="luxe-v">{r.plate}</span>
-
-                                    <span className="luxe-k">الحالة</span>
-                                    <span className="luxe-v">{r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "—"}</span>
-
-                                    <span className="luxe-k">النوع</span>
-                                    <span className="luxe-v"><VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} /></span>
-
-                                    <span className="luxe-k">الحي-الشارع</span>
-                                    <span className="luxe-v">{r.row?.["الحي-الشارع"] || "—"}</span>
-
-                                    <span className="luxe-k">ملاحظات</span>
-                                    <span className="luxe-v"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></span>
-
-                                    {dynCols.map((h) => (
-                                      <Fragment key={h}>
-                                        <span className="luxe-k">{h}</span>
-                                        <span className="luxe-v">{r.row?.[h] || "—"}</span>
-                                      </Fragment>
-                                    ))}
-
-                                    <span className="luxe-k">الموقع</span>
-                                    <span className="luxe-v">
-                                      {r.mapsLink ? (
-                                        <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-primary underline">
-                                          <MapPin size={11} /> خريطة
-                                        </a>
-                                      ) : r.gpsError ? (
-                                        <button onClick={() => retryGpsForPttRow(r.id)} className="inline-flex items-center gap-0.5 text-muted" title="إعادة المحاولة">
-                                          <MapPin size={11} /> إعادة
-                                        </button>
-                                      ) : (
-                                        <span className="animate-pulse text-muted">جاري...</span>
+                      <div ref={pttPinchRef} className="w-full overflow-auto rounded-xl border border-border" style={{ maxHeight: "28rem", touchAction: "pan-x pan-y" }}>
+                        <table className="border-collapse" style={{ direction: "rtl", fontSize: `${zoomFontPx(pttZoom)}px`, minWidth: "max-content" }}>
+                          <thead className="sticky top-0 z-10">
+                            <tr className="bg-surface-2 text-muted">
+                              <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">مسح</th>
+                              <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                              <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
+                              {dynCols.map((h) => (
+                                <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                              ))}
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                              <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sortNear(pttResults).map((r) => (
+                              <tr key={r.id} title={dupeBg(r.plate) ? DUPE_TITLE : undefined} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : dupeBg(r.plate) || (r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface")}`}>
+                                {/* مسح */}
+                                <td className="border-l border-border px-1.5 py-2 text-center">
+                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة"><Trash2 size={14} /></button>
+                                </td>
+                                {/* مربع اختيار للسيارات المطلوبة — لما يتعلّم تظهر مشاركة واتساب */}
+                                <td className="border-l border-border px-1.5 py-2 text-center whitespace-nowrap">
+                                  {r.found && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition" title="تحديد">
+                                        {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                      </button>
+                                      {pttSel.has(r.id) && (
+                                        <button onClick={() => void shareTextViaChooser(pttRowText(r))} className="text-brand" title="مشاركة واتساب"><Share2 size={14} /></button>
                                       )}
                                     </span>
-
-                                    <span className="luxe-k">التاريخ</span>
-                                    <span className="luxe-v">{formatDate(r.checkedAt)}</span>
-                                  </div>
-
-                                  {judgeVisible && r.judge && (
-                                    <div className="rounded-lg border border-border px-2 py-1 text-[10px] leading-4 text-muted">
-                                      <span className="block">موديلنا: <b className="text-ink">{r.judge.oursPlate || "—"}</b>{!r.judge.accepted && ` (مرفوض: ${r.judge.refuseReason ?? "—"})`}</span>
-                                      <span className="block">Deepgram: <b className="text-ink">{r.judge.dgPlate || "—"}</b></span>
-                                      <span className="block">القرار: {r.judge.fusedPlate || "—"} · {r.judge.reason} · {r.judge.serverMs ?? "?"}ms</span>
-                                    </div>
                                   )}
-                                </div>
-                              }
-                            />
-                          );
-                        })}
+                                </td>
+                                {/* رقم اللوحة + قلم — بخط كبير */}
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={editingPttId === r.id ? undefined : { fontSize: "2.4em" }}>
+                                  {editingPttId === r.id ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <input dir="rtl" value={editPttValue}
+                                        onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                        onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
+                                        autoFocus className="w-28 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-base text-ink outline-none" />
+                                      <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={16} /></button>
+                                      <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={16} /></button>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-2">
+                                      <span dir="rtl">{r.plate}</span>
+                                      <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="shrink-0 text-muted hover:text-primary transition" title="تعديل اللوحة"><Pencil size={14} /></button>
+                                    </span>
+                                  )}
+                                </td>
+                                {/* النوع — قائمة منسدلة بنفس ستايل اللوحة */}
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={{ fontSize: "2.4em" }}>
+                                  <VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} />
+                                </td>
+                                {/* الحالة */}
+                                <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                                  {r.found ? <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">{r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة"}</span> : "—"}
+                                </td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
+                                {dynCols.map((h) => (
+                                  <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
+                                ))}
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                                  {r.mapsLink ? (
+                                    <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-primary underline"><MapPin size={11} /> خريطة</a>
+                                  ) : r.gpsError ? (
+                                    <button onClick={() => retryGpsForPttRow(r.id)} className="inline-flex items-center gap-0.5 text-muted" title="إعادة المحاولة"><MapPin size={11} /> إعادة</button>
+                                  ) : (
+                                    <span className="animate-pulse text-muted text-[10px]">جاري...</span>
+                                  )}
+                                </td>
+                                <td className="border-b border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(r.checkedAt)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
 
