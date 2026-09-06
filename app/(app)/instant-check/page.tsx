@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
@@ -9,7 +9,7 @@ import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFil
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
-import { detectChassisColumn, buildChassisIndex, matchChassis, type ChassisMatch } from "@/lib/chassis";
+import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis, searchChassisBySuffix, type ChassisMatch } from "@/lib/chassis";
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
@@ -22,7 +22,6 @@ import { getVoiceEngine, getSpeechmaticsKey } from "@/lib/voiceKeys";
 import { startSpeechmatics, type SpeechmaticsHandle } from "@/lib/speechmaticsRT";
 import { createSpeechGate, type SpeechGate } from "@/lib/audioGate";
 import PlateImagesButton from "@/components/PlateImagesButton";
-import SwipeRevealCard from "@/components/SwipeRevealCard";
 import VoiceLevelMeter from "@/components/VoiceLevelMeter";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
@@ -69,8 +68,6 @@ const FIELD_DUPE_COLORS = [
 // the other — same device, same voice, same mishearings.
 const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
-// منظّم الإيقاع في التشييك الصوتي — اهتزاز + وميض بين اللوحات (نفس فكرة التسجيل).
-const LS_CHECK_PACER = "ph:check:pacer";
 // لو المندوب بيتكلم ومفيش أي نص من المحرك المدة دي → القناة اتعطّلت، نعيد التشغيل.
 const DG_SILENT_MS = 20000;
 // ── طيّار «الرأي التاني» (موديلنا المدرَّب جنب Deepgram) — للمالك وحده ──
@@ -590,7 +587,6 @@ export default function InstantCheckPage() {
   const [draftEdit, setDraftEdit] = useState<{ id: string; field: string } | null>(null);
   const [draftEditValue, setDraftEditValue] = useState("");
   const [manualSel, setManualSel] = useState<Set<string>>(new Set());
-  const [manualCopiedId, setManualCopiedId] = useState<string | null>(null);
   const [manualExporting, setManualExporting] = useState(false);
   const [manualZoom, setManualZoom] = useState(3);
   const manualPinchRef = usePinchZoom(manualZoom, setManualZoom);
@@ -686,7 +682,6 @@ export default function InstantCheckPage() {
   // عرض «الصالة»: بطاقة لكل لوحة برقمها بخط كبير، وباقي البيانات ورا سحبة
   // لليسار. الجدول القديم لسه موجود بضغطة زرار (مافيش حاجة اتشالت).
   const [pttCardView, setPttCardView] = useState(true);
-  const [pttOpenCardId, setPttOpenCardId] = useState<string | null>(null);
   // التشخيص التقني (اسم المحرك + النص الخام) يظهر **للسوبر أدمن فقط** — لا
   // المناديب ولا الأدمنز العاديين.
   const [isSuper, setIsSuper] = useState(false);
@@ -697,11 +692,6 @@ export default function InstantCheckPage() {
   // آخر نصوص خام سمعها المحرك (قبل التحليل) — لوحة ديبج للسوبر أدمن لتشخيص الدقة.
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
-  // منظّم الإيقاع: اهتزاز + وميض بصري كل X ثانية أثناء الاستماع (بدون صوت،
-  // فمايدخلش على الميكروفون ولا يأثّر على التفريغ) — بينظّم المندوب: لوحة كل نبضة.
-  const [pacerOn, setPacerOn] = useState(false);
-  const [pacerSec, setPacerSec] = useState(3);
-  const [pacerPulse, setPacerPulse] = useState(false);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
   // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
@@ -710,7 +700,6 @@ export default function InstantCheckPage() {
   const [icLocating, setIcLocating] = useState(false);
   const [pttError, setPttError] = useState<string | null>(null);
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
-  const [pttCopiedId, setPttCopiedId] = useState<string | null>(null);
   // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
@@ -1043,17 +1032,6 @@ export default function InstantCheckPage() {
     })();
   }, []);
 
-  // استرجاع إعداد منظّم الإيقاع المحفوظ.
-  useEffect(() => {
-    try {
-      const p = JSON.parse(localStorage.getItem(LS_CHECK_PACER) || "null");
-      if (p && typeof p === "object") {
-        if (typeof p.on === "boolean") setPacerOn(p.on);
-        if (typeof p.sec === "number" && p.sec >= 2 && p.sec <= 6) setPacerSec(p.sec);
-      }
-    } catch { /* ignore */ }
-  }, []);
-
   // المؤقّت بتاع التشييك التلقائي: بيتلغي لو المندوب خرج من الوضع اليدوي أو
   // من الصفحة — من غير كده كان ممكن يتشيّك وهو في الكاميرا أو الصوت.
   useEffect(() => {
@@ -1067,23 +1045,6 @@ export default function InstantCheckPage() {
     setMicBusy(pttListening);
     return () => setMicBusy(false);
   }, [pttListening]);
-
-  // نبضة الإيقاع: اهتزاز + وميض كل X ثانية أثناء الاستماع — بدون أي صوت.
-  useEffect(() => {
-    if (!pttListening || !pacerOn) { setPacerPulse(false); return; }
-    const ms = Math.max(1500, pacerSec * 1000);
-    const id = setInterval(() => {
-      try { navigator.vibrate?.(90); } catch { /* مايدعمش الاهتزاز */ }
-      setPacerPulse(true);
-      window.setTimeout(() => setPacerPulse(false), 500);
-    }, ms);
-    return () => clearInterval(id);
-  }, [pttListening, pacerOn, pacerSec]);
-
-  function savePacer(on: boolean, sec: number) {
-    setPacerOn(on); setPacerSec(sec);
-    try { localStorage.setItem(LS_CHECK_PACER, JSON.stringify({ on, sec })); } catch { /* ignore */ }
-  }
 
   // يسجّل النص الخام (اللي المحرك سمعه قبل التحليل) في لوحة ديبج الأدمن — آخر ١٥.
   function logRawTranscript(text: string) {
@@ -1835,16 +1796,6 @@ export default function InstantCheckPage() {
     return lines.join("\n");
   }
 
-  function shareDraftRow(e: FieldCheckEntry) {
-    void shareTextViaChooser(draftRowText(e));
-  }
-
-  async function copyDraftRow(e: FieldCheckEntry) {
-    try { await navigator.clipboard.writeText(draftRowText(e)); } catch { /* ignore */ }
-    setManualCopiedId(e.id);
-    setTimeout(() => setManualCopiedId(null), 1200);
-  }
-
   // هل لوحة القائمة مطلوبة؟ (للتعليم الأخضر)
   function isDraftMatched(e: FieldCheckEntry): boolean {
     return checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)));
@@ -1910,10 +1861,11 @@ export default function InstantCheckPage() {
     setManualExporting(true);
     try {
       const toSave = [...manualDraft].reverse(); // keep chronological order in the sheet
-      for (const e of toSave) await saveFieldCheckEntry(e);
+      // #19 — تصدير سريع: حفظ بالتوازي. اللوحات بتتمسح من التشييك بعد الحفظ بس.
+      await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
       setFieldEntries((prev) => [...manualDraft, ...prev]);
       setManualDraft([]);
-      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
     } finally {
       setManualExporting(false);
     }
@@ -1992,10 +1944,13 @@ export default function InstantCheckPage() {
       checkedAt: h.checkedAt,
     }));
     try {
-      for (const e of toSave) await saveFieldCheckEntry(e);
+      // #19 — تصدير سريع (بالتوازي) + مسح المُصدَّر من التشييك بعد الحفظ.
+      await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
       setFieldEntries((prev) => [...toSave, ...prev]);
-      setHitsExportedIds((s) => { const n = new Set(s); fresh.forEach((h) => n.add(h.id)); return n; });
-      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      const freshIds = new Set(fresh.map((h) => h.id));
+      setManualHits((prev) => prev.filter((h) => !freshIds.has(h.id)));
+      setHitsSelected((prev) => { const n = new Set(prev); freshIds.forEach((id) => n.delete(id)); return n; });
+      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر تصدير اللوحات.");
     }
@@ -3087,11 +3042,6 @@ export default function InstantCheckPage() {
     if (r.mapsLink) lines.push(`📍 الموقع: ${r.mapsLink}`);
     return lines.join("\n");
   }
-  async function copyPttRow(r: PttRow) {
-    try { await navigator.clipboard.writeText(pttRowText(r)); } catch { /* ignore */ }
-    setPttCopiedId(r.id);
-    setTimeout(() => setPttCopiedId(null), 1200);
-  }
   function togglePttSel(id: string) {
     setPttSel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
@@ -3162,13 +3112,17 @@ export default function InstantCheckPage() {
       };
     });
     try {
-      for (const e of toSave) await saveFieldCheckEntry(e);
+      // #19 — تصدير سريع: نحفظ الكل بالتوازي بدل واحد ورا التاني.
+      await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
       setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
-      // نضيف اللي اتصدّر دلوقتي للمصدَّرين (union) — مش نستبدل، عشان القديم
-      // يفضل متعلّم إنه اتصدّر والجديد بس هو اللي يتصدّر المرة الجاية.
-      setPttExportedIds((s) => { const n = new Set(s); freshRows.forEach((r) => n.add(r.id)); return n; });
       markJudgeExportedIfArmed(freshRows.map((r) => r.id)); // قياس الطيّار: الصف اتصدّر فعلاً
-      alert(`تم تصدير ${toSave.length} لوحة لشيت التسجيلات.`);
+      // #19 — بعد ما اتحفظت في السجلات، تتمسح من صفحة التشييك (مش بس تتعلّم «تم»).
+      const freshIds = new Set(freshRows.map((r) => r.id));
+      freshIds.forEach((id) => pttRowIdsRef.current.delete(id));
+      setPttResults((prev) => prev.filter((r) => !freshIds.has(r.id)));
+      setPttSel((s) => { const n = new Set(s); freshIds.forEach((id) => n.delete(id)); return n; });
+      setPttAlert((a) => (a && freshIds.has(a.id) ? null : a));
+      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
       // جمع داتا التدريب (خلفية، مربوط بالمفتاح) — بعد التصدير الناجح، مايعطّلش المندوب.
       void collectTrainingFrom(freshRows);
     } catch (err: any) {
@@ -4117,53 +4071,62 @@ export default function InstantCheckPage() {
         sky
       />
 
-      {/* ── حالة الـ GPS — تظهر في كل التبويبات ما عدا «السجلات» و«فرز» ── */}
-      {mode !== "sheet" && mode !== "sort" && (
-      <div className="flex flex-col gap-1.5">
-        <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
-          حالة الـ GPS
-          <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
-            {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
-          </span>
-          <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
-        </button>
-        {gpsBoxOpen && (
-          <>
-          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${gps ? "border-border bg-surface" : "border-danger/50 bg-danger/5"}`}>
-            <MapPin size={15} className={gps ? "text-primary" : "text-danger"} />
-            <div className="flex-1 min-w-0">
-              <p className={`truncate text-xs ${gps ? "text-ink" : "text-danger font-bold"}`}>
-                {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
-              </p>
-              {gps && (() => {
-                const lvl = gpsAccuracyLevel(gps.accuracy);
-                const cls = lvl === "good" ? "text-brand" : lvl === "ok" ? "text-alert" : "text-danger";
-                const hint = lvl === "good" ? "دقة ممتازة"
-                  : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
-                  : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
-                return (
-                  <p className="text-[11px] text-muted">
-                    {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className={`font-bold ${cls}`}>±{Math.round(gps.accuracy)}م</span>
-                    <span className={`block ${cls}`}>{hint}</span>
-                  </p>
-                );
-              })()}
-            </div>
-            <button onClick={refreshGps} disabled={gpsRefreshing} title="تحديث الموقع"
-              className={`shrink-0 rounded-lg border p-1.5 transition disabled:opacity-50 ${gps ? "border-border text-muted hover:text-primary" : "border-danger/50 text-danger hover:bg-danger/10"}`}>
-              <RefreshCw size={14} className={gpsRefreshing ? "animate-spin" : ""} />
+      {/* ── حالة الـ GPS — ثابتة فوق (sticky) واللوحات بتعدّي تحتها. بتظهر في كل
+             التبويبات ما عدا «السجلات» و«فرز». المربع كله ملوّن حسب قوة الإشارة
+             (ممتازة=أخضر · متوسطة=برتقالي · ضعيفة=أحمر) والدوسة في أي مكان فيه
+             بتعمل تحديث. #7/#10/#11/#12/#14 ── */}
+      {mode !== "sheet" && mode !== "sort" && (() => {
+        const lvl = gps ? gpsAccuracyLevel(gps.accuracy) : null;
+        // ألوان المربع كله حسب القوة (بطلب المندوب): ممتازة أخضر، متوسطة برتقالي، ضعيفة/مفيش أحمر.
+        const boxTone = !gps
+          ? "border-red-500/60 bg-red-500/15 text-red-500"
+          : lvl === "good" ? "border-green-500/60 bg-green-500/15 text-green-500"
+          : lvl === "ok" ? "border-orange-500/60 bg-orange-500/15 text-orange-500"
+          : "border-red-500/60 bg-red-500/15 text-red-500";
+        return (
+        <div className="sticky top-20 z-20 -mx-4 flex flex-col gap-1.5 bg-night px-4 pb-1.5 pt-1">
+          <button onClick={() => setGpsBoxOpen((v) => !v)} className="flex items-center gap-2 self-start text-xs font-bold text-ink">
+            حالة الـ GPS
+            <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${gps ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
+              {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
+            </span>
+            <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
+          </button>
+          {gpsBoxOpen && (
+            <>
+            {/* المربع كله زرّ تحديث — دوسة في أي مكان بتحدّث الموقع */}
+            <button onClick={refreshGps} disabled={gpsRefreshing} title="دوس في أي مكان لتحديث الموقع"
+              className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-right transition active:scale-[0.99] disabled:opacity-70 ${boxTone}`}>
+              <MapPin size={15} className="shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className={`truncate text-xs font-bold ${gps ? "text-ink" : ""}`}>
+                  {gps ? gpsAddress : "الموقع مش متقري — دوس تحديث"}
+                </p>
+                {gps && (() => {
+                  const hint = lvl === "good" ? "دقة ممتازة"
+                    : lvl === "ok" ? "دقة متوسطة — لو الموقع غلط دوس تحديث"
+                    : "دقة ضعيفة — استنى ثانية أو دوس تحديث";
+                  return (
+                    <p className="text-[11px]">
+                      {gps.lat.toFixed(5)}°N, {gps.lng.toFixed(5)}°E • <span className="font-bold">±{Math.round(gps.accuracy)}م</span>
+                      <span className="block font-bold">{hint}</span>
+                    </p>
+                  );
+                })()}
+              </div>
+              <RefreshCw size={16} className={`shrink-0 ${gpsRefreshing ? "animate-spin" : ""}`} />
             </button>
-          </div>
-          {/* سبب فشل «تحديث» — لازم يبان، وإلا الزرار يبان كأنه مايعملش حاجة. */}
-          {gpsMsg && (
-            <p className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-warning" dir="rtl">
-              {gpsMsg}
-            </p>
+            {/* سبب فشل «تحديث» — لازم يبان، وإلا الزرار يبان كأنه مايعملش حاجة. */}
+            {gpsMsg && (
+              <p className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-[12px] font-bold leading-relaxed text-warning" dir="rtl">
+                {gpsMsg}
+              </p>
+            )}
+            </>
           )}
-          </>
-        )}
-      </div>
-      )}
+        </div>
+        );
+      })()}
 
       {/* ── No file notice ── */}
       {!checkTable && (
@@ -4358,18 +4321,15 @@ export default function InstantCheckPage() {
                                   {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
                               </td>
-                              {/* ترقيم + نسخ/واتساب/حذف — تاني عمود بعد التحديد */}
+                              {/* #8 — مسح بس (اتشال النسخ والمشاركة بطلب المندوب) */}
                               <td className="border-l border-border px-2 py-2">
                                 <div className="flex items-center gap-2 whitespace-nowrap">
                                   <span className="text-[11px] font-bold text-muted">{i + 1}</span>
-                                  <button onClick={() => copyDraftRow(e)} className="text-muted hover:text-primary transition" title="نسخ">
-                                    {manualCopiedId === e.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                  </button>
-                                  <button onClick={() => shareDraftRow(e)} className="text-muted hover:text-primary transition" title="مشاركة واتساب"><Share2 size={13} /></button>
-                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
+                                  <button onClick={() => deleteDraftEntry(e.id)} className="text-muted hover:text-danger transition" title="مسح"><Trash2 size={13} /></button>
                                 </div>
                               </td>
-                              <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`}>
+                              {/* #9 — خط اللوحة أكبر ٣ مرات لسهولة القراءة في الميدان */}
+                              <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`} style={{ fontSize: "3em" }}>
                                 {draftCell(e, "plate")}
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-center">
@@ -4614,11 +4574,27 @@ export default function InstantCheckPage() {
               <div className="flex gap-2 items-center">
                 <input dir="ltr" value={cameraInputPlate}
                   onChange={(e) => setCameraInputPlate(e.target.value.toUpperCase())}
-                  placeholder="أو اكتب رقم الشاصي (VIN) للبحث..."
+                  placeholder="اكتب الشاصي كامل أو آخر حرف + آخر أرقامه..."
                   className="flex-1 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-center font-mono focus:border-brand outline-none"
                 />
                 <button
-                  onClick={() => { const v = cameraInputPlate.trim(); if (!v) return; setCameraError(null); onChassisResult(v, matchChassis(v, chassisIndex)); }}
+                  onClick={() => {
+                    const v = cameraInputPlate.trim();
+                    if (!v) return;
+                    setCameraError(null);
+                    // #22 — تطابق تام الأول؛ لو مالقاش، بحث بآخر الشاص (آخر حرف + آخر أرقام).
+                    const exact = matchChassis(v, chassisIndex);
+                    if (exact.found) { onChassisResult(v, exact); return; }
+                    const suf = searchChassisBySuffix(v, chassisIndex);
+                    if (suf.length === 1) {
+                      onChassisResult(v, { found: true, matchType: "partial", normalized: normalizeChassis(v), row: suf[0] });
+                    } else if (suf.length > 1) {
+                      setCameraError(`فيه ${suf.length} أرقام هيكل بتنتهي بنفس اللي كتبته — اكتب حروف/أرقام أكتر`);
+                      onChassisResult(v, exact);
+                    } else {
+                      onChassisResult(v, exact);
+                    }
+                  }}
                   className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white active:scale-95 transition shrink-0"
                 >بحث</button>
               </div>
@@ -4730,27 +4706,7 @@ export default function InstantCheckPage() {
           {mode === "ptt" && (
             <div className={`${luxeVoice ? "luxe " : ""}flex flex-col items-center gap-4`}>
               {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
-              {/* منظّم الإيقاع — اهتزاز + وميض بين اللوحات (بدون صوت، مايأثّرش على التفريغ) */}
-              <div className="flex w-full max-w-xs flex-col items-center gap-1">
-                <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2" dir="rtl">
-                  <span className="text-xs font-bold text-ink">منظّم الإيقاع (اهتزاز)</span>
-                  <button type="button" onClick={() => savePacer(!pacerOn, pacerSec)}
-                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${pacerOn ? "bg-primary text-night" : "border border-border text-muted"}`}>
-                    {pacerOn ? "شغّال" : "مطفي"}
-                  </button>
-                </div>
-                {pacerOn && (
-                  <div className="flex items-center gap-1" dir="rtl">
-                    <span className="text-[10px] text-muted">نبضة كل:</span>
-                    {[2, 3, 4, 5].map((s) => (
-                      <button key={s} type="button" onClick={() => savePacer(true, s)}
-                        className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${pacerSec === s ? "bg-primary text-night" : "border border-border text-muted"}`}>
-                        {s}ث
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* #15 — منظّم الإيقاع اتشال بطلب المندوب. */}
 
               {/* ── الرأي التاني (موديلنا المدرَّب) — **المالك وحده**، والمفتاح المركزي شغّال ──
                   المربّع ده مايظهرش لأي حد تاني: judgeVisible بيتحوّل true بس بعد
@@ -4865,21 +4821,18 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
-              {/* زر الميكروفون الكبير + زر الإيقاف المؤقت الأصغر جنبه (أثناء التسجيل) */}
-              <div className="flex items-center justify-center gap-3">
-                {/* Big mic button — أخضر في السكون، أحمر أثناء الاستماع (مايومضش وقت الإيقاف المؤقت) */}
+              {/* #16 — زر تسجيل مستطيل كبير: أخضر «ابدأ التسجيل» / أحمر «إيقاف التشغيل» */}
+              <div className="flex w-full max-w-sm items-stretch justify-center gap-3">
                 <button
                   onClick={pttListening ? stopPtt : startPtt}
-                  className={`flex h-24 w-24 flex-col items-center justify-center gap-1.5 rounded-full border-4 text-white transition active:scale-95 ${
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-2xl border-4 py-4 text-lg font-black text-white transition active:scale-95 ${
                     pttListening
                       ? `border-red-600 bg-red-500 shadow-[0_0_22px_rgba(239,68,68,0.55)] ${pttPaused ? "" : "animate-pulse"}`
                       : "border-emerald-600 bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"
                   }`}
                 >
-                  <Mic size={28} />
-                  <span className="text-xs font-bold">
-                    {pttListening ? "إيقاف" : "ابدأ"}
-                  </span>
+                  <Mic size={26} />
+                  {pttListening ? "إيقاف التشغيل" : "ابدأ التسجيل"}
                 </button>
 
                 {/* إيقاف مؤقت/استئناف — أصغر، جنب زر التسجيل. يوقف العدّاد والمايك
@@ -4901,13 +4854,6 @@ export default function InstantCheckPage() {
                   </button>
                 )}
               </div>
-
-              {/* نبضة منظّم الإيقاع — "قول اللوحة دلوقتي" (اهتزاز + وميض، بدون صوت) */}
-              {pttListening && pacerOn && (
-                <div className={`rounded-full px-5 py-2 text-sm font-black transition-all duration-150 ${pacerPulse ? "scale-110 bg-brand text-night shadow-brand-glow" : "bg-surface-2 text-muted"}`} dir="rtl">
-                  {pacerPulse ? "🔵 قول اللوحة" : "…"}
-                </div>
-              )}
 
               {/* مؤقّت مدة التسجيل — يظهر تحت الزر أثناء الاستماع (بيتجمّد وقت الإيقاف المؤقت) */}
               {pttListening && (
@@ -5049,156 +4995,95 @@ export default function InstantCheckPage() {
                           className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs text-muted transition hover:text-primary">
                           {pttCardView ? "جدول" : "بطاقات"}
                         </button>
-                        {!luxeVoice && <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />}
+                        <ZoomControl zoom={pttZoom} setZoom={setPttZoom} />{/* #21 — تكبير/تصغير للبطاقات والجدول */}
                       </div>
                     </div>
-                    {/* ── عرض «الصالة»: اللوحة بس بخط كبير، والبيانات ورا سحبة لليسار ── */}
+                    {/* #20 — «بطاقات» بقت جدول أفقي مضغوط: الظاهر مسح · رقم اللوحة · النوع،
+                        والسحب لليسار بيوري باقي البيانات (بعناوين أعمدة). #21 — تكبير/تصغير + بإصبعين. */}
                     {luxeVoice && (
-                      <div
-                        className="w-full flex flex-col gap-2 overflow-y-auto"
-                        style={{ maxHeight: "28rem" }}
-                        dir="rtl"
-                      >
-                        {sortNear(pttResults).map((r, i) => {
-                          const fresh = Date.now() - new Date(r.checkedAt).getTime() < 3000;
-                          const dupe = !!dupeBg(r.plate);
-                          return (
-                            <SwipeRevealCard
-                              key={r.id}
-                              open={pttOpenCardId === r.id}
-                              onOpenChange={(o) => setPttOpenCardId(o ? r.id : null)}
-                              onTap={() => togglePttSel(r.id)}
-                              selected={pttSel.has(r.id)}
-                              className={`${fresh ? "luxe-enter luxe-card--fresh" : ""} ${r.found ? "luxe-card--wanted" : ""}`}
-                              face={
-                                <>
-                                  {/* يمين البطاقة — نسخ · مشاركة · مسح (صغيرين) */}
-                                  <span className="flex shrink-0 items-center gap-0.5">
-                                    <button onClick={() => copyPttRow(r)} title="نسخ" className="luxe-act">
-                                      {pttCopiedId === r.id ? <Check size={15} className="text-brand" /> : <Copy size={15} />}
-                                    </button>
-                                    <button onClick={() => void shareTextViaChooser(pttRowText(r))} title="مشاركة" className="luxe-act">
-                                      <Share2 size={15} />
-                                    </button>
-                                    <button onClick={() => deletePttRow(r.id)} title="مسح اللوحة" className="luxe-act luxe-act--danger">
-                                      <Trash2 size={15} />
-                                    </button>
-                                  </span>
-
-                                  {/* اللوحة — مكتوبة كلها سطر واحد بخط كبير + قلم التعديل */}
-                                  <span className="flex min-w-0 flex-1 items-center justify-center gap-2">
-                                    {editingPttId === r.id ? (
-                                      <>
-                                        <input
-                                          dir="rtl"
-                                          value={editPttValue}
-                                          onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
-                                          onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
-                                          autoFocus
-                                          className="w-32 rounded-lg border border-primary bg-surface-2 px-2 py-1 text-center text-lg font-bold text-ink outline-none"
-                                        />
-                                        <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={16} /></button>
-                                        <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={16} /></button>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <span className="luxe-plate" dir="rtl">{r.plate}</span>
-                                        <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="luxe-act" title="تعديل اللوحة">
-                                          <Pencil size={14} />
-                                        </button>
-                                      </>
-                                    )}
-                                  </span>
-
-                                  {/* شارات صغيرة — تنبيه مش بيانات */}
-                                  <span className="flex shrink-0 flex-col items-center gap-0.5">
-                                    <span className="text-[10px] font-bold" style={{ color: "var(--lx-muted)" }}>{i + 1}</span>
-                                    {r.found && (
-                                      <span className="rounded-full bg-brand/20 px-1.5 py-0.5 text-[9px] font-black text-brand whitespace-nowrap">
-                                        {r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة"}
-                                      </span>
-                                    )}
-                                    {r.needsReview && (
-                                      <span className="rounded-full bg-alert/20 px-1.5 py-0.5 text-[9px] font-black text-alert whitespace-nowrap">راجع</span>
-                                    )}
-                                    {dupe && (
-                                      <span className="text-[9px] font-bold" title={DUPE_TITLE} style={{ color: "var(--lx-gold)" }}>مكررة</span>
-                                    )}
-                                  </span>
-                                </>
-                              }
-                              details={
-                                <div className="flex flex-col gap-2" dir="rtl">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    {r.found && (
-                                      pttExportedIds.has(r.id) ? (
-                                        <span className="inline-flex items-center gap-0.5 text-brand text-[11px] font-bold"><Check size={13} /> تم التشييك</span>
-                                      ) : (
-                                        <button
-                                          onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); markJudgeExportedIfArmed([r.id]); }}
-                                          className="inline-flex items-center gap-1 rounded-lg bg-brand/20 px-2.5 py-1 text-[11px] font-bold text-brand">
-                                          <ClipboardCheck size={12} /> تشييك
-                                        </button>
-                                      )
-                                    )}
-                                  </div>
-
-                                  <div className="luxe-rule" />
-
-                                  <div className="luxe-kv">
-                                    <span className="luxe-k">اللوحة</span>
-                                    <span className="luxe-v">{r.plate}</span>
-
-                                    <span className="luxe-k">الحالة</span>
-                                    <span className="luxe-v">{r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "—"}</span>
-
-                                    <span className="luxe-k">النوع</span>
-                                    <span className="luxe-v"><VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} /></span>
-
-                                    <span className="luxe-k">الحي-الشارع</span>
-                                    <span className="luxe-v">{r.row?.["الحي-الشارع"] || "—"}</span>
-
-                                    <span className="luxe-k">ملاحظات</span>
-                                    <span className="luxe-v"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></span>
-
-                                    {dynCols.map((h) => (
-                                      <Fragment key={h}>
-                                        <span className="luxe-k">{h}</span>
-                                        <span className="luxe-v">{r.row?.[h] || "—"}</span>
-                                      </Fragment>
-                                    ))}
-
-                                    <span className="luxe-k">الموقع</span>
-                                    <span className="luxe-v">
-                                      {r.mapsLink ? (
-                                        <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-primary underline">
-                                          <MapPin size={11} /> خريطة
-                                        </a>
-                                      ) : r.gpsError ? (
-                                        <button onClick={() => retryGpsForPttRow(r.id)} className="inline-flex items-center gap-0.5 text-muted" title="إعادة المحاولة">
-                                          <MapPin size={11} /> إعادة
-                                        </button>
-                                      ) : (
-                                        <span className="animate-pulse text-muted">جاري...</span>
+                      <div ref={pttPinchRef} className="w-full overflow-auto rounded-xl border border-border" style={{ maxHeight: "28rem", touchAction: "pan-x pan-y" }}>
+                        <table className="border-collapse" style={{ direction: "rtl", fontSize: `${zoomFontPx(pttZoom)}px`, minWidth: "max-content" }}>
+                          <thead className="sticky top-0 z-10">
+                            <tr className="bg-surface-2 text-muted">
+                              <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">مسح</th>
+                              <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                              <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
+                              {dynCols.map((h) => (
+                                <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
+                              ))}
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                              <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sortNear(pttResults).map((r) => (
+                              <tr key={r.id} title={dupeBg(r.plate) ? DUPE_TITLE : undefined} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : dupeBg(r.plate) || (r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface")}`}>
+                                {/* مسح */}
+                                <td className="border-l border-border px-1.5 py-2 text-center">
+                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة"><Trash2 size={14} /></button>
+                                </td>
+                                {/* مربع اختيار للسيارات المطلوبة — لما يتعلّم تظهر مشاركة واتساب */}
+                                <td className="border-l border-border px-1.5 py-2 text-center whitespace-nowrap">
+                                  {r.found && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition" title="تحديد">
+                                        {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                                      </button>
+                                      {pttSel.has(r.id) && (
+                                        <button onClick={() => void shareTextViaChooser(pttRowText(r))} className="text-brand" title="مشاركة واتساب"><Share2 size={14} /></button>
                                       )}
                                     </span>
-
-                                    <span className="luxe-k">التاريخ</span>
-                                    <span className="luxe-v">{formatDate(r.checkedAt)}</span>
-                                  </div>
-
-                                  {judgeVisible && r.judge && (
-                                    <div className="rounded-lg border border-border px-2 py-1 text-[10px] leading-4 text-muted">
-                                      <span className="block">موديلنا: <b className="text-ink">{r.judge.oursPlate || "—"}</b>{!r.judge.accepted && ` (مرفوض: ${r.judge.refuseReason ?? "—"})`}</span>
-                                      <span className="block">Deepgram: <b className="text-ink">{r.judge.dgPlate || "—"}</b></span>
-                                      <span className="block">القرار: {r.judge.fusedPlate || "—"} · {r.judge.reason} · {r.judge.serverMs ?? "?"}ms</span>
-                                    </div>
                                   )}
-                                </div>
-                              }
-                            />
-                          );
-                        })}
+                                </td>
+                                {/* رقم اللوحة + قلم — بخط كبير */}
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={editingPttId === r.id ? undefined : { fontSize: "2.4em" }}>
+                                  {editingPttId === r.id ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <input dir="rtl" value={editPttValue}
+                                        onChange={(e) => setEditPttValue(e.target.value.toUpperCase().split("").map((c) => EN_TO_AR[c] ?? c).join(""))}
+                                        onKeyDown={(e) => { if (e.key === "Enter") applyPttEdit(r.id); if (e.key === "Escape") setEditingPttId(null); }}
+                                        autoFocus className="w-28 rounded border border-primary bg-surface-2 px-2 py-1 text-center text-base text-ink outline-none" />
+                                      <button onClick={() => applyPttEdit(r.id)} className="text-brand" title="حفظ"><Check size={16} /></button>
+                                      <button onClick={() => setEditingPttId(null)} className="text-muted" title="إلغاء"><X size={16} /></button>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-2">
+                                      <span dir="rtl">{r.plate}</span>
+                                      <button onClick={() => { setEditingPttId(r.id); setEditPttValue(r.plate); }} className="shrink-0 text-muted hover:text-primary transition" title="تعديل اللوحة"><Pencil size={14} /></button>
+                                    </span>
+                                  )}
+                                </td>
+                                {/* النوع — قائمة منسدلة بنفس ستايل اللوحة */}
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={{ fontSize: "2.4em" }}>
+                                  <VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} />
+                                </td>
+                                {/* الحالة */}
+                                <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                                  {r.found ? <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">{r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة"}</span> : "—"}
+                                </td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
+                                {dynCols.map((h) => (
+                                  <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
+                                ))}
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap">
+                                  {r.mapsLink ? (
+                                    <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-primary underline"><MapPin size={11} /> خريطة</a>
+                                  ) : r.gpsError ? (
+                                    <button onClick={() => retryGpsForPttRow(r.id)} className="inline-flex items-center gap-0.5 text-muted" title="إعادة المحاولة"><MapPin size={11} /> إعادة</button>
+                                  ) : (
+                                    <span className="animate-pulse text-muted text-[10px]">جاري...</span>
+                                  )}
+                                </td>
+                                <td className="border-b border-border px-3 py-2 whitespace-nowrap text-muted">{formatDate(r.checkedAt)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
 
@@ -5207,8 +5092,9 @@ export default function InstantCheckPage() {
                       <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${zoomFontPx(pttZoom)}px` }}>
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-surface-2 text-muted">
-                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
-                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
+                            <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">☐</th>
+                            {/* #18 — عمود مسح مضغوط (علامة المسح بس)، الاسم «مسح» */}
+                            <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">مسح</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
@@ -5224,37 +5110,19 @@ export default function InstantCheckPage() {
                         <tbody>
                           {sortNear(pttResults).map((r, i) => (
                             <tr key={r.id} title={dupeBg(r.plate) ? DUPE_TITLE : undefined} className={`border-b border-border ${pttSel.has(r.id) ? "bg-primary/15" : dupeBg(r.plate) || (r.found ? (r.matchType === "fuzzy" ? "bg-alert/10" : "bg-brand/10") : "bg-surface")}`}>
-                              <td className="border-l border-border px-2 py-2 text-center">
+                              <td className="border-l border-border px-1.5 py-2 text-center">
                                 <button onClick={() => togglePttSel(r.id)} className="text-muted hover:text-primary transition">
                                   {pttSel.has(r.id) ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
                                 </button>
                               </td>
-                              {/* ترقيم + تشييك/نسخ/حذف — تاني عمود بعد التحديد */}
-                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[11px] font-bold text-muted">{i + 1}</span>
-                                  {r.found && (
-                                    pttExportedIds.has(r.id) ? (
-                                      <span className="inline-flex items-center gap-0.5 text-brand text-[10px]"><Check size={13} /> تم</span>
-                                    ) : (
-                                      <button
-                                        onClick={async () => { await exportPttRowToField(r); setPttExportedIds((s) => new Set(s).add(r.id)); markJudgeExportedIfArmed([r.id]); }}
-                                        className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[10px] font-bold text-brand"
-                                        title="تصدير للتشييك"
-                                      >
-                                        <ClipboardCheck size={12} /> تشييك
-                                      </button>
-                                    )
-                                  )}
-                                  <button onClick={() => copyPttRow(r)} className="text-muted hover:text-primary transition" title="نسخ">
-                                    {pttCopiedId === r.id ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
-                                  </button>
-                                  <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
+                              {/* #18 — علامة المسح بس (التصدير من زر «تصدير الكل» تحت) */}
+                              <td className="border-l border-border px-1.5 py-2 text-center">
+                                <button onClick={() => deletePttRow(r.id)} className="text-muted hover:text-danger transition" title="مسح اللوحة">
+                                  <Trash2 size={14} />
+                                </button>
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
+                              {/* #17 — خط اللوحة أكبر ٤ أضعاف في خيار الجدول */}
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={editingPttId === r.id ? undefined : { fontSize: "4em" }}>
                                 {editingPttId === r.id ? (
                                   <span className="inline-flex items-center gap-1">
                                     <input
