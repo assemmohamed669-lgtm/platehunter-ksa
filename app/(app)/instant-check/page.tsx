@@ -48,6 +48,7 @@ import { syncTrainingData } from "@/lib/trainingSync";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 import { browserScreenWake } from "@/lib/screenWake";
+import { engineLabel } from "@/lib/engineLabel";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode, vehicleTypeLabel } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
@@ -4936,15 +4937,29 @@ export default function InstantCheckPage() {
                 )
               )}
 
-              {/* اسم المحرك النشط — للسوبر أدمن فقط (تشخيص، مخفي عن المناديب والأدمنز) */}
-              {pttListening && isSuper && (
+              {/* اسم المحرك النشط — **ظاهر لكل مندوب** أثناء التسجيل.
+                  لما VoiceX يفصل، البرنامج بيرجع لديبجرام بصمت وعربيه أضعف،
+                  فالمندوب كان بيشوف «البرنامج بقى بيغلط» وهو مش عارف إن المحرك
+                  اتبدّل. الشارة بتخلّيه يقول «كان مكتوب ديبجرام». */}
+              {pttListening && (() => {
+                const eng = engineLabel(pttEngine);
+                return (
+                  <span
+                    className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${eng.ours ? "bg-brand/15 text-brand" : "bg-alert/15 text-alert"}`}
+                    dir="rtl"
+                    title={eng.ours ? "شغّال بالموديل بتاعنا" : "الموديل بتاعنا مش متاح دلوقتي — شغّال بمحرك احتياطي"}
+                  >
+                    <Mic size={11} />
+                    {eng.text}
+                    {!eng.ours && <span className="font-normal">(احتياطي)</span>}
+                  </span>
+                );
+              })()}
+
+              {/* تشخيص إضافي للسوبر أدمن — تفاصيل المحرك زي ما كانت */}
+              {pttListening && isSuper && pttEngine === "whisper" && (
                 <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[10px] font-bold text-primary" dir="ltr">
-                  🎙 {pttEngine === "voicex" ? "VoiceX (بتاعنا)"
-                    : pttEngine === "deepgram" ? "Deepgram (لحظي)"
-                    : pttEngine === "speechmatics" ? "Speechmatics (لحظي)"
-                    : pttEngine === "whisper" ? "Whisper/Groq (تقطيع ٧ث)"
-                    : pttEngine === "local" ? "المحرك المحلي"
-                    : "..."}
+                  تقطيع ٧ث
                 </span>
               )}
 
