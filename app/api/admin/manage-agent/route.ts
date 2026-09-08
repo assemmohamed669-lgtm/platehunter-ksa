@@ -9,6 +9,7 @@
  *  - setActive        { active }
  *  - setVoicexEnabled { enabled }   (VoiceX voice engine on/off for this agent)
  *  - setRestPages     { enabled }   (rest-of-app pages on/off for this agent)
+ *  - setAgentNotice   { notice }    (رسالة خاصة تظهر لهذا المندوب وحده)
  *  - delete
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -16,6 +17,7 @@ import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
 import { buildActionDetail } from "@/lib/securityDescribe";
 import { resetDevicePatch } from "@/lib/deviceBinding";
+import { normalizeAgentNotice } from "@/lib/agentNotice";
 import { randomUUID } from "node:crypto";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
@@ -202,6 +204,18 @@ export async function POST(req: NextRequest) {
         // قفله مع فتح VoiceX = صفحة صوت VoiceX فقط (بلا باقي الصفحات).
         const { error } = await supabaseAdmin.from("profiles")
           .update({ rest_pages_enabled: !!body.enabled }).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      case "setAgentNotice": {
+        // رسالة خاصة بالمندوب ده — بتظهر عنده هو لوحده بالأحمر. نص فاضي =
+        // مسح الرسالة (بيتحوّل NULL في التطبيع، مش نص فاضي — وإلا البانر
+        // بيظهر عنده فاضي وهو مالوش زر إخفاء).
+        const text = normalizeAgentNotice(body.notice as string | null | undefined);
+        const { error } = await supabaseAdmin.from("profiles")
+          .update({ agent_notice: text, agent_notice_at: text ? new Date().toISOString() : null })
+          .eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         return NextResponse.json({ ok: true });
       }
