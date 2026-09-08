@@ -49,6 +49,8 @@ import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
 import { browserScreenWake } from "@/lib/screenWake";
 import { engineLabel } from "@/lib/engineLabel";
+import { voiceTabVisible, loadCachedVoiceAccess, saveCachedVoiceAccess } from "@/lib/voiceAccess";
+import { STREET_KEY, withStreetName, loadStreetName, saveStreetName } from "@/lib/streetName";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode, vehicleTypeLabel } from "@/lib/vehicleType";
 import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
@@ -517,15 +519,31 @@ export default function InstantCheckPage() {
    * هو بس**. `null` = لسه بنجيب البروفايل (نعرض الوضع العادي لحد ما يوصل).
    */
   const [voiceOnly, setVoiceOnly] = useState<boolean | null>(null);
+  // تبويب «صوتي» بيظهر للمفعّل عنده الصوت بس. `null` = لسه بنقرا.
+  const [voiceAllowed, setVoiceAllowed] = useState<boolean | null>(null);
+  // اسم الشارع اللي المندوب بيكتبه بإيده — بيتختم على كل لوحة **من لحظة
+  // كتابته**، فتغييره بيمشي للأمام بس. بيتحفظ على الجهاز عشان مايضيعش
+  // لما يخرج من الصفحة ويرجع وهو لسه في نفس الشارع.
+  const [streetName, setStreetName] = useState("");
+  const streetRef = useRef("");
   useEffect(() => {
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
+        // العلمين في استعلام واحد — رحلة شبكة واحدة بدل اتنين على شبكة الموبايل.
         const { data: prof } = await supabase.from("profiles")
-          .select("rest_pages_enabled").eq("id", data.user.id).single();
-        setVoiceOnly((prof as { rest_pages_enabled?: boolean } | null)?.rest_pages_enabled === false);
-      } catch { setVoiceOnly(false); }
+          .select("rest_pages_enabled, voicex_enabled, is_super").eq("id", data.user.id).single();
+        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean } | null;
+        setVoiceOnly(row?.rest_pages_enabled === false);
+        const allowed = voiceTabVisible(row, loadCachedVoiceAccess());
+        setVoiceAllowed(allowed);
+        if (row) saveCachedVoiceAccess(allowed);   // مرجع الأوفلاين المرة الجاية
+      } catch {
+        setVoiceOnly(false);
+        // فشل القراءة (أوفلاين) → آخر قيمة معروفة على الجهاز.
+        setVoiceAllowed(voiceTabVisible(null, loadCachedVoiceAccess()));
+      }
     })();
   }, []);
   // حالة الـ GPS (منقولة من صفحة التسجيل) — تظهر فوق مربع ملف التشييك عشان
@@ -553,9 +571,14 @@ export default function InstantCheckPage() {
    */
   useEffect(() => {
     if (voiceOnly === null) return;
-    if (voiceOnly && (mode === "manual" || mode === "camera" || mode === "chassis")) setMode("ptt");
+    // الصوت مقفول والمندوب واقف على تبويب «صوتي» (محفوظ من قبل القفل) → نطلّعه.
+    // للمشترك صوت-فقط مافيش يدوي، فبيروح للسجلات.
+    if (voiceAllowed === false && mode === "ptt") { setMode(voiceOnly ? "sheet" : "manual"); return; }
+    if (voiceOnly && (mode === "manual" || mode === "camera" || mode === "chassis")) {
+      setMode(voiceAllowed === false ? "sheet" : "ptt");
+    }
     if (!voiceOnly && mode === "sort") setMode("manual");
-  }, [voiceOnly, mode]);
+  }, [voiceOnly, voiceAllowed, mode]);
 
   // Manual
   const [manualInput, setManualInput] = useState("");
@@ -1253,6 +1276,10 @@ export default function InstantCheckPage() {
       else { const s = localStorage.getItem("ic-manual-draft"); if (s) { const v = JSON.parse(s) as FieldCheckEntry[]; icManualDraftCache = v; setManualDraft(v); } }
     } catch {}
     try {
+      const st = loadStreetName();
+      if (st) { setStreetName(st); streetRef.current = st; }
+    } catch {}
+    try {
       const v = localStorage.getItem("ic-ptt-cardview");
       if (v === "0") setPttCardView(false);
     } catch {}
@@ -1733,7 +1760,7 @@ export default function InstantCheckPage() {
       id,
       agentId: agentIdRef.current ?? undefined,
       plate: result?.plate ?? raw,
-      row,
+      row: withStreetName(row, streetRef.current),
       method: "متشيكة يدوي",
       checkedAt: new Date().toISOString(),
     };
@@ -2617,7 +2644,9 @@ export default function InstantCheckPage() {
       found: result.found,
       matchType: result.matchType,
       similarity: result.similarity,
-      row: result.row,
+      // ختم اسم الشارع وقت الإنشاء (مش وقت العرض) — اللوحات القديمة تفضل
+      // بالاسم القديم لما المندوب يغيّره وهو ماشي لشارع تاني.
+      row: withStreetName(result.row ?? {}, streetRef.current),
       vehicleType,
       needsReview: !isComplete || !!uncertain, // مش كاملة (٣+٤) أو المحلّل شكّك (رقم ناقص اتحشى صفر) → «راجع»
       checkedAt: new Date().toISOString(),
@@ -4063,7 +4092,13 @@ export default function InstantCheckPage() {
       {checkTable && (
         <div
           className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg ${
-            voiceOnly ? "grid-cols-3" : "grid-cols-5"
+            // عدد الأعمدة بيتماشى مع التبويبات الظاهرة فعلاً (تبويب الصوت
+            // ممكن يكون مشال)، وإلا بيفضل فراغ مكانه.
+            (voiceOnly ? 3 : 5) - (voiceAllowed === false ? 1 : 0) === 4
+              ? "grid-cols-4"
+              : voiceOnly
+                ? (voiceAllowed === false ? "grid-cols-2" : "grid-cols-3")
+                : "grid-cols-5"
           }`}
         >
           {(
@@ -4082,7 +4117,10 @@ export default function InstantCheckPage() {
                   { key: "chassis", Icon: Barcode, label: "شاص" },
                   { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
                 ] as const)
-          ).map(({ key, Icon, label }) => (
+            // الصوت مقفول عن المشترك ده ⇒ التبويب مايظهرش خالص (مش مجرد إن
+            // المحرك بيتغيّر). بيتشال قبل الرسم فمافيش لمحة ولا ضغطة بالغلط.
+          ).filter((t) => t.key !== "ptt" || voiceAllowed !== false)
+           .map(({ key, Icon, label }) => (
             <button
               key={key}
               onClick={() => setMode(key)}
@@ -4238,7 +4276,18 @@ export default function InstantCheckPage() {
           {/* ── Manual ── */}
           {mode === "manual" && (
             <div className="flex flex-col gap-3">
-              {/* مربع «اسم الموقع» اتشال — عمود «الحي-الشارع» (تلقائي من الـGPS) بيغني عنه. */}
+              {/* مربع «اسم الشارع» — المندوب بيكتبه بإيده، ويتختم على كل لوحة
+                  من لحظة كتابته. فاضي = مايتكتبش حاجة. */}
+              <div className="w-full" dir="rtl">
+                <label className="mb-1 block text-xs font-bold text-muted">اسم الشارع</label>
+                <input
+                  value={streetName}
+                  onChange={(e) => { const v = e.target.value; setStreetName(v); streetRef.current = v; saveStreetName(v); }}
+                  placeholder="اكتب اسم الشارع (اختياري) — هيتحط على اللوحات الجاية"
+                  className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
               <div className="flex gap-2">
                 <input
                   ref={manualInputRef}
@@ -4339,8 +4388,8 @@ export default function InstantCheckPage() {
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                             <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                            <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
@@ -4371,10 +4420,8 @@ export default function InstantCheckPage() {
                               <td className={`border-l border-border px-3 py-2 whitespace-nowrap font-bold ${matched ? "text-brand" : "text-ink"}`} style={{ fontSize: "3em" }}>
                                 {draftCell(e, "plate")}
                               </td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-center">
-                                {matched && <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">مطلوبة</span>}
-                              </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={e.row["النوع"] ?? ""} onChange={(code) => setManualDraftType(e.id, code)} /></td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[STREET_KEY] ?? ""}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] ?? ""}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
                               <td className="border-l border-border px-3 py-2">
@@ -4860,6 +4907,18 @@ export default function InstantCheckPage() {
                 </div>
               )}
 
+
+              {/* مربع «اسم الشارع» — المندوب بيكتبه بإيده، ويتختم على كل لوحة
+                  من لحظة كتابته. فاضي = مايتكتبش حاجة. */}
+              <div className="w-full" dir="rtl">
+                <label className="mb-1 block text-xs font-bold text-muted">اسم الشارع</label>
+                <input
+                  value={streetName}
+                  onChange={(e) => { const v = e.target.value; setStreetName(v); streetRef.current = v; saveStreetName(v); }}
+                  placeholder="اكتب اسم الشارع (اختياري) — هيتحط على اللوحات الجاية"
+                  className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
               {/* #16 — زر تسجيل مستطيل كبير: أخضر «ابدأ التسجيل» / أحمر «إيقاف التشغيل» */}
               <div className="flex w-full max-w-sm items-stretch justify-center gap-3">
                 <button
@@ -5062,7 +5121,7 @@ export default function InstantCheckPage() {
                               <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">☐</th>
                               <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                               <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
-                              <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
+                              <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الشارع</th>
                               <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                               <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                               {dynCols.map((h) => (
@@ -5114,10 +5173,7 @@ export default function InstantCheckPage() {
                                 <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink" style={{ fontSize: "2.4em" }}>
                                   <VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} />
                                 </td>
-                                {/* الحالة */}
-                                <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
-                                  {r.found ? <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">{r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة"}</span> : "—"}
-                                </td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[STREET_KEY] || "—"}</td>
                                 <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
                                 <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
                                 {dynCols.map((h) => (
@@ -5149,8 +5205,8 @@ export default function InstantCheckPage() {
                             {/* #18 — عمود مسح مضغوط (علامة المسح بس)، الاسم «مسح» */}
                             <th className="border-b border-l border-border px-1.5 py-2 text-center font-bold whitespace-nowrap">مسح</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                            <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                            <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                             <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                             {dynCols.map((h) => (
@@ -5221,14 +5277,8 @@ export default function InstantCheckPage() {
                                   </span>
                                 )}
                               </td>
-                              <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
-                                {r.found && (r.matchType === "fuzzy" ? (
-                                  <span className="inline-flex items-center gap-0.5 font-bold text-alert"><AlertTriangle size={12} /> مطلوبة؟ {r.similarity}%</span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-0.5 font-bold text-brand"><CheckCircle2 size={13} /> مطلوبة</span>
-                                ))}
-                              </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} /></td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[STREET_KEY] || "—"}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
                               <td className="min-w-[90px] border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
                               {dynCols.map((h) => (

@@ -1,12 +1,12 @@
 "use client";
 
 import { deviceBindingState, canResetDevice } from "@/lib/deviceBinding";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback , useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
   MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
-  Eye, EyeOff, Pencil, UserRound, X, Mic, LayoutGrid, Lock,
+  Eye, EyeOff, Pencil, UserRound, X, Mic, LayoutGrid, Lock, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
@@ -19,6 +19,7 @@ interface Profile {
   device_lock_exempt?: boolean; // معفي من قفل الجهاز (يدخل من أي جهاز)
   voicex_enabled?: boolean;      // صوت VoiceX مفعّل لهذا المشترك (افتراضي: مقفول)
   rest_pages_enabled?: boolean;  // باقي صفحات البرنامج مفتوحة (افتراضي: مفتوحة)
+  agent_notice?: string | null;  // رسالة خاصة تظهر لهذا المندوب وحده (بالأحمر)
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
   service_keys: ServiceKeys | null;
@@ -65,6 +66,11 @@ export default function AgentDetail() {
   const [editingBio, setEditingBio] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // الرسالة الخاصة بالمندوب — مسودة المربع (بتتملّى من صفّه عند التحميل).
+  const [noticeDraft, setNoticeDraft] = useState("");
+  // بنملّي المربع من صفّ المندوب مرة واحدة بس — بعدها اللي الأدمن بيكتبه
+  // مايتمسحش مع كل إعادة تحميل للصفحة.
+  const noticeLoadedRef = useRef(false);
   const [isSuper, setIsSuper] = useState(false);
   const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
 
@@ -75,6 +81,8 @@ export default function AgentDetail() {
       const prof = data as Profile;
       setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? ""); setEmail(prof.email ?? "");
       setAmount(prof.subscription_amount != null ? String(prof.subscription_amount) : "");
+      setNoticeDraft((d) => (noticeLoadedRef.current ? d : (prof.agent_notice ?? "")));
+      noticeLoadedRef.current = true;
     }
     const { data: ev } = await supabase.from("subscription_events").select("*").eq("agent_id", id).order("created_at", { ascending: false });
     if (ev) setEvents(ev as SubEvent[]);
@@ -305,6 +313,60 @@ export default function AgentDetail() {
         </div>
 
         {msg && <div className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink">{msg}</div>}
+
+        {/* ── رسالة خاصة بالمندوب ده وحده ──
+            بتظهر عنده بالأحمر في كل صفحات البرنامج، وتفضل لحد ما تشيلها من
+            هنا. مالهاش زر إخفاء عنده — دي موجّهة له بالذات مش إعلان عام. */}
+        <div className="rounded-xl border border-danger/40 bg-surface p-3" dir="rtl">
+          <div className="mb-2 flex items-center gap-2">
+            <AlertTriangle size={15} className="text-danger" />
+            <h3 className="text-sm font-bold text-ink">رسالة خاصة للمندوب</h3>
+          </div>
+          <p className="mb-2 text-[11px] leading-relaxed text-muted">
+            بتظهر عنده <b className="text-danger">هو لوحده</b> بالأحمر في كل صفحات البرنامج،
+            وتفضل لحد ما تشيلها من هنا.
+          </p>
+          <textarea
+            value={noticeDraft}
+            onChange={(e) => setNoticeDraft(e.target.value)}
+            rows={3}
+            maxLength={500}
+            placeholder="اكتب الرسالة هنا…"
+            className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-danger"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              disabled={busy || !noticeDraft.trim()}
+              onClick={async () => {
+                if (await call("setAgentNotice", { notice: noticeDraft })) {
+                  setMsg("✅ اتبعتت الرسالة للمندوب."); load();
+                }
+              }}
+              className="flex-1 rounded-lg bg-danger py-2 text-sm font-bold text-white disabled:opacity-40"
+            >
+              إرسال الرسالة
+            </button>
+            {p.agent_notice && (
+              <button
+                disabled={busy}
+                onClick={async () => {
+                  if (!confirm("تشيل الرسالة من عند المندوب؟")) return;
+                  if (await call("setAgentNotice", { notice: "" })) {
+                    setNoticeDraft(""); setMsg("✅ اتشالت الرسالة."); load();
+                  }
+                }}
+                className="rounded-lg border border-border px-3 py-2 text-sm font-bold text-muted disabled:opacity-40"
+              >
+                شيل الرسالة
+              </button>
+            )}
+          </div>
+          {p.agent_notice && (
+            <p className="mt-2 rounded-lg bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
+              ظاهرة عنده دلوقتي: {p.agent_notice}
+            </p>
+          )}
+        </div>
 
         {/* ── مفاتيح الصوت (الأدمن يوزّعها للمندوب) ── */}
         <AgentVoiceKeys
