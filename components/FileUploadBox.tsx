@@ -28,8 +28,8 @@ interface Props {
   sky?: boolean;
   /**
    * لون إطار المربع **لما يتحمّل فيه شيت** (تمييز بصري سريع للمندوب):
-   *  • "data"     → إطار أحمر منوّر بظل.
-   *  • "referral" → إطار أخضر منوّر بظل.
+   *  • "data"     → إطار أخضر منوّر بظل.
+   *  • "referral" → إطار سماوي (نفس لون مربع التشييك في صفحة التشييك).
    * من غيره → الإطار الافتراضي. (لا يؤثّر على المربع الفاضي.)
    */
   loadedAccent?: "data" | "referral";
@@ -56,11 +56,12 @@ export default function FileUploadBox({
   // إطار المربع: سماوي بظل واضح لو sky. بنستخدم صبغة سماوية فوق سطح الثيم (مش لون
   // ثابت) عشان النص يفضل مقروء في الوضع الفاتح والغامق.
   const skyBox = "rounded-xl border-2 border-sky-400/70 bg-sky-500/12 shadow-lg shadow-sky-500/25";
-  // إطار المربع لما يتحمّل شيت: أحمر منوّر للداتا، أخضر منوّر للإحالة (تمييز سريع).
+  // إطار المربع لما يتحمّل شيت: أخضر منوّر للداتا (بطلب المندوب)، وسماوي للإحالة
+  // بنفس لون مربع التشييك في صفحة التشييك (skyBox) للتمييز السريع.
   const loadedBox = loadedAccent === "data"
-    ? "rounded-xl border-2 border-red-500/70 bg-red-500/10 shadow-lg shadow-red-500/30"
+    ? "rounded-xl border-2 border-green-500/70 bg-green-500/10 shadow-lg shadow-green-500/30"
     : loadedAccent === "referral"
-      ? "rounded-xl border-2 border-green-500/70 bg-green-500/10 shadow-lg shadow-green-500/30"
+      ? "rounded-xl border-2 border-sky-400/70 bg-sky-500/12 shadow-lg shadow-sky-500/25"
       : "rounded-xl border border-primary/40 bg-primary/5";
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
