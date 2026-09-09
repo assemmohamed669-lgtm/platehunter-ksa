@@ -108,10 +108,15 @@ export default function FileUploadBox({
       setNeedsPassword(false);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "تعذّرت قراءة الملف.";
-      const isPasswordError = msg.includes("محمياً") || msg.includes("كلمة مرور");
+      // ملف بكلمة مرور: القارئ ممكن يرمي رسالة عربية (محمياً/كلمة مرور) أو رسالة
+      // SheetJS الإنجليزية «File is password-protected». لازم نمسك الاتنين وإلا
+      // بتظهر رسالة خطأ بدل ما تفتح خانة إدخال كلمة المرور.
+      const isPasswordError = msg.includes("محمياً") || msg.includes("كلمة مرور")
+        || /password|passphrase|protected|encrypt/i.test(msg);
       if (isPasswordError) {
         setPendingFile(file);
         setNeedsPassword(true);
+        setError(null);
       } else {
         setError(msg);
       }
