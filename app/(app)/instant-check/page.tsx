@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -14,6 +14,7 @@ import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassis
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import CertificateBadge from "@/components/CertificateBadge";
+import CertificateSearch from "@/components/CertificateSearch";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -171,7 +172,7 @@ interface CheckHit {
 
 // "sort" = تبويب الفرز — يظهر **للمشترك صوت VoiceX فقط** (بديل صفحة الفرز
 // الأساسية اللي مالوش وصول ليها).
-type CheckMode = "manual" | "camera" | "ptt" | "sheet" | "chassis" | "sort";
+type CheckMode = "manual" | "camera" | "ptt" | "sheet" | "chassis" | "sort" | "cert";
 
 interface PlateResult {
   plate: string;
@@ -578,7 +579,8 @@ export default function InstantCheckPage() {
     if (voiceOnly && mode === "camera") {
       setMode(voiceAllowed === false ? "sheet" : "ptt");
     }
-    if (!voiceOnly && mode === "sort") setMode("manual");
+    // «فرز» و«شهايد» تبويبات للمشترك صوت-فقط بس — غيره لو واقف عليهم يرجع «يدوي».
+    if (!voiceOnly && (mode === "sort" || mode === "cert")) setMode("manual");
   }, [voiceOnly, voiceAllowed, mode]);
 
   // Manual
@@ -2031,6 +2033,7 @@ export default function InstantCheckPage() {
     chassis: "متشيكة بالشاصي",
     sheet: "متشيكة يدوي", // unused (the sheet tab never exports)
     sort: "متشيكة يدوي",  // unused (تبويب الفرز مابيصدّرش سجلات)
+    cert: "متشيكة يدوي",  // unused (تبويب الشهايد بحث بس، مابيصدّرش سجلات)
   };
 
   // Collect the extra (selected) detail columns for a matched row.
@@ -4098,6 +4101,7 @@ export default function InstantCheckPage() {
           ? ([
               { key: "manual", Icon: Type, label: "يدوي" },
               { key: "chassis", Icon: Barcode, label: "شاص" },
+              { key: "cert", Icon: FileText, label: "شهايد" },
               { key: "ptt", Icon: Mic, label: "صوتي" },
               { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
               { key: "sort", Icon: ListFilter, label: "فرز" },
@@ -4110,7 +4114,8 @@ export default function InstantCheckPage() {
               { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
             ] as const)
         ).filter((t) => t.key !== "ptt" || voiceAllowed !== false);
-        const cols = tabs.length >= 5 ? "grid-cols-5"
+        const cols = tabs.length >= 6 ? "grid-cols-6"
+          : tabs.length === 5 ? "grid-cols-5"
           : tabs.length === 4 ? "grid-cols-4"
           : tabs.length === 3 ? "grid-cols-3" : "grid-cols-2";
         return (
@@ -4148,7 +4153,7 @@ export default function InstantCheckPage() {
              التبويبات ما عدا «السجلات» و«فرز». المربع كله ملوّن حسب قوة الإشارة
              (ممتازة=أخضر · متوسطة=برتقالي · ضعيفة=أحمر) والدوسة في أي مكان فيه
              بتعمل تحديث. #7/#10/#11/#12/#14 ── */}
-      {mode !== "sheet" && mode !== "sort" && (() => {
+      {mode !== "sheet" && mode !== "sort" && mode !== "cert" && (() => {
         const lvl = gps ? gpsAccuracyLevel(gps.accuracy) : null;
         // ألوان المربع كله حسب القوة (بطلب المندوب): ممتازة أخضر، متوسطة برتقالي، ضعيفة/مفيش أحمر.
         const boxTone = !gps
@@ -4213,8 +4218,13 @@ export default function InstantCheckPage() {
         <VoiceOnlySort checkTable={checkTable} />
       )}
 
+      {/* ── تبويب «شهايد» — نفس البحث عن الشهادة اللي في صفحة المطلوب ── */}
+      {checkTable && mode === "cert" && (
+        <CertificateSearch />
+      )}
+
       {/* ── محتوى التبويب (الشريط نفسه اتنقل فوق الصفحة) ── */}
-      {checkTable && mode !== "sort" && (
+      {checkTable && mode !== "sort" && mode !== "cert" && (
         <>
           {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
           {mode === "sheet" && (
