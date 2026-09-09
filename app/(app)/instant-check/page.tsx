@@ -15,6 +15,7 @@ import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, t
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import CertificateBadge from "@/components/CertificateBadge";
 import CertificateSearch from "@/components/CertificateSearch";
+import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -565,6 +566,12 @@ export default function InstantCheckPage() {
   useEffect(() => {
     try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
   }, [mode]);
+
+  // الشريط التحتي (للمشترك صوت-فقط) بيبدّل التبويب من مخزن checkTab. بنطبّق أي
+  // تبديل منه على mode، ونبلّغ المخزن بالتبويب الحالي عشان الشريط يعلّم الزر
+  // النشط صح. مابنفرضش تبويب عند الدخول — التذكّر (localStorage) يفضل شغّال.
+  useEffect(() => onCheckTabChange((t) => setMode(t)), []);
+  useEffect(() => { setCheckTab(mode); }, [mode]);
   /**
    * حارس تبويبات المشترك صوت-فقط: تبويبه المحفوظ ممكن يكون واحد من المخفيين
    * (يدوي/كاميرا/شاص) من قبل ما يتقفل عنه — من غير ده الصفحة تفضل فاضية لأن
@@ -4093,8 +4100,9 @@ export default function InstantCheckPage() {
   return (
     <div className="flex flex-col gap-4">
       {/* ── شريط التبويبات — أول حاجة فوق في الصفحة (فوق مربع رفع الشيت) ── */}
-      {checkTable && (() => {
-        // المشترك صوت-فقط: صوتي + يدوي + شاص + السجلات + فرز (بدون كاميرا).
+      {/* المشترك صوت-فقط بقى بيتنقّل من الشريط التحتي (BottomNav) زي قناص، فبنخفي
+          الشريط اللي فوق عنه. العادي زي ما هو. voiceOnly=null (تحميل) → نسيبه ظاهر. */}
+      {checkTable && voiceOnly !== true && (() => {
         // العادي: يدوي/كاميرا/صوتي/شاص/السجلات. تبويب الصوت بيتشال لو الصوت مقفول
         // عن المشترك، وعدد الأعمدة بيتحسب من عدد التبويبات الظاهرة فعلاً.
         const tabs = (voiceOnly
