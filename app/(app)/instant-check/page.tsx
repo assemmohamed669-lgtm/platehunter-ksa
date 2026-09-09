@@ -574,7 +574,8 @@ export default function InstantCheckPage() {
     // الصوت مقفول والمندوب واقف على تبويب «صوتي» (محفوظ من قبل القفل) → نطلّعه.
     // للمشترك صوت-فقط مافيش يدوي، فبيروح للسجلات.
     if (voiceAllowed === false && mode === "ptt") { setMode(voiceOnly ? "sheet" : "manual"); return; }
-    if (voiceOnly && (mode === "manual" || mode === "camera" || mode === "chassis")) {
+    // المشترك صوت-فقط بقى معاه «يدوي» و«شاص» كمان — الممنوع عنه بس «كاميرا».
+    if (voiceOnly && mode === "camera") {
       setMode(voiceAllowed === false ? "sheet" : "ptt");
     }
     if (!voiceOnly && mode === "sort") setMode("manual");
@@ -4089,38 +4090,32 @@ export default function InstantCheckPage() {
   return (
     <div className="flex flex-col gap-4">
       {/* ── شريط التبويبات — أول حاجة فوق في الصفحة (فوق مربع رفع الشيت) ── */}
-      {checkTable && (
-        <div
-          className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg ${
-            // عدد الأعمدة بيتماشى مع التبويبات الظاهرة فعلاً (تبويب الصوت
-            // ممكن يكون مشال)، وإلا بيفضل فراغ مكانه.
-            (voiceOnly ? 3 : 5) - (voiceAllowed === false ? 1 : 0) === 4
-              ? "grid-cols-4"
-              : voiceOnly
-                ? (voiceAllowed === false ? "grid-cols-2" : "grid-cols-3")
-                : "grid-cols-5"
-          }`}
-        >
-          {(
-            voiceOnly
-              // المشترك صوت-فقط: صوتي + السجلات (مرتبطين ببعض) + فرز (بديل صفحة
-              // الفرز اللي مالوش وصول ليها). بلا يدوي/كاميرا/شاص.
-              ? ([
-                  { key: "ptt", Icon: Mic, label: "صوتي" },
-                  { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
-                  { key: "sort", Icon: ListFilter, label: "فرز" },
-                ] as const)
-              : ([
-                  { key: "manual", Icon: Type, label: "يدوي" },
-                  { key: "camera", Icon: Camera, label: "كاميرا" },
-                  { key: "ptt", Icon: Mic, label: "صوتي" },
-                  { key: "chassis", Icon: Barcode, label: "شاص" },
-                  { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
-                ] as const)
-            // الصوت مقفول عن المشترك ده ⇒ التبويب مايظهرش خالص (مش مجرد إن
-            // المحرك بيتغيّر). بيتشال قبل الرسم فمافيش لمحة ولا ضغطة بالغلط.
-          ).filter((t) => t.key !== "ptt" || voiceAllowed !== false)
-           .map(({ key, Icon, label }) => (
+      {checkTable && (() => {
+        // المشترك صوت-فقط: صوتي + يدوي + شاص + السجلات + فرز (بدون كاميرا).
+        // العادي: يدوي/كاميرا/صوتي/شاص/السجلات. تبويب الصوت بيتشال لو الصوت مقفول
+        // عن المشترك، وعدد الأعمدة بيتحسب من عدد التبويبات الظاهرة فعلاً.
+        const tabs = (voiceOnly
+          ? ([
+              { key: "manual", Icon: Type, label: "يدوي" },
+              { key: "chassis", Icon: Barcode, label: "شاص" },
+              { key: "ptt", Icon: Mic, label: "صوتي" },
+              { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
+              { key: "sort", Icon: ListFilter, label: "فرز" },
+            ] as const)
+          : ([
+              { key: "manual", Icon: Type, label: "يدوي" },
+              { key: "camera", Icon: Camera, label: "كاميرا" },
+              { key: "ptt", Icon: Mic, label: "صوتي" },
+              { key: "chassis", Icon: Barcode, label: "شاص" },
+              { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
+            ] as const)
+        ).filter((t) => t.key !== "ptt" || voiceAllowed !== false);
+        const cols = tabs.length >= 5 ? "grid-cols-5"
+          : tabs.length === 4 ? "grid-cols-4"
+          : tabs.length === 3 ? "grid-cols-3" : "grid-cols-2";
+        return (
+        <div className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-2 shadow-lg ${cols}`}>
+          {tabs.map(({ key, Icon, label }) => (
             <button
               key={key}
               onClick={() => setMode(key)}
@@ -4133,7 +4128,8 @@ export default function InstantCheckPage() {
             </button>
           ))}
         </div>
-      )}
+        );
+      })()}
 
       {/* ── ملف التشييك (سماوي بحواف مظلّلة — بيبان اسم الشيت وعدد اللوحات) ── */}
       <FileUploadBox
