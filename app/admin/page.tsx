@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
@@ -486,6 +486,12 @@ export default function AdminDashboard() {
             </button>
           ))}
         </div>
+
+        {/* حسابات المناديب — لكل الأدمنز (مش السوبر بس): دفعات + ملاحظات + دخل الشهر */}
+        <button onClick={() => router.push("/admin/accounts")}
+          className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-3 text-sm font-bold text-emerald-500 transition hover:bg-emerald-500/20 active:scale-[0.99]">
+          <Wallet size={16} /> حسابات المناديب — الدفعات والدخل
+        </button>
 
         {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
         {isSuper && (
