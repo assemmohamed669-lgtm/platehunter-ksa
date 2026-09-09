@@ -16,7 +16,15 @@ export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
   "إصلاح كبير في المزامنة: السجلات اللي بتترجّع من السيرفر كانت بتترفع تاني على طول من غير لزوم. البرنامج بقى أخف والسيرفر مرتاح.";
 
-/** يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting). */
+import { clearNativeCache, getNativeCacheBridge } from "./nativeCache";
+
+/**
+ * يمسح الكاش + يلغي الـ service worker + يعيد التحميل بآخر نسخة (cache-busting).
+ *
+ * وعلى **الأندرويد** كمان بيمسح كاش التطبيق الحقيقي عبر الجسر الأصلي — ده اللي
+ * كان المندوب بيضطر يعمله بإيده من إعدادات التليفون. لو الجسر موجود، الأصلي هو
+ * اللي بيعيد التحميل (عشان المسح يخلّص الأول)، فبنسيبه ونخرج.
+ */
 export async function refreshAppNow(): Promise<void> {
   try {
     if (typeof caches !== "undefined") {
@@ -30,5 +38,9 @@ export async function refreshAppNow(): Promise<void> {
   } catch { /* no SW */ }
   const u = new URL(window.location.href);
   u.searchParams.set("_r", String(Date.now()));
+
+  // الأندرويد: امسح كاش التطبيق كمان. لو الجسر رد بنجاح، هو اللي هيعيد التحميل.
+  if (clearNativeCache(getNativeCacheBridge(), u.toString())) return;
+
   window.location.replace(u.toString());
 }

@@ -6,7 +6,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Log;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
+import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -30,7 +32,42 @@ public class MainActivity extends BridgeActivity {
         WebSettings settings = getBridge().getWebView().getSettings();
         settings.setGeolocationEnabled(true);
 
+        // جسر مسح الكاش — زر «تحديث البرنامج» في التطبيق بينده عليه.
+        //
+        // ليه أصلي: الجافاسكريبت مايقدرش يمسح كاش الويب-ڤيو (حماية المتصفح)،
+        // فالمندوب كان لازم يدخل إعدادات التليفون ويمسحه بإيده لما تعلق نسخة
+        // قديمة. دلوقتي الزر بيعمل الاتنين.
+        //
+        // الأمان: الويب-ڤيو بيحمّل نطاقنا بس (server.url في capacitor.config)،
+        // والدالة المعروضة واحدة بلا أي وصول لبيانات — بتمسح وتعيد التحميل.
+        getBridge().getWebView().addJavascriptInterface(new CacheBridge(), "PlateHunterNative");
+
         processIntent(getIntent());
+    }
+
+    /**
+     * الجسر اللي الصفحة بتناديه: `window.PlateHunterNative.clearCacheAndReload(url)`.
+     *
+     * المسح **وإعادة التحميل** الاتنين هنا عن قصد: `clearCache` لازم تشتغل على
+     * خيط الواجهة (غير متزامن)، فلو سبنا الجافاسكريبت يعيد التحميل ممكن يسبق
+     * المسح ونرجع نجيب نفس الملفات القديمة. الترتيب هنا مضمون.
+     */
+    public class CacheBridge {
+        @JavascriptInterface
+        public void clearCacheAndReload(final String url) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        WebView wv = getBridge().getWebView();
+                        wv.clearCache(true);   // true = يمسح الملفات من القرص كمان
+                        wv.loadUrl(url);
+                    } catch (Exception e) {
+                        Log.e(TAG, "clearCacheAndReload failed", e);
+                    }
+                }
+            });
+        }
     }
 
     /** Called when app is already running and another intent arrives */
