@@ -1,11 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { visibleTabs } from "@/lib/navTabs";
+import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
+
+// تبويبات المشترك «صوت فقط» في الشريط التحتي (زي قناص) — كل واحدة بتبدّل خيار
+// التشييك من مخزن checkTab (مش رابط)، ونفس ترتيب المالك.
+const VOICE_TABS: { tab: CheckTab; label: string; icon: typeof Mic }[] = [
+  { tab: "ptt", label: "صوتي", icon: Mic },
+  { tab: "manual", label: "يدوي", icon: Type },
+  { tab: "chassis", label: "شاص", icon: Barcode },
+  { tab: "cert", label: "شهايد", icon: FileText },
+  { tab: "sheet", label: "السجلات", icon: ClipboardCheck },
+  { tab: "sort", label: "فرز", icon: ListFilter },
+];
 
 const TABS = [
   { href: "/sorting", label: "الفرز", icon: ListFilter },
@@ -19,8 +31,12 @@ const TABS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const [isSuper, setIsSuper] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  // التبويب النشط في صفحة التشييك (للمشترك صوت-فقط) — يتزامن مع مخزن checkTab.
+  const [activeTab, setActiveTab] = useState<CheckTab>(getCheckTab());
+  useEffect(() => onCheckTabChange(setActiveTab), []);
   // «باقي صفحات البرنامج» — مفتوح افتراضياً. false = المشترك «صوت VoiceX فقط»
   // فمانعرضش غير تبويب التشييك (اللي فيه الصوت).
   const [restPages, setRestPages] = useState(true);
@@ -82,25 +98,52 @@ export default function BottomNav() {
       }`}
     >
       <div className="mx-auto flex max-w-md justify-between px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
-        {tabs.map(({ href, label, icon: Icon }) => {
-          const active = pathname?.startsWith(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] transition ${
-                active ? "text-white" : "text-white/60 hover:text-white"
-              }`}
-            >
-              <Icon
-                size={22}
-                strokeWidth={active ? 2.5 : 2}
-                className={active ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
-              />
-              <span className={`w-full truncate text-center ${active ? "font-bold" : ""}`}>{label}</span>
-            </Link>
-          );
-        })}
+        {!restPages ? (
+          // المشترك صوت-فقط: خيارات التشييك (صوتي/يدوي/شاص/شهايد/السجلات/فرز)
+          // في الشريط التحتي زي قناص — بتبدّل الخيار من مخزن checkTab.
+          VOICE_TABS.map(({ tab, label, icon: Icon }) => {
+            const active = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                onClick={() => {
+                  setCheckTab(tab);
+                  if (pathname !== "/instant-check") router.push("/instant-check");
+                }}
+                className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] transition ${
+                  active ? "text-white" : "text-white/60 hover:text-white"
+                }`}
+              >
+                <Icon
+                  size={22}
+                  strokeWidth={active ? 2.5 : 2}
+                  className={active ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
+                />
+                <span className={`w-full truncate text-center ${active ? "font-bold" : ""}`}>{label}</span>
+              </button>
+            );
+          })
+        ) : (
+          tabs.map(({ href, label, icon: Icon }) => {
+            const active = pathname?.startsWith(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] transition ${
+                  active ? "text-white" : "text-white/60 hover:text-white"
+                }`}
+              >
+                <Icon
+                  size={22}
+                  strokeWidth={active ? 2.5 : 2}
+                  className={active ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
+                />
+                <span className={`w-full truncate text-center ${active ? "font-bold" : ""}`}>{label}</span>
+              </Link>
+            );
+          })
+        )}
       </div>
     </nav>
   );
