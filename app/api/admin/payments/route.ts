@@ -6,6 +6,8 @@
  * POST { action }:
  *   • "add"     { agentId, amount, paidAt?, method?, note? } → يسجّل دفعة.
  *   • "delete"  { id }                                       → يمسح دفعة.
+ *   • "setPaid" { agentId, month, amount }                   → «دفع»: إجمالي مدفوع الشهر (يستبدل).
+ *   • "setOwed" { agentId, amount }                          → «عليه»: المتبقّي على المندوب.
  *   • "setNote" { agentId, note }                            → ملاحظة الدفع على المندوب.
  *   • "setFee"  { agentId, fee }                             → رسم شهري مخصّص (null = يرجع للمقترح).
  *
@@ -65,6 +67,34 @@ export async function POST(req: NextRequest) {
       case "delete": {
         if (!body.id) return bad("id مطلوب.");
         const { error } = await supabaseAdmin.from("agent_payments").delete().eq("id", body.id);
+        if (error) return bad(error.message);
+        return NextResponse.json({ ok: true });
+      }
+      case "setPaid": {
+        // «دفع» = إجمالي مدفوع الشهر كرقم واحد. بنستبدل دفعات الشهر لهذا المندوب
+        // بصف واحد بالقيمة دي (أو نمسحها لو صفر) — فالمجموع فوق يطلع صح.
+        const month = String(body.month ?? "");
+        if (!body.agentId || !/^\d{4}-\d{2}$/.test(month)) return bad("المندوب والشهر مطلوبين.");
+        const amount = body.amount === "" || body.amount == null ? 0 : Number(body.amount);
+        if (!Number.isFinite(amount) || amount < 0) return bad("مبلغ غير صالح.");
+        const { start, end } = monthRange(month);
+        const del = await supabaseAdmin.from("agent_payments")
+          .delete().eq("agent_id", body.agentId).gte("paid_at", start).lt("paid_at", end);
+        if (del.error) return bad(del.error.message);
+        if (amount > 0) {
+          const ins = await supabaseAdmin.from("agent_payments").insert({
+            agent_id: body.agentId, amount, paid_at: `${month}-01`, note: "إجمالي الشهر", created_by: admin.id,
+          });
+          if (ins.error) return bad(ins.error.message);
+        }
+        return NextResponse.json({ ok: true });
+      }
+      case "setOwed": {
+        // «عليه» = المتبقّي على المندوب (رقم واحد على profiles).
+        if (!body.agentId) return bad("المندوب مطلوب.");
+        const owed = body.amount === "" || body.amount == null ? 0 : Number(body.amount);
+        if (!Number.isFinite(owed) || owed < 0) return bad("مبلغ غير صالح.");
+        const { error } = await supabaseAdmin.from("profiles").update({ owed_amount: owed }).eq("id", body.agentId);
         if (error) return bad(error.message);
         return NextResponse.json({ ok: true });
       }
