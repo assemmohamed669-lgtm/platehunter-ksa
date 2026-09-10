@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
-import { startAlertSiren, stopAlertSiren } from "@/lib/alertSiren";
+import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { WANTED_ALERT_EVENT, type WantedAlertDetail } from "@/lib/wantedAlert";
 
 export default function WantedAlertOverlay() {
@@ -23,8 +23,22 @@ export default function WantedAlertOverlay() {
       startAlertSiren();
     };
     window.addEventListener(WANTED_ALERT_EVENT, handler);
+
+    // فكّ قفل الصوت من **أول لمسة** في التطبيق (وأي لمسة بعدها — تكراره آمن).
+    // ضغطة زر الصوت نفسها لمسة، فبمجرد ما المندوب يبدأ التشييك الصوتي يبقى الـ
+    // context «صاحي»، والصفّارة تشتغل لأي لوحة مطلوبة حتى لو التطابق جه من رد
+    // الشبكة (async). من غير ده الصفّارة كانت بتفضل ساكتة في الصوت.
+    const unlock = () => ensureSirenAudioUnlocked();
+    const passive: AddEventListenerOptions = { passive: true };
+    window.addEventListener("pointerdown", unlock, passive);
+    window.addEventListener("touchstart", unlock, passive);
+    window.addEventListener("keydown", unlock);
+
     return () => {
       window.removeEventListener(WANTED_ALERT_EVENT, handler);
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("touchstart", unlock);
+      window.removeEventListener("keydown", unlock);
       stopAlertSiren();
     };
   }, []);
