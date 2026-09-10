@@ -30,9 +30,15 @@ interface AgentProfile {
   last_seen: string | null;
   subscription_end: string | null;
   subscription_amount: number | null;
+  owed_amount?: number | null;   // «عليه» — المتبقّي على المندوب (من صفحة الحسابات)
   app_version: string | null;
   created_at: string;
 }
+
+// مفتاح شهر YYYY-MM + اسمه بالعربي — لشارة الدفع في القائمة.
+function curMonthKey(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+function curMonthLabel(): string { return new Date().toLocaleDateString("ar-EG", { month: "long" }); }
+const fmtSar = (n: number) => n.toLocaleString("ar-EG");
 
 // رابط واتساب من رقم المندوب — أرقام بس (بيشيل + والمسافات)، وبيشيل بادئة 00
 // الدولية. المفروض الرقم متسجّل بكود الدولة (مثلاً 9665… أو 20…).
@@ -111,6 +117,8 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  // مدفوع الشهر الحالي لكل مندوب (من صفحة الحسابات) — لشارة «دفع كامل / عليه».
+  const [paidByAgent, setPaidByAgent] = useState<Record<string, number>>({});
 
   // create form
   const [showCreate, setShowCreate] = useState(false);
@@ -133,6 +141,18 @@ export default function AdminDashboard() {
     const { data } = await supabase.from("profiles").select("*").order("username", { ascending: true });
     if (data) setAgents(data as AgentProfile[]);
     setLoading(false);
+    // مدفوع الشهر الحالي لكل مندوب — للشارة في القائمة. أي فشل = بلا شارة دفع.
+    try {
+      const res = await fetch(`/api/admin/payments?month=${curMonthKey()}`, { headers: await authHeaders() });
+      if (res.ok) {
+        const json = await res.json();
+        const m: Record<string, number> = {};
+        for (const p of (json.payments ?? []) as Array<{ agent_id: string; amount: number }>) {
+          m[p.agent_id] = (m[p.agent_id] ?? 0) + Number(p.amount || 0);
+        }
+        setPaidByAgent(m);
+      }
+    } catch { /* بلا شارة */ }
   }, []);
 
   // الاستطلاع الشغّال + نتايجه (مين اختار إيه).
@@ -901,6 +921,14 @@ export default function AdminDashboard() {
                     <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[9px] font-bold text-brand"><Clock size={9} /> تجربة</span>
                   )}
                   {!a.is_active && <span className="shrink-0 rounded-full bg-danger/10 px-1.5 py-0.5 text-[9px] font-bold text-danger">مقفول</span>}
+                  {/* شارة الدفع الشهر الحالي: «عليه مبلغ» (أحمر) أو «دفع اشتراك الشهر» (أخضر) */}
+                  {a.role === "agent" && (() => {
+                    const paid = paidByAgent[a.id] ?? 0;
+                    const owed = Number(a.owed_amount || 0);
+                    if (owed > 0) return <span className="shrink-0 rounded-full bg-danger/15 px-1.5 py-0.5 text-[9px] font-bold text-danger" title={`عليه ${fmtSar(owed)} ريال`}>عليه {fmtSar(owed)}</span>;
+                    if (paid > 0) return <span className="shrink-0 rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-600" title={`دفع اشتراك شهر ${curMonthLabel()} كامل`}>✓ دفع {curMonthLabel()}</span>;
+                    return null;
+                  })()}
                 </div>
                 {/* السطر ٢: النسخة + الجهاز + حالة الاشتراك */}
                 <div className="mt-1 flex flex-wrap items-center gap-1">
