@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
   MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
-  Eye, EyeOff, Pencil, UserRound, X, Mic, LayoutGrid, Lock, AlertTriangle,
+  Eye, EyeOff, Pencil, UserRound, UserPlus, X, Mic, LayoutGrid, Lock, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
@@ -24,7 +24,7 @@ interface Profile {
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
   service_keys: ServiceKeys | null;
 }
-interface SubEvent { id: string; new_end: string | null; months: number | null; amount: number | null; note: string | null; created_at: string; }
+interface SubEvent { id: string; new_end: string | null; months: number | null; amount: number | null; note: string | null; created_at: string; created_by: string | null; }
 
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
@@ -73,6 +73,8 @@ export default function AgentDetail() {
   const noticeLoadedRef = useRef(false);
   const [isSuper, setIsSuper] = useState(false);
   const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
+  // مين الأدمن اللي ضاف المندوب — من أقدم حدث اشتراك («إنشاء الحساب») بتاع المندوب.
+  const [creator, setCreator] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,6 +88,17 @@ export default function AgentDetail() {
     }
     const { data: ev } = await supabase.from("subscription_events").select("*").eq("agent_id", id).order("created_at", { ascending: false });
     if (ev) setEvents(ev as SubEvent[]);
+    // مين ضاف المندوب: حدث «إنشاء الحساب» (أو التجربة)، وإلا أقدم حدث. created_by
+    // = الأدمن اللي أنشأ الحساب (بيتسجّل تلقائياً وقت الإنشاء لكل مندوب).
+    const evs = (ev ?? []) as SubEvent[];
+    const creationEv = evs.find((e) => e.note === "إنشاء الحساب" || (e.note ?? "").includes("تجربة")) ?? evs[evs.length - 1];
+    const creatorId = creationEv?.created_by ?? null;
+    if (creatorId) {
+      const { data: adm } = await supabase.from("profiles").select("username").eq("id", creatorId).single();
+      setCreator((adm as { username?: string } | null)?.username ?? "غير معروف");
+    } else {
+      setCreator(null);
+    }
     setLoading(false);
   }, [id]);
 
@@ -216,6 +229,11 @@ export default function AgentDetail() {
               <div className="flex items-center gap-1.5 text-muted" style={goldDim}><KeyRound size={13} /> <span className="text-ink" style={goldText}>••••••••</span> <span className="text-[10px]">(مشفّر — للتغيير اضغط «تعديل»)</span></div>
               <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Phone size={13} /> <span className="text-ink" dir="ltr" style={goldText}>{p.phone || "بدون تليفون"}</span></div>
               <div className="mt-1 flex items-center gap-1.5 text-muted" style={goldDim}><Clock size={12} /> آخر ظهور: {daysAgo(p.last_seen)}</div>
+              {p.role === "agent" && (
+                <div className="flex items-center gap-1.5 text-muted" style={goldDim}>
+                  <UserPlus size={12} /> أضافه: <span className="text-ink" style={goldText}>{creator ?? "غير معروف"}</span>
+                </div>
+              )}
               <div className="flex items-center gap-1.5 text-muted" style={goldDim}><Smartphone size={12} /> {p.device_lock_exempt
                 ? "🔓 يدخل من أي جهاز (معفي من القفل)"
                 : deviceBindingState(p.device_fingerprint, p.last_seen) === "bound"
