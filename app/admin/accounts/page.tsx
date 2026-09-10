@@ -3,22 +3,27 @@
 /**
  * /admin/accounts — «حسابات المناديب» (لأي أدمن، مش السوبر بس).
  *
- * بتساعد المالك يتابع فلوس المناديب:
- *  • كل مندوب: خطته وسعره الشهري (تلقائي من علمَي الصوت/الصفحات، وقابل للتعديل)،
- *    كام دفع الشهر ده، وحالته (مدفوع/جزئي/لم يدفع)، وملاحظة («قال هيسدد بعد يومين»).
- *  • إجمالي دخل الشهر + المتوقّع + المتبقّي.
- *  • تسجيل دفعة، سجل الدفعات، تذكير واتساب.
+ * بتساعد المالك يتابع فلوس المناديب ويدير كل واحد من مكان واحد:
+ *  • فوق: صندوق بيّن بالفلوس اللي اتجمعت الشهر ده + عدّادات الاشتراك
+ *    (نشط / قرب ينتهي / منتهي) — كل رقم بتدوس عليه يفلتر القائمة على ناسه بس.
+ *  • كل مندوب: خطته وسعره الشهري (تلقائي، قابل للتعديل)، الأيام الباقية في
+ *    اشتراكه، كام دفع الشهر ده وحالته، أزرار فتح/قفل الصوت والبرنامج،
+ *    ملاحظة خاصة بالأدمن (حفظ/مسح)، ورسالة تظهر للمندوب بالأحمر (حفظ/مسح)،
+ *    تسجيل دفعة، سجل الدفعات، وتذكير واتساب.
  *
- * الدفعات كلها بتمرّ على /api/admin/payments (service role) — الجدول مقفول بالـRLS.
+ * الدفعات على /api/admin/payments (service role). فتح/قفل الصوت/البرنامج
+ * ورسالة المندوب على /api/admin/manage-agent (نفس اللي بتستخدمه لوحة الأدمن).
  * ⚠️ لازم تشغّل docs/sql/agent-payments.sql مرة واحدة على Supabase قبل الاستخدام.
  */
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft, ChevronRight, Search, Plus, Wallet, Receipt, MessageCircle,
-  X, Trash2, Coins, TrendingUp, AlertCircle, Pencil, Check, CircleUserRound,
+  X, Trash2, Coins, AlertCircle, Save, CircleUserRound, Mic, LayoutGrid,
+  Megaphone, CalendarClock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { subStatus } from "@/lib/subscription";
 import {
   PLAN_LABEL, effectiveFee, agentPlanOf, monthKey, type Plan,
 } from "@/lib/agentBilling";
@@ -34,6 +39,7 @@ interface Agent {
   rest_pages_enabled?: boolean | null;
   monthly_fee?: number | null;
   payment_note?: string | null;
+  agent_notice?: string | null;
 }
 
 interface Payment {
@@ -52,7 +58,6 @@ async function authHeaders() {
   return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
-// نقل مفتاح الشهر شهر لقدّام/لورا (YYYY-MM).
 function shiftMonth(mk: string, delta: number): string {
   const [y, m] = mk.split("-").map((n) => parseInt(n, 10));
   const d = new Date(y, m - 1 + delta, 1);
@@ -64,7 +69,6 @@ function monthLabel(mk: string): string {
 }
 const fmt = (n: number) => n.toLocaleString("ar-EG");
 
-// رابط واتساب من رقم المندوب — أرقام بس (زي صفحة الأدمن).
 function waDigits(phone: string | null): string | null {
   if (!phone) return null;
   let d = phone.replace(/\D/g, "");
@@ -78,7 +82,8 @@ const PLAN_BADGE: Record<Plan, string> = {
   basic: "bg-muted/15 text-muted",
 };
 
-type StatusFilter = "all" | "unpaid" | "paid";
+type PayFilter = "all" | "unpaid" | "paid";
+type SubFilter = "all" | "active" | "expiring" | "expired";
 
 export default function AdminAccounts() {
   const router = useRouter();
@@ -89,13 +94,15 @@ export default function AdminAccounts() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [payFilter, setPayFilter] = useState<PayFilter>("all");
+  const [subFilter, setSubFilter] = useState<SubFilter>("all");
 
-  // تعديل الملاحظة (inline) — مسوّدة لكل مندوب.
+  // مسوّدات التعديل + حالة الحفظ لكل مندوب.
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
-  const [noteSaving, setNoteSaving] = useState<string | null>(null);
+  const [msgDraft, setMsgDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null); // "note:id" / "msg:id" / "flag:id"
 
-  // مودال تسجيل دفعة.
+  // مودالات.
   const [payFor, setPayFor] = useState<Agent | null>(null);
   const [payAmount, setPayAmount] = useState("");
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
@@ -104,15 +111,17 @@ export default function AdminAccounts() {
   const [paySaving, setPaySaving] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
 
-  // مودال سجل دفعات مندوب.
   const [historyFor, setHistoryFor] = useState<Agent | null>(null);
   const [history, setHistory] = useState<Payment[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  // مودال تعديل الرسم الشهري.
   const [feeFor, setFeeFor] = useState<Agent | null>(null);
   const [feeVal, setFeeVal] = useState("");
   const [feeSaving, setFeeSaving] = useState(false);
+
+  const patchAgent = useCallback((id: string, patch: Partial<Agent>) => {
+    setAgents((as) => as.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }, []);
 
   const loadAgents = useCallback(async () => {
     const { data } = await supabase.from("profiles").select("*").order("username", { ascending: true });
@@ -131,7 +140,6 @@ export default function AdminAccounts() {
     finally { setLoading(false); }
   }, []);
 
-  // Access guard — admins only (مش السوبر بس).
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
@@ -145,21 +153,30 @@ export default function AdminAccounts() {
 
   useEffect(() => { if (authorized) void loadPayments(month); }, [authorized, month, loadPayments]);
 
-  // مجموع المدفوع لكل مندوب في الشهر المعروض.
   const paidByAgent = useMemo(() => {
     const m = new Map<string, number>();
     for (const p of payments) m.set(p.agent_id, (m.get(p.agent_id) ?? 0) + Number(p.amount || 0));
     return m;
   }, [payments]);
 
-  // إحصائيات الشهر: محصّل / متوقّع (النشطين) / متبقّي / مين دفع.
-  const stats = useMemo(() => {
-    const collected = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
-    const activeAgents = agents.filter((a) => a.is_active !== false);
-    const expected = activeAgents.reduce((s, a) => s + effectiveFee(a), 0);
-    const paidCount = agents.filter((a) => (paidByAgent.get(a.id) ?? 0) > 0).length;
-    return { collected, expected, outstanding: expected - collected, paidCount, total: agents.length };
-  }, [payments, agents, paidByAgent]);
+  // عدّادات الاشتراك (نشط / قرب ينتهي / منتهي) — كل رقم زر بيفلتر.
+  const subCounts = useMemo(() => {
+    let active = 0, expiring = 0, expired = 0;
+    for (const a of agents) {
+      const s = subStatus(a.subscription_end).status;
+      if (s === "active") active++;
+      else if (s === "expiring" || s === "grace") expiring++;
+      else if (s === "expired") expired++;
+    }
+    return { active, expiring, expired };
+  }, [agents]);
+
+  const collected = useMemo(() => payments.reduce((s, p) => s + Number(p.amount || 0), 0), [payments]);
+  const expected = useMemo(
+    () => agents.filter((a) => a.is_active !== false).reduce((s, a) => s + effectiveFee(a), 0),
+    [agents],
+  );
+  const paidCount = useMemo(() => agents.filter((a) => (paidByAgent.get(a.id) ?? 0) > 0).length, [agents, paidByAgent]);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -167,30 +184,41 @@ export default function AdminAccounts() {
       .map((a) => {
         const fee = effectiveFee(a);
         const paid = paidByAgent.get(a.id) ?? 0;
-        const status: StatusFilter | "partial" = paid <= 0 ? "unpaid" : paid >= fee ? "paid" : "partial";
-        return { a, fee, paid, status };
+        const pstatus = paid <= 0 ? "unpaid" : paid >= fee ? "paid" : "partial";
+        const sub = subStatus(a.subscription_end);
+        return { a, fee, paid, pstatus, sub };
       })
-      .filter(({ a, status }) => {
+      .filter(({ a, pstatus, sub }) => {
         if (q && !(a.username?.toLowerCase().includes(q) || a.phone?.includes(q))) return false;
-        if (statusFilter === "paid") return status === "paid";
-        if (statusFilter === "unpaid") return status === "unpaid" || status === "partial";
+        if (payFilter === "paid" && pstatus !== "paid") return false;
+        if (payFilter === "unpaid" && pstatus === "paid") return false;
+        if (subFilter === "active" && sub.status !== "active") return false;
+        if (subFilter === "expiring" && !(sub.status === "expiring" || sub.status === "grace")) return false;
+        if (subFilter === "expired" && sub.status !== "expired") return false;
         return true;
       })
-      // اللي ماد فعوش الأول (عشان تشوف مين لسه عليه فلوس)، وبعدين بالاسم.
       .sort((x, y) => {
         const w = (s: string) => (s === "unpaid" ? 0 : s === "partial" ? 1 : 2);
-        return w(x.status) - w(y.status) || (x.a.username ?? "").localeCompare(y.a.username ?? "");
+        return w(x.pstatus) - w(y.pstatus) || (x.a.username ?? "").localeCompare(y.a.username ?? "");
       });
-  }, [agents, paidByAgent, search, statusFilter]);
+  }, [agents, paidByAgent, search, payFilter, subFilter]);
 
-  async function post(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+  async function postPay(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await fetch("/api/admin/payments", { method: "POST", headers: await authHeaders(), body: JSON.stringify(body) });
       const json = await res.json();
       return res.ok ? { ok: true } : { ok: false, error: json.error };
     } catch { return { ok: false, error: "تعذّر الاتصال بالخادم." }; }
   }
+  async function manageAgent(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch("/api/admin/manage-agent", { method: "POST", headers: await authHeaders(), body: JSON.stringify(body) });
+      const json = await res.json();
+      return res.ok ? { ok: true } : { ok: false, error: json.error };
+    } catch { return { ok: false, error: "تعذّر الاتصال بالخادم." }; }
+  }
 
+  // ── دفعة ──
   function openPay(a: Agent) {
     const remaining = Math.max(0, effectiveFee(a) - (paidByAgent.get(a.id) ?? 0));
     setPayFor(a);
@@ -204,7 +232,7 @@ export default function AdminAccounts() {
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) { setPayError("اكتب مبلغ صحيح."); return; }
     setPaySaving(true);
-    const r = await post({ action: "add", agentId: payFor.id, amount, paidAt: payDate, method: payMethod || null, note: payNote || null });
+    const r = await postPay({ action: "add", agentId: payFor.id, amount, paidAt: payDate, method: payMethod || null, note: payNote || null });
     setPaySaving(false);
     if (!r.ok) { setPayError(r.error ?? "تعذّر الحفظ."); return; }
     setPayFor(null);
@@ -222,22 +250,73 @@ export default function AdminAccounts() {
   }
   async function deletePayment(id: string) {
     if (!confirm("متأكد تمسح الدفعة دي؟")) return;
-    const r = await post({ action: "delete", id });
+    const r = await postPay({ action: "delete", id });
     if (!r.ok) { alert(r.error ?? "تعذّر المسح."); return; }
     setHistory((h) => h.filter((p) => p.id !== id));
     await loadPayments(month);
   }
 
+  // ── ملاحظة الأدمن (خاصة، المندوب مش بيشوفها) ──
   async function saveNote(a: Agent) {
     const note = noteDraft[a.id] ?? "";
-    setNoteSaving(a.id);
-    const r = await post({ action: "setNote", agentId: a.id, note });
-    setNoteSaving(null);
-    if (!r.ok) { alert(r.error ?? "تعذّر حفظ الملاحظة."); return; }
-    setAgents((as) => as.map((x) => (x.id === a.id ? { ...x, payment_note: note || null } : x)));
+    setBusy(`note:${a.id}`);
+    const r = await postPay({ action: "setNote", agentId: a.id, note });
+    setBusy(null);
+    if (!r.ok) { alert(r.error ?? "تعذّر الحفظ."); return; }
+    patchAgent(a.id, { payment_note: note.trim() || null });
+    setNoteDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+  }
+  async function clearNote(a: Agent) {
+    if (!(a.payment_note || noteDraft[a.id])) return;
+    setBusy(`note:${a.id}`);
+    const r = await postPay({ action: "setNote", agentId: a.id, note: "" });
+    setBusy(null);
+    if (!r.ok) { alert(r.error ?? "تعذّر المسح."); return; }
+    patchAgent(a.id, { payment_note: null });
     setNoteDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
   }
 
+  // ── رسالة المندوب (بتظهر عنده بالأحمر) ──
+  async function saveMsg(a: Agent) {
+    const notice = msgDraft[a.id] ?? "";
+    setBusy(`msg:${a.id}`);
+    const r = await manageAgent({ agentId: a.id, action: "setAgentNotice", notice });
+    setBusy(null);
+    if (!r.ok) { alert(r.error ?? "تعذّر الحفظ."); return; }
+    patchAgent(a.id, { agent_notice: notice.trim() || null });
+    setMsgDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+  }
+  async function clearMsg(a: Agent) {
+    if (!(a.agent_notice || msgDraft[a.id])) return;
+    setBusy(`msg:${a.id}`);
+    const r = await manageAgent({ agentId: a.id, action: "setAgentNotice", notice: "" });
+    setBusy(null);
+    if (!r.ok) { alert(r.error ?? "تعذّر المسح."); return; }
+    patchAgent(a.id, { agent_notice: null });
+    setMsgDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+  }
+
+  // ── فتح/قفل الصوت + البرنامج ──
+  async function toggleVoice(a: Agent) {
+    const next = !(a.voicex_enabled === true);
+    setBusy(`flag:${a.id}`);
+    const r = await manageAgent({ agentId: a.id, action: "setVoicexEnabled", enabled: next });
+    setBusy(null);
+    if (!r.ok) { alert(r.error ?? "تعذّر التنفيذ."); return; }
+    patchAgent(a.id, { voicex_enabled: next });
+  }
+  async function toggleProgram(a: Agent) {
+    const cur = a.rest_pages_enabled !== false;
+    const next = !cur;
+    if (!next && !confirm(`تقفل باقي صفحات البرنامج على «${a.username}» وتخليه صوت فقط؟`)) return;
+    setBusy(`flag:${a.id}`);
+    const r = await manageAgent({ agentId: a.id, action: "setRestPages", enabled: next });
+    setBusy(null);
+    if (!r.ok) { alert(r.error ?? "تعذّر التنفيذ."); return; }
+    patchAgent(a.id, { rest_pages_enabled: next });
+  }
+
+  // ── الرسم الشهري ──
   function openFee(a: Agent) {
     setFeeFor(a);
     setFeeVal(a.monthly_fee != null ? String(a.monthly_fee) : "");
@@ -246,26 +325,29 @@ export default function AdminAccounts() {
     if (!feeFor) return;
     setFeeSaving(true);
     const fee = feeVal.trim() === "" ? null : Number(feeVal);
-    const r = await post({ action: "setFee", agentId: feeFor.id, fee });
+    const r = await postPay({ action: "setFee", agentId: feeFor.id, fee });
     setFeeSaving(false);
     if (!r.ok) { alert(r.error ?? "تعذّر الحفظ."); return; }
-    setAgents((as) => as.map((x) => (x.id === feeFor.id ? { ...x, monthly_fee: fee } : x)));
+    patchAgent(feeFor.id, { monthly_fee: fee });
     setFeeFor(null);
   }
 
-  function remind(a: Agent, fee: number, paid: number) {
+  // تذكير واتساب — بيفتح المحادثة **من غير رسالة** (فاضية) عشان تكتب اللي إنت عايزه.
+  function remind(a: Agent) {
     const digits = waDigits(a.phone);
     if (!digits) { alert("مفيش رقم واتساب للمندوب ده."); return; }
-    const remaining = Math.max(0, fee - paid);
-    const msg = remaining > 0
-      ? `السلام عليكم ${a.username}،\nاشتراكك في قناص عن ${monthLabel(month)}: ${fmt(fee)} ريال.\nالمتبقّي: ${fmt(remaining)} ريال. برجاء السداد، وشكراً 🌟`
-      : `السلام عليكم ${a.username}،\nتم استلام اشتراك ${monthLabel(month)} (${fmt(fee)} ريال). شكراً لك 🌟`;
-    window.open(`https://wa.me/${digits}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+    window.open(`https://wa.me/${digits}`, "_blank", "noopener,noreferrer");
   }
 
   if (authorized === null) {
     return <div className="flex min-h-screen items-center justify-center bg-night text-sm text-muted">جارٍ التحقق...</div>;
   }
+
+  const subCards: { key: SubFilter; label: string; val: number; cls: string; on: string }[] = [
+    { key: "active", label: "نشط", val: subCounts.active, cls: "text-emerald-500", on: "border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500" },
+    { key: "expiring", label: "قرب ينتهي", val: subCounts.expiring, cls: "text-amber-500", on: "border-amber-500 bg-amber-500/10 ring-1 ring-amber-500" },
+    { key: "expired", label: "منتهي", val: subCounts.expired, cls: "text-danger", on: "border-danger bg-danger/10 ring-1 ring-danger" },
+  ];
 
   return (
     <main className="min-h-screen bg-night pb-10">
@@ -278,7 +360,7 @@ export default function AdminAccounts() {
           </button>
           <div className="text-center">
             <h1 className="flex items-center justify-center gap-1.5 text-lg font-bold text-ink"><Wallet size={18} /> حسابات المناديب</h1>
-            <p className="text-[11px] text-muted">دفعات الاشتراكات وملاحظاتها</p>
+            <p className="text-[11px] text-muted">دفعات الاشتراكات وإدارتها</p>
           </div>
           <span className="w-[52px]" />
         </div>
@@ -296,36 +378,48 @@ export default function AdminAccounts() {
           </button>
         </div>
 
-        {/* ملخّص الشهر */}
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5">
-            <p className="flex items-center justify-center gap-1 text-[19px] font-black text-emerald-500"><Coins size={15} /> {fmt(stats.collected)}</p>
-            <p className="text-[10px] text-muted">محصّل الشهر</p>
-          </div>
-          <div className="rounded-xl border border-primary/30 bg-primary/10 p-2.5">
-            <p className="flex items-center justify-center gap-1 text-[19px] font-black text-primary"><TrendingUp size={15} /> {fmt(stats.expected)}</p>
-            <p className="text-[10px] text-muted">المتوقّع (النشطين)</p>
-          </div>
-          <div className={`rounded-xl border p-2.5 ${stats.outstanding > 0 ? "border-danger/30 bg-danger/10" : "border-border bg-surface"}`}>
-            <p className={`text-[19px] font-black ${stats.outstanding > 0 ? "text-danger" : "text-muted"}`}>{fmt(Math.max(0, stats.outstanding))}</p>
-            <p className="text-[10px] text-muted">المتبقّي</p>
-          </div>
+        {/* صندوق الفلوس اللي اتجمعت — بيّن فوق */}
+        <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-center">
+          <p className="flex items-center justify-center gap-1.5 text-[12px] font-bold text-emerald-500"><Coins size={16} /> الفلوس اللي اتجمعت — {monthLabel(month)}</p>
+          <p className="mt-1 text-4xl font-black text-emerald-500">{fmt(collected)} <span className="text-lg font-bold">ريال</span></p>
+          <p className="mt-1.5 text-[11px] text-muted">
+            المتوقّع {fmt(expected)} · المتبقّي <b className={expected - collected > 0 ? "text-danger" : "text-muted"}>{fmt(Math.max(0, expected - collected))}</b> · دفع {fmt(paidCount)} من {fmt(agents.length)}
+          </p>
         </div>
-        <p className="-mt-2 text-center text-[11px] text-muted">دفع {fmt(stats.paidCount)} من {fmt(stats.total)} مندوب</p>
 
-        {/* بحث + فلترة */}
+        {/* عدّادات الاشتراك — كل رقم زر بيفلتر القائمة على ناسه */}
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {subCards.map((c) => {
+            const on = subFilter === c.key;
+            return (
+              <button key={c.key} onClick={() => setSubFilter(on ? "all" : c.key)}
+                className={`rounded-xl border p-2.5 transition active:scale-95 ${on ? c.on : "border-border bg-surface"}`}>
+                <p className={`text-2xl font-black ${c.cls}`}>{fmt(c.val)}</p>
+                <p className="text-[11px] text-muted">{c.label}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* بحث + فلترة الدفع */}
         <div className="relative">
           <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث بالاسم أو التليفون..."
             className="w-full rounded-lg border border-border bg-surface-2 py-2.5 pr-9 pl-4 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary" />
         </div>
-        <div className="flex gap-1.5">
-          {([["all", "الكل"], ["unpaid", "لم يدفع"], ["paid", "مدفوع"]] as [StatusFilter, string][]).map(([k, label]) => (
-            <button key={k} onClick={() => setStatusFilter(k)}
-              className={`flex-1 rounded-full border px-3 py-1.5 text-xs transition ${statusFilter === k ? "border-primary bg-primary/15 font-bold text-primary" : "border-border text-muted"}`}>
+        <div className="flex items-center gap-1.5">
+          {([["all", "الكل"], ["unpaid", "لم يدفع"], ["paid", "مدفوع"]] as [PayFilter, string][]).map(([k, label]) => (
+            <button key={k} onClick={() => setPayFilter(k)}
+              className={`flex-1 rounded-full border px-3 py-1.5 text-xs transition ${payFilter === k ? "border-primary bg-primary/15 font-bold text-primary" : "border-border text-muted"}`}>
               {label}
             </button>
           ))}
+          {subFilter !== "all" && (
+            <button onClick={() => setSubFilter("all")} title="إلغاء فلتر الاشتراك"
+              className="shrink-0 rounded-full border border-border px-2.5 py-1.5 text-xs text-muted transition hover:text-ink">
+              <X size={13} />
+            </button>
+          )}
         </div>
 
         {loadError && (
@@ -336,13 +430,17 @@ export default function AdminAccounts() {
         )}
 
         {/* قائمة المناديب */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2.5">
           {loading && <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>}
-          {!loading && rows.map(({ a, fee, paid, status }) => {
+          {!loading && rows.map(({ a, fee, paid, pstatus, sub }) => {
             const plan = agentPlanOf(a);
-            const editing = noteDraft[a.id] !== undefined;
-            const noteVal = editing ? noteDraft[a.id] : (a.payment_note ?? "");
             const remaining = Math.max(0, fee - paid);
+            const voiceOn = a.voicex_enabled === true;
+            const progOn = a.rest_pages_enabled !== false;
+            const noteVal = noteDraft[a.id] !== undefined ? noteDraft[a.id] : (a.payment_note ?? "");
+            const noteChanged = noteDraft[a.id] !== undefined && noteDraft[a.id] !== (a.payment_note ?? "");
+            const msgVal = msgDraft[a.id] !== undefined ? msgDraft[a.id] : (a.agent_notice ?? "");
+            const msgChanged = msgDraft[a.id] !== undefined && msgDraft[a.id] !== (a.agent_notice ?? "");
             return (
               <div key={a.id} className="rounded-xl border border-border bg-surface p-3">
                 {/* السطر ١: الاسم + الخطة + السعر */}
@@ -352,40 +450,80 @@ export default function AdminAccounts() {
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${PLAN_BADGE[plan]}`}>{PLAN_LABEL[plan]}</span>
                   <button onClick={() => openFee(a)} title="تعديل الرسم الشهري"
                     className="flex shrink-0 items-center gap-0.5 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-ink transition hover:border-primary/50">
-                    {fmt(fee)} <span className="text-[9px] text-muted">ريال</span> <Pencil size={10} className="text-muted" />
+                    {fmt(fee)} <span className="text-[9px] text-muted">ريال</span>
                   </button>
                 </div>
 
-                {/* السطر ٢: حالة الدفع + المدفوع/المتبقّي */}
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                    status === "paid" ? "bg-emerald-500/15 text-emerald-500"
-                    : status === "partial" ? "bg-amber-500/15 text-amber-500"
-                    : "bg-danger/15 text-danger"}`}>
-                    {status === "paid" ? "مدفوع ✓" : status === "partial" ? "دفع جزئي" : "لم يدفع"}
+                {/* السطر ٢: الأيام الباقية + حالة الدفع */}
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    style={{ color: sub.color, background: `${sub.color}22` }}>
+                    <CalendarClock size={12} /> {sub.status === "expired" ? "منتهي — مقطوع" : sub.status === "none" ? "بدون اشتراك" : `${sub.daysLeft} يوم`}
                   </span>
-                  <span className="text-[11px] text-muted">
-                    دفع <b className="text-ink">{fmt(paid)}</b>
-                    {remaining > 0 && <> · متبقّي <b className="text-danger">{fmt(remaining)}</b></>}
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted">
+                    <span className={`rounded-full px-2 py-0.5 font-bold ${
+                      pstatus === "paid" ? "bg-emerald-500/15 text-emerald-500"
+                      : pstatus === "partial" ? "bg-amber-500/15 text-amber-500"
+                      : "bg-danger/15 text-danger"}`}>
+                      {pstatus === "paid" ? "مدفوع ✓" : pstatus === "partial" ? "جزئي" : "لم يدفع"}
+                    </span>
+                    دفع <b className="text-ink">{fmt(paid)}</b>{remaining > 0 && <> · باقي <b className="text-danger">{fmt(remaining)}</b></>}
                   </span>
                 </div>
 
-                {/* السطر ٣: ملاحظة الدفع (قابلة للتعديل) */}
-                <div className="mt-2 flex items-center gap-1.5">
-                  <input
-                    value={noteVal}
-                    onChange={(e) => setNoteDraft((d) => ({ ...d, [a.id]: e.target.value }))}
-                    placeholder="ملاحظة: مثلاً «قال هيسدد بعد يومين»..."
-                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink placeholder:text-muted/50 focus:outline-none focus:border-primary" />
-                  {editing && noteDraft[a.id] !== (a.payment_note ?? "") && (
-                    <button onClick={() => saveNote(a)} disabled={noteSaving === a.id}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-night transition disabled:opacity-50" title="حفظ الملاحظة">
-                      <Check size={15} />
+                {/* السطر ٣: فتح/قفل الصوت + البرنامج */}
+                <div className="mt-2.5 flex items-center gap-1.5">
+                  <button onClick={() => toggleVoice(a)} disabled={busy === `flag:${a.id}`}
+                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[11px] font-bold transition disabled:opacity-50 ${
+                      voiceOn ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500" : "border-danger/40 bg-danger/10 text-danger"}`}>
+                    <Mic size={13} /> الصوت {voiceOn ? "مفتوح" : "مقفول"}
+                  </button>
+                  <button onClick={() => toggleProgram(a)} disabled={busy === `flag:${a.id}`}
+                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[11px] font-bold transition disabled:opacity-50 ${
+                      progOn ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500" : "border-danger/40 bg-danger/10 text-danger"}`}>
+                    <LayoutGrid size={13} /> البرنامج {progOn ? "مفتوح" : "مقفول"}
+                  </button>
+                </div>
+
+                {/* السطر ٤: ملاحظة خاصة بالأدمن (المندوب مش بيشوفها) */}
+                <div className="mt-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <input value={noteVal}
+                      onChange={(e) => setNoteDraft((d) => ({ ...d, [a.id]: e.target.value }))}
+                      placeholder="ملاحظة ليك: «قال هيسدد بعد يومين»... (المندوب مش بيشوفها)"
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink placeholder:text-muted/50 focus:outline-none focus:border-primary" />
+                    <button onClick={() => saveNote(a)} disabled={!noteChanged || busy === `note:${a.id}`}
+                      className="flex h-8 items-center gap-1 rounded-lg bg-primary px-2.5 text-[11px] font-bold text-night transition disabled:opacity-40" title="حفظ الملاحظة">
+                      <Save size={13} /> حفظ
                     </button>
-                  )}
+                    <button onClick={() => clearNote(a)} disabled={!(a.payment_note || noteDraft[a.id]) || busy === `note:${a.id}`}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition hover:text-danger disabled:opacity-40" title="مسح الملاحظة">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
 
-                {/* السطر ٤: أزرار */}
+                {/* السطر ٥: رسالة تظهر للمندوب بالأحمر */}
+                <div className="mt-2 rounded-lg border border-danger/30 bg-danger/5 p-2">
+                  <p className="mb-1 flex items-center gap-1 text-[10px] font-bold text-danger"><Megaphone size={11} /> رسالة تظهر للمندوب بالأحمر</p>
+                  <div className="flex items-center gap-1.5">
+                    <input value={msgVal}
+                      onChange={(e) => setMsgDraft((d) => ({ ...d, [a.id]: e.target.value }))}
+                      placeholder="اكتب رسالة تظهر له في البرنامج..."
+                      className="min-w-0 flex-1 rounded-lg border border-danger/30 bg-surface-2 px-2.5 py-1.5 text-[12px] text-ink placeholder:text-muted/50 focus:outline-none focus:border-danger" />
+                    <button onClick={() => saveMsg(a)} disabled={!msgChanged || busy === `msg:${a.id}`}
+                      className="flex h-8 items-center gap-1 rounded-lg bg-danger px-2.5 text-[11px] font-bold text-white transition disabled:opacity-40" title="إرسال الرسالة للمندوب">
+                      <Save size={13} /> حفظ
+                    </button>
+                    <button onClick={() => clearMsg(a)} disabled={!(a.agent_notice || msgDraft[a.id]) || busy === `msg:${a.id}`}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition hover:text-danger disabled:opacity-40" title="مسح الرسالة من عنده">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                  {a.agent_notice && <p className="mt-1 text-[10px] text-danger/80">شغّالة عنده دلوقتي ✓</p>}
+                </div>
+
+                {/* السطر ٦: أزرار */}
                 <div className="mt-2.5 flex items-center gap-1.5">
                   <button onClick={() => openPay(a)}
                     className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-primary py-2 text-xs font-bold text-night transition active:scale-95">
@@ -396,9 +534,9 @@ export default function AdminAccounts() {
                     <Receipt size={14} /> السجل
                   </button>
                   {waDigits(a.phone) && (
-                    <button onClick={() => remind(a, fee, paid)}
-                      className="flex items-center justify-center gap-1 rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-2 text-xs font-bold text-green-500 transition hover:bg-green-500/20" title="تذكير على واتساب">
-                      <MessageCircle size={14} /> تذكير
+                    <button onClick={() => remind(a)}
+                      className="flex items-center justify-center gap-1 rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-2 text-xs font-bold text-green-500 transition hover:bg-green-500/20" title="فتح واتساب المندوب">
+                      <MessageCircle size={14} /> واتساب
                     </button>
                   )}
                 </div>
