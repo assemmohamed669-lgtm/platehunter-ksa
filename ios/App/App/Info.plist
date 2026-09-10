@@ -63,5 +63,43 @@
 	<string>التطبيق يستخدم صورك لاختيار صورة لوحة لتحليلها.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>التطبيق يحفظ صور أو ملفات اللوحات في مكتبتك عند التصدير.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Spreadsheet</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.openxmlformats.spreadsheetml.sheet</string>
+				<string>com.microsoft.excel.xls</string>
+				<string>public.comma-separated-values-text</string>
+				<string>com.platehunter.ksa.xlsb</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.platehunter.ksa.xlsb</string>
+			<key>UTTypeDescription</key>
+			<string>Excel Binary Workbook</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>xlsb</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

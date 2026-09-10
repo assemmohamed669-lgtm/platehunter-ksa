@@ -69,6 +69,35 @@ export default function IncomingExcelHandler() {
     return () => window.removeEventListener("excelFileOpened", handler);
   }, []);
 
+  // iOS: فتح ملف إكسل من واتساب/الملفات بيوصل عبر Capacitor App (appUrlOpen)
+  // كرابط file://. بنقرا الملف عبر Filesystem ونبعت نفس حدث excelFileOpened اللي
+  // بيبعته MainActivity على أندرويد — فنفس شيت الاختيار بيظهر. مقصور على iOS عشان
+  // مايتعارضش مع مسار أندرويد (اللي بيبعت الحدث من الكود الأصلي).
+  useEffect(() => {
+    let remove: (() => void) | undefined;
+    (async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        if (Capacitor.getPlatform() !== "ios") return;
+        const { App } = await import("@capacitor/app");
+        const sub = await App.addListener("appUrlOpen", async (data: { url?: string }) => {
+          try {
+            const url = data?.url ?? "";
+            if (!url.startsWith("file://")) return; // فتح ملف بس (مش deep link)
+            const name = decodeURIComponent((url.split("/").pop() || "file.xlsx").split("?")[0]);
+            if (!/\.(xlsx|xls|xlsb|xlsm|csv|ods)$/i.test(name)) return; // صيغ الجداول بس
+            const { Filesystem } = await import("@capacitor/filesystem");
+            const res = await Filesystem.readFile({ path: url }); // مسار file:// كامل
+            const base64 = typeof res.data === "string" ? res.data : "";
+            if (base64) window.dispatchEvent(new CustomEvent("excelFileOpened", { detail: { name, base64 } }));
+          } catch { /* تجاهل ملف مش صالح */ }
+        });
+        remove = () => { void sub.remove(); };
+      } catch { /* Capacitor مش متاح (ويب) — نتجاهل */ }
+    })();
+    return () => remove?.();
+  }, []);
+
   async function buildFile(p: PendingFile): Promise<{ file: File; blob: Blob }> {
     let b64 = p.base64 ?? "";
     // النسخة الجديدة من الـAPK بتبعت اسم ملف في الكاش بدل الـbase64 المباشر —
