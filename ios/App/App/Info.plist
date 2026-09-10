@@ -57,6 +57,8 @@
 	<string>التطبيق يستخدم التعرّف على الكلام لتحويل نطق أرقام اللوحات إلى نص.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>التطبيق يستخدم موقعك لتسجيل مكان اللوحة على الخريطة أثناء التشييك.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>التطبيق يستخدم موقعك لتسجيل مكان اللوحة على الخريطة أثناء التشييك.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>التطبيق يستخدم صورك لاختيار صورة لوحة لتحليلها.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
