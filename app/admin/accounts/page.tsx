@@ -101,6 +101,7 @@ export default function AdminAccounts() {
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [msgDraft, setMsgDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null); // "note:id" / "msg:id" / "flag:id"
+  const [flash, setFlash] = useState<Record<string, string>>({}); // "note:id"/"msg:id" → تأكيد مؤقت
 
   // مودالات.
   const [payFor, setPayFor] = useState<Agent | null>(null);
@@ -121,6 +122,12 @@ export default function AdminAccounts() {
 
   const patchAgent = useCallback((id: string, patch: Partial<Agent>) => {
     setAgents((as) => as.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }, []);
+
+  // تأكيد مؤقت جنب الزر («اتحفظت ✓») يختفي لوحده بعد ثواني — عشان يبان إن الحفظ تمّ.
+  const showFlash = useCallback((key: string, msg: string) => {
+    setFlash((f) => ({ ...f, [key]: msg }));
+    setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[key]; return n; }), 2500);
   }, []);
 
   const loadAgents = useCallback(async () => {
@@ -265,6 +272,7 @@ export default function AdminAccounts() {
     if (!r.ok) { alert(r.error ?? "تعذّر الحفظ."); return; }
     patchAgent(a.id, { payment_note: note.trim() || null });
     setNoteDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+    showFlash(`note:${a.id}`, "اتحفظت ✓");
   }
   async function clearNote(a: Agent) {
     if (!(a.payment_note || noteDraft[a.id])) return;
@@ -274,6 +282,7 @@ export default function AdminAccounts() {
     if (!r.ok) { alert(r.error ?? "تعذّر المسح."); return; }
     patchAgent(a.id, { payment_note: null });
     setNoteDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+    showFlash(`note:${a.id}`, "اتمسحت ✓");
   }
 
   // ── رسالة المندوب (بتظهر عنده بالأحمر) ──
@@ -285,6 +294,7 @@ export default function AdminAccounts() {
     if (!r.ok) { alert(r.error ?? "تعذّر الحفظ."); return; }
     patchAgent(a.id, { agent_notice: notice.trim() || null });
     setMsgDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+    showFlash(`msg:${a.id}`, notice.trim() ? "وصلت للمندوب ✓" : "اتمسحت ✓");
   }
   async function clearMsg(a: Agent) {
     if (!(a.agent_notice || msgDraft[a.id])) return;
@@ -294,6 +304,7 @@ export default function AdminAccounts() {
     if (!r.ok) { alert(r.error ?? "تعذّر المسح."); return; }
     patchAgent(a.id, { agent_notice: null });
     setMsgDraft((d) => { const n = { ...d }; delete n[a.id]; return n; });
+    showFlash(`msg:${a.id}`, "اتمسحت من عنده ✓");
   }
 
   // ── فتح/قفل الصوت + البرنامج ──
@@ -501,6 +512,7 @@ export default function AdminAccounts() {
                       <Trash2 size={13} />
                     </button>
                   </div>
+                  {flash[`note:${a.id}`] && <p className="mt-1 text-[10px] font-bold text-emerald-500">{flash[`note:${a.id}`]}</p>}
                 </div>
 
                 {/* السطر ٥: رسالة تظهر للمندوب بالأحمر */}
@@ -520,7 +532,9 @@ export default function AdminAccounts() {
                       <Trash2 size={13} />
                     </button>
                   </div>
-                  {a.agent_notice && <p className="mt-1 text-[10px] text-danger/80">شغّالة عنده دلوقتي ✓</p>}
+                  {flash[`msg:${a.id}`]
+                    ? <p className="mt-1 text-[10px] font-bold text-emerald-500">{flash[`msg:${a.id}`]}</p>
+                    : a.agent_notice && <p className="mt-1 text-[10px] text-danger/80">شغّالة عنده دلوقتي ✓</p>}
                 </div>
 
                 {/* السطر ٦: أزرار */}
