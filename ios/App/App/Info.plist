@@ -49,5 +49,17 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>التطبيق يستخدم الكاميرا لتصوير لوحات السيارات والتعرّف عليها.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>التطبيق يستخدم الميكروفون لإدخال أرقام اللوحات بالصوت.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>التطبيق يستخدم التعرّف على الكلام لتحويل نطق أرقام اللوحات إلى نص.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>التطبيق يستخدم موقعك لتسجيل مكان اللوحة على الخريطة أثناء التشييك.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>التطبيق يستخدم صورك لاختيار صورة لوحة لتحليلها.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>التطبيق يحفظ صور أو ملفات اللوحات في مكتبتك عند التصدير.</string>
 </dict>
 </plist>
