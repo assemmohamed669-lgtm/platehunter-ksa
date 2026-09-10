@@ -2146,6 +2146,52 @@ export function detectArabicPlateColumn(headers: string[]): string | null {
   return null;
 }
 
+/**
+ * أفضل عمود لوحاته **عربية** (حروفها عربي أكتر من لاتيني) بالمحتوى — أو null لو
+ * مفيش عمود عربي واضح فوق العتبة. بيُستخدم للإحالة عشان نفضّل العمود العربي حتى
+ * في ملف **مالوش صف عناوين** (detectArabicPlateColumn بيعتمد على اسم الهيدر
+ * فبيفشل هنا). لو رجّع null، المنادي يرجع للعمود الإنجليزي/البنكي.
+ *
+ * ليه مهم: ملف إحالة فيه عمود عربي («رىح5647») وعمود إنجليزي («5647JVR») لنفس
+ * اللوحة، ومالوش هيدر، كان بيتقرا **إنجليزي** فيتطبّق عليه احتياطي «عكس الحروف»
+ * (ريح→حير) — فلوحة الداتا «حير5647» (عربية تانية) بتتطابق غلط وتتعرض «ريح5647».
+ * تفضيل العمود العربي بيمنع ده.
+ */
+export function detectArabicPlateColumnByContent(
+  headers: string[],
+  rows: Record<string, string>[],
+  sampleSize = 200,
+  minRatio = 0.5,
+): string | null {
+  if (headers.length === 0 || rows.length === 0) return null;
+  const sample = rows.slice(0, Math.min(sampleSize, rows.length));
+  let bestCol: string | null = null;
+  let bestRatio = 0;
+  let bestNonEmpty = 0;
+  for (const header of headers) {
+    let plateLike = 0, nonEmpty = 0, arabicLetters = 0, latinLetters = 0;
+    for (const row of sample) {
+      const raw = String(row[header] ?? "").trim();
+      if (!raw) continue;
+      nonEmpty++;
+      if (cellLooksLikePlate(raw)) {
+        plateLike++;
+        for (let k = 0; k < raw.length; k++) {
+          const c = raw.charCodeAt(k);
+          if (c >= 0x0600 && c <= 0x06ff) arabicLetters++;
+          else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) latinLetters++;
+        }
+      }
+    }
+    if (nonEmpty === 0 || arabicLetters <= latinLetters) continue; // مش عمود عربي
+    const ratio = plateLike / nonEmpty;
+    if (ratio > bestRatio || (ratio === bestRatio && nonEmpty > bestNonEmpty)) {
+      bestRatio = ratio; bestCol = header; bestNonEmpty = nonEmpty;
+    }
+  }
+  return bestRatio >= minRatio ? bestCol : null;
+}
+
 export function detectPlateColumn(headers: string[], rows?: Record<string, string>[]): string | null {
   // الأولوية: اكتشاف بناءً على المحتوى الفعلي (يشتغل بغض النظر عن اسم العمود)
   if (rows && rows.length > 0) {

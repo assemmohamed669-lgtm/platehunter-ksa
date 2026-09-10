@@ -14,7 +14,7 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw, readSheetNames,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectArabicPlateColumn, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
+  detectPlateColumn, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
@@ -693,7 +693,11 @@ export default function SortingPage() {
 
   // ── Derived ──
   const dataPlateCol = dataTable ? detectPlateColumn(dataTable.headers, dataTable.rows) : null;
-  const referralArabicPlateCol = referralTable ? detectArabicPlateColumn(referralTable.headers) : null;
+  // نفضّل العمود العربي دايمًا — بالهيدر الأول، وبعدين بالمحتوى (للملفات اللي
+  // مالهاش صف عناوين). الإنجليزي/البنكي بس لو مفيش عمود عربي خالص.
+  const referralArabicPlateCol = referralTable
+    ? (detectArabicPlateColumn(referralTable.headers) ?? detectArabicPlateColumnByContent(referralTable.headers, referralTable.rows))
+    : null;
   const referralPlateCol = referralArabicPlateCol ?? (referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null);
   const referralPlateIsArabic = referralArabicPlateCol !== null;
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
@@ -850,7 +854,7 @@ export default function SortingPage() {
     // زي الأساسية بالظبط، وإلا المحفظة المرفوعة كإحالة إضافية تطلع بلا أعمدة.
     for (const er of extraReferrals) {
       if (!er.table) continue;
-      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectPlateColumn(er.table.headers, er.table.rows);
+      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows) ?? detectPlateColumn(er.table.headers, er.table.rows);
       sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
     }
     return resolveMergedResultColumns(sources);
@@ -912,7 +916,7 @@ export default function SortingPage() {
     }
     for (const er of extraReferrals) {
       if (!er.table) continue;
-      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectPlateColumn(er.table.headers, er.table.rows);
+      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows) ?? detectPlateColumn(er.table.headers, er.table.rows);
       sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
     }
     const fixed = resolveMergedResultColumns(sources);
@@ -1776,10 +1780,12 @@ export default function SortingPage() {
     // بيتمّوا في collectReferralEntries زي الشيتات الإضافية بالظبط.
     if (isMultiSheetRef) {
       for (const s of selectedRefSheets) {
+        // نفضّل العمود العربي (بالهيدر ثم بالمحتوى) — الإنجليزي بس لو مفيش عربي.
+        const arabicCol = detectArabicPlateColumn(s.headers) ?? detectArabicPlateColumnByContent(s.headers, s.rows);
         srcs.push({
           rows: s.rows,
-          plateCol: s.headers[s.plateCol],
-          isArabic: detectArabicPlateColumn(s.headers) !== null,
+          plateCol: arabicCol ?? s.headers[s.plateCol],
+          isArabic: arabicCol !== null,
         });
       }
     } else if (referralTable && effectiveReferralPlateCol) {
@@ -1787,7 +1793,7 @@ export default function SortingPage() {
     }
     for (const er of extraReferrals) {
       if (!er.table) continue;
-      const arabicCol = detectArabicPlateColumn(er.table.headers);
+      const arabicCol = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows);
       const plateCol = arabicCol ?? detectPlateColumn(er.table.headers, er.table.rows);
       if (!plateCol) continue;
       srcs.push({ rows: er.table.rows, plateCol, isArabic: arabicCol !== null });
