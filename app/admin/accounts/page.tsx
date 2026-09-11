@@ -80,7 +80,9 @@ export default function AdminAccounts() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [payFilter, setPayFilter] = useState<PayFilter>("all");
+  // الافتراضي: اللي لسه عليه فلوس بس — اللي دفع كامل (دفع ومفيش عليه) يختفي من
+  // الصفحة تلقائيًا. تقدر تشوفهم من فلتر «خالص» أو «الكل».
+  const [payFilter, setPayFilter] = useState<PayFilter>("unpaid");
   const [subFilter, setSubFilter] = useState<SubFilter>("all");
 
   // مسوّدات التعديل لكل مندوب.
