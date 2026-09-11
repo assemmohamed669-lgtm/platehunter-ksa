@@ -1,2 +1,5 @@
 /build/*
 !/build/.npmkeep
+
+# Firebase — إعداد المشروع للإشعارات. نزّله من Firebase Console وحطّه هنا.
+google-services.json

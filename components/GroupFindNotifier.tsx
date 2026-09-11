@@ -75,11 +75,26 @@ export default function GroupFindNotifier() {
       if (now - last < 60_000) return;
       recentRef.current.set(d.plate, now);
       const c = coordsRef.current;
-      void supabase.from("group_finds").insert({
-        team: me.team, finder_id: me.id, finder_name: me.name,
-        plate: d.plate, info: d.info ?? null,
-        maps_link: c ? toMapsLink(c.lat, c.lng) : null,
-      });
+      const mapsLink = c ? toMapsLink(c.lat, c.lng) : null;
+      void (async () => {
+        // (١) الصف ده هو اللي بيوصل لحظيًا للي التطبيق مفتوح عندهم.
+        await supabase.from("group_finds").insert({
+          team: me.team, finder_id: me.id, finder_name: me.name,
+          plate: d.plate, info: d.info ?? null, maps_link: mapsLink,
+        });
+        // (٢) وده بيوصل للي التطبيق مقفول عندهم (إشعار هاتف). لو فشل
+        //     مانعملش حاجة — اللقطة نفسها اتسجّلت وإشعار التطبيق شغّال.
+        try {
+          const { data: s } = await supabase.auth.getSession();
+          const at = s.session?.access_token;
+          if (!at) return;
+          await fetch("/api/group-push", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${at}` },
+            body: JSON.stringify({ plate: d.plate, mapsLink: mapsLink ?? "" }),
+          });
+        } catch { /* مافيش نت — الإشعار الداخلي وصل والسجل اتحفظ */ }
+      })();
     };
     window.addEventListener(WANTED_ALERT_EVENT, onFind);
 

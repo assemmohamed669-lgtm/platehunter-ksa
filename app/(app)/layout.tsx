@@ -9,6 +9,7 @@ import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import GroupFindNotifier from "@/components/GroupFindNotifier";
+import PushRegistrar from "@/components/PushRegistrar";
 import AppMenu from "@/components/AppMenu";
 import UpdateBanner from "@/components/UpdateBanner";
 import NoticeBanner from "@/components/NoticeBanner";
@@ -237,6 +238,7 @@ export default function AppShellLayout({
         <BottomNav />
         <WantedAlertOverlay />
         <GroupFindNotifier />
+        <PushRegistrar />
         <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} voiceOnly={!restPagesEnabled} />
       </div>
     </SessionGuard>
