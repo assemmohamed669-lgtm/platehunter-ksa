@@ -22,6 +22,7 @@ interface Profile {
   agent_notice?: string | null;  // رسالة خاصة تظهر لهذا المندوب وحده (بالأحمر)
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
+  voicex_until: string | null; rest_until: string | null;   // اشتراك منفصل لكل خدمة
   service_keys: ServiceKeys | null;
 }
 interface SubEvent { id: string; new_end: string | null; months: number | null; amount: number | null; note: string | null; created_at: string; created_by: string | null; }
@@ -59,6 +60,8 @@ export default function AgentDetail() {
   const [busy, setBusy] = useState(false);
   const [end, setEnd] = useState("");
   const [amount, setAmount] = useState("");
+  const [voiceEnd, setVoiceEnd] = useState("");   // اشتراك الصوت حتى
+  const [restEnd, setRestEnd] = useState("");      // اشتراك باقي البرنامج حتى
   const [newPass, setNewPass] = useState("");
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
@@ -82,6 +85,7 @@ export default function AgentDetail() {
     if (data) {
       const prof = data as Profile;
       setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? ""); setEmail(prof.email ?? "");
+      setVoiceEnd(prof.voicex_until ?? ""); setRestEnd(prof.rest_until ?? "");
       setAmount(prof.subscription_amount != null ? String(prof.subscription_amount) : "");
       setNoticeDraft((d) => (noticeLoadedRef.current ? d : (prof.agent_notice ?? "")));
       noticeLoadedRef.current = true;
@@ -125,6 +129,16 @@ export default function AgentDetail() {
       return true;
     } catch { setMsg("❌ تعذّر الاتصال."); return false; }
     finally { setBusy(false); }
+  }
+
+  // تمديد اشتراك خدمة واحدة — الصوت أو باقي البرنامج — لوحده.
+  async function saveVoiceSub() {
+    if (!voiceEnd) { setMsg("اختار تاريخ نهاية الصوت."); return; }
+    if (await call("extendVoice", { until: voiceEnd })) { setMsg(`✅ اشتراك الصوت لـ${p?.username ?? "المندوب"} حتى ${voiceEnd}.`); load(); }
+  }
+  async function saveRestSub() {
+    if (!restEnd) { setMsg("اختار تاريخ نهاية باقي البرنامج."); return; }
+    if (await call("extendRest", { until: restEnd })) { setMsg(`✅ اشتراك باقي البرنامج لـ${p?.username ?? "المندوب"} حتى ${restEnd}.`); load(); }
   }
 
   async function saveSubscription() {
@@ -469,6 +483,41 @@ export default function AgentDetail() {
               className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-50">
               <Save size={15} /> حفظ التمديد
             </button>
+          </div>
+        )}
+
+        {/* اشتراك كل خدمة على حدة — الصوت / باقي البرنامج */}
+        {isAgent && (
+          <div className="rounded-2xl border border-border bg-surface p-4">
+            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink"><CalendarClock size={16} className="text-primary" /> اشتراك كل خدمة على حدة</div>
+            <p className="mb-3 text-[11px] leading-relaxed text-muted">
+              كل خدمة أيامها لوحدها — لما تخلص تتقفل الخدمة دي بس تلقائيًا (مع زر الفتح/القفل اليدوي فوق).
+              تاريخ الحساب العام بيبقى = الأبعد فيهم.
+            </p>
+            {([
+              { label: "الصوت (VoiceX)", icon: <Mic size={14} />, until: p.voicex_until, value: voiceEnd, setValue: setVoiceEnd, save: saveVoiceSub },
+              { label: "باقي البرنامج", icon: <LayoutGrid size={14} />, until: p.rest_until, value: restEnd, setValue: setRestEnd, save: saveRestSub },
+            ] as const).map((svc, i) => {
+              const s = subStatus(svc.until);
+              return (
+                <div key={i} className={`${i === 0 ? "mb-3" : ""} rounded-xl border border-border bg-surface-2 p-2.5`}>
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-ink">{svc.icon} {svc.label}</span>
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: s.color, background: `${s.color}22` }}>
+                      {svc.until ? s.label : "بدون حد"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input type="date" value={svc.value} onChange={(e) => svc.setValue(e.target.value)}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-primary" />
+                    <button onClick={() => svc.setValue(addMonthsTo(svc.value || null, 1))}
+                      className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] text-muted transition hover:border-primary hover:text-primary">+ شهر</button>
+                    <button onClick={svc.save} disabled={busy}
+                      className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-night disabled:opacity-50">حفظ</button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

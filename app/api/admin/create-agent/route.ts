@@ -123,6 +123,9 @@ export async function POST(req: NextRequest) {
     rest_pages_enabled: flags.rest_pages_enabled,
     subscription_start: role === "admin" ? null : start,
     subscription_end: end,
+    // اشتراك منفصل لكل خدمة — يبدأ بنفس نهاية الاشتراك (المندوب بس).
+    voicex_until: role === "admin" ? null : end,
+    rest_until: role === "admin" ? null : end,
   }, { onConflict: "id" });
   if (profileError) {
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);

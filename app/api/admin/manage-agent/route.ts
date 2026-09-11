@@ -18,6 +18,7 @@ import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
 import { buildActionDetail } from "@/lib/securityDescribe";
 import { resetDevicePatch } from "@/lib/deviceBinding";
 import { normalizeAgentNotice } from "@/lib/agentNotice";
+import { maxDate } from "@/lib/subscription";
 import { randomUUID } from "node:crypto";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
@@ -126,8 +127,12 @@ export async function POST(req: NextRequest) {
       case "extendSubscription": {
         const subscriptionEnd: string = body.subscriptionEnd ?? "";
         if (!subscriptionEnd) return NextResponse.json({ error: "تاريخ النهاية مطلوب." }, { status: 400 });
-        // تمديد الاشتراك يحوّل حساب التجربة لمشترك عادي.
-        const patch: Record<string, unknown> = { subscription_end: subscriptionEnd, is_active: true, is_trial: false };
+        // تمديد الاشتراك العام يمدّد **الخدمتين** معاً (الصوت + باقي البرنامج)،
+        // ويحوّل حساب التجربة لمشترك عادي.
+        const patch: Record<string, unknown> = {
+          subscription_end: subscriptionEnd, voicex_until: subscriptionEnd, rest_until: subscriptionEnd,
+          is_active: true, is_trial: false,
+        };
         if (body.amount != null) patch.subscription_amount = Number(body.amount);
         const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -137,6 +142,33 @@ export async function POST(req: NextRequest) {
           amount: body.amount != null ? Number(body.amount) : null,
           new_end: subscriptionEnd,
           note: body.note ?? "تمديد الاشتراك",
+          created_by: adminId,
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      // تمديد خدمة واحدة لوحدها: الصوت (voicex_until) أو باقي البرنامج (rest_until).
+      // تاريخ الحساب العام = الأبعد بين الخدمتين، فقفل الحساب الكلي يفضل صح
+      // (الحساب شغّال طول ما أي خدمة سارية).
+      case "extendVoice":
+      case "extendRest": {
+        const until: string = body.until ?? "";
+        if (!until) return NextResponse.json({ error: "تاريخ النهاية مطلوب." }, { status: 400 });
+        const isVoice = action === "extendVoice";
+        const { data: cur } = await supabaseAdmin
+          .from("profiles").select("voicex_until, rest_until").eq("id", agentId).single();
+        const c = (cur ?? {}) as { voicex_until?: string | null; rest_until?: string | null };
+        const otherUntil = isVoice ? (c.rest_until ?? null) : (c.voicex_until ?? null);
+        const patch: Record<string, unknown> = {
+          [isVoice ? "voicex_until" : "rest_until"]: until,
+          subscription_end: maxDate(until, otherUntil),
+          is_active: true, is_trial: false,
+        };
+        const { error } = await supabaseAdmin.from("profiles").update(patch).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        await supabaseAdmin.from("subscription_events").insert({
+          agent_id: agentId, new_end: until,
+          note: isVoice ? "تمديد الصوت" : "تمديد باقي البرنامج",
           created_by: adminId,
         });
         return NextResponse.json({ ok: true });

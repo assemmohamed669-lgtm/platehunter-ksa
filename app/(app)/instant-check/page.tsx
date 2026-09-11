@@ -52,6 +52,7 @@ import PlateBadge from "@/components/PlateBadge";
 import { browserScreenWake } from "@/lib/screenWake";
 import { engineLabel } from "@/lib/engineLabel";
 import { voiceTabVisible, loadCachedVoiceAccess, saveCachedVoiceAccess } from "@/lib/voiceAccess";
+import { serviceActive } from "@/lib/subscription";
 import { STREET_KEY, withStreetName, loadStreetName, saveStreetName } from "@/lib/streetName";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode, vehicleTypeLabel } from "@/lib/vehicleType";
@@ -535,9 +536,12 @@ export default function InstantCheckPage() {
         if (!data.user) return;
         // العلمين في استعلام واحد — رحلة شبكة واحدة بدل اتنين على شبكة الموبايل.
         const { data: prof } = await supabase.from("profiles")
-          .select("rest_pages_enabled, voicex_enabled, is_super").eq("id", data.user.id).single();
-        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean } | null;
-        setVoiceOnly(row?.rest_pages_enabled === false);
+          .select("rest_pages_enabled, voicex_enabled, is_super, voicex_until, rest_until").eq("id", data.user.id).single();
+        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean; voicex_until?: string | null; rest_until?: string | null } | null;
+        // «صوت فقط» = باقي البرنامج مش متاح (مقفول يدويًا أو أيامه خلصت). السوبر
+        // أدمن مالوش انتهاء. voiceTabVisible بياخد في حسابه انتهاء أيام الصوت.
+        const restAvailable = row?.is_super === true || (!!row && row.rest_pages_enabled !== false && serviceActive(row.rest_until));
+        setVoiceOnly(row ? !restAvailable : false);
         const allowed = voiceTabVisible(row, loadCachedVoiceAccess());
         setVoiceAllowed(allowed);
         if (row) saveCachedVoiceAccess(allowed);   // مرجع الأوفلاين المرة الجاية
@@ -945,9 +949,10 @@ export default function InstantCheckPage() {
         // ⇒ السلوك القديم بالحرف (ديبجرام).
         let voicexEnabled = false;
         try {
-          const { data: prof } = await supabase.from("profiles").select("voicex_enabled, is_super").eq("id", uid).single();
-          const p = prof as { voicex_enabled?: boolean; is_super?: boolean } | null;
-          voicexEnabled = p?.voicex_enabled === true || p?.is_super === true;
+          const { data: prof } = await supabase.from("profiles").select("voicex_enabled, is_super, voicex_until").eq("id", uid).single();
+          const p = prof as { voicex_enabled?: boolean; is_super?: boolean; voicex_until?: string | null } | null;
+          // السوبر أدمن مفتوح دايمًا؛ غيره: الصوت مفتوح يدويًا **و** أيامه لسه سارية.
+          voicexEnabled = p?.is_super === true || (p?.voicex_enabled === true && serviceActive(p?.voicex_until));
         } catch { /* أوفلاين — يفضل ديبجرام */ }
 
         if (voicexEnabled) {

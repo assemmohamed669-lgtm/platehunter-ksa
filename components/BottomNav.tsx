@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { visibleTabs } from "@/lib/navTabs";
+import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
 
 // تبويبات المشترك «صوت فقط» في الشريط التحتي (زي قناص) — كل واحدة بتبدّل خيار
@@ -75,10 +76,12 @@ export default function BottomNav() {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
         const { data: prof } = await supabase.from("profiles")
-          .select("is_super, role, rest_pages_enabled").eq("id", data.user.id).single();
+          .select("is_super, role, rest_pages_enabled, rest_until").eq("id", data.user.id).single();
         setIsSuper(!!prof?.is_super);
         setIsAdmin(prof?.role === "admin");
-        setRestPages((prof as { rest_pages_enabled?: boolean } | null)?.rest_pages_enabled !== false);
+        // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه سارية) — أو سوبر أدمن.
+        const rp = prof as { is_super?: boolean; rest_pages_enabled?: boolean; rest_until?: string | null } | null;
+        setRestPages(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
