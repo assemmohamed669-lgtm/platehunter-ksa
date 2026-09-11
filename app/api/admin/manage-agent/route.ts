@@ -252,6 +252,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
+      case "setTeam": {
+        // مجموعة المندوب — اللي نفس الـteam بيوصلهم لقطات بعض لحظيًا. فاضي = بلا مجموعة.
+        const team = typeof body.team === "string" && body.team.trim() ? body.team.trim() : null;
+        const { error } = await supabaseAdmin.from("profiles").update({ team }).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
       case "setKeys": {
         // مفاتيح الصوت للمندوب (Deepgram/Speechmatics/ElevenLabs) + المحرك النشط الحصري.
         const sk = (body.serviceKeys ?? {}) as Record<string, unknown>;

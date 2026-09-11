@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
   MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
-  Eye, EyeOff, Pencil, UserRound, UserPlus, X, Mic, LayoutGrid, Lock, AlertTriangle,
+  Eye, EyeOff, Pencil, UserRound, UserPlus, Users, X, Mic, LayoutGrid, Lock, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus } from "@/lib/subscription";
@@ -22,6 +22,7 @@ interface Profile {
   agent_notice?: string | null;  // رسالة خاصة تظهر لهذا المندوب وحده (بالأحمر)
   last_seen: string | null; subscription_start: string | null;
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
+  team: string | null;   // مجموعة المندوب — اللي نفسها بيوصلهم لقطات بعض
   voicex_until: string | null; rest_until: string | null;   // اشتراك منفصل لكل خدمة
   service_keys: ServiceKeys | null;
 }
@@ -60,6 +61,7 @@ export default function AgentDetail() {
   const [busy, setBusy] = useState(false);
   const [end, setEnd] = useState("");
   const [amount, setAmount] = useState("");
+  const [teamVal, setTeamVal] = useState("");   // مجموعة المندوب
   const [voiceEnd, setVoiceEnd] = useState("");   // اشتراك الصوت حتى
   const [restEnd, setRestEnd] = useState("");      // اشتراك باقي البرنامج حتى
   const [newPass, setNewPass] = useState("");
@@ -87,6 +89,7 @@ export default function AgentDetail() {
       setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? ""); setEmail(prof.email ?? "");
       setVoiceEnd(prof.voicex_until ?? ""); setRestEnd(prof.rest_until ?? "");
       setAmount(prof.subscription_amount != null ? String(prof.subscription_amount) : "");
+      setTeamVal(prof.team ?? "");
       setNoticeDraft((d) => (noticeLoadedRef.current ? d : (prof.agent_notice ?? "")));
       noticeLoadedRef.current = true;
     }
@@ -139,6 +142,13 @@ export default function AgentDetail() {
   async function saveRestSub() {
     if (!restEnd) { setMsg("اختار تاريخ نهاية باقي البرنامج."); return; }
     if (await call("extendRest", { until: restEnd })) { setMsg(`✅ اشتراك باقي البرنامج لـ${p?.username ?? "المندوب"} حتى ${restEnd}.`); load(); }
+  }
+
+  // حفظ مجموعة المندوب — اللي نفس المجموعة بيوصلهم لقطات بعض لحظيًا.
+  async function saveTeam() {
+    if (await call("setTeam", { team: teamVal })) {
+      setMsg(teamVal.trim() ? `✅ ${p?.username ?? "المندوب"} في مجموعة «${teamVal.trim()}».` : "✅ اتشال من المجموعة."); load();
+    }
   }
 
   async function saveSubscription() {
@@ -458,6 +468,22 @@ export default function AgentDetail() {
             </div>
           );
         })()}
+
+        {/* المجموعة — اللي نفس المجموعة بيوصلهم لقطات بعض لحظيًا */}
+        {isAgent && (
+          <div className="rounded-2xl border border-border bg-surface p-4">
+            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink"><Users size={16} className="text-primary" /> المجموعة</div>
+            <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
+              المناديب اللي في نفس المجموعة، لما واحد يلاقي سيارة مطلوبة، الباقي يوصلهم إشعار لحظي باللوحة وبياناتها وموقعها. سيبها فاضية = بلا مجموعة.
+            </p>
+            <div className="flex items-center gap-1.5">
+              <input value={teamVal} onChange={(e) => setTeamVal(e.target.value)} placeholder="اسم/رقم المجموعة (مثلاً: فريق ١)" dir="rtl"
+                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
+              <button onClick={saveTeam} disabled={busy}
+                className="shrink-0 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-night disabled:opacity-50">حفظ</button>
+            </div>
+          </div>
+        )}
 
         {/* Subscription */}
         {isAgent && (
