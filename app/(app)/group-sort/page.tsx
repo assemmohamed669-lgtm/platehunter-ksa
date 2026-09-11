@@ -24,7 +24,7 @@ async function fetchGroupChassis(ids: string[], agentMap: Map<string, string>): 
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase.from("chassis_records").select("*").in("agent_id", ids).range(from, from + PAGE - 1);
-    if (error) break;
+    if (error) throw new Error(error.message);   // مانبلعش الخطأ — كان بيبان «مفيش شاص»
     const rows = (data ?? []) as Record<string, unknown>[];
     for (const r of rows) {
       agentMap.set(String(r.local_id), String(r.agent_id));
@@ -58,6 +58,7 @@ export default function GroupSortPage() {
   const [names, setNames] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warn, setWarn] = useState<string | null>(null);
   const [results, setResults] = useState<Match[] | null>(null);
   const [chassisResults, setChassisResults] = useState<ChassisSortMatch[] | null>(null);
   const [refCount, setRefCount] = useState(0);
@@ -72,14 +73,16 @@ export default function GroupSortPage() {
       const t = (me as { team?: string | null } | null)?.team ?? null;
       if (!t) { setReady("no-team"); return; }
       setTeam(t);
-      const { data: mem } = await supabase.from("profiles").select("id, username").eq("team", t);
+      // أعضاء المجموعة عبر دالة security definer — قراءة profiles مباشرة بترجّع
+      // المندوب نفسه بس (RLS)، فالفرز كان بيطلع على سجلاته هو بس.
+      const { data: mem } = await supabase.rpc("my_team_members");
       setNames(Object.fromEntries(((mem ?? []) as { id: string; username: string }[]).map((m) => [m.id, m.username])));
       setReady("ok");
     })();
   }, [router]);
 
   async function onFile(file: File) {
-    setError(null); setResults(null); setChassisResults(null); setBusy(true);
+    setError(null); setWarn(null); setResults(null); setChassisResults(null); setBusy(true);
     try {
       const table = await parseExcelFile(file);
       const arabicCol = detectArabicPlateColumn(table.headers) ?? detectArabicPlateColumnByContent(table.headers, table.rows);
@@ -92,9 +95,19 @@ export default function GroupSortPage() {
       const norms = [...normMap.keys()];
       if (norms.length === 0) { setError("مفيش لوحات في الملف."); return; }
 
-      const { data, error: rpcErr } = await supabase.rpc("match_group_plates", { p_norms: norms });
-      if (rpcErr) { setError("تعذّر الفرز على السيرفر: " + rpcErr.message); return; }
-      const rows = (data ?? []) as Omit<Match, "refRow">[];
+      // بنجيب النتيجة على صفحات — الرد بيتقصّ عند ١٠٠٠ صف، فبدون ده كانت
+      // المطابقات الزيادة بتضيع بصمت.
+      const rows: Omit<Match, "refRow">[] = [];
+      const RPC_PAGE = 1000;
+      for (let from = 0; ; from += RPC_PAGE) {
+        const { data, error: rpcErr } = await supabase
+          .rpc("match_group_plates", { p_norms: norms })
+          .range(from, from + RPC_PAGE - 1);
+        if (rpcErr) { setError("تعذّر الفرز على السيرفر: " + rpcErr.message); return; }
+        const got = (data ?? []) as Omit<Match, "refRow">[];
+        rows.push(...got);
+        if (got.length < RPC_PAGE) break;
+      }
       const matches: Match[] = rows
         .map((r) => ({ ...r, refRow: normMap.get(normalizePlate(bankPlateToArabic(r.plate))) ?? null }))
         .sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1));
@@ -104,12 +117,15 @@ export default function GroupSortPage() {
       // الفرز الحالي — تام/تقريبي/بآخر الأرقام). الشاص أقل بكتير فبنجيبه كله.
       const memberIds = Object.keys(names);
       chassisAgentRef.current.clear();
-      const chassisRecs = await fetchGroupChassis(memberIds, chassisAgentRef.current);
-      if (chassisRecs.length) {
-        const chMatches = matchChassisRecordsAgainstReferrals(chassisRecs, [{ headers: table.headers, rows: table.rows }]);
-        setChassisResults(chMatches);
-      } else {
+      try {
+        const chassisRecs = await fetchGroupChassis(memberIds, chassisAgentRef.current);
+        setChassisResults(chassisRecs.length
+          ? matchChassisRecordsAgainstReferrals(chassisRecs, [{ headers: table.headers, rows: table.rows }])
+          : []);
+      } catch {
+        // فشل الشاص مايضيّعش نتيجة اللوحات — بنكمّل ونحذّر.
         setChassisResults([]);
+        setWarn("تعذّر جلب سجلات الشاص — نتيجة اللوحات فوق كاملة.");
       }
     } catch (e) {
       const msg = (e as Error)?.message ?? "";
@@ -154,6 +170,11 @@ export default function GroupSortPage() {
             {error && (
               <div className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2.5 text-xs text-danger">
                 <AlertCircle size={15} className="shrink-0" /> {error}
+              </div>
+            )}
+            {warn && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600">
+                <AlertCircle size={15} className="shrink-0" /> {warn}
               </div>
             )}
 

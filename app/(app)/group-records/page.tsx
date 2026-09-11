@@ -8,7 +8,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Users, Search, MapPin } from "lucide-react";
+import { ChevronLeft, Users, Search, MapPin, AlertCircle } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -36,31 +36,42 @@ export default function GroupRecordsPage() {
   const searchRef = useRef("");
   const [source, setSource] = useState<Source>("plates");   // لوحات / شاص
   const sourceRef = useRef<Source>("plates");
+  const [err, setErr] = useState<string | null>(null);
+  const genRef = useRef(0);   // رقم الطلب الحالي — يلغي نتيجة أي طلب قديم
   const loadedRef = useRef(0);
   const loadingRef = useRef(false);
 
   const load = useCallback(async (reset: boolean) => {
-    if (loadingRef.current) return;
+    // «تحميل المزيد» بس اللي بيتمنع وقت وجود طلب شغّال؛ تبديل المصدر/البحث لازم
+    // يمشي دايمًا (الطلب القديم بيترمي بفرق رقم الطلب) وإلا القايمة تفضل قديمة.
+    if (loadingRef.current && !reset) return;
     const ids = memberIdsRef.current;
     if (ids.length === 0) return;
     loadingRef.current = true; setLoading(true);
     try {
+      const gen = genRef.current;          // أي تبديل مصدر/بحث بيزوّدها فنرمي النتيجة القديمة
       const offset = reset ? 0 : loadedRef.current;
       const isCh = sourceRef.current === "chassis";
       const tbl = isCh ? "chassis_records" : "field_checks";
       const pcol = isCh ? "chassis" : "plate";
       const scol = isCh ? "vehicle_type" : "method";
+      // ⚠️ chassis_records مفتاحها local_id (مفيش عمود id) — الاختيار الغلط كان
+      //    بيفشل الاستعلام فتاب «شاص» يطلع فاضي.
+      const idCol = isCh ? "local_id" : "id";
       let q = supabase.from(tbl)
-        .select(`id, ${pcol}, ${scol}, maps_link, checked_at, agent_id`, reset ? { count: "exact" } : {})
+        .select(`${idCol}, ${pcol}, ${scol}, maps_link, checked_at, agent_id`, reset ? { count: "exact" } : {})
         .in("agent_id", ids)
         .order("checked_at", { ascending: false })
+        .order(idCol, { ascending: false })   // فاصل ثابت — يمنع تكرار/تخطّي صفوف بين الصفحات
         .range(offset, offset + PAGE - 1);
       const term = searchRef.current.trim();
       if (term) q = q.ilike(pcol, `%${term}%`);
       const { data, count, error } = await q;
-      if (error) return;
+      if (gen !== genRef.current) return;   // اتبدّل المصدر/البحث وإحنا مستنيين → ارمِ النتيجة
+      if (error) { setErr("تعذّر تحميل السجلات. جرّب تاني."); return; }
+      setErr(null);
       const got = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-        id: String(r.id), primary: String(r[pcol] ?? ""), sub: (r[scol] as string) ?? null,
+        id: String(r[idCol]), primary: String(r[pcol] ?? ""), sub: (r[scol] as string) ?? null,
         maps_link: (r.maps_link as string) ?? null, checked_at: String(r.checked_at), agent_id: String(r.agent_id),
       })) as Row[];
       if (reset) { setRows(got); loadedRef.current = got.length; setTotal(count ?? null); }
@@ -77,7 +88,9 @@ export default function GroupRecordsPage() {
       const t = (me as { team?: string | null } | null)?.team ?? null;
       if (!t) { setReady("no-team"); return; }
       setTeam(t);
-      const { data: mem } = await supabase.from("profiles").select("id, username").eq("team", t);
+      // أعضاء المجموعة عبر دالة security definer — قراءة profiles مباشرة بترجّع
+      // المندوب نفسه بس (RLS)، فالمشاركة ماكانتش بتحصل.
+      const { data: mem } = await supabase.rpc("my_team_members");
       const members = (mem ?? []) as { id: string; username: string }[];
       memberIdsRef.current = members.map((m) => m.id);
       setNames(Object.fromEntries(members.map((m) => [m.id, m.username])));
@@ -86,11 +99,12 @@ export default function GroupRecordsPage() {
     })();
   }, [router, load]);
 
-  function runSearch() { searchRef.current = search; setRows([]); setTotal(null); setHasMore(true); loadedRef.current = 0; void load(true); }
+  function runSearch() { genRef.current++; searchRef.current = search; setRows([]); setTotal(null); setHasMore(true); setErr(null); loadedRef.current = 0; void load(true); }
   function switchSource(s: Source) {
     if (s === source) return;
+    genRef.current++;
     setSource(s); sourceRef.current = s;
-    setRows([]); setTotal(null); setHasMore(true); loadedRef.current = 0; setSearch(""); searchRef.current = "";
+    setRows([]); setTotal(null); setHasMore(true); setErr(null); loadedRef.current = 0; setSearch(""); searchRef.current = "";
     void load(true);
   }
 
@@ -143,6 +157,12 @@ export default function GroupRecordsPage() {
               </div>
               <button onClick={runSearch} className="shrink-0 rounded-lg bg-primary px-4 py-2.5 text-xs font-bold text-night">بحث</button>
             </div>
+
+            {err && (
+              <div className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2.5 text-xs text-danger">
+                <AlertCircle size={15} className="shrink-0" /> {err}
+              </div>
+            )}
 
             {/* القائمة */}
             <div className="flex flex-col gap-2">

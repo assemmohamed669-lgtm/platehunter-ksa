@@ -25,7 +25,9 @@ import { randomUUID } from "node:crypto";
 // setActive/setVoicexEnabled/setRestPages متاحين للأدمن العادي كمان — بطلب المالك —
 // لكن الحماية تحت (target.role === "admin" && !isSuper) بتمنعه من إنه يعملها على
 // حساب أدمن/سوبر، فبيقدر يفتح/يقفل صوت VoiceX وباقي الصفحات **للمناديب بس**.
-const SUPER_ONLY = new Set(["delete", "setRole"]);
+// setTeam للسوبر أدمن بس — صفحة المجموعات نفسها سوبر-only، وبدون القفل ده أي
+// أدمن يقدر ينقل مندوب بين المجموعات بنداء مباشر على الـAPI.
+const SUPER_ONLY = new Set(["delete", "setRole", "setTeam"]);
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
