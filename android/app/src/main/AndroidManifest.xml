@@ -70,6 +70,16 @@
 
         </activity>
 
+        <!-- إشعارات الهاتف (FCM): أيقونة أبيض على شفاف — من غيرها أندرويد
+             بيرسم أيقونة التطبيق الملوّنة كمربع أبيض في شريط الإشعارات. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_notify" />
+        <!-- نفس معرّف القناة اللي بيتعمل من PushRegistrar وبيبعت بيه السيرفر. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="wanted_finds" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -90,4 +100,6 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- منظّم الإيقاع: الاهتزاز أثناء التسجيل. محتاج بناء APK جديد عشان يتفعّل. -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- إشعارات الهاتف — أندرويد ١٣+ بيطلب الإذن ده وقت التشغيل. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
