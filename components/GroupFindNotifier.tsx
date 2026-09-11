@@ -26,7 +26,9 @@ interface GroupFind {
 }
 
 export default function GroupFindNotifier() {
-  const [notif, setNotif] = useState<GroupFind | null>(null);
+  // طابور — لو جت لقطتين ورا بعض، التانية ماتمسحش الأولى قبل ما المندوب يشوفها.
+  const [queue, setQueue] = useState<GroupFind[]>([]);
+  const notif = queue[0] ?? null;
   const meRef = useRef<{ id: string; team: string | null; name: string } | null>(null);
   const coordsRef = useRef<GpsCoords | null>(null);
   const recentRef = useRef<Map<string, number>>(new Map()); // dedup نفس اللوحة
@@ -55,7 +57,7 @@ export default function GroupFindNotifier() {
           (payload) => {
             const row = payload.new as GroupFind;
             if (!row?.plate || row.finder_id === meRef.current?.id) return; // مش لقطتي أنا
-            setNotif(row);
+            setQueue((q) => (q.some((x) => x.id === row.id) ? q : [...q, row]));
             try { playNoticeTone(); } catch { /* الصوت مش متاح */ }
           })
         .subscribe();
@@ -95,9 +97,9 @@ export default function GroupFindNotifier() {
       <div className="w-full max-w-sm overflow-hidden rounded-2xl border-2 border-brand bg-surface shadow-2xl">
         <div className="flex items-center justify-between gap-2 bg-brand px-3 py-2 text-night">
           <span className="flex items-center gap-1.5 text-sm font-black">
-            <Car size={16} /> {notif.finder_name || "زميلك"} لقى سيارة مطلوبة!
+            <Car size={16} /> {notif.finder_name || "زميلك"} لقى سيارة مطلوبة!{queue.length > 1 ? ` (+${queue.length - 1})` : ""}
           </span>
-          <button onClick={() => setNotif(null)} className="text-night/80 transition hover:text-night"><X size={18} /></button>
+          <button onClick={() => setQueue((q) => q.slice(1))} className="text-night/80 transition hover:text-night"><X size={18} /></button>
         </div>
         <div className="flex flex-col items-center gap-2 px-4 py-3">
           <PlateBadge value={notif.plate} size="md" />
@@ -117,7 +119,7 @@ export default function GroupFindNotifier() {
               <MapPin size={14} /> مكان السيارة (فين لقاها)
             </a>
           )}
-          <button onClick={() => setNotif(null)} className="mt-0.5 w-full rounded-xl border border-border py-2 text-xs font-bold text-muted">تمام</button>
+          <button onClick={() => setQueue((q) => q.slice(1))} className="mt-0.5 w-full rounded-xl border border-border py-2 text-xs font-bold text-muted">تمام</button>
         </div>
       </div>
     </div>
