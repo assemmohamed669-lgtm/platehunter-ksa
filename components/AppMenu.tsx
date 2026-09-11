@@ -282,6 +282,10 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Users size={16} className="text-primary" /> سجلات المجموعة
             </Link>
+            <Link href="/group-sort" onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+              <FileUp size={16} className="text-primary" /> فرز على سجلات المجموعة
+            </Link>
             <Link href="/backup" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Download size={16} className="text-brand" /> نسخة احتياطية
