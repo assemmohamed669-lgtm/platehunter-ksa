@@ -8,7 +8,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Users, FileUp, MapPin, AlertCircle } from "lucide-react";
+import { ChevronLeft, Users, FileUp, MapPin, AlertCircle, Barcode } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { supabase } from "@/lib/supabaseClient";
 import { parseExcelFile } from "@/lib/excel";
@@ -16,6 +16,30 @@ import {
   collectReferralEntries, detectArabicPlateColumn, detectArabicPlateColumnByContent,
   detectPlateColumn, normalizePlate, bankPlateToArabic,
 } from "@/lib/plateParser";
+import { matchChassisRecordsAgainstReferrals, type ChassisSortMatch, type ChassisRecord } from "@/lib/chassisRecords";
+
+// يجيب سجلات شاص المجموعة (كلها — الشاص أقل بكتير من اللوحات) ويحوّلها لـChassisRecord.
+async function fetchGroupChassis(ids: string[], agentMap: Map<string, string>): Promise<ChassisRecord[]> {
+  const out: ChassisRecord[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("chassis_records").select("*").in("agent_id", ids).range(from, from + PAGE - 1);
+    if (error) break;
+    const rows = (data ?? []) as Record<string, unknown>[];
+    for (const r of rows) {
+      agentMap.set(String(r.local_id), String(r.agent_id));
+      out.push({
+        id: String(r.local_id), chassis: String(r.chassis ?? ""),
+        vehicleType: (r.vehicle_type as string) ?? undefined, notes: (r.notes as string) ?? undefined,
+        region: (r.region as string) ?? undefined, row: (r.extra as Record<string, string>) ?? undefined,
+        found: !!r.found, lat: (r.lat as number) ?? undefined, lng: (r.lng as number) ?? undefined,
+        mapsLink: (r.maps_link as string) ?? undefined, checkedAt: String(r.checked_at ?? ""),
+      });
+    }
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
 
 interface Match {
   id: string; plate: string; method: string | null; maps_link: string | null;
@@ -35,8 +59,10 @@ export default function GroupSortPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Match[] | null>(null);
+  const [chassisResults, setChassisResults] = useState<ChassisSortMatch[] | null>(null);
   const [refCount, setRefCount] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const chassisAgentRef = useRef<Map<string, string>>(new Map()); // recordId → agent_id
 
   useEffect(() => {
     (async () => {
@@ -53,7 +79,7 @@ export default function GroupSortPage() {
   }, [router]);
 
   async function onFile(file: File) {
-    setError(null); setResults(null); setBusy(true);
+    setError(null); setResults(null); setChassisResults(null); setBusy(true);
     try {
       const table = await parseExcelFile(file);
       const arabicCol = detectArabicPlateColumn(table.headers) ?? detectArabicPlateColumnByContent(table.headers, table.rows);
@@ -73,6 +99,18 @@ export default function GroupSortPage() {
         .map((r) => ({ ...r, refRow: normMap.get(normalizePlate(bankPlateToArabic(r.plate))) ?? null }))
         .sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1));
       setResults(matches);
+
+      // الشاص: نجيب سجلات شاص المجموعة ونطابق أرقام الشاص على الإحالة (نفس منطق
+      // الفرز الحالي — تام/تقريبي/بآخر الأرقام). الشاص أقل بكتير فبنجيبه كله.
+      const memberIds = Object.keys(names);
+      chassisAgentRef.current.clear();
+      const chassisRecs = await fetchGroupChassis(memberIds, chassisAgentRef.current);
+      if (chassisRecs.length) {
+        const chMatches = matchChassisRecordsAgainstReferrals(chassisRecs, [{ headers: table.headers, rows: table.rows }]);
+        setChassisResults(chMatches);
+      } else {
+        setChassisResults([]);
+      }
     } catch (e) {
       const msg = (e as Error)?.message ?? "";
       setError(/password|protected|محمي|كلمة/i.test(msg) ? "الملف محمي بكلمة مرور — افتحه واحفظه بدون حماية." : "تعذّر قراءة الملف: " + msg);
@@ -157,8 +195,40 @@ export default function GroupSortPage() {
                       </div>
                     );
                   })}
-                  {results.length === 0 && <p className="py-8 text-center text-sm text-muted">مفيش أي سيارة من الإحالة اتلاقت في سجلات المجموعة.</p>}
+                  {results.length === 0 && (!chassisResults || chassisResults.length === 0) &&
+                    <p className="py-8 text-center text-sm text-muted">مفيش أي سيارة من الإحالة اتلاقت في سجلات المجموعة.</p>}
                 </div>
+
+                {/* مطابقات الشاص */}
+                {chassisResults && chassisResults.length > 0 && (
+                  <div className="mt-1 flex flex-col gap-2">
+                    <div className="flex items-center gap-1.5 text-sm font-bold text-ink"><Barcode size={15} className="text-brand" /> شاص طابق ({chassisResults.length.toLocaleString("ar-EG")})</div>
+                    {chassisResults.map((m, i) => {
+                      const agentId = chassisAgentRef.current.get(m.record.id);
+                      const info = m.referralRow ? Object.entries(m.referralRow).filter(([, v]) => v && String(v).trim()).slice(0, 6) : [];
+                      return (
+                        <div key={i} className="rounded-xl border border-border bg-surface p-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink" dir="ltr" title={m.record.chassis}>{m.record.chassis}</span>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${m.matchType === "exact" ? "bg-emerald-500/15 text-emerald-500" : "bg-amber-500/15 text-amber-500"}`}>
+                              {m.matchType === "exact" ? "تام" : m.matchType === "fuzzy" ? "تقريبي" : "بآخر الأرقام"}
+                            </span>
+                            {m.record.mapsLink && (
+                              <a href={m.record.mapsLink} target="_blank" rel="noopener noreferrer"
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-primary/40 bg-primary/10 text-primary" title="الموقع"><MapPin size={14} /></a>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-[10px] text-muted">لقاها: {agentId ? (names[agentId] ?? "—") : "—"}{m.record.vehicleType ? ` · ${m.record.vehicleType}` : ""}</p>
+                          {info.length > 0 && (
+                            <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-surface-2 p-2">
+                              {info.map(([k, v], j) => (<div key={j} className="flex min-w-0 gap-1 text-[11px]"><span className="shrink-0 text-muted">{k}:</span><span className="truncate font-bold text-ink">{v}</span></div>))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </>
             )}
           </>
