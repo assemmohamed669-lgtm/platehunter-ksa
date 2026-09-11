@@ -23,6 +23,22 @@ function startOfToday(): number {
   return d.getTime();
 }
 
+/**
+ * خدمة (صوت / باقي البرنامج) لسه سارية؟ التاريخ الفاضي (null) = بلا حد → سارية.
+ * غير كده: سارية لو تاريخ نهايتها النهاردة أو بعده. القفل التلقائي مبني عليها.
+ */
+export function serviceActive(until: string | null | undefined): boolean {
+  if (!until) return true;
+  return new Date(until + "T00:00:00").getTime() >= startOfToday();
+}
+
+/** الأبعد بين تاريخين (YYYY-MM-DD) — لتاريخ الحساب العام = أبعد خدمة. */
+export function maxDate(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return a >= b ? a : b;   // مقارنة نصية آمنة لصيغة YYYY-MM-DD
+}
+
 export function subStatus(end: string | null | undefined, graceDays = GRACE_DAYS): SubInfo {
   if (!end) return { status: "none", daysLeft: 0, label: "بدون اشتراك", color: "#9ca3af" };
   const endMs = new Date(end + "T00:00:00").getTime();

@@ -1,3 +1,5 @@
+import { serviceActive } from "@/lib/subscription";
+
 /**
  * مين يشوف تبويب «صوتي» في صفحة التشييك.
  *
@@ -13,17 +15,24 @@
 export interface VoiceAccessProfile {
   voicex_enabled?: boolean | null;
   is_super?: boolean | null;
+  voicex_until?: string | null;   // تاريخ نهاية اشتراك الصوت (لما يعدّي يتقفل)
 }
 
 /**
  * @param profile صف المشترك من السيرفر، أو `null` لو القراءة فشلت.
  * @param cached  آخر قيمة معروفة على الجهاز، أو `null` لو مافيش.
+ *
+ * الصوت ظاهر لو (voicex_enabled يدويًا **و** أيام الصوت لسه سارية) أو السوبر أدمن.
+ * السوبر أدمن مالوش انتهاء. voicex_until فاضي = بلا حد (سارية).
  */
 export function voiceTabVisible(
   profile: VoiceAccessProfile | null,
   cached: boolean | null,
 ): boolean {
-  if (profile) return profile.voicex_enabled === true || profile.is_super === true;
+  if (profile) {
+    if (profile.is_super === true) return true;
+    return profile.voicex_enabled === true && serviceActive(profile.voicex_until);
+  }
   return cached ?? false;
 }
 

@@ -20,7 +20,7 @@ import { applyServiceKeys } from "@/lib/voiceKeys";
 import { fetchSharedDeepgramKey } from "@/lib/sharedVoiceKey";
 import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
-import { subStatus, isCutOff, GRACE_DAYS, subscriptionNotice, type SubInfo } from "@/lib/subscription";
+import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, type SubInfo } from "@/lib/subscription";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 
 const ADMIN_WHATSAPP = "971542482545";
@@ -66,12 +66,14 @@ export default function AppShellLayout({
       if (!data.user) return;
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, is_active, subscription_end, is_trial, service_keys, rest_pages_enabled")
+        .select("role, is_active, subscription_end, is_trial, service_keys, rest_pages_enabled, rest_until, is_super")
         .eq("id", data.user.id)
         .single();
       setIsAdmin(profile?.role === "admin");
-      // العلم الأب: undefined → مفتوح (الافتراضي). false فقط = «صوت VoiceX فقط».
-      setRestPagesEnabled((profile as { rest_pages_enabled?: boolean } | null)?.rest_pages_enabled !== false);
+      // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه لسه سارية) — أو سوبر أدمن.
+      // false فقط (يدوي) أو انتهاء الأيام = «صوت VoiceX فقط». undefined → مفتوح.
+      const rp = profile as { rest_pages_enabled?: boolean; rest_until?: string | null; is_super?: boolean } | null;
+      setRestPagesEnabled(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).
       if (profile && (profile as { service_keys?: unknown }).service_keys != null) {
         applyServiceKeys((profile as { service_keys?: unknown }).service_keys);
