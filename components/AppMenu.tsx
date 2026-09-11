@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   X, Settings, HelpCircle, LogOut, Info,
   Palette, KeyRound, ChevronLeft,
-  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp, Mic,
+  RefreshCw, Download, MessageCircle, BarChart3, CloudDownload, FileUp, Mic, Users,
 } from "lucide-react";
 import Link from "next/link";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
@@ -278,6 +278,10 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
               <CloudDownload size={16} className="text-primary" /> {syncing ? "جارٍ المزامنة..." : "مزامنة واسترجاع بياناتي"}
             </button>
+            <Link href="/group-records" onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+              <Users size={16} className="text-primary" /> سجلات المجموعة
+            </Link>
             <Link href="/backup" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Download size={16} className="text-brand" /> نسخة احتياطية
