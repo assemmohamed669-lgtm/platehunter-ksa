@@ -12,7 +12,7 @@ import { APP_VERSION } from "@/lib/appVersion";
 import { fetchLearningEnabled, setLearningEnabled } from "@/lib/learningSettings";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, BellRing } from "lucide-react";
 
 interface AgentProfile {
   id: string;
@@ -32,6 +32,7 @@ interface AgentProfile {
   subscription_amount: number | null;
   owed_amount?: number | null;   // «عليه» — المتبقّي على المندوب (من صفحة الحسابات)
   app_version: string | null;
+  team?: string | null;          // المجموعة — لاستهداف الإشعار بمجموعة واحدة
   created_at: string;
 }
 
@@ -105,7 +106,13 @@ export default function AdminDashboard() {
   const [pollOpts, setPollOpts] = useState<string[]>(["", ""]);
   const [pollBusy, setPollBusy] = useState(false);
   // زرّين فوق البث للمناديب: رسالة عادية ولا استطلاع رأي (سوبر أدمن فقط)
-  const [broadcastTab, setBroadcastTab] = useState<"notice" | "poll">("notice");
+  const [broadcastTab, setBroadcastTab] = useState<"notice" | "poll" | "push">("notice");
+  // إشعار هاتف — بيوصل حتى والتطبيق مقفول (النسخة المثبّتة من المتجر).
+  const [pushText, setPushText] = useState("");
+  const [pushTarget, setPushTarget] = useState<"all" | "team">("all");
+  const [pushTeam, setPushTeam] = useState("");
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
   const [learningBusy, setLearningBusy] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0); // عيّنات متجمّعة على الجهاز
@@ -604,6 +611,10 @@ export default function AdminDashboard() {
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${broadcastTab === "poll" ? "bg-primary text-night" : "bg-surface-2 text-muted"}`}>
               <BarChart3 size={13} /> استطلاع رأي
             </button>
+            <button onClick={() => setBroadcastTab("push")}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${broadcastTab === "push" ? "bg-primary text-night" : "bg-surface-2 text-muted"}`}>
+              <BellRing size={13} /> إشعار هاتف
+            </button>
           </div>
 
           {broadcastTab === "notice" && (<>
@@ -674,6 +685,82 @@ export default function AdminDashboard() {
               {noticeBusy ? "..." : "انشر"}
             </button>
           </div>
+          </>)}
+
+          {broadcastTab === "push" && (<>
+          <p className="mb-2 text-[11px] leading-relaxed text-muted">
+            ده إشعار بيطلع على شاشة الموبايل <b className="text-ink">حتى لو التطبيق مقفول</b> —
+            مش زي الرسالة اللي فوق اللي بتظهر جوّه البرنامج. بيوصل بس للمناديب اللي مركّبين
+            النسخة من المتجر وسمحوا بالإشعارات.
+          </p>
+          {/* رسالة جاهزة — أكتر استخدام متوقّع */}
+          <button
+            onClick={() => setPushText("نزل تحديث جديد للبرنامج — حدّث التطبيق من المتجر.")}
+            className="mb-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-[10px] font-bold text-primary transition hover:bg-primary/20">
+            + رسالة «فيه تحديث»
+          </button>
+          <textarea
+            value={pushText}
+            onChange={(e) => { setPushText(e.target.value); setPushMsg(null); }}
+            rows={2}
+            maxLength={200}
+            placeholder="اكتب نص الإشعار…"
+            className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs text-ink outline-none focus:border-primary"
+          />
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <select
+                value={pushTarget}
+                onChange={(e) => setPushTarget(e.target.value as "all" | "team")}
+                className="rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary">
+                <option value="all">كل المناديب</option>
+                <option value="team">مجموعة معيّنة</option>
+              </select>
+              {pushTarget === "team" && (
+                <select
+                  value={pushTeam}
+                  onChange={(e) => setPushTeam(e.target.value)}
+                  className="rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary">
+                  <option value="">اختار المجموعة…</option>
+                  {Array.from(new Set(agents.map((a) => a.team).filter(Boolean) as string[]))
+                    .sort()
+                    .map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              )}
+            </div>
+            <button
+              disabled={pushBusy || !pushText.trim() || (pushTarget === "team" && !pushTeam)}
+              onClick={async () => {
+                const who = pushTarget === "team" ? `مجموعة «${pushTeam}»` : "كل المناديب";
+                if (!confirm(`تبعت الإشعار ده لـ${who}؟\n\n${pushText.trim()}`)) return;
+                setPushBusy(true); setPushMsg(null);
+                try {
+                  const res = await fetch("/api/admin/push", {
+                    method: "POST", headers: await authHeaders(),
+                    body: JSON.stringify({
+                      body: pushText.trim(),
+                      target: pushTarget,
+                      ...(pushTarget === "team" ? { team: pushTeam } : {}),
+                    }),
+                  });
+                  const j = await res.json();
+                  if (!res.ok) setPushMsg({ ok: false, text: j.error ?? "تعذّر الإرسال." });
+                  else if (j.devices === 0) setPushMsg({ ok: false, text: "مفيش أي جهاز مسجّل للإشعارات لسه — لازم المناديب يحدّثوا التطبيق من المتجر ويسمحوا بالإشعارات." });
+                  else { setPushMsg({ ok: true, text: `اتبعت لـ${j.sent} جهاز من ${j.devices}.` }); setPushText(""); }
+                } catch {
+                  setPushMsg({ ok: false, text: "مافيش اتصال — جرّب تاني." });
+                }
+                setPushBusy(false);
+              }}
+              className={`shrink-0 rounded-full bg-primary px-4 py-1.5 text-[11px] font-bold text-night transition ${pushBusy || !pushText.trim() || (pushTarget === "team" && !pushTeam) ? "opacity-50" : ""}`}>
+              {pushBusy ? "..." : "ابعت الإشعار"}
+            </button>
+          </div>
+          {pushMsg && (
+            <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold ${pushMsg.ok ? "bg-emerald-600/10 text-emerald-600" : "bg-danger/10 text-danger"}`}>
+              {pushMsg.text}
+            </p>
+          )}
           </>)}
 
           {broadcastTab === "poll" && (<>
