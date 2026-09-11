@@ -513,6 +513,14 @@ export default function AdminDashboard() {
           <Wallet size={16} /> حسابات المناديب — الدفعات والدخل
         </button>
 
+        {/* المجموعات — سوبر أدمن فقط: مين مع مين (لقطات + سجلات مشتركة) */}
+        {isSuper && (
+          <button onClick={() => router.push("/admin/groups")}
+            className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
+            <Users size={16} /> المجموعات — مين مع مين
+          </button>
+        )}
+
         {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
         {isSuper && (
           <button onClick={() => router.push("/admin/locations")}
