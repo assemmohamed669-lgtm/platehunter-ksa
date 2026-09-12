@@ -1,93 +1,138 @@
-import { describe, it, expect } from "vitest";
-import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY } from "@/lib/fieldCheckEdit";
-import type { FieldCheckEntry } from "@/lib/idb";
+import "fake-indexeddb/auto";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 /**
- * المندوب بيعدّل على اللوحة اللي طلعت في التشييك — يكتب ملاحظة، أو يختار نوع
- * السيارة (ونيت/صالون…)، أو يصلّح اللوحة نفسها. التعديلات دي لازم:
- *   • تتحفظ **على طول** جوّه السجل نفسه (مش في الذاكرة بس)،
- *   • تفضل قدام السيارة في التصدير والمشاركة،
- *   • وتطلع في نتيجة الفرز بعد كده.
+ * تعديل لوحة في «السجلات» كان **بيرجع زي ما كان** بعد إعادة فتح الحساب.
  *
- * النوع والملاحظات بيتخزّنوا جوّه `row` — الفرز بينشر `row` كله في شيت
- * السجلات، فأي حاجة هنا بتوصل للفرز تلقائياً.
+ * السبب: `savePlatesEditor` بيحفظ التعديل محلياً بـ`synced:false` بس مابيرفعوش
+ * على طول. وأول ما المندوب يفتح الصفحة تاني، `restoreFieldChecks` بيسحب كل
+ * صفوفه من السيرفر ويكتبها فوق المحلي (`put`) — فالقيمة **القديمة** الجاية من
+ * السيرفر بتمسح تعديله، وبعدها المزامنة التدريجية مالاقيتش حاجة «معلّقة» لأن
+ * الصف اتكتب فوقه بـ`synced:true`. التعديل بيضيع في صمت.
+ *
+ * القاعدة الصح: أي صف لسه ماترفعش (`synced:false`) = تعديل محلي أحدث من
+ * السيرفر → الاسترجاع مايكتبش فوقه.
  */
 
-const base = (): FieldCheckEntry => ({
-  id: "e1",
-  plate: "ا ب ح 1234",
-  row: { "الحي-الشارع": "الواحة" },
-  method: "متشيكة بالصوت",
-  checkedAt: "2026-08-10T10:00:00.000Z",
-  synced: true,
+// ── Supabase موهوم: جدول field_checks في الذاكرة ─────────────────────────────
+type Row = Record<string, unknown>;
+const serverRows: Row[] = [];
+let sessionUid: string | null = null;
+
+function makeQuery() {
+  const st: {
+    op: "select" | "delete" | "upsert";
+    filters: [string, unknown][];
+    inFilter: [string, unknown[]] | null;
+    range: [number, number] | null;
+    head: boolean;
+    row?: Row;
+  } = { op: "select", filters: [], inFilter: null, range: null, head: false };
+
+  const matches = (r: Row) =>
+    st.filters.every(([c, v]) => r[c] === v) &&
+    (!st.inFilter || st.inFilter[1].includes(r[st.inFilter[0]]));
+
+  function run() {
+    if (st.op === "upsert") {
+      const row = st.row!;
+      const i = serverRows.findIndex((r) => r.local_id === row.local_id);
+      if (i >= 0) serverRows[i] = row;
+      else serverRows.push(row);
+      return { data: null, error: null };
+    }
+    if (st.op === "delete") {
+      for (let i = serverRows.length - 1; i >= 0; i--) if (matches(serverRows[i])) serverRows.splice(i, 1);
+      return { data: null, error: null };
+    }
+    const rows = serverRows.filter(matches);
+    if (st.head) return { data: null, count: rows.length, error: null };
+    const [from, to] = st.range ?? [0, rows.length - 1];
+    return { data: rows.slice(from, to + 1), count: rows.length, error: null };
+  }
+
+  const q = {
+    select: (_c?: string, o?: { head?: boolean }) => { st.op = "select"; st.head = !!o?.head; return q; },
+    delete: () => { st.op = "delete"; return q; },
+    upsert: (row: Row) => { st.op = "upsert"; st.row = row; return q; },
+    eq: (c: string, v: unknown) => { st.filters.push([c, v]); return q; },
+    in: (c: string, v: unknown[]) => { st.inFilter = [c, v]; return q; },
+    order: () => q,
+    range: (f: number, t: number) => { st.range = [f, t]; return q; },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    then: (res: any, rej: any) => Promise.resolve(run()).then(res, rej),
+  };
+  return q;
+}
+
+vi.mock("@/lib/supabaseClient", () => ({
+  supabase: {
+    from: () => makeQuery(),
+    auth: { getSession: async () => ({ data: { session: sessionUid ? { user: { id: sessionUid } } : null } }) },
+  },
+}));
+
+const { saveFieldCheckEntry, getAllFieldCheckEntries, clearFieldCheck } = await import("@/lib/idb");
+const { restoreFieldChecks, pushPendingFieldChecks } = await import("@/lib/syncFieldCheck");
+type FieldCheckEntry = import("@/lib/idb").FieldCheckEntry;
+
+const AG = "7b4bc404-50e7-46ad-935f-aa65e293d6b8";
+const ID = "fc-1";
+
+function entry(plate: string, synced: boolean): FieldCheckEntry {
+  return {
+    id: ID, agentId: AG, plate, row: {}, method: "يدوي",
+    checkedAt: "2026-09-11T10:00:00.000Z", synced,
+  } as FieldCheckEntry;
+}
+
+/** الصف زي ما هو مخزّن على السيرفر (اللوحة القديمة قبل التعديل). */
+function serverRow(plate: string): Row {
+  return {
+    local_id: ID, agent_id: AG, plate, method: "يدوي",
+    lat: null, lng: null, maps_link: null, extra: {},
+    checked_at: "2026-09-11T10:00:00.000Z",
+  };
+}
+
+beforeEach(async () => {
+  serverRows.length = 0;
+  sessionUid = AG;
+  await clearFieldCheck();
 });
 
-describe("applyEntryEdit — تعديلات المندوب بتتحفظ في السجل", () => {
-  it("الملاحظات بتتكتب جوّه السجل", () => {
-    const e = applyEntryEdit(base(), { notes: "مركونة تحت العمارة" });
-    expect(entryNotes(e)).toBe("مركونة تحت العمارة");
-    expect(e.row[NOTES_KEY]).toBe("مركونة تحت العمارة");
+describe("تعديل سجل لسه ماترفعش", () => {
+  it("الاسترجاع مايكتبش القيمة القديمة فوق تعديل محلي معلّق", async () => {
+    serverRows.push(serverRow("ابح1111"));          // السيرفر: اللوحة القديمة
+    await saveFieldCheckEntry(entry("ابح2222", false)); // المندوب عدّلها ولسه مترفعتش
+
+    await restoreFieldChecks(AG);
+
+    const rows = await getAllFieldCheckEntries(AG);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].plate).toBe("ابح2222");   // تعديله لازم يفضل
+    expect(rows[0].synced).toBe(false);       // ولسه معلّق للرفع
   });
 
-  it("نوع السيارة بيتحفظ", () => {
-    const e = applyEntryEdit(base(), { type: "ونيت" });
-    expect(entryType(e)).toBe("ونيت");
-    expect(e.row[TYPE_KEY]).toBe("ونيت");
+  it("بعد الرفع، السيرفر بياخد اللوحة الجديدة والاسترجاع يبقى متطابق", async () => {
+    serverRows.push(serverRow("ابح1111"));
+    await saveFieldCheckEntry(entry("ابح2222", false));
+
+    await pushPendingFieldChecks(AG);
+    expect(serverRows[0].plate).toBe("ابح2222");
+
+    await restoreFieldChecks(AG);
+    const rows = await getAllFieldCheckEntries(AG);
+    expect(rows[0].plate).toBe("ابح2222");
   });
 
-  it("تعديل اللوحة نفسها بيتحفظ ومتشالة منها المسافات الزيادة", () => {
-    const e = applyEntryEdit(base(), { plate: "  د ن ر 5678  " });
-    expect(e.plate).toBe("د ن ر 5678");
-  });
+  it("الصف المرفوع بالفعل (synced) بياخد قيمة السيرفر عادي", async () => {
+    serverRows.push(serverRow("ابح3333"));
+    await saveFieldCheckEntry(entry("ابح1111", true));  // نسخة قديمة مرفوعة
 
-  it("أي تعديل بيعلّم السجل إنه محتاج يترفع تاني للسيرفر", () => {
-    expect(applyEntryEdit(base(), { notes: "x" }).synced).toBe(false);
-    expect(applyEntryEdit(base(), { type: "و" }).synced).toBe(false);
-    expect(applyEntryEdit(base(), { plate: "ابح1235" }).synced).toBe(false);
-  });
+    await restoreFieldChecks(AG);
 
-  it("مسح الملاحظة أو النوع بيشيلهم من السجل مش بيسيبهم فاضيين", () => {
-    const withBoth = applyEntryEdit(base(), { notes: "ملاحظة", type: "ونيت" });
-    const cleared = applyEntryEdit(withBoth, { notes: "", type: "" });
-    expect(NOTES_KEY in cleared.row).toBe(false);
-    expect(TYPE_KEY in cleared.row).toBe(false);
-  });
-
-  it("باقي بيانات السجل مابتتلمسش", () => {
-    const e = applyEntryEdit(base(), { notes: "ملاحظة" });
-    expect(e.row["الحي-الشارع"]).toBe("الواحة");
-    expect(e.id).toBe("e1");
-    expect(e.method).toBe("متشيكة بالصوت");
-    expect(e.checkedAt).toBe("2026-08-10T10:00:00.000Z");
-  });
-
-  it("السجل الأصلي مابيتغيّرش (نسخة جديدة)", () => {
-    const orig = base();
-    applyEntryEdit(orig, { notes: "ملاحظة" });
-    expect(orig.row[NOTES_KEY]).toBeUndefined();
-    expect(orig.synced).toBe(true);
-  });
-
-  it("لوحة فاضية مابتتقبلش — بتفضل زي ما هي", () => {
-    const e = applyEntryEdit(base(), { plate: "   " });
-    expect(e.plate).toBe("ا ب ح 1234");
-  });
-
-  it("بيقرا ملاحظة موجودة أصلاً بأي تسمية قريبة من الشيت", () => {
-    const e: FieldCheckEntry = { ...base(), row: { "الملاحظات": "من الشيت" } };
-    expect(entryNotes(e)).toBe("من الشيت");
-  });
-
-  it("التعديل بيكتب في نفس عمود الشيت مش بيعمل عمود تاني", () => {
-    const e: FieldCheckEntry = { ...base(), row: { "الملاحظات": "قديمة" } };
-    const upd = applyEntryEdit(e, { notes: "جديدة" });
-    expect(upd.row["الملاحظات"]).toBe("جديدة");
-    expect(NOTES_KEY in upd.row && upd.row[NOTES_KEY] !== "جديدة").toBe(false);
-    expect(Object.keys(upd.row)).toHaveLength(1);
-  });
-
-  it("مافيش تعديل → السجل زي ما هو بالظبط", () => {
-    const orig = base();
-    expect(applyEntryEdit(orig, {})).toEqual(orig);
+    const rows = await getAllFieldCheckEntries(AG);
+    expect(rows[0].plate).toBe("ابح3333");   // السيرفر هو المرجع هنا
   });
 });
