@@ -17,7 +17,6 @@ import {
   detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
-import { FuzzyPlateIndex } from "@/lib/fuzzyPlateIndex";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
@@ -1931,14 +1930,14 @@ export default function SortingPage() {
       setRefPlateCount(new Set(
         refEntries.filter((e) => /[0-9]/.test(e.norm) && /[^0-9]/.test(e.norm)).map((e) => e.norm)
       ).size);
-      // فهرس المتشابه (خانة واحدة غلط) — بيشتغل بس لما مفيش تطابق تام.
-      const refFuzzy = new FuzzyPlateIndex<{ row: Record<string, string>; norm: string }>();
-      for (const e of refEntries) refFuzzy.add(e.norm, { row: e.row, norm: e.norm });
+      // ⛔ **تطابق تام بس.** جُرّبت المطابقة التقريبية (خانة واحدة مختلفة) وطلّعت
+      //    لوحات من الداتا مش موجودة في الإحالة أصلاً كـ«مطلوبة» — المندوب
+      //    يتحرك لعربية غلط. الضرر أكبر من النفع، فاتشالت بأمر المالك
+      //    (٢٠٢٦-٠٩-١٣). `lib/fuzzyPlateIndex.ts` متسابة لو اتعملت يوم كقسم
+      //    منفصل «للمراجعة» مش كنتيجة مطلوبة.
       const pushMatch = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number) => {
         const hit = refIndex.get(n);
-        if (hit) { matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx }); return; }
-        const f = refFuzzy.find(n);
-        if (f) matches.push({ referralRow: f.value.row, dataRow, status: "fuzzy", similarity: f.similarity, refPlateNorm: f.value.norm, dataIdx, srcIdx });
+        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx });
       };
       for (const e of refEntries) {
         if (!refIndex.has(e.norm)) refIndex.set(e.norm, { row: e.row, norm: e.norm });
@@ -2067,14 +2066,10 @@ export default function SortingPage() {
           }
         }
       }
-      // نفس فكرة الفرز الكلي: متشابه بخانة واحدة لما مفيش تطابق تام.
-      const newFuzzy = new FuzzyPlateIndex<{ row: Record<string, string>; norm: string }>();
-      for (const e of newEntries) newFuzzy.add(e.norm, { row: e.row, norm: e.norm });
+      // ⛔ تطابق تام بس — نفس سبب الفرز الكلي فوق.
       const pushNew = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number) => {
         const hit = newIndex.get(n);
-        if (hit) { matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx }); return; }
-        const f = newFuzzy.find(n);
-        if (f) matches.push({ referralRow: f.value.row, dataRow, status: "fuzzy", similarity: f.similarity, dataIdx, refPlateNorm: f.value.norm, srcIdx });
+        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx });
       };
       // gIdx = فهرس عام متتابع عبر كل مصادر الداتا (أساسي + إضافي) بالترتيب — عشان
       // dataIdx يفضل مطابق لترتيب الملفات بعد الفرز النهائي.
@@ -2096,9 +2091,6 @@ export default function SortingPage() {
       // (وتطابق على فهرس الجديد مباشرة)، والصغيرة عبر فهرس صغير في الذاكرة.
       if (memSources.length) {
         const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>>();
-        // المسار ده بيلفّ على الإحالة مش على الداتا، فالفهرس التقريبي بيتبني على
-        // **الداتا** عشان لوحة الإحالة تلاقي شبيهها.
-        const dataFuzzy = new FuzzyPlateIndex<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>();
         for (let si = 0; si < memSources.length; si++) {
           const src = memSources[si];
           const pc = src.plateCol;
@@ -2121,7 +2113,6 @@ export default function SortingPage() {
             const entry = { row, dataIdx: idx, srcIdx: srcBase + si };
             const arr = dataIndex.get(n);
             if (arr) arr.push(entry); else dataIndex.set(n, [entry]);
-            dataFuzzy.add(n, entry);
           }
         }
         for (const e of newEntries) {
@@ -2131,11 +2122,6 @@ export default function SortingPage() {
           if (dataRows) {
             for (const { row: dataRow, dataIdx, srcIdx } of dataRows) {
               matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm, srcIdx });
-            }
-          } else {
-            for (const f of dataFuzzy.findAll(e.norm)) {
-              matches.push({ referralRow: e.row, dataRow: f.value.row, status: "fuzzy", similarity: f.similarity,
-                dataIdx: f.value.dataIdx, refPlateNorm: e.norm, srcIdx: f.value.srcIdx });
             }
           }
         }
@@ -2967,7 +2953,7 @@ export default function SortingPage() {
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-surface p-3">
-                <p className="text-xl font-black text-ink">{totalReferralRows}</p>
+                <p className="text-xl font-black text-ink">{refPlateCount || totalReferralRows}</p>
                 <p className="text-xs text-muted">
                   إجمالي الإحالة{extraReferrals.some((e) => e.table) ? ` (${collectRefSources().length} شيتات)` : ""}
                 </p>
