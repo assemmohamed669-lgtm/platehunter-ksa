@@ -12,8 +12,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Users, Plus, X, Search, Trash2, UserPlus, ChevronDown, Save } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { GROUP_ELIGIBLE_ROLES, memberBadge, membersLabel } from "@/lib/groupMembers";
 
-interface Agent { id: string; username: string; team: string | null; }
+interface Agent { id: string; username: string; team: string | null; role: string | null; }
 
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
@@ -42,9 +43,11 @@ export default function GroupsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // الأدمنز كمان ينفع يبقوا في مجموعة — الباك إند بيدعمهم من الأصل
+    // (setTeam بلا فلتر دور، وmy_team_members بترجّع أي حد بنفس الـteam).
     const { data } = await supabase.from("profiles").select("id, username, team, role")
-      .eq("role", "agent").order("username", { ascending: true });
-    if (data) setAgents((data as (Agent & { role: string })[]).map(({ id, username, team }) => ({ id, username, team })));
+      .in("role", [...GROUP_ELIGIBLE_ROLES]).order("username", { ascending: true });
+    if (data) setAgents((data as Agent[]).map(({ id, username, team, role }) => ({ id, username, team, role })));
     setLoading(false);
   }, []);
 
@@ -155,7 +158,7 @@ export default function GroupsPage() {
                 className="flex w-full items-center justify-between gap-2 px-4 py-3 text-right">
                 <span className="flex items-center gap-1.5 text-sm font-bold text-ink"><Users size={16} className="text-primary" /> {t}</span>
                 <span className="flex items-center gap-2">
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{members.length} مندوب</span>
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{membersLabel(members)}</span>
                   <ChevronDown size={16} className={`text-muted transition ${isOpen ? "rotate-180" : ""}`} />
                 </span>
               </button>
@@ -246,6 +249,7 @@ export default function GroupsPage() {
                     <button key={a.id} onClick={() => setCreateSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })}
                       className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-right transition ${on ? "border-primary bg-primary/10" : "border-transparent hover:bg-surface"}`}>
                       <span className="min-w-0 flex-1 truncate text-xs text-ink">{a.username}
+                        {memberBadge(a.role) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold text-primary bg-primary/10">{memberBadge(a.role)}</span>}
                         {a.team && <span className="mr-1 text-[10px] text-amber-500">(في «{a.team}» — هينتقل)</span>}
                       </span>
                       <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${on ? "border-primary bg-primary text-night" : "border-border"}`}>{on && "✓"}</span>
