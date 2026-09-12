@@ -16,6 +16,7 @@ import {
   collectReferralEntries, detectArabicPlateColumn, detectArabicPlateColumnByContent,
   detectPlateColumn, normalizePlate, bankPlateToArabic,
 } from "@/lib/plateParser";
+import { referralBlocks } from "@/lib/sideBySideTables";
 import { matchChassisRecordsAgainstReferrals, type ChassisSortMatch, type ChassisRecord } from "@/lib/chassisRecords";
 
 // يجيب سجلات شاص المجموعة (كلها — الشاص أقل بكتير من اللوحات) ويحوّلها لـChassisRecord.
@@ -85,10 +86,12 @@ export default function GroupSortPage() {
     setError(null); setWarn(null); setResults(null); setChassisResults(null); setBusy(true);
     try {
       const table = await parseExcelFile(file);
-      const arabicCol = detectArabicPlateColumn(table.headers) ?? detectArabicPlateColumnByContent(table.headers, table.rows);
-      const plateCol = arabicCol ?? detectPlateColumn(table.headers, table.rows);
-      if (!plateCol) { setError("مش لاقي عمود لوحة في الملف."); return; }
-      const entries = collectReferralEntries([{ rows: table.rows, plateCol, isArabic: arabicCol !== null }]);
+      // الورقة ممكن تكون كذا جدول جنب بعض — نفس معالجة صفحة الفرز بالظبط.
+      const blocks = referralBlocks(table.headers, table.rows).filter((b) => b.plateCol);
+      if (blocks.length === 0) { setError("مش لاقي عمود لوحة في الملف."); return; }
+      const entries = collectReferralEntries(
+        blocks.map((b) => ({ rows: b.rows, plateCol: b.plateCol!, isArabic: b.isArabic }))
+      );
       setRefCount(entries.length);
       const normMap = new Map<string, Record<string, string>>();
       for (const e of entries) if (!normMap.has(e.norm)) normMap.set(e.norm, e.row);

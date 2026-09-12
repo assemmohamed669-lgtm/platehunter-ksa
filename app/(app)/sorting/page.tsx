@@ -16,7 +16,7 @@ import {
 import {
   detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
-import { splitSideBySideTables, type SplitTable } from "@/lib/sideBySideTables";
+import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
@@ -846,7 +846,12 @@ export default function SortingPage() {
     // فعمود «نوع المركبة» العربي ماكانش بيظهر في النتيجة خالص).
     if (isMultiSheetRef) {
       for (const s of selectedRefSheets) {
-        sources.push({ kind: "referral", headers: s.headers, rows: s.rows, plateCol: s.headers[s.plateCol] ?? null });
+        const blocks = refBlocks({ headers: s.headers, rows: s.rows });
+        if (blocks.length > 1) {
+          for (const b of blocks) sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: b.plateCol });
+        } else {
+          sources.push({ kind: "referral", headers: s.headers, rows: s.rows, plateCol: s.headers[s.plateCol] ?? null });
+        }
       }
     } else if (referralTable) {
       // ورقة فيها كذا جدول جنب بعض: كل جدول بأعمدته (بأسمائها الموحّدة) عشان
@@ -854,7 +859,7 @@ export default function SortingPage() {
       const blocks = refBlocks(referralTable);
       if (blocks.length > 1) {
         for (const b of blocks) {
-          sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: blockPlateCol(b).col });
+          sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: b.plateCol });
         }
       } else {
         sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
@@ -865,7 +870,7 @@ export default function SortingPage() {
     for (const er of extraReferrals) {
       if (!er.table) continue;
       for (const b of refBlocks(er.table)) {
-        sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: blockPlateCol(b).col });
+        sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: b.plateCol });
       }
     }
     return resolveMergedResultColumns(sources);
@@ -1786,20 +1791,11 @@ export default function SortingPage() {
 
   // كل مصادر الإحالة (الأساسية + الإضافية) كـ ReferralSource للفرز الموحّد.
   /**
-   * ورقة الإحالة ممكن تكون **كذا جدول جنب بعض** (الخرج | الرياض | الشرقية…)،
-   * وكل جدول بعمود لوحة لوحده. بنرجّع كل جدول كمصدر مستقل عشان اللوحات كلها
-   * تتفرز وكل لوحة تطلع ببيانات صفّها هي. الورقة العادية بترجع زي ما هي.
+   * ورقة الإحالة ممكن تكون **كذا جدول جنب بعض** (الخرج | الرياض | الشرقية…).
+   * المنطق كله في lib/sideBySideTables عشان كل المسارات تستخدم نفس الحاجة.
    */
-  function refBlocks(t: { headers: string[]; rows: Record<string, string>[] } | null): SplitTable[] {
-    if (!t) return [];
-    const hasPlates = (h: string[], r: Record<string, string>[]) =>
-      detectArabicPlateColumnByContent(h, r) !== null || detectPlateColumnByContent(h, r, 50, 0.5) !== null;
-    return splitSideBySideTables(t.headers, t.rows, hasPlates) ?? [{ headers: t.headers, rows: t.rows }];
-  }
-  /** عمود اللوحة لجدول ناتج من التقسيم + هل هو عربي. */
-  function blockPlateCol(b: SplitTable): { col: string | null; isArabic: boolean } {
-    const ar = detectArabicPlateColumn(b.headers) ?? detectArabicPlateColumnByContent(b.headers, b.rows);
-    return { col: ar ?? detectPlateColumn(b.headers, b.rows), isArabic: ar !== null };
+  function refBlocks(t: { headers: string[]; rows: Record<string, string>[] } | null): ReferralBlock[] {
+    return t ? referralBlocks(t.headers, t.rows) : [];
   }
 
   function collectRefSources(): ReferralSource[] {
@@ -1808,6 +1804,16 @@ export default function SortingPage() {
     // بيتمّوا في collectReferralEntries زي الشيتات الإضافية بالظبط.
     if (isMultiSheetRef) {
       for (const s of selectedRefSheets) {
+        // الورقة نفسها ممكن تكون كذا جدول جنب بعض — نقسّمها الأول زي الملف
+        // ذي الورقة الواحدة بالظبط. (الملف اللي فيه ورقة تانية فاضية بيمشي
+        // على المسار ده، فمن غير التقسيم هنا اللوحات بتفضل ضايعة.)
+        const blocks = refBlocks({ headers: s.headers, rows: s.rows });
+        if (blocks.length > 1) {
+          for (const b of blocks) {
+            if (b.plateCol) srcs.push({ rows: b.rows, plateCol: b.plateCol, isArabic: b.isArabic });
+          }
+          continue;
+        }
         // نفضّل العمود العربي (بالهيدر ثم بالمحتوى) — الإنجليزي بس لو مفيش عربي.
         const arabicCol = detectArabicPlateColumn(s.headers) ?? detectArabicPlateColumnByContent(s.headers, s.rows);
         srcs.push({
@@ -1820,8 +1826,7 @@ export default function SortingPage() {
       const blocks = refBlocks(referralTable);
       if (blocks.length > 1) {
         for (const b of blocks) {
-          const { col, isArabic } = blockPlateCol(b);
-          if (col) srcs.push({ rows: b.rows, plateCol: col, isArabic });
+          if (b.plateCol) srcs.push({ rows: b.rows, plateCol: b.plateCol, isArabic: b.isArabic });
         }
       } else {
         srcs.push({ rows: referralTable.rows, plateCol: effectiveReferralPlateCol, isArabic: referralPlateIsArabic });
@@ -1830,8 +1835,7 @@ export default function SortingPage() {
     for (const er of extraReferrals) {
       if (!er.table) continue;
       for (const b of refBlocks(er.table)) {
-        const { col, isArabic } = blockPlateCol(b);
-        if (col) srcs.push({ rows: b.rows, plateCol: col, isArabic });
+        if (b.plateCol) srcs.push({ rows: b.rows, plateCol: b.plateCol, isArabic: b.isArabic });
       }
     }
     return srcs;
