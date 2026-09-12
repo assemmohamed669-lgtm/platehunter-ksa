@@ -327,6 +327,9 @@ export default function SortingPage() {
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const [newPlatesCount, setNewPlatesCount] = useState(0);
+  // عدد **لوحات** الإحالة اللي الفرز فحصها فعلاً. كان العرض بيستخدم عدد الصفوف
+  // ويسمّيه لوحات — وده غلط في أي ملف الصف فيه أكتر من لوحة (جداول جنب بعض).
+  const [refPlateCount, setRefPlateCount] = useState(0);
   // التشخيص التقني يظهر للأدمن فقط، ومطوي افتراضياً (سهم لفتحه). المندوب
   // مايشوفهوش خالص.
   const [isAdmin, setIsAdmin] = useState(false);
@@ -1905,7 +1908,9 @@ export default function SortingPage() {
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
       const refIndex = new Map<string, { row: Record<string, string>; norm: string }>();
-      for (const e of collectReferralEntries(collectRefSources())) {
+      const refEntries = collectReferralEntries(collectRefSources());
+      setRefPlateCount(new Set(refEntries.map((e) => e.norm)).size);
+      for (const e of refEntries) {
         if (!refIndex.has(e.norm)) refIndex.set(e.norm, { row: e.row, norm: e.norm });
         if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
           const rev = reversePlateLetters(e.norm);
@@ -3273,7 +3278,11 @@ export default function SortingPage() {
       {sorted && results && matchedResults.length === 0 && (() => {
         // عدد اللوحات اللي اتفحصت: في «فرز جديد» = اللوحات الجديدة، في «فرز
         // كلي» = كل لوحات الإحالة.
-        const checkedCount = sortMode === "new" ? newPlatesCount : (referralTable?.rows.length ?? 0);
+        // «كلي»: عدد اللوحات اللي اتفحصت فعلاً (مش عدد صفوف الملف — الصف الواحد
+        // ممكن يبقى فيه أكتر من لوحة في الورقات اللي فيها جداول جنب بعض).
+        const checkedCount = sortMode === "new"
+          ? newPlatesCount
+          : (refPlateCount || referralTable?.rows.length || 0);
         return (
         <div className="rounded-2xl border border-danger/40 bg-surface p-4 space-y-3">
 
@@ -3304,6 +3313,9 @@ export default function SortingPage() {
                 <div className="text-xs text-muted space-y-1.5 font-mono px-3 pb-3">
                   <p>📂 عمود لوحة الداتا: <span className="text-ink">{effectiveDataPlateCol ?? "—"}</span></p>
                   <p>📋 عمود لوحة الإحالة: <span className="text-ink">{effectiveReferralPlateCol ?? "—"}</span></p>
+                  <p>🧾 جداول في ورقة الإحالة: <span className="text-ink">{refBlocks(referralTable).length}</span>
+                    &nbsp;· صفوف: <span className="text-ink">{referralTable?.rows.length ?? 0}</span>
+                    &nbsp;· لوحات اتفحصت: <span className="text-ink">{refPlateCount || "—"}</span></p>
                   <p>📊 عينة داتا (أول 3):&nbsp;
                     <span className="text-ink">{
                       dataTable?.rows.slice(0, 8)
