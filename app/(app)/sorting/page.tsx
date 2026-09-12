@@ -17,6 +17,7 @@ import {
   detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
+import { FuzzyPlateIndex } from "@/lib/fuzzyPlateIndex";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
@@ -703,6 +704,22 @@ export default function SortingPage() {
     ? (detectArabicPlateColumn(referralTable.headers) ?? detectArabicPlateColumnByContent(referralTable.headers, referralTable.rows))
     : null;
   const referralPlateCol = referralArabicPlateCol ?? (referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null);
+  // عدد **اللوحات** اللي البرنامج بيقراها من ورقة الإحالة — بيشمل الجداول
+  // المتجاورة (ورقة فيها ٣ جداول = صف واحد فيه ٣ لوحات). بيتعرض في المربع جنب
+  // عدد الصفوف عشان الفرق يبان قبل الفرز بدل ما يتحسب غلط.
+  const referralPlateTotal = useMemo(() => {
+    if (!referralTable) return null;
+    try {
+      const srcs = referralBlocks(referralTable.headers, referralTable.rows)
+        .filter((b) => b.plateCol)
+        .map((b) => ({ rows: b.rows, plateCol: b.plateCol as string, isArabic: b.isArabic }));
+      const seen = new Set<string>();
+      for (const e of collectReferralEntries(srcs)) {
+        if (/[0-9]/.test(e.norm) && /[^0-9]/.test(e.norm)) seen.add(e.norm);
+      }
+      return seen.size || null;
+    } catch { return null; }
+  }, [referralTable]);
   const referralPlateIsArabic = referralArabicPlateCol !== null;
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   const gpsCol = dataTable ? findGpsColumn(dataTable.headers) : null;
@@ -1909,7 +1926,20 @@ export default function SortingPage() {
     try {
       const refIndex = new Map<string, { row: Record<string, string>; norm: string }>();
       const refEntries = collectReferralEntries(collectRefSources());
-      setRefPlateCount(new Set(refEntries.map((e) => e.norm)).size);
+      // العدّاد: اللوحات بس — الصف اللي مالوش أرقام (زي صف رؤوس مكرّر جوّه
+      // الشيت) مش لوحة ومايقدرش يطابق حاجة، فمايتعدّش.
+      setRefPlateCount(new Set(
+        refEntries.filter((e) => /[0-9]/.test(e.norm) && /[^0-9]/.test(e.norm)).map((e) => e.norm)
+      ).size);
+      // فهرس المتشابه (خانة واحدة غلط) — بيشتغل بس لما مفيش تطابق تام.
+      const refFuzzy = new FuzzyPlateIndex<{ row: Record<string, string>; norm: string }>();
+      for (const e of refEntries) refFuzzy.add(e.norm, { row: e.row, norm: e.norm });
+      const pushMatch = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number) => {
+        const hit = refIndex.get(n);
+        if (hit) { matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx }); return; }
+        const f = refFuzzy.find(n);
+        if (f) matches.push({ referralRow: f.value.row, dataRow, status: "fuzzy", similarity: f.similarity, refPlateNorm: f.value.norm, dataIdx, srcIdx });
+      };
       for (const e of refEntries) {
         if (!refIndex.has(e.norm)) refIndex.set(e.norm, { row: e.row, norm: e.norm });
         if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
@@ -1933,8 +1963,7 @@ export default function SortingPage() {
             const idx = gj++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            const hit = refIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx, srcIdx: 0 });
+            pushMatch(dataRow, n, idx, 0);
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data", sheets: selectedDataSheetFilter });
@@ -1956,8 +1985,7 @@ export default function SortingPage() {
               const idx = dataBase + gj; gj++;
               const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
               if (!n) continue;
-              const hit = refIndex.get(n);
-              if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: idx, srcIdx: srcBase + si });
+              pushMatch(dataRow, n, idx, srcBase + si);
             }
             await new Promise<void>((r) => setTimeout(r, 0));
           }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -1971,8 +1999,7 @@ export default function SortingPage() {
             const dataRow = rows[j];
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            const hit = refIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx: dataBase + j, srcIdx: srcBase + si });
+            pushMatch(dataRow, n, dataBase + j, srcBase + si);
           }
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
@@ -2040,6 +2067,15 @@ export default function SortingPage() {
           }
         }
       }
+      // نفس فكرة الفرز الكلي: متشابه بخانة واحدة لما مفيش تطابق تام.
+      const newFuzzy = new FuzzyPlateIndex<{ row: Record<string, string>; norm: string }>();
+      for (const e of newEntries) newFuzzy.add(e.norm, { row: e.row, norm: e.norm });
+      const pushNew = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number) => {
+        const hit = newIndex.get(n);
+        if (hit) { matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx }); return; }
+        const f = newFuzzy.find(n);
+        if (f) matches.push({ referralRow: f.value.row, dataRow, status: "fuzzy", similarity: f.similarity, dataIdx, refPlateNorm: f.value.norm, srcIdx });
+      };
       // gIdx = فهرس عام متتابع عبر كل مصادر الداتا (أساسي + إضافي) بالترتيب — عشان
       // dataIdx يفضل مطابق لترتيب الملفات بعد الفرز النهائي.
       let gIdx = 0;
@@ -2051,8 +2087,7 @@ export default function SortingPage() {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            const hit = newIndex.get(n);
-            if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm, srcIdx: 0 });
+            pushNew(dataRow, n, idx, 0);
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data", sheets: selectedDataSheetFilter });
@@ -2061,6 +2096,9 @@ export default function SortingPage() {
       // (وتطابق على فهرس الجديد مباشرة)، والصغيرة عبر فهرس صغير في الذاكرة.
       if (memSources.length) {
         const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>>();
+        // المسار ده بيلفّ على الإحالة مش على الداتا، فالفهرس التقريبي بيتبني على
+        // **الداتا** عشان لوحة الإحالة تلاقي شبيهها.
+        const dataFuzzy = new FuzzyPlateIndex<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>();
         for (let si = 0; si < memSources.length; si++) {
           const src = memSources[si];
           const pc = src.plateCol;
@@ -2070,8 +2108,7 @@ export default function SortingPage() {
                 const idx = gIdx++;
                 const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
                 if (!n) continue;
-                const hit = newIndex.get(n);
-                if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx: idx, refPlateNorm: hit.norm, srcIdx: srcBase + si });
+                pushNew(dataRow, n, idx, srcBase + si);
               }
               await new Promise<void>((r) => setTimeout(r, 0));
             }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2084,6 +2121,7 @@ export default function SortingPage() {
             const entry = { row, dataIdx: idx, srcIdx: srcBase + si };
             const arr = dataIndex.get(n);
             if (arr) arr.push(entry); else dataIndex.set(n, [entry]);
+            dataFuzzy.add(n, entry);
           }
         }
         for (const e of newEntries) {
@@ -2093,6 +2131,11 @@ export default function SortingPage() {
           if (dataRows) {
             for (const { row: dataRow, dataIdx, srcIdx } of dataRows) {
               matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm, srcIdx });
+            }
+          } else {
+            for (const f of dataFuzzy.findAll(e.norm)) {
+              matches.push({ referralRow: e.row, dataRow: f.value.row, status: "fuzzy", similarity: f.similarity,
+                dataIdx: f.value.dataIdx, refPlateNorm: e.norm, srcIdx: f.value.srcIdx });
             }
           }
         }
@@ -2823,6 +2866,7 @@ export default function SortingPage() {
         hint={sortMode === "new" ? "إحالة اليوم الجديدة" : "قائمة البنك بالسيارات المطلوبة"}
         parsedFile={referralFile}
         parsedRowCount={referralTable?.rows.length ?? null}
+        plateCount={referralPlateTotal}
         onParsed={(table, file) => persistAndSet("referral", table, file)}
         onClear={() => clearSlot("referral")}
         showReplaceButtons
@@ -3116,7 +3160,15 @@ export default function SortingPage() {
                             <button onClick={() => deleteResult(i)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
                           </div>
                         </td>
-                        <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
+                        <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">
+                          {plate}
+                          {r.status === "fuzzy" && (
+                            <span className="mr-1.5 rounded-full bg-alert/20 px-1.5 py-0.5 text-[0.7em] font-bold text-alert align-middle"
+                              title="اللوحة مش مطابقة تماماً — فيها خانة واحدة مختلفة. راجعها قبل ما تتحرك.">
+                              تقريبية {r.similarity}%
+                            </span>
+                          )}
+                        </td>
                         {allResultCols.map((rc) => {
                           const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
                           return (
