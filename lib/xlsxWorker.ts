@@ -6,6 +6,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
+import { makeHeadersUnique } from "./uniqueHeaders";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
 import { readAllSheetsRawStream } from "./xlsxStream";
@@ -333,6 +334,9 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
       rawHeaderCells.forEach((name, col) => { if (name) headerCols.push({ name, col }); });
       dataStartRow = headerRowIdx + 1;
     }
+    // 🔴 لازم تفضل مطابقة لـexcel.ts: القارئ ده هو اللي بيشتغل فعلاً في المتصفح،
+    //    وتعديل في excel.ts لوحده مابيوصلش للمندوب أبداً.
+    makeHeadersUnique(headerCols);
     const headers = headerCols.map((hc) => hc.name);
 
     if (headers.length === 0) {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildTableFromAoa } from "@/lib/excel";
 import { splitSideBySideTables, baseHeaderName } from "@/lib/sideBySideTables";
 import { detectArabicPlateColumnByContent, collectReferralEntries } from "@/lib/plateParser";
+import { readFileSync } from "fs";
 
 /**
  * محفظة شركة بتيجي **كذا جدول جنب بعض في نفس الورقة** (الخرج / الرياض /
@@ -68,5 +69,19 @@ describe("جداول متجاورة في نفس الورقة", () => {
       [HDR, ["1", "تم التبليغ", "يارس", "ر س س - 2810", "عبدالعزيز", "MR2BE9B37P0029004"]],
       "ورقة1", ["ورقة1"]);
     expect(splitSideBySideTables(single.headers, single.rows, hasPlates)).toBeNull();
+  });
+});
+
+/**
+ * 🔴 حارس: قراءة الإكسيل ليها **نسختين** — `lib/excel.ts` والنسخة اللي جوّه
+ * الـWeb Worker. الـWorker هو اللي بيشتغل فعلاً في المتصفح، فأي إصلاح في
+ * excel.ts لوحده مابيوصلش للمندوب أبداً (حصل فعلاً: الإصلاح اتحط في excel.ts
+ * والمندوب فضل شايف نفس العدد الغلط بعد تحديث ومسح كاش).
+ */
+describe("القارئان لازم يفضلوا متطابقين", () => {
+  it("الاتنين بينادوا makeHeadersUnique", () => {
+    for (const f of ["lib/excel.ts", "lib/xlsxWorker.ts"]) {
+      expect(readFileSync(f, "utf-8")).toContain("makeHeadersUnique(headerCols)");
+    }
   });
 });
