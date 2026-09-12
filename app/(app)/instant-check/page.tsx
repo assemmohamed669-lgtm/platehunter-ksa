@@ -2196,8 +2196,14 @@ export default function InstantCheckPage() {
       if (changed && d.plate.trim()) await saveFieldCheckEntry({ ...d, synced: false });
     }
     setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined).catch(() => []));
-    if (agentIdRef.current && removed.length > 0) {
-      void pushFieldCheckDeletes(agentIdRef.current).catch(() => {});
+    // المسح **والتعديل** الاتنين لازم يوصلوا السيرفر. التعديل كان بيتحفظ محلياً
+    // بس (synced=false) ويستنى زر المزامنة — فلو المندوب قفل البرنامج، الاسترجاع
+    // بعدين كان بيلاقي القيمة القديمة على السيرفر. (الاسترجاع بقى بيحمي المعلّق
+    // كمان، فده بيخلّي السيرفر متطابق على طول مش بس محمي.)
+    const uid = agentIdRef.current;
+    if (uid) {
+      if (removed.length > 0) void pushFieldCheckDeletes(uid).catch(() => {});
+      void pushPendingFieldChecks(uid).catch(() => {});
     }
     setPlatesEditorOpen(false);
   }

@@ -177,6 +177,14 @@ export async function restoreFieldChecks(
   // الاسترجاع ماينفعش يرجّعها قدام المندوب تاني.
   const tombstoned = new Set((await getFieldCheckDeletes(agentId)).map((d) => d.id));
 
+  // صفوف **معدّلة محلياً ولسه مترفعتش** (synced=false). الاسترجاع بيكتب بـ`put`
+  // فكان بيحطّ نسخة السيرفر القديمة فوق تعديل المندوب ويمسحه في صمت — ولأن
+  // الصف بيتكتب بـ`synced:true` المزامنة التدريجية بعده مالاقيتش حاجة معلّقة،
+  // فالتعديل بيضيع خالص («بعدّل وبيرجع زي ما كان»). الصف المعلّق أحدث من
+  // السيرفر بحكم التعريف → نتخطّاه لحد ما يترفع.
+  const pendingLocal = new Set((await getPendingFieldChecks(agentId)).map((e) => e.id));
+  const isPending = (localId: unknown) => pendingLocal.has(localId as string);
+
   const toEntry = (r: unknown) => serverRowToEntry(r, agentId);
 
   const fetchPage = (from: number) =>
@@ -202,8 +210,9 @@ export async function restoreFieldChecks(
       const { data, error } = await fetchPage(from);
       if (error) return { restored, error: error.message };
       const rows = data ?? [];
+      // المحذوف يتشال خالص؛ المعلّق بيتعدّ (موجود عند المندوب) بس مايتكتبش فوقه.
       const keep = rows.filter((r) => !tombstoned.has(r.local_id));
-      await saveFieldCheckEntries(keep.map(toEntry));
+      await saveFieldCheckEntries(keep.filter((r) => !isPending(r.local_id)).map(toEntry));
       restored += keep.length;
       onProgress?.(restored, restored);
       if (rows.length < PAGE) break; // نهاية الصفحات = طول الصفحة الخام مش المفلترة
@@ -225,15 +234,21 @@ export async function restoreFieldChecks(
     const batch = offsets.slice(i, i + CONCURRENCY);
     const pages = await Promise.all(batch.map((from) => fetchPage(from)));
     const entries: FieldCheckEntry[] = [];
+    let keptInBatch = 0;   // اللي المندوب المفروض يشوفه (بما فيه المعلّق محلياً)
     for (const p of pages) {
       if (p.error) { if (!firstError) firstError = p.error.message; continue; }
-      for (const r of p.data ?? []) if (!tombstoned.has(r.local_id)) entries.push(toEntry(r));
+      for (const r of p.data ?? []) {
+        if (tombstoned.has(r.local_id)) continue;   // اتمسح محلياً — مايرجعش
+        keptInBatch++;
+        if (isPending(r.local_id)) continue;         // تعديل محلي أحدث — مايتكتبش فوقه
+        entries.push(toEntry(r));
+      }
     }
     // معاملة واحدة للمجموعة كلها. لو فشلت (مساحة الجهاز مثلاً) بنكمّل باقي
     // المجموعات بدل ما الاسترجاع كله يقف — ومافيش سجل محلي بيتمسح في الحالتين.
     try {
       await saveFieldCheckEntries(entries);
-      restored += entries.length;
+      restored += keptInBatch;
     } catch (e) {
       if (!firstError) firstError = e instanceof Error ? e.message : String(e);
     }
