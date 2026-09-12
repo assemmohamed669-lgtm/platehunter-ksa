@@ -19,6 +19,11 @@ export function baseHeaderName(name: string): string {
   return name.replace(/\s*\(\d+\)$/, "");
 }
 
+import {
+  detectPlateColumn, detectPlateColumnByContent,
+  detectArabicPlateColumn, detectArabicPlateColumnByContent,
+} from "./plateParser";
+
 export interface SplitTable {
   headers: string[];
   rows: Record<string, string>[];
@@ -83,4 +88,37 @@ export function splitSideBySideTables(
   const withPlates = tables.filter((t) => t.rows.length > 0 && hasPlates(t.headers, t.rows));
   if (withPlates.length < 2) return null;
   return withPlates;
+}
+
+export interface ReferralBlock {
+  headers: string[];
+  rows: Record<string, string>[];
+  plateCol: string | null;
+  isArabic: boolean;
+}
+
+/**
+ * ورقة إحالة → قايمة جداول جاهزة للفرز (جدول واحد للورقة العادية، وكذا جدول
+ * للورقة اللي فيها جداول جنب بعض) وكل جدول بعمود لوحته.
+ *
+ * **استخدم الدالة دي في أي صفحة بتفرز إحالة** — إعادة كتابة المنطق في كل صفحة
+ * هي اللي خلّت الإصلاح يوصل لمسار ويفوت التاني.
+ */
+export function referralBlocks(
+  headers: string[],
+  rows: Record<string, string>[],
+): ReferralBlock[] {
+  const hasPlates = (h: string[], r: Record<string, string>[]) =>
+    detectArabicPlateColumnByContent(h, r) !== null ||
+    detectPlateColumnByContent(h, r, 50, 0.5) !== null;
+  const blocks = splitSideBySideTables(headers, rows, hasPlates) ?? [{ headers, rows }];
+  return blocks.map((b) => {
+    const ar = detectArabicPlateColumn(b.headers) ?? detectArabicPlateColumnByContent(b.headers, b.rows);
+    return {
+      headers: b.headers,
+      rows: b.rows,
+      plateCol: ar ?? detectPlateColumn(b.headers, b.rows),
+      isArabic: ar !== null,
+    };
+  });
 }
