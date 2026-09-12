@@ -9,6 +9,7 @@ import type ExcelJS from "exceljs";
 import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
+import { makeHeadersUnique } from "./uniqueHeaders";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
 import { gpsCellToLink } from "./gps";
@@ -921,17 +922,7 @@ export function buildTableFromAoa(
         headerCols.sort((a, b) => a.col - b.col);
       }
     }
-    // أسماء الأعمدة لازم تبقى **فريدة**: الصف بيتبني كـ`obj[name] = ...`، فعمودين
-    // بنفس الاسم كان التاني بيمسح الأول وداتا عمود كاملة تضيع في صمت. بيحصل في
-    // الورقات اللي فيها **كذا جدول جنب بعض** (نفس الرؤوس مكرّرة) — محفظة حقيقية
-    // فيها ٤٩ لوحة كان البرنامج بيشوف ٢٠ بس (آخر جدول). الأول بيفضل باسمه زي ما
-    // هو عشان الملفات العادية ماتتأثرش، والتكرار بياخد «(2)»، «(3)»…
-    const nameCount = new Map<string, number>();
-    for (const hc of headerCols) {
-      const n = (nameCount.get(hc.name) ?? 0) + 1;
-      nameCount.set(hc.name, n);
-      if (n > 1) hc.name = `${hc.name} (${n})`;
-    }
+    makeHeadersUnique(headerCols);   // مشترك مع الـWorker — شوف lib/uniqueHeaders.ts
     const headers = headerCols.map((hc) => hc.name);
     if (headers.length === 0) throw new Error("empty");
 
