@@ -14,8 +14,9 @@ import {
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw, readSheetNames,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
+  detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
+import { splitSideBySideTables, type SplitTable } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
@@ -848,14 +849,24 @@ export default function SortingPage() {
         sources.push({ kind: "referral", headers: s.headers, rows: s.rows, plateCol: s.headers[s.plateCol] ?? null });
       }
     } else if (referralTable) {
-      sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
+      // ورقة فيها كذا جدول جنب بعض: كل جدول بأعمدته (بأسمائها الموحّدة) عشان
+      // أعمدة النتيجة تطلع مرة واحدة نضيفة بدل «الاسم (2)» و«الاسم (3)».
+      const blocks = refBlocks(referralTable);
+      if (blocks.length > 1) {
+        for (const b of blocks) {
+          sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: blockPlateCol(b).col });
+        }
+      } else {
+        sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
+      }
     }
     // شيتات الإحالة الإضافية (زر +) — أعمدتها (لون/سنة/ماركة) لازم تظهر في النتيجة
     // زي الأساسية بالظبط، وإلا المحفظة المرفوعة كإحالة إضافية تطلع بلا أعمدة.
     for (const er of extraReferrals) {
       if (!er.table) continue;
-      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows) ?? detectPlateColumn(er.table.headers, er.table.rows);
-      sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
+      for (const b of refBlocks(er.table)) {
+        sources.push({ kind: "referral", headers: b.headers, rows: b.rows, plateCol: blockPlateCol(b).col });
+      }
     }
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals,
@@ -1774,6 +1785,23 @@ export default function SortingPage() {
   }
 
   // كل مصادر الإحالة (الأساسية + الإضافية) كـ ReferralSource للفرز الموحّد.
+  /**
+   * ورقة الإحالة ممكن تكون **كذا جدول جنب بعض** (الخرج | الرياض | الشرقية…)،
+   * وكل جدول بعمود لوحة لوحده. بنرجّع كل جدول كمصدر مستقل عشان اللوحات كلها
+   * تتفرز وكل لوحة تطلع ببيانات صفّها هي. الورقة العادية بترجع زي ما هي.
+   */
+  function refBlocks(t: { headers: string[]; rows: Record<string, string>[] } | null): SplitTable[] {
+    if (!t) return [];
+    const hasPlates = (h: string[], r: Record<string, string>[]) =>
+      detectArabicPlateColumnByContent(h, r) !== null || detectPlateColumnByContent(h, r, 50, 0.5) !== null;
+    return splitSideBySideTables(t.headers, t.rows, hasPlates) ?? [{ headers: t.headers, rows: t.rows }];
+  }
+  /** عمود اللوحة لجدول ناتج من التقسيم + هل هو عربي. */
+  function blockPlateCol(b: SplitTable): { col: string | null; isArabic: boolean } {
+    const ar = detectArabicPlateColumn(b.headers) ?? detectArabicPlateColumnByContent(b.headers, b.rows);
+    return { col: ar ?? detectPlateColumn(b.headers, b.rows), isArabic: ar !== null };
+  }
+
   function collectRefSources(): ReferralSource[] {
     const srcs: ReferralSource[] = [];
     // ملف متعدد الورقات: كل ورقة مختارة بتبقى مصدر إحالة، والدمج وإزالة التكرار
@@ -1789,14 +1817,22 @@ export default function SortingPage() {
         });
       }
     } else if (referralTable && effectiveReferralPlateCol) {
-      srcs.push({ rows: referralTable.rows, plateCol: effectiveReferralPlateCol, isArabic: referralPlateIsArabic });
+      const blocks = refBlocks(referralTable);
+      if (blocks.length > 1) {
+        for (const b of blocks) {
+          const { col, isArabic } = blockPlateCol(b);
+          if (col) srcs.push({ rows: b.rows, plateCol: col, isArabic });
+        }
+      } else {
+        srcs.push({ rows: referralTable.rows, plateCol: effectiveReferralPlateCol, isArabic: referralPlateIsArabic });
+      }
     }
     for (const er of extraReferrals) {
       if (!er.table) continue;
-      const arabicCol = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows);
-      const plateCol = arabicCol ?? detectPlateColumn(er.table.headers, er.table.rows);
-      if (!plateCol) continue;
-      srcs.push({ rows: er.table.rows, plateCol, isArabic: arabicCol !== null });
+      for (const b of refBlocks(er.table)) {
+        const { col, isArabic } = blockPlateCol(b);
+        if (col) srcs.push({ rows: b.rows, plateCol: col, isArabic });
+      }
     }
     return srcs;
   }
