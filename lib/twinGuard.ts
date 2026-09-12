@@ -43,6 +43,17 @@ export interface TwinReading {
   conf?: number;
   /** زمن النطق بالملّي (مركز نافذة الصوت) — **مش** زمن الوصول. */
   tMs?: number;
+  /**
+   * القراءة دي جت من **النطق الكامل** ولا من **نافذة ثابتة**؟
+   *
+   * 🔴 المحرك بيقرا بطريقتين: نافذة ٥ث كل ١.٥ث (بتقطع اللوحة البطيئة في نصها
+   * فتطلع قراءة جزئية)، والنطق كامل بعد ما السكوت يجي (اللوحة كلها مرة واحدة).
+   * بلاغ المالك «ردي7365 وبعدها ردي7265 والأخيرة هي الصح» سببه ده بالظبط:
+   * النافذة بتوصل الأول والنطق الكامل بعدها.
+   *
+   * `undefined` = مش معروف (مصادر قديمة) ⇒ القاعدة دي مابتشتغلش.
+   */
+  fromUtterance?: boolean;
 }
 
 export type TwinDecision =
@@ -78,11 +89,41 @@ export function twinGuardDecision(
 
   if (!incomingConfirmed && twinConfirmed) return "drop-incoming";  // (١)
   if (incomingConfirmed && !twinConfirmed) return "drop-twin";      // (٢)
-  if (incomingConfirmed && twinConfirmed) return "none";            // (٤) الاتنين مؤكّدين
+  if (incomingConfirmed && twinConfirmed) {
+    // (٤) الاتنين مؤكّدين — الأصل ماتلمسش. **الاستثناء الوحيد**: واحدة منهم
+    // جاية من **النطق الكامل** والتانية من **نافذة مقطوعة**، ومن **نفس النطق**.
+    // ساعتها الكامل أدق بحكم إنه شاف اللوحة كلها، مش تخمين على التوقيت.
+    // أي حالة تانية (الاتنين كامل · الاتنين نافذة · مش عارفين) ⇒ ماتلمسش.
+    const decided = preferFullUtterance(incoming, twin, sameUtteranceMs);
+    return decided ?? "none";
+  }
 
   // (٣) الاتنين مفردين — بس لو من **نفس النطق**.
+  // النطق الكامل له الأولوية هنا كمان قبل مقارنة الثقة.
+  const byUtterance = preferFullUtterance(incoming, twin, sameUtteranceMs);
+  if (byUtterance) return byUtterance;
   if (incoming.tMs === undefined || twin.tMs === undefined) return "none";
   if (Math.abs(incoming.tMs - twin.tMs) > sameUtteranceMs) return "none";
   // التعادل بيروح للموجود على الشاشة (استقرار العرض).
   return (incoming.conf ?? 0) > (twin.conf ?? 0) ? "drop-twin" : "drop-incoming";
+}
+
+
+/**
+ * لو واحدة من القراءتين جاية من **النطق الكامل** والتانية من **نافذة مقطوعة**،
+ * ومن **نفس النطق** ⇒ الكامل يكسب. غير كده `null` (يعني القاعدة مش منطبقة).
+ *
+ * 🔒 شرط «نفس النطق» (≤٢ث) **مايتشالش**: من غيره ممكن نرمي لوحة عربية تانية
+ * اتقالت بعدها بشوية — وده أسوأ حاجة ممكن تحصل.
+ */
+function preferFullUtterance(
+  incoming: TwinReading,
+  twin: TwinReading,
+  sameUtteranceMs: number,
+): TwinDecision | null {
+  if (incoming.fromUtterance === undefined || twin.fromUtterance === undefined) return null;
+  if (incoming.fromUtterance === twin.fromUtterance) return null;   // نفس المصدر ⇒ مافيش مرجّح
+  if (incoming.tMs === undefined || twin.tMs === undefined) return null;
+  if (Math.abs(incoming.tMs - twin.tMs) > sameUtteranceMs) return null;
+  return incoming.fromUtterance ? "drop-twin" : "drop-incoming";
 }
