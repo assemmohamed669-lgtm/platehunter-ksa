@@ -1968,7 +1968,7 @@ export default function SortingPage() {
         if (error) return;
         const got = (data ?? []) as Array<{
           plate: string; method: string | null; maps_link: string | null;
-          checked_at: string; agent_id: string;
+          checked_at: string; agent_id: string; extra?: Record<string, string> | null;
         }>;
         for (const g of got) {
           const hit = index.get(normalizePlate(bankPlateToArabic(String(g.plate ?? ""))));
@@ -1976,6 +1976,9 @@ export default function SortingPage() {
           matches.push({
             referralRow: hit.row,
             dataRow: {
+              // `extra` فيه الحي-الشارع والنوع وملاحظات المندوب — بيتفرد الأول
+              // والأعمدة المحسوبة تحت بتغلب عليه (زي سجلات المندوب نفسه بالظبط).
+              ...(g.extra ?? {}),
               "رقم اللوحة": String(g.plate ?? ""),
               "الحالة": g.method ?? "",
               "GPS": g.maps_link ?? "",
