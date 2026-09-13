@@ -943,6 +943,7 @@ export default function InstantCheckPage() {
   useEffect(() => {
     let alive = true;
     let unsubPointer = () => {};
+    let cancelVoicexRetry = () => {};
     (async () => {
       try {
         let uid: string | null = null;
@@ -975,6 +976,16 @@ export default function InstantCheckPage() {
           if (!alive) return;
           voicexEndpointRef.current = await ptr.resolveVoicexEndpoint();
           if (!alive) return;
+          // فشل الجلب (Supabase متعثّرة) = رجوع صامت لديبجرام — وكان بيفضل كده
+          // لحد ما المندوب يقفل البرنامج ويفتحه، حتى بعد رجوع الداتابيز بساعات.
+          // دلوقتي بنعيد المحاولة في الخلفية فيرجع للموديل لوحده. مفيش أي أثر
+          // لو الجلب نجح من أول مرة — وهي الحالة العادية.
+          if (!voicexEndpointRef.current) {
+            cancelVoicexRetry = ptr.retryVoicexEndpoint(
+              () => ptr.resolveVoicexEndpoint(),
+              (ep) => { if (alive) voicexEndpointRef.current = ep; },
+            );
+          }
           judgeModsRef.current = { client, fusion, log };
           judgeOwnerIdRef.current = uid;              // وسم السجل = معرّف المشترك نفسه
           judgeSourceRef.current = "voicex";
@@ -1008,7 +1019,7 @@ export default function InstantCheckPage() {
         if (cfg) { setJudgeUrlInput(cfg.base); setJudgeTokenInput(cfg.token); }
       } catch { /* أي فشل = مقفول */ }
     })();
-    return () => { alive = false; unsubPointer(); };
+    return () => { alive = false; unsubPointer(); cancelVoicexRetry(); };
   }, []);
 
   // Keep a live GPS watch running the whole time the page is open, so stamping

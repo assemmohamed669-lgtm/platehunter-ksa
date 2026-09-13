@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildVoicexEndpoint, resolvePointerRow } from "@/lib/voicexPointer";
+import { buildVoicexEndpoint, resolvePointerRow, retryVoicexEndpoint, RETRY_DELAYS_MS } from "@/lib/voicexPointer";
 
 // مؤشّر VoiceX: العنوان بييجي من Supabase (مش localStorage زي الطيّار). العقد
 // **فشل-مغلق**: أي التباس (نفق واقع/عنوان غلط/توكن قصير) = null ⇒ رجوع لديبجرام.
@@ -77,5 +77,81 @@ describe("resolvePointerRow", () => {
 
   it("url مش سترنج ⇒ null", () => {
     expect(resolvePointerRow({ url: 123, is_up: true }, null)).toBeNull();
+  });
+});
+
+// 🐞 لما Supabase تتعثّر، التطبيق مابيعرفش يقرا عنوان VoiceX فبيرجع **صامت**
+// لديبجرام — وبيفضل عليه لحد ما المندوب يقفل البرنامج ويفتحه، حتى بعد ما
+// الداتابيز ترجع. يعني دقة الفرز الصوتي بتفضل ضعيفة ساعات بعد ما العطل يخلص.
+// (حصلت ٢٠٢٦-٠٩-١٣: انقطاع ٣٤ دقيقة، والمناديب فضلوا على ديبجرام بعده.)
+describe("retryVoicexEndpoint — الرجوع للموديل لوحده بعد العطل", () => {
+  const EP = { url: "https://x.trycloudflare.com", token: "t" } as never;
+  /** جدولة وهمية: بتسجّل المدد وبتنفّذ فوراً — عشان الاختبار ما يستناش. */
+  function fakeScheduler() {
+    const delays: number[] = [];
+    const run = (fn: () => void, ms: number) => { delays.push(ms); fn(); return 0 as unknown as ReturnType<typeof setTimeout>; };
+    return { delays, run };
+  }
+
+  it("🐞 بيرجع للموديل أول ما الداتابيز ترجع", async () => {
+    const s = fakeScheduler();
+    let calls = 0;
+    const resolve = async () => (++calls >= 2 ? EP : null);   // فشل مرة وبعدين نجح
+    const got: unknown[] = [];
+    retryVoicexEndpoint(resolve, (ep) => got.push(ep), RETRY_DELAYS_MS, s.run);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(got).toEqual([EP]);
+  });
+
+  it("بيبطّل أول ما ينجح — مايكملش محاولات", async () => {
+    const s = fakeScheduler();
+    let calls = 0;
+    const resolve = async () => { calls++; return EP; };
+    retryVoicexEndpoint(resolve, () => {}, RETRY_DELAYS_MS, s.run);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(1);
+  });
+
+  it("بيقف بعد عدد محدود من المحاولات — مايفضلش يضرب للأبد", async () => {
+    const s = fakeScheduler();
+    let calls = 0;
+    const resolve = async () => { calls++; return null; };
+    retryVoicexEndpoint(resolve, () => {}, RETRY_DELAYS_MS, s.run);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(RETRY_DELAYS_MS.length);
+  });
+
+  it("المدد بتتباعد — مايغرقش السيرفر وهو تعبان", async () => {
+    const s = fakeScheduler();
+    retryVoicexEndpoint(async () => null, () => {}, RETRY_DELAYS_MS, s.run);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.delays).toEqual([...RETRY_DELAYS_MS]);
+    for (let i = 1; i < RETRY_DELAYS_MS.length; i++) {
+      expect(RETRY_DELAYS_MS[i]).toBeGreaterThan(RETRY_DELAYS_MS[i - 1]);
+    }
+  });
+
+  it("مابينادّيش بعنوان فاضي أبداً", async () => {
+    const s = fakeScheduler();
+    const got: unknown[] = [];
+    retryVoicexEndpoint(async () => null, (ep) => got.push(ep), RETRY_DELAYS_MS, s.run);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(got).toEqual([]);
+  });
+
+  it("الإلغاء بيوقف المحاولات — المندوب قفل الصفحة", async () => {
+    const delays: number[] = [];
+    const pending: (() => void)[] = [];
+    const run = (fn: () => void, ms: number) => { delays.push(ms); pending.push(fn); return 0 as unknown as ReturnType<typeof setTimeout>; };
+    let calls = 0;
+    const cancel = retryVoicexEndpoint(async () => { calls++; return null; }, () => {}, RETRY_DELAYS_MS, run);
+    cancel();
+    pending.forEach((f) => f());                 // لو الإلغاء مش شغّال، دي هتزوّد calls
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(0);
+  });
+
+  it("المحاولة الأولى بعد ١٠ ثواني على الأكتر — الرجوع يبقى سريع", () => {
+    expect(RETRY_DELAYS_MS[0]).toBeLessThanOrEqual(10_000);
   });
 });

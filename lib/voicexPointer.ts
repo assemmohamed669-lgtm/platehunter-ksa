@@ -126,3 +126,51 @@ export function subscribeVoicexPointer(
   })();
   return () => cleanup();
 }
+
+/**
+ * مدد إعادة المحاولة لما جلب العنوان يفشل. بتتباعد عشان مانضربش سيرفر تعبان.
+ * الأولى بعد ١٠ ثواني عشان الرجوع يبقى سريع لو العطل كان لحظة.
+ */
+export const RETRY_DELAYS_MS = [10_000, 30_000, 120_000, 300_000];
+
+/**
+ * بيعيد محاولة جلب عنوان VoiceX لما المحاولة الأولى تفشل.
+ *
+ * 🐞 ليه: لما Supabase تتعثّر، عنوان VoiceX وتوكنه (الاتنين متخزّنين فيها)
+ * مابيتقروش، فالتطبيق بيرجع **صامت** لديبجرام — وبيفضل عليه لحد ما المندوب
+ * يقفل البرنامج ويفتحه، حتى بعد ما الداتابيز ترجع بساعات. وديبجرام أضعف من
+ * الموديل المدرَّب في قراءة اللوحات السعودية، يعني **دقة الفرز** بتتأثر مش
+ * السرعة بس. (انقطاع ٢٠٢٦-٠٩-١٣: ٣٤ دقيقة، والمناديب فضلوا على الاحتياطي بعده.)
+ *
+ * ⚠️ التصميم مقصود إنه **مالوش أي أثر في الحالة الطبيعية**: لو المحاولة الأصلية
+ * نجحت، الدالة دي مابتتندهش أصلاً. فالكود بيمشي حرف بحرف زي ما كان لكل مندوب
+ * وضعه سليم — والإضافة بتشتغل بس في الحالة اللي هي أصلاً مكسورة.
+ *
+ * الجدولة قابلة للحقن عشان الاختبار مايستناش دقايق حقيقية.
+ * بيرجّع دالة إلغاء — تتنده لما المندوب يقفل الصفحة.
+ */
+export function retryVoicexEndpoint(
+  resolve: () => Promise<JudgeEndpoint | null>,
+  onResolved: (endpoint: JudgeEndpoint) => void,
+  delays: number[] = RETRY_DELAYS_MS,
+  schedule: (fn: () => void, ms: number) => unknown = (fn, ms) => setTimeout(fn, ms),
+): () => void {
+  let cancelled = false;
+  let i = 0;
+  const attempt = () => {
+    if (cancelled || i >= delays.length) return;
+    const wait = delays[i++];
+    schedule(() => {
+      if (cancelled) return;
+      void (async () => {
+        let ep: JudgeEndpoint | null = null;
+        try { ep = await resolve(); } catch { ep = null; }
+        if (cancelled) return;
+        if (ep) onResolved(ep);      // نجح — نبطّل
+        else attempt();              // لسه — نجرّب تاني بعد مدة أطول
+      })();
+    }, wait);
+  };
+  attempt();
+  return () => { cancelled = true; };
+}
