@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * صفحة المجموعات — للسوبر أدمن بس. منظّمة على شكل مربعات:
+ * صفحة المجموعات — لكل الأدمنز (بطلب المالك). منظّمة على شكل مربعات:
  *  • زر «إنشئ مجموعة جديدة» → تسمّي المجموعة وتختار مين فيها وتحفظ → يتعمل مربع باسمها.
  *  • تفتح المربع → تشوف أعضاءها، تضيف (زر إضافة) أو تشيل (بتأكيد)، وتدوس «حفظ»
  *    فتتحفظ كل التغييرات مرة واحدة.
@@ -28,6 +28,10 @@ export default function GroupsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // مفاتيح كل مجموعة: الإشعارات + مشاركة السجلات. الافتراضي الاتنين مفتوحين،
+  // فمجموعة مالهاش صف في group_settings بتشتغل زي ما هي.
+  const [settings, setSettings] = useState<Record<string, { notify: boolean; share: boolean }>>({});
+  const [togglingTeam, setTogglingTeam] = useState<string | null>(null);
 
   // إنشاء مجموعة
   const [createOpen, setCreateOpen] = useState(false);
@@ -49,6 +53,18 @@ export default function GroupsPage() {
       .in("role", [...GROUP_ELIGIBLE_ROLES]).order("username", { ascending: true });
     if (data) setAgents((data as Agent[]).map(({ id, username, team, role }) => ({ id, username, team, role })));
     setLoading(false);
+    // مفاتيح المجموعات — فشلها مايمنعش الصفحة (بتشتغل بالافتراضي: مفتوح).
+    try {
+      const res = await fetch("/api/admin/group-settings", { headers: await authHeaders() });
+      if (res.ok) {
+        const j = await res.json();
+        const m: Record<string, { notify: boolean; share: boolean }> = {};
+        for (const r of (j.settings ?? []) as Array<{ team: string; notify_enabled: boolean; share_records_enabled: boolean }>) {
+          m[r.team] = { notify: r.notify_enabled, share: r.share_records_enabled };
+        }
+        setSettings(m);
+      }
+    } catch { /* الافتراضي مفتوح */ }
   }, []);
 
   useEffect(() => {
@@ -56,7 +72,7 @@ export default function GroupsPage() {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
       const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
-      if (prof?.role !== "admin" || !prof?.is_super) { router.replace("/admin"); return; }
+      if (prof?.role !== "admin") { router.replace("/admin"); return; }
       setAuthorized(true);
       load();
     })();
@@ -65,6 +81,25 @@ export default function GroupsPage() {
   const nameOf = (id: string) => agents.find((a) => a.id === id)?.username ?? id;
   const teams = Array.from(new Set(agents.map((a) => a.team).filter((t): t is string => !!t))).sort();
   const membersOf = (t: string) => agents.filter((a) => a.team === t);
+
+  const groupSet = (t: string) => settings[t] ?? { notify: true, share: true };
+  async function toggleGroup(team: string, key: "notify" | "share") {
+    const cur = groupSet(team);
+    const next = { ...cur, [key]: !cur[key] };
+    setTogglingTeam(team);
+    setSettings((m) => ({ ...m, [team]: next }));            // تفاؤلي — يرجع لو فشل
+    try {
+      const res = await fetch("/api/admin/group-settings", {
+        method: "POST", headers: await authHeaders(),
+        body: JSON.stringify({ team, notifyEnabled: next.notify, shareRecordsEnabled: next.share }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "فشل الحفظ");
+    } catch (e) {
+      setSettings((m) => ({ ...m, [team]: cur }));
+      alert("تعذّر الحفظ: " + ((e as Error)?.message ?? ""));
+    }
+    setTogglingTeam(null);
+  }
 
   // يطبّق setTeam على مجموعة من المناديب بالتتابع.
   async function setTeamFor(ids: string[], team: string) {
@@ -165,6 +200,31 @@ export default function GroupsPage() {
 
               {isOpen && (
                 <div className="border-t border-border px-4 py-3">
+                  {/* مفاتيح المجموعة — بيأثّروا على كل أعضائها فورًا */}
+                  <div className="mb-3 flex flex-col gap-1.5">
+                    {([
+                      { key: "notify" as const, on: groupSet(t).notify, label: "إشعارات السيارات المطلوبة",
+                        hint: "لما يكون مقفول، محدش في المجموعة ياخد إشعار لو زميله لقى سيارة مطلوبة." },
+                      { key: "share" as const, on: groupSet(t).share, label: "مشاركة السجلات",
+                        hint: "لما يكون مفتوح، كل سجلات كل الأعضاء تظهر للكل (والفرز بيمشي عليها كلها)." },
+                    ]).map((row) => (
+                      <div key={row.key} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-ink">{row.label}</p>
+                          <p className="text-[10px] leading-relaxed text-muted">{row.hint}</p>
+                        </div>
+                        <button
+                          disabled={togglingTeam === t}
+                          onClick={() => void toggleGroup(t, row.key)}
+                          className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition ${
+                            row.on ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
+                          } ${togglingTeam === t ? "opacity-50" : ""}`}>
+                          {row.on ? "مفتوح ✓" : "مقفول"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
                   {/* الأعضاء (المعلّقين) */}
                   <div className="flex flex-col gap-1.5">
                     {[...editSet].length === 0 && <p className="text-[11px] text-muted">مفيش أعضاء — أضف مناديب.</p>}
