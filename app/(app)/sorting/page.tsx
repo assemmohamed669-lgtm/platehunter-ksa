@@ -189,6 +189,11 @@ export default function SortingPage() {
   const [dataLocked, setDataLocked] = useState(false);
   // ربط سجلات المندوب كخانة داتا (من صفحة السجلات) — ربط حي بيتحدّث لوحده.
   const [recordsLinked, setRecordsLinked] = useState(false);
+  // المجموعة: الفرز بيمشي كمان على سجلات كل الأعضاء — والمطابقة بتحصل **على
+  // السيرفر** (٧٠ ألف سجل ماينفعش ينزلوا على الموبايل)، والراجع هو المطابق بس.
+  const [hasTeam, setHasTeam] = useState(false);
+  const groupNamesRef = useRef<Record<string, string>>({});
+  const myNameRef = useRef<string>("");
   const [recordsTgt, setRecordsTgt] = useState<RecordsTarget>("extra");
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
@@ -481,6 +486,22 @@ export default function SortingPage() {
             setExtraColsSel((cs) => ({ ...cs, ...sel }));
           }
         } catch { /* no extra data files */ }
+        // مين أنا + مجموعتي (لو فيه) — عشان عمود «المندوب» ومطابقة سجلات المجموعة.
+        try {
+          const { data: au } = await supabase.auth.getUser();
+          if (au.user) {
+            const { data: prof } = await supabase.from("profiles")
+              .select("username, team").eq("id", au.user.id).single();
+            const pr = prof as { username?: string; team?: string | null } | null;
+            myNameRef.current = pr?.username ?? "";
+            if (pr?.team) {
+              setHasTeam(true);
+              const { data: mem } = await supabase.rpc("my_team_members");
+              groupNamesRef.current = Object.fromEntries(
+                ((mem ?? []) as Array<{ id: string; username: string }>).map((m) => [m.id, m.username]));
+            }
+          }
+        } catch { /* أوفلاين — الفرز المحلي شغّال عادي */ }
         // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
         try {
@@ -491,6 +512,7 @@ export default function SortingPage() {
             keys.add("GPS");
             keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
             keys.add("الحالة");    // طريقة التشييك (كاميرا/صوت/يدوي) — زي تصدير السجلات
+            keys.add("المندوب");   // مين سجّلها — بيفرق لما سجلات المجموعة تتلم مع بتاعته
             const headers = [...keys];
             const rows = fieldEntries.map((e) => ({
               "رقم اللوحة": e.plate,
@@ -503,6 +525,7 @@ export default function SortingPage() {
               "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
               // وقت التشييك الفعلي (مش عمود من الشيت) — بيغلب أي «تاريخ» جوه e.row.
               "التاريخ": e.checkedAt ? fmtCheckDate(e.checkedAt) : (e.row?.["التاريخ"] ?? ""),
+              "المندوب": myNameRef.current,
             } as Record<string, string>));
             setTashyeekTable({ headers, rows });
             setTashyeekFile(null);
@@ -855,7 +878,7 @@ export default function SortingPage() {
       sources.push({ kind: "data", headers: dataTable.headers, rows: dataTable.rows, plateCol: effectiveDataPlateCol });
     }
     // سجلات المندوب كخانة داتا (ربط حي) — أعمدتها لازم تظهر في نتيجة الفرز زي أي داتا.
-    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
+    if (tashyeekTable && tashyeekPlateCol) {
       sources.push({ kind: "data", headers: tashyeekTable.headers, rows: tashyeekTable.rows, plateCol: tashyeekPlateCol });
     }
     // **مهم:** لو الملف متعدد الورقات، الأعمدة لازم تتقري من **الورقات المختارة**
@@ -928,7 +951,7 @@ export default function SortingPage() {
       for (const h of extraColsSel[ed.id] ?? []) picked.add(h);
     }
     // سجلات المندوب المربوطة كداتا — كل أعمدة الشيت تظهر في النتيجة (الشيت بالكامل).
-    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
+    if (tashyeekTable && tashyeekPlateCol) {
       for (const h of tashyeekTable.headers) if (h && h !== tashyeekPlateCol) picked.add(h);
     }
     return [...picked].filter((h) => !usedData.has(h))
@@ -1397,6 +1420,11 @@ export default function SortingPage() {
   // سجلات المندوب مربوطة كداتا وفيها صفوف = مصدر داتا صالح للفرز الكلي حتى من
   // غير ما يرفع ملف داتا (ده الهدف: يفرز على سجلاته من غير تنزيل/رفع).
   const recordsAsDataReady = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
+  /**
+   * سجلات المندوب بقت بتدخل الفرز كمصدر داتا **دايمًا**، فالقسم المنفصل
+   * «نتيجة فرز السجلات» بقى تكرار لنفس السيارات — بنوقفه لما السجلات موجودة.
+   */
+  const recordsInData = !!tashyeekTable && !!tashyeekPlateCol;
   const canSort = sortMode === "new"
     ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol && dataSheetsReady
     : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || recordsAsDataReady);
@@ -1669,8 +1697,9 @@ export default function SortingPage() {
       if (!plateCol) continue;
       srcs.push({ rows: ed.table.rows, plateCol });
     }
-    // سجلات المندوب كخانة داتا (ربط حي من صفحة السجلات) — تتطابق زي أي ملف داتا.
-    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
+    // سجلات المندوب بتدخل الفرز **تلقائيًا** (بطلب المالك) — مش مستنية زر
+    // «أضف لخانة الداتا». ولو رافعها كملف داتا إضافي كمان، الاتنين بيتفرزوا.
+    if (tashyeekTable && tashyeekPlateCol) {
       srcs.push({ rows: tashyeekTable.rows, plateCol: tashyeekPlateCol });
     }
     return srcs;
@@ -1913,12 +1942,64 @@ export default function SortingPage() {
     setter(next);
   }
 
+  /** رقم نافذة مخصّص لسجلات المجموعة — بعيد عن أرقام ملفات الداتا. */
+  const GROUP_SRC_IDX = 9000;
+
+  /**
+   * سجلات المجموعة: المطابقة على السيرفر (`match_group_plates`) وبنستقبل
+   * **المطابق بس** — فـ٧٠ ألف سجل مابينزلوش على الموبايل. بيتنادى بعد الفرز
+   * المحلي، وفشله مايوقفش النتيجة المحلية.
+   */
+  async function addGroupMatches(
+    matches: MatchResult[],
+    index: Map<string, { row: Record<string, string>; norm: string }>,
+    startIdx: number,
+  ): Promise<void> {
+    if (!hasTeam) return;
+    const norms = [...index.keys()];
+    if (norms.length === 0) return;
+    const RPC_PAGE = 1000;
+    let n = startIdx;
+    try {
+      for (let from = 0; ; from += RPC_PAGE) {
+        const { data, error } = await supabase
+          .rpc("match_group_plates", { p_norms: norms })
+          .range(from, from + RPC_PAGE - 1);
+        if (error) return;
+        const got = (data ?? []) as Array<{
+          plate: string; method: string | null; maps_link: string | null;
+          checked_at: string; agent_id: string;
+        }>;
+        for (const g of got) {
+          const hit = index.get(normalizePlate(bankPlateToArabic(String(g.plate ?? ""))));
+          if (!hit) continue;
+          matches.push({
+            referralRow: hit.row,
+            dataRow: {
+              "رقم اللوحة": String(g.plate ?? ""),
+              "الحالة": g.method ?? "",
+              "GPS": g.maps_link ?? "",
+              "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
+              "المندوب": groupNamesRef.current[g.agent_id] ?? "",
+            },
+            status: "exact",
+            refPlateNorm: hit.norm,
+            dataIdx: n++,
+            srcIdx: GROUP_SRC_IDX,
+            srcLabel: "نتيجة فرز سجلات المجموعة",
+          });
+        }
+        if (got.length < RPC_PAGE) return;
+      }
+    } catch { /* مافيش نت — الفرز المحلي شغّال */ }
+  }
+
   // ── Full sort ──
   // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
   // ملف الداتا → نتيجة واحدة مجمّعة.
   async function runFullSort() {
     const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
-    const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
+    const hasRecordsData = !!tashyeekTable && !!tashyeekPlateCol;
     if (!(hasUploadedData || hasRecordsData) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
@@ -2004,10 +2085,12 @@ export default function SortingPage() {
         }
         dataBase += rows.length;
       }
+      // سجلات المجموعة — مطابقة على السيرفر، بترجّع المطابق بس.
+      await addGroupMatches(matches, refIndex, dataBase + 1);
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // لو السجلات مربوطة كخانة داتا، بتظهر في نتيجة الداتا فوق — فمانعملش قسم
       // «فرز السجلات» المنفصل عشان ماتتكررش نفس السيارات مرتين.
-      if (!recordsLinked && tashyeekTable && tashyeekPlateCol) {
+      if (!recordsInData && tashyeekTable && tashyeekPlateCol) {
         const tashyeekMatches: TashyeekResultRow[] = [];
         for (const row of tashyeekTable.rows) {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
@@ -2126,11 +2209,13 @@ export default function SortingPage() {
           }
         }
       }
+      // سجلات المجموعة — نفس فكرة الفرز الكلي.
+      await addGroupMatches(matches, newIndex, gIdx + 1);
       matches.sort((a, b) => a.dataIdx - b.dataIdx);
       // شيت السجلات (الميداني): طابق اللوحات الجديدة عليه كمان.
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // مربوطة كداتا → بتظهر فوق في نتيجة الداتا، فمافيش قسم سجلات منفصل (منع التكرار).
-      if (!recordsLinked && tashyeekTable && tashyeekPlateCol) {
+      if (!recordsInData && tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
         for (const e of newEntries) {
           if (!tashyeekRefIndex.has(e.norm)) tashyeekRefIndex.set(e.norm, e.row);
@@ -2491,7 +2576,7 @@ export default function SortingPage() {
 
     // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
     // لو السجلات مربوطة كداتا، بتتطابق فوق مع الداتا فمانعملش قسم منفصل (منع التكرار).
-    const recordMatches = !recordsLinked && tashyeekTable && tashyeekPlateCol
+    const recordMatches = !recordsInData && tashyeekTable && tashyeekPlateCol
       ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol)
       : [];
     recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);

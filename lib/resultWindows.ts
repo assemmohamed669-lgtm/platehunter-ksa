@@ -43,10 +43,11 @@ export function groupResultsBySource(results: MatchResult[]): ResultWindow[] {
   // ملف واحد (أو قائمة فاضية) → نافذة واحدة بلا عنوان.
   if (byIdx.size <= 1) {
     const [key = 0] = [...byIdx.keys()];
-    return [{ key, title: byIdx.size === 1 && key > 0 ? `نتيجة فرز داتا ${key + 1}` : null, items }];
+    const lbl = items[0]?.r.srcLabel;
+    return [{ key, title: lbl ?? (byIdx.size === 1 && key > 0 ? `نتيجة فرز داتا ${key + 1}` : null), items }];
   }
 
   return [...byIdx.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([key, list]) => ({ key, title: `نتيجة فرز داتا ${key + 1}`, items: list }));
+    .map(([key, list]) => ({ key, title: list[0]?.r.srcLabel ?? `نتيجة فرز داتا ${key + 1}`, items: list }));
 }
