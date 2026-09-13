@@ -5,11 +5,10 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Database, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
-import { fetchLearningEnabled, setLearningEnabled } from "@/lib/learningSettings";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
 import { BarChart3, BellRing } from "lucide-react";
@@ -113,14 +112,9 @@ export default function AdminDashboard() {
   const [pushTeam, setPushTeam] = useState("");
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [learningOn, setLearningOn] = useState(false);   // مفتاح جمع/تعلّم الصوت (سوبر أدمن)
-  const [learningBusy, setLearningBusy] = useState(false);
-  const [trainingCount, setTrainingCount] = useState(0); // عيّنات متجمّعة على الجهاز
-  const [trainingBusy, setTrainingBusy] = useState(false);
-  const [pendingByAgent, setPendingByAgent] = useState<Array<{ agentId: string; count: number }>>([]); // معلّق مركزي
-  const [centralBusy, setCentralBusy] = useState(false);
-  const [centralLoaded, setCentralLoaded] = useState(false);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
+  // مين الأدمن اللي ضاف كل مندوب — من حدث إنشاء الحساب في subscription_events.
+  const [creatorOf, setCreatorOf] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -146,8 +140,26 @@ export default function AdminDashboard() {
   const loadAgents = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase.from("profiles").select("*").order("username", { ascending: true });
-    if (data) setAgents(data as AgentProfile[]);
+    const list = (data ?? []) as AgentProfile[];
+    if (data) setAgents(list);
     setLoading(false);
+    // مين ضاف مين: أقدم حدث لكل مندوب = حدث الإنشاء (نفس منطق صفحة المندوب).
+    // اسم الأدمن بيتحل من نفس قايمة البروفايلات — من غير أي استعلام زيادة.
+    try {
+      const { data: evs } = await supabase
+        .from("subscription_events")
+        .select("agent_id, created_by, created_at")
+        .order("created_at", { ascending: true });
+      if (evs) {
+        const nameById = new Map(list.map((p) => [p.id, p.username]));
+        const first: Record<string, string> = {};
+        for (const e of evs as Array<{ agent_id: string; created_by: string | null }>) {
+          if (!e.created_by || first[e.agent_id]) continue;
+          first[e.agent_id] = nameById.get(e.created_by) ?? "غير معروف";
+        }
+        setCreatorOf(first);
+      }
+    } catch { /* مش مشكلة — الاسم مايظهرش بس */ }
     // مدفوع الشهر الحالي لكل مندوب — للشارة في القائمة. أي فشل = بلا شارة دفع.
     try {
       const res = await fetch(`/api/admin/payments?month=${curMonthKey()}`, { headers: await authHeaders() });
@@ -178,8 +190,6 @@ export default function AdminDashboard() {
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setIsSuper(!!prof?.is_super);
       if (prof?.is_super) {
-        fetchLearningEnabled().then(setLearningOn);  // حالة مفتاح التعلّم
-        import("@/lib/trainingStore").then((m) => m.countTrainingSamples().then(setTrainingCount).catch(() => {}));
         void fetchAppNotice().then(setNoticeActive); // الرسالة الشغّالة دلوقتي (سوبر فقط)
         void loadPoll();                              // الاستطلاع الشغّال + نتايجه (سوبر فقط)
       }
@@ -188,137 +198,32 @@ export default function AdminDashboard() {
     })();
   }, [router, loadAgents]);
 
-  // ── تنزيل/مسح داتا التدريب المتجمّعة (سوبر أدمن) ──
-  function downloadBlob(blob: Blob, name: string) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = name; document.body.appendChild(a); a.click();
-    a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-  function base64ToBytes(b64: string): Uint8Array {
-    const bin = atob(b64); const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-  async function handleDownloadTraining() {
-    setTrainingBusy(true);
+  // الرجوع من صفحة المندوب كان بيرجّع القايمة لفوق خالص. بنحفظ مين اتفتح
+  // وموضع التمرير، وأول ما القايمة ترجع تترسم بنزحلق لنفس المندوب.
+  const RESTORE_KEY = "ph:admin:lastOpened";
+  function openAgent(id: string) {
     try {
-      const store = await import("@/lib/trainingStore");
-      const { buildTrainingManifest, mimeToExt, fileStamp } = await import("@/lib/trainingExport");
-      const [samples, sessions] = await Promise.all([store.getAllTrainingSamples(), store.getAllTrainingSessions()]);
-      if (samples.length === 0) { alert("مفيش داتا تدريب متجمّعة على الجهاز ده لسه. سجّل صوت وصدّر الأول."); return; }
-      const manifest = buildTrainingManifest(samples, sessions);
-      // اسم فريد بطابع زمني عشان تنزيلات الجهاز مايتكرروش (كانوا كلهم training-labels.json).
-      downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }), `training-${fileStamp(new Date())}-labels.json`);
-      for (const sess of sessions) {
-        const buf = base64ToBytes(sess.audioBase64).buffer as ArrayBuffer;
-        downloadBlob(new Blob([buf], { type: sess.mimeType }), `${sess.sessionId}.${mimeToExt(sess.mimeType)}`);
-      }
-      alert(`تم تنزيل ${manifest.count} لوحة في ${manifest.sessionCount} مقطع + ملف اللوحات (training-labels.json).`);
-    } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
-    finally { setTrainingBusy(false); }
+      sessionStorage.setItem(RESTORE_KEY, JSON.stringify({ id, y: window.scrollY }));
+    } catch { /* التخزين مقفول — الرجوع هيبقى لفوق زي الأول */ }
+    router.push(`/admin/${id}`);
   }
-  async function handleClearTraining() {
-    if (!confirm("متأكد؟ ده هيمسح كل داتا التدريب المتجمّعة على الجهاز ده. نزّلها الأول لو محتاجها.")) return;
-    setTrainingBusy(true);
-    try { const store = await import("@/lib/trainingStore"); await store.clearTrainingData(); setTrainingCount(0); }
-    catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
-    finally { setTrainingBusy(false); }
-  }
-
-  // ── داتا المناديب المركزية (من Supabase) ──
-  const usernameOf = (agentId: string) => agents.find((a) => a.id === agentId)?.username || agentId;
-  async function loadPending() {
-    try { const c = await import("@/lib/trainingCentral"); setPendingByAgent(await c.listPendingByAgent()); setCentralLoaded(true); }
-    catch (e) { alert("تعذّر تحميل القائمة: " + ((e as Error)?.message ?? "")); }
-  }
-  async function downloadNew(agentId?: string) {
-    setCentralBusy(true);
+  useEffect(() => {
+    if (loading || filtered.length === 0) return;
+    let saved: { id?: string; y?: number } | null = null;
     try {
-      const c = await import("@/lib/trainingCentral");
-      const rows = await c.fetchPendingSamples(agentId);
-      if (rows.length === 0) { alert("مفيش لوحات جديدة."); return; }
-      const manifest = c.buildCentralManifest(rows);
-      const { mimeToExt, trainingFilePrefix } = await import("@/lib/trainingExport");
-      // طابع زمني واحد للتنزيل ده — يخلّي كل الأسماء فريدة عن أي تنزيل سابق.
-      const stampDate = new Date();
-      let audioCount = 0;
-      for (const agent of manifest.agents) {
-        const name = usernameOf(agent.agentId);
-        // بادئة فريدة لكل مندوب لكل تنزيل: «<اسم>-<تاريخ ووقت>». الملفات تحتها
-        // بتترقّم بالتسلسل (001، 002...) فأسماء اللوحات والصوت ماتتكررش أبداً.
-        const prefix = trainingFilePrefix(name, stampDate);
-        // نجهّز الصوت الأول (عشان الامتداد الصح) ونسمّي كل مقطع بالتسلسل، وبعدين
-        // نبني ملف اللوحات بنفس الأسماء بالظبط عشان يطابق ملفات الصوت.
-        type CentralSession = (typeof manifest.agents)[number]["sessions"][number];
-        const built: { audioFile: string; blob: Blob | null; session: CentralSession }[] = [];
-        let seq = 0;
-        for (const s of agent.sessions) {
-          seq++;
-          const idx = String(seq).padStart(3, "0");
-          const a = await c.fetchAudioBase64(s.sessionId);
-          const ext = a ? mimeToExt(a.mimeType) : "webm";
-          const audioFile = `${prefix}-${idx}.${ext}`;
-          const blob = a ? new Blob([base64ToBytes(a.base64).buffer as ArrayBuffer], { type: a.mimeType }) : null;
-          built.push({ audioFile, blob, session: s });
-        }
-        // (١) ملف اللوحات (labels) — اسم فريد + بيشير لأسماء ملفات الصوت المتسلسلة.
-        const labels = {
-          agentId: agent.agentId, username: name, sampleCount: agent.sampleCount,
-          sessions: built.map((b) => ({ sessionId: b.session.sessionId, audioFile: b.audioFile, plates: b.session.plates })),
-        };
-        downloadBlob(new Blob([JSON.stringify(labels, null, 2)], { type: "application/json" }), `training-${prefix}-labels.json`);
-        // (٢) ملف صوت **منفصل** لكل مقطع (قابل للتشغيل) بنفس الاسم المتسلسل.
-        for (const b of built) {
-          if (!b.blob) continue;
-          downloadBlob(b.blob, b.audioFile);
-          audioCount++;
-        }
-      }
-      await c.markDownloaded(rows.map((r) => r.id));
-      // مسح تلقائي للمُنزَّل من السيرفر بعد كل تنزيل ناجح — يفضّي مساحة Supabase.
-      // بيمسح بس اللي اتنزّل (downloaded_at) — الجديد اللي لسه ماتنزّلش مايتمسّش.
-      let purgedMsg = "";
-      try { const p = await c.purgeDownloaded(); purgedMsg = `\nواتمسح ${p.deleted} من السيرفر (فُضّيت المساحة).`; }
-      catch { purgedMsg = "\n(تعذّر مسح السيرفر تلقائياً — استخدم زر «مسح المُنزَّل» يدوياً)."; }
-      await loadPending();
-      alert(`تم تنزيل ${rows.length} لوحة (${manifest.agents.length} مندوب) + ${audioCount} مقطع صوت.${purgedMsg}`);
-    } catch (e) { alert("تعذّر التنزيل: " + ((e as Error)?.message ?? "")); }
-    finally { setCentralBusy(false); }
-  }
-  async function purgeDownloadedServer() {
-    if (!confirm("مسح كل المُنزَّل من السيرفر (اللي نزّلته قبل كده)؟ ده بيفضّي مساحة Supabase. الجديد اللي لسه ماتنزّلش مش هيتمسح.")) return;
-    setCentralBusy(true);
-    try { const c = await import("@/lib/trainingCentral"); const r = await c.purgeDownloaded(); alert(`تم مسح ${r.deleted} عيّنة مُنزَّلة من السيرفر.`); }
-    catch (e) { alert("تعذّر المسح: " + ((e as Error)?.message ?? "")); }
-    finally { setCentralBusy(false); }
-  }
-  // تشخيص كامل لمسار التعلّم على الجهاز ده — يبيّن فين المشكلة بالظبط.
-  async function handleLearningDiagnostics() {
-    setCentralBusy(true);
-    const lines: string[] = [];
-    try {
-      const on = await fetchLearningEnabled();
-      lines.push(`المفتاح (من السيرفر): ${on ? "شغّال ✓" : "متوقّف ✗"}`);
-    } catch (e) { lines.push("المفتاح: خطأ — " + ((e as Error)?.message ?? "")); }
-    try {
-      const s = await import("@/lib/trainingStore");
-      const [samples, sessions, unsynced] = await Promise.all([s.getAllTrainingSamples(), s.getAllTrainingSessions(), s.getUnsyncedSamples()]);
-      lines.push(`محلي على الجهاز ده: ${samples.length} لوحة، ${sessions.length} مقطع صوت، ${unsynced.length} لسه ما اترفعتش`);
-    } catch (e) { lines.push("المحلي: خطأ — " + ((e as Error)?.message ?? "")); }
-    try {
-      const { syncTrainingData } = await import("@/lib/trainingSync");
-      const r = await syncTrainingData();
-      lines.push(`الرفع لـ Supabase: ${r.uploaded} لوحة + ${r.audioUploaded ?? 0} صوت${r.error ? ` — خطأ: ${r.error}` : " ✓"}`);
-    } catch (e) { lines.push("الرفع: خطأ — " + ((e as Error)?.message ?? "")); }
-    try {
-      const c = await import("@/lib/trainingCentral");
-      const pend = await c.listPendingByAgent();
-      lines.push(`على السيرفر (كل المناديب): ${pend.reduce((a, x) => a + x.count, 0)} لوحة معلّقة`);
-    } catch (e) { lines.push("السيرفر: خطأ — " + ((e as Error)?.message ?? "")); }
-    setCentralBusy(false);
-    alert(lines.join("\n"));
-  }
+      const raw = sessionStorage.getItem(RESTORE_KEY);
+      if (raw) saved = JSON.parse(raw);
+      sessionStorage.removeItem(RESTORE_KEY);   // مرة واحدة بس
+    } catch { /* تجاهل */ }
+    if (!saved) return;
+    // الصف نفسه أدق من الرقم (الفلتر/البحث بيغيّروا الأطوال) — والرقم احتياطي.
+    requestAnimationFrame(() => {
+      const el = saved!.id ? document.querySelector(`[data-agent-id="${saved!.id}"]`) : null;
+      if (el) el.scrollIntoView({ block: "center" });
+      else if (typeof saved!.y === "number") window.scrollTo(0, saved!.y);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   async function handleCreate() {
     setCError(null);
@@ -447,9 +352,6 @@ export default function AdminDashboard() {
     warn: agentsOnly.filter((e) => e.sub.status === "expiring" || e.sub.status === "grace").length,
     cut: agentsOnly.filter((e) => e.sub.status === "expired").length,
   };
-  const expiringSoon = agentsOnly
-    .filter((e) => e.sub.status === "expiring" || e.sub.status === "grace")
-    .sort((x, y) => x.sub.daysLeft - y.sub.daysLeft);
 
   if (authorized === null) {
     return <div className="flex min-h-screen items-center justify-center bg-night text-sm text-muted">جارٍ التحقق...</div>;
@@ -875,128 +777,13 @@ export default function AdminDashboard() {
         </div>
         )}
 
-        {/* مفتاح جمع/تعلّم الصوت + تنزيل الداتا — سوبر أدمن فقط. الافتراضي متوقّف. */}
-        {isSuper && (
-          <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
-            <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink">
-              <Database size={14} /> جمع بيانات الصوت للتعلّم
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] leading-relaxed text-muted">
-                لما يكون شغّال، البرنامج بيجمّع (صوت اللوحة + اللوحة الصح) للتدريب لاحقاً. الافتراضي متوقّف — سوبر أدمن فقط.
-              </p>
-              <button
-                disabled={learningBusy}
-                onClick={async () => {
-                  setLearningBusy(true);
-                  const next = !learningOn;
-                  const r = await setLearningEnabled(next);
-                  if (r.ok) setLearningOn(next);
-                  else alert("تعذّر الحفظ: " + (r.error ?? ""));
-                  setLearningBusy(false);
-                }}
-                className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition ${
-                  learningOn ? "bg-green-600 text-white" : "border border-border bg-surface-2 text-muted"
-                } ${learningBusy ? "opacity-50" : ""}`}>
-                {learningBusy ? "..." : learningOn ? "شغّال ✓" : "متوقّف"}
-              </button>
-            </div>
-
-            {/* داتا التدريب المتجمّعة على الجهاز — تنزيل (صوت + لوحات صح) + مسح. */}
-            <div className="mt-3 flex items-center justify-between gap-2 border-t border-primary/20 pt-2.5">
-              <span className="text-[11px] text-muted">
-                المتجمّع على الجهاز ده: <b className="text-ink">{trainingCount}</b> لوحة
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  disabled={trainingBusy}
-                  onClick={handleDownloadTraining}
-                  className={`shrink-0 rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold text-night transition ${trainingBusy ? "opacity-50" : ""}`}>
-                  {trainingBusy ? "..." : "تنزيل الصوت + اللوحات"}
-                </button>
-                <button
-                  disabled={trainingBusy}
-                  onClick={handleClearTraining}
-                  className={`shrink-0 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-[11px] text-muted transition ${trainingBusy ? "opacity-50" : ""}`}>
-                  مسح
-                </button>
-              </div>
-            </div>
-
-            {/* داتا المناديب المركزية (من Supabase) — الجديد بس، مفصول بكل مندوب. */}
-            <div className="mt-3 border-t border-primary/20 pt-2.5">
-              <div className="mb-1.5 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold text-ink">داتا المناديب (مركزي)</span>
-                <div className="flex items-center gap-1.5">
-                  <button disabled={centralBusy} onClick={handleLearningDiagnostics}
-                    className={`rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-600 transition ${centralBusy ? "opacity-50" : ""}`}>
-                    تشخيص
-                  </button>
-                  <button disabled={centralBusy} onClick={loadPending}
-                    className={`rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] text-muted transition ${centralBusy ? "opacity-50" : ""}`}>
-                    {centralBusy ? "..." : "تحديث القائمة"}
-                  </button>
-                  {pendingByAgent.length > 0 && (
-                    <button disabled={centralBusy} onClick={() => downloadNew()}
-                      className={`rounded-full bg-primary px-3 py-1 text-[11px] font-bold text-night transition ${centralBusy ? "opacity-50" : ""}`}>
-                      تنزيل الكل الجديد
-                    </button>
-                  )}
-                </div>
-              </div>
-              {centralLoaded && pendingByAgent.length === 0 && (
-                <p className="text-[11px] text-muted">مفيش لوحات جديدة عند أي مندوب دلوقتي.</p>
-              )}
-              {pendingByAgent.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  {pendingByAgent.map(({ agentId, count }) => (
-                    <div key={agentId} className="flex items-center justify-between rounded-lg bg-surface px-2 py-1">
-                      <span className="truncate text-[11px] text-ink">{usernameOf(agentId)} <b className="text-primary">({count})</b></span>
-                      <button disabled={centralBusy} onClick={() => downloadNew(agentId)}
-                        className={`shrink-0 rounded-full border border-primary/40 px-2.5 py-0.5 text-[10px] font-bold text-primary transition ${centralBusy ? "opacity-50" : ""}`}>
-                        تنزيل الجديد
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* مسح المُنزَّل من السيرفر — يظهر دايماً بعد تحديث القائمة (مش مربوط
-                  بوجود داتا جديدة) عشان تقدر تفضّي مساحة بعد ما تكون نزّلت كل حاجة. */}
-              {centralLoaded && (
-                <button disabled={centralBusy} onClick={purgeDownloadedServer}
-                  className="mt-2 self-start text-[11px] text-danger underline">
-                  🗑️ مسح المُنزَّل من السيرفر (تفريغ مساحة)
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Expiring soon */}
-        {expiringSoon.length > 0 && (
-          <div className="rounded-xl border border-alert/40 bg-alert/5 p-3">
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-alert">
-              <CalendarClock size={14} /> قرب ينتهي اشتراكهم ({expiringSoon.length})
-            </div>
-            <div className="flex flex-col gap-1">
-              {expiringSoon.slice(0, 5).map(({ a, sub }) => (
-                <button key={a.id} onClick={() => router.push(`/admin/${a.id}`)}
-                  className="flex items-center justify-between rounded-lg px-2 py-1 text-xs hover:bg-surface transition">
-                  <span className="truncate text-ink">{a.username}</span>
-                  <span className="shrink-0 font-bold" style={{ color: sub.color }}>{sub.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* List */}
         <div className="flex flex-col gap-2">
           {loading && <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>}
           {!loading && filtered.map(({ a, sub }) => {
             const act = activityStatus(a.last_seen);
             return (
-            <div key={a.id} role="button" tabIndex={0} onClick={() => router.push(`/admin/${a.id}`)}
+            <div key={a.id} data-agent-id={a.id} role="button" tabIndex={0} onClick={() => openAgent(a.id)}
               className={`flex cursor-pointer items-center gap-2.5 rounded-xl border p-2.5 text-right transition ${
                 a.is_super ? "border-2 bg-black hover:opacity-90" : "border-border bg-surface hover:border-primary/50"
               }`}
@@ -1025,6 +812,13 @@ export default function AdminDashboard() {
                     return null;
                   })()}
                 </div>
+                {/* مين الأدمن اللي ضاف المندوب ده */}
+                {creatorOf[a.id] && (
+                  <div className="mt-0.5 flex items-center gap-1 text-[9px] text-muted">
+                    <UserPlus size={9} className="shrink-0" />
+                    <span className="truncate">أضافه: {creatorOf[a.id]}</span>
+                  </div>
+                )}
                 {/* السطر ٢: النسخة + الجهاز + حالة الاشتراك */}
                 <div className="mt-1 flex flex-wrap items-center gap-1">
                   {a.app_version
@@ -1096,10 +890,21 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Create modal */}
+      {/* Create modal.
+          النافذة كانت بتتقصّ لما لوحة المفاتيح تطلع: بقت تتمرّر جوّه نفسها،
+          وأول ما المندوب يدوس على خانة بتتزحلق لنص الشاشة بعد ما الكيبورد
+          يخلّص حركته — فالكلام اللي بيتكتب يفضل باين. */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
+        <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/70 p-4 sm:items-center">
+          <div
+            onFocus={(e) => {
+              const el = e.target as HTMLElement;
+              if (!el.matches?.("input, textarea, select")) return;
+              setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 280);
+            }}
+            className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-border bg-surface p-5"
+            style={{ maxHeight: "85dvh" }}
+          >
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-bold text-ink">حساب جديد</h3>
               <button onClick={() => setShowCreate(false)} className="text-muted hover:text-ink"><X size={18} /></button>
