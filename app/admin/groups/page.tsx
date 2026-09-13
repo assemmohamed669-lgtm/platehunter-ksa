@@ -16,6 +16,14 @@ import { GROUP_ELIGIBLE_ROLES, memberBadge, membersLabel } from "@/lib/groupMemb
 
 interface Agent { id: string; username: string; team: string | null; role: string | null; }
 
+/** أي انتظار مالوش نهاية = شاشة واقفة عند المندوب. بنحط سقف زمني ونقول السبب. */
+function withTimeout<T>(p: PromiseLike<T>, ms: number, what: string): Promise<T> {
+  return Promise.race([
+    Promise.resolve(p),
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what}: الطلب أخد وقت طويل — جرّب تاني.`)), ms)),
+  ]);
+}
+
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -32,6 +40,8 @@ export default function GroupsPage() {
   // فمجموعة مالهاش صف في group_settings بتشتغل زي ما هي.
   const [settings, setSettings] = useState<Record<string, { notify: boolean; share: boolean }>>({});
   const [togglingTeam, setTogglingTeam] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
 
   // إنشاء مجموعة
   const [createOpen, setCreateOpen] = useState(false);
@@ -47,12 +57,21 @@ export default function GroupsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // الأدمنز كمان ينفع يبقوا في مجموعة — الباك إند بيدعمهم من الأصل
-    // (setTeam بلا فلتر دور، وmy_team_members بترجّع أي حد بنفس الـteam).
-    const { data } = await supabase.from("profiles").select("id, username, team, role")
-      .in("role", [...GROUP_ELIGIBLE_ROLES]).order("username", { ascending: true });
-    if (data) setAgents((data as Agent[]).map(({ id, username, team, role }) => ({ id, username, team, role })));
-    setLoading(false);
+    try {
+      // الأدمنز كمان ينفع يبقوا في مجموعة — الباك إند بيدعمهم من الأصل
+      // (setTeam بلا فلتر دور، وmy_team_members بترجّع أي حد بنفس الـteam).
+      const { data, error } = await withTimeout(
+        supabase.from("profiles").select("id, username, team, role")
+          .in("role", [...GROUP_ELIGIBLE_ROLES]).order("username", { ascending: true }),
+        20000, "تحميل المناديب");
+      if (error) setErr("تعذّر تحميل المناديب: " + error.message);
+      if (data) setAgents((data as Agent[]).map(({ id, username, team, role }) => ({ id, username, team, role })));
+    } catch (e) {
+      // كانت بتفضل «جارٍ التحميل...» للأبد لو الطلب وقف — دلوقتي بتقول السبب.
+      setErr((e as Error)?.message ?? "تعذّر التحميل.");
+    } finally {
+      setLoading(false);
+    }
     // مفاتيح المجموعات — فشلها مايمنعش الصفحة (بتشتغل بالافتراضي: مفتوح).
     try {
       const res = await fetch("/api/admin/group-settings", { headers: await authHeaders() });
@@ -103,12 +122,23 @@ export default function GroupsPage() {
 
   // يطبّق setTeam على مجموعة من المناديب بالتتابع.
   async function setTeamFor(ids: string[], team: string) {
+    // الهيدر مرة واحدة قبل اللفّة: getSession() جوّه اللوب كان ممكن يوقف على
+    // شبكة ضعيفة لو صادف تجديد التوكن، فالشاشة تفضل «جارٍ» بلا نهاية.
+    const headers = await withTimeout(authHeaders(), 15000, "التحقق من الجلسة");
     for (const id of ids) {
-      const res = await fetch("/api/admin/manage-agent", {
-        method: "POST", headers: await authHeaders(),
-        body: JSON.stringify({ agentId: id, action: "setTeam", team }),
-      });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error ?? "تعذّر الحفظ."); }
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const res = await fetch("/api/admin/manage-agent", {
+          method: "POST", headers, signal: ctrl.signal,
+          body: JSON.stringify({ agentId: id, action: "setTeam", team }),
+        });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error ?? "تعذّر الحفظ."); }
+      } catch (e) {
+        throw new Error((e as Error)?.name === "AbortError"
+          ? `«${nameOf(id)}»: الطلب أخد وقت طويل — جرّب تاني.`
+          : `«${nameOf(id)}»: ${(e as Error)?.message ?? "تعذّر الحفظ."}`);
+      } finally { clearTimeout(timer); }
     }
   }
 
@@ -118,9 +148,14 @@ export default function GroupsPage() {
     const name = createName.trim();
     if (!name) { alert("اكتب اسم المجموعة."); return; }
     if (createSel.size === 0) { alert("اختار مندوب واحد على الأقل."); return; }
-    setBusy(true);
-    try { await setTeamFor([...createSel], name); await load(); setCreateOpen(false); }
-    catch (e) { alert((e as Error).message); }
+    setBusy(true); setErr(null); setOkMsg(null);
+    try {
+      await setTeamFor([...createSel], name);
+      setOkMsg(`اتعملت مجموعة «${name}» ✓ (${createSel.size} مندوب)`);
+      setTimeout(() => setOkMsg(null), 4000);
+      setCreateOpen(false);
+      await load();
+    } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -135,12 +170,17 @@ export default function GroupsPage() {
     const added = [...editSet].filter((id) => !current.has(id));
     const removed = [...current].filter((id) => !editSet.has(id));
     if (added.length === 0 && removed.length === 0) { setOpenGroup(null); return; }
-    setBusy(true);
+    setBusy(true); setErr(null); setOkMsg(null);
     try {
       if (added.length) await setTeamFor(added, openGroup);
       if (removed.length) await setTeamFor(removed, "");     // "" = يتشال من المجموعة
-      await load(); setOpenGroup(null);
-    } catch (e) { alert((e as Error).message); }
+      // التعديل اتنفّذ خلاص — نقول «اتحفظ» قبل إعادة التحميل، عشان لو التحميل
+      // اتأخّر المندوب مايفتكرش إن الحفظ فشل.
+      setOkMsg(`اتحفظ ✓ ${added.length ? `أضفنا ${added.length}` : ""}${added.length && removed.length ? " · " : ""}${removed.length ? `شِلنا ${removed.length}` : ""}`);
+      setTimeout(() => setOkMsg(null), 4000);
+      setOpenGroup(null);
+      await load();
+    } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -170,6 +210,13 @@ export default function GroupsPage() {
           <Plus size={17} /> إنشئ مجموعة جديدة
         </button>
 
+        {okMsg && <p className="rounded-xl bg-green-600/10 px-3 py-2 text-xs font-bold text-green-600">{okMsg}</p>}
+        {err && (
+          <div className="flex items-start justify-between gap-2 rounded-xl bg-danger/10 px-3 py-2">
+            <p className="text-xs font-bold text-danger">{err}</p>
+            <button onClick={() => { setErr(null); void load(); }} className="shrink-0 text-[11px] font-bold text-danger underline">جرّب تاني</button>
+          </div>
+        )}
         {loading && <p className="py-6 text-center text-sm text-muted">جارٍ التحميل...</p>}
 
         {/* مربعات المجموعات */}
