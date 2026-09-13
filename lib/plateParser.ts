@@ -2262,6 +2262,11 @@ export function reversePlateLetters(normalized: string): string {
 }
 
 export interface MatchResult {
+  /**
+   * عنوان نافذة النتيجة لو المصدر مش ملف داتا مرقّم — زي «سجلات المجموعة».
+   * غيابه = السلوك القديم بالحرف («نتيجة فرز داتا ٢»…).
+   */
+  srcLabel?: string;
   referralRow: Record<string, string>;
   dataRow?: Record<string, string>;
   status: "exact" | "fuzzy" | "none";
