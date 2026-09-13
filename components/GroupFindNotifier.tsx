@@ -77,6 +77,13 @@ export default function GroupFindNotifier() {
       const c = coordsRef.current;
       const mapsLink = c ? toMapsLink(c.lat, c.lng) : null;
       void (async () => {
+        // مفتاح إشعارات المجموعة (من صفحة المجموعات). بنقراه **وقت اللقطة** مش
+        // عند التشغيل عشان قفل الأدمن يسري فورًا. غياب الصف = مفتوح (الافتراضي).
+        try {
+          const { data: gs } = await supabase
+            .from("group_settings").select("notify_enabled").eq("team", me.team).maybeSingle();
+          if ((gs as { notify_enabled?: boolean } | null)?.notify_enabled === false) return;
+        } catch { /* مافيش نت أو الجدول لسه ماتعملش — نكمّل عادي */ }
         // (١) الصف ده هو اللي بيوصل لحظيًا للي التطبيق مفتوح عندهم.
         await supabase.from("group_finds").insert({
           team: me.team, finder_id: me.id, finder_name: me.name,

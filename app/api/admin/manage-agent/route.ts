@@ -27,7 +27,8 @@ import { randomUUID } from "node:crypto";
 // حساب أدمن/سوبر، فبيقدر يفتح/يقفل صوت VoiceX وباقي الصفحات **للمناديب بس**.
 // setTeam للسوبر أدمن بس — صفحة المجموعات نفسها سوبر-only، وبدون القفل ده أي
 // أدمن يقدر ينقل مندوب بين المجموعات بنداء مباشر على الـAPI.
-const SUPER_ONLY = new Set(["delete", "setRole", "setTeam"]);
+// setTeam مبقاش سوبر-أونلي: المالك طلب إن الأدمنز يديروا المجموعات زيه.
+const SUPER_ONLY = new Set(["delete", "setRole"]);
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");

@@ -29,6 +29,13 @@ export async function POST(req: NextRequest) {
   const team = (me as { team?: string | null } | null)?.team ?? null;
   if (!team || !fcmConfigured()) return NextResponse.json({ ok: true, sent: 0 });
 
+  // إشعارات المجموعة مقفولة من صفحة المجموعات؟ مانبعتش. (غياب الصف = مفتوح.)
+  const { data: gs } = await supabaseAdmin
+    .from("group_settings").select("notify_enabled").eq("team", team).maybeSingle();
+  if ((gs as { notify_enabled?: boolean } | null)?.notify_enabled === false) {
+    return NextResponse.json({ ok: true, sent: 0, skipped: "notifications-off" });
+  }
+
   const { data: mates } = await supabaseAdmin
     .from("profiles").select("id").eq("team", team).neq("id", uid);
   const ids = (mates ?? []).map((m: { id: string }) => m.id);
