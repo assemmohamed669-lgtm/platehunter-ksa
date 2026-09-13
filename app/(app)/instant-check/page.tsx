@@ -49,6 +49,7 @@ import { saveTrainingSample, saveTrainingSession, countTrainingToday } from "@/l
 import { syncTrainingData } from "@/lib/trainingSync";
 import OpenDownloadButton from "@/components/OpenDownloadButton";
 import PlateBadge from "@/components/PlateBadge";
+import GroupRecordsView from "@/components/GroupRecordsView";
 import { browserScreenWake } from "@/lib/screenWake";
 import { engineLabel } from "@/lib/engineLabel";
 import { voiceTabVisible, loadCachedVoiceAccess, saveCachedVoiceAccess } from "@/lib/voiceAccess";
@@ -522,6 +523,10 @@ export default function InstantCheckPage() {
    * هو بس**. `null` = لسه بنجيب البروفايل (نعرض الوضع العادي لحد ما يوصل).
    */
   const [voiceOnly, setVoiceOnly] = useState<boolean | null>(null);
+  // تبويب «السجلات»: سجلاتي ولا سجلات المجموعة كلها. اللي مش في مجموعة
+  // مايشوفش الزرّين أصلاً.
+  const [recordsScope, setRecordsScope] = useState<"mine" | "group">("mine");
+  const [hasTeam, setHasTeam] = useState(false);
   // تبويب «صوتي» بيظهر للمفعّل عنده الصوت بس. `null` = لسه بنقرا.
   const [voiceAllowed, setVoiceAllowed] = useState<boolean | null>(null);
   // اسم الشارع اللي المندوب بيكتبه بإيده — بيتختم على كل لوحة **من لحظة
@@ -536,8 +541,9 @@ export default function InstantCheckPage() {
         if (!data.user) return;
         // العلمين في استعلام واحد — رحلة شبكة واحدة بدل اتنين على شبكة الموبايل.
         const { data: prof } = await supabase.from("profiles")
-          .select("rest_pages_enabled, voicex_enabled, is_super, voicex_until, rest_until").eq("id", data.user.id).single();
-        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean; voicex_until?: string | null; rest_until?: string | null } | null;
+          .select("rest_pages_enabled, voicex_enabled, is_super, voicex_until, rest_until, team").eq("id", data.user.id).single();
+        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean; voicex_until?: string | null; rest_until?: string | null; team?: string | null } | null;
+        setHasTeam(!!row?.team);
         // «صوت فقط» = باقي البرنامج مش متاح (مقفول يدويًا أو أيامه خلصت). السوبر
         // أدمن مالوش انتهاء. voiceTabVisible بياخد في حسابه انتهاء أيام الصوت.
         const restAvailable = row?.is_super === true || (!!row && row.rest_pages_enabled !== false && serviceActive(row.rest_until));
@@ -4246,7 +4252,7 @@ export default function InstantCheckPage() {
       {checkTable && mode !== "sort" && mode !== "cert" && (
         <>
           {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
-          {mode === "sheet" && (
+          {mode === "sheet" && recordsScope === "mine" && (
             <div className="flex flex-wrap justify-end gap-2">
               {recordsLinkedUi ? (
                 <button onClick={() => { unlinkRecords(); setRecordsLinkedUi(false); }}
@@ -5523,8 +5529,27 @@ export default function InstantCheckPage() {
         </>
       )}
 
+      {/* سجلاتي / سجلات المجموعة — نفس المكان اللي المندوب بيفتحه كل يوم، عشان
+          السجلات المشتركة ماتفضلش مخبّية في القايمة. */}
+      {mode === "sheet" && hasTeam && (
+        <div className="mb-3 flex gap-1.5">
+          {([["mine", "سجلاتي"], ["group", "سجلات المجموعة"]] as Array<["mine" | "group", string]>).map(([k, label]) => (
+            <button key={k} onClick={() => setRecordsScope(k)}
+              className={`flex-1 rounded-full border px-3 py-2 text-xs transition ${
+                recordsScope === k ? "border-primary bg-primary/15 font-bold text-primary" : "border-border text-muted"
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === "sheet" && recordsScope === "group" && (
+        <div className="mb-3"><GroupRecordsView embedded /></div>
+      )}
+
       {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات (قابل للتعديل + مشاركة/تصدير) */}
-      {mode === "sheet" && chassisRecords.length > 0 && (
+      {mode === "sheet" && recordsScope === "mine" && chassisRecords.length > 0 && (
         <div className="mb-3 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center gap-2">
             <Barcode size={16} className="text-brand shrink-0" />
@@ -5611,7 +5636,7 @@ export default function InstantCheckPage() {
       {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
       {/* لسه بنسترجع من السيرفر → مانقولش «مفيش تسجيلات» (المندوب كان بيفتكرها
           ضاعت وهي لسه بتحمّل من حسابه). */}
-      {mode === "sheet" && restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
+      {mode === "sheet" && recordsScope === "mine" && restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
         <div className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-8 text-center text-sm font-bold text-primary">
           <span className="animate-pulse">
             جاري استرجاع سجلاتك…
@@ -5620,12 +5645,12 @@ export default function InstantCheckPage() {
           <p className="mt-1 text-[11px] font-normal text-muted">سجلاتك محفوظة على حسابك وبترجع على أي جهاز تدخل منه</p>
         </div>
       )}
-      {mode === "sheet" && !restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
+      {mode === "sheet" && recordsScope === "mine" && !restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
         <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
           لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
         </div>
       )}
-      {mode === "sheet" && fieldEntries.length > 0 && (() => {
+      {mode === "sheet" && recordsScope === "mine" && fieldEntries.length > 0 && (() => {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
         // النوع والملاحظات ليهم أعمدة تعديل خاصة فوق — نستبعدهم من الأعمدة العادية
         const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
