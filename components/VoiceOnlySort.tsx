@@ -20,7 +20,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import PlateBadge from "@/components/PlateBadge";
 import {
   buildReferralIndex,
   matchChunkAgainstIndex,
@@ -268,34 +267,63 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     if (rows.length === 0) {
       return <p className="rounded-2xl bg-surface-2 px-3 py-4 text-center text-xs text-muted">{emptyHint}</p>;
     }
+    // أعمدة الجدول = اتحاد مفاتيح كل الصفوف (بترتيب ظهورها) — زي جدول نتيجة
+    // الفرز بالظبط بدل كارت كبير لكل لوحة.
+    const cols: string[] = [];
+    for (const m of rows) {
+      for (const [k, v] of Object.entries(mergedRow(m))) {
+        if (k === REC_PLATE_COL) continue;
+        if (!String(v ?? "").trim()) continue;
+        if (!cols.includes(k)) cols.push(k);
+      }
+    }
     return (
       <div className="flex flex-col gap-2">
-        {rows.map((m, i) => {
-          const r = mergedRow(m);
-          const details = Object.entries(r).filter(([k, v]) => k !== REC_PLATE_COL && String(v ?? "").trim());
-          return (
-            <div key={i} className="rounded-2xl border border-danger/40 bg-danger/5 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <PlateBadge value={plateOf(m)} size="sm" />
-                {m.status === "fuzzy" && (
-                  <span className="rounded-full bg-alert/15 px-2 py-0.5 text-[10px] font-bold text-alert">
-                    مشتبه {m.similarity != null ? `${Math.round(m.similarity)}%` : ""}
-                  </span>
-                )}
-              </div>
-              {details.length > 0 && (
-                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-                  {details.slice(0, 10).map(([k, v], j) => (
-                    <div key={j} className="flex gap-1 text-[11px] min-w-0">
-                      <span className="shrink-0 text-muted">{k}:</span>
-                      <span className="truncate font-bold text-ink">{String(v)}</span>
-                    </div>
+        <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
+          <div style={{ fontSize: "12px", minWidth: "max-content" }}>
+            <table className="w-full border-collapse" style={{ direction: "rtl" }}>
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-surface-2 text-muted">
+                  <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">رقم اللوحة</th>
+                  {cols.map((c) => (
+                    <th key={c} className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">{c}</th>
                   ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((m, i) => {
+                  const r = mergedRow(m);
+                  return (
+                    <tr key={i} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                      <td className="whitespace-nowrap border-l border-border px-3 py-2 font-bold text-brand">
+                        <span className="inline-flex items-center gap-1.5">
+                          {plateOf(m)}
+                          {m.status === "fuzzy" && (
+                            <span className="rounded-full bg-alert/20 px-1.5 py-0.5 text-[0.75em] font-bold text-alert"
+                              title="تطابق تقريبي — راجع اللوحة قبل ما تتحرك">
+                              مشتبه {m.similarity != null ? `${Math.round(m.similarity)}%` : ""}
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      {cols.map((c) => {
+                        const v = String(r[c] ?? "").trim();
+                        const gps = /^https?:\/\//i.test(v);
+                        return (
+                          <td key={c} className="whitespace-nowrap border-l border-border px-3 py-2 text-ink">
+                            {gps
+                              ? <a href={v} target="_blank" rel="noopener noreferrer" className="text-primary underline">خريطة</a>
+                              : (v || "—")}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         {/* أزرار المشاركة + المسح — نفس خدمات صفحة الفرز */}
         <div className="grid grid-cols-3 gap-1.5">

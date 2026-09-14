@@ -2417,8 +2417,12 @@ export function buildReferralIndex(
     const norm = normalizePlate(bankPlateToArabic(String(row[referralPlateCol] ?? "")));
     if (!norm) continue;
     exact.set(norm, row);
-    const rev = reversePlateLetters(norm);
-    if (rev !== norm) exact.set(rev, row);
+    // ⛔ كان بيتسجّل كمان مفتاح **بحروف معكوسة** لكل لوحة إحالة — تخمين إن
+    //    الملف ممكن يكون مكتوب من السطر اللاتيني. ده طلّع مطابقات وهمية في
+    //    الميدان (٢٠٢٦-٠٩-١٤: محفظة فيها «رسا2244» طابقت سجل «اسر2244» —
+    //    سيارتين مختلفتين، وظهرت للمندوب كـ«مطلوبة»).
+    //    القلب الحقيقي بيتعمل في `bankPlateToArabic` من **شكل الخانة** نفسها
+    //    (أرقام بعدين حروف = سطر لاتيني ⇒ يتقلب)، فالتخمين بقى ضرر بلا فايدة.
     const key = norm[0];
     if (!byFirstChar.has(key)) byFirstChar.set(key, []);
     byFirstChar.get(key)!.push({ norm, row });
