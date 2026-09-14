@@ -2072,7 +2072,7 @@ export default function SortingPage() {
               const idx = dataBase + gj; gj++;
               const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
               if (!n) continue;
-              pushMatch(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined);
+              pushMatch(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز السجلات" : undefined);
             }
             await new Promise<void>((r) => setTimeout(r, 0));
           }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2086,7 +2086,7 @@ export default function SortingPage() {
             const dataRow = rows[j];
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            pushMatch(dataRow, n, dataBase + j, srcBase + si, src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined);
+            pushMatch(dataRow, n, dataBase + j, srcBase + si, src.isRecords ? "نتيجة فرز السجلات" : undefined);
           }
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
@@ -2190,7 +2190,7 @@ export default function SortingPage() {
                 const idx = gIdx++;
                 const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
                 if (!n) continue;
-                pushNew(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined);
+                pushNew(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز السجلات" : undefined);
               }
               await new Promise<void>((r) => setTimeout(r, 0));
             }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2200,7 +2200,7 @@ export default function SortingPage() {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
             if (!n) continue;
-            const entry = { row, dataIdx: idx, srcIdx: srcBase + si, srcLabel: src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined };
+            const entry = { row, dataIdx: idx, srcIdx: srcBase + si, srcLabel: src.isRecords ? "نتيجة فرز السجلات" : undefined };
             const arr = dataIndex.get(n);
             if (arr) arr.push(entry); else dataIndex.set(n, [entry]);
           }
