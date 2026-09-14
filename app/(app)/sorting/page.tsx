@@ -2023,9 +2023,9 @@ export default function SortingPage() {
       //    يتحرك لعربية غلط. الضرر أكبر من النفع، فاتشالت بأمر المالك
       //    (٢٠٢٦-٠٩-١٣). `lib/fuzzyPlateIndex.ts` متسابة لو اتعملت يوم كقسم
       //    منفصل «للمراجعة» مش كنتيجة مطلوبة.
-      const pushMatch = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number) => {
+      const pushMatch = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number, srcLabel?: string) => {
         const hit = refIndex.get(n);
-        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx });
+        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx, srcLabel });
       };
       for (const e of refEntries) {
         if (!refIndex.has(e.norm)) refIndex.set(e.norm, { row: e.row, norm: e.norm });
@@ -2072,7 +2072,7 @@ export default function SortingPage() {
               const idx = dataBase + gj; gj++;
               const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
               if (!n) continue;
-              pushMatch(dataRow, n, idx, srcBase + si);
+              pushMatch(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined);
             }
             await new Promise<void>((r) => setTimeout(r, 0));
           }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2086,7 +2086,7 @@ export default function SortingPage() {
             const dataRow = rows[j];
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            pushMatch(dataRow, n, dataBase + j, srcBase + si);
+            pushMatch(dataRow, n, dataBase + j, srcBase + si, src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined);
           }
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
@@ -2157,9 +2157,9 @@ export default function SortingPage() {
         }
       }
       // ⛔ تطابق تام بس — نفس سبب الفرز الكلي فوق.
-      const pushNew = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number) => {
+      const pushNew = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number, srcLabel?: string) => {
         const hit = newIndex.get(n);
-        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx });
+        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx, srcLabel });
       };
       // gIdx = فهرس عام متتابع عبر كل مصادر الداتا (أساسي + إضافي) بالترتيب — عشان
       // dataIdx يفضل مطابق لترتيب الملفات بعد الفرز النهائي.
@@ -2180,7 +2180,7 @@ export default function SortingPage() {
       // (ب) ملفات الداتا الإضافية بالترتيب: الكبيرة تُقرا من الجهاز على دفعات
       // (وتطابق على فهرس الجديد مباشرة)، والصغيرة عبر فهرس صغير في الذاكرة.
       if (memSources.length) {
-        const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number }>>();
+        const dataIndex = new Map<string, Array<{ row: Record<string, string>; dataIdx: number; srcIdx: number; srcLabel?: string }>>();
         for (let si = 0; si < memSources.length; si++) {
           const src = memSources[si];
           const pc = src.plateCol;
@@ -2190,7 +2190,7 @@ export default function SortingPage() {
                 const idx = gIdx++;
                 const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
                 if (!n) continue;
-                pushNew(dataRow, n, idx, srcBase + si);
+                pushNew(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined);
               }
               await new Promise<void>((r) => setTimeout(r, 0));
             }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2200,7 +2200,7 @@ export default function SortingPage() {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
             if (!n) continue;
-            const entry = { row, dataIdx: idx, srcIdx: srcBase + si };
+            const entry = { row, dataIdx: idx, srcIdx: srcBase + si, srcLabel: src.isRecords ? "نتيجة فرز سجلات المندوب" : undefined };
             const arr = dataIndex.get(n);
             if (arr) arr.push(entry); else dataIndex.set(n, [entry]);
           }
@@ -2210,8 +2210,8 @@ export default function SortingPage() {
             !e.isArabic && /[A-Za-z]/.test(e.raw) ? dataIndex.get(reversePlateLetters(e.norm)) : undefined
           );
           if (dataRows) {
-            for (const { row: dataRow, dataIdx, srcIdx } of dataRows) {
-              matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm, srcIdx });
+            for (const { row: dataRow, dataIdx, srcIdx, srcLabel } of dataRows) {
+              matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm, srcIdx, srcLabel });
             }
           }
         }
