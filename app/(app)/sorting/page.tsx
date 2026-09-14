@@ -878,7 +878,7 @@ export default function SortingPage() {
       sources.push({ kind: "data", headers: dataTable.headers, rows: dataTable.rows, plateCol: effectiveDataPlateCol });
     }
     // سجلات المندوب كخانة داتا (ربط حي) — أعمدتها لازم تظهر في نتيجة الفرز زي أي داتا.
-    if (tashyeekTable && tashyeekPlateCol) {
+    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
       sources.push({ kind: "data", headers: tashyeekTable.headers, rows: tashyeekTable.rows, plateCol: tashyeekPlateCol });
     }
     // **مهم:** لو الملف متعدد الورقات، الأعمدة لازم تتقري من **الورقات المختارة**
@@ -951,7 +951,7 @@ export default function SortingPage() {
       for (const h of extraColsSel[ed.id] ?? []) picked.add(h);
     }
     // سجلات المندوب المربوطة كداتا — كل أعمدة الشيت تظهر في النتيجة (الشيت بالكامل).
-    if (tashyeekTable && tashyeekPlateCol) {
+    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
       for (const h of tashyeekTable.headers) if (h && h !== tashyeekPlateCol) picked.add(h);
     }
     return [...picked].filter((h) => !usedData.has(h))
@@ -1424,7 +1424,7 @@ export default function SortingPage() {
    * سجلات المندوب بقت بتدخل الفرز كمصدر داتا **دايمًا**، فالقسم المنفصل
    * «نتيجة فرز السجلات» بقى تكرار لنفس السيارات — بنوقفه لما السجلات موجودة.
    */
-  const recordsInData = !!tashyeekTable && !!tashyeekPlateCol;
+  const recordsInData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
   const canSort = sortMode === "new"
     ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol && dataSheetsReady
     : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || recordsAsDataReady);
@@ -1699,11 +1699,10 @@ export default function SortingPage() {
       if (!plateCol) continue;
       srcs.push({ rows: ed.table.rows, plateCol });
     }
-    // سجلات المندوب بتدخل الفرز **تلقائيًا** (بطلب المالك) — مش مستنية زر
-    // «أضف لخانة الداتا». ولو رافعها كملف داتا إضافي كمان، الاتنين بيتفرزوا.
-    // `isRecords` عشان اللصق النصّي يفصلها في ويندو لوحدها بأعمدتها هي (فيها
-    // GPS والحي والتاريخ) — أعمدة ملف الداتا مابتوصفهاش فكانت بتطلع فاضية.
-    if (tashyeekTable && tashyeekPlateCol) {
+    // سجلات المندوب كخانة داتا — بزر «أضف لخانة الداتا» زي الأول. (دخولها
+    // تلقائيًا كان بيقسّم النتيجة ويندوهات كتير ويشتّت المناديب — اترجع.)
+    // `isRecords` باقية عشان اللصق النصّي يفصلها في ويندو بأعمدتها هي.
+    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
       srcs.push({ rows: tashyeekTable.rows, plateCol: tashyeekPlateCol, isRecords: true });
     }
     return srcs;
@@ -1946,67 +1945,16 @@ export default function SortingPage() {
     setter(next);
   }
 
-  /** رقم نافذة مخصّص لسجلات المجموعة — بعيد عن أرقام ملفات الداتا. */
-  const GROUP_SRC_IDX = 9000;
-
-  /**
-   * سجلات المجموعة: المطابقة على السيرفر (`match_group_plates`) وبنستقبل
-   * **المطابق بس** — فـ٧٠ ألف سجل مابينزلوش على الموبايل. بيتنادى بعد الفرز
-   * المحلي، وفشله مايوقفش النتيجة المحلية.
-   */
-  async function addGroupMatches(
-    matches: MatchResult[],
-    index: Map<string, { row: Record<string, string>; norm: string }>,
-    startIdx: number,
-  ): Promise<void> {
-    if (!hasTeam) return;
-    const norms = [...index.keys()];
-    if (norms.length === 0) return;
-    const RPC_PAGE = 1000;
-    let n = startIdx;
-    try {
-      for (let from = 0; ; from += RPC_PAGE) {
-        const { data, error } = await supabase
-          .rpc("match_group_plates", { p_norms: norms })
-          .range(from, from + RPC_PAGE - 1);
-        if (error) return;
-        const got = (data ?? []) as Array<{
-          plate: string; method: string | null; maps_link: string | null;
-          checked_at: string; agent_id: string; extra?: Record<string, string> | null;
-        }>;
-        for (const g of got) {
-          const hit = index.get(normalizePlate(bankPlateToArabic(String(g.plate ?? ""))));
-          if (!hit) continue;
-          matches.push({
-            referralRow: hit.row,
-            dataRow: {
-              // `extra` فيه الحي-الشارع والنوع وملاحظات المندوب — بيتفرد الأول
-              // والأعمدة المحسوبة تحت بتغلب عليه (زي سجلات المندوب نفسه بالظبط).
-              ...(g.extra ?? {}),
-              "رقم اللوحة": String(g.plate ?? ""),
-              "الحالة": g.method ?? "",
-              "GPS": g.maps_link ?? "",
-              "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
-              "المندوب": groupNamesRef.current[g.agent_id] ?? "",
-            },
-            status: "exact",
-            refPlateNorm: hit.norm,
-            dataIdx: n++,
-            srcIdx: GROUP_SRC_IDX,
-            srcLabel: "نتيجة فرز سجلات المجموعة",
-          });
-        }
-        if (got.length < RPC_PAGE) return;
-      }
-    } catch { /* مافيش نت — الفرز المحلي شغّال */ }
-  }
+  // ملحوظة: مطابقة سجلات المجموعة في الفرز اتشالت بطلب المالك (٢٠٢٦-٠٩-١٤) —
+  // كانت بتزوّد ويندو في النتيجة وتشتّت المناديب. فرز سجلات المجموعة لسه متاح
+  // في صفحته المنفصلة «فرز على سجلات المجموعة».
 
   // ── Full sort ──
   // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
   // ملف الداتا → نتيجة واحدة مجمّعة.
   async function runFullSort() {
     const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
-    const hasRecordsData = !!tashyeekTable && !!tashyeekPlateCol;
+    const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
     if (!(hasUploadedData || hasRecordsData) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
@@ -2072,7 +2020,7 @@ export default function SortingPage() {
               const idx = dataBase + gj; gj++;
               const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
               if (!n) continue;
-              pushMatch(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز السجلات" : undefined);
+              pushMatch(dataRow, n, idx, srcBase + si);
             }
             await new Promise<void>((r) => setTimeout(r, 0));
           }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2086,14 +2034,12 @@ export default function SortingPage() {
             const dataRow = rows[j];
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            pushMatch(dataRow, n, dataBase + j, srcBase + si, src.isRecords ? "نتيجة فرز السجلات" : undefined);
+            pushMatch(dataRow, n, dataBase + j, srcBase + si);
           }
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
         dataBase += rows.length;
       }
-      // سجلات المجموعة — مطابقة على السيرفر، بترجّع المطابق بس.
-      await addGroupMatches(matches, refIndex, dataBase + 1);
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // لو السجلات مربوطة كخانة داتا، بتظهر في نتيجة الداتا فوق — فمانعملش قسم
       // «فرز السجلات» المنفصل عشان ماتتكررش نفس السيارات مرتين.
@@ -2190,7 +2136,7 @@ export default function SortingPage() {
                 const idx = gIdx++;
                 const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
                 if (!n) continue;
-                pushNew(dataRow, n, idx, srcBase + si, src.isRecords ? "نتيجة فرز السجلات" : undefined);
+                pushNew(dataRow, n, idx, srcBase + si);
               }
               await new Promise<void>((r) => setTimeout(r, 0));
             }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2200,7 +2146,7 @@ export default function SortingPage() {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(row[pc] ?? "")));
             if (!n) continue;
-            const entry = { row, dataIdx: idx, srcIdx: srcBase + si, srcLabel: src.isRecords ? "نتيجة فرز السجلات" : undefined };
+            const entry = { row, dataIdx: idx, srcIdx: srcBase + si };
             const arr = dataIndex.get(n);
             if (arr) arr.push(entry); else dataIndex.set(n, [entry]);
           }
@@ -2216,8 +2162,6 @@ export default function SortingPage() {
           }
         }
       }
-      // سجلات المجموعة — نفس فكرة الفرز الكلي.
-      await addGroupMatches(matches, newIndex, gIdx + 1);
       matches.sort((a, b) => a.dataIdx - b.dataIdx);
       // شيت السجلات (الميداني): طابق اللوحات الجديدة عليه كمان.
       let finalTashyeek: TashyeekResultRow[] | null = null;
