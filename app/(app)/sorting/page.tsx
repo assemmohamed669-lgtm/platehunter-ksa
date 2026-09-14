@@ -1671,7 +1671,9 @@ export default function SortingPage() {
   // مسارات الفرز عشان الفرز يتم على كل ملفات الداتا مدموجة.
   // مصدر داتا: إمّا صفوف في الذاكرة (rows) أو ملف كبير على الجهاز (slot + rowCount)
   // بيتقري على دفعات وقت الفرز بدل ما يتحمّل في الذاكرة.
-  type DataSource = { rows: Record<string, string>[]; plateCol: string; slot?: string; rowCount?: number; sheets?: Set<string> | null };
+  // isRecords: مصدره سجلات المندوب مش ملف داتا مرفوع — اللصق النصّي بيفصلها
+  // في ويندو لوحدها بأعمدتها هي (GPS · الحي · التاريخ).
+  type DataSource = { rows: Record<string, string>[]; plateCol: string; slot?: string; rowCount?: number; sheets?: Set<string> | null; isRecords?: boolean };
   function collectDataSources(): DataSource[] {
     const srcs: DataSource[] = [];
     if (dataTable && effectiveDataPlateCol) {
@@ -1699,8 +1701,10 @@ export default function SortingPage() {
     }
     // سجلات المندوب بتدخل الفرز **تلقائيًا** (بطلب المالك) — مش مستنية زر
     // «أضف لخانة الداتا». ولو رافعها كملف داتا إضافي كمان، الاتنين بيتفرزوا.
+    // `isRecords` عشان اللصق النصّي يفصلها في ويندو لوحدها بأعمدتها هي (فيها
+    // GPS والحي والتاريخ) — أعمدة ملف الداتا مابتوصفهاش فكانت بتطلع فاضية.
     if (tashyeekTable && tashyeekPlateCol) {
-      srcs.push({ rows: tashyeekTable.rows, plateCol: tashyeekPlateCol });
+      srcs.push({ rows: tashyeekTable.rows, plateCol: tashyeekPlateCol, isRecords: true });
     }
     return srcs;
   }
@@ -2552,7 +2556,9 @@ export default function SortingPage() {
         }, { slot: "data", sheets: selectedDataSheetFilter });
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية.
-      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      // السجلات ليها ويندو لوحدها تحت — فمابتدخلش لفّة الداتا هنا.
+      const allMem = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      const memSources = allMem.filter((x) => !x.isRecords);
       for (const src of memSources) {
         // ملف إضافي كبير (streamed): لفّ على دفعاته من القرص وطابق كل دفعة (تام
         // فقط زي الأساسي — التقريبي على الملايين بطيء)، مع إزاحة dataIdx.
@@ -2579,7 +2585,8 @@ export default function SortingPage() {
 
     // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
     // لو السجلات مربوطة كداتا، بتتطابق فوق مع الداتا فمانعملش قسم منفصل (منع التكرار).
-    const recordMatches = !recordsInData && tashyeekTable && tashyeekPlateCol
+    // السجلات دايمًا في ويندو منفصلة — بأعمدتها هي (GPS · الحي · التاريخ).
+    const recordMatches = tashyeekTable && tashyeekPlateCol
       ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol)
       : [];
     recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);
@@ -3728,8 +3735,13 @@ export default function SortingPage() {
 
         {!dataTable && <p className="text-xs text-alert">رفع «ملف الداتا» بالأعلى مطلوب أولاً.</p>}
 
+        {/* كل مصدر ليه ويندو لوحده وبعنوانه — الداتا المرفوعة وسجلات المندوب
+            أعمدتهم مختلفة (السجلات فيها GPS والحي والتاريخ)، وخلطهم كان بيخلّي
+            خانات السجلات تطلع فاضية. */}
         {pasteRan && pasteResults.length === 0 && (
-          <p className="py-2 text-center text-sm text-muted">لا توجد تطابقات في ملف الداتا.</p>
+          <p className="rounded-xl border border-border bg-surface-2 py-3 text-center text-sm font-bold text-muted">
+            لا يوجد سيارات مطلوبة في الداتا
+          </p>
         )}
 
         {pasteRan && pasteResults.length > 0 && (
@@ -3739,7 +3751,7 @@ export default function SortingPage() {
             <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={13} className="text-brand" />
-                <span className="text-xs font-bold text-brand">{pasteResults.length} لوحة مطلوبة</span>
+                <span className="text-xs font-bold text-brand">ويندو الداتا — {pasteResults.length} لوحة مطلوبة</span>
               </div>
               <div className="flex items-center gap-1">
                 <button onClick={handleNearest} disabled={locating} title="ترتيب حسب الأقرب لموقعك"
@@ -3900,11 +3912,17 @@ export default function SortingPage() {
         {/* لوحات ملصوقة سبق تشييكها — تطابق ضد شيت السجلات (صوت/يدوي)، منفصلة
             عن جدول ملف الداتا (أعمدة مختلفة) وعن شرط pasteResults.length > 0
             عشان تظهر حتى لو اللوحة مش موجودة في ملف الداتا أصلاً. */}
+        {pasteRan && pasteRecordResults.length === 0 && tashyeekTable && (
+          <p className="rounded-xl border border-border bg-surface-2 py-3 text-center text-sm font-bold text-muted">
+            لا يوجد سيارات مطلوبة في السجلات
+          </p>
+        )}
+
         {pasteRan && pasteRecordResults.length > 0 && (
               <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
                 <div className="flex items-center justify-between border-b border-brand/20 bg-brand/10 px-3 py-2">
                   <span className="text-xs font-bold text-brand">
-                    {pasteRecordResults.length} لوحة سبق تشييكها (شيت السجلات)
+                    ويندو السجلات — {pasteRecordResults.length} لوحة سبق تشييكها
                   </span>
                 </div>
                 <div ref={pastePinch2} className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl", touchAction: "pan-x pan-y" }}>
