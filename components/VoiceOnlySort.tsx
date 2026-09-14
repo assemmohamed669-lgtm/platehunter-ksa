@@ -18,7 +18,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon } from "lucide-react";
+import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
+  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import {
   buildReferralIndex,
@@ -32,6 +33,7 @@ import {
 import { buildExcelBlob, shareExcelBlob, type ExcelTable } from "@/lib/excel";
 import { renderTableImages } from "@/lib/plateImage";
 import { shareImageWithText, shareTextViaChooser } from "@/lib/share";
+import { gpsService, extractLatLngFromMapsLink, haversineKm, formatDistanceKm, type GpsCoords } from "@/lib/gps";
 import {
   saveUploadedFile,
   getUploadedFile,
@@ -188,6 +190,46 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
   // ── المشاركة ──────────────────────────────────────────────────────────────
   /** يدمج صف الإحالة + صف السجل في صف واحد للعرض/التصدير (كل البيانات). */
+  // ── أدوات النتيجة: تحديد · الأقرب · أعمدة · تكبير ─────────────────────────
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [zoom, setZoom] = useState(1);
+  const [nearest, setNearest] = useState(false);
+  const [userLoc, setUserLoc] = useState<GpsCoords | null>(null);
+  const [colsOpen, setColsOpen] = useState(false);
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  const [colOrder, setColOrder] = useState<string[]>([]);
+  const [rowCopied, setRowCopied] = useState<number | null>(null);
+
+  // موقع المندوب — بيتشغّل بس لما يطلب «الأقرب أولاً» (مايستهلكش بطارية بلا داعي).
+  useEffect(() => {
+    if (!nearest) return;
+    const un = gpsService.subscribe((c) => setUserLoc(c));
+    return () => { un?.(); };
+  }, [nearest]);
+
+  /** إحداثيات الصف من أول خانة فيها رابط خريطة. */
+  function coordsOf(m: MatchResult): { lat: number; lng: number } | null {
+    for (const v of Object.values(mergedRow(m))) {
+      const t = String(v ?? "").trim();
+      if (!t) continue;
+      const c = extractLatLngFromMapsLink(t);
+      if (c) return c;
+      const pair = t.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
+      if (pair) return { lat: Number(pair[1]), lng: Number(pair[2]) };
+    }
+    return null;
+  }
+
+  /** نص صف واحد — نفس تنسيق مشاركة النص بالظبط. */
+  function rowText(m: MatchResult): string {
+    const r = mergedRow(m);
+    const details = Object.entries(r)
+      .filter(([k, v]) => k !== REC_PLATE_COL && String(v ?? "").trim())
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+    return `🚗 ${plateOf(m)}\n${details}`;
+  }
+
   function mergedRow(m: MatchResult): Record<string, string> {
     return { ...(m.dataRow ?? {}), ...m.referralRow };
   }
@@ -261,40 +303,142 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   // ── العرض ─────────────────────────────────────────────────────────────────
   const canSort = !!refTable && !!refPlateCol && !busy;
 
-  function ResultsBlock({ rows, onClear, emptyHint }: {
+  function ResultsBlock({ rows, onClear, emptyHint, onRemoveRow }: {
     rows: MatchResult[]; onClear: () => void; emptyHint: string;
+    onRemoveRow: (i: number) => void;
   }) {
     if (rows.length === 0) {
       return <p className="rounded-2xl bg-surface-2 px-3 py-4 text-center text-xs text-muted">{emptyHint}</p>;
     }
-    // أعمدة الجدول = اتحاد مفاتيح كل الصفوف (بترتيب ظهورها) — زي جدول نتيجة
-    // الفرز بالظبط بدل كارت كبير لكل لوحة.
-    const cols: string[] = [];
+    // أعمدة الجدول = اتحاد مفاتيح كل الصفوف (بترتيب ظهورها)، وبعدين ترتيب
+    // المندوب وإخفاؤه لو غيّرهم.
+    const allCols: string[] = [];
     for (const m of rows) {
       for (const [k, v] of Object.entries(mergedRow(m))) {
         if (k === REC_PLATE_COL) continue;
         if (!String(v ?? "").trim()) continue;
-        if (!cols.includes(k)) cols.push(k);
+        if (!allCols.includes(k)) allCols.push(k);
       }
     }
+    const ordered = colOrder.length
+      ? [...colOrder.filter((c) => allCols.includes(c)), ...allCols.filter((c) => !colOrder.includes(c))]
+      : allCols;
+    const cols = ordered.filter((c) => !hiddenCols.has(c));
+
+    // «الأقرب أولاً» — ترتيب بالمسافة من موقع المندوب. الصفوف اللي مالهاش موقع
+    // بتروح آخر القايمة بدل ما تختفي.
+    const view = rows.map((m, i) => ({ m, i }));
+    if (nearest && userLoc) {
+      for (const it of view) {
+        const c = coordsOf(it.m);
+        (it as { _d?: number })._d = c ? haversineKm(userLoc.lat, userLoc.lng, c.lat, c.lng) : Infinity;
+      }
+      view.sort((a, b) => ((a as { _d?: number })._d ?? Infinity) - ((b as { _d?: number })._d ?? Infinity));
+    }
+
+    const picked = sel.size > 0 ? rows.filter((_, i) => sel.has(i)) : rows;
+    const allSelected = sel.size === rows.length && rows.length > 0;
+
+    function moveCol(c: string, dir: -1 | 1) {
+      const base = ordered.slice();
+      const at = base.indexOf(c);
+      const to = at + dir;
+      if (at < 0 || to < 0 || to >= base.length) return;
+      [base[at], base[to]] = [base[to], base[at]];
+      setColOrder(base);
+    }
+
     return (
       <div className="flex flex-col gap-2">
+        {/* شريط الأدوات: الأقرب · الأعمدة · التكبير */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button onClick={() => setNearest((v) => !v)}
+            className={`flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition ${
+              nearest ? "border-primary bg-primary/15 text-primary" : "border-border bg-surface-2 text-muted"
+            }`}>
+            <Navigation size={13} /> {nearest ? (userLoc ? "الأقرب أولاً ✓" : "جارٍ تحديد موقعك…") : "الأقرب أولاً"}
+          </button>
+          <button onClick={() => setColsOpen((v) => !v)}
+            className="flex items-center gap-1 rounded-xl border border-border bg-surface-2 px-2.5 py-1.5 text-[11px] font-bold text-muted">
+            <SlidersHorizontal size={13} /> الأعمدة ({cols.length}/{allCols.length})
+          </button>
+          <div className="flex items-center gap-1.5 rounded-xl border border-border bg-surface px-2.5 py-1.5">
+            <button onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.15).toFixed(2)))} className="text-muted"><ZoomOut size={13} /></button>
+            <span className="text-[10px] font-bold text-muted">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.15).toFixed(2)))} className="text-muted"><ZoomIn size={13} /></button>
+          </div>
+        </div>
+
+        {colsOpen && (
+          <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-2 p-2">
+            {ordered.map((c) => (
+              <div key={c} className="flex items-center gap-1.5 rounded-lg bg-surface px-2 py-1">
+                <button onClick={() => setHiddenCols((h) => { const n = new Set(h); if (n.has(c)) n.delete(c); else n.add(c); return n; })}
+                  className="shrink-0 text-muted">
+                  {hiddenCols.has(c) ? <Square size={13} /> : <CheckSquare size={13} className="text-primary" />}
+                </button>
+                <span className="min-w-0 flex-1 truncate text-[11px] text-ink">{c}</span>
+                <button onClick={() => moveCol(c, -1)} className="shrink-0 text-muted" title="فوق"><ChevronUp size={13} /></button>
+                <button onClick={() => moveCol(c, 1)} className="shrink-0 text-muted" title="تحت"><ChevronDown size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {sel.size > 0 && (
+          <p className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary">
+            محدَّد {sel.size} — المشاركة هتبعت المحدَّد بس
+          </p>
+        )}
+
         <div className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh" }}>
-          <div style={{ fontSize: "12px", minWidth: "max-content" }}>
+          <div style={{ fontSize: `${zoom * 12}px`, minWidth: "max-content" }}>
             <table className="w-full border-collapse" style={{ direction: "rtl" }}>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-surface-2 text-muted">
+                  <th className="border-b border-l border-border px-2 py-2 text-center font-bold">
+                    <button onClick={() => setSel(allSelected ? new Set() : new Set(rows.map((_, i) => i)))} className="text-muted">
+                      {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                    </button>
+                  </th>
+                  <th className="whitespace-nowrap border-b border-l border-border px-2 py-2 text-center font-bold">إجراءات</th>
                   <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">رقم اللوحة</th>
+                  {nearest && <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">المسافة</th>}
                   {cols.map((c) => (
                     <th key={c} className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">{c}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((m, i) => {
+                {view.map(({ m, i }, n) => {
                   const r = mergedRow(m);
+                  const isSel = sel.has(i);
+                  const d = (view[n] as { _d?: number })._d;
                   return (
-                    <tr key={i} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                    <tr key={i} className={`border-b border-border ${isSel ? "bg-primary/10" : n % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                      <td className="border-l border-border px-2 py-2 text-center">
+                        <button onClick={() => setSel((sset) => { const x = new Set(sset); if (x.has(i)) x.delete(i); else x.add(i); return x; })}
+                          className="text-muted">
+                          {isSel ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+                        </button>
+                      </td>
+                      <td className="border-l border-border px-2 py-2">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <span className="text-[0.85em] font-bold text-muted">{n + 1}</span>
+                          <button title="نسخ" className="text-muted"
+                            onClick={async () => { await navigator.clipboard.writeText(rowText(m)); setRowCopied(i); setTimeout(() => setRowCopied(null), 1200); }}>
+                            {rowCopied === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
+                          </button>
+                          <button title="واتساب" className="text-muted"
+                            onClick={() => void shareTextViaChooser(rowText(m), "مطلوبة للسحب").catch(() => {})}>
+                            <Share2 size={13} />
+                          </button>
+                          <button title="حذف الصف من النتيجة" className="text-muted hover:text-danger"
+                            onClick={() => { onRemoveRow(i); setSel(new Set()); }}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
                       <td className="whitespace-nowrap border-l border-border px-3 py-2 font-bold text-brand">
                         <span className="inline-flex items-center gap-1.5">
                           {plateOf(m)}
@@ -306,6 +450,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                           )}
                         </span>
                       </td>
+                      {nearest && (
+                        <td className="whitespace-nowrap border-l border-border px-3 py-2 font-bold text-primary">
+                          {d != null && Number.isFinite(d) ? formatDistanceKm(d) : "—"}
+                        </td>
+                      )}
                       {cols.map((c) => {
                         const v = String(r[c] ?? "").trim();
                         const gps = /^https?:\/\//i.test(v);
@@ -327,15 +476,15 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
         {/* أزرار المشاركة + المسح — نفس خدمات صفحة الفرز */}
         <div className="grid grid-cols-3 gap-1.5">
-          <button onClick={() => void shareExcel(rows)} disabled={shareBusy}
+          <button onClick={() => void shareExcel(picked)} disabled={shareBusy}
             className="flex items-center justify-center gap-1 rounded-xl bg-emerald-600/15 py-2.5 text-[11px] font-bold text-emerald-600 disabled:opacity-50">
             <FileSpreadsheet size={14} /> إكسيل
           </button>
-          <button onClick={() => void shareImage(rows)} disabled={shareBusy}
+          <button onClick={() => void shareImage(picked)} disabled={shareBusy}
             className="flex items-center justify-center gap-1 rounded-xl bg-primary/15 py-2.5 text-[11px] font-bold text-primary disabled:opacity-50">
             <ImageIcon size={14} /> صورة
           </button>
-          <button onClick={() => void shareAsText(rows)} disabled={shareBusy}
+          <button onClick={() => void shareAsText(picked)} disabled={shareBusy}
             className="flex items-center justify-center gap-1 rounded-xl bg-brand/15 py-2.5 text-[11px] font-bold text-brand disabled:opacity-50">
             <Share2 size={14} /> نص
           </button>
@@ -406,6 +555,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
           <ResultsBlock
             rows={results}
             onClear={() => { setResults([]); setRan(false); setScanned(null); }}
+            onRemoveRow={(i) => setResults((rs) => rs.filter((_, j) => j !== i))}
             emptyHint="مفيش سيارات مطابقة."
           />
         </div>
@@ -432,6 +582,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
           <ResultsBlock
             rows={pasteResults}
             onClear={() => { setPasteResults([]); setPasteRan(false); }}
+            onRemoveRow={(i) => setPasteResults((rs) => rs.filter((_, j) => j !== i))}
             emptyHint="مفيش لوحة من اللي لصقتها موجودة في سجلاتك."
           />
         )}
