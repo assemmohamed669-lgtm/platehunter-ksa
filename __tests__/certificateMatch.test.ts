@@ -68,3 +68,41 @@ describe("certificateMatch", () => {
     expect(matchCertFiles("زذر9999", [{ name: "د و ا 8403.pdf" }])).toEqual([]);
   });
 });
+
+/**
+ * أشكال أسماء الشهادات على الدرايف (من صورة المالك ٢٠٢٦-٠٩-١٥):
+ *   «س د ط 2104.pdf» · «2104-د ل ي.pdf» · «د ع ن 2104.PDF» · وبالإنجليزي كمان.
+ */
+describe("بحث الشهايد — أشكال اسم الملف", () => {
+  const files = [
+    { name: "د ه ق 2104.pdf" },
+    { name: "س د ط 2104.pdf" },
+    { name: "2104-د ل ي.pdf" },
+    { name: "د ع ن 2104.PDF" },
+    { name: "SDT 2104.pdf" },      // نفس «س د ط» بالإنجليزي
+    { name: "د ه ق 5555.pdf" },
+  ];
+
+  it("المندوب بيكتب الحروف ملزوقة والملف بمسافات", () => {
+    expect(matchCertFiles("سدط2104", files).map((f) => f.name))
+      .toEqual(["س د ط 2104.pdf", "SDT 2104.pdf"]);
+  });
+
+  it("الأرقام قبل الحروف في اسم الملف بتتطابق برضه", () => {
+    expect(matchCertFiles("دلي2104", files).map((f) => f.name)).toEqual(["2104-د ل ي.pdf"]);
+  });
+
+  it("اسم الملف إنجليزي والمندوب كتب عربي", () => {
+    expect(matchCertFiles("سدط 2104", files).some((f) => f.name === "SDT 2104.pdf")).toBe(true);
+  });
+
+  it("بحث بالأرقام بس بيرجّع كل شهادات الرقم ده", () => {
+    const names = matchCertFiles("2104", files).map((f) => f.name);
+    expect(names).toHaveLength(5);
+    expect(names).not.toContain("د ه ق 5555.pdf");
+  });
+
+  it("الامتداد مابيدخلش في مفتاح اللوحة", () => {
+    expect(plateCertKey("د ه ق 2104.pdf")).toBe(plateCertKey("دهق2104"));
+  });
+});
