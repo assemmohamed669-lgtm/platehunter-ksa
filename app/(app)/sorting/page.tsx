@@ -18,6 +18,7 @@ import {
 } from "@/lib/plateParser";
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
+import { buildExportRows } from "@/lib/exportColumns";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
@@ -2383,15 +2384,10 @@ export default function SortingPage() {
       if ("GPS" in o && g) o["GPS"] = g;
       return o;
     });
-    const allObjs = [...dataObjs, ...tashObjs];
-    const keys: string[] = [];
-    for (const o of allObjs) for (const k of Object.keys(o)) if (!keys.includes(k)) keys.push(k);
-    const columns = [...keys.filter((k) => k !== "الحالة"), ...(keys.includes("الحالة") ? ["الحالة"] : [])];
-    const rowObjects = allObjs.map((o) => {
-      const row: Record<string, unknown> = {};
-      for (const k of columns) row[k] = o[k] ?? "";
-      return row;
-    });
+    // ترتيب أعمدة ثابت متّفق عليه: كل معنى في عمود واحد (الطراز/النوع → «نوع
+    // السيارة»، العنوان/الحي → «الحي-الشارع»…)، والأعمدة الفاضية بتتشال.
+    // قبل كده كانت اتحاد مفاتيح الصفوف، فبتطلع «الماركة» و«العنوان» مرتين.
+    const { columns, rows: rowObjects } = buildExportRows([...dataObjs, ...tashObjs]);
     return { columns, rowObjects };
   }
 
