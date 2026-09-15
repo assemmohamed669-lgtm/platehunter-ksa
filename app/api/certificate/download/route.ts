@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
-import { getDriveAccessToken } from "@/lib/gdrive";
+import { getDriveAccessTokens } from "@/lib/gdrive";
 
 /**
  * يجيب ملف الشهادة (PDF) من درايف ويبعته للتطبيق — عشان المندوب يفتحها/يشاركها
@@ -16,14 +16,20 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("fileId") || "";
   if (!/^[A-Za-z0-9_-]{10,}$/.test(id)) return NextResponse.json({ error: "bad_id" }, { status: 400 });
 
-  const token = await getDriveAccessToken();
-  if (!token) return NextResponse.json({ error: "drive_unavailable" }, { status: 502 });
+  // الملف ممكن يكون على أي حساب من حسابات الدرايف المتظبّطة — نجرّبهم بالترتيب.
+  const tokens = await getDriveAccessTokens();
+  if (tokens.length === 0) return NextResponse.json({ error: "drive_unavailable" }, { status: 502 });
 
-  const r = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-  if (!r.ok) return NextResponse.json({ error: "fetch_failed", detail: r.status }, { status: 502 });
+  let r: Response | null = null;
+  for (const token of tokens) {
+    const attempt = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (attempt.ok) { r = attempt; break; }
+    r = attempt;   // آخر رد للتشخيص لو كلهم فشلوا
+  }
+  if (!r || !r.ok) return NextResponse.json({ error: "fetch_failed", detail: r?.status ?? 0 }, { status: 502 });
 
   const buf = await r.arrayBuffer();
   return new NextResponse(buf, {

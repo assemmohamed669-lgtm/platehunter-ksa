@@ -1,19 +1,32 @@
 /**
  * Google Drive access للسيرفر — عبر refresh token مخزّن (السيرفر فقط).
  * بيجدّد access token تلقائياً ويتكاش في الذاكرة (~ساعة) عشان مانجدّدش كل نداء.
- * القيم السرّية في env: GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET / GDRIVE_REFRESH_TOKEN.
+ *
+ * **أكتر من حساب**: الشهادات ممكن تكون متفرّقة على درايفات حسابات مختلفة.
+ * env: GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET + GDRIVE_REFRESH_TOKEN
+ * (الحساب الأساسي) و GDRIVE_REFRESH_TOKEN_2 … _5 (حسابات إضافية، اختيارية).
+ * أي واحد مش متظبّط بيتعدّى بهدوء — فالإضافة مابتكسرش اللي شغّال.
  */
 
-let cached: { token: string; exp: number } | null = null;
+/** أسماء متغيّرات الـrefresh token بالترتيب — الأساسي الأول. */
+const REFRESH_ENV_KEYS = [
+  "GDRIVE_REFRESH_TOKEN",
+  "GDRIVE_REFRESH_TOKEN_2",
+  "GDRIVE_REFRESH_TOKEN_3",
+  "GDRIVE_REFRESH_TOKEN_4",
+  "GDRIVE_REFRESH_TOKEN_5",
+];
 
-export async function getDriveAccessToken(): Promise<string | null> {
+const cache = new Map<string, { token: string; exp: number }>();
+
+async function tokenFor(refresh_token: string): Promise<string | null> {
   const now = Date.now();
-  if (cached && cached.exp > now + 60_000) return cached.token;
+  const hit = cache.get(refresh_token);
+  if (hit && hit.exp > now + 60_000) return hit.token;
 
   const client_id = process.env.GDRIVE_CLIENT_ID;
   const client_secret = process.env.GDRIVE_CLIENT_SECRET;
-  const refresh_token = process.env.GDRIVE_REFRESH_TOKEN;
-  if (!client_id || !client_secret || !refresh_token) return null;
+  if (!client_id || !client_secret) return null;
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -23,8 +36,23 @@ export async function getDriveAccessToken(): Promise<string | null> {
   if (!res.ok) return null;
   const d = await res.json();
   if (!d?.access_token) return null;
-  cached = { token: d.access_token, exp: now + (Number(d.expires_in) || 3600) * 1000 };
+  cache.set(refresh_token, { token: d.access_token, exp: now + (Number(d.expires_in) || 3600) * 1000 });
   return d.access_token;
+}
+
+/** توكنات **كل** حسابات الدرايف المتظبّطة (الأساسي + الإضافية). */
+export async function getDriveAccessTokens(): Promise<string[]> {
+  const refresh = REFRESH_ENV_KEYS
+    .map((k) => process.env[k])
+    .filter((v): v is string => !!v && v.trim().length > 0);
+  const tokens = await Promise.all(refresh.map((r) => tokenFor(r)));
+  return tokens.filter((t): t is string => !!t);
+}
+
+/** الحساب الأساسي — متسابة للتوافق مع أي نداء قديم. */
+export async function getDriveAccessToken(): Promise<string | null> {
+  const [first] = await getDriveAccessTokens();
+  return first ?? null;
 }
 
 export interface DriveFile { id: string; name: string; webViewLink?: string }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
-import { getDriveAccessToken, driveSearch } from "@/lib/gdrive";
+import { getDriveAccessTokens, driveSearch, type DriveFile } from "@/lib/gdrive";
 import { looksLikeChassis, looksLikeCertNumber, certSearchToken, plateDigits, matchCertFiles } from "@/lib/certificateMatch";
 
 // يهرب علامة التنصيص المفردة في استعلام درايف.
@@ -22,21 +22,30 @@ export async function GET(req: NextRequest) {
   const q = (req.nextUrl.searchParams.get("q") || "").trim();
   if (!q) return NextResponse.json({ error: "missing_q" }, { status: 400 });
 
-  const token = await getDriveAccessToken();
-  if (!token) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
+  // كل حسابات الدرايف المتظبّطة — الشهادات متفرّقة على أكتر من حساب.
+  const tokens = await getDriveAccessTokens();
+  if (tokens.length === 0) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
+  /** يبحث في كل الحسابات ويدمج النتايج بلا تكرار (نفس الملف ممكن يبقى مشارك). */
+  const searchAll = async (query: string): Promise<DriveFile[]> => {
+    const lists = await Promise.all(tokens.map((t) => driveSearch(query, t)));
+    const seen = new Set<string>();
+    const out: DriveFile[] = [];
+    for (const list of lists) for (const f of list) { if (!seen.has(f.id)) { seen.add(f.id); out.push(f); } }
+    return out;
+  };
 
   let files;
   if (looksLikeChassis(q)) {
     // هيكل (VIN) — بحث بالمحتوى (فريد ومباشر).
-    files = await driveSearch(`fullText contains '${esc(q)}' and mimeType='application/pdf'`, token);
+    files = await searchAll(`fullText contains '${esc(q)}' and mimeType='application/pdf'`);
   } else if (looksLikeCertNumber(q)) {
     // رقم شهادة (REPO/CRN أو أرقام ملزوقة) — نبحث بالتوكن المناسب (آخر ٨ للملزوق).
     const tok = certSearchToken(q);
-    files = await driveSearch(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`, token);
+    files = await searchAll(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`);
   } else {
     const digits = plateDigits(q);
     if (!digits) return NextResponse.json({ found: false, results: [] });
-    const all = await driveSearch(`name contains '${esc(digits)}' and mimeType='application/pdf'`, token);
+    const all = await searchAll(`name contains '${esc(digits)}' and mimeType='application/pdf'`);
     files = matchCertFiles(q, all);
   }
 
