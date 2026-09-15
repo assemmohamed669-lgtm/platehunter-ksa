@@ -39,33 +39,20 @@ import {
   getUploadedFile,
   deleteUploadedFile,
   getAllFieldCheckEntries,
-  type FieldCheckEntry,
 } from "@/lib/idb";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
+import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
 
 /** سلوت الإحالة بتاعة المشترك صوت-فقط — نفس نمط `local:check`. */
 const REF_SLOT = "voice-referral";
 const AGENT = "local";
 
 /** عمود اللوحة المصطنع في صفوف السجلات (السجل مش جدول إكسيل، فبنلفّه). */
-const REC_PLATE_COL = "رقم اللوحة";
-
 type SortMode = "new" | "full";
 
 export interface VoiceOnlySortProps {
   /** ملف التشييك المحمّل في الصفحة — لازم لوضع «جديد» (الإحالة ناقص التشييك). */
   checkTable: ExcelTable | null;
-}
-
-/** يحوّل سجلات المندوب لصفوف جدول عشان تعدّي على نفس محرّك المطابقة. */
-function recordsToRows(entries: FieldCheckEntry[]): Record<string, string>[] {
-  return entries.map((e) => ({
-    ...e.row,                                   // الأعمدة المرجعية اللي اتحفظت مع السجل
-    [REC_PLATE_COL]: e.plate,
-    "الطريقة": e.method ?? "",
-    "التاريخ": e.checkedAt ? new Date(e.checkedAt).toLocaleString("ar-EG") : "",
-    "الموقع": e.mapsLink ?? "",
-  }));
 }
 
 export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
@@ -568,6 +555,15 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface-2 p-3">
         <div className="flex items-center gap-1.5 text-xs font-bold text-ink">
           <ClipboardPaste size={15} /> لصق لوحات مكتوبة
+          {/* مسح اللي اتلصق — على الموبايل تحديد النص كله ومسحه وجع، والمندوب
+              بيلصق دفعة ورا دفعة. بيظهر بس لما يكون فيه حاجة تتمسح. */}
+          {(pasteText.trim() || pasteRan) && (
+            <button onClick={() => { setPasteText(""); setPasteResults([]); setPasteRan(false); }}
+              title="امسح اللوحات المكتوبة"
+              className="mr-auto flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-bold text-muted transition hover:border-danger/40 hover:text-danger">
+              <Trash2 size={12} /> مسح
+            </button>
+          )}
         </div>
         <textarea
           value={pasteText}
