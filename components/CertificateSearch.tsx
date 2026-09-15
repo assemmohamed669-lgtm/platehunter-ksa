@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { FileText, ExternalLink, Share2, Loader2 } from "lucide-react";
-import { findCertificate, fetchCertBlob, openCertBlob, shareCertBlob, type CertResult } from "@/lib/certificate";
+import { findCertificate, fetchCertBlob, openCertBlob, shareCertBlob, type CertResult, type CertSearch } from "@/lib/certificate";
 
 /**
  * بحث عن شهادة السحب — المندوب يكتب رقم اللوحة (بأي شكل: مشبّك/بمسافة/عربي/إنجليزي)
@@ -15,11 +15,15 @@ export default function CertificateSearch() {
   const [ran, setRan] = useState(false);
   const [results, setResults] = useState<CertResult[]>([]);
   const [action, setAction] = useState<string | null>(null);   // "<id>:open" | "<id>:share"
+  // سبب عدم ظهور نتيجة — قبل كده كل الأسباب كانت بتظهر «مفيش شهادة».
+  const [info, setInfo] = useState<Pick<CertSearch, "scanned" | "error"> | null>(null);
 
   async function search() {
     if (!q.trim() || busy) return;
-    setBusy(true); setRan(false);
-    setResults(await findCertificate(q.trim()));
+    setBusy(true); setRan(false); setInfo(null);
+    const r = await findCertificate(q.trim());
+    setResults(r.results);
+    setInfo({ scanned: r.scanned, error: r.error });
     setRan(true); setBusy(false);
   }
   async function doOpen(c: CertResult) {
@@ -58,7 +62,18 @@ export default function CertificateSearch() {
       </div>
 
       {ran && results.length === 0 && (
-        <p className="mt-2 text-[11px] text-muted">مفيش شهادة للرقم ده.</p>
+        info?.error ? (
+          <p className="mt-2 rounded-lg bg-danger/10 px-2 py-1.5 text-[11px] font-bold text-danger">{info.error}</p>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted">
+            مفيش شهادة للرقم ده.
+            {info && (
+              <span className="text-muted/70">
+                {" "}(درايف رجّع {info.scanned} ملف)
+              </span>
+            )}
+          </p>
+        )
       )}
       {results.map((c) => (
         <div key={c.id} className="mt-2 rounded-lg border border-primary/30 bg-surface p-2">
