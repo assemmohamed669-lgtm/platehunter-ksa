@@ -5,12 +5,13 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet, HardDriveDownload } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { APP_VERSION } from "@/lib/appVersion";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
+import { driveHealthMessage, type HealthMessage } from "@/lib/driveHealth";
 import { BarChart3, BellRing } from "lucide-react";
 
 interface AgentProfile {
@@ -88,6 +89,10 @@ export default function AdminDashboard() {
   const [isSuper, setIsSuper] = useState(false);
   // فتح/قفل صوت VoiceX لكل المناديب مرة واحدة (سوبر أدمن بس) — بتأكيد قبل التنفيذ
   // عشان ضغطة غلط ماتقفلش الصوت على الأسطول كله.
+  // فحص اتصال درايف (الشهادات) — عشان نعرف إن الصلاحية ماتت قبل شكوى مندوب.
+  const [driveBusy, setDriveBusy] = useState(false);
+  const [driveMsg, setDriveMsg] = useState<HealthMessage | null>(null);
+
   const [bulkConfirm, setBulkConfirm] = useState<"on" | "off" | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -298,6 +303,24 @@ export default function AdminDashboard() {
    * فتح/قفل صوت VoiceX لكل **المناديب** مرة واحدة. الفلترة على المناديب بتتم
    * على السيرفر (`role = 'agent'`) — الأدمن والسوبر أدمن مايتأثروش نهائياً.
    */
+  /** فحص اتصال درايف — بينادي راوت الأدمن ويترجم الرد لرسالة مفهومة. */
+  async function runDriveHealth() {
+    setDriveBusy(true);
+    setDriveMsg(null);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/drive-health", {
+        headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+      });
+      const j = await res.json().catch(() => ({}));
+      setDriveMsg(driveHealthMessage({ ok: !!j?.ok, files: j?.files, error: j?.error }));
+    } catch {
+      setDriveMsg(driveHealthMessage({ ok: false, error: "network" }));
+    } finally {
+      setDriveBusy(false);
+    }
+  }
+
   async function runVoicexBulk(enabled: boolean) {
     setBulkBusy(true);
     setBulkMsg(null);
@@ -428,6 +451,31 @@ export default function AdminDashboard() {
           className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
           <Users size={16} /> المجموعات — مين مع مين
         </button>
+
+        {/* ── فحص اتصال درايف (الشهادات) — لكل الأدمنز ───────────────────────
+            الصلاحية ماتت مرة وفضل التطبيق يقول «مفيش شهادة» أسبوعين والمالك
+            عرف من شكوى مندوب. الزرار ده بيقول الحالة في ثانية. */}
+        <div className="rounded-xl border border-border bg-surface-2/40 p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink">
+            <HardDriveDownload size={15} /> شهادات السحب — فحص الاتصال بدرايف
+          </div>
+          <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
+            لو الصلاحية انتهت، المندوب بيشوف «مفيش شهادة» من غير ما حد يعرف. اضغط تتأكد.
+          </p>
+          <button onClick={() => void runDriveHealth()} disabled={driveBusy}
+            className="w-full rounded-lg border border-primary/40 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
+            {driveBusy ? "بيفحص…" : "افحص الاتصال"}
+          </button>
+          {driveMsg && (
+            <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold leading-relaxed ${
+              driveMsg.level === "ok" ? "bg-emerald-600/10 text-emerald-600"
+                : driveMsg.level === "warn" ? "bg-alert/10 text-alert"
+                : "bg-danger/10 text-danger"
+            }`}>
+              {driveMsg.text}
+            </p>
+          )}
+        </div>
 
         {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
         {isSuper && (

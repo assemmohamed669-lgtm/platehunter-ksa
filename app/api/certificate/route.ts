@@ -32,15 +32,18 @@ export async function GET(req: NextRequest) {
     mode = "chassis";
     // هيكل (VIN) — بحث بالمحتوى (فريد ومباشر).
     files = await driveSearch(`fullText contains '${esc(q)}' and mimeType='application/pdf'`, token);
+    scanned = files.length;
   } else if (looksLikeCertNumber(q)) {
     mode = "cert";
     // رقم شهادة (REPO/CRN أو أرقام ملزوقة) — نبحث بالتوكن المناسب (آخر ٨ للملزوق).
     const tok = certSearchToken(q);
     files = await driveSearch(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`, token);
+    scanned = files.length;
   } else {
     const digits = plateDigits(q);
     if (!digits) return NextResponse.json({ found: false, results: [] });
     const all = await driveSearch(`name contains '${esc(digits)}' and mimeType='application/pdf'`, token);
+    scanned = all.length;
     files = matchCertFiles(q, all);
   }
 
