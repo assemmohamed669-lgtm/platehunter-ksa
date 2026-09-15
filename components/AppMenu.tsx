@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
+import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
 import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -133,7 +134,8 @@ export default function AppMenu({
   useEffect(() => {
     if (!open) return;
     (async () => {
-      const fieldEntries = await getAllFieldCheckEntries().catch(() => []);
+      // العدّاد لازم يطابق اللي المندوب بيشوفه في الشيت بعد تجميع التكرار.
+      const fieldEntries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries().catch(() => []));
       let wanted = 0;
       try {
         const check = await getUploadedFile("local", "check");

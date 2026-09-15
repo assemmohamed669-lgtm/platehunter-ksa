@@ -14,6 +14,7 @@ import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, load
 import { ChevronDown } from "lucide-react";
 import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
+import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
 import { buildColoredSortExcel } from "@/lib/excel";
@@ -142,7 +143,7 @@ export default function WantedPage() {
       const [checkRec, dataRec, fieldEntries] = await Promise.all([
         getUploadedFile("local", "check"),
         getUploadedFile("local", "data"),
-        getAllFieldCheckEntries().catch(() => [] as FieldCheckEntry[]),
+        getAllFieldCheckEntries().catch(() => [] as FieldCheckEntry[]).then(collapseSameMinuteDuplicates),
       ]);
       // ملفات الداتا الإضافية (data-2, data-3...) — بتتدمج مع الأساسي في الفرز.
       const extraDataRecs: NonNullable<typeof dataRec>[] = [];

@@ -45,6 +45,7 @@ import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
+import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
 import { isRecordsLinked, recordsTarget, unlinkRecords, RECORDS_LINK_EVENT, type RecordsTarget } from "@/lib/recordsAsData";
@@ -508,7 +509,8 @@ export default function SortingPage() {
         // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
         try {
-          const fieldEntries = await getAllFieldCheckEntries();
+          // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
+          const fieldEntries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries());
           if (fieldEntries.length > 0) {
             const keys = new Set<string>(["رقم اللوحة"]);
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
