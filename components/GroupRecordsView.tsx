@@ -17,6 +17,7 @@ import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import EditableTextCell from "@/components/EditableTextCell";
 import { NOTES_KEY, TYPE_KEY } from "@/lib/fieldCheckEdit";
 import { supabase } from "@/lib/supabaseClient";
+import { dedupeSameMinuteRows } from "@/lib/fieldCheck";
 
 const PAGE = 100;
 
@@ -93,8 +94,12 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
         maps_link: (r.maps_link as string) ?? null, checked_at: String(r.checked_at), agent_id: String(r.agent_id),
         extra: (r.extra as Record<string, string>) ?? {},
       })) as Row[];
-      if (reset) { setRows(got); loadedRef.current = got.length; setTotal(count ?? null); }
-      else { setRows((r) => [...r, ...got]); loadedRef.current += got.length; }
+      // محرك الصوت بيعيد إرسال نفس النطق ⇒ نفس اللوحة بتتسجّل كذا مرة في نفس
+      // الدقيقة. بنوريها مرة واحدة (لكل مندوب على حدة — مندوبين مختلفين ممكن
+      // يشيّكوا نفس اللوحة في نفس الدقيقة بشكل شرعي).
+      const clean = dedupeSameMinuteRows(got, (r) => ({ plate: r.primary, at: r.checked_at, owner: r.agent_id }));
+      if (reset) { setRows(clean); loadedRef.current = got.length; setTotal(count ?? null); }
+      else { setRows((r) => dedupeSameMinuteRows([...r, ...clean], (x) => ({ plate: x.primary, at: x.checked_at, owner: x.agent_id }))); loadedRef.current += got.length; }
       setHasMore(got.length === PAGE);
     } finally { loadingRef.current = false; setLoading(false); }
   }, []);

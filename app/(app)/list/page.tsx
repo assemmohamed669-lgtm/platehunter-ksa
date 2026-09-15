@@ -14,12 +14,13 @@ import { Crosshair, ScanLine, Mic } from "lucide-react";
 import RecordingsTable from "@/components/RecordingsTable";
 import {
   getAllFieldCheckEntries, getAllRecordings, getUploadedFile,
-  deleteFieldCheckEntry, deleteFieldCheckEntries, deleteRecording,
+  deleteFieldCheckEntries, deleteRecording,
   type RecordingEntry, type FieldCheckEntry,
 } from "@/lib/idb";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { supabase } from "@/lib/supabaseClient";
 import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
+import { collapseSameMinuteDuplicates, sameMinuteDuplicateIds } from "@/lib/fieldCheck";
 
 type ListType = "records" | "wanted" | "voice";
 
@@ -50,6 +51,9 @@ export default function ListPage() {
   const [type, setType] = useState<ListType>("records");
   const [rows, setRows] = useState<RecordingEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  // معرّف الصف الظاهر → كل معرّفات مجموعته المخفية. المسح لازم يشيل المجموعة
+  // كلها، وإلا يطلع مكان الممسوح أخوه والمندوب يقول «مسحته ورجع».
+  const [dupGroups, setDupGroups] = useState<Map<string, string[]>>(new Map());
 
   async function load() {
     setLoading(true);
@@ -65,7 +69,12 @@ export default function ListPage() {
         return;
       }
 
-      const entries = await getAllFieldCheckEntries();
+      // محرك الصوت بيعيد إرسال نفس النطق، فلوحة واحدة كانت بتطلع لحد ٨ مرات في
+      // أقل من دقيقتين بنفس الـGPS. بنجمّع نفس اللوحة في نفس الدقيقة في صف واحد
+      // **للعرض والتصدير بس** — السجل الأصلي في قاعدة البيانات مابيتمسحش.
+      const allEntries = await getAllFieldCheckEntries();
+      setDupGroups(sameMinuteDuplicateIds(allEntries));
+      const entries = collapseSameMinuteDuplicates(allEntries);
       if (kind === "wanted") {
         const check = await getUploadedFile("local", "check");
         if (!check) { setRows([]); return; }
@@ -93,14 +102,22 @@ export default function ListPage() {
     } catch { /* أوفلاين — الشاهدة بتفضل وتتنفّذ المرة الجاية */ }
   }
 
+  /** يضيف الصفوف المخفية (تكرار نفس الدقيقة) لأي مجموعة معرّفات هتتمسح. */
+  function withHiddenDuplicates(ids: string[]): string[] {
+    const out = new Set(ids);
+    for (const id of ids) for (const sib of dupGroups.get(id) ?? []) out.add(sib);
+    return [...out];
+  }
+
   async function handleDelete(id: string) {
-    if (type === "voice") await deleteRecording(id); else await deleteFieldCheckEntry(id);
+    if (type === "voice") await deleteRecording(id);
+    else await deleteFieldCheckEntries(withHiddenDuplicates([id]));
     setRows((prev) => prev.filter((r) => r.localId !== id));
     if (type !== "voice") void propagateDeletes();
   }
   async function handleDeleteMany(ids: string[]) {
     if (type === "voice") { for (const id of ids) await deleteRecording(id); }
-    else await deleteFieldCheckEntries(ids); // معاملة واحدة — «تحديد الكل» على آلاف السجلات
+    else await deleteFieldCheckEntries(withHiddenDuplicates(ids)); // معاملة واحدة — «تحديد الكل» على آلاف السجلات
     const s = new Set(ids);
     setRows((prev) => prev.filter((r) => !s.has(r.localId)));
     if (type !== "voice") void propagateDeletes();

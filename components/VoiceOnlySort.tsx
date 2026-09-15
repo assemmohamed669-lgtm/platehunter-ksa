@@ -41,6 +41,7 @@ import {
   getAllFieldCheckEntries,
   type FieldCheckEntry,
 } from "@/lib/idb";
+import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 
 /** سلوت الإحالة بتاعة المشترك صوت-فقط — نفس نمط `local:check`. */
 const REF_SLOT = "voice-referral";
@@ -149,7 +150,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     if (!refTable || !refPlateCol || busy) return;
     setBusy(true);
     try {
-      const entries = await getAllFieldCheckEntries();
+      // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
+      const entries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries());
       const recRows = recordsToRows(entries);
 
       // وضع «جديد»: نشيل من الإحالة أي لوحة موجودة أصلاً في ملف التشييك.
@@ -176,7 +178,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     if (tokens.length === 0) { setPasteResults([]); setPasteRan(true); return; }
     setBusy(true);
     try {
-      const entries = await getAllFieldCheckEntries();
+      // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
+      const entries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries());
       const recRows = recordsToRows(entries);
       // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
       const index = buildReferralIndex(recRows, REC_PLATE_COL);
