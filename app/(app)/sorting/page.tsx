@@ -2598,6 +2598,48 @@ export default function SortingPage() {
       : [];
     recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);
 
+    // المندوب اللي في مجموعة بيفرز اللصق على **سجلات المجموعة كلها** كمان —
+    // في نفس ويندو السجلات. المطابقة على السيرفر والراجع هو المطابق بس.
+    if (hasTeam) {
+      const norms = [...new Set(
+        tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean)
+      )];
+      if (norms.length) {
+        let idx = recordMatches.length;
+        const RPC_PAGE = 1000;
+        try {
+          for (let from = 0; ; from += RPC_PAGE) {
+            const { data, error } = await supabase
+              .rpc("match_group_plates", { p_norms: norms })
+              .range(from, from + RPC_PAGE - 1);
+            if (error) break;
+            const got = (data ?? []) as Array<{
+              plate: string; method: string | null; maps_link: string | null;
+              checked_at: string; agent_id: string; extra?: Record<string, string> | null;
+            }>;
+            for (const g of got) {
+              // سجلاتي اتطابقت فوق من الشيت المحلي — مانكررهاش.
+              if (g.agent_id === myIdRef.current) continue;
+              recordMatches.push({
+                converted: String(g.plate ?? ""),
+                status: "exact",
+                dataIdx: idx++,
+                row: {
+                  ...(g.extra ?? {}),
+                  "رقم اللوحة": String(g.plate ?? ""),
+                  "الحالة": g.method ?? "",
+                  "GPS": g.maps_link ?? "",
+                  "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
+                  "المندوب": groupNamesRef.current[g.agent_id] ?? "",
+                },
+              });
+            }
+            if (got.length < RPC_PAGE) break;
+          }
+        } catch { /* مافيش نت — نتيجة السجلات المحلية شغّالة */ }
+      }
+    }
+
     setPasteResults(matches);
     setPasteRecordResults(recordMatches);
     setPasteRan(true);
