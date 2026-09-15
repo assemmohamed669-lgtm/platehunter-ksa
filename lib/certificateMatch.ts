@@ -1,3 +1,5 @@
+import { EN_TO_AR } from "./plateParser";
+
 /**
  * منطق مطابقة شهادة السحب — تطبيع اللوحة/الشاص للبحث في Google Drive.
  *
@@ -57,9 +59,17 @@ export function plateDigits(input: string): string {
  * بيدّوا نفس المفتاح «دوا8403».
  */
 export function plateCertKey(s: string): string {
-  const t = toLatinDigits(s)
+  // الامتداد الأول (.pdf/.PDF) — حروفه لاتينية وهنحوّل اللاتيني لعربي تحت،
+  // فلو سِبناه هيبقى جزء من مفتاح اللوحة.
+  const noExt = s.replace(/\.[A-Za-z0-9]{2,4}$/, "");
+  const t = toLatinDigits(noExt)
     .replace(/[أإآ]/g, "ا")   // أ/إ/آ → ا
-    .replace(/ى/g, "ي");                 // ى → ي
+    .replace(/ى/g, "ي")                  // ى → ي
+    // اسم الملف ساعات بحروف اللوحة **الإنجليزي** (DLY 2104) والمندوب بيكتب
+    // عربي — نحوّل اللاتيني لعربي فالاتنين يدّوا نفس المفتاح. الحرف اللي مش
+    // من حروف اللوحة بيتشال.
+    .toUpperCase()
+    .replace(/[A-Z]/g, (c) => EN_TO_AR[c] ?? "");
   const letters = (t.match(/[؀-ۿ]+/g) || []).join("");
   const digits = (t.match(/[0-9]+/g) || []).join("");
   return letters + digits;
@@ -69,5 +79,11 @@ export function plateCertKey(s: string): string {
 export function matchCertFiles<T extends { name: string }>(plateInput: string, files: T[]): T[] {
   const key = plateCertKey(plateInput);
   if (!key) return [];
+  const digits = key.replace(/\D/g, "");
+  const letters = key.replace(/[0-9]/g, "");
+  // بحث بالأرقام بس («2104») → **كل** الشهادات اللي بالرقم ده والمندوب يختار.
+  if (!letters && digits) {
+    return files.filter((f) => plateCertKey(f.name).replace(/\D/g, "") === digits);
+  }
   return files.filter((f) => plateCertKey(f.name) === key);
 }
