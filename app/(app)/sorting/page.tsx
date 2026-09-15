@@ -194,6 +194,7 @@ export default function SortingPage() {
   const [hasTeam, setHasTeam] = useState(false);
   const groupNamesRef = useRef<Record<string, string>>({});
   const myNameRef = useRef<string>("");
+  const myIdRef = useRef<string>("");
   const [recordsTgt, setRecordsTgt] = useState<RecordsTarget>("extra");
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
@@ -494,6 +495,7 @@ export default function SortingPage() {
               .select("username, team").eq("id", au.user.id).single();
             const pr = prof as { username?: string; team?: string | null } | null;
             myNameRef.current = pr?.username ?? "";
+            myIdRef.current = au.user.id;
             if (pr?.team) {
               setHasTeam(true);
               const { data: mem } = await supabase.rpc("my_team_members");
@@ -1949,6 +1951,57 @@ export default function SortingPage() {
   // كانت بتزوّد ويندو في النتيجة وتشتّت المناديب. فرز سجلات المجموعة لسه متاح
   // في صفحته المنفصلة «فرز على سجلات المجموعة».
 
+  /**
+   * سجلات **باقي المجموعة** اللي طابقت الإحالة — بتتلمّ جوّه **نفس خانة
+   * «نتيجة فرز السجلات»** مش خانة جديدة (التقسيم الزيادة شتّت المناديب قبل كده).
+   *
+   * المطابقة على السيرفر (`match_group_plates`) والراجع هو **المطابق بس** —
+   * فـ١٠٠ ألف سجل مابينزلوش على الموبايل. فشل النداء مايوقفش النتيجة المحلية.
+   *
+   * الصف بيتبني بنفس مفاتيح شيت السجلات بالظبط (النوع · الحي · GPS · التاريخ ·
+   * الحالة · المندوب) فبيتعرض في نفس الأعمدة زي سجلات المندوب نفسه.
+   */
+  async function groupRecordMatches(
+    index: Map<string, { row: Record<string, string>; norm: string }>,
+  ): Promise<TashyeekResultRow[]> {
+    if (!hasTeam) return [];
+    const norms = [...index.keys()];
+    if (norms.length === 0) return [];
+    const out: TashyeekResultRow[] = [];
+    const RPC_PAGE = 1000;
+    try {
+      for (let from = 0; ; from += RPC_PAGE) {
+        const { data, error } = await supabase
+          .rpc("match_group_plates", { p_norms: norms })
+          .range(from, from + RPC_PAGE - 1);
+        if (error) return out;
+        const got = (data ?? []) as Array<{
+          plate: string; method: string | null; maps_link: string | null;
+          checked_at: string; agent_id: string; extra?: Record<string, string> | null;
+        }>;
+        for (const g of got) {
+          // سجلاتي أنا متطابقة فوق أصلاً من الشيت المحلي — مانكررهاش.
+          if (g.agent_id === myIdRef.current) continue;
+          const hit = index.get(normalizePlate(bankPlateToArabic(String(g.plate ?? ""))));
+          if (!hit) continue;
+          out.push({
+            referralRow: hit.row,
+            tashyeekRow: {
+              ...(g.extra ?? {}),
+              "رقم اللوحة": String(g.plate ?? ""),
+              "الحالة": g.method ?? "",
+              "GPS": g.maps_link ?? "",
+              "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
+              "المندوب": groupNamesRef.current[g.agent_id] ?? "",
+            },
+          });
+        }
+        if (got.length < RPC_PAGE) return out;
+      }
+    } catch { /* مافيش نت — النتيجة المحلية شغّالة */ }
+    return out;
+  }
+
   // ── Full sort ──
   // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
   // ملف الداتا → نتيجة واحدة مجمّعة.
@@ -2053,6 +2106,9 @@ export default function SortingPage() {
         }
         finalTashyeek = tashyeekMatches;
       }
+      // سجلات باقي المجموعة — في **نفس الخانة**، بعد سجلات المندوب.
+      const groupRows = await groupRecordMatches(refIndex);
+      if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "full", 0);
@@ -2183,6 +2239,13 @@ export default function SortingPage() {
           if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
         }
         finalTashyeek = tashyeekMatches;
+      }
+      // سجلات باقي المجموعة — نفس الخانة زي الفرز الكلي.
+      {
+        const gIndex = new Map<string, { row: Record<string, string>; norm: string }>();
+        for (const e of newEntries) if (!gIndex.has(e.norm)) gIndex.set(e.norm, { row: e.row, norm: e.norm });
+        const groupRows = await groupRecordMatches(gIndex);
+        if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
       }
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
