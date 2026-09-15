@@ -15,11 +15,27 @@
 - ⚠️ **البحث باللوحة غير موثوق مباشرة** (بحث درايف العربي بيطابق الأرقام بس) — الحل: نجيب كل PDF بالأربع أرقام ثم **نطبّع الأسماء ونفلتر في الكود** بالحروف (`د و ا 8403` طلع صح بالتطبيع).
 - ✅ **مفتاح دائم شغّال:** refresh token جدّد access token تلقائياً ولقى الشهادة (بدون تسجيل دخول متكرر).
 
-## ٣) الأكسيز (مُجهّز وشغّال)
-- **حساب:** `mafifi456@gmail.com` (الشركات مشاركة فولدراتها معاه). لاحقاً يُفضّل حساب شركة مخصّص.
-- **Google Cloud project:** `platehunter-certs` → Drive API مفعّل → OAuth consent (Testing) → test user = الحساب.
-- **OAuth client (Web):** redirect URI = `https://developers.google.com/oauthplayground`.
-- **٣ قيم سرّية (السيرفر فقط):** `CLIENT_ID` · `CLIENT_SECRET` · `REFRESH_TOKEN` (دائم — طالما التطبيق Published أو يُستخدم بانتظام).
+## ٣) الأكسيز (مُجهّز وشغّال — أُعيد بناؤه ٢٠٢٦-٠٩-١٥)
+- **حساب الدرايف:** `mafifi456@gmail.com` (الشركات مشاركة فولدراتها معاه). لاحقاً يُفضّل حساب شركة مخصّص.
+- **Google Cloud project:** **`platehunter`** (id `platehunter-59f88`، تحت *No organization*، على حساب المالك) →
+  Drive API مفعّل → OAuth consent **External / In production** → test user = حساب الدرايف.
+  > ⚠️ التوثيق الأصلي كان بيسمّي المشروع `platehunter-certs` — **مافيش مشروع بالاسم ده**؛
+  > ضاع الوصول للـclient القديم فاتعمل واحد جديد على مشروع `platehunter` (نفس مشروع Firebase بتاع الإشعارات).
+- **OAuth client (Web):** اسمه `Web client 1certs` — redirect URI = `https://developers.google.com/oauthplayground`
+  (لازم تتحط في **Authorized redirect URIs**، مش في *Authorized JavaScript origins* اللي بترفض أي مسار).
+- **Authorized domain** في صفحة Branding لازم يكون `platehunter-ksa.vercel.app` **كامل** — `vercel.app` لوحده مرفوض (دومين عام).
+- **٣ قيم سرّية (السيرفر فقط):** `CLIENT_ID` · `CLIENT_SECRET` · `REFRESH_TOKEN`.
+  التوكن **دائم** لأن التطبيق `In production`؛ في وضع `Testing` بيموت بعد ٧ أيام.
+
+### تجديد الـrefresh token (لو مات)
+1. اعمل الـtoken من `developers.google.com/oauthplayground` في نافذة **متخفّية**.
+2. ⚙️ → ✅ `Use your own OAuth credentials` → حط الـClient ID/Secret بتوع المشروع
+   (من غير كده الـPlayground بيستخدم client جوجل العام وبيلغي التوكن بعد ٢٤ ساعة).
+3. Scope: `https://www.googleapis.com/auth/drive.readonly` → Authorize → **سجّل دخول بحساب الدرايف** (مش حساب المالك).
+4. **اتأكد قبل الديبلوي:** Step 3 على `drive/v3/files?q=mimeType='application/pdf'` لازم يرجّع أسماء شهادات.
+5. حدّث `GDRIVE_REFRESH_TOKEN` في Vercel واعمل Redeploy.
+
+> **Vercel:** اسم المشروع **`platehunter`** (مش `platehunter-ksa` — ده الدومين بس).
 
 ## ٤) إزاي بتشتغل (التنفيذ في قناص)
 ### السيرفر — `app/api/certificate/route.ts`
@@ -48,7 +64,12 @@ GDRIVE_REFRESH_TOKEN=...
 - الـClient Secret ظهر أثناء الإعداد → **يُعمل Regenerate قبل الإنتاج** ويتخزّن الجديد في السيرفر بس.
 - ملف الاختبار المحلي (`Downloads/test_refresh.mjs`) فيه الـrefresh token → يتحفظ آمن أو يتمسح.
 
-## ٦) قرارات مفتوحة
+## ٦) المراقبة
+- **صفحة الأدمن → «شهادات السحب — فحص الاتصال بدرايف»** بيفحص الاتصال في ثانية ويفرّق بين:
+  الصلاحية ماتت / شغّال بس مافيش ملفات (مشاركة الفولدرات) / شغّال تمام.
+  الراوت: `app/api/admin/drive-health` — مابيرجّعش أي قيمة سرّية.
+- المندوب كمان بيشوف السبب الحقيقي بدل «مفيش شهادة» (`lib/certificate.ts` → `CertSearch.error`).
+
+## ٧) قرارات مفتوحة
 - تحويل الأكسيز لاحقاً لحساب شركة مخصّص بدل الحساب الشخصي (نفس الكود، بس نبدّل الـrefresh token).
-- نشر التطبيق (Publish) عشان الـrefresh token يفضل دائم (في Testing بيعيش ٧ أيام لو مش مستخدم).
 - ملف اختبار: `scratchpad/test_refresh.mjs` (تجديد التوكن + بحث بالهيكل).
