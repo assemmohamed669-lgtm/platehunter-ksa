@@ -21,7 +21,7 @@ export default function CertificateBadge({ plate, chassis }: { plate?: string; c
     setState("loading");
     findCertificate(q).then((r) => {
       if (!alive) return;
-      if (r.length > 0) { setCert(r[0]); setState("found"); } else setState("none");
+      if (r.results.length > 0) { setCert(r.results[0]); setState("found"); } else setState("none");
     });
     return () => { alive = false; };
   }, [plate, chassis]);

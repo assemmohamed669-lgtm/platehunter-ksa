@@ -6,14 +6,39 @@ import { authHeader } from "./authHeader";
 
 export interface CertResult { id: string; name: string; link: string | null }
 
-/** بحث عن شهادة برقم الهيكل أو اللوحة (أي شكل). بيرجّع النتائج المطابقة. */
-export async function findCertificate(q: string): Promise<CertResult[]> {
+export interface CertSearch {
+  results: CertResult[];
+  /** كام PDF رجع من درايف قبل الفلترة (تشخيص). */
+  scanned: number;
+  /** سبب الفشل لو فيه — مش «مفيش نتيجة». */
+  error?: string;
+}
+
+/**
+ * بحث عن شهادة برقم الهيكل أو اللوحة (أي شكل).
+ *
+ * ⚠️ قبل كده كانت بترجّع `[]` في **كل** حالات الفشل (درايف واقع، جلسة منتهية،
+ * خطأ شبكة) — فالمندوب يشوف «مفيش شهادة» والمشكلة تفضل مخفية. دلوقتي بترجّع
+ * السبب عشان الشاشة تقوله.
+ */
+export async function findCertificate(q: string): Promise<CertSearch> {
+  const empty = (error?: string): CertSearch => ({ results: [], scanned: 0, error });
   try {
     const res = await fetch(`/api/certificate?q=${encodeURIComponent(q)}`, { headers: await authHeader() });
-    if (!res.ok) return [];
+    if (res.status === 401) return empty("الجلسة انتهت — سجّل خروج ودخول تاني.");
+    if (res.status === 429) return empty("بحث كتير في وقت قصير — استنى دقيقة.");
+    if (!res.ok) return empty("تعذّر البحث (خطأ في السيرفر).");
     const d = await res.json();
-    return Array.isArray(d?.results) ? d.results : [];
-  } catch { return []; }
+    if (d?.error === "drive_unavailable") {
+      return empty("الاتصال بجوجل درايف مش شغّال — الصلاحية محتاجة تجديد.");
+    }
+    return {
+      results: Array.isArray(d?.results) ? d.results : [],
+      scanned: Number(d?.scanned ?? 0),
+    };
+  } catch {
+    return empty("مافيش اتصال بالإنترنت.");
+  }
 }
 
 /** يجيب ملف الشهادة كـBlob (للفتح/المشاركة). */

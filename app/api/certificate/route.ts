@@ -26,10 +26,14 @@ export async function GET(req: NextRequest) {
   if (!token) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
 
   let files;
+  let scanned = 0;           // كام PDF رجع من درايف قبل الفلترة — للتشخيص
+  let mode = "plate";
   if (looksLikeChassis(q)) {
+    mode = "chassis";
     // هيكل (VIN) — بحث بالمحتوى (فريد ومباشر).
     files = await driveSearch(`fullText contains '${esc(q)}' and mimeType='application/pdf'`, token);
   } else if (looksLikeCertNumber(q)) {
+    mode = "cert";
     // رقم شهادة (REPO/CRN أو أرقام ملزوقة) — نبحث بالتوكن المناسب (آخر ٨ للملزوق).
     const tok = certSearchToken(q);
     files = await driveSearch(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`, token);
@@ -41,5 +45,7 @@ export async function GET(req: NextRequest) {
   }
 
   const results = files.map((f) => ({ id: f.id, name: f.name, link: f.webViewLink ?? null }));
-  return NextResponse.json({ found: results.length > 0, results });
+  // `scanned` و`mode` بيفرّقوا بين «درايف رجع ملفات بس مفيش مطابق» و«درايف
+  // مارجّعش حاجة أصلاً» — الاتنين كانوا بيظهروا للمندوب «مفيش شهادة».
+  return NextResponse.json({ found: results.length > 0, results, scanned, mode });
 }
