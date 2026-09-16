@@ -84,6 +84,14 @@ export function toExportRow(
       if (k in out || baseName(k) !== spec.name) continue;
       out[k] = src[k] ?? "";
     }
+    // وباقي الإخوة: أي عمود تاني بيطابق نفس الخانة (زي «الحي» مع «العنوان»).
+    // خانة واحدة بتاخد واحد بس، والباقي كان بيتزقّ **آخر الملف** — فالمندوب
+    // اللي مختار «الحي» رقم ٤ كان بيلاقيه آخر عمود مهما عمل. دلوقتي بيقف هنا.
+    for (const [k, v] of Object.entries(src)) {
+      if (used.has(k) || isHidden(k) || k in out || !spec.match.test(k) || !text(v)) continue;
+      out[k] = v;
+      used.add(k);
+    }
   }
   // اللي مالوش مكان في الترتيب وفيه قيمة — يتلحق آخر الملف بدل ما يضيع.
   // (ده بيشمل عمود متسمّي بمصدره اسمه الأساسي مش في الترتيب أصلاً.)
@@ -110,6 +118,36 @@ export function buildExportRows(
   const rows = mapped.map((r) => {
     const out: Record<string, unknown> = {};
     for (const c of kept) out[c] = r[c] ?? "";
+    return out;
+  });
+  return { columns: kept, rows };
+}
+
+/**
+ * صفوف المشاركة **بترتيب العرض زي ما هو** — للوضع «المخصّص».
+ *
+ * المندوب رتّب أعمدته بإيده على التليفون، والمشاركة كانت بتعدّي على الترتيب
+ * الثابت (`EXPORT_COLUMNS`) فيطلع الإكسيل والصورة بترتيب تاني خالص. صفوف
+ * المشاركة بتتبني أصلاً بترتيب العرض، فترتيب مفاتيح الصف **هو** ترتيب المندوب
+ * — بناخده زي ما هو ومانعيدش ترتيبه.
+ *
+ * اللي بيفضل زي التصدير العادي: الأعمدة المحجوبة بتتشال، والعمود الفاضي في
+ * **كل** الصفوف بيتشال، وكل صف بياخد كل الأعمدة (الناقص فاضي).
+ */
+export function buildDisplayRows(
+  sources: Record<string, unknown>[],
+): { columns: string[]; rows: Record<string, unknown>[] } {
+  const columns: string[] = [];
+  for (const src of sources) {
+    for (const k of Object.keys(src)) {
+      if (isHidden(k) || columns.includes(k)) continue;
+      columns.push(k);
+    }
+  }
+  const kept = columns.filter((c) => sources.some((r) => text(r[c])));
+  const rows = sources.map((src) => {
+    const out: Record<string, unknown> = {};
+    for (const c of kept) out[c] = src[c] ?? "";
     return out;
   });
   return { columns: kept, rows };
