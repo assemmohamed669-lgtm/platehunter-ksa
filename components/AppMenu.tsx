@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
+import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
@@ -46,6 +47,10 @@ export default function AppMenu({
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+
+  /** اللينك يظهر للمندوب ده؟ المشترك صوت-فقط بيشوف المسموح بس — نفس سياسة
+      الحارس بالظبط، فاللي بيتخفي هو اللي بيترمي، مافيش فرق بينهم. */
+  const canOpen = (href: string) => !voiceOnly || isAllowedForVoiceOnly(href);
   // مدخل مؤقّت لصفحة التسجيل الجديدة اللي بتتجرَّب. الافتراضي **مقفول**: أي
   // فشل في القراءة = الرابط مايظهرش، فالمندوب مايشوفهوش بأي حال.
   const [isSuper, setIsSuper] = useState(false);
@@ -256,8 +261,18 @@ export default function AppMenu({
             <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-muted"><BarChart3 size={14} /> إحصائيات</div>
             <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface-2 p-2 text-center">
               <Link href={voiceOnly ? "/instant-check?tab=sheet" : "/list?type=records"} onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></Link>
-              <Link href="/list?type=wanted" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></Link>
-              <Link href="/list?type=voice" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></Link>
+              {/* المشترك صوت-فقط: الرقم يفضل ظاهر، بس من غير لينك — الصفحة
+                  مقفولة عنده وكانت بترميه لصفحة التشييك من غير ما يفهم ليه. */}
+              {voiceOnly ? (
+                <div className="rounded-lg py-1"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></div>
+              ) : (
+                <Link href="/list?type=wanted" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></Link>
+              )}
+              {voiceOnly ? (
+                <div className="rounded-lg py-1"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></div>
+              ) : (
+                <Link href="/list?type=voice" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></Link>
+              )}
             </div>
             {subEnd && (() => {
               const s = subStatus(subEnd);
@@ -280,22 +295,30 @@ export default function AppMenu({
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition disabled:opacity-50">
               <CloudDownload size={16} className="text-primary" /> {syncing ? "جارٍ المزامنة..." : "مزامنة واسترجاع بياناتي"}
             </button>
+            {canOpen("/group-records") ? (
             <Link href="/group-records" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Users size={16} className="text-primary" /> سجلات المجموعة
             </Link>
+            ) : null}
+            {canOpen("/group-sort") ? (
             <Link href="/group-sort" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <FileUp size={16} className="text-primary" /> فرز على سجلات المجموعة
             </Link>
+            ) : null}
+            {canOpen("/backup") ? (
             <Link href="/backup" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <Download size={16} className="text-brand" /> نسخة احتياطية
             </Link>
+            ) : null}
+            {canOpen("/data-upload") ? (
             <Link href="/data-upload" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <FileUp size={16} className="text-alert" /> رفع للداتا
             </Link>
+            ) : null}
             {isSuper && (
               <Link href="/registration-v2" onClick={() => onOpenChange(false)}
                 className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
