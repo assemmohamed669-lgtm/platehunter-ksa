@@ -47,6 +47,7 @@ import {
 } from "@/lib/idb";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { resolveDataPlateCol } from "@/lib/dataSources";
+import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
@@ -580,6 +581,13 @@ export default function SortingPage() {
   useEffect(() => {
     try { setDataLocked(localStorage.getItem("ph:sorting:dataLocked") === "1"); } catch { /* ignore */ }
   }, []);
+  // أقفال المربعات الإضافية — واحد لكل مربع، بنفس سلوك قفل الداتا الأساسي.
+  const [extraLocks, setExtraLocks] = useState<boolean[]>([]);
+  useEffect(() => { setExtraLocks(loadExtraDataLocks()); }, []);
+  const toggleExtraLock = (i: number) => {
+    setExtraLocks((prev) => { const next = toggleLockAt(prev, i); saveExtraDataLocks(next); return next; });
+  };
+
   // زر القفل — بيبدّل الحالة ويحفظها.
   const toggleDataLock = () => {
     setDataLocked((v) => {
@@ -1657,6 +1665,9 @@ export default function SortingPage() {
       void persistExtraDataSlots(next);
       return next;
     });
+    // القفل بتاع المربع المتشال لازم يتشال معاه، وإلا الأقفال تتزحلق على
+    // المربعات الغلط (الأقفال بالمواقع لأن المربعات بتتشال بالموقع).
+    setExtraLocks((prev) => { const next = removeLockAt(prev, i); saveExtraDataLocks(next); return next; });
     setResults(null); setSorted(false); wipeSortResults();
   }
 
@@ -2909,12 +2920,31 @@ export default function SortingPage() {
           مطلوب/لصق). كل مربع مُضاف ليه زر «مسح المربع» يلغيه (الأول ثابت). */}
       {extraData.map((ed, i) => (
         <div key={ed.id} className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between px-0.5">
+          <div className="flex items-center justify-between gap-2 px-0.5">
             <span className="text-xs font-bold text-muted">داتا إضافية {i + 2}</span>
-            <button onClick={() => clearExtraDataBox(i)} title="مسح هذا المربع"
-              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger">
-              <X size={13} /> مسح المربع
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {/* قفل المربع — نفس سلوك قفل الداتا الأساسي: وهو مقفول مفيش مسح
+                  للإكسيل ولا للمربع نفسه (المسح ده كان هيضيّع الملف برضه). */}
+              <button
+                onClick={() => toggleExtraLock(i)}
+                className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold transition ${
+                  isLockedAt(extraLocks, i)
+                    ? "border-danger/50 bg-danger/10 text-danger"
+                    : "border-border bg-surface-2 text-muted hover:text-primary"
+                }`}
+                title={isLockedAt(extraLocks, i) ? "مقفول — دوس عشان تفتح القفل" : "اقفل المربع فمحدش يقدر يمسح ملفه"}
+              >
+                {isLockedAt(extraLocks, i) ? <Lock size={13} /> : <LockOpen size={13} />}
+                {isLockedAt(extraLocks, i) ? "مقفول" : "قفل"}
+              </button>
+              <button
+                onClick={() => clearExtraDataBox(i)}
+                disabled={isLockedAt(extraLocks, i)}
+                title={isLockedAt(extraLocks, i) ? "المربع مقفول — افتح القفل الأول" : "مسح هذا المربع"}
+                className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted">
+                <X size={13} /> مسح المربع
+              </button>
+            </div>
           </div>
           <FileUploadBox
             title={`ملف الداتا ${i + 2}`}
@@ -2929,6 +2959,7 @@ export default function SortingPage() {
             onLargeFile={(file, onProgress) => handleExtraLargeData(i, file, onProgress)}
             onClear={() => clearExtraDataFile(i)}
             showReplaceButtons
+            locked={isLockedAt(extraLocks, i)}
           />
           {/* ملف إضافي فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه (زي الأساسي) */}
           {(ed.streamMeta?.sheets?.length ?? 0) > 1 && (
