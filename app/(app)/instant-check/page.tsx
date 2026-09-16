@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -16,6 +16,7 @@ import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from 
 import CertificateBadge from "@/components/CertificateBadge";
 import CertificateSearch from "@/components/CertificateSearch";
 import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
+import { loadGpsOff, saveGpsOff } from "@/lib/gpsCapture";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -742,6 +743,19 @@ export default function InstantCheckPage() {
   // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
   const [icNearest, setIcNearest] = useState(false);
   const [icUserLoc, setIcUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+
+  // زرار «تسجيل الموقع»: مقفول = السيارة تتشيّك وتتسجّل من غير موقع (يدوي/صوت).
+  // بيتخزّن على الجهاز فيفضل بعد قفل التطبيق. الدوال اللي بتختم الموقع غير
+  // متزامنة، فبتقرا من الـref مش من الحالة (عشان ماتقراش قيمة قديمة).
+  const [gpsOff, setGpsOffState] = useState(false);
+  const gpsOffRef = useRef(false);
+  useEffect(() => { const v = loadGpsOff(); gpsOffRef.current = v; setGpsOffState(v); }, []);
+  function toggleGpsOff() {
+    const next = !gpsOffRef.current;
+    gpsOffRef.current = next;
+    setGpsOffState(next);
+    saveGpsOff(next);
+  }
   const [icLocating, setIcLocating] = useState(false);
   const [pttError, setPttError] = useState<string | null>(null);
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
@@ -1703,6 +1717,9 @@ export default function InstantCheckPage() {
     apply: (lat: number, lng: number, region: string) => void,
     onFail: () => void,
   ) {
+    // المندوب قافل تسجيل الموقع — بنخرج بهدوء (مش onFail) عشان مايظهرش خطأ GPS
+    // ولا زرار إعادة محاولة على حاجة هو اللي قافلها بنفسه.
+    if (gpsOffRef.current) return;
     const warm = gpsService.getLastCoords();
     if (warm) apply(warm.lat, warm.lng, "");            // لحظي (الحي يتملّي بعد التحسين)
     // حسّن لأدق قراءة: getFreshFix بيرجّع المخزّن فوراً لو ممتاز (≤١.٥ث و≤١٥م)،
@@ -1815,6 +1832,7 @@ export default function InstantCheckPage() {
    * فضلت كده بيتنبّه وقت التصدير.
    */
   async function attachGpsToDraft(id: string, base: FieldCheckEntry) {
+    if (gpsOffRef.current) return;   // الموقع مقفول — مافيش داعي لخمس محاولات
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         const gps = await getCurrentGps();
@@ -2078,7 +2096,10 @@ export default function InstantCheckPage() {
   // a new row; the sheet colour-codes repeated plates so they're easy to spot.
   async function exportToFieldCheck(result: PlateResult, mode: CheckMode, prefetchedGps?: { lat: number; lng: number } | null) {
     if (!result.found) return;
-    const gpsPromise = prefetchedGps ? Promise.resolve(prefetchedGps) : getCurrentGps();
+    // الموقع مقفول ⇒ الصف بيتحفظ من غير lat/lng/رابط خريطة خالص.
+    const gpsPromise = gpsOffRef.current
+      ? Promise.resolve(null)
+      : (prefetchedGps ? Promise.resolve(prefetchedGps) : getCurrentGps());
 
     const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const base: FieldCheckEntry = {
@@ -4205,6 +4226,24 @@ export default function InstantCheckPage() {
               {gps ? <><Wifi size={11} /> متصل</> : <><WifiOff size={11} /> غير متصل</>}
             </span>
             <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${gpsBoxOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {/* زرار «تسجيل الموقع» — شغّال مع اليدوي والصوتي (والكاميرا). مقفول =
+              السيارة تتشيّك وتتسجّل من غير موقع. بيفضل محفوظ بعد قفل التطبيق،
+              وظاهر برّه المربع المطوي عشان المندوب يشوف حالته من غير ما يفتحه. */}
+          <button onClick={toggleGpsOff}
+            title={gpsOff ? "الموقع مقفول — دوس عشان يرجع" : "الموقع شغّال — دوس عشان تقفله"}
+            className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-right transition active:scale-[0.99] ${
+              gpsOff ? "border-danger/50 bg-danger/10 text-danger" : "border-border bg-surface-2 text-muted"
+            }`}>
+            <span className="flex items-center gap-1.5 text-[12px] font-bold">
+              {gpsOff ? <MapPinOff size={14} /> : <MapPin size={14} />}
+              {gpsOff ? "تسجيل الموقع مقفول — السيارات هتتسجّل بدون موقع" : "تسجيل الموقع شغّال"}
+            </span>
+            {/* مفتاح شكله واضح من نظرة */}
+            <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${gpsOff ? "bg-danger/40" : "bg-primary/40"}`}>
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${gpsOff ? "right-0.5" : "left-0.5"}`} />
+            </span>
           </button>
           {gpsBoxOpen && (
             <>
