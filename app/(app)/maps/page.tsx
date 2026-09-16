@@ -12,7 +12,7 @@ import {
   deleteRecording, deleteFieldCheckEntry, deleteFieldCheckEntries,
   type RecordingEntry, type FieldCheckEntry,
 } from "@/lib/idb";
-import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
+import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { detectPlateColumn, detectPlateColumnByContent } from "@/lib/plateParser";
 import { plateKey } from "@/lib/fieldCheck";
 import { buildSpreadsheetBlob, openExcelBlob } from "@/lib/excel";
@@ -129,7 +129,7 @@ export default function MapsPage() {
       ]);
       setRecordings(recs);
       // ٨ دبابيس فوق بعض بنفس الإحداثيات = دبوس واحد.
-      setFieldEntries(collapseSameMinuteDuplicates(fields));
+      setFieldEntries(collapseDuplicateChecks(fields));
       if (check) {
         const col = detectPlateColumn(check.headers) ?? detectPlateColumnByContent(check.headers, check.rows);
         const map = new Map<string, Record<string, string>>();

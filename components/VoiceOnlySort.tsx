@@ -40,7 +40,7 @@ import {
   deleteUploadedFile,
   getAllFieldCheckEntries,
 } from "@/lib/idb";
-import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
+import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 
@@ -139,7 +139,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     setBusy(true);
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
-      const entries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries());
+      const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
       const recRows = recordsToRows(entries);
 
       // وضع «جديد»: نشيل من الإحالة أي لوحة موجودة أصلاً في ملف التشييك.
@@ -167,7 +167,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     setBusy(true);
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
-      const entries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries());
+      const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
       const recRows = recordsToRows(entries);
       // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
       const index = buildReferralIndex(recRows, REC_PLATE_COL);

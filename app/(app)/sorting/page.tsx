@@ -45,7 +45,7 @@ import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
-import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
+import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
@@ -513,7 +513,7 @@ export default function SortingPage() {
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
         try {
           // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
-          const fieldEntries = collapseSameMinuteDuplicates(await getAllFieldCheckEntries());
+          const fieldEntries = collapseDuplicateChecks(await getAllFieldCheckEntries());
           if (fieldEntries.length > 0) {
             const keys = new Set<string>(["رقم اللوحة"]);
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
