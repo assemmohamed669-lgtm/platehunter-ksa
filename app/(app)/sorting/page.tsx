@@ -47,6 +47,7 @@ import {
 } from "@/lib/idb";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { resolveDataPlateCol } from "@/lib/dataSources";
+import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
 import { isRecordsLinked, recordsTarget, unlinkRecords, RECORDS_LINK_EVENT, type RecordsTarget } from "@/lib/recordsAsData";
@@ -2124,7 +2125,9 @@ export default function SortingPage() {
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
-      const checkSet = new Set<string>();
+      // ملفات التشييك الإضافية (زر «+» في صفحة التشييك) بتتحسب زي الأساسي —
+      // وإلا إحالة المندوب رافعها كملف تشييك إضافي تفضل تطلع «جديدة» كل مرة.
+      const checkSet = combinedCheckPlates(await loadAllCheckSources());
       for (const row of checkTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveCheckPlateCol] ?? "")));
         if (!n) continue;
