@@ -33,6 +33,22 @@ export const EXPORT_COLUMNS: ExportColumnSpec[] = [
 
 const text = (v: unknown) => String(v ?? "").trim();
 
+/**
+ * عمود متسمّي بمصدره: «نوع السيارة (المحفظة)» أو «الماركة (الداتا)».
+ *
+ * نتيجة الفرز بتطلّع عمودين لنفس المعنى لما المعنى موجود في الداتا وفي المحفظة
+ * — الأول بالاسم الثابت والتاني متسمّي بمصدره. العمود المتسمّي **مش مرشّح** لخانة
+ * أخوه؛ له خانته هو. من غير الاستثناء ده كان بيحصل حاجتين وحشين على داتا حقيقية:
+ * لو نوع الداتا فاضي، نوع المحفظة بياخد مكانه (فمعنى العمود بيتغيّر من صف لصف)،
+ * ولو الداتا مليانة، عمود المحفظة بيتزقّ آخر الملف بعد «الحالة» — وساعات يتشال.
+ */
+const SOURCE_SUFFIX = /\s*\((?:المحفظة|الداتا)\)\s*$/;
+
+/** اسم العمود من غير لاحقة المصدر — «نوع السيارة (المحفظة)» → «نوع السيارة». */
+function baseName(header: string): string {
+  return String(header ?? "").replace(SOURCE_SUFFIX, "").trim();
+}
+
 /** بيحوّل صف بأعمدة أي مصدر لصف بالأعمدة الموحّدة. */
 export function toExportRow(
   src: Record<string, unknown>,
@@ -40,6 +56,10 @@ export function toExportRow(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const used = new Set<string>();
+  // الأعمدة المتسمّية بمصدرها بتتحجز من البداية عشان ماتتحطّش في خانة غيرها.
+  const qualified = Object.keys(src).filter((k) => SOURCE_SUFFIX.test(k));
+  for (const k of qualified) used.add(k);
+
   for (const spec of specs) {
     out[spec.name] = "";
     for (const [k, v] of Object.entries(src)) {
@@ -48,10 +68,17 @@ export function toExportRow(
       used.add(k);
       break;
     }
+    // إخوة العمود ده المتسمّيين بمصدرهم — جنبه على طول، مش آخر الملف.
+    for (const k of qualified) {
+      if (k in out || baseName(k) !== spec.name) continue;
+      out[k] = src[k] ?? "";
+    }
   }
   // اللي مالوش مكان في الترتيب وفيه قيمة — يتلحق آخر الملف بدل ما يضيع.
+  // (ده بيشمل عمود متسمّي بمصدره اسمه الأساسي مش في الترتيب أصلاً.)
   for (const [k, v] of Object.entries(src)) {
-    if (used.has(k) || k in out || !text(v)) continue;
+    if (k in out || !text(v)) continue;
+    if (used.has(k) && !qualified.includes(k)) continue;
     out[k] = v;
   }
   return out;
