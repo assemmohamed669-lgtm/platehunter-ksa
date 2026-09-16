@@ -24,7 +24,7 @@ import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
-import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, adoptNewColumns, loadKnownColumns, saveKnownColumns, type OrderMode } from "@/lib/columnOrder";
+import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
@@ -1004,15 +1004,7 @@ export default function SortingPage() {
   const [colOrder, setColOrder] = useState<string[]>([]);
   // الوضع: «أساسي» (ترتيب البرنامج الافتراضي — الافتراضي لأي مندوب) أو «مخصّص».
   const [orderMode, setOrderModeState] = useState<OrderMode>("basic");
-  // علامة مستقلة عن `hydrated`: تبنّي الأعمدة الجديدة لازم يستنى **الترتيب
-  // المحفوظ** بالذات. لو اشتغل قبله كان هيسجّل كل الأعمدة كـ«معروفة» والترتيب
-  // لسه فاضي — فالأعمدة الجديدة تتحرق ومحصلش تبنّي أبداً.
-  const [colOrderLoaded, setColOrderLoaded] = useState(false);
-  useEffect(() => {
-    setColOrder(loadColumnOrder());
-    setOrderModeState(loadOrderMode());
-    setColOrderLoaded(true);
-  }, []);
+  useEffect(() => { setColOrder(loadColumnOrder()); setOrderModeState(loadOrderMode()); }, []);
 
   // حالة ربط السجلات كخانة داتا — تُقرأ عند الفتح، وتتحدّث لو المندوب غيّرها من
   // صفحة السجلات (حدث مخصّص) أو رجع للتاب (visibilitychange).
@@ -1058,18 +1050,6 @@ export default function SortingPage() {
   }, [allResultColsRaw, dataTable, effectiveDataPlateCol, referralTable, effectiveReferralPlateCol]);
   // كل الأعمدة القابلة للاختيار = المفيدة + كل الخام. (للاختيار والعرض عند الاختيار.)
   const pickableColsRaw = useMemo(() => [...allResultColsRaw, ...rawExtraCols], [allResultColsRaw, rawExtraCols]);
-
-  // مش كل داتا فيها نفس الأعمدة ولا كل محفظة — فالمندوب اللي عامل تخصيص كان أي
-  // عمود جديد مايظهرش عنده أبداً. بنضيف **الجديد بس** لآخر ترتيبه؛ اللي أخفاه
-  // بإيده يفضل مخفي (بنفرّق بينهم بسجل «الأعمدة اللي اتعرضت عليه قبل كده»).
-  useEffect(() => {
-    if (!colOrderLoaded) return;                 // استنى الترتيب المحفوظ يتحمّل
-    const available = pickableColsRaw.map((c) => c.label);
-    if (available.length === 0) return;
-    const r = adoptNewColumns(colOrder, loadKnownColumns(), available);
-    saveKnownColumns(r.known);
-    if (r.added.length > 0) { setColOrder(r.order); saveColumnOrder(r.order); }
-  }, [colOrderLoaded, pickableColsRaw, colOrder]);
 
   // الأعمدة المعروضة فعلاً: مفيش اختيار → الافتراضي (المفيدة زي الأول)؛ فيه اختيار →
   // الثابت + اللي المندوب اختاره (من أي عمود في ملفه).
