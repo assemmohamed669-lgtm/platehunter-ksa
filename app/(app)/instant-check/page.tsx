@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff, Plus } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -17,6 +17,7 @@ import CertificateBadge from "@/components/CertificateBadge";
 import CertificateSearch from "@/components/CertificateSearch";
 import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
 import { loadGpsOff, saveGpsOff } from "@/lib/gpsCapture";
+import { buildCombinedCheckIndex } from "@/lib/checkSheets";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -517,6 +518,12 @@ let icPttExportedCache: string[] | null = null;
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
+  /**
+   * ملفات تشييك إضافية (زر «+»). بتشتغل مع الأساسي كأنهم **شيت واحد** في كل
+   * حاجة: يدوي · صوتي · كاميرا · شاص. بتتخزّن في سلوتات `check-2`, `check-3`…
+   * فتفضل بعد قفل التطبيق، زي شيتات الإحالة الإضافية في صفحة الفرز بالظبط.
+   */
+  const [extraChecks, setExtraChecks] = useState<{ id: number; table: ExcelTable | null; file: File | null }[]>([]);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   /**
    * المشترك **صوت VoiceX فقط** (`rest_pages_enabled = false`): مالوش صفحة الفرز
@@ -1416,6 +1423,34 @@ export default function InstantCheckPage() {
         .catch(() => {});
     };
     loadCheck();
+    // الملفات الإضافية (`check-2`, `check-3`…) — بتتقري بالتتابع لحد أول سلوت فاضي.
+    (async () => {
+      const loaded: { id: number; table: ExcelTable | null; file: File | null }[] = [];
+      for (let n = 2; n < 100; n++) {
+        const rec = await getUploadedFile("local", `check-${n}`).catch(() => null);
+        if (!rec) break;
+        loaded.push({
+          id: n,
+          table: { headers: rec.headers, rows: rec.rows },
+          file: new File([rec.fileBlob ?? new Blob()], rec.fileName, {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }),
+        });
+      }
+      if (loaded.length) {
+        setExtraChecks(loaded);
+        // أعمدة الملفات الإضافية لازم تدخل أعمدة العرض، وإلا تفاصيل الصف
+        // المطابق من ملف إضافي مابتظهرش للمندوب.
+        setSelectedCheckCols((prev) => {
+          const next = new Set(prev);
+          for (const e of loaded) {
+            const plate = e.table ? detectPlateColumn(e.table.headers) : null;
+            for (const h of e.table?.headers ?? []) if (h !== plate) next.add(h);
+          }
+          return next;
+        });
+      }
+    })();
     // لو ملف التشييك اتضاف من نافذة «الإكسيل الوارد من واتساب» والصفحة مفتوحة
     // بالفعل (router.push لنفس الصفحة مابيعملش remount)، نعيد قراءته فور ما
     // الحدث ييجي — بدل ما المندوب يضطر يطلع من الصفحة ويرجع عشان الملف يبان.
@@ -1464,15 +1499,16 @@ export default function InstantCheckPage() {
   function dupeBg(plate: string): string { return dupeBgByKey(plateKey(plate)); }
   const DUPE_TITLE = "لوحة مكررة — اتشيّكت أكتر من مرة (ممكن يكون ليها أكتر من موقع)";
 
+  // فهرس واحد من **كل** ملفات التشييك (الأساسي + الإضافية) — التشييك بكل طرقه
+  // بيدوّر فيه، فأي تطابق في أي ملف = «مطلوبة» + سرينة. الأساسي بيكسب لو نفس
+  // اللوحة في أكتر من ملف.
   const checkIndex = useMemo(() => {
-    if (!checkTable || !checkPlateCol) return new Map<string, Record<string, string>>();
-    const map = new Map<string, Record<string, string>>();
-    for (const row of checkTable.rows) {
-      const key = normalizePlate(bankPlateToArabic(String(row[checkPlateCol] ?? "")));
-      if (key) map.set(key, row);
-    }
-    return map;
-  }, [checkTable, checkPlateCol]);
+    const sources = [
+      ...(checkTable ? [checkTable] : []),
+      ...extraChecks.map((e) => e.table).filter((t): t is ExcelTable => !!t),
+    ];
+    return buildCombinedCheckIndex(sources);
+  }, [checkTable, extraChecks]);
 
   // فهرس الشاصي (VIN مطبّع → صف) مبني من *كل ورقات* ملف التشييك — لمود «شاص».
   // بيدوّر على عمود الشاصي في كل ورقة (بالاسم أو بالمحتوى) ويجمّعهم في فهرس واحد.
@@ -1491,7 +1527,12 @@ export default function InstantCheckPage() {
     // «شاص». دلوقتي مابيتبنيش إلا لما يفتح التبويب فعلاً، ومرة واحدة لكل ملف.
     if (mode !== "chassis") return;
     const token = checkFile ?? checkTable;
-    if (!token || chassisBuiltForRef.current === token) return;
+    // مفتاح البناء = هوية الملف الأساسي + بصمة الملفات الإضافية. من غير الجزء
+    // التاني، إضافة ملف إضافي وإحنا في «شاص» مكانتش تعيد بناء الفهرس.
+    const extraKey = extraChecks.map((e) => `${e.id}:${e.table?.rows.length ?? 0}`).join(",");
+    if (!token) return;
+    const built = chassisBuiltForRef.current as { token: unknown; extraKey: string } | null;
+    if (built && built.token === token && built.extraKey === extraKey) return;
 
     let cancelled = false;
     setChassisBuilding(true);
@@ -1513,16 +1554,25 @@ export default function InstantCheckPage() {
           for (const s of await readAllSheets(checkFile)) addSheet(s.headers, s.rows);
         } catch { /* blob غير قابل للقراءة — نكتفي بالورقة المحمّلة */ }
       }
+      // 3) ملفات التشييك الإضافية — نفس المعاملة بالظبط (ورقة محمّلة + كل ورقات الملف).
+      for (const ex of extraChecks) {
+        if (ex.table) addSheet(ex.table.headers, ex.table.rows);
+        if (ex.file) {
+          try {
+            for (const s of await readAllSheets(ex.file)) addSheet(s.headers, s.rows);
+          } catch { /* blob غير قابل للقراءة */ }
+        }
+      }
       if (!cancelled) {
         setChassisIndex(combined);
         setChassisSheetFound(found);
         setChassisColByRow(colMap);
-        chassisBuiltForRef.current = token;   // اتبنى لهذا الملف — مايتعادش
+        chassisBuiltForRef.current = { token, extraKey };   // اتبنى للمجموعة دي — مايتعادش
       }
       if (!cancelled) setChassisBuilding(false);
     })();
     return () => { cancelled = true; setChassisBuilding(false); };
-  }, [checkFile, checkTable, mode]);
+  }, [checkFile, checkTable, extraChecks, mode]);
 
   // اللوحة المرتبطة برقم الشاص (من الصف المطابق) — عشان تظهر بارزة قدّام الشاص.
   function chassisPlate(row: Record<string, string>): string | null {
@@ -4132,6 +4182,43 @@ export default function InstantCheckPage() {
     setPttResults([]);
   }
 
+  /** رفع/تغيير ملف تشييك إضافي — بيتخزّن في سلوت `check-N` فيفضل بعد القفل. */
+  async function handleExtraParsed(id: number, table: ExcelTable, file: File) {
+    await saveUploadedFile({
+      key: `local:check-${id}`, agentId: "local", slot: `check-${id}`,
+      fileName: file.name, headers: table.headers, rows: table.rows,
+      uploadedAt: new Date().toISOString(), fileBlob: file,
+    });
+    setExtraChecks((prev) => prev.map((e) => (e.id === id ? { ...e, table, file } : e)));
+    const plate = detectPlateColumn(table.headers);
+    setSelectedCheckCols((prev) => {
+      const next = new Set(prev);
+      for (const h of table.headers) if (h !== plate) next.add(h);
+      return next;
+    });
+    clearAutoCheck();
+  }
+
+  /** مسح ملف إضافي — بيشيل المربع كمان (مش بيسيبه فاضي). */
+  async function handleExtraClear(id: number) {
+    await deleteUploadedFile("local", `check-${id}`).catch(() => {});
+    // السلوتات لازم تفضل متتابعة (`check-2`, `check-3`…) عشان قراءتها وقت
+    // الفتح بتقف عند أول سلوت فاضي — فبنعيد كتابة اللي بعده بأرقام جديدة.
+    const rest = extraChecks.filter((e) => e.id !== id);
+    for (const e of extraChecks) await deleteUploadedFile("local", `check-${e.id}`).catch(() => {});
+    const renumbered = rest.map((e, i) => ({ ...e, id: i + 2 }));
+    for (const e of renumbered) {
+      if (!e.table || !e.file) continue;
+      await saveUploadedFile({
+        key: `local:check-${e.id}`, agentId: "local", slot: `check-${e.id}`,
+        fileName: e.file.name, headers: e.table.headers, rows: e.table.rows,
+        uploadedAt: new Date().toISOString(), fileBlob: e.file,
+      });
+    }
+    setExtraChecks(renumbered);
+    clearAutoCheck();
+  }
+
   async function handleClear() {
     await deleteUploadedFile("local", "check");
     setCheckTable(null);
@@ -4205,6 +4292,31 @@ export default function InstantCheckPage() {
         showReplaceButtons
         sky
       />
+
+      {/* ── ملفات تشييك إضافية ───────────────────────────────────────────────
+          بتشتغل مع الأساسي **كأنهم شيت واحد**: يدوي · صوتي · كاميرا · شاص.
+          لازمتها إن إحالة جديدة تنزل ومش موجودة في ملف التشييك المرفوع. */}
+      {extraChecks.map((ex, i) => (
+        <FileUploadBox
+          key={ex.id}
+          title={`ملف تشييك ${i + 2}`}
+          hint="بيشتغل مع ملف التشييك الأساسي"
+          parsedFile={ex.file}
+          parsedRowCount={ex.table?.rows.length ?? null}
+          onParsed={(t, f) => void handleExtraParsed(ex.id, t, f)}
+          onClear={() => void handleExtraClear(ex.id)}
+          showReplaceButtons
+          sky
+        />
+      ))}
+
+      {checkTable && (
+        <button
+          onClick={() => setExtraChecks((prev) => [...prev, { id: prev.length + 2, table: null, file: null }])}
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-primary/50 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/5 active:scale-[0.99]">
+          <Plus size={15} /> إضافة ملف تشييك
+        </button>
+      )}
 
       {/* ── حالة الـ GPS — ثابتة فوق (sticky) واللوحات بتعدّي تحتها. بتظهر في كل
              التبويبات ما عدا «السجلات» و«فرز». المربع كله ملوّن حسب قوة الإشارة
