@@ -30,7 +30,7 @@ import VoiceLevelMeter from "@/components/VoiceLevelMeter";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
-import { findDuplicateEntry, filterFieldEntries, plateKey } from "@/lib/fieldCheck";
+import { findDuplicateEntry, filterFieldEntries, plateKey, looksLikePlateQuery, collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -1985,8 +1985,18 @@ export default function InstantCheckPage() {
       : fieldFilter === "manual" ? /يدوي/.test(e.method)
       : fieldFilter === "wanted" ? checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)))
       : true;
-    return filterFieldEntries(fieldEntries, fieldSearch).filter(inCat);
+    // الإرسالات المكرّرة لنفس التشييك (نفس اللوحة/الموقع/الوقت) بتتجمّع — من
+    // غير كده العدّاد اللي المندوب بيشوفه بيقول ٨ والتشييك واحد.
+    return filterFieldEntries(collapseDuplicateChecks(fieldEntries), fieldSearch).filter(inCat);
   }, [fieldEntries, fieldSearch, fieldFilter, checkIndex]);
+
+  /** مسح صف من السجلات لازم يشيل إخواته المخفيين، وإلا يطلع أخوه مكانه. */
+  const fieldDupGroups = useMemo(() => duplicateCheckIds(fieldEntries), [fieldEntries]);
+  function withHiddenDuplicates(ids: string[]): string[] {
+    const out = new Set(ids);
+    for (const id of ids) for (const sib of fieldDupGroups.get(id) ?? []) out.add(sib);
+    return [...out];
+  }
 
   function toggleManualSel(id: string) {
     setManualSel((prev) => {
@@ -2038,7 +2048,7 @@ export default function InstantCheckPage() {
   }
 
   async function deleteFieldEntry(id: string) {
-    await deleteFieldCheckEntry(id);
+    await deleteFieldCheckEntries(withHiddenDuplicates([id]));
     setFieldEntries((prev) => prev.filter((e) => e.id !== id));
     // المسح يوصل السيرفر فوراً — من غير كده الاسترجاع بيرجّعه تاني.
     const uid = agentIdRef.current;
@@ -2275,7 +2285,7 @@ export default function InstantCheckPage() {
     // تأكيد قبل تطبيق التعديل على شيت السجلات (بما فيه الحذف).
     const delMsg = removed.length > 0 ? ` (هيتمسح ${removed.length} لوحة)` : "";
     if (!window.confirm(`هيتم تطبيق التعديلات على شيت السجلات${delMsg}. موافق؟`)) return;
-    await deleteFieldCheckEntries(removed.map((r) => r.id));
+    await deleteFieldCheckEntries(withHiddenDuplicates(removed.map((r) => r.id)));
     const byId = new Map(fieldEntries.map((e) => [e.id, e]));
     for (const d of draftFieldEntries) {
       const o = byId.get(d.id);
@@ -5878,7 +5888,18 @@ export default function InstantCheckPage() {
               )}
             </div>
             {fieldSearch.trim() && (
-              <p className="text-[11px] text-muted">{visible.length} من {fieldEntries.length}</p>
+              looksLikePlateQuery(fieldSearch) ? (
+                // بحث بلوحة: المهم عنده «اتشيّكت كام مرة»، مش «كام من كام».
+                <p className="text-[12px] font-bold text-primary" dir="rtl">
+                  {visible.length === 0
+                    ? "اللوحة دي مش في سجلاتك"
+                    : visible.length === 1
+                      ? "اللوحة دي اتشيّكت مرة واحدة"
+                      : `اللوحة دي اتشيّكت ${visible.length} مرات`}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted">{visible.length} من {fieldEntries.length}</p>
+              )
             )}
 
             {/* Zoom */}
