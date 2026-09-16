@@ -35,3 +35,25 @@ export function buildCombinedCheckIndex(
   }
   return map;
 }
+
+/** مجموعة لوحات التشييك المطبّعة من كل الملفات — لفلتر «فرز جديد». */
+export function combinedCheckPlates(sources: CheckSource[]): Set<string> {
+  return new Set(buildCombinedCheckIndex(sources).keys());
+}
+
+/**
+ * بيقرا ملف التشييك الأساسي + كل الملفات الإضافية من التخزين المحلي.
+ * القراءة بتقف عند أول سلوت فاضي، عشان كده الترقيم لازم يفضل متتابع.
+ */
+export async function loadAllCheckSources(): Promise<CheckSource[]> {
+  const { getUploadedFile } = await import("./idb");
+  const out: CheckSource[] = [];
+  const main = await getUploadedFile("local", "check").catch(() => null);
+  if (main) out.push({ headers: main.headers, rows: main.rows });
+  for (let n = 2; n < 100; n++) {
+    const rec = await getUploadedFile("local", `check-${n}`).catch(() => null);
+    if (!rec) break;
+    out.push({ headers: rec.headers, rows: rec.rows });
+  }
+  return out;
+}

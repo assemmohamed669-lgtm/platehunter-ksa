@@ -68,3 +68,21 @@ describe("buildCombinedCheckIndex", () => {
     expect(buildCombinedCheckIndex([]).size).toBe(0);
   });
 });
+
+/**
+ * فلتر «فرز جديد» = لوحات الإحالة اللي **مش** في التشييك. لو الملفات الإضافية
+ * مش داخلة الحساب، المندوب يرفع إحالة جديدة كملف تشييك إضافي ويفضل «جديد»
+ * يعتبرها جديدة — فتطلعله كل مرة.
+ */
+describe("combinedCheckPlates", () => {
+  it("بتجمع لوحات كل الملفات", async () => {
+    const { combinedCheckPlates } = await import("@/lib/checkSheets");
+    const set = combinedCheckPlates([
+      { headers: ["رقم اللوحة"], rows: [{ "رقم اللوحة": "رري3706" }] },
+      { headers: ["رقم اللوحة"], rows: [{ "رقم اللوحة": "دوا8403" }] },
+    ]);
+    expect(set.has("رري3706")).toBe(true);
+    expect(set.has("دوا8403")).toBe(true);
+    expect(set.size).toBe(2);
+  });
+});

@@ -42,6 +42,7 @@ import {
 } from "@/lib/idb";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
+import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 
 /** سلوت الإحالة بتاعة المشترك صوت-فقط — نفس نمط `local:check`. */
 const REF_SLOT = "voice-referral";
@@ -101,16 +102,16 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   }, [refTable, refPlateCol]);
 
   /** لوحات ملف التشييك مطبّعة — لطرحها في وضع «جديد». */
-  const checkSet = useMemo(() => {
-    const s = new Set<string>();
-    if (!checkTable) return s;
-    const col = detectPlateColumn(checkTable.headers, checkTable.rows);
-    if (!col) return s;
-    for (const row of checkTable.rows) {
-      const n = normalizePlate(bankPlateToArabic(String(row[col] ?? "")));
-      if (n) s.add(n);
-    }
-    return s;
+  // لوحات التشييك = الملف الأساسي + كل الملفات الإضافية (زر «+»)، عشان «جديد»
+  // مايعتبرش إحالة المندوب رافعها كملف تشييك إضافي «جديدة» كل مرة.
+  const [checkSet, setCheckSet] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const set = combinedCheckPlates(await loadAllCheckSources());
+      if (!cancelled) setCheckSet(set);
+    })();
+    return () => { cancelled = true; };
   }, [checkTable]);
 
   async function handleParsed(table: ExcelTable, file: File) {
