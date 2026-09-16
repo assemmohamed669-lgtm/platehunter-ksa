@@ -20,7 +20,7 @@ import {
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { supabase } from "@/lib/supabaseClient";
 import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
-import { collapseSameMinuteDuplicates, sameMinuteDuplicateIds } from "@/lib/fieldCheck";
+import { collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
 
 type ListType = "records" | "wanted" | "voice";
 
@@ -73,8 +73,8 @@ export default function ListPage() {
       // أقل من دقيقتين بنفس الـGPS. بنجمّع نفس اللوحة في نفس الدقيقة في صف واحد
       // **للعرض والتصدير بس** — السجل الأصلي في قاعدة البيانات مابيتمسحش.
       const allEntries = await getAllFieldCheckEntries();
-      setDupGroups(sameMinuteDuplicateIds(allEntries));
-      const entries = collapseSameMinuteDuplicates(allEntries);
+      setDupGroups(duplicateCheckIds(allEntries));
+      const entries = collapseDuplicateChecks(allEntries);
       if (kind === "wanted") {
         const check = await getUploadedFile("local", "check");
         if (!check) { setRows([]); return; }
