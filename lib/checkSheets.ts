@@ -57,3 +57,14 @@ export async function loadAllCheckSources(): Promise<CheckSource[]> {
   }
   return out;
 }
+
+/**
+ * بيشيل مربع تشييك إضافي ويعيد ترقيم الباقي من ٢.
+ *
+ * السلوتات بتتقري وقت الفتح **بالتتابع لحد أول سلوت فاضي** — فلو المندوب شال
+ * المربع اللي في النص، الثغرة بتخفي كل اللي بعده. عشان كده الترقيم بيتعاد بعد
+ * أي مسح (مربع فاضي كان ولا فيه ملف).
+ */
+export function renumberCheckSlots<T extends { id: number }>(boxes: T[], removeId: number): T[] {
+  return boxes.filter((b) => b.id !== removeId).map((b, i) => ({ ...b, id: i + 2 }));
+}
