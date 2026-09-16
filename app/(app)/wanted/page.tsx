@@ -16,6 +16,7 @@ import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+import { resolveDataPlateCol } from "@/lib/dataSources";
 import { gpsCellCoords, gpsCellToLink, toMapsLink } from "@/lib/gps";
 import { buildColoredSortExcel } from "@/lib/excel";
 import { playSortBeep } from "@/lib/sortBeep";
@@ -193,9 +194,13 @@ export default function WantedPage() {
       let neighborLocCol: string | null = null;
       let neighborPlateCol = "";
       let neighborDetailCols: string[] = [];
+      // عمود أول ملف داتا بيبقى الاحتياطي لباقي الملفات — من غيره الملف اللي
+      // الكشف مالقاش فيه دليل بيتفرز على **أول عمود** فمايطلّعش ولا سيارة.
+      let baseDataCol: string | null = null;
       for (const rec of allDataRecs) {
-        const dataCol = detectPlateColumn(rec.headers, rec.rows);
+        const dataCol = resolveDataPlateCol(rec.headers, rec.rows, baseDataCol);
         if (!dataCol) continue;
+        baseDataCol ??= dataCol;
         if (!neighborPlateCol) {
           neighborPlateCol = dataCol;
           neighborLocCol = detectLocationColumn(rec.headers);

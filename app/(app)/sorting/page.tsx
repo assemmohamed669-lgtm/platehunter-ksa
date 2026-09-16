@@ -46,6 +46,7 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import { collapseSameMinuteDuplicates } from "@/lib/fieldCheck";
+import { resolveDataPlateCol } from "@/lib/dataSources";
 import ShareSortButton from "@/components/ShareSortButton";
 import { supabase } from "@/lib/supabaseClient";
 import { isRecordsLinked, recordsTarget, unlinkRecords, RECORDS_LINK_EVENT, type RecordsTarget } from "@/lib/recordsAsData";
@@ -1690,8 +1691,7 @@ export default function SortingPage() {
       // والفرز بيقرا من الجهاز على دفعات (بذاكرة دفعة واحدة).
       if (ed.streamed && ed.streamSlot && ed.streamMeta) {
         const pc = ed.streamMeta.plateCol
-          || detectArabicPlateColumn(ed.table.headers)
-          || detectPlateColumn(ed.table.headers, ed.table.rows);
+          || resolveDataPlateCol(ed.table.headers, ed.table.rows, effectiveDataPlateCol);
         if (!pc) continue;
         // متعدد الورقات → نفرز على الورقات المختارة بس (زي المربع الأساسي).
         const multi = (ed.streamMeta.sheets?.length ?? 0) > 1;
@@ -1699,8 +1699,9 @@ export default function SortingPage() {
         srcs.push({ rows: [], plateCol: pc, slot: ed.streamSlot, rowCount: ed.streamMeta.rowCount, sheets });
         continue;
       }
-      const arabicCol = detectArabicPlateColumn(ed.table.headers);
-      const plateCol = arabicCol ?? detectPlateColumn(ed.table.headers, ed.table.rows);
+      // عمود الملف الأساسي احتياطي — من غيره الملف الإضافي اللي الكشف مالقاش
+      // فيه دليل كان بيتفرز على **أول عمود** فمايطلّعش ولا نتيجة، في صمت.
+      const plateCol = resolveDataPlateCol(ed.table.headers, ed.table.rows, effectiveDataPlateCol);
       if (!plateCol) continue;
       srcs.push({ rows: ed.table.rows, plateCol });
     }
