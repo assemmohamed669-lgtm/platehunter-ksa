@@ -28,8 +28,19 @@ export const EXPORT_COLUMNS: ExportColumnSpec[] = [
   { name: "ملاحظة",         match: /ملاحظ|note/i },
   { name: "تاريخ التسجيل",  match: /تاريخ|date/i },
   { name: "المندوب",        match: /^\s*المندوب\s*$/ },
-  { name: "الحالة",         match: /^\s*الحالة\s*$/ },
 ];
+
+/**
+ * أعمدة **مش بتظهر في نتيجة الفرز خالص** (بطلب المالك).
+ *
+ * «الحالة» كان البرنامج بيحطّه بنفسه بقيمة «مطلوبة» في **كل صف** — معلومة صفر
+ * بتاخد عرض من الجدول والصورة. والشيل لازم يكون صريح: مجرد إني أشيله من
+ * الترتيب مش كفاية، لأن أي عمود مش في الترتيب بيتلحق آخر الملف.
+ * المطابقة **كاملة** عشان عمود زي «الحالة الفنية» مايتشالش بالغلط.
+ */
+export const HIDDEN_EXPORT_COLUMNS: RegExp[] = [/^\s*الحالة\s*$/];
+
+const isHidden = (header: string) => HIDDEN_EXPORT_COLUMNS.some((re) => re.test(header));
 
 const text = (v: unknown) => String(v ?? "").trim();
 
@@ -57,13 +68,13 @@ export function toExportRow(
   const out: Record<string, unknown> = {};
   const used = new Set<string>();
   // الأعمدة المتسمّية بمصدرها بتتحجز من البداية عشان ماتتحطّش في خانة غيرها.
-  const qualified = Object.keys(src).filter((k) => SOURCE_SUFFIX.test(k));
+  const qualified = Object.keys(src).filter((k) => SOURCE_SUFFIX.test(k) && !isHidden(k));
   for (const k of qualified) used.add(k);
 
   for (const spec of specs) {
     out[spec.name] = "";
     for (const [k, v] of Object.entries(src)) {
-      if (used.has(k) || !spec.match.test(k) || !text(v)) continue;
+      if (used.has(k) || isHidden(k) || !spec.match.test(k) || !text(v)) continue;
       out[spec.name] = v;          // أول خانة فيها قيمة تكسب
       used.add(k);
       break;
@@ -77,7 +88,7 @@ export function toExportRow(
   // اللي مالوش مكان في الترتيب وفيه قيمة — يتلحق آخر الملف بدل ما يضيع.
   // (ده بيشمل عمود متسمّي بمصدره اسمه الأساسي مش في الترتيب أصلاً.)
   for (const [k, v] of Object.entries(src)) {
-    if (k in out || !text(v)) continue;
+    if (k in out || isHidden(k) || !text(v)) continue;
     if (used.has(k) && !qualified.includes(k)) continue;
     out[k] = v;
   }

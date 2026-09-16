@@ -517,15 +517,11 @@ export default function SortingPage() {
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
             keys.add("GPS");
             keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
-            keys.add("الحالة");    // طريقة التشييك (كاميرا/صوت/يدوي) — زي تصدير السجلات
             keys.add("المندوب");   // مين سجّلها — بيفرق لما سجلات المجموعة تتلم مع بتاعته
             const headers = [...keys];
             const rows = fieldEntries.map((e) => ({
               "رقم اللوحة": e.plate,
               ...e.row,
-              // طريقة التشييك — متخزّنة في e.method مش جوه e.row، فلازم تتضاف
-              // هنا وإلا عمود «الحالة» يفضل فاضي في نتيجة فرز السجلات.
-              "الحالة": e.method || "",
               // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
               // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
               "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
@@ -1993,7 +1989,6 @@ export default function SortingPage() {
             tashyeekRow: {
               ...(g.extra ?? {}),
               "رقم اللوحة": String(g.plate ?? ""),
-              "الحالة": g.method ?? "",
               "GPS": g.maps_link ?? "",
               "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
               "المندوب": groupNamesRef.current[g.agent_id] ?? "",
@@ -2416,7 +2411,8 @@ export default function SortingPage() {
       const d = (r as { _dist: number })._dist;
       if (Number.isFinite(d)) row["المسافة"] = formatDistanceKm(d);
     }
-    row["الحالة"] = "مطلوبة";
+    // عمود «الحالة» اتشال (بطلب المالك): كان بيتكتب «مطلوبة» في **كل صف** —
+    // معلومة صفر بتاخد عرض من الجدول والصورة.
     return row;
   }
 
@@ -2626,7 +2622,6 @@ export default function SortingPage() {
                 row: {
                   ...(g.extra ?? {}),
                   "رقم اللوحة": String(g.plate ?? ""),
-                  "الحالة": g.method ?? "",
                   "GPS": g.maps_link ?? "",
                   "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
                   "المندوب": groupNamesRef.current[g.agent_id] ?? "",
