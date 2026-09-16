@@ -17,7 +17,7 @@ import CertificateBadge from "@/components/CertificateBadge";
 import CertificateSearch from "@/components/CertificateSearch";
 import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
 import { loadGpsOff, saveGpsOff } from "@/lib/gpsCapture";
-import { buildCombinedCheckIndex } from "@/lib/checkSheets";
+import { buildCombinedCheckIndex, renumberCheckSlots } from "@/lib/checkSheets";
 import { reverseGeocode } from "@/lib/geocoding";
 import { pushBackHandler } from "@/lib/backStack";
 import { parseSessionChunk, newSessionState, type SessionState } from "@/lib/sessionParser";
@@ -4204,9 +4204,8 @@ export default function InstantCheckPage() {
     await deleteUploadedFile("local", `check-${id}`).catch(() => {});
     // السلوتات لازم تفضل متتابعة (`check-2`, `check-3`…) عشان قراءتها وقت
     // الفتح بتقف عند أول سلوت فاضي — فبنعيد كتابة اللي بعده بأرقام جديدة.
-    const rest = extraChecks.filter((e) => e.id !== id);
     for (const e of extraChecks) await deleteUploadedFile("local", `check-${e.id}`).catch(() => {});
-    const renumbered = rest.map((e, i) => ({ ...e, id: i + 2 }));
+    const renumbered = renumberCheckSlots(extraChecks, id);
     for (const e of renumbered) {
       if (!e.table || !e.file) continue;
       await saveUploadedFile({
@@ -4297,17 +4296,29 @@ export default function InstantCheckPage() {
           بتشتغل مع الأساسي **كأنهم شيت واحد**: يدوي · صوتي · كاميرا · شاص.
           لازمتها إن إحالة جديدة تنزل ومش موجودة في ملف التشييك المرفوع. */}
       {extraChecks.map((ex, i) => (
-        <FileUploadBox
-          key={ex.id}
-          title={`ملف تشييك ${i + 2}`}
-          hint="بيشتغل مع ملف التشييك الأساسي"
-          parsedFile={ex.file}
-          parsedRowCount={ex.table?.rows.length ?? null}
-          onParsed={(t, f) => void handleExtraParsed(ex.id, t, f)}
-          onClear={() => void handleExtraClear(ex.id)}
-          showReplaceButtons
-          sky
-        />
+        <div key={ex.id} className="flex flex-col gap-1">
+          {/* شيل المربع نفسه — لازم يشتغل حتى والمربع **فاضي**، وإلا المندوب
+              يفتح مربع بالغلط ومايقدرش يقفله. */}
+          <button
+            onClick={() => {
+              if (ex.file && !confirm(`متأكد تشيل «ملف تشييك ${i + 2}»؟`)) return;
+              void handleExtraClear(ex.id);
+            }}
+            className="flex items-center gap-1 self-start rounded-lg px-2 py-1 text-[11px] font-bold text-muted transition hover:text-danger"
+            title="شيل المربع ده">
+            <X size={12} /> شيل المربع
+          </button>
+          <FileUploadBox
+            title={`ملف تشييك ${i + 2}`}
+            hint="بيشتغل مع ملف التشييك الأساسي"
+            parsedFile={ex.file}
+            parsedRowCount={ex.table?.rows.length ?? null}
+            onParsed={(t, f) => void handleExtraParsed(ex.id, t, f)}
+            onClear={() => void handleExtraClear(ex.id)}
+            showReplaceButtons
+            sky
+          />
+        </div>
       ))}
 
       {checkTable && (

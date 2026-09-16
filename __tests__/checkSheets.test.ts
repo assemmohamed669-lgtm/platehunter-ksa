@@ -86,3 +86,44 @@ describe("combinedCheckPlates", () => {
     expect(set.size).toBe(2);
   });
 });
+
+/**
+ * شيل مربع تشييك إضافي — سواء فيه ملف أو فاضي.
+ *
+ * السلوتات (`check-2`, `check-3`…) بتتقري وقت الفتح **بالتتابع لحد أول سلوت
+ * فاضي**. فلو المندوب شال المربع اللي في النص، الثغرة دي بتخفي كل اللي بعده
+ * خالص. عشان كده الترقيم لازم يتعاد بعد أي مسح.
+ */
+describe("renumberCheckSlots", () => {
+  const box = (id: number, name: string | null = null) => ({ id, name });
+
+  it("بيشيل المربع المطلوب", async () => {
+    const { renumberCheckSlots } = await import("@/lib/checkSheets");
+    const out = renumberCheckSlots([box(2, "أ"), box(3, "ب")], 2);
+    expect(out.map((b) => b.name)).toEqual(["ب"]);
+  });
+
+  it("بيعيد الترقيم من ٢ عشان مافيش ثغرة", async () => {
+    const { renumberCheckSlots } = await import("@/lib/checkSheets");
+    const out = renumberCheckSlots([box(2, "أ"), box(3, "ب"), box(4, "ج")], 3);
+    expect(out.map((b) => b.id)).toEqual([2, 3]);
+    expect(out.map((b) => b.name)).toEqual(["أ", "ج"]);
+  });
+
+  it("بيشيل المربع الفاضي زي المليان", async () => {
+    const { renumberCheckSlots } = await import("@/lib/checkSheets");
+    const out = renumberCheckSlots([box(2, "أ"), box(3, null)], 3);
+    expect(out.map((b) => b.id)).toEqual([2]);
+  });
+
+  it("شيل مربع مش موجود مايغيّرش حاجة", async () => {
+    const { renumberCheckSlots } = await import("@/lib/checkSheets");
+    const out = renumberCheckSlots([box(2, "أ")], 9);
+    expect(out.map((b) => b.id)).toEqual([2]);
+  });
+
+  it("شيل آخر مربع بيسيب القايمة فاضية", async () => {
+    const { renumberCheckSlots } = await import("@/lib/checkSheets");
+    expect(renumberCheckSlots([box(2, "أ")], 2)).toEqual([]);
+  });
+});
