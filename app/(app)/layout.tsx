@@ -24,6 +24,7 @@ import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, type SubInfo } from "@/lib/subscription";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
+import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -107,7 +108,7 @@ export default function AppShellLayout({
   // ده الحارس الفعلي اللي بيمنع الوصول بالرابط المباشر.) /admin في مجموعة
   // مسارات منفصلة فمش متأثّر، والمالك يقدر يرجّع العلم من هناك.
   useEffect(() => {
-    if (!restPagesEnabled && pathname && !pathname.startsWith("/instant-check")) {
+    if (!restPagesEnabled && pathname && !isAllowedForVoiceOnly(pathname)) {
       router.replace("/instant-check");
     }
   }, [restPagesEnabled, pathname, router]);
