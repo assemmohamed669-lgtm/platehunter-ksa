@@ -89,3 +89,49 @@ export function saveOrderMode(m: OrderMode): void {
 export function toggleColumn(order: string[], label: string): string[] {
   return order.includes(label) ? order.filter((l) => l !== label) : [...order, label];
 }
+
+/** الأعمدة اللي اتعرضت على المندوب قبل كده — مفتاح مستقل عن الترتيب. */
+const KNOWN_KEY = "ph:sorting:colKnown";
+
+/** بيرجّع `null` لو الجهاز لسه ماسجّلش — فرق مهم عن «مسجّل وفاضي». */
+export function loadKnownColumns(): string[] | null {
+  try {
+    const raw = localStorage.getItem(KNOWN_KEY);
+    if (raw === null) return null;
+    const arr = JSON.parse(raw) as unknown;
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+  } catch { return null; }
+}
+
+export function saveKnownColumns(labels: string[]): void {
+  try { localStorage.setItem(KNOWN_KEY, JSON.stringify(labels)); } catch { /* storage unavailable */ }
+}
+
+/**
+ * بيضيف الأعمدة **الجديدة** لترتيب المندوب المخصّص.
+ *
+ * المشكلة: مش كل داتا فيها نفس الأعمدة، ولا كل محفظة — فالمندوب اللي عامل
+ * تخصيص كان أي عمود جديد مايظهرش عنده **أبداً**، لا في الجدول ولا في المشاركة،
+ * ومافيش حاجة تقوله ليه.
+ *
+ * والفخ إن العمود اللي **أخفاه بإيده** والعمود **الجديد** شكلهم واحد في
+ * التخزين (الاتنين مش في الترتيب). عشان كده بنسجّل الأعمدة اللي اتعرضت عليه
+ * قبل كده: مش معروف = جديد ⇒ يتعرض؛ معروف ومش مختار = مخفي بإرادته ⇒ يفضل مخفي.
+ *
+ * @param known `null` = الجهاز لسه ماسجّلش ⇒ **نسجّل بس ومانضيفش**، وإلا كنا
+ *              هنرجّع كل الأعمدة لأي مندوب مرتّب أعمدته خلاص.
+ */
+export function adoptNewColumns(
+  order: string[],
+  known: string[] | null,
+  available: string[],
+): { order: string[]; known: string[]; added: string[] } {
+  const optional = optionalAvailable(available);           // من غير «رقم اللوحة»
+  const learn = [...new Set([...(known ?? []), ...optional, ...order])];
+  // أول تسجيل، أو مندوب مامخصّصش حاجة (الافتراضي شغّال) ⇒ نتعلّم بس.
+  if (known === null || order.length === 0) return { order, known: learn, added: [] };
+
+  const seen = new Set([...known, ...order]);
+  const added = optional.filter((l) => !seen.has(l));
+  return { order: added.length ? [...order, ...added] : order, known: learn, added };
+}
