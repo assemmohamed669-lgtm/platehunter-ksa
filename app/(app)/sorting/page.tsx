@@ -18,7 +18,7 @@ import {
 } from "@/lib/plateParser";
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
-import { buildExportRows } from "@/lib/exportColumns";
+import { buildExportRows, buildDisplayRows } from "@/lib/exportColumns";
 import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
@@ -2382,10 +2382,18 @@ export default function SortingPage() {
       if ("GPS" in o && g) o["GPS"] = g;
       return o;
     });
-    // ترتيب أعمدة ثابت متّفق عليه: كل معنى في عمود واحد (الطراز/النوع → «نوع
-    // السيارة»، العنوان/الحي → «الحي-الشارع»…)، والأعمدة الفاضية بتتشال.
-    // قبل كده كانت اتحاد مفاتيح الصفوف، فبتطلع «الماركة» و«العنوان» مرتين.
-    const { columns, rows: rowObjects } = buildExportRows([...dataObjs, ...tashObjs]);
+    // **الوضع المخصّص**: المندوب رتّب أعمدته بإيده ⇒ المشاركة تطلع بترتيبه
+    // بالظبط زي الشاشة. صفوف المشاركة متبنية أصلاً بترتيب العرض، فبناخده زي ما
+    // هو. (قبل كده كانت بتعدّي على الترتيب الثابت، فالمندوب يرتّب على التليفون
+    // وياخد إكسيل/صورة بترتيب تاني.)
+    //
+    // **الوضع الأساسي**: الترتيب الثابت المتّفق عليه — كل معنى في عمود واحد
+    // (الطراز/النوع → «نوع السيارة»، العنوان/الحي → «الحي-الشارع»…) والفاضي
+    // بيتشال. قبله كانت اتحاد مفاتيح الصفوف فبتطلع «الماركة» و«العنوان» مرتين.
+    const all = [...dataObjs, ...tashObjs];
+    const { columns, rows: rowObjects } = orderMode === "custom"
+      ? buildDisplayRows(all)
+      : buildExportRows(all);
     return { columns, rowObjects };
   }
 
