@@ -21,22 +21,11 @@ export default function PlatformClass() {
       }
       if (cancelled) return;
       const el = document.documentElement;
-      el.classList.remove("platform-ios", "platform-android", "platform-web");
-      el.classList.add(`platform-${platform}`);
-
-      // viewport-fit=cover على الآيفون بس — عشان تتفعّل متغيّرات env(safe-area)
-      // ويتحطّ الشريط العلوي تحت النوتش. على الأندرويد cover بيرسم المحتوى تحت
-      // شريط الحالة (تخبيص)، فمابنحطّهوش هناك.
-      if (platform === "ios") {
-        try {
-          const vp = document.querySelector('meta[name="viewport"]');
-          const c = vp?.getAttribute("content") ?? "";
-          if (vp && !/viewport-fit/i.test(c)) {
-            vp.setAttribute("content", `${c}, viewport-fit=cover`);
-          }
-        } catch {
-          /* تجاهل */
-        }
+      // ملاحظة: على iOS الكلاس + viewport-fit=cover بيتحطّوا قبل الرسم من السكريبت
+      // المضمّن في اللياوت (أموثق). هنا بنضمن الكلاس لأندرويد/الويب (وإعادة تأكيد iOS).
+      if (!el.classList.contains(`platform-${platform}`)) {
+        el.classList.remove("platform-ios", "platform-android", "platform-web");
+        el.classList.add(`platform-${platform}`);
       }
     })();
     return () => { cancelled = true; };
