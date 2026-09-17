@@ -52,3 +52,24 @@ export function fieldCategoryList(
   if (filter === "wanted") return base.filter(isWanted);
   return base;
 }
+
+/**
+ * شريحة السجلات **بلا دمج** — لنافذة «إظهار وتعديل اللوحات».
+ *
+ * 🐞 المحرّر كان بيفتح **كل** السجلات مهما كانت الشريحة المختارة: المندوب واقف
+ * على «مطلوب ٥» ويدوس، فيلاقي قدامه الـ١٦ ألف كلهم.
+ *
+ * ⚠️ وبيفلتر بس **من غير دمج المكرر** عن قصد: المحرّر بيتعدّل فيه، فلو خبّينا
+ * صف مكرّر المندوب هيعدّل واحد ويسيب أخوه من غير ما يعرف. الدمج للعرض المختصر
+ * بس. (والنسخة الكاملة بتفضل زي ما هي عشان الحفظ يشتغل صح.)
+ */
+export function fieldCategoryOnly(
+  entries: FieldCheckEntry[],
+  filter: FieldFilter,
+  isWanted: (e: FieldCheckEntry) => boolean,
+): FieldCheckEntry[] {
+  if (filter === "voice") return entries.filter(isVoice);
+  if (filter === "manual") return entries.filter(isManual);
+  if (filter === "wanted") return entries.filter(isWanted);
+  return entries;
+}

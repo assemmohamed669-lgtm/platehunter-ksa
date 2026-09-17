@@ -31,7 +31,7 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey, looksLikePlateQuery, collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
-import { fieldCategoryCounts, fieldCategoryList, type FieldFilter } from "@/lib/fieldCheckView";
+import { fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type FieldFilter } from "@/lib/fieldCheckView";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -1241,7 +1241,7 @@ export default function InstantCheckPage() {
 
   // بحث أو فلتر جديد → نرجع لأول دفعة عشان النتيجة تبان من فوق
   useEffect(() => { setFieldShown(PAGE_STEP); }, [fieldSearch, fieldFilter]);
-  useEffect(() => { setPeShown(PAGE_STEP); }, [peSearch]);
+  useEffect(() => { setPeShown(PAGE_STEP); }, [peSearch, fieldFilter]);
 
   useEffect(() => {
     if (!peSearch.trim()) return;
@@ -1741,11 +1741,23 @@ export default function InstantCheckPage() {
   // ترتيب أي قائمة لوحات (فيها lat/lng) حسب الأقرب لموقع المندوب. لو الترتيب
   // مش مفعّل بيرجّع القائمة زي ما هي. التحديد في القوائم دي بالـ id مش بالرقم،
   // فإعادة الترتيب مابتخربطش أي لوحة متحدّدة.
+  /**
+   * ترتيب بالأقرب. المسافة بتتحسب **مرة واحدة لكل صف** قبل الترتيب.
+   *
+   * ⚠️ قبل كده كانت بتتحسب جوّه دالة المقارنة نفسها — يعني O(n log n) نداء
+   * بدل O(n). على مندوب عنده ١٦ ألف سجل ده ~٢٢٧ ألف عملية في الرندر الواحد،
+   * وبيتعاد مع **كل حرف** في البحث ⇒ iOS يقتل التطبيق بلا رسالة.
+   */
   function sortNear<T extends { lat?: number; lng?: number }>(list: T[]): T[] {
     if (!icNearest || !icUserLoc) return list;
-    const distOf = (x: T) =>
-      x.lat != null && x.lng != null ? haversineKm(icUserLoc.lat, icUserLoc.lng, x.lat, x.lng) : Infinity;
-    return [...list].sort((a, b) => distOf(a) - distOf(b));
+    const { lat: ulat, lng: ulng } = icUserLoc;
+    return list
+      .map((x) => ({
+        x,
+        d: x.lat != null && x.lng != null ? haversineKm(ulat, ulng, x.lat, x.lng) : Infinity,
+      }))
+      .sort((a, b) => a.d - b.d)
+      .map((p) => p.x);
   }
 
   // اسم «الحي-الشارع» من إحداثيات — بنفس صيغة خانة حالة الـGPS (شارع - حي).
@@ -5945,7 +5957,8 @@ export default function InstantCheckPage() {
                   </thead>
                   <tbody>
                     {/* عرض مصغّر — ٤ سيارات بس؛ الكل + التعديل من «إظهار وتعديل اللوحات» */}
-                    {sortNear(visible).slice(0, 4).map((e, i) => {
+                    {/* الترتيب على الـ٤ المعروضين بس — ترتيب ١٦ ألف عشان نرمي ٩٩.٩٪ منهم كان بيقتل الآيفون */}
+                    {sortNear(visible.slice(0, 4)).map((e, i) => {
                       const dup = dupeBg(e.plate);
                       const rowBg = dup || (i % 2 === 0 ? "bg-surface" : "bg-surface-2/40");
                       return (
@@ -6060,24 +6073,29 @@ export default function InstantCheckPage() {
         const allCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
         const shownCols = allCols.filter((h) => peCols.has(h));
         // بحث برقم اللوحة — نطبّع الاتنين عشان المطابقة تشتغل مع/بدون فراغات وحروف EN.
+        // المحرّر بيفتح على **نفس الشريحة** اللي المندوب واقف عليها: واقف على
+        // «مطلوب ٥» ⇒ يشوف الـ٥، مش الـ١٦ ألف. (النسخة الكاملة draftFieldEntries
+        // بتفضل زي ما هي عشان الحفظ والمقارنة يشتغلوا صح.) وبلا دمج مكرر —
+        // ده محرّر، وخبط صف مكرّر معناه إن المندوب يعدّل واحد ويسيب أخوه.
+        const peEntries = fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry);
         const q = normalizePlate(bankPlateToArabic(peSearch.trim()));
         // البحث **مايخفيش** الباقي: القايمة بتفضل كاملة واللوحة المطابقة بتتعلّم
         // وبيتنطّ عليها — عشان المندوب يشوف اللي قبلها واللي بعدها في السياق.
         const matchIds = new Set(
-          q ? draftFieldEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q)).map((e) => e.id) : []
+          q ? peEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q)).map((e) => e.id) : []
         );
-        const firstMatchIdx = q ? draftFieldEntries.findIndex((e) => matchIds.has(e.id)) : -1;
-        const firstMatchId = firstMatchIdx >= 0 ? draftFieldEntries[firstMatchIdx].id : undefined;
+        const firstMatchIdx = q ? peEntries.findIndex((e) => matchIds.has(e.id)) : -1;
+        const firstMatchId = firstMatchIdx >= 0 ? peEntries[firstMatchIdx].id : undefined;
         // بنرسم دفعة وبنزوّد مع التمرير — ٦٠٠٠ صف بخانات إدخال مرة واحدة كانت
         // بتقتل الصفحة على الأيفون. البحث والحفظ بيشتغلوا على **الكل** زي ما هما،
         // ولو أول لوحة مطابقة برّه الدفعة بنوسّع لحد ما توصلها عشان النطّ يشتغل.
         const effShown = firstMatchIdx >= 0 ? Math.max(peShown, firstMatchIdx + 1) : peShown;
-        const rows = pageSlice(draftFieldEntries, effShown);
+        const rows = pageSlice(peEntries, effShown);
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
             <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <h3 className="text-sm font-bold text-ink">تعديل اللوحات ({draftFieldEntries.length})</h3>
+                <h3 className="text-sm font-bold text-ink">تعديل اللوحات ({peEntries.length})</h3>
                 <button onClick={() => setPlatesEditorOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
               </div>
 
@@ -6159,12 +6177,12 @@ export default function InstantCheckPage() {
                   </table>
                 )}
                 {/* مستشعر آخر القايمة — بيزوّد دفعة تلقائياً مع التمرير */}
-                {hasMore(draftFieldEntries.length, effShown) && (
+                {hasMore(peEntries.length, effShown) && (
                   <div ref={peMoreRef} className="flex flex-col items-center gap-1 py-3">
                     <span className="text-[11px] text-muted">
-                      معروض {Math.min(effShown, draftFieldEntries.length)} من {draftFieldEntries.length}
+                      معروض {Math.min(effShown, peEntries.length)} من {peEntries.length}
                     </span>
-                    <button onClick={() => setPeShown((s) => growShown(draftFieldEntries.length, Math.max(s, effShown)))}
+                    <button onClick={() => setPeShown((s) => growShown(peEntries.length, Math.max(s, effShown)))}
                       className="rounded-lg border border-border bg-surface-2 px-3 py-1 text-xs font-bold text-primary transition hover:bg-surface">
                       عرض المزيد
                     </button>

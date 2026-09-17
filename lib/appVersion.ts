@@ -5,7 +5,7 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.6.1";
+export const APP_VERSION = "1.7.0";
 
 /**
  * معرّف البناء — بيتغيّر مع **كل نشر** (SHA الكوميت). بيتقارن بين الجهاز والسيرفر
@@ -14,7 +14,7 @@ export const APP_VERSION = "1.6.1";
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
-  "إصلاح خروج البرنامج على الآيفون وقت البحث في السجلات — كان بيحصل مع المناديب اللي سجلاتهم بالآلاف.";
+  "«إظهار وتعديل اللوحات» بقت تفتح على نفس الشريحة اللي انت واقف عليها (مطلوب/صوتي/يدوي)، مش كل السجلات. وإصلاح تاني لخروج البرنامج وقت البحث على الآيفون.";
 
 import { clearNativeCache, getNativeCacheBridge } from "./nativeCache";
 
