@@ -25,9 +25,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  // يفعّل متغيّرات المنطقة الآمنة (env safe-area-inset-*) على الآيفون عشان
-  // الشريط العلوي والقائمة مايتخبّوش تحت شريط الحالة/النوتش.
-  viewportFit: "cover",
+  // ملاحظة: viewport-fit=cover **مش** هنا — بيتحط على الآيفون بس من PlatformClass.
+  // على الأندرويد cover بيخلّي المحتوى يرسم تحت شريط الحالة (تخبيص)، فبنسيبه بره.
 };
 
 export default function RootLayout({
