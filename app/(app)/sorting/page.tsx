@@ -2531,6 +2531,15 @@ export default function SortingPage() {
     setResults(null); setSorted(false); setSelectedByWin({}); setVisibleByWin({});
     persistSortResults([], tashyeekResults, sortMode, 0);
   }
+
+  // «مسح الكل» — يمسح كل نتايج الفرز مع بعض: نوافذ الداتا (الأساسية + الإضافية)
+  // **ونتيجة فرز السجلات**. (clearMainResults بيسيب السجلات؛ دي بتمسح الاتنين.)
+  function clearAllResults() {
+    if (!confirm("متأكد تمسح كل نتايج الفرز (الداتا + السجلات)؟")) return;
+    setResults(null); setSorted(false); setSelectedByWin({}); setVisibleByWin({});
+    setTashyeekResults(null); setTashyeekSelected(new Set());
+    persistSortResults([], null, sortMode, 0);
+  }
   function clearTashyeekResults() {
     if (!confirm("متأكد تمسح نتايج فرز السجلات؟")) return;
     setTashyeekResults(null); setTashyeekSelected(new Set());
@@ -3485,9 +3494,22 @@ export default function SortingPage() {
           );
           })}
 
-          <button onClick={clearMainResults}
+          {/* مشاركة الكل — نتايج كل نوافذ الداتا (الأساسية + الإضافية) + السجلات
+              في مشاركة واحدة (فتح/واتساب/صورة). بتظهر لما فيه أكتر من نافذة عشان
+              متتكررش مع مشاركة النافذة الواحدة (اللي أصلاً بتضم السجلات). */}
+          {resultGroups.length > 1 && (
+            <ShareSortButton title="كل نتايج الفرز" label="مشاركة الكل"
+              rows={() => [
+                ...displayResults.map(buildRowObject),
+                ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...buildTashyeekRowObj(r) })),
+              ]}
+              imageTable={() => buildSortImageTable(displayResults, tashyeekResults ?? [])}
+              excelBlob={() => buildSortExcelBlob(displayResults, tashyeekResults ?? [])} />
+          )}
+
+          <button onClick={clearAllResults}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
-            <Trash2 size={15} /> مسح نتايج الفرز
+            <Trash2 size={15} /> مسح الكل
           </button>
         </div>
       )}
