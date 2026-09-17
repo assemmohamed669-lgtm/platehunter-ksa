@@ -24,6 +24,11 @@ describe("incomingExcelOptions", () => {
     expect(ref.goTab).toBe("sort");
   });
 
+  it("مشترك صوت-فقط: الوجهتين في تبويب «فرز» — المربعين فوق بعض هناك", () => {
+    const opts = incomingExcelOptions({ voiceOnly: true, nextReferralNum: null });
+    expect(opts.map((o) => o.goTab)).toEqual(["sort", "sort"]);
+  });
+
   it("مشترك صوت-فقط: مافيش خيار «داتا» ولا إحالة إضافية", () => {
     const opts = incomingExcelOptions({ voiceOnly: true, nextReferralNum: 2 });
     expect(opts.map((o) => o.slot)).toEqual(["check", VOICE_REFERRAL_SLOT]);
