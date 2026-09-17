@@ -20,7 +20,11 @@
 // way almost every take (زير, زيرو, زيرة, زيره, زيرا, زيرى). Match the whole
 // family as one standalone word instead of chasing each variant. The
 // lookbehind/lookahead keep it whole-word, so "وزير" (minister) is untouched.
-const ZERO_WORD_RE = /(?<![؀-ۿ])زير[وةهاىي]?(?![؀-ۿ])/g;
+// ملاحظة توافق iOS: بنستبدل النظرة-للخلف (?<!…) بمجموعة سابقة (^|[^…]) لأن
+// Safari أقل من 16.4 مابيدعمش lookbehind (بيرمي خطأ يوقّف التطبيق كله = شاشة
+// بيضا). المجموعة الأولى بتتلقّط الحرف السابق وبتترجّع في الاستبدال ($1) —
+// مكافئ حرفياً للنظرة-للخلف الصفرية.
+const ZERO_WORD_RE = /(^|[^؀-ۿ])زير[وةهاىي]?(?![؀-ۿ])/g;
 
 // ─── Egyptian dialect → Saudi plate letter/digit mapping ─────────────────
 // المأمور يقول كل حرف كلمة لوحدها: "دال حه ره واحد اتنين تلاتة أربعة"
@@ -207,7 +211,7 @@ export function plateAtoms(transcript: string): PlateAtom[] {
   // converting. Clearing it (and other punctuation) to a space up front makes
   // every token a clean word again — and keeps stray punctuation out of notes.
   text = text.replace(/[،؛؟۔.,;!?]/g, " ");
-  text = text.replace(ZERO_WORD_RE, " 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
+  text = text.replace(ZERO_WORD_RE, "$1 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
   text = text.replace(/[أإآ]/g, "ا");        // alef variants → ا
   // NB: no ألف→1000 rewrite here (unlike parsePlateFromTranscript). In
   // letter-by-letter dictation "ألف" is almost always the LETTER ا, and this
@@ -224,7 +228,7 @@ export function plateAtoms(transcript: string): PlateAtom[] {
   // conjunction و, and Step 2.5 needs to tell them apart. A Latin placeholder
   // survives every later Arabic-only regex/lookup untouched and is resolved
   // to a marked atom in Step 2, which Step 2.5 then exempts from removal.
-  text = text.replace(/(?<![؀-ۿ])(?:واو|وا)(?![؀-ۿ])/g, " __WAWNAME__ ");
+  text = text.replace(/(^|[^؀-ۿ])(?:واو|وا)(?![؀-ۿ])/g, "$1 __WAWNAME__ ");
   text = replaceAll(text, LETTER_NAMES);     // دال→د, صاد→ص, لام→ل …
   text = replaceAll(text, PHONETIC_MERGES);  // احلام→ا ح ل …
   // علّم كلمات **العشرات** المبدوءة بواو («وثمانين» → «@80») قبل ما القاموس
@@ -236,7 +240,7 @@ export function plateAtoms(transcript: string): PlateAtom[] {
   // بنفضّي «@» الأول عشان العلامة تبقى بتاعتنا مافيش غيرها (تفريغ حقيقي رجّع
   // «و80» ملزوقة قبل كده، فالواو نفسها ما تنفعش علامة).
   text = text.replace(/@/g, " ");
-  text = text.replace(WAW_TENS_RE, (w) => ` ${WAW_TENS_VALUE.get(w)} `);
+  text = text.replace(WAW_TENS_RE, (_m, p1, w) => `${p1} ${WAW_TENS_VALUE.get(w)} `);
   text = replaceAll(text, SPOKEN_NUMBERS);   // خمسة→5, تلاتين→30, ألفين→2000 …
   // standalone ه → هـ (SR drops the tatweel) — MUST run AFTER the word maps
   // above, not before: converting bare ه too early corrupts the letter name
@@ -1215,7 +1219,7 @@ const WAW_TENS_TOKEN_RE = new RegExp(`^${WAW_MARK}([2-9]0)$`);
 // الأطول أولاً زي الجدول الأصلي، ومخرجها «@NN» مش عربي فمفيش مدخل بيتطابق
 // على ناتج مدخل قبله. (مُتحقَّق: نفس المخرج بايت‑ببايت على ١٣٧٧٦ مدخل.)
 const WAW_TENS_RE = new RegExp(
-  `(?<![\\u0600-\\u06FF])(?:${WAW_TENS_MARKS.map(([w]) => w).join("|")})(?![\\u0600-\\u06FF])`,
+  `(^|[^\\u0600-\\u06FF])(${WAW_TENS_MARKS.map(([w]) => w).join("|")})(?![\\u0600-\\u06FF])`,
   "g",
 );
 const WAW_TENS_VALUE = new Map(WAW_TENS_MARKS);
@@ -1316,8 +1320,8 @@ function replaceAll(text: string, pairs: [string, string][]): string {
   for (const [from, to] of pairs) {
     // Only match when not surrounded by Arabic chars (prevents "با" eating "دبا")
     result = result.replace(
-      new RegExp(`(?<![\\u0600-\\u06FF])${from}(?![\\u0600-\\u06FF])`, "g"),
-      ` ${to} `
+      new RegExp(`(^|[^\\u0600-\\u06FF])${from}(?![\\u0600-\\u06FF])`, "g"),
+      `$1 ${to} `
     );
   }
   return result.replace(/\s+/g, " ").trim();
@@ -1395,7 +1399,7 @@ const ALEF_MARK = "__ALEFNAME__";
 //   «الالف»/«الفا» (أسماء حرف لا لبس فيها في LETTER_NAMES) ⇒ ما تتلمسش
 // «آلف» داخلة لأن خطوة ٣ بتوحّد أإآ→ا **قبل** دي، فبتوصل «الف» — بس مكتوبة
 // صراحةً عشان الدالة ما تعتمدش على ترتيب خطوة قبلها.
-const ALEF_NAME_RE = /(?<![؀-ۿ])(?:ألف|الف|آلف)(?![؀-ۿ])/g;
+const ALEF_NAME_RE = /(^|[^؀-ۿ])(?:ألف|الف|آلف)(?![؀-ۿ])/g;
 
 /**
  * عدد حروف اللوحة في توكن واحد — بنفس تعريف ذرّة «L» في plateAtoms (خطوة ٢)
@@ -1841,7 +1845,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // with a comma glued to it ("اثنين،") wouldn't convert. Clear punctuation
   // up front so every token is a clean word.
   text = text.replace(/[،؛؟۔.,;!?]/g, " ");
-  text = text.replace(ZERO_WORD_RE, " 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
+  text = text.replace(ZERO_WORD_RE, "$1 0 "); // زير/زيرو/زيرة/زيره… = arabized "zero"
 
   // 2. Detect and strip vehicle type
   let vehicleType: string | undefined;
@@ -1867,7 +1871,7 @@ export function parsePlateFromTranscript(transcript: string): ParseResult {
   // بياكل الحرف ا ويحط ١٠٠٠ مكانه، وقاعدة الضم بتجمع ١٠٠٠+١ = ١٠٠١.
   // مقيس: القاعدة دي كانت بتضرب على ١٨٦ مدخل من الكوربَس، **مافيش ولا واحد**
   // منهم كان بيطلع صح.
-  text = text.replace(ALEF_NAME_RE, ` ${ALEF_MARK} `);
+  text = text.replace(ALEF_NAME_RE, `$1 ${ALEF_MARK} `);
 
   // 3b. Normalize ى (alef maqsura) → ي — both are valid plate letters, treated as equivalent
   text = text.replace(/ى/g, "ي");
