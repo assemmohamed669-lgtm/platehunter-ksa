@@ -19,9 +19,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
-  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown } from "lucide-react";
+  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown, Lock} from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import {
+import { detectArabicPlateColumn,
   buildReferralIndex,
   matchChunkAgainstIndex,
   detectPlateColumn,
@@ -30,7 +30,7 @@ import {
   tokenizePastedPlates,
   type MatchResult,
 } from "@/lib/plateParser";
-import { buildExcelBlob, shareExcelBlob, type ExcelTable } from "@/lib/excel";
+import { buildExcelBlob, shareExcelBlob, parseExcelFile, type ExcelTable } from "@/lib/excel";
 import { renderTableImages } from "@/lib/plateImage";
 import { shareImageWithText, shareTextViaChooser } from "@/lib/share";
 import { gpsService, extractLatLngFromMapsLink, haversineKm, formatDistanceKm, type GpsCoords } from "@/lib/gps";
@@ -43,6 +43,10 @@ import {
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
+import {
+  fetchTeamDataState, downloadTeamData, uploadTeamData, deleteTeamData,
+  needsTeamDataRefresh, TEAM_DATA_SLOT, type TeamDataState,
+} from "@/lib/teamData";
 
 /** سلوت الإحالة بتاعة المشترك صوت-فقط — نفس نمط `local:check`. */
 const REF_SLOT = "voice-referral";
@@ -105,6 +109,56 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   // لوحات التشييك = الملف الأساسي + كل الملفات الإضافية (زر «+»)، عشان «جديد»
   // مايعتبرش إحالة المندوب رافعها كملف تشييك إضافي «جديدة» كل مرة.
   const [checkSet, setCheckSet] = useState<Set<string>>(new Set());
+
+  /**
+   * داتا المجموعة — المشترك صوت-فقط صفحة الفرز مقفولة عنده، فبتوصله هنا.
+   * بيفرز عليها زي أي داتا، ومايقدرش يفتحها ولا يحمّلها ولا يمسحها (مافيش أي
+   * زرار أصلاً). «off» = الميزة مقفولة للمجموعة ⇒ التبويب زي ما هو بالظبط.
+   */
+  const [teamRows, setTeamRows] = useState<Record<string, string>[] | null>(null);
+  const [teamPlateCol, setTeamPlateCol] = useState<string | null>(null);
+  const [teamPlateCount, setTeamPlateCount] = useState<number | null>(null);
+  const [teamState, setTeamState] = useState<TeamDataState>({ role: "off", team: null, file: null });
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamMsg, setTeamMsg] = useState<string | null>(null);
+  const [teamTick, setTeamTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const state = await fetchTeamDataState();
+      if (cancelled) return;
+      setTeamState(state);
+      if (state.role === "off") { setTeamRows(null); return; }
+      const local = await getUploadedFile("local", TEAM_DATA_SLOT).catch(() => null);
+      if (!state.file) {
+        if (local) await deleteUploadedFile("local", TEAM_DATA_SLOT).catch(() => {});
+        setTeamRows(null);
+        return;
+      }
+      let table = local ? { headers: local.headers, rows: local.rows } : null;
+      if (needsTeamDataRefresh(local?.uploadedAt ?? null, state.file.updatedAt)) {
+        const blob = await downloadTeamData(state.file.path);
+        if (blob) {
+          const file = new File([blob], state.file.fileName, { type: blob.type });
+          const parsed = await parseExcelFile(file).catch(() => null);
+          if (parsed) {
+            table = { headers: parsed.headers, rows: parsed.rows };
+            await saveUploadedFile({
+              key: `local:${TEAM_DATA_SLOT}`, agentId: "local", slot: TEAM_DATA_SLOT,
+              fileName: state.file.fileName, headers: parsed.headers, rows: parsed.rows,
+              uploadedAt: state.file.updatedAt, fileBlob: file,
+            });
+          }
+        }
+      }
+      if (cancelled || !table) return;
+      const col = detectArabicPlateColumn(table.headers) ?? detectPlateColumn(table.headers, table.rows);
+      setTeamRows(table.rows);
+      setTeamPlateCol(col);
+      setTeamPlateCount(state.file.plateCount ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [teamTick]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -140,7 +194,14 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
-      const recRows = recordsToRows(entries);
+      // الفرز على **سجلاته + داتا المجموعة** (لو المسئول رافع). الاتنين
+      // بيتحوّلوا لنفس شكل الصفوف عشان يعدّوا على نفس محرّك المطابقة.
+      const recRows = [
+        ...recordsToRows(entries),
+        ...(teamRows && teamPlateCol
+          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+          : []),
+      ];
 
       // وضع «جديد»: نشيل من الإحالة أي لوحة موجودة أصلاً في ملف التشييك.
       const pool = sortMode === "new"
@@ -168,7 +229,12 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
-      const recRows = recordsToRows(entries);
+      const recRows = [
+        ...recordsToRows(entries),
+        ...(teamRows && teamPlateCol
+          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+          : []),
+      ];
       // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
       const index = buildReferralIndex(recRows, REC_PLATE_COL);
       const pastedRows = tokens.map((t) => ({ [REC_PLATE_COL]: t }));
@@ -490,6 +556,69 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* المسئول لو مشترك صوت-فقط: صفحة الفرز مقفولة عنده، فمربع الرفع لازم
+          يبقى هنا كمان — وإلا مايقدرش يرفع داتا المجموعة أصلاً. */}
+      {teamState.role === "leader" && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-xs font-bold text-primary">داتا المجموعة (إنت المسئول)</span>
+            {teamState.file && (
+              <button
+                onClick={async () => {
+                  if (!teamState.team || !confirm("متأكد تمسح داتا المجموعة؟ هتتشال من عند كل المناديب.")) return;
+                  setTeamBusy(true);
+                  const ok = await deleteTeamData(teamState.team);
+                  setTeamBusy(false);
+                  if (!ok) { alert("تعذّر المسح — جرّب تاني."); return; }
+                  setTeamTick((t) => t + 1);
+                }}
+                disabled={teamBusy}
+                className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger disabled:opacity-40">
+                <Trash2 size={12} /> مسح
+              </button>
+            )}
+          </div>
+          <FileUploadBox
+            title="داتا المجموعة"
+            hint="بتنزل عند مناديب مجموعتك للفرز بس — مايقدروش يفتحوها ولا يمسحوها"
+            parsedFile={teamState.file ? new File([new Blob()], teamState.file.fileName) : null}
+            parsedRowCount={teamState.file?.rowCount ?? null}
+            plateCount={teamState.file?.plateCount ?? null}
+            onParsed={async (table, file) => {
+              if (!teamState.team) return;
+              setTeamBusy(true); setTeamMsg(null);
+              const col = detectArabicPlateColumn(table.headers) ?? detectPlateColumn(table.headers, table.rows);
+              const plates = col
+                ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col] ?? "")))).filter(Boolean)).size
+                : 0;
+              const res = await uploadTeamData(teamState.team, file, table.rows.length, plates);
+              setTeamBusy(false);
+              if (!res.ok) { setTeamMsg(`تعذّر الرفع: ${res.error}`); return; }
+              setTeamTick((t) => t + 1);
+            }}
+            onClear={() => { /* المسح من الزر اللي فوق — بيشيلها من عند الكل */ }}
+            showReplaceButtons
+          />
+          {teamBusy && <p className="px-0.5 text-[11px] font-bold text-primary">جارٍ…</p>}
+          {teamMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{teamMsg}</p>}
+        </div>
+      )}
+
+      {/* داتا المجموعة — مقفولة: اسم وعدد بس، مافيش فتح ولا تحميل ولا مسح. */}
+      {teamState.role === "member" && teamRows && (
+        <div className="rounded-2xl border border-primary/40 bg-primary/5 px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <Lock size={15} className="shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-bold text-ink">داتا المجموعة · للفرز فقط</p>
+              <p className="text-[11px] text-muted">
+                {(teamPlateCount ?? teamRows.length).toLocaleString("en-US")} لوحة — بتتفرز مع سجلاتك
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ملف الإحالة */}
       <FileUploadBox
         title="مربع الإحالة"
