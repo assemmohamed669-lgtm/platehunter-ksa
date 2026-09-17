@@ -5,7 +5,7 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.6.0";
+export const APP_VERSION = "1.6.1";
 
 /**
  * معرّف البناء — بيتغيّر مع **كل نشر** (SHA الكوميت). بيتقارن بين الجهاز والسيرفر
@@ -14,7 +14,7 @@ export const APP_VERSION = "1.6.0";
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
-  "قائمة «المطلوب» بقت تعرض كل السجلات المطلوبة حتى لو نفس اللوحة اتسجّلت أكتر من مرة — والرقم اللي على الزرار بقى مطابق للي جواه.";
+  "إصلاح خروج البرنامج على الآيفون وقت البحث في السجلات — كان بيحصل مع المناديب اللي سجلاتهم بالآلاف.";
 
 import { clearNativeCache, getNativeCacheBridge } from "./nativeCache";
 

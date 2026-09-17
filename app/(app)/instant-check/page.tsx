@@ -1983,9 +1983,20 @@ export default function InstantCheckPage() {
     () => fieldCategoryCounts(fieldEntries, isWantedEntry),
     [fieldEntries, isWantedEntry],
   );
+  // ⚠️ الشريحة بتتحسب من غير الكلام المكتوب — عن قصد.
+  // دمج المكرر بيبني قائمة الـ١٦ ألف سجل من الأول، ومالوش أي علاقة بالبحث. لما
+  // كان جوّه نفس الـmemo بتاع البحث، كان بيتعاد مع **كل حرف**: مندوب عنده ١٦ ألف
+  // سجل كان بيبقى في ذاكرته نسختين من القائمة في نفس اللحظة، فiOS يقتل التطبيق
+  // بلا أي رسالة — بيرجع لأول صفحة (وفي سفاري بيعيد التحميل فالجلسة تضيع).
+  // كان بيحصل من تاني حرف، ومع أي كلام، ومع المندوب ده لوحده (اللي سجلاته أقل
+  // ماكانش بيحصل معاه). فصل الحسبتين بيخلّي الكتابة فلترة رخيصة على قائمة جاهزة.
+  const fieldCategory = useMemo(
+    () => fieldCategoryList(fieldEntries, fieldFilter as FieldFilter, isWantedEntry),
+    [fieldEntries, fieldFilter, isWantedEntry],
+  );
   const fieldVisible = useMemo(
-    () => filterFieldEntries(fieldCategoryList(fieldEntries, fieldFilter as FieldFilter, isWantedEntry), fieldSearch),
-    [fieldEntries, fieldSearch, fieldFilter, isWantedEntry],
+    () => filterFieldEntries(fieldCategory, fieldSearch),
+    [fieldCategory, fieldSearch],
   );
 
   /** مسح صف من السجلات لازم يشيل إخواته المخفيين، وإلا يطلع أخوه مكانه. */
