@@ -24,6 +24,7 @@ import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, type SubInfo } from "@/lib/subscription";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
+import { getDevicePlatform } from "@/lib/devicePlatform";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 
 const ADMIN_WHATSAPP = "971542482545";
@@ -93,13 +94,20 @@ export default function AppShellLayout({
         setSub(subStatus(profile.subscription_end, grace));
         setCutOff(isCutOff(profile.subscription_end, profile.is_active, grace));
       }
-      // heartbeat — «آخر ظهور» + نسخة البرنامج اللي المندوب شغّال بيها (للأدمن).
-      // لو نسخة الـ RPC اللي بتاخد النسخة لسه ماتّشغّلتش (SQL)، بنرجع للنداء
-      // القديم بدون بارامتر عشان «آخر ظهور» مايوقفش.
-      supabase.rpc("touch_last_seen", { p_version: APP_VERSION }).then(
-        () => {},
-        () => { supabase.rpc("touch_last_seen").then(() => {}, () => {}); }
-      );
+      // heartbeat — «آخر ظهور» + نسخة البرنامج + نظام الجهاز (آيفون/أندرويد) للأدمن.
+      // لو نسخة الـ RPC اللي بتاخد النظام لسه ماتّشغّلتش (SQL)، بنرجع للنداء
+      // اللي بالنسخة بس، وبعده للنداء القديم بدون بارامتر عشان «آخر ظهور» مايوقفش.
+      supabase
+        .rpc("touch_last_seen", { p_version: APP_VERSION, p_platform: getDevicePlatform() })
+        .then(
+          () => {},
+          () => {
+            supabase.rpc("touch_last_seen", { p_version: APP_VERSION }).then(
+              () => {},
+              () => { supabase.rpc("touch_last_seen").then(() => {}, () => {}); }
+            );
+          }
+        );
     });
   }, []);
 

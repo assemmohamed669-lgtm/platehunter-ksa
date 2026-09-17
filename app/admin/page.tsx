@@ -32,8 +32,21 @@ interface AgentProfile {
   subscription_amount: number | null;
   owed_amount?: number | null;   // «عليه» — المتبقّي على المندوب (من صفحة الحسابات)
   app_version: string | null;
+  platform: string | null;       // نظام الجهاز: ios / android / web-ios / web-android / web
   team?: string | null;          // المجموعة — لاستهداف الإشعار بمجموعة واحدة
   created_at: string;
+}
+
+// شارة نظام جهاز المندوب (آيفون / أندرويد / ويب) — من عمود profiles.platform.
+function platformInfo(p: string | null): { label: string; title: string } | null {
+  switch (p) {
+    case "ios":         return { label: "🍏 آيفون", title: "تطبيق آيفون (App Store)" };
+    case "android":     return { label: "🤖 أندرويد", title: "تطبيق أندرويد" };
+    case "web-ios":     return { label: "🍏 آيفون (ويب)", title: "متصفح على آيفون" };
+    case "web-android": return { label: "🤖 أندرويد (ويب)", title: "متصفح على أندرويد" };
+    case "web":         return { label: "🌐 ويب", title: "متصفح على كمبيوتر" };
+    default:            return null;
+  }
 }
 
 // مفتاح شهر YYYY-MM + اسمه بالعربي — لشارة الدفع في القائمة.
@@ -873,6 +886,12 @@ export default function AdminDashboard() {
                         ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-500">أحدث نسخة</span>
                         : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[9px] font-bold text-orange-500" title={`المندوب على ${a.app_version} — الأحدث ${APP_VERSION}`}>نسخة {a.app_version}</span>)
                     : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[9px] text-muted">نسخة غير معروفة</span>}
+                  {(() => {
+                    const pi = platformInfo(a.platform);
+                    return pi
+                      ? <span className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-600" title={pi.title}>{pi.label}</span>
+                      : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[9px] text-muted" title="النظام هيظهر بعد أول مرة يفتح فيها التطبيق">نظام؟</span>;
+                  })()}
                   {a.role === "agent" && (
                     a.device_lock_exempt
                       ? <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[9px] font-bold text-orange-500" title="يدخل من أي جهاز">🔓 أي جهاز</span>
