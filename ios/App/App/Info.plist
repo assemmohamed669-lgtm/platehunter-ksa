@@ -5,7 +5,15 @@
 	<key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
+	<string>ar</string>
+	<!-- اللغات اللي التطبيق بيدعمها. من غير الإعلان ده iOS بيعرض قوايمه
+	     (لصق · تعبئة تلقائية · تنسيق · أذونات) بالإنجليزي مهما كانت لغة
+	     التليفون — لأن التطبيق كان معلن إنه إنجليزي بس. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>ar</string>
+		<string>en</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>قناص اللوحات</string>
 	<key>CFBundleExecutable</key>
