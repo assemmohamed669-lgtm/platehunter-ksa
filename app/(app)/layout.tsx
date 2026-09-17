@@ -162,7 +162,7 @@ export default function AppShellLayout({
   return (
     <SessionGuard>
       <div className="min-h-screen bg-night pb-24 overflow-x-hidden w-full">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur">
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 pb-3 pt-[max(0.75rem,var(--safe-top))] backdrop-blur">
           <div className="flex min-w-0 items-center gap-1.5">
             {!isHome && <BackButton />}
             <PlateIcon size={56} />

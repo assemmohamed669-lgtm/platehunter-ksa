@@ -25,6 +25,19 @@
   --c-muted: #57606A;
   --c-alert: #9A6700;
   --c-danger: #CF222E;
+
+  /* مسافات المنطقة الآمنة.
+     - الأعلى (--safe-top): على iOS بس (المحتوى edge-to-edge تحت النوتش/الساعة).
+       على أندرويد المحتوى أصلاً بينزل تحت شريط الحالة، فمسافة env كانت بتعمل
+       جاب مضاعف («باظت») ⇒ نخليها صفر. الكلاس بيتحط من PlatformClass.
+     - الأسفل (--safe-bottom): على كل الأنظمة (أندرويد بيرسم تحت شريط التنقّل
+       بالإيماءات، فمحتاج المسافة زي ما BottomNav بيعمل). */
+  --safe-top: 0px;
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+html.platform-ios {
+  --safe-top: env(safe-area-inset-top);
 }
 
 /* وضع التوفير — battery-saving dark mode (true-black bg for OLED screens).

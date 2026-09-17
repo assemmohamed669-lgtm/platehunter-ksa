@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { ThemeProvider } from "@/lib/ThemeProvider";
 import BackButtonHandler from "@/components/BackButtonHandler";
 import IncomingExcelHandler from "@/components/IncomingExcelHandler";
+import PlatformClass from "@/components/PlatformClass";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -37,6 +38,7 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body>
+        <PlatformClass />
         <BackButtonHandler />
         {/* Mounted here (not deep in the authenticated layout) so its listener
             is registered as early as possible — a cold app-open from tapping
