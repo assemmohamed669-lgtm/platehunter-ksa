@@ -229,7 +229,7 @@ export default function AppMenu({
         onTouchEnd={onDragEnd}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between border-b border-border px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="min-w-0">
             <span className="text-sm font-bold text-ink">القائمة</span>
             {/* إيميل المندوب — عشان يعرف هو داخل بأنهي حساب */}
@@ -242,7 +242,7 @@ export default function AppMenu({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4">
+        <div className="flex-1 overflow-y-auto px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-4">
           {/* ── الخلفية والنمط — بتفتح صفحة مستقلة (قوالب + تخصيص) ── */}
           <section className="flex flex-col gap-3">
             <h3 className="flex items-center gap-1.5 text-xs font-bold text-muted"><Settings size={14} /> الإعدادات</h3>
