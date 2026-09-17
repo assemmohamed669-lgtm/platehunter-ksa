@@ -31,6 +31,7 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey, looksLikePlateQuery, collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
+import { fieldCategoryCounts, fieldCategoryList, type FieldFilter } from "@/lib/fieldCheckView";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -1970,25 +1971,22 @@ export default function InstantCheckPage() {
   // عدّادات السجلات (صوتي/يدوي/مطلوب) + القائمة المفلترة — محفوظة في useMemo عشان
   // ماتتحسبش من جديد في كل رندر. من غير الحفظ، أي ضغطة (تعديل/مشاركة تفتح نافذة)
   // كانت بتعيد حساب O(n) على كل السجلات فبيهنّج على iOS مع السجلات الكتير.
-  const fieldCounts = useMemo(() => {
-    let voice = 0, manual = 0, wanted = 0;
-    for (const e of fieldEntries) {
-      if (/صوت/.test(e.method)) voice++;
-      if (/يدوي/.test(e.method)) manual++;
-      if (checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)))) wanted++;
-    }
-    return { voice, manual, wanted };
-  }, [fieldEntries, checkIndex]);
-  const fieldVisible = useMemo(() => {
-    const inCat = (e: FieldCheckEntry) =>
-      fieldFilter === "voice" ? /صوت/.test(e.method)
-      : fieldFilter === "manual" ? /يدوي/.test(e.method)
-      : fieldFilter === "wanted" ? checkIndex.has(normalizePlate(bankPlateToArabic(e.plate)))
-      : true;
-    // الإرسالات المكرّرة لنفس التشييك (نفس اللوحة/الموقع/الوقت) بتتجمّع — من
-    // غير كده العدّاد اللي المندوب بيشوفه بيقول ٨ والتشييك واحد.
-    return filterFieldEntries(collapseDuplicateChecks(fieldEntries), fieldSearch).filter(inCat);
-  }, [fieldEntries, fieldSearch, fieldFilter, checkIndex]);
+  // العدّادات والقوايم من **مصدر واحد** (lib/fieldCheckView) — لما كانوا
+  // منفصلين، العدّاد كان بيعد الخام والقائمة بتعرض المدموج، فالمندوب شاف
+  // «مطلوب ٥» ولقى ٤ لوحات. و«المطلوب» بيعرض المكرّر بقرار المالك: دي
+  // القائمة الحرجة والأمان فيها إن المندوب يشوف أكتر مش أقل.
+  const isWantedEntry = useCallback(
+    (e: FieldCheckEntry) => checkIndex.has(normalizePlate(bankPlateToArabic(e.plate))),
+    [checkIndex],
+  );
+  const fieldCounts = useMemo(
+    () => fieldCategoryCounts(fieldEntries, isWantedEntry),
+    [fieldEntries, isWantedEntry],
+  );
+  const fieldVisible = useMemo(
+    () => filterFieldEntries(fieldCategoryList(fieldEntries, fieldFilter as FieldFilter, isWantedEntry), fieldSearch),
+    [fieldEntries, fieldSearch, fieldFilter, isWantedEntry],
+  );
 
   /** مسح صف من السجلات لازم يشيل إخواته المخفيين، وإلا يطلع أخوه مكانه. */
   const fieldDupGroups = useMemo(() => duplicateCheckIds(fieldEntries), [fieldEntries]);

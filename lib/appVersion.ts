@@ -5,7 +5,7 @@
  *
  * لما تنزّل تحديث مهم: زوّد APP_VERSION واكتب ملاحظة قصيرة في UPDATE_NOTE.
  */
-export const APP_VERSION = "1.5.0";
+export const APP_VERSION = "1.6.0";
 
 /**
  * معرّف البناء — بيتغيّر مع **كل نشر** (SHA الكوميت). بيتقارن بين الجهاز والسيرفر
@@ -14,7 +14,7 @@ export const APP_VERSION = "1.5.0";
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 export const UPDATE_NOTE =
-  "التشييك الصوتي بيرجع لمحرك القراءة الأساسي لوحده بعد أي انقطاع في السيرفر — قبل كده كان بيفضل على الاحتياطي لحد ما تقفل البرنامج وتفتحه.";
+  "قائمة «المطلوب» بقت تعرض كل السجلات المطلوبة حتى لو نفس اللوحة اتسجّلت أكتر من مرة — والرقم اللي على الزرار بقى مطابق للي جواه.";
 
 import { clearNativeCache, getNativeCacheBridge } from "./nativeCache";
 
