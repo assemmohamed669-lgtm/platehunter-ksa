@@ -44,7 +44,8 @@ import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import {
-  fetchTeamDataState, downloadTeamData, needsTeamDataRefresh, TEAM_DATA_SLOT,
+  fetchTeamDataState, downloadTeamData, uploadTeamData, deleteTeamData,
+  needsTeamDataRefresh, TEAM_DATA_SLOT, type TeamDataState,
 } from "@/lib/teamData";
 
 /** سلوت الإحالة بتاعة المشترك صوت-فقط — نفس نمط `local:check`. */
@@ -117,14 +118,21 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [teamRows, setTeamRows] = useState<Record<string, string>[] | null>(null);
   const [teamPlateCol, setTeamPlateCol] = useState<string | null>(null);
   const [teamPlateCount, setTeamPlateCount] = useState<number | null>(null);
+  const [teamState, setTeamState] = useState<TeamDataState>({ role: "off", team: null, file: null });
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamMsg, setTeamMsg] = useState<string | null>(null);
+  const [teamTick, setTeamTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const state = await fetchTeamDataState();
-      if (cancelled || state.role === "off") return;
+      if (cancelled) return;
+      setTeamState(state);
+      if (state.role === "off") { setTeamRows(null); return; }
       const local = await getUploadedFile("local", TEAM_DATA_SLOT).catch(() => null);
       if (!state.file) {
         if (local) await deleteUploadedFile("local", TEAM_DATA_SLOT).catch(() => {});
+        setTeamRows(null);
         return;
       }
       let table = local ? { headers: local.headers, rows: local.rows } : null;
@@ -150,7 +158,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       setTeamPlateCount(state.file.plateCount ?? null);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [teamTick]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -548,8 +556,56 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* المسئول لو مشترك صوت-فقط: صفحة الفرز مقفولة عنده، فمربع الرفع لازم
+          يبقى هنا كمان — وإلا مايقدرش يرفع داتا المجموعة أصلاً. */}
+      {teamState.role === "leader" && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-xs font-bold text-primary">داتا المجموعة (إنت المسئول)</span>
+            {teamState.file && (
+              <button
+                onClick={async () => {
+                  if (!teamState.team || !confirm("متأكد تمسح داتا المجموعة؟ هتتشال من عند كل المناديب.")) return;
+                  setTeamBusy(true);
+                  const ok = await deleteTeamData(teamState.team);
+                  setTeamBusy(false);
+                  if (!ok) { alert("تعذّر المسح — جرّب تاني."); return; }
+                  setTeamTick((t) => t + 1);
+                }}
+                disabled={teamBusy}
+                className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger disabled:opacity-40">
+                <Trash2 size={12} /> مسح
+              </button>
+            )}
+          </div>
+          <FileUploadBox
+            title="داتا المجموعة"
+            hint="بتنزل عند مناديب مجموعتك للفرز بس — مايقدروش يفتحوها ولا يمسحوها"
+            parsedFile={teamState.file ? new File([new Blob()], teamState.file.fileName) : null}
+            parsedRowCount={teamState.file?.rowCount ?? null}
+            plateCount={teamState.file?.plateCount ?? null}
+            onParsed={async (table, file) => {
+              if (!teamState.team) return;
+              setTeamBusy(true); setTeamMsg(null);
+              const col = detectArabicPlateColumn(table.headers) ?? detectPlateColumn(table.headers, table.rows);
+              const plates = col
+                ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col] ?? "")))).filter(Boolean)).size
+                : 0;
+              const res = await uploadTeamData(teamState.team, file, table.rows.length, plates);
+              setTeamBusy(false);
+              if (!res.ok) { setTeamMsg(`تعذّر الرفع: ${res.error}`); return; }
+              setTeamTick((t) => t + 1);
+            }}
+            onClear={() => { /* المسح من الزر اللي فوق — بيشيلها من عند الكل */ }}
+            showReplaceButtons
+          />
+          {teamBusy && <p className="px-0.5 text-[11px] font-bold text-primary">جارٍ…</p>}
+          {teamMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{teamMsg}</p>}
+        </div>
+      )}
+
       {/* داتا المجموعة — مقفولة: اسم وعدد بس، مافيش فتح ولا تحميل ولا مسح. */}
-      {teamRows && (
+      {teamState.role === "member" && teamRows && (
         <div className="rounded-2xl border border-primary/40 bg-primary/5 px-3 py-2.5">
           <div className="flex items-center gap-2">
             <Lock size={15} className="shrink-0 text-primary" />
