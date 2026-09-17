@@ -16,6 +16,18 @@ import { GROUP_ELIGIBLE_ROLES, memberBadge, membersLabel } from "@/lib/groupMemb
 
 interface Agent { id: string; username: string; team: string | null; role: string | null; }
 
+/**
+ * مفاتيح المجموعة. `leader` + `sharedData` = ميزة «داتا المجموعة»: المسئول
+ * يرفع ملف داتا والأعضاء يفرزوا عليه بس (مايفتحوهش ولا يحمّلوه ولا يمسحوه).
+ * **مقفولة افتراضياً** — بتتفتح بإيد المالك لكل مجموعة بعد تحديد المسئول.
+ */
+interface GroupSet {
+  notify: boolean;
+  share: boolean;
+  leader: string | null;
+  sharedData: boolean;
+}
+
 /** أي انتظار مالوش نهاية = شاشة واقفة عند المندوب. بنحط سقف زمني ونقول السبب. */
 function withTimeout<T>(p: PromiseLike<T>, ms: number, what: string): Promise<T> {
   return Promise.race([
@@ -38,7 +50,7 @@ export default function GroupsPage() {
   const [busy, setBusy] = useState(false);
   // مفاتيح كل مجموعة: الإشعارات + مشاركة السجلات. الافتراضي الاتنين مفتوحين،
   // فمجموعة مالهاش صف في group_settings بتشتغل زي ما هي.
-  const [settings, setSettings] = useState<Record<string, { notify: boolean; share: boolean }>>({});
+  const [settings, setSettings] = useState<Record<string, GroupSet>>({});
   const [togglingTeam, setTogglingTeam] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -77,9 +89,15 @@ export default function GroupsPage() {
       const res = await fetch("/api/admin/group-settings", { headers: await authHeaders() });
       if (res.ok) {
         const j = await res.json();
-        const m: Record<string, { notify: boolean; share: boolean }> = {};
-        for (const r of (j.settings ?? []) as Array<{ team: string; notify_enabled: boolean; share_records_enabled: boolean }>) {
-          m[r.team] = { notify: r.notify_enabled, share: r.share_records_enabled };
+        const m: Record<string, GroupSet> = {};
+        for (const r of (j.settings ?? []) as Array<{
+          team: string; notify_enabled: boolean; share_records_enabled: boolean;
+          leader_id: string | null; shared_data_enabled: boolean;
+        }>) {
+          m[r.team] = {
+            notify: r.notify_enabled, share: r.share_records_enabled,
+            leader: r.leader_id ?? null, sharedData: !!r.shared_data_enabled,
+          };
         }
         setSettings(m);
       }
@@ -101,7 +119,32 @@ export default function GroupsPage() {
   const teams = Array.from(new Set(agents.map((a) => a.team).filter((t): t is string => !!t))).sort();
   const membersOf = (t: string) => agents.filter((a) => a.team === t);
 
-  const groupSet = (t: string) => settings[t] ?? { notify: true, share: true };
+  // الافتراضي: الإشعارات والمشاركة مفتوحين (زي ما كانوا)، و«داتا المجموعة»
+  // **مقفولة** ومن غير مسئول — فمافيش مجموعة بتتأثر من غير قرار المالك.
+  const groupSet = (t: string): GroupSet =>
+    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false };
+
+  /** بيحفظ أي تغيير في مفاتيح المجموعة (تفاؤلي — بيرجع لو فشل). */
+  async function saveGroupSet(team: string, next: GroupSet) {
+    const cur = groupSet(team);
+    setTogglingTeam(team);
+    setSettings((m) => ({ ...m, [team]: next }));
+    try {
+      const res = await fetch("/api/admin/group-settings", {
+        method: "POST", headers: await authHeaders(),
+        body: JSON.stringify({
+          team, notifyEnabled: next.notify, shareRecordsEnabled: next.share,
+          leaderId: next.leader, sharedDataEnabled: next.sharedData,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "فشل الحفظ");
+    } catch (e) {
+      setSettings((m) => ({ ...m, [team]: cur }));
+      alert("تعذّر الحفظ: " + ((e as Error)?.message ?? ""));
+    }
+    setTogglingTeam(null);
+  }
+
   async function toggleGroup(team: string, key: "notify" | "share") {
     const cur = groupSet(team);
     const next = { ...cur, [key]: !cur[key] };
@@ -270,6 +313,42 @@ export default function GroupsPage() {
                         </button>
                       </div>
                     ))}
+
+                    {/* ── داتا المجموعة — مقفولة لحد ما المالك يفتحها بإيده ──
+                        المسئول يرفع ملف داتا، والأعضاء **يفرزوا عليه بس**:
+                        مايفتحوهش ولا يحمّلوه ولا يغيّروه ولا يمسحوه. */}
+                    <div className="rounded-lg border border-border bg-surface-2 px-2.5 py-2">
+                      <p className="text-xs font-bold text-ink">داتا المجموعة</p>
+                      <p className="mb-2 text-[10px] leading-relaxed text-muted">
+                        المسئول يرفع داتا والباقي يفرزوا عليها بس — مايفتحوهاش ولا يحمّلوها ولا يمسحوها.
+                      </p>
+
+                      <label className="mb-1 block text-[10px] font-bold text-muted">مسئول المجموعة</label>
+                      <select
+                        value={groupSet(t).leader ?? ""}
+                        disabled={togglingTeam === t}
+                        onChange={(e) => {
+                          const leader = e.target.value || null;
+                          // من غير مسئول مافيش معنى للميزة — بتتقفل تلقائي.
+                          void saveGroupSet(t, { ...groupSet(t), leader, sharedData: leader ? groupSet(t).sharedData : false });
+                        }}
+                        className="mb-2 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink">
+                        <option value="">— مفيش مسئول —</option>
+                        {membersOf(t).map((a) => (
+                          <option key={a.id} value={a.id}>{a.username}</option>
+                        ))}
+                      </select>
+
+                      <button
+                        disabled={togglingTeam === t || !groupSet(t).leader}
+                        onClick={() => void saveGroupSet(t, { ...groupSet(t), sharedData: !groupSet(t).sharedData })}
+                        title={groupSet(t).leader ? "" : "حدّد المسئول الأول"}
+                        className={`w-full rounded-full px-3 py-1.5 text-[11px] font-bold transition disabled:opacity-40 ${
+                          groupSet(t).sharedData ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
+                        }`}>
+                        {groupSet(t).sharedData ? "الميزة مفتوحة ✓" : "الميزة مقفولة"}
+                      </button>
+                    </div>
                   </div>
 
                   {/* الأعضاء (المعلّقين) */}
