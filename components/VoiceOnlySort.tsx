@@ -19,9 +19,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
-  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown } from "lucide-react";
+  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown, Lock} from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
-import {
+import { detectArabicPlateColumn,
   buildReferralIndex,
   matchChunkAgainstIndex,
   detectPlateColumn,
@@ -30,7 +30,7 @@ import {
   tokenizePastedPlates,
   type MatchResult,
 } from "@/lib/plateParser";
-import { buildExcelBlob, shareExcelBlob, type ExcelTable } from "@/lib/excel";
+import { buildExcelBlob, shareExcelBlob, parseExcelFile, type ExcelTable } from "@/lib/excel";
 import { renderTableImages } from "@/lib/plateImage";
 import { shareImageWithText, shareTextViaChooser } from "@/lib/share";
 import { gpsService, extractLatLngFromMapsLink, haversineKm, formatDistanceKm, type GpsCoords } from "@/lib/gps";
@@ -43,6 +43,9 @@ import {
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
+import {
+  fetchTeamDataState, downloadTeamData, needsTeamDataRefresh, TEAM_DATA_SLOT,
+} from "@/lib/teamData";
 
 /** سلوت الإحالة بتاعة المشترك صوت-فقط — نفس نمط `local:check`. */
 const REF_SLOT = "voice-referral";
@@ -105,6 +108,49 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   // لوحات التشييك = الملف الأساسي + كل الملفات الإضافية (زر «+»)، عشان «جديد»
   // مايعتبرش إحالة المندوب رافعها كملف تشييك إضافي «جديدة» كل مرة.
   const [checkSet, setCheckSet] = useState<Set<string>>(new Set());
+
+  /**
+   * داتا المجموعة — المشترك صوت-فقط صفحة الفرز مقفولة عنده، فبتوصله هنا.
+   * بيفرز عليها زي أي داتا، ومايقدرش يفتحها ولا يحمّلها ولا يمسحها (مافيش أي
+   * زرار أصلاً). «off» = الميزة مقفولة للمجموعة ⇒ التبويب زي ما هو بالظبط.
+   */
+  const [teamRows, setTeamRows] = useState<Record<string, string>[] | null>(null);
+  const [teamPlateCol, setTeamPlateCol] = useState<string | null>(null);
+  const [teamPlateCount, setTeamPlateCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const state = await fetchTeamDataState();
+      if (cancelled || state.role === "off") return;
+      const local = await getUploadedFile("local", TEAM_DATA_SLOT).catch(() => null);
+      if (!state.file) {
+        if (local) await deleteUploadedFile("local", TEAM_DATA_SLOT).catch(() => {});
+        return;
+      }
+      let table = local ? { headers: local.headers, rows: local.rows } : null;
+      if (needsTeamDataRefresh(local?.uploadedAt ?? null, state.file.updatedAt)) {
+        const blob = await downloadTeamData(state.file.path);
+        if (blob) {
+          const file = new File([blob], state.file.fileName, { type: blob.type });
+          const parsed = await parseExcelFile(file).catch(() => null);
+          if (parsed) {
+            table = { headers: parsed.headers, rows: parsed.rows };
+            await saveUploadedFile({
+              key: `local:${TEAM_DATA_SLOT}`, agentId: "local", slot: TEAM_DATA_SLOT,
+              fileName: state.file.fileName, headers: parsed.headers, rows: parsed.rows,
+              uploadedAt: state.file.updatedAt, fileBlob: file,
+            });
+          }
+        }
+      }
+      if (cancelled || !table) return;
+      const col = detectArabicPlateColumn(table.headers) ?? detectPlateColumn(table.headers, table.rows);
+      setTeamRows(table.rows);
+      setTeamPlateCol(col);
+      setTeamPlateCount(state.file.plateCount ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -140,7 +186,14 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
-      const recRows = recordsToRows(entries);
+      // الفرز على **سجلاته + داتا المجموعة** (لو المسئول رافع). الاتنين
+      // بيتحوّلوا لنفس شكل الصفوف عشان يعدّوا على نفس محرّك المطابقة.
+      const recRows = [
+        ...recordsToRows(entries),
+        ...(teamRows && teamPlateCol
+          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+          : []),
+      ];
 
       // وضع «جديد»: نشيل من الإحالة أي لوحة موجودة أصلاً في ملف التشييك.
       const pool = sortMode === "new"
@@ -168,7 +221,12 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
-      const recRows = recordsToRows(entries);
+      const recRows = [
+        ...recordsToRows(entries),
+        ...(teamRows && teamPlateCol
+          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+          : []),
+      ];
       // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
       const index = buildReferralIndex(recRows, REC_PLATE_COL);
       const pastedRows = tokens.map((t) => ({ [REC_PLATE_COL]: t }));
@@ -490,6 +548,21 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* داتا المجموعة — مقفولة: اسم وعدد بس، مافيش فتح ولا تحميل ولا مسح. */}
+      {teamRows && (
+        <div className="rounded-2xl border border-primary/40 bg-primary/5 px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <Lock size={15} className="shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-bold text-ink">داتا المجموعة · للفرز فقط</p>
+              <p className="text-[11px] text-muted">
+                {(teamPlateCount ?? teamRows.length).toLocaleString("en-US")} لوحة — بتتفرز مع سجلاتك
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ملف الإحالة */}
       <FileUploadBox
         title="مربع الإحالة"
