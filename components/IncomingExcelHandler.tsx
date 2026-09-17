@@ -16,6 +16,10 @@ import { X, FileSpreadsheet, ListFilter, CheckCircle2, Lock } from "lucide-react
 import { parseExcelFile, readSheetNames } from "@/lib/excel";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { importMultiSheetData } from "@/lib/dataStore";
+import { supabase } from "@/lib/supabaseClient";
+import { serviceActive } from "@/lib/subscription";
+import { setCheckTab } from "@/lib/checkTab";
+import { incomingExcelOptions, VOICE_REFERRAL_SLOT, type IncomingOption } from "@/lib/incomingExcel";
 
 interface PendingFile {
   name: string;
@@ -24,13 +28,7 @@ interface PendingFile {
 }
 
 // referral-${number} = ملف إحالة إضافي (٢، ٣، ...) تحت الإحالة الأساسية.
-type Slot = "referral" | "data" | "check" | `referral-${number}`;
-
-// ترتيب مؤنث للعرض («ثانية/ثالثة/...») — رقم اللي أكبر من ١٠ يظهر رقمياً.
-const ORDINAL_FEM = ["", "الأولى", "ثانية", "ثالثة", "رابعة", "خامسة", "سادسة", "سابعة", "ثامنة", "تاسعة", "عاشرة"];
-function ordinalFem(n: number): string {
-  return ORDINAL_FEM[n] ?? `رقم ${n}`;
-}
+type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${number}`;
 
 export default function IncomingExcelHandler() {
   const router = useRouter();
@@ -44,6 +42,23 @@ export default function IncomingExcelHandler() {
   // رقم ملف الإحالة الإضافي التالي (٢، ٣، ...) — null يعني مفيش إحالة أساسية بعد
   // فمانعرضش خيار «إضافة إحالة إضافية». بيتحسب أول ما ييجي ملف.
   const [nextReferralNum, setNextReferralNum] = useState<number | null>(null);
+  // المشترك صوت-فقط: صفحة الفرز مقفولة عنده، فخياراته وسلوتاته مختلفة.
+  // نفس منطق حارس الصفحات في `app/(app)/layout.tsx` بالظبط.
+  const [voiceOnly, setVoiceOnly] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        const { data: prof } = await supabase
+          .from("profiles").select("rest_pages_enabled, rest_until, is_super")
+          .eq("id", data.user.id).single();
+        const p = prof as { rest_pages_enabled?: boolean; rest_until?: string | null; is_super?: boolean } | null;
+        const restOpen = p?.is_super === true || (p?.rest_pages_enabled !== false && serviceActive(p?.rest_until));
+        setVoiceOnly(!restOpen);
+      } catch { /* مش عارفين — نسيبها زي ما هي (خيارات كاملة) */ }
+    })();
+  }, []);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -166,7 +181,11 @@ export default function IncomingExcelHandler() {
       setNeedsPassword(false);
       setPassword("");
       setPendingSlot(null);
-      router.push(slot === "check" ? "/instant-check" : "/sorting");
+      // المشترك صوت-فقط: كل وجهاته جوّه صفحة التشييك — بنودّيه للتبويب الصح
+      // بدل ما نبعته لصفحة الفرز اللي الحارس هيرجّعه منها فوراً.
+      const opt = options.find((o) => o.slot === slot);
+      if (opt?.goTab) { setCheckTab(opt.goTab); router.push("/instant-check"); }
+      else router.push(slot === "check" ? "/instant-check" : "/sorting");
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : "";
@@ -183,6 +202,8 @@ export default function IncomingExcelHandler() {
       setLoading(false);
     }
   }
+
+  const options: IncomingOption[] = incomingExcelOptions({ voiceOnly, nextReferralNum });
 
   function openAs(slot: Slot) {
     runParse(slot);
@@ -267,59 +288,22 @@ export default function IncomingExcelHandler() {
             )}
 
             <div className="flex flex-col gap-2">
-              {/* Data (sorting) — الأول */}
-              <button
-                disabled={loading}
-                onClick={() => openAs("data")}
-                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
-              >
-                <ListFilter size={20} className="shrink-0 text-primary" />
-                <div>
-                  <p className="text-sm font-bold text-ink">إضافة ملف الداتا</p>
-                  <p className="text-xs text-muted">خانة الداتا في صفحة الفرز</p>
-                </div>
-              </button>
-
-              {/* Referral (sorting) */}
-              <button
-                disabled={loading}
-                onClick={() => openAs("referral")}
-                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
-              >
-                <ListFilter size={20} className="shrink-0 text-primary" />
-                <div>
-                  <p className="text-sm font-bold text-ink">إضافة لخانة الإحالة</p>
-                  <p className="text-xs text-muted">خانة الإحالة في صفحة الفرز</p>
-                </div>
-              </button>
-
-              {/* Referral إضافي ديناميكي (٢/٣/...) — بيظهر بس لو فيه إحالة أساسية */}
-              {nextReferralNum !== null && (
+              {options.map((o) => (
                 <button
+                  key={o.slot}
                   disabled={loading}
-                  onClick={() => openAs(`referral-${nextReferralNum}`)}
-                  className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-right transition hover:border-primary/50 hover:bg-primary/10 disabled:opacity-50"
+                  onClick={() => openAs(o.slot as Slot)}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
                 >
-                  <ListFilter size={20} className="shrink-0 text-primary" />
+                  {o.slot === "check"
+                    ? <CheckCircle2 size={20} className="shrink-0 text-primary" />
+                    : <ListFilter size={20} className="shrink-0 text-primary" />}
                   <div>
-                    <p className="text-sm font-bold text-ink">إضافة ملف إحالة {ordinalFem(nextReferralNum)}</p>
-                    <p className="text-xs text-muted">إحالة إضافية تحت الأساسية في صفحة الفرز</p>
+                    <p className="text-sm font-bold text-ink">{o.label}</p>
+                    <p className="text-xs text-muted">{o.hint}</p>
                   </div>
                 </button>
-              )}
-
-              {/* Check file */}
-              <button
-                disabled={loading}
-                onClick={() => openAs("check")}
-                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
-              >
-                <CheckCircle2 size={20} className="shrink-0 text-primary" />
-                <div>
-                  <p className="text-sm font-bold text-ink">إضافة لخانة التشييك</p>
-                  <p className="text-xs text-muted">خانة التشييك في صفحة تشييك</p>
-                </div>
-              </button>
+              ))}
             </div>
 
             {loading && (

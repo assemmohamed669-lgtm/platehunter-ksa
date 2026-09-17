@@ -74,16 +74,27 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [shareBusy, setShareBusy] = useState(false);
 
   // ── تحميل شيت الإحالة المحفوظ (بيفضل بعد إعادة فتح التطبيق) ────────────────
+  // وبيتعاد لو المندوب فتح ملف إكسيل من واتساب واختار «أضف لخانة الإحالة» —
+  // من غير كده الخانة تفضل فاضية لحد ما يطلع من الصفحة ويرجع.
   useEffect(() => {
-    getUploadedFile(AGENT, REF_SLOT)
-      .then((rec) => {
-        if (!rec) return;
-        setRefTable({ headers: rec.headers, rows: rec.rows });
-        setRefFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }));
-      })
-      .catch(() => {});
+    const load = () => {
+      getUploadedFile(AGENT, REF_SLOT)
+        .then((rec) => {
+          if (!rec) return;
+          setRefTable({ headers: rec.headers, rows: rec.rows });
+          setRefFile(new File([rec.fileBlob ?? new Blob()], rec.fileName, {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }));
+        })
+        .catch(() => {});
+    };
+    load();
+    const onUpdate = (e: Event) => {
+      const slot = (e as CustomEvent<{ slot?: string }>).detail?.slot;
+      if (!slot || slot === REF_SLOT) load();
+    };
+    window.addEventListener("idbFileUpdated", onUpdate);
+    return () => window.removeEventListener("idbFileUpdated", onUpdate);
   }, []);
 
   const refPlateCol = useMemo(
