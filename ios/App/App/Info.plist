@@ -63,6 +63,10 @@
 	<string>التطبيق يستخدم صورك لاختيار صورة لوحة لتحليلها.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>التطبيق يحفظ صور أو ملفات اللوحات في مكتبتك عند التصدير.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
