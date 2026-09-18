@@ -1,26 +1,28 @@
 /**
- * تخزين جلسة الدخول (Supabase auth) في **التخزين الأصلي للتليفون** (Preferences)
- * عشان iOS/WebKit مايمسحش الجلسة فالمندوب مايتسجّلش خروج لوحده.
+ * تخزين جلسة الدخول (Supabase auth) في **ملف على ذاكرة التليفون الدائمة** عبر
+ * مكوّن @capacitor/filesystem — عشان iOS/WebKit مايمسحش الجلسة فالمندوب مايتسجّلش
+ * خروج لوحده.
+ *
+ * ليه Filesystem مش Preferences: مكوّن Filesystem **مربوط وشغّال بالفعل** في كل
+ * البناءات (بنستخدمه لفتح الإكسل)، بينما Preferences مكانش بيترابط في إعداد iOS
+ * (SPM). فده بيشتغل **بلا بناء جديد** — بيوصل عبر Vercel للنسخة الموجودة.
  *
  * التصميم مضاد للتعليق:
- *  - كل نداء للمكوّن الأصلي عليه **مهلة أمان** — لو ماردّش بسرعة (أو المكوّن
- *    مش متظبّط في البناء) بنرجع لـlocalStorage فوراً، فالتطبيق **مايعلّقش أبداً**
- *    على شاشة «جاري التحميل».
- *  - بنكتب في **الاتنين** (localStorage فوري + Preferences في الخلفية): كده
- *    الجلسة دايماً موجودة قصير المدى، ولو iOS مسح localStorage تفضل في التخزين
- *    الأصلي (getItem بيفضّله).
+ *  - كل نداء للمكوّن عليه **مهلة أمان** — لو ماردّش يرجع لـlocalStorage فوراً،
+ *    فالتطبيق مايعلّقش على «جاري التحميل».
+ *  - **localStorage-first** في القراءة: الفتح العادي بيرجّع من localStorage فوراً
+ *    (سريع)؛ الملف بيُقرأ بس لو localStorage فاضي (iOS مسحه). الكتابة في الاتنين.
  *
- * على الويب والنسخ القديمة (مافيش المكوّن) `preferencesAvailable` = false،
+ * على الويب والنسخ اللي مافيهاش المكوّن: `nativeStorageAvailable` = false،
  * و supabaseClient بيسيب Supabase يستخدم localStorage الافتراضي زي ما هو.
  */
 import { Capacitor } from "@capacitor/core";
 
-export const preferencesAvailable =
-  Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("Preferences");
+export const nativeStorageAvailable =
+  Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("Filesystem");
 
-const TIMEOUT_MS = 1500;
+const TIMEOUT_MS = 2500;
 
-// بيرجّع fallback لو الوعد ماخلصش في الوقت المحدد أو رمى — مايعلّقش المستدعي.
 function withTimeout<T>(p: Promise<T>, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let settled = false;
@@ -32,100 +34,86 @@ function withTimeout<T>(p: Promise<T>, fallback: T): Promise<T> {
     };
     const t = setTimeout(() => done(fallback), TIMEOUT_MS);
     p.then(
-      (v) => {
-        clearTimeout(t);
-        done(v);
-      },
-      () => {
-        clearTimeout(t);
-        done(fallback);
-      },
+      (v) => { clearTimeout(t); done(v); },
+      () => { clearTimeout(t); done(fallback); },
     );
   });
 }
 
-async function prefs() {
-  const { Preferences } = await import("@capacitor/preferences");
-  return Preferences;
+async function fsMod() {
+  return import("@capacitor/filesystem");
+}
+
+// اسم ملف آمن لكل مفتاح جلسة.
+function fileNameFor(key: string): string {
+  return "authstore_" + key.replace(/[^a-zA-Z0-9._-]/g, "_") + ".txt";
 }
 
 function lsGet(key: string): string | null {
   try {
     return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 function lsSet(key: string, value: string): void {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
-  } catch {
-    /* تجاهل */
-  }
+  try { if (typeof localStorage !== "undefined") localStorage.setItem(key, value); } catch { /* */ }
 }
 function lsRemove(key: string): void {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.removeItem(key);
-  } catch {
-    /* تجاهل */
-  }
+  try { if (typeof localStorage !== "undefined") localStorage.removeItem(key); } catch { /* */ }
 }
 
-// نداءات المكوّن الأصلي — كلها مغلّفة بمهلة، فمفيش نداء يقدر يعلّق التطبيق.
-async function prefGet(key: string): Promise<string | null> {
+async function fileGet(key: string): Promise<string | null> {
   return withTimeout(
-    (async () => {
-      const P = await prefs();
-      const { value } = await P.get({ key });
-      return value ?? null;
+    (async (): Promise<string | null> => {
+      try {
+        const { Filesystem, Directory, Encoding } = await fsMod();
+        const res = await Filesystem.readFile({ path: fileNameFor(key), directory: Directory.Data, encoding: Encoding.UTF8 });
+        return typeof res.data === "string" ? res.data : null;
+      } catch {
+        return null; // الملف مش موجود أو خطأ — نرجع فاضي
+      }
     })(),
     null,
   );
 }
-function prefSet(key: string, value: string): void {
+function fileSet(key: string, value: string): void {
   void withTimeout(
     (async () => {
       try {
-        const P = await prefs();
-        await P.set({ key, value });
-      } catch {
-        /* تجاهل */
-      }
+        const { Filesystem, Directory, Encoding } = await fsMod();
+        await Filesystem.writeFile({ path: fileNameFor(key), directory: Directory.Data, encoding: Encoding.UTF8, data: value });
+      } catch { /* */ }
     })(),
     undefined,
   );
 }
-function prefRemove(key: string): void {
+function fileRemove(key: string): void {
   void withTimeout(
     (async () => {
       try {
-        const P = await prefs();
-        await P.remove({ key });
-      } catch {
-        /* تجاهل */
-      }
+        const { Filesystem, Directory } = await fsMod();
+        await Filesystem.deleteFile({ path: fileNameFor(key), directory: Directory.Data });
+      } catch { /* */ }
     })(),
     undefined,
   );
 }
 
 /**
- * اختبار ذاتي: بيكتب قيمة في التخزين الأصلي ويقراها ويمسحها — عشان نتأكد إن
- * المكوّن مربوط وشغّال فعلاً في البناء (مش بس متسجّل في JS). بمهلة أمان فمايعلّقش.
- * "ok" = شغّال · "hang" = المكوّن مش بيردّ (ربط SPM ناقص) · "error"/"n/a" = مش متاح.
+ * اختبار ذاتي: بيكتب/يقرا/يمسح ملف — عشان نتأكد إن المكوّن شغّال في البناء.
+ * "ok" شغّال · "hang" مش بيردّ · "error"/"n/a" مش متاح.
  */
-export async function preferencesSelfTest(): Promise<"ok" | "hang" | "error" | "n/a"> {
-  if (!preferencesAvailable) return "n/a";
+export async function nativeStorageSelfTest(): Promise<"ok" | "hang" | "error" | "n/a"> {
+  if (!nativeStorageAvailable) return "n/a";
   const key = "__pk_selftest__";
   const val = String(Date.now());
   return withTimeout(
     (async (): Promise<"ok" | "error"> => {
       try {
-        const P = await prefs();
-        await P.set({ key, value: val });
-        const got = await P.get({ key });
-        await P.remove({ key });
-        return got.value === val ? "ok" : "error";
+        const { Filesystem, Directory, Encoding } = await fsMod();
+        await Filesystem.writeFile({ path: fileNameFor(key), directory: Directory.Data, encoding: Encoding.UTF8, data: val });
+        const res = await Filesystem.readFile({ path: fileNameFor(key), directory: Directory.Data, encoding: Encoding.UTF8 });
+        await Filesystem.deleteFile({ path: fileNameFor(key), directory: Directory.Data });
+        return res.data === val ? "ok" : "error";
       } catch {
         return "error";
       }
@@ -135,32 +123,26 @@ export async function preferencesSelfTest(): Promise<"ok" | "hang" | "error" | "
 }
 
 /**
- * محوّل تخزين متوافق مع Supabase — يُستخدم فقط لما preferencesAvailable = true.
- *
- * **localStorage-first** في القراءة: الفتح العادي بيلاقي الجلسة في localStorage
- * فيرجّعها **فوراً** (فتح سريع، مافيش انتظار للمكوّن الأصلي). التخزين الأصلي
- * بيُقرأ **بس لو localStorage فاضي** — يعني iOS مسحه، وهي الحالة النادرة اللي
- * عايزين نغطّيها. الكتابة بتروح للاتنين، فالتخزين الأصلي دايماً فيه نسخة
- * للاسترجاع بعد المسح.
+ * محوّل تخزين متوافق مع Supabase — يُستخدم فقط لما nativeStorageAvailable = true.
+ * localStorage-first في القراءة (فتح سريع)، والملف نسخة دائمة تعيش عبر مسح iOS.
  */
-export const preferencesStorage = {
+export const nativeSessionStorage = {
   async getItem(key: string): Promise<string | null> {
     const local = lsGet(key);
     if (local != null) {
-      prefSet(key, local); // خلفية: اضمن نسخة أصلية للاسترجاع بعد مسح iOS
+      fileSet(key, local); // خلفية: اضمن نسخة في الملف للاسترجاع بعد مسح iOS
       return local;
     }
-    // localStorage فاضي (غالباً iOS مسحه) → استرجع من التخزين الأصلي (بمهلة).
-    const fromPref = await prefGet(key);
-    if (fromPref != null) lsSet(key, fromPref);
-    return fromPref;
+    const fromFile = await fileGet(key);
+    if (fromFile != null) lsSet(key, fromFile);
+    return fromFile;
   },
   async setItem(key: string, value: string): Promise<void> {
-    lsSet(key, value); // فوري — الجلسة دايماً موجودة قصير المدى.
-    prefSet(key, value); // في الخلفية — يعيش عبر مسح iOS.
+    lsSet(key, value);
+    fileSet(key, value);
   },
   async removeItem(key: string): Promise<void> {
     lsRemove(key);
-    prefRemove(key);
+    fileRemove(key);
   },
 };

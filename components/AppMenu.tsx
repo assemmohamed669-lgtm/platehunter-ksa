@@ -17,7 +17,7 @@ import { subStatus } from "@/lib/subscription";
 import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
-import { preferencesSelfTest, preferencesAvailable } from "@/lib/authStorage";
+import { nativeStorageSelfTest, nativeStorageAvailable } from "@/lib/authStorage";
 
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
@@ -49,11 +49,11 @@ export default function AppMenu({
   const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   // اختبار ذاتي لتخزين الدخول الأصلي — بيتشغّل أول ما القائمة تتفتح (مؤقّت للتشخيص).
-  const [storeTest, setStoreTest] = useState<string>(preferencesAvailable ? "…" : "غير مفعّل");
+  const [storeTest, setStoreTest] = useState<string>(nativeStorageAvailable ? "…" : "غير مفعّل");
   useEffect(() => {
-    if (!open || !preferencesAvailable) return;
+    if (!open || !nativeStorageAvailable) return;
     let alive = true;
-    preferencesSelfTest().then((r) => {
+    nativeStorageSelfTest().then((r) => {
       if (!alive) return;
       setStoreTest(r === "ok" ? "✅ شغّال" : r === "hang" ? "⏳ معلّق (ربط ناقص)" : "⚠️ غير متاح");
     });
