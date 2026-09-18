@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { preferencesStorage, preferencesAvailable } from "./authStorage";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
@@ -16,5 +17,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    // على النسخة الأصلية الجديدة بس: نخزّن الجلسة في التخزين الأصلي للتليفون
+    // (Preferences) عشان iOS مايمسحهاش. غير كده (ويب/النسخ القديمة) = undefined
+    // → Supabase يستخدم localStorage الافتراضي زي ما هو بالظبط (صفر تغيير).
+    storage: preferencesAvailable ? preferencesStorage : undefined,
   },
 });
