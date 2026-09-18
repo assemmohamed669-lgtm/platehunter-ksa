@@ -96,7 +96,6 @@ function toImageTable(rows: WantedRow[], colOrder: string[], mode: OrderMode): {
 
 export default function WantedPage() {
   const [sorting, setSorting] = useState(false);
-  const [diag, setDiag] = useState("");   // سطر تشخيص مؤقّت — يوضّح فين الفرز بيقف
   const [sorted, setSorted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dataRows, setDataRows] = useState<WantedRow[]>([]);
@@ -333,8 +332,6 @@ export default function WantedPage() {
         });
       }
 
-      const dataCount = bigMeta ? bigMeta.rowCount : (dataRec?.rows.length ?? 0);
-      setDiag(`تشخيص — مطلوبين: ${wanted.size} · صفوف داتا: ${dataCount}${bigMeta ? " (كبير/متدفّق)" : ""} · إضافية: ${extraDataRecs.length} · سجلات: ${fieldEntries.length} · تطابق: ${dRows.length}+${rRows.length}`);
       setDataRows(dRows); setRecordRows(rRows); setSorted(true);
       persist(dRows, rRows, true);
     } catch (err) {
@@ -397,8 +394,6 @@ export default function WantedPage() {
       </button>
 
       {error && <p className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-center text-sm text-danger" dir="rtl">{error}</p>}
-
-      {diag && <p className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-center text-[11px] text-muted" dir="rtl">{diag}</p>}
 
       {/* بحث عن شهادة السحب — برقم اللوحة أو الهيكل، من Google Drive */}
       <CertificateSearch />
