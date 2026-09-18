@@ -35,6 +35,7 @@ import { fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type FieldFi
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
 import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyShareText } from "@/lib/share";
@@ -1258,6 +1259,12 @@ export default function InstantCheckPage() {
   // Owner of new field-check rows — so a shared device doesn't mix two agents.
   const agentIdRef = useRef<string | null>(null);
   const [syncingRecords, setSyncingRecords] = useState(false);
+  /**
+   * آخر فشل مزامنة — بيتعرض فوق شيت السجلات.
+   * مندوب فضل شهر وعنده ٥٨٨ سجل محلي و١ على السيرفر، لأن الفشل كان بيتبلع
+   * في صمت (`.catch(() => {})`). التحذير ده هو اللي بيمنع تكرارها.
+   */
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
 
   // «مزامنة» — يرفع سجلات التشييك (شيت السجلات) للسيرفر تدريجياً: أول ضغطة كله،
   // وبعدين الجديد فقط (سريع). بيعرض نتيجة قصيرة.
@@ -1267,6 +1274,7 @@ export default function InstantCheckPage() {
     setSyncingRecords(true);
     try {
       const res = await pushPendingFieldChecks(uid);
+      setSyncWarning(syncFailureMessage(res));
       if (res.error) alert(`❌ فشل المزامنة:\n${res.error}`);
       else if (res.pending === 0) alert("مفيش سجلات جديدة — الكل متزامن ✅");
       else alert(`✅ اترفع ${res.synced} من ${res.pending} سجل للسيرفر.`);
@@ -1299,7 +1307,10 @@ export default function InstantCheckPage() {
           setRestoreProgress({ done, total });
           if (done > 0) void getAllFieldCheckEntries(uid).then(setFieldEntries).catch(() => {});
         });
-        pushPendingFieldChecks(uid).catch(() => {}); // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع
+        // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع. ولو فشل، **يبان** مش يتبلع.
+        void pushPendingFieldChecks(uid)
+          .then((r) => setSyncWarning(syncFailureMessage(r)))
+          .catch(() => {});
         setFieldEntries(await getAllFieldCheckEntries(uid));
         // سجلات الشاص: استرجاع من السيرفر + رفع المحلي (نفس فكرة اللوحات).
         await restoreChassisRecords(uid);
@@ -2322,7 +2333,9 @@ export default function InstantCheckPage() {
     const uid = agentIdRef.current;
     if (uid) {
       if (removed.length > 0) void pushFieldCheckDeletes(uid).catch(() => {});
-      void pushPendingFieldChecks(uid).catch(() => {});
+      void pushPendingFieldChecks(uid)
+        .then((r) => setSyncWarning(syncFailureMessage(r)))
+        .catch(() => {});
     }
     setPlatesEditorOpen(false);
   }
@@ -5737,6 +5750,14 @@ export default function InstantCheckPage() {
 
       {/* سجلاتي / سجلات المجموعة — نفس المكان اللي المندوب بيفتحه كل يوم، عشان
           السجلات المشتركة ماتفضلش مخبّية في القايمة. */}
+      {/* آخر مزامنة فشلت — لازم يبان، وإلا المندوب يفضل شغّال وسجلاته مش
+          واصلة لمسئول مجموعته (حصلت فعلاً: ٥٨٨ محلي مقابل ١ على السيرفر). */}
+      {mode === "sheet" && syncWarning && (
+        <div className="mb-3 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2.5 text-[12px] font-bold leading-relaxed text-danger" dir="rtl">
+          {syncWarning}
+        </div>
+      )}
+
       {mode === "sheet" && hasTeam && (
         <div className="mb-3 flex gap-1.5">
           {([["mine", "سجلاتي"], ["group", "سجلات المجموعة"]] as Array<["mine" | "group", string]>).map(([k, label]) => (
