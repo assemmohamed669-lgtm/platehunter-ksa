@@ -121,3 +121,74 @@ describe("🔒 الأمان — لوحتين حقيقيتين مايتلمسوش
     )).toBe("none");
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  قراءة النطق الكامل مقابل قراءة النافذة المقطوعة
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 🔴 **بلاغ المالك (٤ سبتمبر ٢٠٢٦):** المندوب قال «ردي٧٢٦٥». البرنامج طلّع
+ * `ردي7365` الأول، وبعدها `ردي7265`. ولاحظ إن **آخر قراءة دايماً هي الصح**.
+ *
+ * وده **مش صدفة، له سبب في الكود**: المحرك بيقرا بطريقتين —
+ *   · **نافذة ثابتة ٥ث كل ١.٥ث** ⇒ بتقطع اللوحة البطيئة في نصها ⇒ قراءة جزئية.
+ *   · **النطق كامل** (بعد ما السكوت يجي) ⇒ اللوحة كلها مرة واحدة ⇒ أدق.
+ * النافذة بتوصل **الأول** (كل ١.٥ث) والنطق الكامل بيوصل **بعدها** (محتاج ٩٠٠
+ * مللي سكوت). فـ«الأخيرة صح» فعلياً معناها **«النطق الكامل صح»**.
+ *
+ * فبدل قاعدة «الأحدث تكسب» (تخمين على التوقيت)، بنستخدم **«الكامل يكسب
+ * المقطوع»** — سبب هندسي، ومايتأثرش بترتيب وصول الردود من السيرفر.
+ *
+ * ⚠️ لسه محكوم بقيد «نفس النطق» (≤٢ث): لوحتين حقيقيتين ورا بعض مايتلمسوش.
+ */
+describe("النطق الكامل مقابل النافذة المقطوعة", () => {
+  const T = 10_000;
+  it("🔴 قراءة النطق الكامل تكسب قراءة النافذة — حتى لو الاتنين مؤكّدين", () => {
+    // ده بالظبط بلاغ ردي7365 / ردي7265
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7265", mult: 2, conf: 0.8, tMs: T + 900, fromUtterance: true },
+      { letters: "ردي", digits: "7365", mult: 2, conf: 0.9, tMs: T, fromUtterance: false },
+    )).toBe("drop-twin");
+  });
+
+  it("النافذة ما تكسبش النطق الكامل حتى لو ثقتها أعلى", () => {
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7365", mult: 2, conf: 0.99, tMs: T + 900, fromUtterance: false },
+      { letters: "ردي", digits: "7265", mult: 2, conf: 0.5, tMs: T, fromUtterance: true },
+    )).toBe("drop-incoming");
+  });
+
+  it("🔴 نطقين مختلفين (فرق > ٢ث) مايتلمسوش مهما كان المصدر", () => {
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7265", mult: 2, conf: 0.8, tMs: T + 4000, fromUtterance: true },
+      { letters: "ردي", digits: "7365", mult: 2, conf: 0.9, tMs: T, fromUtterance: false },
+    )).toBe("none");
+  });
+
+  it("🔴 الاتنين من نطق كامل ⇒ ماتلمسش (مافيش سبب نفضّل واحدة)", () => {
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7265", mult: 2, conf: 0.8, tMs: T + 500, fromUtterance: true },
+      { letters: "ردي", digits: "7365", mult: 2, conf: 0.9, tMs: T, fromUtterance: true },
+    )).toBe("none");
+  });
+
+  it("الاتنين من نوافذ ⇒ ماتلمسش (السلوك القديم زي ما هو)", () => {
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7265", mult: 2, conf: 0.8, tMs: T + 500, fromUtterance: false },
+      { letters: "ردي", digits: "7365", mult: 2, conf: 0.9, tMs: T, fromUtterance: false },
+    )).toBe("none");
+  });
+
+  it("مصدر مش VoiceX ⇒ الحارس يتخطّى حتى مع علم النطق الكامل", () => {
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7265", tMs: T + 500, fromUtterance: true },
+      { letters: "ردي", digits: "7365", tMs: T, fromUtterance: false },
+    )).toBe("none");
+  });
+
+  it("🔴 مش توأم أصلاً ⇒ ماتلمسش مهما كان المصدر (لوحتين مختلفتين)", () => {
+    expect(twinGuardDecision(
+      { letters: "ردي", digits: "7265", mult: 2, conf: 0.8, tMs: T + 500, fromUtterance: true },
+      { letters: "سبك", digits: "1122", mult: 2, conf: 0.9, tMs: T, fromUtterance: false },
+    )).toBe("none");
+  });
+});
