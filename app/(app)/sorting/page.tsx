@@ -623,6 +623,11 @@ export default function SortingPage() {
   // المسئول بيرفع، والأعضاء **بيفرزوا عليها بس**. الحالة «off» معناها الميزة
   // مقفولة للمجموعة دي ⇒ مافيش أي مربع بيظهر والصفحة زي ما هي بالظبط.
   const [teamData, setTeamData] = useState<TeamDataState>({ role: "off", team: null, file: null });
+  /**
+   * دور المندوب في داتا المجموعة — في `ref` كمان عشان دوال الرفع/المسح تقراه
+   * وقت التنفيذ مش وقت ما اتعرّفت (نفس فخ التوقيت بتاع سجلات المجموعة).
+   */
+  const teamDataRef = useRef<TeamDataState>({ role: "off", team: null, file: null });
   const [teamTable, setTeamTable] = useState<ExcelTable | null>(null);
   const [teamBusy, setTeamBusy] = useState(false);
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
@@ -636,6 +641,7 @@ export default function SortingPage() {
   const syncTeamData = useCallback(async () => {
     const state = await fetchTeamDataState();
     setTeamData(state);
+    teamDataRef.current = state;
     if (state.role === "off") { setTeamTable(null); return; }
 
     const local = await getUploadedFile("local", TEAM_DATA_SLOT).catch(() => null);
@@ -1543,6 +1549,21 @@ export default function SortingPage() {
       setDataTable(table); setDataFile(file); setDataPlateColOverride(null);
       setOutputCols(new Set(defaultDataCols(table.headers, table.rows, detectPlateColumn(table.headers, table.rows))));
       setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
+      // **المسئول**: مربع الداتا بتاعه هو نفسه داتا المجموعة — بيرفع في مكانه
+      // الطبيعي والملف بينزل عند مناديبه تلقائي. من غير كده كان بيفرز على ملف
+      // زيادة مش عندهم، فنتيجته تطلع أكبر من نتيجتهم من غير ما حد يفهم ليه.
+      const td = teamDataRef.current;
+      if (td.role === "leader" && td.team) {
+        setTeamBusy(true); setTeamMsg(null);
+        const col = resolveDataPlateCol(table.headers, table.rows, null);
+        const plates = col
+          ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col] ?? "")))).filter(Boolean)).size
+          : 0;
+        const res = await uploadTeamData(td.team, file, table.rows.length, plates);
+        setTeamBusy(false);
+        if (!res.ok) setTeamMsg(`تعذّر رفع الداتا للمجموعة: ${res.error}`);
+        else await syncTeamData();
+      }
     } else {
       setReferralTable(table); setReferralFile(file); setReferralPlateColOverride(null);
       const p = detectPlateColumn(table.headers, table.rows);
@@ -1589,6 +1610,14 @@ export default function SortingPage() {
   }, [handleMultiSheetData]);
 
   async function clearSlot(slot: "data" | "referral") {
+    const td = teamDataRef.current;
+    // المسئول: الملف ده عند مناديبه كمان — المسح بيشيله من عندهم، فبنسأل.
+    if (slot === "data" && td.role === "leader" && td.team && td.file) {
+      if (!confirm("الملف ده نازل عند مناديب مجموعتك — مسحه هيشيله من عندهم كمان. متأكد؟")) return;
+      setTeamBusy(true);
+      await deleteTeamData(td.team);
+      setTeamBusy(false);
+    }
     await deleteUploadedFile("local", slot);
     if (slot === "data") {
       setDataStreamed(false); setDataStreamMeta(null); await clearBigData("data");
@@ -1784,7 +1813,9 @@ export default function SortingPage() {
     }
     // داتا المجموعة — بتتفرز زي أي داتا. الأعضاء مايقدروش يفتحوها ولا
     // يحمّلوها، بس الفرز عليها شغّال (ده كل الهدف منها).
-    if (teamTable) {
+    // المسئول عنده **نفس الملف** في مربع الداتا بتاعه (هو اللي رفعه)، فإضافته
+    // تاني هنا كانت هتفرز عليه مرتين وتطلّع كل لوحة مكررة.
+    if (teamTable && teamData.role !== "leader") {
       const pc = resolveDataPlateCol(teamTable.headers, teamTable.rows, effectiveDataPlateCol);
       if (pc) srcs.push({ rows: teamTable.rows, plateCol: pc });
     }
@@ -2971,7 +3002,9 @@ export default function SortingPage() {
       <FileUploadBox
         title={extraData.length > 0 ? "ملف الداتا 1" : "ملف الداتا"}
         loadedAccent="data"
-        hint="بيانات التفريغ الميداني"
+        hint={teamData.role === "leader"
+          ? "بينزل عند مناديب مجموعتك تلقائي — يفرزوا عليه بس"
+          : "بيانات التفريغ الميداني"}
         parsedFile={dataFile}
         parsedRowCount={dataStreamed && dataStreamMeta ? dataStreamMeta.rowCount : (dataTable?.rows.length ?? null)}
         onParsed={(table, file) => ((table.allSheetNames?.length ?? 0) > 1
@@ -3028,51 +3061,11 @@ export default function SortingPage() {
       {/* ── داتا المجموعة ────────────────────────────────────────────────────
           المسئول: مربع رفع عادي. العضو: مربع **مقفول** — اسم الملف وعدد
           اللوحات بس، من غير فتح ولا تحميل ولا تغيير ولا مسح. */}
-      {teamData.role === "leader" && (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="text-xs font-bold text-primary">داتا المجموعة (إنت المسئول)</span>
-            {teamData.file && (
-              <button
-                onClick={async () => {
-                  if (!teamData.team || !confirm("متأكد تمسح داتا المجموعة؟ هتتشال من عند كل المناديب.")) return;
-                  setTeamBusy(true);
-                  const ok = await deleteTeamData(teamData.team);
-                  setTeamBusy(false);
-                  if (!ok) { alert("تعذّر المسح — جرّب تاني."); return; }
-                  await syncTeamData();
-                }}
-                disabled={teamBusy}
-                className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition hover:border-danger/50 hover:text-danger disabled:opacity-40">
-                <Trash2 size={12} /> مسح
-              </button>
-            )}
-          </div>
-          <FileUploadBox
-            title="داتا المجموعة"
-            loadedAccent="data"
-            hint="بتنزل عند مناديب مجموعتك للفرز بس — مايقدروش يفتحوها ولا يمسحوها"
-            parsedFile={teamData.file ? new File([new Blob()], teamData.file.fileName) : null}
-            parsedRowCount={teamData.file?.rowCount ?? null}
-            plateCount={teamData.file?.plateCount ?? null}
-            onParsed={async (table, file) => {
-              if (!teamData.team) return;
-              setTeamBusy(true); setTeamMsg(null);
-              const col = resolveDataPlateCol(table.headers, table.rows, null);
-              const plates = col
-                ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col] ?? "")))).filter(Boolean)).size
-                : 0;
-              const res = await uploadTeamData(teamData.team, file, table.rows.length, plates);
-              setTeamBusy(false);
-              if (!res.ok) { setTeamMsg(`تعذّر الرفع: ${res.error}`); return; }
-              await syncTeamData();
-            }}
-            onClear={() => { /* المسح من الزر اللي فوق — بيشيلها من عند الكل */ }}
-            showReplaceButtons
-          />
-          {teamBusy && <p className="px-0.5 text-[11px] font-bold text-primary">جارٍ…</p>}
-          {teamMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{teamMsg}</p>}
-        </div>
+      {/* حالة رفع داتا المجموعة (للمسئول) — بتظهر تحت مربع الداتا مباشرة. */}
+      {teamData.role === "leader" && (teamBusy || teamMsg) && (
+        <p className={`px-0.5 text-[11px] font-bold ${teamMsg ? "text-danger" : "text-primary"}`}>
+          {teamMsg ?? "جارٍ رفع الداتا لمجموعتك…"}
+        </p>
       )}
 
       {teamData.role === "member" && teamData.file && (
