@@ -14,6 +14,7 @@ import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, load
 import { ChevronDown } from "lucide-react";
 import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
+import { getDataMeta, getSampleRows, iterateRows } from "@/lib/dataStore";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { resolveDataPlateCol } from "@/lib/dataSources";
@@ -154,7 +155,6 @@ export default function WantedPage() {
         if (!rec) break;
         extraDataRecs.push(rec);
       }
-      const allDataRecs = [dataRec, ...extraDataRecs].filter(Boolean) as NonNullable<typeof dataRec>[];
 
       if (!checkRec) { setError("مفيش ملف تشييك (المطلوبين). ارفعه من صفحة التشييك الأول."); setSorting(false); return; }
       const checkCol = detectPlateColumn(checkRec.headers, checkRec.rows);
@@ -186,11 +186,14 @@ export default function WantedPage() {
       const yearOf = (norm: string) => (yearCheckCol ? String(checkRowByNorm.get(norm)?.[yearCheckCol] ?? "").trim() : "");
 
       // (١) مطابقة على كل ملفات الداتا (الأساسي + الإضافية) — بترتيب الملفات ثم
-      // الداتا (مناطق تحت بعضها).
+      // الداتا (مناطق تحت بعضها). الملف الأساسي الكبير (>3MB) بيكون متخزّن في
+      // dataStore (streaming) مش في getUploadedFile — فبنقراه متدفّق زي صفحة الفرز
+      // عشان الآيفون مايكرّشش ومايطلّعش صفر.
       const dRows: WantedRow[] = [];
       let di = 0;
       // قائمة الداتا المرتّبة كاملة (كل الصفوف) — لميزة «موقعها» (جيران نفس الشارع).
-      // dataIdx على كل صف مطابق = موضعه هنا. عمود الموقع/اللوحة من أول ملف داتا.
+      // بتتبني للملفات الصغيرة (الذاكرة) بس؛ الملف الكبير المتدفّق بنسيبها فاضية
+      // (المطابقات بتظهر عادي، وميزة «موقعها» بتتحسب وقت الطلب زي الفرز).
       const orderedData: Record<string, string>[] = [];
       let neighborLocCol: string | null = null;
       let neighborPlateCol = "";
@@ -198,56 +201,100 @@ export default function WantedPage() {
       // عمود أول ملف داتا بيبقى الاحتياطي لباقي الملفات — من غيره الملف اللي
       // الكشف مالقاش فيه دليل بيتفرز على **أول عمود** فمايطلّعش ولا سيارة.
       let baseDataCol: string | null = null;
-      for (const rec of allDataRecs) {
+
+      function setupNeighbors(headers: string[], dataCol: string) {
+        if (neighborPlateCol) return;
+        neighborPlateCol = dataCol;
+        neighborLocCol = detectLocationColumn(headers);
+        const t = headers.find((h) => /نوع|طراز/i.test(h)) ?? headers.find((h) => /ماركة|صانع|vehicle|model|make/i.test(h));
+        const addr = headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h)) ?? neighborLocCol ?? undefined;
+        neighborDetailCols = [...new Set([t, addr].filter((h): h is string => !!h && h !== dataCol))];
+      }
+      type Srcs = { typeSrc: string | null; brandSrc: string | null; addrSrc: string | null; distSrc: string | null; gpsSrc: string | null; colorSrc: string | null; yearSrc: string | null; dateSrc: string | null };
+      function srcsOf(headers: string[], sample: Record<string, string>[], dataCol: string): Srcs {
+        const resolved = resolveResultColumns(headers, sample, dataCol);
+        const s = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
+        return { typeSrc: s("type"), brandSrc: s("brand"), addrSrc: s("address"), distSrc: s("district"), gpsSrc: s("gps"), colorSrc: s("color"), yearSrc: s("year"), dateSrc: s("date") };
+      }
+      // بيرجّع صف نتيجة من صف داتا لو اللوحة مطلوبة (وإلا null). مشترك بين المسار
+      // العادي (ذاكرة) والمسار المتدفّق (dataStore).
+      function buildFromRow(row: Record<string, string>, dataCol: string, srcs: Srcs, gIdx: number): WantedRow | null {
+        const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
+        if (!norm || !wanted.has(norm)) return null;
+        const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
+        const rawGps = val(srcs.gpsSrc);
+        let mapsLink = gpsCellToLink(rawGps);
+        let coords = gpsCellCoords(rawGps);
+        if (!mapsLink) {
+          const g = findGps(row);
+          if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
+        }
+        const brand = brandOf(norm) || val(srcs.brandSrc);
+        return {
+          id: `d${di++}`,
+          plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
+          norm,
+          type: val(srcs.typeSrc) || typeOfCheck(norm) || inferVehicleType(brand),
+          brand,
+          bank: bankOf(norm),
+          address: val(srcs.addrSrc),
+          district: val(srcs.distSrc),
+          color: colorOf(norm) || val(srcs.colorSrc),
+          year: yearOf(norm) || val(srcs.yearSrc),
+          date: val(srcs.dateSrc),
+          mapsLink,
+          lat: coords?.lat,
+          lng: coords?.lng,
+          dataIdx: gIdx,
+        };
+      }
+
+      // (١-أ) الملف الأساسي الكبير في dataStore — متدفّق (مايتحملش في الذاكرة).
+      const bigMeta = await getDataMeta("data");
+      if (bigMeta) {
+        const sample = await getSampleRows(50);
+        const dataCol = resolveDataPlateCol(bigMeta.headers, sample, baseDataCol) || bigMeta.plateCol;
+        if (dataCol) {
+          baseDataCol ??= dataCol;
+          setupNeighbors(bigMeta.headers, dataCol);
+          const srcs = srcsOf(bigMeta.headers, sample, dataCol);
+          let gj = 0;
+          await iterateRows(async (batch) => {
+            for (const row of batch) {
+              const wr = buildFromRow(row, dataCol, srcs, gj++);
+              if (wr) dRows.push(wr);
+            }
+            await new Promise<void>((r) => setTimeout(r, 0)); // yield — مايجمّدش الواجهة
+          }, { slot: "data" });
+        }
+      } else if (dataRec) {
+        // (١-ب) ملف أساسي صغير في الذاكرة — بنبني orderedData كمان لميزة «موقعها».
+        const dataCol = resolveDataPlateCol(dataRec.headers, dataRec.rows, baseDataCol);
+        if (dataCol) {
+          baseDataCol ??= dataCol;
+          setupNeighbors(dataRec.headers, dataCol);
+          const srcs = srcsOf(dataRec.headers, dataRec.rows, dataCol);
+          for (const row of dataRec.rows) {
+            const gIdx = orderedData.length;
+            orderedData.push(row);
+            const wr = buildFromRow(row, dataCol, srcs, gIdx);
+            if (wr) dRows.push(wr);
+          }
+        }
+      }
+
+      // (١-ج) ملفات الداتا الإضافية (data-2, data-3...) — صغيرة، من getUploadedFile.
+      for (const rec of extraDataRecs) {
         const dataCol = resolveDataPlateCol(rec.headers, rec.rows, baseDataCol);
         if (!dataCol) continue;
         baseDataCol ??= dataCol;
-        if (!neighborPlateCol) {
-          neighborPlateCol = dataCol;
-          neighborLocCol = detectLocationColumn(rec.headers);
-          // العمودان جنب اللوحة في نافذة «موقعها»: نوع السيارة ثم العنوان. لو مفيش
-          // عمود عنوان صريح، نستخدم عمود الموقع نفسه (اللي فيه بيانات الموقع فعلاً).
-          const t = rec.headers.find((h) => /نوع|طراز/i.test(h)) ?? rec.headers.find((h) => /ماركة|صانع|vehicle|model|make/i.test(h));
-          const addr = rec.headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h)) ?? neighborLocCol ?? undefined;
-          neighborDetailCols = [...new Set([t, addr].filter((h): h is string => !!h && h !== dataCol))];
-        }
-        // أعمدة الداتا بالمحتوى/الاسم (نوع/عنوان/حي/GPS/لون/سنة/تاريخ) — لكل ملف.
-        const resolved = resolveResultColumns(rec.headers, rec.rows, dataCol);
-        const srcOf = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
-        const typeSrc = srcOf("type"), brandSrc = srcOf("brand"), addrSrc = srcOf("address"), distSrc = srcOf("district");
-        const gpsSrc = srcOf("gps"), colorSrc = srcOf("color"), yearSrc = srcOf("year"), dateSrc = srcOf("date");
+        setupNeighbors(rec.headers, dataCol);
+        const srcs = srcsOf(rec.headers, rec.rows, dataCol);
         for (const row of rec.rows) {
           const gIdx = orderedData.length;
           orderedData.push(row);
-          const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
-          if (!norm || !wanted.has(norm)) continue;
-          const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
-          // GPS من عمود الداتا زي ما هو (رابط/إحداثيات بأي صيغة)، وإلا نمسح باقي الأعمدة.
-          const rawGps = val(gpsSrc);
-          let mapsLink = gpsCellToLink(rawGps);
-          let coords = gpsCellCoords(rawGps);
-          if (!mapsLink) {
-            const g = findGps(row);
-            if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
-          }
-          const brand = brandOf(norm) || val(brandSrc);
-          dRows.push({
-            id: `d${di++}`,
-            plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm,
-            norm,
-            type: val(typeSrc) || typeOfCheck(norm) || inferVehicleType(brand),
-            brand,
-            bank: bankOf(norm),
-            address: val(addrSrc),
-            district: val(distSrc),
-            color: colorOf(norm) || val(colorSrc),
-            year: yearOf(norm) || val(yearSrc),
-            date: val(dateSrc),
-            mapsLink,
-            lat: coords?.lat,
-            lng: coords?.lng,
-            dataIdx: gIdx,
-          });
+          const wr = buildFromRow(row, dataCol, srcs, gIdx);
+          if (wr) dRows.push(wr);
         }
       }
       wantedNeighborData = { orderedData, locCol: neighborLocCol, plateCol: neighborPlateCol, detailCols: neighborDetailCols };
@@ -286,7 +333,8 @@ export default function WantedPage() {
         });
       }
 
-      setDiag(`تشخيص — مطلوبين: ${wanted.size} · ملفات داتا: ${allDataRecs.length} · صفوف داتا: ${orderedData.length} · سجلات: ${fieldEntries.length} · تطابق داتا: ${dRows.length} · تطابق سجلات: ${rRows.length}`);
+      const dataCount = bigMeta ? bigMeta.rowCount : (dataRec?.rows.length ?? 0);
+      setDiag(`تشخيص — مطلوبين: ${wanted.size} · صفوف داتا: ${dataCount}${bigMeta ? " (كبير/متدفّق)" : ""} · إضافية: ${extraDataRecs.length} · سجلات: ${fieldEntries.length} · تطابق: ${dRows.length}+${rRows.length}`);
       setDataRows(dRows); setRecordRows(rRows); setSorted(true);
       persist(dRows, rRows, true);
     } catch (err) {
