@@ -17,7 +17,8 @@ let package = Package(
         .package(name: "CapacitorFilesystem", path: "../../../node_modules/@capacitor/filesystem"),
         .package(name: "CapacitorGeolocation", path: "../../../node_modules/@capacitor/geolocation"),
         .package(name: "CapacitorShare", path: "../../../node_modules/@capacitor/share"),
-        .package(name: "IndependoCapacitorVoiceRecorder", path: "../../../node_modules/@independo/capacitor-voice-recorder")
+        .package(name: "IndependoCapacitorVoiceRecorder", path: "../../../node_modules/@independo/capacitor-voice-recorder"),
+        .package(name: "CapacitorPreferences", path: "../../../node_modules/@capacitor/preferences")
     ],
     targets: [
         .target(
@@ -30,7 +31,8 @@ let package = Package(
                 .product(name: "CapacitorFilesystem", package: "CapacitorFilesystem"),
                 .product(name: "CapacitorGeolocation", package: "CapacitorGeolocation"),
                 .product(name: "CapacitorShare", package: "CapacitorShare"),
-                .product(name: "IndependoCapacitorVoiceRecorder", package: "IndependoCapacitorVoiceRecorder")
+                .product(name: "IndependoCapacitorVoiceRecorder", package: "IndependoCapacitorVoiceRecorder"),
+                .product(name: "CapacitorPreferences", package: "CapacitorPreferences")
             ]
         )
     ]
