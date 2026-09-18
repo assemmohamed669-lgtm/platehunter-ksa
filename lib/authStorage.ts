@@ -1,22 +1,49 @@
 /**
- * تخزين جلسة الدخول (Supabase auth) في **التخزين الأصلي للتليفون** بدل تخزين
- * الويب — عشان iOS/WebKit مايمسحش الجلسة فالمندوب مايتسجّلش خروج لوحده.
+ * تخزين جلسة الدخول (Supabase auth) في **التخزين الأصلي للتليفون** (Preferences)
+ * عشان iOS/WebKit مايمسحش الجلسة فالمندوب مايتسجّلش خروج لوحده.
  *
- * أمان الانتقال: بنستخدم Capacitor Preferences **بس لو المكوّن الأصلي موجود
- * فعلاً** (النسخة الجديدة). على الويب وعلى النسخ القديمة المنزّلة دلوقتي
- * (اللي مافيهاش المكوّن) `preferencesAvailable` = false، و supabaseClient
- * بيسيب Supabase يستخدم localStorage الافتراضي بالظبط زي ما هو — يعني **صفر
- * تغيير للمستخدمين الحاليين** لحد ما ينزّلوا النسخة الجديدة.
+ * التصميم مضاد للتعليق:
+ *  - كل نداء للمكوّن الأصلي عليه **مهلة أمان** — لو ماردّش بسرعة (أو المكوّن
+ *    مش متظبّط في البناء) بنرجع لـlocalStorage فوراً، فالتطبيق **مايعلّقش أبداً**
+ *    على شاشة «جاري التحميل».
+ *  - بنكتب في **الاتنين** (localStorage فوري + Preferences في الخلفية): كده
+ *    الجلسة دايماً موجودة قصير المدى، ولو iOS مسح localStorage تفضل في التخزين
+ *    الأصلي (getItem بيفضّله).
  *
- * أول تشغيل على النسخة الجديدة: لو Preferences فاضي بننقل الجلسة الموجودة من
- * localStorage (هجرة لمرة واحدة) عشان محدش يتسجّل خروج عند التحديث.
+ * على الويب والنسخ القديمة (مافيش المكوّن) `preferencesAvailable` = false،
+ * و supabaseClient بيسيب Supabase يستخدم localStorage الافتراضي زي ما هو.
  */
 import { Capacitor } from "@capacitor/core";
 
 export const preferencesAvailable =
   Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("Preferences");
 
-// استيراد كسول للمكوّن — بس على النسخة اللي فيها المكوّن الأصلي.
+const TIMEOUT_MS = 1500;
+
+// بيرجّع fallback لو الوعد ماخلصش في الوقت المحدد أو رمى — مايعلّقش المستدعي.
+function withTimeout<T>(p: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v: T) => {
+      if (!settled) {
+        settled = true;
+        resolve(v);
+      }
+    };
+    const t = setTimeout(() => done(fallback), TIMEOUT_MS);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        done(v);
+      },
+      () => {
+        clearTimeout(t);
+        done(fallback);
+      },
+    );
+  });
+}
+
 async function prefs() {
   const { Preferences } = await import("@capacitor/preferences");
   return Preferences;
@@ -29,6 +56,13 @@ function lsGet(key: string): string | null {
     return null;
   }
 }
+function lsSet(key: string, value: string): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
+  } catch {
+    /* تجاهل */
+  }
+}
 function lsRemove(key: string): void {
   try {
     if (typeof localStorage !== "undefined") localStorage.removeItem(key);
@@ -37,48 +71,60 @@ function lsRemove(key: string): void {
   }
 }
 
-/**
- * محوّل تخزين متوافق مع Supabase (بيقبل async). بيُستخدم فقط لما
- * `preferencesAvailable` = true.
- */
-export const preferencesStorage = {
-  async getItem(key: string): Promise<string | null> {
-    try {
+// نداءات المكوّن الأصلي — كلها مغلّفة بمهلة، فمفيش نداء يقدر يعلّق التطبيق.
+async function prefGet(key: string): Promise<string | null> {
+  return withTimeout(
+    (async () => {
       const P = await prefs();
       const { value } = await P.get({ key });
-      if (value != null) return value;
-      // هجرة لمرة واحدة: الجلسة القديمة في localStorage → التخزين الأصلي.
-      const legacy = lsGet(key);
-      if (legacy != null) {
-        await P.set({ key, value: legacy });
-        return legacy;
-      }
-      return null;
-    } catch {
-      // لو المكوّن فشل لأي سبب — نرجع لـlocalStorage عشان الدخول مايتكسرش.
-      return lsGet(key);
-    }
-  },
-  async setItem(key: string, value: string): Promise<void> {
-    try {
-      const P = await prefs();
-      await P.set({ key, value });
-    } catch {
+      return value ?? null;
+    })(),
+    null,
+  );
+}
+function prefSet(key: string, value: string): void {
+  void withTimeout(
+    (async () => {
       try {
-        if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
+        const P = await prefs();
+        await P.set({ key, value });
       } catch {
         /* تجاهل */
       }
-    }
+    })(),
+    undefined,
+  );
+}
+function prefRemove(key: string): void {
+  void withTimeout(
+    (async () => {
+      try {
+        const P = await prefs();
+        await P.remove({ key });
+      } catch {
+        /* تجاهل */
+      }
+    })(),
+    undefined,
+  );
+}
+
+/** محوّل تخزين متوافق مع Supabase — يُستخدم فقط لما preferencesAvailable = true. */
+export const preferencesStorage = {
+  async getItem(key: string): Promise<string | null> {
+    const fromPref = await prefGet(key);
+    if (fromPref != null) return fromPref;
+    // فاضي في التخزين الأصلي → اقرا القديم من localStorage وانقله (best-effort).
+    const legacy = lsGet(key);
+    if (legacy != null) prefSet(key, legacy);
+    return legacy;
+  },
+  async setItem(key: string, value: string): Promise<void> {
+    lsSet(key, value); // فوري — الجلسة دايماً موجودة قصير المدى.
+    prefSet(key, value); // في الخلفية — يعيش عبر مسح iOS.
   },
   async removeItem(key: string): Promise<void> {
-    try {
-      const P = await prefs();
-      await P.remove({ key });
-    } catch {
-      /* تجاهل */
-    }
-    // نمسح النسخة القديمة كمان (لو كانت اتهاجرت).
     lsRemove(key);
+    prefRemove(key);
   },
 };
