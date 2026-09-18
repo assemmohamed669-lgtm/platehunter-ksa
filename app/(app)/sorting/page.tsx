@@ -47,6 +47,7 @@ import {
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { resolveDataPlateCol } from "@/lib/dataSources";
+import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
 import {
   fetchTeamDataState, uploadTeamData, deleteTeamData, downloadTeamData,
@@ -96,6 +97,13 @@ type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: st
 const sortCacheByMode: { new: SortCache | null; full: SortCache | null } = { new: null, full: null };
 let sortActiveMode: "new" | "full" = "new";
 let pasteResultsCache: PasteCache | null = null;
+
+/**
+ * نتيجة تحليل ورقات ملف الإحالة — بتعيش عبر التنقّل.
+ * التحليل بيفكّ الملف ويقرا كل ورقة (شغل تقيل على الخيط الرئيسي)، وكان بيتعاد
+ * كل مرة الصفحة تفتح على **نفس الملف**. البصمة بتمنع الإعادة دي.
+ */
+let refSheetsCache: { key: string; infos: SheetInfo[] } | null = null;
 // نتيجة فرز أرقام الشاص على الإحالة — كاش يعيش عبر التنقّل (زي باقي نتايج الفرز).
 let chassisSortCache: ChassisSortMatch[] | null = null;
 
@@ -441,6 +449,15 @@ export default function SortingPage() {
         if (checkRec) {
           setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
         }
+        // ── الشغل التقيل بيتعمل في الخلفية، مش قبل ما الصفحة تظهر ──────────
+        // ومعاه المربعات الإضافية: كانت بتتقري **واحد ورا التاني** (كل ملف رحلة
+        // لوحده للتخزين) قبل ما الصفحة تظهر — والمندوب اللي عنده ٣ أو ٤ ملفات
+        // كان بيستنى الرحلات كلها عشان يشوف المربع الأساسي.
+        // كان جوّه السلسلة اللي `hydrated` بيستناها، فالصفحة تفضل «جارٍ تحميل
+        // الملفات المحفوظة» لحد ما **الشبكة** ترد و**كل** سجلات المندوب تتحوّل
+        // لجدول (عشرات الآلاف من الصفوف) — وده بيتعاد كل مرة يرجع للفرز.
+        // دلوقتي الصفحة بتظهر بملفاتها المحفوظة على طول، والباقي بيلحق.
+        void (async () => {
         // شيتات الإحالة الإضافية: نبحث في slots متتابعة (referral-2, referral-3, ...)
         // لحد أول slot فاضي — كده تفضل بعد إعادة فتح التطبيق.
         try {
@@ -497,12 +514,6 @@ export default function SortingPage() {
           }
         } catch { /* no extra data files */ }
         // مين أنا + مجموعتي (لو فيه) — عشان عمود «المندوب» ومطابقة سجلات المجموعة.
-        // ── الشغل التقيل بيتعمل في الخلفية، مش قبل ما الصفحة تظهر ──────────
-        // كان جوّه السلسلة اللي `hydrated` بيستناها، فالصفحة تفضل «جارٍ تحميل
-        // الملفات المحفوظة» لحد ما **الشبكة** ترد و**كل** سجلات المندوب تتحوّل
-        // لجدول (عشرات الآلاف من الصفوف) — وده بيتعاد كل مرة يرجع للفرز.
-        // دلوقتي الصفحة بتظهر بملفاتها المحفوظة على طول، والباقي بيلحق.
-        void (async () => {
         try {
           const { data: au } = await supabase.auth.getUser();
           if (au.user) {
@@ -1163,8 +1174,12 @@ export default function SortingPage() {
   /** يحلّل ورقات ملف الإحالة ويحدّد المختار (يستعيد اختيار سابق لو موجود). */
   const analyzeReferralFile = useCallback(async (file: File) => {
     try {
-      const raw = await readAllSheetsRaw(file);
-      const infos = analyzeWorkbook(raw);
+      // نفس الملف اتحلّل قبل كده؟ نستخدم النتيجة بدل ما نفكّه تاني — ده كان
+      // بيحصل كل مرة الصفحة تفتح وبيوقف الواجهة.
+      const key = fileIdentity(file);
+      const cached = refSheetsCache && refSheetsCache.key === key ? refSheetsCache.infos : null;
+      const infos = cached ?? analyzeWorkbook(await readAllSheetsRaw(file));
+      if (!cached) refSheetsCache = { key, infos };
       const withPlates = infos.filter((s) => s.plateCount > 0);
       setRefSheets(infos);
       // اختيار محفوظ لنفس الملف؟ وإلا علّم كل الورقات اللي فيها لوحات.
