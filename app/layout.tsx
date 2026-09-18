@@ -25,8 +25,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  // ملاحظة: viewport-fit=cover **مش** هنا — بيتحط على الآيفون بس من PlatformClass.
-  // على الأندرويد cover بيخلّي المحتوى يرسم تحت شريط الحالة (تخبيص)، فبنسيبه بره.
+  // في الإعداد الأساسي (SSR) عشان env(safe-area) تشتغل موثوق من أول رسمة على iOS.
+  // (حطّه بجافاسكريبت بعد التحميل مكانش موثوق.) الأعلى والأسفل بياخدوا مسافتهم
+  // من env على النظامين — على الأندرويد cover بيرسم تحت الأشرطة فمحتاج نفس المسافة.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -37,15 +39,6 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body>
-        {/* قبل الرسم: على الآيفون بس نضيف كلاس platform-ios + viewport-fit=cover
-            عشان مسافة المنطقة الآمنة (تحت النوتش) تشتغل من أول لحظة بشكل موثوق.
-            الأندرويد مايتلمسش (بيرسم تحت شريط الحالة أصلاً، وcover بيخبّصه). */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html:
-              "(function(){try{if(/iPad|iPhone|iPod/.test(navigator.userAgent)){document.documentElement.classList.add('platform-ios');var m=document.querySelector('meta[name=viewport]');if(m){var c=m.getAttribute('content')||'';if(!/viewport-fit/.test(c))m.setAttribute('content',c+', viewport-fit=cover');}}}catch(e){}})();",
-          }}
-        />
         <PlatformClass />
         <BackButtonHandler />
         {/* Mounted here (not deep in the authenticated layout) so its listener

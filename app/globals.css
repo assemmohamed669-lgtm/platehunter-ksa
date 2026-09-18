@@ -32,12 +32,8 @@
        جاب مضاعف («باظت») ⇒ نخليها صفر. الكلاس بيتحط من PlatformClass.
      - الأسفل (--safe-bottom): على كل الأنظمة (أندرويد بيرسم تحت شريط التنقّل
        بالإيماءات، فمحتاج المسافة زي ما BottomNav بيعمل). */
-  --safe-top: 0px;
-  --safe-bottom: env(safe-area-inset-bottom);
-}
-
-html.platform-ios {
   --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
 }
 
 /* وضع التوفير — battery-saving dark mode (true-black bg for OLED screens).
