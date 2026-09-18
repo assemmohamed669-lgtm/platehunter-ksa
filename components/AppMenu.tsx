@@ -17,6 +17,7 @@ import { subStatus } from "@/lib/subscription";
 import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
+import { preferencesSelfTest, preferencesAvailable } from "@/lib/authStorage";
 
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
@@ -47,6 +48,17 @@ export default function AppMenu({
   const [stats, setStats] = useState({ field: 0, wanted: 0, rec: 0 });
   const [subEnd, setSubEnd] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // اختبار ذاتي لتخزين الدخول الأصلي — بيتشغّل أول ما القائمة تتفتح (مؤقّت للتشخيص).
+  const [storeTest, setStoreTest] = useState<string>(preferencesAvailable ? "…" : "غير مفعّل");
+  useEffect(() => {
+    if (!open || !preferencesAvailable) return;
+    let alive = true;
+    preferencesSelfTest().then((r) => {
+      if (!alive) return;
+      setStoreTest(r === "ok" ? "✅ شغّال" : r === "hang" ? "⏳ معلّق (ربط ناقص)" : "⚠️ غير متاح");
+    });
+    return () => { alive = false; };
+  }, [open]);
 
   /** اللينك يظهر للمندوب ده؟ المشترك صوت-فقط بيشوف المسموح بس — نفس سياسة
       الحارس بالظبط، فاللي بيتخفي هو اللي بيترمي، مافيش فرق بينهم. */
@@ -369,8 +381,9 @@ export default function AppMenu({
 
         {/* ── عن التطبيق ── (footer ثابت أسفل الدرج — بياخد مسافة المنطقة الآمنة
             السفلى على iOS عشان الإصدار ما يتغطّاش تحت مؤشّر الهوم/شريط التنقّل) */}
-        <div className="flex items-center gap-1.5 border-t border-border px-4 pt-3 pb-[max(0.75rem,var(--safe-bottom))] text-[11px] text-muted">
-          <Info size={12} /> قناص اللوحات — الإصدار {APP_VERSION}
+        <div className="flex flex-col gap-1 border-t border-border px-4 pt-3 pb-[max(0.75rem,var(--safe-bottom))] text-[11px] text-muted">
+          <span className="flex items-center gap-1.5"><Info size={12} /> قناص اللوحات — الإصدار {APP_VERSION}</span>
+          <span className="text-[10px]">تخزين الدخول: {storeTest}</span>
         </div>
       </div>
     </>

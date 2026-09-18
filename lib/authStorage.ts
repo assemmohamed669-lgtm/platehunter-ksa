@@ -110,6 +110,31 @@ function prefRemove(key: string): void {
 }
 
 /**
+ * اختبار ذاتي: بيكتب قيمة في التخزين الأصلي ويقراها ويمسحها — عشان نتأكد إن
+ * المكوّن مربوط وشغّال فعلاً في البناء (مش بس متسجّل في JS). بمهلة أمان فمايعلّقش.
+ * "ok" = شغّال · "hang" = المكوّن مش بيردّ (ربط SPM ناقص) · "error"/"n/a" = مش متاح.
+ */
+export async function preferencesSelfTest(): Promise<"ok" | "hang" | "error" | "n/a"> {
+  if (!preferencesAvailable) return "n/a";
+  const key = "__pk_selftest__";
+  const val = String(Date.now());
+  return withTimeout(
+    (async (): Promise<"ok" | "error"> => {
+      try {
+        const P = await prefs();
+        await P.set({ key, value: val });
+        const got = await P.get({ key });
+        await P.remove({ key });
+        return got.value === val ? "ok" : "error";
+      } catch {
+        return "error";
+      }
+    })(),
+    "hang",
+  );
+}
+
+/**
  * محوّل تخزين متوافق مع Supabase — يُستخدم فقط لما preferencesAvailable = true.
  *
  * **localStorage-first** في القراءة: الفتح العادي بيلاقي الجلسة في localStorage
