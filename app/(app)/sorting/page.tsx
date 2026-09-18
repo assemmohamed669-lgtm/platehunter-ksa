@@ -209,6 +209,17 @@ export default function SortingPage() {
   // المجموعة: الفرز بيمشي كمان على سجلات كل الأعضاء — والمطابقة بتحصل **على
   // السيرفر** (٧٠ ألف سجل ماينفعش ينزلوا على الموبايل)، والراجع هو المطابق بس.
   const [hasTeam, setHasTeam] = useState(false);
+  /**
+   * 🔴 بيانات المجموعة بتوصل من **الشبكة**، والفرز ممكن يبدأ قبلها.
+   *
+   * `hasTeam` حالة React — لو المندوب دوس «ابدأ الفرز» قبل ما الرد يوصل،
+   * سجلات المجموعة كانت **بتتخطّى في صمت** ونتيجته تطلع ناقصة عن زمايله.
+   * (حصلت فعلاً: لوحة في سجلات المسئول ظهرت عنده ومظهرتش عند مندوب تاني.)
+   *
+   * فالفرز بيستنى الوعد ده وبيقرا من الـref — مش من الحالة.
+   */
+  const teamReadyRef = useRef<Promise<void> | null>(null);
+  const hasTeamRef = useRef(false);
   const groupNamesRef = useRef<Record<string, string>>({});
   const myNameRef = useRef<string>("");
   const myIdRef = useRef<string>("");
@@ -457,7 +468,7 @@ export default function SortingPage() {
         // الملفات المحفوظة» لحد ما **الشبكة** ترد و**كل** سجلات المندوب تتحوّل
         // لجدول (عشرات الآلاف من الصفوف) — وده بيتعاد كل مرة يرجع للفرز.
         // دلوقتي الصفحة بتظهر بملفاتها المحفوظة على طول، والباقي بيلحق.
-        void (async () => {
+        const teamReady = (async () => {
         // شيتات الإحالة الإضافية: نبحث في slots متتابعة (referral-2, referral-3, ...)
         // لحد أول slot فاضي — كده تفضل بعد إعادة فتح التطبيق.
         try {
@@ -523,6 +534,7 @@ export default function SortingPage() {
             myNameRef.current = pr?.username ?? "";
             myIdRef.current = au.user.id;
             if (pr?.team) {
+              hasTeamRef.current = true;
               setHasTeam(true);
               const { data: mem } = await supabase.rpc("my_team_members");
               groupNamesRef.current = Object.fromEntries(
@@ -557,6 +569,7 @@ export default function SortingPage() {
           }
         } catch { /* no field sheet yet */ }
         })();
+        teamReadyRef.current = teamReady;
         try {
           // الكاش في الذاكرة أولاً (بيعيش عبر التنقّل)، وإلا localStorage.
           if (!sortCacheByMode.new && !sortCacheByMode.full) {
@@ -2058,7 +2071,10 @@ export default function SortingPage() {
   async function groupRecordMatches(
     index: Map<string, { row: Record<string, string>; norm: string }>,
   ): Promise<TashyeekResultRow[]> {
-    if (!hasTeam) return [];
+    // استنى بيانات المجموعة لو لسه في الطريق — من غير كده الفرز السريع بيطلع
+    // من غير سجلات المجموعة **في صمت**.
+    await teamReadyRef.current?.catch(() => {});
+    if (!hasTeamRef.current) return [];
     const norms = [...index.keys()];
     if (norms.length === 0) return [];
     const out: TashyeekResultRow[] = [];
@@ -2708,7 +2724,9 @@ export default function SortingPage() {
 
     // المندوب اللي في مجموعة بيفرز اللصق على **سجلات المجموعة كلها** كمان —
     // في نفس ويندو السجلات. المطابقة على السيرفر والراجع هو المطابق بس.
-    if (hasTeam) {
+    // (نفس فخ التوقيت بتاع الفرز العادي: نستنى بيانات المجموعة الأول.)
+    await teamReadyRef.current?.catch(() => {});
+    if (hasTeamRef.current) {
       const norms = [...new Set(
         tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean)
       )];
