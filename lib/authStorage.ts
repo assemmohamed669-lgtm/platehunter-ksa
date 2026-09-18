@@ -109,15 +109,26 @@ function prefRemove(key: string): void {
   );
 }
 
-/** محوّل تخزين متوافق مع Supabase — يُستخدم فقط لما preferencesAvailable = true. */
+/**
+ * محوّل تخزين متوافق مع Supabase — يُستخدم فقط لما preferencesAvailable = true.
+ *
+ * **localStorage-first** في القراءة: الفتح العادي بيلاقي الجلسة في localStorage
+ * فيرجّعها **فوراً** (فتح سريع، مافيش انتظار للمكوّن الأصلي). التخزين الأصلي
+ * بيُقرأ **بس لو localStorage فاضي** — يعني iOS مسحه، وهي الحالة النادرة اللي
+ * عايزين نغطّيها. الكتابة بتروح للاتنين، فالتخزين الأصلي دايماً فيه نسخة
+ * للاسترجاع بعد المسح.
+ */
 export const preferencesStorage = {
   async getItem(key: string): Promise<string | null> {
+    const local = lsGet(key);
+    if (local != null) {
+      prefSet(key, local); // خلفية: اضمن نسخة أصلية للاسترجاع بعد مسح iOS
+      return local;
+    }
+    // localStorage فاضي (غالباً iOS مسحه) → استرجع من التخزين الأصلي (بمهلة).
     const fromPref = await prefGet(key);
-    if (fromPref != null) return fromPref;
-    // فاضي في التخزين الأصلي → اقرا القديم من localStorage وانقله (best-effort).
-    const legacy = lsGet(key);
-    if (legacy != null) prefSet(key, legacy);
-    return legacy;
+    if (fromPref != null) lsSet(key, fromPref);
+    return fromPref;
   },
   async setItem(key: string, value: string): Promise<void> {
     lsSet(key, value); // فوري — الجلسة دايماً موجودة قصير المدى.
