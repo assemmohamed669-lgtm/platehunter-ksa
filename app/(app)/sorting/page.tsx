@@ -497,6 +497,12 @@ export default function SortingPage() {
           }
         } catch { /* no extra data files */ }
         // مين أنا + مجموعتي (لو فيه) — عشان عمود «المندوب» ومطابقة سجلات المجموعة.
+        // ── الشغل التقيل بيتعمل في الخلفية، مش قبل ما الصفحة تظهر ──────────
+        // كان جوّه السلسلة اللي `hydrated` بيستناها، فالصفحة تفضل «جارٍ تحميل
+        // الملفات المحفوظة» لحد ما **الشبكة** ترد و**كل** سجلات المندوب تتحوّل
+        // لجدول (عشرات الآلاف من الصفوف) — وده بيتعاد كل مرة يرجع للفرز.
+        // دلوقتي الصفحة بتظهر بملفاتها المحفوظة على طول، والباقي بيلحق.
+        void (async () => {
         try {
           const { data: au } = await supabase.auth.getUser();
           if (au.user) {
@@ -539,6 +545,7 @@ export default function SortingPage() {
             setTashyeekFile(null);
           }
         } catch { /* no field sheet yet */ }
+        })();
         try {
           // الكاش في الذاكرة أولاً (بيعيش عبر التنقّل)، وإلا localStorage.
           if (!sortCacheByMode.new && !sortCacheByMode.full) {
