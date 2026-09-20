@@ -15,10 +15,15 @@ describe("driveHealthMessage", () => {
     expect(r.text).toContain("الصلاحية");
   });
 
-  it("يقول شغّال ويذكر عدد الملفات لما درايف يرد", () => {
-    const r = driveHealthMessage({ ok: true, files: 7 });
+  it("يقول شغّال لما درايف يرد", () => {
+    const r = driveHealthMessage({ ok: true, files: 1 });
     expect(r.level).toBe("ok");
-    expect(r.text).toContain("7");
+    expect(r.text).toContain("شغّال");
+  });
+
+  it("مابيذكرش رقم — الرقم كان بيتقري كأنه عدد الشهادات أو حد أقصى للبحث", () => {
+    expect(driveHealthMessage({ ok: true, files: 1 }).text).not.toMatch(/\d/);
+    expect(driveHealthMessage({ ok: true, files: 200 }).text).not.toMatch(/\d/);
   });
 
   it("ينبّه لما الاتصال شغّال بس الحساب مش شايف ولا ملف", () => {

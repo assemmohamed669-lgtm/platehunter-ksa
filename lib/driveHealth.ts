@@ -11,7 +11,7 @@
 
 export interface DriveHealth {
   ok: boolean;
-  /** عدد ملفات الـPDF اللي درايف رجّعها في فحص خفيف (أول صفحة بس). */
+  /** بيرجّع ١ لو درايف شايف شهادات و٠ لو مش شايف — مش عدد الأرشيف. */
   files?: number;
   /** سبب الفشل زي ما رجع من السيرفر. */
   error?: string;
@@ -45,7 +45,9 @@ export function driveHealthMessage(h: DriveHealth): HealthMessage {
 
   const files = Number(h.files ?? 0);
   if (files > 0) {
-    return { level: "ok", text: `الاتصال شغّال ✅ — درايف رجّع ${files} ملف شهادة.` };
+    // من غير رقم عن قصد: الفحص بيجيب ملف واحد بس عشان يتأكد، والرقم كان
+    // بيتقري غلط كأنه عدد الشهادات كلها أو حد أقصى للبحث. ولا واحدة صح.
+    return { level: "ok", text: "الاتصال شغّال ✅ — درايف بيرد والحساب شايف الشهادات." };
   }
   return {
     level: "warn",

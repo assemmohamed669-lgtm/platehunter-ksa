@@ -29,14 +29,55 @@ export async function getDriveAccessToken(): Promise<string | null> {
 
 export interface DriveFile { id: string; name: string; webViewLink?: string }
 
-/** بحث في درايف (بيشمل الملفات المشاركة من الشركات). */
-export async function driveSearch(q: string, token: string): Promise<DriveFile[]> {
-  const url = "https://www.googleapis.com/drive/v3/files?" + new URLSearchParams({
-    q, fields: "files(id,name,webViewLink)", pageSize: "200",
-    includeItemsFromAllDrives: "true", supportsAllDrives: "true",
-  });
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) return [];
-  const d = await res.json();
-  return Array.isArray(d?.files) ? d.files : [];
+/**
+ * أقصى عدد ملفات نلمّها في بحث واحد.
+ *
+ * كنا بناخد **أول صفحة بس** (٢٠٠ ملف) وبنتجاهل `nextPageToken`. للهيكل ورقم
+ * الشهادة مالوش تأثير — النتيجة واحدة. لكن بحث **اللوحة** بيدوّر بـ٤ أرقام
+ * جوّه اسم الملف، والأرقام دي بتيجي صدفة جوّه أرقام شهادات وتواريخ في أسماء
+ * ملفات تانية؛ فلو طابقت أكتر من ٢٠٠، شهادة المندوب تبقى في الصفحة التانية
+ * والبرنامج يقوله «مفيش شهادة» وهي موجودة.
+ *
+ * الحد موجود عشان أرشيف ضخم مايعلّقش الطلب — ٢٠٠٠ = ٢ نداء لدرايف بالكتير.
+ */
+export const DRIVE_MAX_FILES = 2000;
+
+/** أقصى حجم صفحة بتقبله Drive v3. */
+const DRIVE_PAGE_SIZE = 1000;
+
+/** أعلى عدد نداءات في بحث واحد — حارس ضد سيرفر بيرجّع نفس التوكن. */
+const MAX_PAGES = 50;
+
+/**
+ * بحث في درايف (بيشمل الملفات المشاركة من الشركات)، **بيكمّل على الصفحات**
+ * لحد `maxFiles`. لو صفحة في النص فشلت بنرجّع اللي لمّيناه — أحسن من فاضي.
+ */
+export async function driveSearch(
+  q: string,
+  token: string,
+  opts: { maxFiles?: number } = {},
+): Promise<DriveFile[]> {
+  const maxFiles = Math.max(1, opts.maxFiles ?? DRIVE_MAX_FILES);
+  const out: DriveFile[] = [];
+  let pageToken = "";
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      q, fields: "nextPageToken,files(id,name,webViewLink)",
+      pageSize: String(Math.min(DRIVE_PAGE_SIZE, maxFiles - out.length)),
+      includeItemsFromAllDrives: "true", supportsAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const res = await fetch("https://www.googleapis.com/drive/v3/files?" + params,
+      { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return out;                       // أول صفحة → فاضي، وإلا اللي لمّيناه
+    const d = await res.json();
+    if (Array.isArray(d?.files)) out.push(...d.files);
+
+    pageToken = typeof d?.nextPageToken === "string" ? d.nextPageToken : "";
+    if (!pageToken || out.length >= maxFiles) break;
+  }
+
+  return out.length > maxFiles ? out.slice(0, maxFiles) : out;
 }
