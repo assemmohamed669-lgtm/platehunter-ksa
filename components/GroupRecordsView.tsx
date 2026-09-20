@@ -12,12 +12,13 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Users, Search, MapPin, AlertCircle, Pencil, Check, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, Users, Search, MapPin, AlertCircle, Pencil, Check, X, ZoomIn, ZoomOut, Trash2 } from "lucide-react";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import EditableTextCell from "@/components/EditableTextCell";
 import { NOTES_KEY, TYPE_KEY } from "@/lib/fieldCheckEdit";
 import { supabase } from "@/lib/supabaseClient";
 import { dedupeDuplicateRows } from "@/lib/fieldCheck";
+import { canDeleteGroupRecord, type GroupViewer } from "@/lib/groupAdmin";
 
 const PAGE = 100;
 
@@ -53,6 +54,9 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
   const sourceRef = useRef<Source>("plates");
   const [err, setErr] = useState<string | null>(null);
   const [meId, setMeId] = useState<string>("");          // سجلاتي أنا = القابلة للتعديل
+  // الأدمن اللي في مجموعة بيمسح أي سجل من سجلات مجموعته (RLS بيطبّقها على السيرفر).
+  const [viewer, setViewer] = useState<GroupViewer>({ id: "", role: null, team: null });
+  const [busyDel, setBusyDel] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const [zoom, setZoom] = useState(1);                    // نفس فكرة تكبير شيت السجلات
@@ -109,8 +113,9 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
       setMeId(data.user.id);
-      const { data: me } = await supabase.from("profiles").select("team").eq("id", data.user.id).single();
+      const { data: me } = await supabase.from("profiles").select("team, role").eq("id", data.user.id).single();
       const t = (me as { team?: string | null } | null)?.team ?? null;
+      setViewer({ id: data.user.id, role: (me as { role?: string | null } | null)?.role ?? null, team: t });
       if (!t) { setReady("no-team"); return; }
       setTeam(t);
       // أعضاء المجموعة عبر دالة security definer — قراءة profiles مباشرة بترجّع
@@ -138,6 +143,28 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
     setRows((list) => list.map((x) => (x.id === r.id ? { ...x, extra, primary: patch.plate ?? x.primary } : x)));
   }
 
+  /**
+   * مسح سجل من المجموعة — سجلاتي أنا، أو أي سجل لو أنا أدمن في المجموعة.
+   * السيرفر هو اللي بيقرّر فعلاً (RLS)؛ لو رفض بنقول للمستخدم بدل ما نبلعها.
+   */
+  async function deleteRow(r: Row) {
+    if (!canDeleteGroupRecord(viewer, r.agent_id, memberIdsRef.current)) return;
+    const who = names[r.agent_id] ?? "";
+    if (!window.confirm(`متأكد تمسح «${r.primary}»${who ? ` (سجّلها ${who})` : ""}؟ المسح نهائي.`)) return;
+    setBusyDel(r.id);
+    try {
+      const isCh = sourceRef.current === "chassis";
+      const { error } = await supabase
+        .from(isCh ? "chassis_records" : "field_checks")
+        .delete()
+        .eq(isCh ? "local_id" : "id", r.id);
+      if (error) { setErr("تعذّر المسح: " + error.message); return; }
+      setErr(null);
+      setRows((list) => list.filter((x) => x.id !== r.id));
+      setTotal((t) => (t != null && t > 0 ? t - 1 : t));
+    } finally { setBusyDel(null); }
+  }
+
   function runSearch() { genRef.current++; searchRef.current = search; setRows([]); setTotal(null); setHasMore(true); setErr(null); loadedRef.current = 0; void load(true); }
   function switchSource(s: Source) {
     if (s === source) return;
@@ -146,6 +173,9 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
     setRows([]); setTotal(null); setHasMore(true); setErr(null); loadedRef.current = 0; setSearch(""); searchRef.current = "";
     void load(true);
   }
+
+  // عمود الحذف بيبان للأدمن اللي في مجموعة، أو لأي حد عنده سجل هو مسجّله.
+  const canDelete = viewer.role === "admin" && !!viewer.team;
 
   const content = (
     <>
@@ -228,6 +258,7 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
                       <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">الحالة</th>
                       <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">GPS</th>
                       <th className="whitespace-nowrap border-b border-border px-3 py-2 text-right font-bold">التاريخ</th>
+                      {canDelete && <th className="whitespace-nowrap border-b border-border px-3 py-2 text-center font-bold">حذف</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -281,11 +312,21 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
                               : <span className="text-muted">—</span>}
                           </td>
                           <td className="whitespace-nowrap border-border px-3 py-2 text-muted">{fmtDate(r.checked_at)}</td>
+                          {canDelete && (
+                            <td className="border-border px-3 py-2 text-center">
+                              {canDeleteGroupRecord(viewer, r.agent_id, memberIdsRef.current) ? (
+                                <button onClick={() => void deleteRow(r)} disabled={busyDel === r.id} title="حذف السجل"
+                                  className="rounded-lg border border-danger/40 bg-danger/10 p-1.5 text-danger transition hover:bg-danger/20 disabled:opacity-40">
+                                  <Trash2 size={13} />
+                                </button>
+                              ) : <span className="text-muted">—</span>}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
                     {rows.length === 0 && !loading && (
-                      <tr><td colSpan={8} className="py-8 text-center text-sm text-muted">مفيش سجلات{searchRef.current ? " للبحث ده" : ""}.</td></tr>
+                      <tr><td colSpan={canDelete ? 9 : 8} className="py-8 text-center text-sm text-muted">مفيش سجلات{searchRef.current ? " للبحث ده" : ""}.</td></tr>
                     )}
                   </tbody>
                 </table>
