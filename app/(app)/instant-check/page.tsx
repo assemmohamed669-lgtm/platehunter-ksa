@@ -65,7 +65,7 @@ import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryE
 import { setMicBusy } from "@/lib/micBusy";
 import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
 import { plateKeyboardMode, readSmartKeyboard, writeSmartKeyboard } from "@/lib/keyboardMode";
-import { PAGE_STEP, pageSlice, hasMore, growShown } from "@/lib/pagedRows";
+import { PAGE_STEP, pageSlice, hasMore, growShown, focusWindow } from "@/lib/pagedRows";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -518,6 +518,9 @@ let icHitsExportedCache: string[] | null = null;
 let icPttExportedCache: string[] | null = null;
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+/** مرجع ثابت لقايمة فاضية — عشان الـmemo مايرجّعش مصفوفة جديدة كل رندر. */
+const EMPTY_ENTRIES: FieldCheckEntry[] = [];
+
 export default function InstantCheckPage() {
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
   /**
@@ -2024,6 +2027,27 @@ export default function InstantCheckPage() {
 
   /** مسح صف من السجلات لازم يشيل إخواته المخفيين، وإلا يطلع أخوه مكانه. */
   const fieldDupGroups = useMemo(() => duplicateCheckIds(fieldEntries), [fieldEntries]);
+
+  // ── مشتقّات نافذة «إظهار وتعديل اللوحات» ──
+  // محفوظة في useMemo: كانت بتتحسب جوّه الـJSX فبتتعاد على **كل** رندر للصفحة
+  // (كل حرف في أي مربع بحث)، و`fieldCategoryOnly` بيلف على السجلات كلها.
+  const peEntries = useMemo(
+    () => (platesEditorOpen ? fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry) : EMPTY_ENTRIES),
+    [platesEditorOpen, draftFieldEntries, fieldFilter, isWantedEntry],
+  );
+  const peMatch = useMemo(() => {
+    const q = normalizePlate(bankPlateToArabic(peSearch.trim()));
+    if (!q) return { ids: new Set<string>(), firstIdx: -1, firstId: undefined as string | undefined };
+    const ids = new Set<string>();
+    let firstIdx = -1;
+    for (let i = 0; i < peEntries.length; i++) {
+      if (normalizePlate(bankPlateToArabic(peEntries[i].plate)).includes(q)) {
+        ids.add(peEntries[i].id);
+        if (firstIdx < 0) firstIdx = i;
+      }
+    }
+    return { ids, firstIdx, firstId: firstIdx >= 0 ? peEntries[firstIdx].id : undefined };
+  }, [peEntries, peSearch]);
   function withHiddenDuplicates(ids: string[]): string[] {
     const out = new Set(ids);
     for (const id of ids) for (const sib of fieldDupGroups.get(id) ?? []) out.add(sib);
@@ -6100,20 +6124,17 @@ export default function InstantCheckPage() {
         // «مطلوب ٥» ⇒ يشوف الـ٥، مش الـ١٦ ألف. (النسخة الكاملة draftFieldEntries
         // بتفضل زي ما هي عشان الحفظ والمقارنة يشتغلوا صح.) وبلا دمج مكرر —
         // ده محرّر، وخبط صف مكرّر معناه إن المندوب يعدّل واحد ويسيب أخوه.
-        const peEntries = fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry);
-        const q = normalizePlate(bankPlateToArabic(peSearch.trim()));
         // البحث **مايخفيش** الباقي: القايمة بتفضل كاملة واللوحة المطابقة بتتعلّم
         // وبيتنطّ عليها — عشان المندوب يشوف اللي قبلها واللي بعدها في السياق.
-        const matchIds = new Set(
-          q ? peEntries.filter((e) => normalizePlate(bankPlateToArabic(e.plate)).includes(q)).map((e) => e.id) : []
-        );
-        const firstMatchIdx = q ? peEntries.findIndex((e) => matchIds.has(e.id)) : -1;
-        const firstMatchId = firstMatchIdx >= 0 ? peEntries[firstMatchIdx].id : undefined;
-        // بنرسم دفعة وبنزوّد مع التمرير — ٦٠٠٠ صف بخانات إدخال مرة واحدة كانت
-        // بتقتل الصفحة على الأيفون. البحث والحفظ بيشتغلوا على **الكل** زي ما هما،
-        // ولو أول لوحة مطابقة برّه الدفعة بنوسّع لحد ما توصلها عشان النطّ يشتغل.
-        const effShown = firstMatchIdx >= 0 ? Math.max(peShown, firstMatchIdx + 1) : peShown;
-        const rows = pageSlice(peEntries, effShown);
+        const { ids: matchIds, firstIdx: firstMatchIdx, firstId: firstMatchId } = peMatch;
+        const q = peSearch.trim();
+        // بنرسم **نافذة حوالين المطابق**، مش من أول القايمة لحد عنده.
+        // التوسيع القديم (`slice(0, idx + 1)`) كان معناه إن اللوحة رقم ١٢ ألف
+        // ترسم ١٢ ألف صف بخانات إدخال في لحظة — وده سبب تقل البحث، وبالأخص عند
+        // آخر رقم (اللوحة بتكمل فيفضل مطابق واحد ممكن يكون في آخر القايمة).
+        const win = focusWindow(peEntries.length, peShown, firstMatchIdx);
+        const rows = peEntries.slice(win.start, win.end);
+        const effShown = win.end;
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
             <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>

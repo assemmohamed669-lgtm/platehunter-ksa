@@ -48,22 +48,35 @@ export function looksLikePlateQuery(query: string): boolean {
 export function entryMatchesQuery(entry: FieldCheckEntry, query: string): boolean {
   const raw = query.trim();
   if (!raw) return true;
-  const q = raw.toLowerCase();
+  return matchesPrepared(entry, prepareQuery(raw));
+}
 
-  const qKey = plateKey(raw);
-  if (looksLikePlateQuery(raw)) return plateKey(entry.plate).includes(qKey);
-  if (qKey && plateKey(entry.plate).includes(qKey)) return true;
-  if (entry.method.toLowerCase().includes(q)) return true;
+/** القيم المشتقّة من نص البحث — بتتحسب **مرة واحدة** مش مع كل سجل. */
+interface PreparedQuery { q: string; qKey: string; plateOnly: boolean }
+
+function prepareQuery(raw: string): PreparedQuery {
+  return { q: raw.toLowerCase(), qKey: plateKey(raw), plateOnly: looksLikePlateQuery(raw) };
+}
+
+function matchesPrepared(entry: FieldCheckEntry, p: PreparedQuery): boolean {
+  const key = plateKey(entry.plate);
+  if (p.plateOnly) return key.includes(p.qKey);
+  if (p.qKey && key.includes(p.qKey)) return true;
+  if (entry.method.toLowerCase().includes(p.q)) return true;
   for (const v of Object.values(entry.row)) {
-    if (String(v ?? "").toLowerCase().includes(q)) return true;
+    if (String(v ?? "").toLowerCase().includes(p.q)) return true;
   }
   return false;
 }
 
 /** Filter the sheet by a free-text query (returns all when blank). */
 export function filterFieldEntries(entries: FieldCheckEntry[], query: string): FieldCheckEntry[] {
-  if (!query.trim()) return entries;
-  return entries.filter((e) => entryMatchesQuery(e, query));
+  const raw = query.trim();
+  if (!raw) return entries;
+  // البحث بيتنده مع **كل حرف** على كل السجلات، فتحضير نص البحث بيتعمل مرة
+  // واحدة برّه اللفّة بدل تلات مرات لكل سجل.
+  const prepared = prepareQuery(raw);
+  return entries.filter((e) => matchesPrepared(e, prepared));
 }
 
 /**

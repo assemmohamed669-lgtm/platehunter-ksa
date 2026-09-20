@@ -46,6 +46,7 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
+import { dedupeRecordsByPlate } from "@/lib/recordResultDedupe";
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
@@ -75,6 +76,20 @@ const DUPE_COLORS = [
 ] as const;
 
 type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string> };
+
+/**
+ * اللوحة الواحدة صف واحد في نتيجة السجلات — الأحدث.
+ * المندوب ممكن يكون شيّك نفس اللوحة أكتر من مرة، أو أكتر من مندوب في المجموعة
+ * شافوها، فكانت بتطلع صفوف مكررة في النتيجة.
+ */
+function dedupeTashyeek(rows: TashyeekResultRow[] | null): TashyeekResultRow[] | null {
+  if (!rows || rows.length < 2) return rows;
+  return dedupeRecordsByPlate(
+    rows,
+    (r) => String(r.tashyeekRow["رقم اللوحة"] ?? ""),
+    (r) => String(r.tashyeekRow["التاريخ"] ?? ""),
+  );
+}
 
 // كاش على مستوى الموديول — بيعيش طول ما التطبيق مفتوح (عبر التنقّل بين الصفحات)
 // حتى لو localStorage فشل (نتايج كبيرة تتعدّى حد المساحة). الاسترجاع بيفضّله على
@@ -2249,6 +2264,7 @@ export default function SortingPage() {
       // سجلات باقي المجموعة — في **نفس الخانة**، بعد سجلات المندوب.
       const groupRows = await groupRecordMatches(refIndex);
       if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
+      finalTashyeek = dedupeTashyeek(finalTashyeek);
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "full", 0);
@@ -2389,6 +2405,7 @@ export default function SortingPage() {
         const groupRows = await groupRecordMatches(gIndex);
         if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
       }
+      finalTashyeek = dedupeTashyeek(finalTashyeek);
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "new", newEntries.length);
@@ -2797,9 +2814,15 @@ export default function SortingPage() {
     }
 
     setPasteResults(matches);
-    setPasteRecordResults(recordMatches);
+    // نفس دمج نتيجة الفرز: اللوحة الواحدة صف واحد (الأحدث) في ويندو السجلات.
+    const recordRows = dedupeRecordsByPlate(
+      recordMatches,
+      (r) => String(r.row?.["رقم اللوحة"] ?? r.converted ?? ""),
+      (r) => String(r.row?.["التاريخ"] ?? ""),
+    );
+    setPasteRecordResults(recordRows);
     setPasteRan(true);
-    persistPasteResults(matches, recordMatches, pasteText);
+    persistPasteResults(matches, recordRows, pasteText);
   }
 
   // ── WhatsApp ──

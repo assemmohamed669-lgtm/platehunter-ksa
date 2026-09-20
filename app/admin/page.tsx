@@ -8,6 +8,7 @@ import {
   ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet, HardDriveDownload } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { subStatus, type SubStatus } from "@/lib/subscription";
+import { ADMIN_RETURN_KEY, packAdminReturn, unpackAdminReturn, type AdminReturn } from "@/lib/adminListRestore";
 import { APP_VERSION } from "@/lib/appVersion";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
@@ -216,32 +217,29 @@ export default function AdminDashboard() {
     })();
   }, [router, loadAgents]);
 
-  // الرجوع من صفحة المندوب كان بيرجّع القايمة لفوق خالص. بنحفظ مين اتفتح
-  // وموضع التمرير، وأول ما القايمة ترجع تترسم بنزحلق لنفس المندوب.
-  const RESTORE_KEY = "ph:admin:lastOpened";
+  // الرجوع من صفحة المندوب كان بيرجّع القايمة لفوق **و**يرجّع التبويب لـ«الكل»،
+  // لأن الصفحة بتتعاد من الصفر فالـstate بيرجع لقيمته الابتدائية. بنحفظ التبويب
+  // والبحث والصف والموضع، وبنرجّعهم كلهم.
   function openAgent(id: string) {
     try {
-      sessionStorage.setItem(RESTORE_KEY, JSON.stringify({ id, y: window.scrollY }));
+      sessionStorage.setItem(
+        ADMIN_RETURN_KEY,
+        packAdminReturn({ id, y: window.scrollY, filter, search }),
+      );
     } catch { /* التخزين مقفول — الرجوع هيبقى لفوق زي الأول */ }
     router.push(`/admin/${id}`);
   }
+
+  // التبويب والبحث بيترجعوا **على الفور** (والقايمة لسه بتحمّل، فمفيش رفرفة).
+  // مش في قيمة الـstate الابتدائية عشان مايحصلش اختلاف بين رسم السيرفر والمتصفح.
   useEffect(() => {
-    if (loading || filtered.length === 0) return;
-    let saved: { id?: string; y?: number } | null = null;
-    try {
-      const raw = sessionStorage.getItem(RESTORE_KEY);
-      if (raw) saved = JSON.parse(raw);
-      sessionStorage.removeItem(RESTORE_KEY);   // مرة واحدة بس
-    } catch { /* تجاهل */ }
+    let saved: AdminReturn | null = null;
+    try { saved = unpackAdminReturn(sessionStorage.getItem(ADMIN_RETURN_KEY)); } catch { /* تجاهل */ }
     if (!saved) return;
-    // الصف نفسه أدق من الرقم (الفلتر/البحث بيغيّروا الأطوال) — والرقم احتياطي.
-    requestAnimationFrame(() => {
-      const el = saved!.id ? document.querySelector(`[data-agent-id="${saved!.id}"]`) : null;
-      if (el) el.scrollIntoView({ block: "center" });
-      else if (typeof saved!.y === "number") window.scrollTo(0, saved!.y);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+    setFilter(saved.filter);
+    setSearch(saved.search);
+  }, []);
+
 
   async function handleCreate() {
     setCError(null);
@@ -380,6 +378,24 @@ export default function AdminDashboard() {
       })
       .sort((x, y) => rank(x.a) - rank(y.a) || (x.a.username ?? "").localeCompare(y.a.username ?? ""));
   }, [enriched, search, filter]);
+
+  // وبعد ما القايمة تترسم بالفلتر الصح بنزحلق لنفس الصف.
+  useEffect(() => {
+    if (loading || filtered.length === 0) return;
+    let saved: AdminReturn | null = null;
+    try {
+      saved = unpackAdminReturn(sessionStorage.getItem(ADMIN_RETURN_KEY));
+      sessionStorage.removeItem(ADMIN_RETURN_KEY);   // مرة واحدة بس
+    } catch { /* تجاهل */ }
+    if (!saved) return;
+    // الصف نفسه أدق من الرقم (الفلتر/البحث بيغيّروا الأطوال) — والرقم احتياطي.
+    requestAnimationFrame(() => {
+      const el = saved!.id ? document.querySelector(`[data-agent-id="${saved!.id}"]`) : null;
+      if (el) el.scrollIntoView({ block: "center" });
+      else window.scrollTo(0, saved!.y);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, filtered.length]);
 
   const agentsOnly = enriched.filter((e) => e.a.role === "agent");
   const stat = {

@@ -33,3 +33,25 @@ export function growShown(total: number, shown: number, step = PAGE_STEP): numbe
 export function resetShown(total: number, step = PAGE_STEP): number {
   return Math.min(total, step);
 }
+
+/**
+ * نافذة الرسم لما يبقى فيه صف **مطلوب إنه يبان** (نتيجة بحث بنتنطّ عليها).
+ *
+ * كنا بنوسّع الدفعة لحد الصف المطابق (`slice(0, idx + 1)`) — يعني اللوحة رقم
+ * ١٢ ألف بترسم ١٢ ألف صف بخانات إدخال في لحظة واحدة والبرنامج يهنّج. بدل كده
+ * بنرسم **نافذة حواليه**: `lead` صف قبله (السياق) ودفعة بعده، وبتكبر لتحت
+ * عادي مع التمرير.
+ *
+ * @param focusIdx مكان الصف المطابق، أو `-1` لو مافيش بحث (السلوك العادي).
+ */
+export function focusWindow(
+  total: number,
+  shown: number,
+  focusIdx: number,
+  lead = 50,
+): { start: number; end: number } {
+  const page = Math.max(0, shown);
+  if (focusIdx < 0 || focusIdx >= total) return { start: 0, end: Math.min(total, page) };
+  const start = Math.max(0, focusIdx - lead);
+  return { start, end: Math.min(total, Math.max(focusIdx + 1, start + page)) };
+}
