@@ -23,7 +23,9 @@ export async function GET(req: NextRequest) {
   const token = await getDriveAccessToken();
   if (!token) return NextResponse.json({ ok: false, error: "drive_unavailable" });
 
-  // أخف بحث ممكن: أي PDF. لو رجع صفر يبقى التوكن سليم بس الفولدرات مش مشاركة.
-  const files = await driveSearch("mimeType='application/pdf'", token);
+  // أخف بحث ممكن: **ملف واحد** كفاية نعرف بيه إن التوكن سليم والفولدرات مشاركة.
+  // (كان بيجيب ٢٠٠ ويعرضهم، فالمالك فهم إن دي كل الشهادات — العدد ده مالوش
+  //  أي علاقة بحجم الأرشيف ولا بحد البحث.) صفر = التوكن سليم بس مافيش مشاركة.
+  const files = await driveSearch("mimeType='application/pdf'", token, { maxFiles: 1 });
   return NextResponse.json({ ok: true, files: files.length });
 }
