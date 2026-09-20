@@ -359,3 +359,32 @@ describe("ربط عمود الرابط اللي بلا عنوان بالمحتو
     expect(m[1].target).toBe("الشارع");
   });
 });
+
+// ── شيت المراجعة بيفتح عند أول صف جديد ──
+import { reviewFocusRow, buildReviewRows as buildReview2 } from "@/lib/dataMerge";
+
+describe("reviewFocusRow", () => {
+  const rows = Array.from({ length: 200 }, (_, i) => ({ a: String(i) }));
+
+  it("بيشاور على أول صف «جديد» في شيت المراجعة", () => {
+    const at = 50, added = 3, context = 10;
+    const review = buildReview2(rows, at, added, context);
+    const focus = reviewFocusRow(at, context);
+    // صف ١ في إكسيل = العناوين، فصف المراجعة رقم focus هو review[focus - 2]
+    expect(review[focus - 2]["الحالة"]).toBe("جديد");
+    expect(review[focus - 3]["الحالة"]).toBe("");
+  });
+
+  it("الإدخال في أول الملف — مافيش صفوف قبله", () => {
+    const review = buildReview2(rows, 0, 2, 10);
+    const focus = reviewFocusRow(0, 10);
+    expect(focus).toBe(2);                       // العناوين ثم أول جديد على طول
+    expect(review[focus - 2]["الحالة"]).toBe("جديد");
+  });
+
+  it("سياق أقل من العشرة بيتحسب صح", () => {
+    const review = buildReview2(rows, 4, 2, 10);
+    const focus = reviewFocusRow(4, 10);
+    expect(review[focus - 2]["الحالة"]).toBe("جديد");
+  });
+});

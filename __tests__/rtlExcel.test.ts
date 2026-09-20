@@ -185,3 +185,37 @@ describe("مكان sheetViews لازم يطابق المواصفة", () => {
     expect(patchSheetXml(already)).toBe(already);
   });
 });
+
+// ── الفتح عند صف معيّن (شيت المراجعة بيفتح عند أول لوحة اتضافت) ──
+import { patchSheetXml as patchFocus } from "@/lib/rtlExcel";
+
+describe("patchSheetXml — الفتح عند صف", () => {
+  it("بيحط topLeftCell و activeCell على الصف المطلوب", () => {
+    const out = patchFocus("<worksheet><sheetData/></worksheet>", 12);
+    expect(out).toContain('topLeftCell="A12"');
+    expect(out).toContain('activeCell="A12"');
+    expect(out).toContain('sqref="A12"');
+  });
+
+  it("لسه بيفتح من اليمين مع الصف", () => {
+    const out = patchFocus("<worksheet><sheetData/></worksheet>", 12);
+    expect(out).toContain('rightToLeft="1"');
+  });
+
+  it("ورقة فيها sheetView بالفعل بتاخد الصف كمان", () => {
+    const out = patchFocus('<worksheet><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetData/></worksheet>', 7);
+    expect(out).toContain('topLeftCell="A7"');
+    expect(out).toContain('rightToLeft="1"');
+  });
+
+  it("من غير صف = نفس السلوك القديم بالظبط", () => {
+    const xml = "<worksheet><sheetData/></worksheet>";
+    expect(patchFocus(xml)).toBe(patchFocus(xml, undefined));
+    expect(patchFocus(xml)).not.toContain("topLeftCell");
+  });
+
+  it("صف غلط (صفر أو سالب) بيتتجاهل", () => {
+    expect(patchFocus("<worksheet><sheetData/></worksheet>", 0)).not.toContain("topLeftCell");
+    expect(patchFocus("<worksheet><sheetData/></worksheet>", -3)).not.toContain("topLeftCell");
+  });
+});
