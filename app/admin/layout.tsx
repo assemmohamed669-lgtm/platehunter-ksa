@@ -45,7 +45,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="min-h-screen bg-night pb-10">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur">
+      {/*
+        المنطقة الآمنة فوق: اللياوت ده منفصل عن لياوت التطبيق، فإصلاح النوتش/شريط
+        الحالة مااتطبّقش عليه وكان «لوحة الأدمن» وزر «خروج» بيتخبّوا ورا الساعة
+        والواي فاي. نفس الكلاس بتاع لياوت المندوب بالحرف — لازم يفضلوا زي بعض.
+      */}
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 pb-3 pt-[max(0.75rem,var(--safe-top))] backdrop-blur">
         <div className="flex items-center gap-2">
           <ShieldCheck size={20} className="text-primary" />
           <span className="font-bold text-ink">لوحة الأدمن</span>
