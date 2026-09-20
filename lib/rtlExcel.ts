@@ -25,11 +25,21 @@ function looksLikeZip(bytes: Uint8Array): boolean {
   return bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
 }
 
-/** بيضيف rightToLeft="1" على كل sheetView في الورقة (ومابيكررش لو موجود). */
-export function patchSheetXml(xml: string): string {
-  if (/rightToLeft=/.test(xml)) return xml;
+/**
+ * بيضيف rightToLeft="1" على كل sheetView في الورقة (ومابيكررش لو موجود).
+ *
+ * `focusRow` (اختياري، ١-based): الورقة تفتح عند الصف ده بدل أولها — شيت
+ * المراجعة بيستخدمه عشان يفتح عند **أول لوحة اتضافت** على طول بدل ما المندوب
+ * يدوّر عليها وسط صفوف السياق.
+ */
+export function patchSheetXml(xml: string, focusRow?: number): string {
+  const focus = Number.isFinite(focusRow) && (focusRow as number) > 0 ? Math.floor(focusRow as number) : 0;
+  const cell = focus ? `A${focus}` : "";
+
+  if (/rightToLeft=/.test(xml)) return focus ? addFocus(xml, cell) : xml;
   if (/<sheetView[\s/>]/.test(xml)) {
-    return xml.replace(/<sheetView\b/g, '<sheetView rightToLeft="1"');
+    const rtl = xml.replace(/<sheetView\b/g, '<sheetView rightToLeft="1"');
+    return focus ? addFocus(rtl, cell) : rtl;
   }
   // ورقة بلا sheetViews خالص — لازم تتحط في **مكانها الصح** بالمواصفة:
   //   sheetPr → dimension → sheetViews → sheetFormatPr → cols → sheetData
@@ -37,7 +47,9 @@ export function patchSheetXml(xml: string): string {
   // كنا بنحطها قبل <sheetData> على طول، فكانت تقع بعد <sheetFormatPr> و<cols>.
   // إكسيل بيصلّح الترتيب في صمت، لكن **جوجل شيتس بيرفض الملف** ويقول فيه
   // مشكلة — فالمندوب مايقدرش يفتح الشيت اللي البرنامج طلّعهوله.
-  const view = '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews>';
+  const view = focus
+    ? `<sheetViews><sheetView rightToLeft="1" topLeftCell="${cell}" workbookViewId="0"><selection activeCell="${cell}" sqref="${cell}"/></sheetView></sheetViews>`
+    : '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews>';
 
   // بعد <dimension .../> لو موجود
   const dim = xml.match(/<dimension\b[^>]*\/>/);
@@ -88,11 +100,22 @@ export function patchStylesXml(xml: string): string {
   return xml.replace(block[0], patched);
 }
 
+/** بيحط مكان الفتح على sheetView موجود بالفعل: topLeftCell + خانة مختارة. */
+function addFocus(xml: string, cell: string): string {
+  if (/topLeftCell=/.test(xml)) return xml;
+  return xml.replace(/<sheetView\b([^>]*?)(\/>|>)/, (_m, attrs: string, tail: string) => {
+    const a = `${attrs} topLeftCell="${cell}"`;
+    const sel = `<selection activeCell="${cell}" sqref="${cell}"/>`;
+    return tail === "/>" ? `<sheetView${a}>${sel}</sheetView>` : `<sheetView${a}>${sel}`;
+  });
+}
+
 /**
- * بيعدّل بايتس ملف xlsx: كل الورقات من اليمين + كل الخلايا محاذاة يمين.
+ * بيعدّل بايتس ملف xlsx: كل الورقات من اليمين + كل الخلايا محاذاة يمين،
+ * و(اختياري) تفتح عند الصف `focusRow`.
  * بيرجّع **نفس** البايتس لو الملف مش xlsx أو حصل أي خطأ.
  */
-export async function rtlAlignXlsxBytes(bytes: Uint8Array): Promise<Uint8Array> {
+export async function rtlAlignXlsxBytes(bytes: Uint8Array, focusRow?: number): Promise<Uint8Array> {
   if (!looksLikeZip(bytes) || bytes.length > MAX_PATCH_BYTES) return bytes;
   try {
     const { default: JSZip } = await import("jszip");
@@ -104,7 +127,7 @@ export async function rtlAlignXlsxBytes(bytes: Uint8Array): Promise<Uint8Array> 
     const sheets = zip.file(/^xl\/worksheets\/sheet\d+\.xml$/);
     if (sheets.length === 0) return bytes;
     for (const f of sheets) {
-      zip.file(f.name, patchSheetXml(await f.async("string")));
+      zip.file(f.name, patchSheetXml(await f.async("string"), focusRow));
     }
 
     const styles = zip.file("xl/styles.xml");
@@ -117,12 +140,12 @@ export async function rtlAlignXlsxBytes(bytes: Uint8Array): Promise<Uint8Array> 
 }
 
 /** نفس الحكاية بس على Blob — بترجّع نفس الـ Blob لو مش xlsx أو حصل خطأ. */
-export async function rtlAlignBlob(blob: Blob, filename?: string): Promise<Blob> {
+export async function rtlAlignBlob(blob: Blob, filename?: string, focusRow?: number): Promise<Blob> {
   if (filename && !/\.xlsx$/i.test(filename)) return blob;
   if (blob.size > MAX_PATCH_BYTES) return blob;
   try {
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const out = await rtlAlignXlsxBytes(bytes);
+    const out = await rtlAlignXlsxBytes(bytes, focusRow);
     if (out === bytes) return blob;
     // نسخة على ArrayBuffer صريح — Uint8Array<ArrayBufferLike> مش BlobPart في TS الجديد
     return new Blob([out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer], { type: blob.type });

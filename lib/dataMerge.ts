@@ -306,3 +306,12 @@ export function buildReviewRows(
   for (let i = insertedAt + addedCount; i < end; i++) out.push(tag(mergedRows[i], ""));
   return out;
 }
+
+/**
+ * صف إكسيل (١-based) اللي فيه **أول لوحة اتضافت** في شيت المراجعة — عشان الشيت
+ * يفتح عند الإضافة على طول بدل ما المندوب يدوّر عليها وسط صفوف السياق.
+ * صف ١ = العناوين، وبعده صفوف السياق اللي قبل الإدخال.
+ */
+export function reviewFocusRow(insertedAt: number, context = 10): number {
+  return Math.min(Math.max(0, insertedAt), context) + 2;
+}

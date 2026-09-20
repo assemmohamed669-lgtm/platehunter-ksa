@@ -15,19 +15,22 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Upload, FileSpreadsheet, ArrowDownToLine, Check, AlertTriangle, RefreshCw, X, Share2, Eye, History,
-  MessageCircle,
+  MessageCircle, Search, MoveRight, Crosshair,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import {
   parseAnySpreadsheet, buildExcelBlob, buildBigExcelBlob, openExcelBlob, shareExcelBlob,
   type ExcelTable,
 } from "@/lib/excel";
-import { importRowsToData } from "@/lib/dataStore";
+import { importRowsToData, getDataMeta } from "@/lib/dataStore";
+import { getUploadedFile, deleteUploadedFile } from "@/lib/idb";
 import {
   buildLocationIndex, suggestLocations, locationsInSheet, suggestColumnMapping,
-  mergeIntoData, verifyMerge, detectLocationColumn, buildReviewRows,
+  mergeIntoData, verifyMerge, detectLocationColumn, buildReviewRows, reviewFocusRow,
   type ColumnMapping, type LocationInfo,
 } from "@/lib/dataMerge";
+import { sameDataFile, mergedDataName, type SortingDataBox } from "@/lib/sortingDataBox";
+import { findPlateRows, contextWindow, nextOccurrence } from "@/lib/plateLocator";
 import { detectArabicPlateColumn, detectPlateColumn } from "@/lib/plateParser";
 import {
   matchPreviousUpload, describeMatch, sheetFingerprint, platesOf,
@@ -40,6 +43,19 @@ const SLOW_ROWS = 150_000;
 
 /** رقم الإدارة — زي باقي الصفحات. */
 const ADMIN_WHATSAPP = "971542482545";
+
+/** كام سيارة قبل اللوحة اللي المندوب دوّر عليها وكام بعدها في نافذة التحديد اليدوي. */
+const MANUAL_SPAN = 10;
+
+/** اللي في مربع الداتا بتاع صفحة الفرز دلوقتي — ملف صغير أو داتا كبيرة مخزّنة. */
+async function readSortingDataBox(): Promise<SortingDataBox | null> {
+  try {
+    const rec = await getUploadedFile("local", "data");
+    if (rec) return { fileName: rec.fileName, rowCount: rec.rows.length };
+    const meta = await getDataMeta("data");
+    return meta ? { fileName: meta.fileName, rowCount: meta.rowCount } : null;
+  } catch { return null; }
+}
 
 export default function DataUploadPage() {
   const router = useRouter();
@@ -59,6 +75,17 @@ export default function DataUploadPage() {
   const [dupMatch, setDupMatch] = useState<UploadMatch | null>(null);
   const [dupDismissed, setDupDismissed] = useState(false);
 
+  // مربع الداتا بتاع صفحة الفرز — عشان نعرف نقول «حدّث» ولا «انقل».
+  const [sortBox, setSortBox] = useState<SortingDataBox | null>(null);
+  const [pushed, setPushed] = useState<string | null>(null);
+
+  // ── التحديد اليدوي لمكان الإدخال ──
+  const [manualOpen, setManualOpen] = useState(false);
+  const [plateQuery, setPlateQuery] = useState("");
+  const [searchedFor, setSearchedFor] = useState("");
+  const [hits, setHits] = useState<number[]>([]);
+  const [hitIdx, setHitIdx] = useState(0);
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
@@ -66,6 +93,7 @@ export default function DataUploadPage() {
       setAllowed(true);
     })();
     syncUploadHistory().then(setHistory).catch(() => {});
+    readSortingDataBox().then(setSortBox);
   }, [router]);
 
   /**
@@ -83,6 +111,8 @@ export default function DataUploadPage() {
     try {
       const t = await readFile(file);
       setDataTable(t); setDataName(file.name); setInsertAfter(null);
+      // ملف تاني → نتايج بحث ملف قديم مالهاش لازمة
+      setHits([]); setHitIdx(0); setSearchedFor(""); setPlateQuery(""); setPushed(null);
     } catch (e) { setError((e as Error)?.message ?? "تعذّرت قراءة ملف الداتا."); }
     finally { setBusy(null); }
   }
@@ -132,6 +162,32 @@ export default function DataUploadPage() {
       ?? detectPlateColumn(sheetTable.headers, sheetTable.rows.slice(0, 200));
   }, [sheetTable]);
 
+  /** عمود اللوحة في ملف الداتا — للبحث اليدوي عن مكان الإدخال. */
+  const dataPlateCol = useMemo(() => {
+    if (!dataTable) return null;
+    return detectArabicPlateColumn(dataTable.headers)
+      ?? detectPlateColumn(dataTable.headers, dataTable.rows.slice(0, 200));
+  }, [dataTable]);
+
+  /**
+   * بحث عن لوحة في ملف الداتا. دوسة تانية على **نفس** اللوحة بتوديه للمرة اللي
+   * بعدها — عشان لو اللوحة متكررة يقدر يلف عليها لحد ما يوصل للصف اللي قاصده.
+   */
+  function searchPlate() {
+    if (!dataTable || !dataPlateCol) return;
+    const q = plateQuery.trim();
+    if (!q) return;
+    if (q === searchedFor && hits.length > 1) { setHitIdx((i) => nextOccurrence(i, hits.length)); return; }
+    const found = findPlateRows(dataTable.rows, dataPlateCol, q);
+    setHits(found); setHitIdx(0); setSearchedFor(q);
+  }
+
+  /** صفوف النافذة: اللوحة ومعاها ١٠ قبلها و١٠ بعدها. */
+  const manualWindow = useMemo(() => {
+    if (!dataTable || hits.length === 0) return [];
+    return contextWindow(hits[hitIdx] ?? hits[0], dataTable.rows.length, MANUAL_SPAN);
+  }, [dataTable, hits, hitIdx]);
+
   const locIndex = useMemo<LocationInfo[]>(
     () => (dataTable && dataLocCol ? buildLocationIndex(dataTable.rows, dataLocCol) : []),
     [dataTable, dataLocCol],
@@ -178,11 +234,18 @@ export default function DataUploadPage() {
     };
   }
 
-  /** شيت المراجعة: الجديد ومعاه اللي قبله وبعده — xlsx صغير بيفتح في لحظة. */
-  function buildReviewBlob(): { blob: Blob; name: string } {
+  /**
+   * شيت المراجعة: الجديد ومعاه اللي قبله وبعده — xlsx صغير بيفتح في لحظة،
+   * و**بيفتح عند أول لوحة اتضافت** مش من أول الشيت.
+   */
+  function buildReviewBlob(): { blob: Blob; name: string; focusRow: number } {
     if (!merged) throw new Error("مافيش نتيجة.");
     const rows = buildReviewRows(merged.rows, merged.at, merged.added);
-    return { blob: buildExcelBlob(rows, "مراجعة"), name: "شيت-المراجعة.xlsx" };
+    return {
+      blob: buildExcelBlob(rows, "مراجعة"),
+      name: "شيت-المراجعة.xlsx",
+      focusRow: reviewFocusRow(merged.at),
+    };
   }
 
   /**
@@ -218,8 +281,8 @@ export default function DataUploadPage() {
   }
 
   const openReview = () => withFile("جاري فتح شيت المراجعة…", async () => {
-    const { blob, name } = buildReviewBlob();
-    await openExcelBlob(blob, name);
+    const { blob, name, focusRow } = buildReviewBlob();
+    await openExcelBlob(blob, name, { focusRow });
   });
 
   const openFull = () => withFile("جاري فتح الملف…", async () => {
@@ -234,14 +297,35 @@ export default function DataUploadPage() {
     await markUploaded();
   });
 
-  async function updateAppData() {
+  /** الملف اللي شغالين عليه هنا هو نفسه اللي في مربع الداتا بتاع صفحة الفرز؟ */
+  const inSortBox = sameDataFile(sortBox, dataName);
+
+  /**
+   * بينزّل النتيجة في **مربع الداتا بتاع صفحة الفرز**.
+   *
+   * كان فيه باج: `importRowsToData` بتكتب في مخزن الداتا الكبيرة، لكن صفحة الفرز
+   * بتشوف الملف الصغير المحفوظ في `local:data` **الأول** — فلو المندوب كان رافع
+   * ملف صغير، التحديث كان بيروح لمكان محدش بيقراه والزرار يبان كأنه مابيعملش
+   * حاجة. فبنشيل الملف الصغير القديم بعد ما الكتابة تنجح.
+   */
+  async function pushToSortingBox() {
     if (!merged || !dataTable) return;
-    if (!confirm(`هيتحدّث داتا البرنامج بـ${merged.rows.length} صف (بدل اللي موجودة دلوقتي). متأكد؟`)) return;
-    setBusy("جاري تحديث داتا البرنامج…"); setError(null);
+    const ask = inSortBox
+      ? `هيتحدّث ملف الداتا اللي في صفحة الفرز بـ${merged.rows.length.toLocaleString("en")} صف (بدل اللي موجود). متأكد؟`
+      : `الملف ده هيتنقل لمربع الداتا في صفحة الفرز بـ${merged.rows.length.toLocaleString("en")} صف، وهيحلّ محل اللي هناك دلوقتي${sortBox ? ` (${sortBox.fileName})` : ""}. متأكد؟`;
+    if (!confirm(ask)) return;
+
+    setBusy(inSortBox ? "جاري تحديث داتا البرنامج…" : "جاري النقل لمربع الداتا…"); setError(null);
     try {
-      await importRowsToData(merged.rows, dataTable.headers, { fileName: `داتا-محدّثة-${dataName}` });
+      const fileName = mergedDataName(dataName);
+      await importRowsToData(merged.rows, dataTable.headers, { slot: "data", fileName });
+      // لازم بعد النجاح: ده اللي بيخلّي صفحة الفرز تقرا الجديد بدل الملف الصغير القديم
+      await deleteUploadedFile("local", "data");
       await markUploaded();
-      alert("تم تحديث داتا البرنامج. افتح صفحة الفرز وجرّب.");
+      setSortBox({ fileName, rowCount: merged.rows.length });
+      setPushed(inSortBox
+        ? "تم تحديث داتا البرنامج — افتح صفحة الفرز وجرّب."
+        : "الملف اتنقل لمربع الداتا في صفحة الفرز — افتحها وهتلاقيه.");
     } catch (e) { setError((e as Error)?.message ?? "تعذّر التحديث."); }
     finally { setBusy(null); }
   }
@@ -402,10 +486,101 @@ export default function DataUploadPage() {
               }`}>
               في آخر الملف
             </button>
+
+            {/* تحديد يدوي: دوّر على لوحة وحدّد تحتها بإيدك */}
+            <button onClick={() => setManualOpen((v) => !v)}
+              className={`flex items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition ${
+                manualOpen ? "border-alert bg-alert/10 text-alert" : "border-border text-muted hover:text-ink"
+              }`}>
+              <Crosshair size={13} /> {manualOpen ? "اقفل التحديد اليدوي" : "تحديد يدوي — دوّر على لوحة"}
+            </button>
           </div>
+
+          {manualOpen && (
+            <div className="mt-2 rounded-lg border border-alert/40 bg-alert/5 p-2.5">
+              <p className="mb-2 text-[11px] leading-relaxed text-ink">
+                اكتب لوحة من ملف الداتا، والبرنامج هيوريك صفها كامل ومعاه <b>١٠ عربيات قبلها و١٠ بعدها</b>.
+                دوس على الصف اللي عايز الإضافة تنزل تحته.
+              </p>
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={plateQuery}
+                  onChange={(e) => setPlateQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); searchPlate(); } }}
+                  placeholder="مثال: حبك1234"
+                  inputMode="text"
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-sm text-ink outline-none focus:border-primary"
+                />
+                <button onClick={searchPlate} disabled={!dataPlateCol || !plateQuery.trim()}
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-night transition disabled:opacity-40">
+                  <Search size={14} /> بحث
+                </button>
+              </div>
+
+              {!dataPlateCol && (
+                <p className="mt-1.5 text-[11px] text-alert">مالقيتش عمود لوحة في ملف الداتا — استخدم الاختيار بالموقع فوق.</p>
+              )}
+
+              {searchedFor && hits.length === 0 && (
+                <p className="mt-1.5 text-[11px] text-alert">اللوحة «{searchedFor}» مش موجودة في ملف الداتا.</p>
+              )}
+
+              {hits.length > 0 && (
+                <p className="mt-1.5 text-[11px] text-ink">
+                  اللوحة <b>{searchedFor}</b> ظاهرة <b>{hits.length}</b> {hits.length === 1 ? "مرة" : "مرات"}
+                  {hits.length > 1 && <> — دي رقم <b>{hitIdx + 1}</b>، دوس «بحث» تاني للي بعدها</>}
+                  {" "}(صف <b>{(hits[hitIdx] ?? 0) + 1}</b>)
+                </p>
+              )}
+
+              {manualWindow.length > 0 && (
+                <div className="mt-2 overflow-auto rounded-lg border border-border bg-surface" style={{ maxHeight: "45vh" }}>
+                  <table className="w-full border-collapse text-[11px]" style={{ direction: "rtl" }}>
+                    <thead className="sticky top-0 bg-surface-2 text-muted">
+                      <tr>
+                        <th className="border-b border-l border-border px-2 py-1 text-right">#</th>
+                        <th className="border-b border-l border-border px-2 py-1 text-right">تحديد</th>
+                        {dataTable.headers.map((h) => (
+                          <th key={h} className="border-b border-l border-border px-2 py-1 text-right whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualWindow.map((i) => {
+                        const isHit = i === hits[hitIdx];
+                        const isPicked = insertAfter === i;
+                        return (
+                          <tr key={i} onClick={() => setInsertAfter(i)}
+                            className={`cursor-pointer ${isPicked ? "bg-primary/20 font-bold" : isHit ? "bg-alert/15 font-bold" : ""}`}>
+                            <td className="border-b border-l border-border px-2 py-1 text-muted">{i + 1}</td>
+                            <td className="border-b border-l border-border px-2 py-1 text-center">
+                              {isPicked ? <Check size={13} className="inline text-primary" /> : <span className="text-muted">◯</span>}
+                            </td>
+                            {dataTable.headers.map((h) => (
+                              <td key={h} className="border-b border-l border-border px-2 py-1 whitespace-nowrap text-ink">
+                                {String(dataTable.rows[i]?.[h] ?? "").slice(0, 28) || "—"}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {manualWindow.length > 0 && (
+                <p className="mt-1 text-[10px] text-muted">
+                  الصف الملوّن هو اللوحة اللي دوّرت عليها. الإضافة بتنزل <b>تحت</b> الصف اللي عليه علامة ✓.
+                </p>
+              )}
+            </div>
+          )}
+
           {insertAfter !== null && (
             <p className="mt-2 rounded-lg bg-surface-2 px-2.5 py-1.5 text-[11px] text-ink">
               هيتحط <b>{sheetTable.rows.length}</b> صف بعد صف رقم <b>{insertAfter + 1}</b>
+              {dataPlateCol ? ` — لوحة ${String(dataTable.rows[insertAfter]?.[dataPlateCol] ?? "—").slice(0, 20)}` : ""}
               {dataLocCol ? ` (${String(dataTable.rows[insertAfter]?.[dataLocCol] ?? "").slice(0, 40)})` : ""}
             </p>
           )}
@@ -481,10 +656,29 @@ export default function DataUploadPage() {
               </button>
             </div>
 
-            <button onClick={updateAppData} disabled={!!busy}
+            {/*
+              نفس الفعل بإسمين: لو الملف ده هو اللي في مربع الفرز بقى «تحديث»،
+              ولو مربع الفرز فيه حاجة تانية (أو فاضي) بقى «نقل» — عشان المندوب
+              يعرف هو بيحدّث نسخته ولا بيبدّل اللي هناك.
+            */}
+            <button onClick={pushToSortingBox} disabled={!!busy}
               className="flex items-center justify-center gap-2 rounded-xl border border-primary/50 bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-50">
-              <RefreshCw size={15} /> حدّث داتا البرنامج
+              {inSortBox
+                ? <><RefreshCw size={15} /> حدّث داتا البرنامج</>
+                : <><MoveRight size={15} /> انقل لمربع الداتا في الفرز</>}
             </button>
+            <p className="-mt-1 text-center text-[10px] text-muted">
+              {inSortBox
+                ? "ده نفس الملف اللي في مربع الداتا بصفحة الفرز — هيتحدّث بالإضافة الجديدة."
+                : sortBox
+                  ? `مربع الداتا في الفرز فيه دلوقتي «${sortBox.fileName}» — الدوسة هتحطّ الملف ده مكانه.`
+                  : "مربع الداتا في صفحة الفرز فاضي — الدوسة هتحطّ الملف ده فيه."}
+            </p>
+            {pushed && (
+              <p className="rounded-lg border border-brand/40 bg-brand/10 px-2.5 py-1.5 text-center text-[11px] font-bold text-brand">
+                {pushed}
+              </p>
+            )}
             <button onClick={() => setMerged(null)}
               className="rounded-xl border border-border py-2 text-xs text-muted transition hover:text-ink">
               رجوع وتعديل

@@ -14,6 +14,7 @@ import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
 import { gpsCellToLink } from "./gps";
 import { rtlAlignBlob } from "./rtlExcel";
+import { writeBlobInChunks, type CacheFs } from "./nativeFile";
 import { readAllSheetsRawStream } from "./xlsxStream";
 
 function formatDate(iso: string): string {
@@ -1181,23 +1182,32 @@ export async function blobToBase64(blob: Blob): Promise<string> {
   return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
 }
 
-export async function openExcelBlob(blob: Blob, filename: string): Promise<"opened" | "downloaded"> {
-  blob = await rtlAlignBlob(blob, filename);   // يفتح من اليمين + كل الخلايا محاذاة يمين
+/**
+ * بيكتب الملف في الكاش ويرجّع الـuri.
+ *
+ * على دفعات لما يكبر: `Filesystem.writeFile` بتاخد الملف كله base64 في نداء
+ * واحد، وملف الداتا بعد الدمج بيطلع ~٨٠ ميجا base64 فالجافا بترمي
+ * «Failed to allocate a 82698200 byte allocation» والمشاركة/الفتح يفشلوا خالص.
+ */
+async function writeToCache(blob: Blob, safeName: string): Promise<string> {
+  const { Filesystem, Directory } = await import("@capacitor/filesystem");
+  return writeBlobInChunks(Filesystem as unknown as CacheFs, Directory.Cache, safeName, blob, blobToBase64);
+}
+
+export async function openExcelBlob(
+  blob: Blob,
+  filename: string,
+  opts: { focusRow?: number } = {},
+): Promise<"opened" | "downloaded"> {
+  // يفتح من اليمين + كل الخلايا محاذاة يمين (و«شيت المراجعة» يفتح عند أول جديد)
+  blob = await rtlAlignBlob(blob, filename, opts.focusRow);
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
     try {
-      const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { FileOpener } = await import("@capacitor-community/file-opener");
 
-      // تحويل غير محجوب — الشاشة مابتتجمّدش مهما كبرت السجلات.
-      const base64 = await blobToBase64(blob);
-
       const safeName = toSafeCacheFilename(filename);
-      const { uri } = await Filesystem.writeFile({
-        path: safeName,
-        data: base64,
-        directory: Directory.Cache,
-      });
+      const uri = await writeToCache(blob, safeName);
 
       await FileOpener.open({
         filePath: uri,
@@ -1219,17 +1229,9 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
     try {
-      const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { Share } = await import("@capacitor/share");
 
-      // تحويل غير محجوب — الشاشة مابتتجمّدش مهما كبرت السجلات.
-      const base64 = await blobToBase64(blob);
-
-      const { uri } = await Filesystem.writeFile({
-        path: toSafeCacheFilename(filename),
-        data: base64,
-        directory: Directory.Cache,
-      });
+      const uri = await writeToCache(blob, toSafeCacheFilename(filename));
 
       await Share.share({ title, url: uri, dialogTitle: title });
       return;
