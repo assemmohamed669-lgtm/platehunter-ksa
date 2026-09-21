@@ -44,7 +44,7 @@ interface Cluster {
   tMs: number;
   times: number[];
   /** إملاء كامل → {عدد مرات ظهوره، مجموع ثقته، أعلى ثقة مفردة} */
-  spellings: Map<string, { count: number; confSum: number; maxConf: number }>;
+  spellings: Map<string, { count: number; confSum: number; maxConf: number; minLps: number[] }>;
   confs: number[];
   minLps: number[];
   lastMs: number;
@@ -150,10 +150,11 @@ export class LiveConsensus {
     }
     target.times.push(read.tMs);
     target.tMs = target.times.reduce((a, b) => a + b, 0) / target.times.length;
-    const cur = target.spellings.get(read.plate) ?? { count: 0, confSum: 0, maxConf: -Infinity };
+    const cur = target.spellings.get(read.plate) ?? { count: 0, confSum: 0, maxConf: -Infinity, minLps: [] };
     cur.count += 1;
     cur.confSum += read.conf;
     cur.maxConf = Math.max(cur.maxConf, read.conf);
+    if (typeof read.minLp === "number") cur.minLps.push(read.minLp);
     target.spellings.set(read.plate, cur);
     target.confs.push(read.conf);
     if (typeof read.minLp === "number") target.minLps.push(read.minLp);
@@ -198,7 +199,7 @@ export class LiveConsensus {
      * **٣٣٪ لـ٨٥٪**. (المجموع كان بيتصرّف زي التكرار وبيضيّع الصح.)
      */
     // نجمّع الإملاءات في **مجموعات أرقام** (فرق ≤١ خانة = نفس النطق، ضجيج نافذة).
-    type G = { rep: string; totalCount: number; maxConf: number; best: string; bestConf: number };
+    type G = { rep: string; totalCount: number; maxConf: number; best: string; bestConf: number; minLps: number[] };
     const groups: G[] = [];
     const entries = [...cl.spellings.entries()].sort(
       (a, b) => b[1].maxConf - a[1].maxConf
@@ -206,11 +207,12 @@ export class LiveConsensus {
     for (const [spelling, s] of entries) {
       let g = groups.find((g) => digitDist(g.rep, spelling) <= 1);
       if (!g) {
-        g = { rep: spelling, totalCount: 0, maxConf: -Infinity, best: spelling, bestConf: -Infinity };
+        g = { rep: spelling, totalCount: 0, maxConf: -Infinity, best: spelling, bestConf: -Infinity, minLps: [] };
         groups.push(g);
       }
       g.totalCount += s.count;
       g.maxConf = Math.max(g.maxConf, s.maxConf);
+      g.minLps.push(...s.minLps);
       if (s.maxConf > g.bestConf) {
         g.bestConf = s.maxConf;
         g.best = spelling;
@@ -235,6 +237,45 @@ export class LiveConsensus {
         conf: g.maxConf,
         tMs: cl.tMs,
       }));
+    }
+
+    /**
+     * ⚠️ **اللوحة التانية اللي اتقرت نافذة واحدة بس كانت بتضيع خالص.**
+     *
+     * التقسيم فوق بيشترط إن **كل** مجموعة أرقام تظهر مرتين+. فلو المندوب قال
+     * لوحتين بنفس التلات حروف بسرعة ولحق التانية نافذة واحدة، العنقود كان
+     * بيطلّع لوحة واحدة والتانية تختفي — ولو كانت مطلوبة، مافيش صف ولا صفّارة
+     * ولا حتى علم إنها فاتت. ده أخطر شكل للضياع لأنه صامت تماماً.
+     *
+     * الاسترجاع: المجموعة التانية بتطلع كمان، **بس** لو عدّت نفس حواجز
+     * الاختراع اللي بتتطبّق على أي قراءة مفردة في المحرك (الثقة ≥ minSoloConf
+     * وأضعف توكن ≥ soloMinLp). وبتترجّع «للمراجعة» (🟡) مش مؤكّدة — المندوب
+     * يشوفها وتتطابق على ملف التشييك عادي.
+     *
+     * ليه ده مايرجّعش مشكلة «تقسيم الأسطول» المقيسة: المجموعات أصلاً متفصولة
+     * بفرق ≥٢ خانة (ضجيج النافذة فرق خانة واحدة وبيتدمج)، والحواجز هي هي
+     * المستعملة في كل المحرك للقراءة المفردة.
+     */
+    if (stable.length === 1 && groups.length > 1) {
+      const rescued: CommittedPlate[] = [];
+      for (const g of groups) {
+        if (g === stable[0]) continue;
+        if (g.maxConf < this.minSoloConf) continue;                       // اختراع وقفة
+        if (g.minLps.length && Math.max(...g.minLps) < this.soloMinLp) continue;  // تلفيق
+        rescued.push({
+          plate: g.best,
+          tier: g.maxConf >= this.greenSoloConf ? "green" : "yellow",
+          mult: g.totalCount,
+          conf: g.maxConf,
+          tMs: cl.tMs,
+        });
+      }
+      if (rescued.length > 0) {
+        return [
+          { plate: stable[0].best, tier: "green" as Tier, mult: stable[0].totalCount, conf: stable[0].maxConf, tMs: cl.tMs },
+          ...rescued,
+        ];
+      }
     }
 
     // الحالة العادية: إملاء واحد بأعلى ثقة، mult = كل قراءات العنقود (زي ما كان).
