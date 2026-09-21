@@ -15,24 +15,24 @@ const SAFE_TOP = "pt-[max(0.75rem,var(--safe-top))]";
 describe("المنطقة الآمنة فوق", () => {
   for (const f of LAYOUTS) {
     it(`${f} — الشريط العلوي بياخد --safe-top`, () => {
-      const src = readFileSync(f, "utf8");
+      const src = readFileSync(f, "utf8").replace(/\r\n/g, "\n");
       const header = src.match(/<header className="[^"]*sticky top-0[^"]*"/);
       expect(header, `مافيش شريط sticky في ${f}`).not.toBeNull();
       expect(header![0]).toContain(SAFE_TOP);
     });
 
     it(`${f} — مافيش py- على الشريط (بتلغي مسافة الأمان)`, () => {
-      const src = readFileSync(f, "utf8");
+      const src = readFileSync(f, "utf8").replace(/\r\n/g, "\n");
       const header = src.match(/<header className="[^"]*sticky top-0[^"]*"/)![0];
       expect(header).not.toMatch(/\spy-\d/);
     });
   }
 
   it("viewport-fit=cover مضبوط — من غيره env(safe-area) بترجع صفر", () => {
-    expect(readFileSync("app/layout.tsx", "utf8")).toContain('viewportFit: "cover"');
+    expect(readFileSync("app/layout.tsx", "utf8").replace(/\r\n/g, "\n")).toContain('viewportFit: "cover"');
   });
 
   it("--safe-top متعرّفة من env", () => {
-    expect(readFileSync("app/globals.css", "utf8")).toContain("--safe-top: env(safe-area-inset-top)");
+    expect(readFileSync("app/globals.css", "utf8").replace(/\r\n/g, "\n")).toContain("--safe-top: env(safe-area-inset-top)");
   });
 });

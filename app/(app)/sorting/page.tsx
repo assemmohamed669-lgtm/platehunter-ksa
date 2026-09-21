@@ -29,7 +29,7 @@ import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSor
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate } from "@/lib/locationNeighbors";
-import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo } from "@/lib/referralSheets";
+import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
@@ -1212,7 +1212,10 @@ export default function SortingPage() {
       // بيحصل كل مرة الصفحة تفتح وبيوقف الواجهة.
       const key = fileIdentity(file);
       const cached = refSheetsCache && refSheetsCache.key === key ? refSheetsCache.infos : null;
-      const infos = cached ?? analyzeWorkbook(await readAllSheetsRaw(file));
+      // ⛔ الورقات المخفية بتتشال **من المصدر** — قرار المالك: الفرز على الصفحة
+      // الأساسية بس. مش كفاية إنها تطلع غير معلّمة: اختيار محفوظ قديم كان
+      // بيرجّعها، وده اللي خلّى المشكلة ترجع بعد ما اتصلّحت.
+      const infos = cached ?? analyzeWorkbook(visibleSheets(await readAllSheetsRaw(file)));
       if (!cached) refSheetsCache = { key, infos };
       const withPlates = infos.filter((s) => s.plateCount > 0);
       setRefSheets(infos);

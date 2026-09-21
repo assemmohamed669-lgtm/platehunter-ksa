@@ -10,13 +10,17 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-const SRC = readFileSync("app/(app)/instant-check/page.tsx", "utf8");
+// ⚠️ توحيد نهايات السطور: على ويندوز git بيحوّل الملف لـCRLF، وساعتها
+// `"\n  }\n"` مابتلاقيش حاجة فالقصّ بياخد الملف كله — والحارس يعدّي على أي
+// حاجة في صمت. (حصل فعلاً: الاختبار ده «نجح» وهو بيقرا الملف كله.)
+const SRC = readFileSync("app/(app)/instant-check/page.tsx", "utf8").replace(/\r\n/g, "\n");
 
 /** جسم دالة بالاسم ده (من التعريف لحد أول قفلة على أول عمود). */
 function body(name: string): string {
   const i = SRC.indexOf(`function ${name}(`);
   expect(i, `مالقيتش ${name}`).toBeGreaterThan(-1);
   const end = SRC.indexOf("\n  }\n", i);
+  expect(end, `مالقيتش نهاية ${name} — القصّ بايظ`).toBeGreaterThan(i);
   return SRC.slice(i, end);
 }
 
