@@ -651,6 +651,17 @@ export default function InstantCheckPage() {
   const [draftEditValue, setDraftEditValue] = useState("");
   const [manualSel, setManualSel] = useState<Set<string>>(new Set());
   const [manualExporting, setManualExporting] = useState(false);
+  /**
+   * قفل تصدير **واحد** لكل مسارات التصدير (زرار الصوت · زرار الكاميرا ·
+   * التصدير التلقائي · تأثير قفل التسجيل).
+   *
+   * المندوب ضغط «تصدير» كذا مرة والتطبيق هنج، فاشتغلت كذا عملية حفظ على نفس
+   * اللوحات. المعرّف الثابت بيمنع التكرار في القاعدة، والقفل ده بيمنع الشغل
+   * المتوازي من أصله (وبيخلّي الزرار يبان «جاري التصدير...» فالمندوب يعرف
+   * إن اللي دوسه ماشي).
+   */
+  const exportBusyRef = useRef(false);
+  const [exportBusy, setExportBusy] = useState(false);
 
   // ── التصدير التلقائي ──────────────────────────────────────────────────────
   // مقفول = زي ما البرنامج شغّال بالظبط (المندوب بيدوس «تصدير للسجلات»).
@@ -1666,27 +1677,14 @@ export default function InstantCheckPage() {
       return { plate: rawPlate, normalized, found: true, matchType: "exact", row: exactRow };
     }
 
-    // Fuzzy fallback (88% threshold, first-char optimization)
+    // ⛔ **تطابق تام بس — مافيش مطابقة تقريبية خالص** (قرار المالك ٢٠٢٦-٠٩-٢١:
+    //    «يظهر فقط المطلوب بتطابق تام، ميظهرش لوحات متشابهة أبداً»).
     //
-    // **الطرفين لازم يكونوا لوحة سعودية قياسية (٣ حروف + ٤ أرقام).** من غير
-    // الشرط ده، مدخل بـ٨ خانات (٤ حروف بالغلط) بيطلع ٨٨٪ ضد لوحة سليمة —
-    // لأن فرق خانة من ٨ = 87.5 وبتتقرّب لـ٨٨ — فبيدّي إنذار كاذب لعربية مش
-    // مطلوبة (حصل فعلاً في الميدان). وده مابيلغيش أي مطابقة صحيحة: غلطة
-    // حقيقية بين لوحتين سليمتين بتطلع ٨٦٪ وكانت مرفوضة أصلاً تحت العتبة.
-    if (isStandardPlate(normalized)) {
-      let bestSim = 0;
-      let bestRow: Record<string, string> | undefined;
-      for (const [key, row] of checkIndex) {
-        if (key[0] !== normalized[0]) continue;
-        if (!isStandardPlate(key)) continue;
-        const sim = similarityPercent(normalized, key);
-        if (sim > bestSim) { bestSim = sim; bestRow = row; }
-      }
-      if (bestSim >= 88 && bestRow) {
-        if (!silent) fireWantedAlert({ plate: rawPlate, matchType: "fuzzy", similarity: Math.round(bestSim), info: rowToAlertInfo(bestRow) });
-        return { plate: rawPlate, normalized, found: true, matchType: "fuzzy", similarity: Math.round(bestSim), row: bestRow };
-      }
-    }
+    //    كان هنا فرع تقريبي بعتبة ٨٨٪. اتشال. وللعلم هو ماكانش بيشتغل أصلاً:
+    //    الفرع كان بيشترط إن الطرفين لوحة قياسية (٣ حروف + ٤ أرقام)، وأقصى
+    //    تشابه بين لوحتين قياسيتين **مختلفتين** هو ٨٦٪ (فرق خانة من ٧)، يعني
+    //    تحت العتبة دايماً. اتشال عشان مايرجعش يشتغل لو العتبة أو الشرط اتغيّر
+    //    يوم، ومايفضلش في الشاشة وعد بحاجة البرنامج مش بيعملها.
 
     return { plate: rawPlate, normalized, found: false };
   }
@@ -2218,9 +2216,9 @@ export default function InstantCheckPage() {
       if (!opts.silent) alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة.");
       return;
     }
-    const stamp = Date.now();
-    const toSave: FieldCheckEntry[] = fresh.map((h, i) => ({
-      id: `${stamp}-${i}`,
+    const toSave: FieldCheckEntry[] = fresh.map((h) => ({
+      // معرّف مشتق من الصورة نفسها — نفس سبب مسار الصوت فوق (تصدير idempotent).
+      id: `fc-cam-${h.id}`,
       agentId: agentIdRef.current ?? undefined,
       plate: h.plate,
       row: h.row,
@@ -2848,7 +2846,14 @@ export default function InstantCheckPage() {
     // ── حارس التوأم — VoiceX فقط (mult معرَّف) ────────────────────────────────────
     // كل قواعد القرار في `lib/twinGuard.ts` (نقية + مغطّاة باختبارات). الصفحة
     // بتلفّ على اللوحات الأخيرة وتنفّذ القرار بس — مافيش منطق قرار هنا.
-    if (mult !== undefined) {
+    // ⚠️ **اللوحة المطلوبة بتطابق تام مابتتبلعش أبداً.**
+    // الحارس ده بيشتغل *قبل* ما نبص في ملف التشييك، فكان ممكن يرمي قراءة
+    // لعربية **مطلوبة فعلاً** لمجرد إنها بترقم واحد من لوحة قريبة اتقالت
+    // قبلها بثواني (أبج١٢٣٤ ثم أبج١٢٣٥ — أسطول واقف جنب بعض). النتيجة: لا
+    // صفّارة ولا صف، والمندوب يعدّي على العربية وهو مش عارف. فبنسأل الفهرس
+    // الأول (O(1))، ولو اللوحة في ملف التشييك بتطابق تام بنعدّي الحارس.
+    const wantedExact = checkIndex.has(normalizePlate(bankPlateToArabic(corrected)));
+    if (mult !== undefined && !wantedExact) {
       for (const [k, v] of seen) {
         if (v.mult === undefined || nowMs - v.at > 6000) continue;
         if (!areTwins(
@@ -3447,7 +3452,7 @@ export default function InstantCheckPage() {
    * بيصدّرها بإيده من الزرار، وهو بيسأله الأول.
    */
   const runAutoExportOnce = useCallback(async () => {
-    if (autoBusyRef.current) return;
+    if (autoBusyRef.current || exportBusyRef.current) return;
     const L = autoLatestRef.current;
     const draftReady = readyForAutoExport(L.manualDraft);
     const hitsReady = readyForAutoExport(L.manualHits.filter((h) => !L.hitsExportedIds.has(h.id)));
@@ -3495,7 +3500,9 @@ export default function InstantCheckPage() {
         return;
       }
       try {
-        const { saved, failed } = await L.exportAllPttToField({ silent: true, only: ready });
+        const res = await withExportLock(() => L.exportAllPttToField({ silent: true, only: ready }));
+        if (!res) return;                       // تصدير تاني شغّال — اللوحات فضلت مكانها
+        const { saved, failed } = res;
         // العدد اللي بيتقال للمندوب = اللي اتحفظ فعلاً، مش اللي حاولنا نحفظه.
         alert(exportedMessage(saved, waiting + failed));
       } catch {
@@ -3505,19 +3512,31 @@ export default function InstantCheckPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pttListening, autoExport]);
 
+  /** بيمنع أي تصدير تاني يشتغل وواحد شغّال. بيرجّع false لو كان فيه واحد شغّال. */
+  async function withExportLock<T>(run: () => Promise<T>): Promise<T | null> {
+    if (exportBusyRef.current) return null;
+    exportBusyRef.current = true; setExportBusy(true);
+    try { return await run(); }
+    finally { exportBusyRef.current = false; setExportBusy(false); }
+  }
+
   async function exportAllPttToField(opts: { silent?: boolean; only?: typeof pttResults } = {}): Promise<{ saved: number; failed: number }> {
     const freshRows = (opts.only ?? pttResults).filter((r) => !pttExportedIds.has(r.id));
     if (freshRows.length === 0) {
       if (!opts.silent) alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة.");
       return { saved: 0, failed: 0 };
     }
-    const stamp = Date.now();
-    const toSave: FieldCheckEntry[] = freshRows.map((r, i) => {
+    const toSave: FieldCheckEntry[] = freshRows.map((r) => {
       const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
       if (r.vehicleType) mergedRow["النوع"] = typeToCode(r.vehicleType) || r.vehicleType;
-      mergedRow["الحالة"] = r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة";
+      mergedRow["الحالة"] = r.found ? "مطلوبة" : "غير مطلوبة";
       return {
-        id: `${stamp}-${i}`,
+        // **معرّف مشتق من صف المصدر، مش من الوقت.** كان `${Date.now()}-${i}`،
+        // يعني كل ضغطة على «تصدير» بتولّد معرّف جديد لنفس اللوحة و
+        // `saveFieldCheckEntry` (put بالمعرّف) بيضيف صف جديد بدل ما يكتب فوق
+        // القديم. المندوب اللي ضغط كذا مرة والتطبيق هنج خرج بنُسخ مكررة.
+        // بالمعرّف الثابت التصدير بقى idempotent: مية ضغطة = صف واحد.
+        id: `fc-ptt-${r.id}`,
         agentId: agentIdRef.current ?? undefined,
         plate: r.plate,
         row: mergedRow,
@@ -3526,7 +3545,9 @@ export default function InstantCheckPage() {
         lat: r.lat,
         lng: r.lng,
         mapsLink: r.mapsLink,
-        checkedAt: new Date().toISOString(),
+        // وقت **التشييك** مش وقت التصدير — بوقت التصدير كان دمج المكرر
+        // (نفس اللوحة/المكان في ٥ دقايق) بيفشل فالنسخ المكررة تبان.
+        checkedAt: r.checkedAt ?? new Date().toISOString(),
       };
     });
     try {
@@ -4912,8 +4933,8 @@ export default function InstantCheckPage() {
 
                     {/* تصدير للسجلات — الشيت الموحّد الوحيد لكل طرق التشييك */}
                     <button
-                      onClick={() => void exportManualDraft()}
-                      disabled={manualExporting}
+                      onClick={() => void withExportLock(() => exportManualDraft())}
+                      disabled={manualExporting || exportBusy}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-40 active:scale-95"
                     >
                       <Download size={16} /> {manualExporting ? "جاري التصدير..." : `تصدير ${manualDraft.length} لوحة للسجلات`}
@@ -5782,9 +5803,9 @@ export default function InstantCheckPage() {
                     <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} waiting={autoWaiting} />
 
                     {/* تصدير كل لوحات الصوت لشيت التسجيلات — الشيت الموحّد الوحيد */}
-                    <button onClick={() => void exportAllPttToField()}
-                      className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
-                      <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
+                    <button onClick={() => void withExportLock(() => exportAllPttToField())} disabled={exportBusy}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95 disabled:opacity-50">
+                      <ClipboardCheck size={15} /> {exportBusy ? "جاري التصدير..." : "تصدير كل اللوحات لشيت التسجيلات"}
                     </button>
 
                     {/* مشاركة كل لوحات الصوت كملف إكسيل — عبر اختيار التطبيق (واتساب/إيميل/حفظ) */}
@@ -5958,9 +5979,9 @@ export default function InstantCheckPage() {
                 <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} waiting={autoWaiting} />
 
                 {/* تصدير الكل لشيت التسجيلات — الشيت الموحّد الوحيد */}
-                <button onClick={() => void exportAllHitsToField()}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
-                  <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
+                <button onClick={() => void withExportLock(() => exportAllHitsToField())} disabled={exportBusy}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95 disabled:opacity-50">
+                  <ClipboardCheck size={15} /> {exportBusy ? "جاري التصدير..." : "تصدير كل اللوحات لشيت التسجيلات"}
                 </button>
               </div>
             );

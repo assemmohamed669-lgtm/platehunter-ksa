@@ -14,7 +14,7 @@ import { parseExcelFile,
   openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw, readSheetNames,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, reversePlateLetters, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
+  detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
@@ -2186,12 +2186,13 @@ export default function SortingPage() {
         const hit = refIndex.get(n);
         if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx, srcLabel });
       };
+      // ⛔ **تطابق تام بس.** كان بيتحقن هنا مفتاح إضافي بالحروف معكوسة لكل
+      //    إحالة إنجليزية — تخمين تاني بعد التحويل الأساسي. والنتيجة كانت
+      //    بتتوسم `status: "exact"` وهي مش تام: عربية مختلفة فعلاً بحروف مرآة
+      //    كانت بتطلع «مطلوبة» والمندوب يروح لها. اتشال بقرار المالك.
+      //    (تحويل التخطيط اللاتيني الحقيقي لسه شغّال جوّه bankPlateToArabic.)
       for (const e of refEntries) {
         if (!refIndex.has(e.norm)) refIndex.set(e.norm, { row: e.row, norm: e.norm });
-        if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
-          const rev = reversePlateLetters(e.norm);
-          if (rev !== e.norm && !refIndex.has(rev)) refIndex.set(rev, { row: e.row, norm: e.norm });
-        }
       }
       const matches: MatchResult[] = [];
       const CHUNK = 16000;
@@ -2311,12 +2312,9 @@ export default function SortingPage() {
       const anyStreamed = (dataStreamed && dataStreamMeta) || memSources.some((s) => s.slot);
       const newIndex = new Map<string, { row: Record<string, string>; norm: string }>();
       if (anyStreamed) {
+        // تام فقط — بلا مفتاح «حروف معكوسة» (نفس سبب الفرز الكلي).
         for (const e of newEntries) {
           if (!newIndex.has(e.norm)) newIndex.set(e.norm, { row: e.row, norm: e.norm });
-          if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
-            const rev = reversePlateLetters(e.norm);
-            if (rev !== e.norm && !newIndex.has(rev)) newIndex.set(rev, { row: e.row, norm: e.norm });
-          }
         }
       }
       // ⛔ تطابق تام بس — نفس سبب الفرز الكلي فوق.
@@ -2369,9 +2367,8 @@ export default function SortingPage() {
           }
         }
         for (const e of newEntries) {
-          const dataRows = dataIndex.get(e.norm) ?? (
-            !e.isArabic && /[A-Za-z]/.test(e.raw) ? dataIndex.get(reversePlateLetters(e.norm)) : undefined
-          );
+          const dataRows = dataIndex.get(e.norm);   // تام فقط
+
           if (dataRows) {
             for (const { row: dataRow, dataIdx, srcIdx, srcLabel } of dataRows) {
               matches.push({ referralRow: e.row, dataRow, status: "exact", dataIdx, refPlateNorm: e.norm, srcIdx, srcLabel });
@@ -2385,12 +2382,8 @@ export default function SortingPage() {
       // مربوطة كداتا → بتظهر فوق في نتيجة الداتا، فمافيش قسم سجلات منفصل (منع التكرار).
       if (!recordsInData && tashyeekTable && tashyeekPlateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
-        for (const e of newEntries) {
+        for (const e of newEntries) {   // تام فقط
           if (!tashyeekRefIndex.has(e.norm)) tashyeekRefIndex.set(e.norm, e.row);
-          if (!e.isArabic && /[A-Za-z]/.test(e.raw)) {
-            const rev = reversePlateLetters(e.norm);
-            if (rev !== e.norm && !tashyeekRefIndex.has(rev)) tashyeekRefIndex.set(rev, e.row);
-          }
         }
         const tashyeekMatches: TashyeekResultRow[] = [];
         for (const row of tashyeekTable.rows) {
@@ -2755,7 +2748,10 @@ export default function SortingPage() {
           }, { slot: src.slot, sheets: src.sheets ?? undefined });
           continue;
         }
-        for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol)) {
+        // تام فقط (enableFuzzy=false) — زي فرعَي الداتا الكبيرة فوق بالظبط.
+        // الفرع ده كان بياخد الافتراضي (تقريبي ٨٨٪) فاللصق كان بيطلّع لوحات
+        // متشابهة موسومة «مطلوبة» على أي ملف داتا صغير.
+        for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol, 88, false)) {
           matches.push({ ...m, dataIdx: m.dataIdx + base });
         }
         base += src.rows.length;
@@ -2769,7 +2765,7 @@ export default function SortingPage() {
     // لو السجلات مربوطة كداتا، بتتطابق فوق مع الداتا فمانعملش قسم منفصل (منع التكرار).
     // السجلات دايمًا في ويندو منفصلة — بأعمدتها هي (GPS · الحي · التاريخ).
     const recordMatches = tashyeekTable && tashyeekPlateCol
-      ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol)
+      ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol, 88, false)   // تام فقط
       : [];
     recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);
 

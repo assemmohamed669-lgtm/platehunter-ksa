@@ -11,15 +11,23 @@ import { AlertTriangle, Check } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { WANTED_ALERT_EVENT, type WantedAlertDetail } from "@/lib/wantedAlert";
+import { pushAlert, dropCurrent, type QueuedAlert } from "@/lib/wantedAlertQueue";
 
 export default function WantedAlertOverlay() {
-  const [alert, setAlert] = useState<WantedAlertDetail | null>(null);
+  /**
+   * **طابور** مش سلوت واحد. قبل كده كل لوحة مطلوبة جديدة كانت بتدوس على اللي
+   * قبلها، فالمندوب اللي قال ٥٠ لوحة مطلوبة ورا بعض شاف الأخيرة بس وسمع
+   * صفّارة واحدة متصلة. دلوقتي كل واحدة بتاخد دورها: بياناتها وصفّارتها،
+   * و«تم» بتوري اللي بعدها.
+   */
+  const [queue, setQueue] = useState<QueuedAlert[]>([]);
+  const alert = queue[0] ?? null;
 
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<WantedAlertDetail>).detail;
       if (!detail?.plate) return;
-      setAlert(detail);
+      setQueue((q) => pushAlert(q, detail));
       startAlertSiren();
     };
     window.addEventListener(WANTED_ALERT_EVENT, handler);
@@ -43,12 +51,21 @@ export default function WantedAlertOverlay() {
     };
   }, []);
 
+  /**
+   * «تم» — توقف صفّارة اللوحة دي وتوري اللي بعدها **بصفّارة جديدة**، عشان
+   * المندوب يعرف إن دي عربية تانية مش نفس الإنذار.
+   */
   function dismiss() {
     stopAlertSiren();
-    setAlert(null);
+    setQueue((q) => {
+      const rest = dropCurrent(q);
+      if (rest.length > 0) setTimeout(() => startAlertSiren(), 250);
+      return rest;
+    });
   }
 
   if (!alert) return null;
+  const remaining = queue.length - 1;
 
   const fuzzy = alert.matchType === "fuzzy";
 
@@ -59,6 +76,11 @@ export default function WantedAlertOverlay() {
         <div className="flex items-center justify-center gap-2 bg-danger px-4 py-3 text-white">
           <AlertTriangle size={22} className="animate-pulse" />
           <span className="text-lg font-black">🚨 سيارة مطلوبة!</span>
+          {remaining > 0 && (
+            <span className="rounded-full bg-white/25 px-2 py-0.5 text-xs font-black">
+              +{remaining} كمان
+            </span>
+          )}
         </div>
 
         <div className="flex flex-col items-center gap-3 px-5 py-5">
@@ -87,7 +109,7 @@ export default function WantedAlertOverlay() {
             onClick={dismiss}
             className="mt-1 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand py-4 text-lg font-black text-night transition active:scale-95"
           >
-            <Check size={22} /> تم
+            <Check size={22} /> {remaining > 0 ? `تم — وريني اللي بعدها (${remaining})` : "تم"}
           </button>
         </div>
       </div>
