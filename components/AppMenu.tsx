@@ -325,12 +325,6 @@ export default function AppMenu({
                 <Mic size={16} className="text-brand" /> التسجيل الجديد (تجربة)
               </Link>
             )}
-            {isSuper && (
-              <Link href="/wheel" onClick={() => onOpenChange(false)}
-                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
-                <span className="text-base leading-none">🎡</span> عجلة الحظ (تجربة)
-              </Link>
-            )}
             <button onClick={() => refreshAppNow()}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
               <RefreshCw size={16} className="text-primary" /> تحديث التطبيق (آخر نسخة)
