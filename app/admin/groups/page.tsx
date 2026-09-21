@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Users, Plus, X, Search, Trash2, UserPlus, ChevronDown, Save } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { GROUP_ELIGIBLE_ROLES, memberBadge, membersLabel } from "@/lib/groupMembers";
 
 interface Agent { id: string; username: string; team: string | null; role: string | null; }
@@ -106,9 +107,9 @@ export default function GroupsPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", userId).single();
       if (prof?.role !== "admin") { router.replace("/admin"); return; }
       setAuthorized(true);
       load();

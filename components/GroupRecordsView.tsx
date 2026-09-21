@@ -17,6 +17,7 @@ import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import EditableTextCell from "@/components/EditableTextCell";
 import { NOTES_KEY, TYPE_KEY } from "@/lib/fieldCheckEdit";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { dedupeDuplicateRows } from "@/lib/fieldCheck";
 import { canDeleteGroupRecord, type GroupViewer } from "@/lib/groupAdmin";
 
@@ -110,12 +111,12 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      setMeId(data.user.id);
-      const { data: me } = await supabase.from("profiles").select("team, role").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      setMeId(userId);
+      const { data: me } = await supabase.from("profiles").select("team, role").eq("id", userId).single();
       const t = (me as { team?: string | null } | null)?.team ?? null;
-      setViewer({ id: data.user.id, role: (me as { role?: string | null } | null)?.role ?? null, team: t });
+      setViewer({ id: userId, role: (me as { role?: string | null } | null)?.role ?? null, team: t });
       if (!t) { setReady("no-team"); return; }
       setTeam(t);
       // أعضاء المجموعة عبر دالة security definer — قراءة profiles مباشرة بترجّع

@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { ChevronLeft, MapPin, RefreshCw, Navigation, CircleUserRound } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { activityStatus } from "@/lib/presence";
 import { toMapsLink } from "@/lib/gps";
 import type { MapPoint } from "@/components/MapView";
@@ -69,9 +70,9 @@ export default function AgentLocationsPage() {
   // Access guard — السوبر أدمن فقط (مش أي أدمن عادي).
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", userId).single();
       if (prof?.role !== "admin" || !prof?.is_super) { router.replace("/sorting"); return; }
       setAuthorized(true);
       load();
