@@ -22,7 +22,7 @@ const SHOWN_KEY = "pk_wheel_shown_session";
 //  - WHEEL_EVENT_DATE = "" يعني **مقفولة عن المناديب** (بس السوبر أدمن وحسابات
 //    التجربة يشوفوها). وقت الإطلاق نحطها = تاريخ اليوم "YYYY-MM-DD" فتظهر
 //    للمناديب في اليوم ده بس.
-const WHEEL_EVENT_DATE = "";
+const WHEEL_EVENT_DATE = "2026-09-21";
 //  - حسابات تجربة تشوف العجلة الحقيقية (للتأكد إن الأيام بتتضاف) بدون ما نطلقها
 //    لكل المناديب. غيّرها لإيميل حساب المندوب التجريبي بتاعك.
 const WHEEL_TEST_EMAILS = ["asemafify40@gmail.com"];
@@ -46,11 +46,12 @@ export default function WheelPopup() {
       const uid = data.user?.id;
       const email = data.user?.email ?? "";
       if (!uid || !alive) return;
-      const { data: prof } = await supabase.from("profiles").select("is_super, is_trial").eq("id", uid).single();
+      const { data: prof } = await supabase.from("profiles").select("is_super, is_trial, role").eq("id", uid).single();
       if (!alive) return;
-      const p = prof as { is_super?: boolean; is_trial?: boolean } | null;
+      const p = prof as { is_super?: boolean; is_trial?: boolean; role?: string } | null;
       const isSuper = !!p?.is_super;
       const isTrial = !!p?.is_trial;
+      const isAgent = p?.role === "agent";
 
       if (isSuper) {
         try { sessionStorage.setItem(SHOWN_KEY, "1"); } catch { /* */ }
@@ -62,6 +63,8 @@ export default function WheelPopup() {
       // حسابات التجربة (للتأكد إن الأيام بتتضاف) بتشوفها دايماً بغضّ النظر عن اليوم.
       const isTestAccount = WHEEL_TEST_EMAILS.includes(email);
       if (!isTestAccount) {
+        // للمناديب (agents) بس — مش الأدمن ولا أي دور تاني.
+        if (!isAgent) return;
         // مندوب حقيقي: لازم يكون **مشترك مدفوع (مش تجربة)** واليوم مفعّل.
         if (isTrial) return;                                            // حسابات التجربة متشوفش العجلة
         if (!(!!WHEEL_EVENT_DATE && todayStr() === WHEEL_EVENT_DATE)) return; // اليوم مش مفعّل
