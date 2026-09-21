@@ -11,6 +11,7 @@
  * أي فرق عن المعمل = باج. أي فشل نفق متكرر → onFatal (رجوع صامت لديبجرام).
  */
 import { postAudioForPlate } from "./plateJudgeClient";
+import { PendingWindow } from "./pendingWindow";
 import { LiveConsensus } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
 import { Vad } from "./vad";
@@ -115,6 +116,14 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // وعود النوافذ الجارية — عشان الإيقاف يستناها قبل التصريف النهائي (آخر لوحة ماتضيعش).
   const inflightSet = new Set<Promise<void>>();
 
+  /**
+   * النافذة اللي اتأجّلت لأن الخط كان مزنوق. كانت بتترمي وخلاص، فآخر لوحة في
+   * السلسلة كانت ممكن ماتدخلش أي نافذة اتبعتت أصلاً. بنمسك **المدى** (مش
+   * البايتات) فقصّه بعدين بيجيب نفس الصوت بالظبط — مافيش أي تغيير على اللي
+   * بيوصل للموديل.
+   */
+  const pending = new PendingWindow();
+
   // يبعت نافذة WAV واحدة، يطبّق حواجز المعمل، يضيف اللوحات للإجماع. مايلمسش المؤقتات.
   async function sendWav(wav: Blob, tMs: number): Promise<void> {
     try {
@@ -161,16 +170,25 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       inflight -= 1;
       inflightSet.delete(pr);
       if (!stopped) opts.onStatus?.("listening");
+      // فضي مكان → ابعت النافذة اللي كانت مستنية (لو لسه فيه).
+      if (!stopped && pending.has && inflight < MAX_INFLIGHT) {
+        const w = pending.take();
+        if (w) sliceAndSend(w.start, w.end);
+      }
     });
   }
 
   const segTimer = setInterval(() => {
     if (stopped) return;
-    if (inflight >= MAX_INFLIGHT) return;   // مشغول — النافذة الجاية هتلحق
     const elapsed = mic.elapsedSec;
     // اقرا بس أثناء الكلام أو بعده بلحظة (١.٥ث) — بلاش نقرا سكوت (زي المعمل).
     if (!speaking && elapsed - lastSpokeSec > 1.5) return;
-    sliceAndSend(Math.max(0, elapsed - WIN_S), elapsed);
+    const from = Math.max(0, elapsed - WIN_S);
+    // مشغول؟ **نأجّلها مش نرميها.** الرمي كان بيضيّع آخر لوحة في السلسلة لما
+    // الرد يبقى أبطأ من ٣ث (= نافذتين × ١.٥ث): كل نبضة تلاقي الاتنين مشغولين
+    // وتلغي نفسها، والنوافذ بتقف بعد ١.٥ث من آخر كلام — فمفيش فرصة تانية.
+    if (inflight >= MAX_INFLIGHT) { pending.set({ start: from, end: elapsed }); return; }
+    sliceAndSend(from, elapsed);
   }, STEP_MS);
 
   const drainTimer = setInterval(() => {
@@ -192,6 +210,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // مكررة، خصوصاً مع النفق اللي بيقع ويرجع فبيتكرر الإيقاف). آخر لوحة اتقالت
     // موجودة أصلاً في آخر نافذة دورية (عنقود مفتوح لسه ماستقرّش) والـflush بيطلّعها
     // بلا إعادة قراءة. فبنكتفي بـ: نقفل الميك، نستنى النوافذ الجارية، ثم flush واحد.
+    // النافذة اللي كانت مستنية لسه ماتبعتتش — دي غالباً اللي فيها **آخر لوحة**.
+    // بنبعتها قبل ما نستنى، فالانتظار تحت بيغطّيها. (mic.stop() بعدها عشان
+    // القصّ يلاقي الصوت موجود.)
+    const last = pending.take();
+    if (last) sliceAndSend(last.start, last.end);
     try { mic.stop(); } catch { /* ignore */ }
     try { await Promise.allSettled([...inflightSet]); } catch { /* ignore */ }
     for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
