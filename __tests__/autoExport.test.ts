@@ -1,89 +1,57 @@
 /**
  * «التصدير التلقائي» في صفحة التشييك: مفتاح لما يكون مفتوح، اللوحات المتشيّكة
- * بتروح لشيت السجلات لوحدها من غير ما المندوب يدوس. مقفول = زي ما هو بالظبط،
- * لازم يدوس «تصدير اللوحات للسجلات».
+ * بتروح لشيت السجلات لوحدها. مقفول = زي ما هو، لازم يدوس «تصدير للسجلات».
  *
- * الحتة الحسّاسة: **الموقع**. اللوحة بتتسجّل قبل ما الـGPS يوصل بثواني، فلو
- * صدّرناها على طول بتتحفظ في السجلات **بلا موقع للأبد**. فالتلقائي بيستنى
- * الموقع، وبمهلة قصوى عشان اللوحة ماتعلّقش لو الـGPS مقفول خالص.
+ * **القاعدة الحاكمة (بأمر المالك): مفيش تصدير تلقائي بلا موقع.**
+ * «بدون ما يتحط موقعها بالظبط ملهاش لازمه مع المندوب» — فاللوحة اللي لسه
+ * مستنية الـGPS بتفضل في التشييك، مهما طال، مش بتتصدّر ناقصة.
  */
 import { describe, it, expect } from "vitest";
 import {
-  trackFirstSeen, readyForAutoExport, hasRowLocation, loadAutoExport, saveAutoExport,
-  AUTO_EXPORT_WAIT_MS, AUTO_EXPORT_TICK_MS, AUTO_EXPORT_KEY,
+  readyForAutoExport, waitingForLocation, hasRowLocation, loadAutoExport, saveAutoExport,
+  AUTO_EXPORT_TICK_MS, AUTO_EXPORT_KEY,
 } from "@/lib/autoExport";
 
-type R = { id: string; gps: boolean };
-const row = (id: string, gps = false): R => ({ id, gps });
-const idOf = (r: R) => r.id;
-const hasLoc = (r: R) => r.gps;
-
-describe("trackFirstSeen", () => {
-  it("بيسجّل أول مرة شاف فيها كل صف", () => {
-    const seen = new Map<string, number>();
-    trackFirstSeen(["a", "b"], seen, 1000);
-    expect(seen.get("a")).toBe(1000);
-    expect(seen.get("b")).toBe(1000);
-  });
-
-  it("مابيغيّرش وقت صف شافه قبل كده", () => {
-    const seen = new Map([["a", 1000]]);
-    trackFirstSeen(["a", "b"], seen, 5000);
-    expect(seen.get("a")).toBe(1000);
-    expect(seen.get("b")).toBe(5000);
-  });
-
-  it("بينضّف الصفوف اللي راحت (اتصدّرت أو اتمسحت)", () => {
-    const seen = new Map([["a", 1000], ["قديم", 1000]]);
-    trackFirstSeen(["a"], seen, 5000);
-    expect(seen.has("قديم")).toBe(false);
-    expect(seen.has("a")).toBe(true);
-  });
-});
+type R = { id: string; mapsLink?: string | null; lat?: number | null };
+const withGps = (id: string): R => ({ id, lat: 24.7, mapsLink: "https://maps.google.com/?q=24.7,46.6" });
+const noGps = (id: string): R => ({ id });
 
 describe("readyForAutoExport", () => {
-  const seen = (ids: [string, number][]) => new Map(ids);
-
-  it("الصف اللي معاه موقع بيتصدّر على طول", () => {
-    const out = readyForAutoExport([row("a", true)], idOf, hasLoc, seen([["a", 0]]), 0);
-    expect(out.map(idOf)).toEqual(["a"]);
+  it("اللي معاه موقع بيتصدّر", () => {
+    expect(readyForAutoExport([withGps("a")]).map((r) => r.id)).toEqual(["a"]);
   });
 
-  it("الصف اللي لسه بلا موقع بيستنى — مايتصدّرش ناقص", () => {
-    const out = readyForAutoExport([row("a", false)], idOf, hasLoc, seen([["a", 0]]), 1000);
-    expect(out).toEqual([]);
+  it("اللي بلا موقع مايتصدّرش — أبداً", () => {
+    expect(readyForAutoExport([noGps("a")])).toEqual([]);
   });
 
-  it("بس مايستناش للأبد — بعد المهلة بيتصدّر بلا موقع", () => {
-    const out = readyForAutoExport([row("a", false)], idOf, hasLoc, seen([["a", 0]]), AUTO_EXPORT_WAIT_MS + 1);
-    expect(out.map(idOf)).toEqual(["a"]);
+  it("مفيش مهلة تعدّي وتصدّره ناقص — مهما طال", () => {
+    // مافيش بارامتر وقت أصلاً: القرار على الموقع بس، مش على الانتظار.
+    expect(readyForAutoExport([noGps("a")])).toEqual([]);
+    expect(readyForAutoExport([noGps("a")])).toEqual([]);
   });
 
-  it("بيخلط: اللي جاهز يمشي واللي لسه يستنى", () => {
-    const out = readyForAutoExport(
-      [row("a", true), row("b", false), row("c", true)],
-      idOf, hasLoc, seen([["a", 0], ["b", 0], ["c", 0]]), 500,
-    );
-    expect(out.map(idOf)).toEqual(["a", "c"]);
-  });
-
-  it("صف لسه ما اتسجّلش في الخريطة بيتعامل كأنه دلوقتي (يستنى)", () => {
-    const out = readyForAutoExport([row("جديد", false)], idOf, hasLoc, new Map(), 9_999_999);
-    expect(out).toEqual([]);
+  it("بيخلط: الجاهز يمشي واللي مستني يفضل", () => {
+    const out = readyForAutoExport([withGps("a"), noGps("b"), withGps("c")]);
+    expect(out.map((r) => r.id)).toEqual(["a", "c"]);
   });
 
   it("قايمة فاضية", () => {
-    expect(readyForAutoExport([], idOf, hasLoc, new Map(), 0)).toEqual([]);
+    expect(readyForAutoExport([])).toEqual([]);
+  });
+});
+
+describe("waitingForLocation", () => {
+  it("بيعدّ اللي لسه مستني موقعه", () => {
+    expect(waitingForLocation([withGps("a"), noGps("b"), noGps("c")])).toBe(2);
   });
 
-  it("المهلة قابلة للتغيير", () => {
-    const out = readyForAutoExport([row("a", false)], idOf, hasLoc, seen([["a", 0]]), 100, 50);
-    expect(out.map(idOf)).toEqual(["a"]);
+  it("كلهم جاهزين = صفر", () => {
+    expect(waitingForLocation([withGps("a")])).toBe(0);
   });
 
-  it("المهلة الافتراضية معقولة — ثوانٍ مش دقايق", () => {
-    expect(AUTO_EXPORT_WAIT_MS).toBeGreaterThanOrEqual(5_000);
-    expect(AUTO_EXPORT_WAIT_MS).toBeLessThanOrEqual(60_000);
+  it("قايمة فاضية = صفر", () => {
+    expect(waitingForLocation([])).toBe(0);
   });
 });
 
@@ -108,12 +76,11 @@ describe("hasRowLocation — قاعدة واحدة للتلات طرق", () => {
 });
 
 describe("إيقاع المحرّك", () => {
-  it("الدورة أسرع بكتير من مهلة انتظار الموقع", () => {
-    // لو الاتنين قرّبوا، الصف اللي الـGPS مش جايله بيقعد دورات زيادة مستني.
-    expect(AUTO_EXPORT_TICK_MS).toBeLessThan(AUTO_EXPORT_WAIT_MS / 4);
+  it("بيبص كل شوية — بسرعة كفاية إن اللوحة تروح أول ما موقعها يوصل", () => {
+    expect(AUTO_EXPORT_TICK_MS).toBeLessThanOrEqual(5_000);
   });
 
-  it("الدورة مش سريعة لدرجة إنها تتعب الجهاز", () => {
+  it("ومش سريع لدرجة إنه يتعب الجهاز", () => {
     expect(AUTO_EXPORT_TICK_MS).toBeGreaterThanOrEqual(1_000);
   });
 });

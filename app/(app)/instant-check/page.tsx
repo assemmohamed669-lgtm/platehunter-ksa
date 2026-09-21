@@ -66,7 +66,7 @@ import { setMicBusy } from "@/lib/micBusy";
 import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
 import { plateKeyboardMode, readSmartKeyboard, writeSmartKeyboard } from "@/lib/keyboardMode";
 import { PAGE_STEP, pageSlice, hasMore, growShown, focusWindow } from "@/lib/pagedRows";
-import { loadAutoExport, saveAutoExport, trackFirstSeen, readyForAutoExport, hasRowLocation, AUTO_EXPORT_TICK_MS } from "@/lib/autoExport";
+import { loadAutoExport, saveAutoExport, readyForAutoExport, waitingForLocation, AUTO_EXPORT_TICK_MS } from "@/lib/autoExport";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -653,7 +653,6 @@ export default function InstantCheckPage() {
   // مفتوح = اللوحات بتروح لشيت السجلات لوحدها. الإعداد بيتقرا بعد التحميل
   // (مش في القيمة الابتدائية) عشان مايحصلش اختلاف بين رسم السيرفر والمتصفح.
   const [autoExport, setAutoExport] = useState(false);
-  const autoSeenRef = useRef<Map<string, number>>(new Map());   // أول مرة شفنا كل صف
   const autoBusyRef = useRef(false);                            // مانشتغلش مرتين في نفس الوقت
   const [manualZoom, setManualZoom] = useState(3);
   const manualPinchRef = usePinchZoom(manualZoom, setManualZoom);
@@ -3366,6 +3365,13 @@ export default function InstantCheckPage() {
     setAutoExport((v) => { saveAutoExport(!v); return !v; });
   }
 
+  // كام لوحة لسه مستنية موقعها — بتتعرض جنب المفتاح. من غير الرقم ده التلقائي
+  // بيبان «واقف» وهو بيستنى الـGPS، والمندوب يفتكره بايظ.
+  const autoWaiting =
+    waitingForLocation(manualDraft) +
+    waitingForLocation(manualHits.filter((h) => !hitsExportedIds.has(h.id))) +
+    waitingForLocation(pttResults.filter((r) => !pttExportedIds.has(r.id)));
+
   /**
    * أحدث نسخة من القوايم ودوال التصدير — محرّك التصدير التلقائي بيقرا منها.
    *
@@ -3384,28 +3390,19 @@ export default function InstantCheckPage() {
   });
 
   /**
-   * دورة واحدة من التصدير التلقائي: بتبعت **الجاهز بس** من التلات طرق
-   * (يدوي/كاميرا/صوت) لشيت السجلات.
+   * دورة واحدة من التصدير التلقائي: بتبعت **اللي معاه موقع بس** من التلات
+   * طرق (يدوي/كاميرا/صوت) لشيت السجلات.
    *
-   * «جاهز» = معاه موقع، أو استنّى الموقع أكتر من المهلة — عشان مانحفظش سيارة
-   * بلا مكانها للأبد (الموقع بيوصل بعد اللوحة بثواني).
+   * اللوحة اللي لسه مستنية الـGPS بتفضل في التشييك مهما طال — اللوحة بلا
+   * مكانها مالهاش لازمة عند المندوب (قرار المالك). ولو الـGPS مقفول خالص
+   * بيصدّرها بإيده من الزرار، وهو بيسأله الأول.
    */
   const runAutoExportOnce = useCallback(async () => {
     if (autoBusyRef.current) return;
     const L = autoLatestRef.current;
-    const seen = autoSeenRef.current;
-    const now = Date.now();
-    trackFirstSeen(
-      [...L.manualDraft.map((e) => e.id), ...L.manualHits.map((h) => h.id), ...L.pttResults.map((r) => r.id)],
-      seen, now,
-    );
-    const draftReady = readyForAutoExport(L.manualDraft, (e) => e.id, hasRowLocation, seen, now);
-    const hitsReady = readyForAutoExport(
-      L.manualHits.filter((h) => !L.hitsExportedIds.has(h.id)), (h) => h.id, hasRowLocation, seen, now,
-    );
-    const pttReady = readyForAutoExport(
-      L.pttResults.filter((r) => !L.pttExportedIds.has(r.id)), (r) => r.id, hasRowLocation, seen, now,
-    );
+    const draftReady = readyForAutoExport(L.manualDraft);
+    const hitsReady = readyForAutoExport(L.manualHits.filter((h) => !L.hitsExportedIds.has(h.id)));
+    const pttReady = readyForAutoExport(L.pttResults.filter((r) => !L.pttExportedIds.has(r.id)));
     if (draftReady.length === 0 && hitsReady.length === 0 && pttReady.length === 0) return;
 
     autoBusyRef.current = true;
@@ -3421,8 +3418,8 @@ export default function InstantCheckPage() {
   }, []);
 
   // المحرّك: مؤقّت دوري طول ما المفتاح مفتوح. الدورة رخيصة وبتخرج فوراً لو
-  // مافيش صف جاهز، والدورية دي هي اللي بتضمن إن صف مستنّي الموقع يتصدّر بعد
-  // المهلة حتى لو مافيش أي لوحة جديدة بعده.
+  // مافيش صف جاهز، والدورية دي هي اللي بتخلّي اللوحة تروح **أول ما موقعها
+  // يوصل** حتى لو مافيش أي لوحة جديدة بعدها.
   useEffect(() => {
     if (!autoExport) return;
     void runAutoExportOnce();
@@ -4820,7 +4817,7 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
-                    <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} />
+                    <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} waiting={autoWaiting} />
 
                     {/* تصدير للسجلات — الشيت الموحّد الوحيد لكل طرق التشييك */}
                     <button
@@ -5691,7 +5688,7 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
-                    <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} />
+                    <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} waiting={autoWaiting} />
 
                     {/* تصدير كل لوحات الصوت لشيت التسجيلات — الشيت الموحّد الوحيد */}
                     <button onClick={() => void exportAllPttToField()}
@@ -5863,7 +5860,7 @@ export default function InstantCheckPage() {
                   </div>
                 )}
 
-                <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} />
+                <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} waiting={autoWaiting} />
 
                 {/* تصدير الكل لشيت التسجيلات — الشيت الموحّد الوحيد */}
                 <button onClick={() => void exportAllHitsToField()}
@@ -6367,7 +6364,7 @@ export default function InstantCheckPage() {
  * مفتاح «التصدير التلقائي» — نفس المفتاح بيظهر في التلات طرق (يدوي/كاميرا/صوت)
  * وبيتحكم فيهم كلهم. مقفول = المندوب لازم يدوس «تصدير للسجلات» زي ما كان.
  */
-function AutoExportToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+function AutoExportToggle({ on, onToggle, waiting }: { on: boolean; onToggle: () => void; waiting: number }) {
   return (
     <button
       onClick={onToggle}
@@ -6382,7 +6379,7 @@ function AutoExportToggle({ on, onToggle }: { on: boolean; onToggle: () => void 
       </span>
       <span className="flex items-center gap-1.5">
         <span className="text-[10px] font-normal">
-          {on ? "اللوحات بتروح للسجلات لوحدها" : "لازم تدوس تصدير"}
+          {!on ? "لازم تدوس تصدير" : waiting > 0 ? `${waiting} مستنية الموقع` : "بتروح للسجلات لوحدها"}
         </span>
         <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${on ? "bg-brand" : "bg-border"}`}>
           <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface transition-all ${on ? "right-0.5" : "right-[1.125rem]"}`} />
