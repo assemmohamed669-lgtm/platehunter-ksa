@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff, Plus } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff, Plus, Zap, ZapOff } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -66,6 +66,7 @@ import { setMicBusy } from "@/lib/micBusy";
 import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
 import { plateKeyboardMode, readSmartKeyboard, writeSmartKeyboard } from "@/lib/keyboardMode";
 import { PAGE_STEP, pageSlice, hasMore, growShown, focusWindow } from "@/lib/pagedRows";
+import { loadAutoExport, saveAutoExport, trackFirstSeen, readyForAutoExport, hasRowLocation, AUTO_EXPORT_TICK_MS } from "@/lib/autoExport";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -646,6 +647,14 @@ export default function InstantCheckPage() {
   const [draftEditValue, setDraftEditValue] = useState("");
   const [manualSel, setManualSel] = useState<Set<string>>(new Set());
   const [manualExporting, setManualExporting] = useState(false);
+
+  // ── التصدير التلقائي ──────────────────────────────────────────────────────
+  // مقفول = زي ما البرنامج شغّال بالظبط (المندوب بيدوس «تصدير للسجلات»).
+  // مفتوح = اللوحات بتروح لشيت السجلات لوحدها. الإعداد بيتقرا بعد التحميل
+  // (مش في القيمة الابتدائية) عشان مايحصلش اختلاف بين رسم السيرفر والمتصفح.
+  const [autoExport, setAutoExport] = useState(false);
+  const autoSeenRef = useRef<Map<string, number>>(new Map());   // أول مرة شفنا كل صف
+  const autoBusyRef = useRef(false);                            // مانشتغلش مرتين في نفس الوقت
   const [manualZoom, setManualZoom] = useState(3);
   const manualPinchRef = usePinchZoom(manualZoom, setManualZoom);
   // زوم نافذة نتيجة التشييك الصوتي (+ زوم بإصبعين).
@@ -2081,23 +2090,34 @@ export default function InstantCheckPage() {
     setManualSel(new Set());
   }
 
-  // Commit the whole working list to شيت التسجيلات (field_check), then clear it.
-  async function exportManualDraft() {
-    if (manualDraft.length === 0) return;
+  /**
+   * بيرحّل القائمة لشيت التسجيلات (field_check) وبيمسحها من هنا.
+   *
+   * `only` = صفوف بعينها (التصدير التلقائي بيبعت الجاهز بس)، و`silent` = من
+   * غير أسئلة ولا رسالة نجاح — مايصحّش نوقف المندوب برسالة وهو ماطلبش حاجة.
+   */
+  async function exportManualDraft(opts: { silent?: boolean; only?: FieldCheckEntry[] } = {}) {
+    const rows = opts.only ?? manualDraft;
+    if (rows.length === 0) return;
     // مانسيبش سيارة من غير موقعها — لو فيه صفوف لسه بلا موقع نسأل المندوب.
-    const noGps = manualDraft.filter((e) => !e.mapsLink && e.lat == null).length;
-    if (noGps > 0) {
-      const msg = `فيه ${noGps} لوحة لسه من غير موقع (الموقع لسه بيتجاب).\n\n«موافق» = صدّرها كده   |   «إلغاء» = استنى شوية وصدّر بعدين`;
-      if (!window.confirm(msg)) return;
+    // (التلقائي بيفلتر الجاهز قبل ما ينده، فمافيش سؤال أصلاً.)
+    if (!opts.silent) {
+      const noGps = rows.filter((e) => !e.mapsLink && e.lat == null).length;
+      if (noGps > 0) {
+        const msg = `فيه ${noGps} لوحة لسه من غير موقع (الموقع لسه بيتجاب).\n\n«موافق» = صدّرها كده   |   «إلغاء» = استنى شوية وصدّر بعدين`;
+        if (!window.confirm(msg)) return;
+      }
     }
     setManualExporting(true);
     try {
-      const toSave = [...manualDraft].reverse(); // keep chronological order in the sheet
+      const toSave = [...rows].reverse(); // keep chronological order in the sheet
       // #19 — تصدير سريع: حفظ بالتوازي. اللوحات بتتمسح من التشييك بعد الحفظ بس.
       await Promise.all(toSave.map((e) => saveFieldCheckEntry(e)));
-      setFieldEntries((prev) => [...manualDraft, ...prev]);
-      setManualDraft([]);
-      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
+      setFieldEntries((prev) => [...rows, ...prev]);
+      const gone = new Set(rows.map((e) => e.id));
+      setManualDraft((prev) => prev.filter((e) => !gone.has(e.id)));
+      setManualSel((prev) => { const n = new Set(prev); gone.forEach((id) => n.delete(id)); return n; });
+      if (!opts.silent) alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
     } finally {
       setManualExporting(false);
     }
@@ -2159,9 +2179,12 @@ export default function InstantCheckPage() {
   // يصدّر صور الكاميرا لشيت التسجيلات — الجديد بس (اللي ما اتصدّرش قبل كده).
   // التكرار مسموح (لوحة تتصوّر مرتين = صفّين)، لكن إعادة الضغط مابتعيدش تصدير
   // اللي اتصدّر خلاص — بيبعت الجديد اللي اتضاف بعد آخر تصدير فقط.
-  async function exportAllHitsToField() {
-    const fresh = manualHits.filter((h) => !hitsExportedIds.has(h.id));
-    if (fresh.length === 0) { alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة."); return; }
+  async function exportAllHitsToField(opts: { silent?: boolean; only?: typeof manualHits } = {}) {
+    const fresh = (opts.only ?? manualHits).filter((h) => !hitsExportedIds.has(h.id));
+    if (fresh.length === 0) {
+      if (!opts.silent) alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة.");
+      return;
+    }
     const stamp = Date.now();
     const toSave: FieldCheckEntry[] = fresh.map((h, i) => ({
       id: `${stamp}-${i}`,
@@ -2182,9 +2205,10 @@ export default function InstantCheckPage() {
       const freshIds = new Set(fresh.map((h) => h.id));
       setManualHits((prev) => prev.filter((h) => !freshIds.has(h.id)));
       setHitsSelected((prev) => { const n = new Set(prev); freshIds.forEach((id) => n.delete(id)); return n; });
-      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
+      if (!opts.silent) alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
     } catch (err: any) {
-      alert(err?.message ?? "تعذّر تصدير اللوحات.");
+      if (!opts.silent) alert(err?.message ?? "تعذّر تصدير اللوحات.");
+      else throw err;                       // التلقائي بيمسكه ويعيد المحاولة بعدين
     }
   }
 
@@ -3336,9 +3360,82 @@ export default function InstantCheckPage() {
   // يصدّر لوحات الصوت لشيت التسجيلات — الجديد بس (اللي ما اتصدّرش قبل كده).
   // التكرار مسموح، لكن إعادة الضغط بتبعت اللوحات اللي اتضافت بعد آخر تصدير فقط
   // مش كل القائمة تاني.
-  async function exportAllPttToField() {
-    const freshRows = pttResults.filter((r) => !pttExportedIds.has(r.id));
-    if (freshRows.length === 0) { alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة."); return; }
+  useEffect(() => { setAutoExport(loadAutoExport()); }, []);
+
+  function toggleAutoExport() {
+    setAutoExport((v) => { saveAutoExport(!v); return !v; });
+  }
+
+  /**
+   * أحدث نسخة من القوايم ودوال التصدير — محرّك التصدير التلقائي بيقرا منها.
+   *
+   * ليه ref مش deps: المحرّك مؤقّت دوري، ولو اتعاد تركيبه مع كل لوحة جديدة
+   * كان هيتصفّر باستمرار ويفضل مايشتغلش طول ما المندوب بيسجّل.
+   */
+  const autoLatestRef = useRef({
+    manualDraft, manualHits, pttResults, hitsExportedIds, pttExportedIds,
+    exportManualDraft, exportAllHitsToField, exportAllPttToField,
+  });
+  useEffect(() => {
+    autoLatestRef.current = {
+      manualDraft, manualHits, pttResults, hitsExportedIds, pttExportedIds,
+      exportManualDraft, exportAllHitsToField, exportAllPttToField,
+    };
+  });
+
+  /**
+   * دورة واحدة من التصدير التلقائي: بتبعت **الجاهز بس** من التلات طرق
+   * (يدوي/كاميرا/صوت) لشيت السجلات.
+   *
+   * «جاهز» = معاه موقع، أو استنّى الموقع أكتر من المهلة — عشان مانحفظش سيارة
+   * بلا مكانها للأبد (الموقع بيوصل بعد اللوحة بثواني).
+   */
+  const runAutoExportOnce = useCallback(async () => {
+    if (autoBusyRef.current) return;
+    const L = autoLatestRef.current;
+    const seen = autoSeenRef.current;
+    const now = Date.now();
+    trackFirstSeen(
+      [...L.manualDraft.map((e) => e.id), ...L.manualHits.map((h) => h.id), ...L.pttResults.map((r) => r.id)],
+      seen, now,
+    );
+    const draftReady = readyForAutoExport(L.manualDraft, (e) => e.id, hasRowLocation, seen, now);
+    const hitsReady = readyForAutoExport(
+      L.manualHits.filter((h) => !L.hitsExportedIds.has(h.id)), (h) => h.id, hasRowLocation, seen, now,
+    );
+    const pttReady = readyForAutoExport(
+      L.pttResults.filter((r) => !L.pttExportedIds.has(r.id)), (r) => r.id, hasRowLocation, seen, now,
+    );
+    if (draftReady.length === 0 && hitsReady.length === 0 && pttReady.length === 0) return;
+
+    autoBusyRef.current = true;
+    try {
+      // فشل واحدة مايمنعش التانيتين — والصفوف بتفضل مكانها فالدورة الجاية
+      // بتعيد المحاولة لوحدها.
+      if (draftReady.length) await L.exportManualDraft({ silent: true, only: draftReady }).catch(() => {});
+      if (hitsReady.length) await L.exportAllHitsToField({ silent: true, only: hitsReady }).catch(() => {});
+      if (pttReady.length) await L.exportAllPttToField({ silent: true, only: pttReady }).catch(() => {});
+    } finally {
+      autoBusyRef.current = false;
+    }
+  }, []);
+
+  // المحرّك: مؤقّت دوري طول ما المفتاح مفتوح. الدورة رخيصة وبتخرج فوراً لو
+  // مافيش صف جاهز، والدورية دي هي اللي بتضمن إن صف مستنّي الموقع يتصدّر بعد
+  // المهلة حتى لو مافيش أي لوحة جديدة بعده.
+  useEffect(() => {
+    if (!autoExport) return;
+    void runAutoExportOnce();
+    const id = setInterval(() => { void runAutoExportOnce(); }, AUTO_EXPORT_TICK_MS);
+    return () => clearInterval(id);
+  }, [autoExport, runAutoExportOnce]);
+
+  async function exportAllPttToField(opts: { silent?: boolean; only?: typeof pttResults } = {}) {
+    const freshRows = (opts.only ?? pttResults).filter((r) => !pttExportedIds.has(r.id));
+    if (freshRows.length === 0) {
+      if (!opts.silent) alert("كل اللوحات اتصدّرت خلاص — مفيش لوحات جديدة.");
+      return;
+    }
     const stamp = Date.now();
     const toSave: FieldCheckEntry[] = freshRows.map((r, i) => {
       const mergedRow: Record<string, string> = { ...(r.row ?? {}) };
@@ -3368,11 +3465,12 @@ export default function InstantCheckPage() {
       setPttResults((prev) => prev.filter((r) => !freshIds.has(r.id)));
       setPttSel((s) => { const n = new Set(s); freshIds.forEach((id) => n.delete(id)); return n; });
       setPttAlert((a) => (a && freshIds.has(a.id) ? null : a));
-      alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
+      if (!opts.silent) alert(`تم تصدير ${toSave.length} لوحة لشيت السجلات ومسحها من هنا.`);
       // جمع داتا التدريب (خلفية، مربوط بالمفتاح) — بعد التصدير الناجح، مايعطّلش المندوب.
       void collectTrainingFrom(freshRows);
     } catch (err: any) {
-      alert(err?.message ?? "تعذّر تصدير اللوحات.");
+      if (!opts.silent) alert(err?.message ?? "تعذّر تصدير اللوحات.");
+      else throw err;                       // التلقائي بيمسكه ويعيد المحاولة بعدين
     }
   }
 
@@ -4722,9 +4820,11 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
+                    <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} />
+
                     {/* تصدير للسجلات — الشيت الموحّد الوحيد لكل طرق التشييك */}
                     <button
-                      onClick={exportManualDraft}
+                      onClick={() => void exportManualDraft()}
                       disabled={manualExporting}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary bg-primary/10 py-2.5 text-sm font-bold text-primary transition disabled:opacity-40 active:scale-95"
                     >
@@ -5591,8 +5691,10 @@ export default function InstantCheckPage() {
                       </div>
                     )}
 
+                    <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} />
+
                     {/* تصدير كل لوحات الصوت لشيت التسجيلات — الشيت الموحّد الوحيد */}
-                    <button onClick={exportAllPttToField}
+                    <button onClick={() => void exportAllPttToField()}
                       className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
                       <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
                     </button>
@@ -5761,8 +5863,10 @@ export default function InstantCheckPage() {
                   </div>
                 )}
 
+                <AutoExportToggle on={autoExport} onToggle={toggleAutoExport} />
+
                 {/* تصدير الكل لشيت التسجيلات — الشيت الموحّد الوحيد */}
-                <button onClick={exportAllHitsToField}
+                <button onClick={() => void exportAllHitsToField()}
                   className="flex items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-night transition active:scale-95">
                   <ClipboardCheck size={15} /> تصدير كل اللوحات لشيت التسجيلات
                 </button>
@@ -6256,5 +6360,34 @@ export default function InstantCheckPage() {
       })()}
 
     </div>
+  );
+}
+
+/**
+ * مفتاح «التصدير التلقائي» — نفس المفتاح بيظهر في التلات طرق (يدوي/كاميرا/صوت)
+ * وبيتحكم فيهم كلهم. مقفول = المندوب لازم يدوس «تصدير للسجلات» زي ما كان.
+ */
+function AutoExportToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-pressed={on}
+      className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition active:scale-95 ${
+        on ? "border-brand bg-brand/10 text-brand" : "border-border bg-surface-2 text-muted"
+      }`}
+    >
+      <span className="flex items-center gap-1.5">
+        {on ? <Zap size={14} /> : <ZapOff size={14} />}
+        التصدير التلقائي
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="text-[10px] font-normal">
+          {on ? "اللوحات بتروح للسجلات لوحدها" : "لازم تدوس تصدير"}
+        </span>
+        <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${on ? "bg-brand" : "bg-border"}`}>
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface transition-all ${on ? "right-0.5" : "right-[1.125rem]"}`} />
+        </span>
+      </span>
+    </button>
   );
 }
