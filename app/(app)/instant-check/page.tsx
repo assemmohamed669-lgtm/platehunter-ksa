@@ -1346,20 +1346,30 @@ export default function InstantCheckPage() {
     // التخزين الأساسي IndexedDB (localStorage بتتمسح من الـWebView أحياناً)،
     // والقراءة من localStorage بتحصل مرة واحدة للترحيل — جوّه loadDraft.
     void (async () => {
-      if (icHitsCache) setManualHits(icHitsCache);
-      else { const v = await loadDraft<CheckHit>("hits", "ic-hits"); if (v.length) { icHitsCache = v; setManualHits(v); } }
+      // ⚠️ الاسترجاع بقى **غير متزامن** (IndexedDB). حاجتين لازم يتحافظ عليهم:
+      //  • `listsHydrated` مايتعلّمش إلا بعد ما الاسترجاع يخلّص فعلاً — وإلا
+      //    تأثيرات الحفظ تشتغل والقوايم لسه فاضية وتدوس على المحفوظ.
+      //  • أي لوحة اتسجّلت **وإحنا لسه بنقرا** مايتدوسش عليها — عشان كده
+      //    التحديث بالدالة: اللي في الشاشة يكسب لو فيه حاجة.
+      const keep = <T,>(prev: T[], loaded: T[]) => (prev.length ? prev : loaded);
+      try {
+        if (icHitsCache) setManualHits(icHitsCache);
+        else { const v = await loadDraft<CheckHit>("hits", "ic-hits"); if (v.length) { icHitsCache = v; setManualHits((p) => keep(p, v)); } }
 
-      if (icPttCache) setPttResults(icPttCache);
-      else { const v = await loadDraft<PttRow>("ptt", "ic-ptt-results"); if (v.length) { icPttCache = v; setPttResults(v); } }
+        if (icPttCache) setPttResults(icPttCache);
+        else { const v = await loadDraft<PttRow>("ptt", "ic-ptt-results"); if (v.length) { icPttCache = v; setPttResults((p) => keep(p, v)); } }
 
-      if (icManualDraftCache) setManualDraft(icManualDraftCache);
-      else { const v = await loadDraft<FieldCheckEntry>("manual", "ic-manual-draft"); if (v.length) { icManualDraftCache = v; setManualDraft(v); } }
+        if (icManualDraftCache) setManualDraft(icManualDraftCache);
+        else { const v = await loadDraft<FieldCheckEntry>("manual", "ic-manual-draft"); if (v.length) { icManualDraftCache = v; setManualDraft((p) => keep(p, v)); } }
 
-      if (icHitsExportedCache) setHitsExportedIds(new Set(icHitsExportedCache));
-      else { const v = await loadDraft<string>("hits-exported", "ic-hits-exported"); if (v.length) { icHitsExportedCache = v; setHitsExportedIds(new Set(v)); } }
+        if (icHitsExportedCache) setHitsExportedIds(new Set(icHitsExportedCache));
+        else { const v = await loadDraft<string>("hits-exported", "ic-hits-exported"); if (v.length) { icHitsExportedCache = v; setHitsExportedIds((p) => (p.size ? p : new Set(v))); } }
 
-      if (icPttExportedCache) setPttExportedIds(new Set(icPttExportedCache));
-      else { const v = await loadDraft<string>("ptt-exported", "ic-ptt-exported"); if (v.length) { icPttExportedCache = v; setPttExportedIds(new Set(v)); } }
+        if (icPttExportedCache) setPttExportedIds(new Set(icPttExportedCache));
+        else { const v = await loadDraft<string>("ptt-exported", "ic-ptt-exported"); if (v.length) { icPttExportedCache = v; setPttExportedIds((p) => (p.size ? p : new Set(v))); } }
+      } finally {
+        listsHydrated.current = true;   // **بعد** الاسترجاع، مش قبله
+      }
     })();
     try {
       const st = loadStreetName();
@@ -1412,10 +1422,6 @@ export default function InstantCheckPage() {
     void saveDraft("ptt-exported", "ic-ptt-exported", arr);
   }, [pttExportedIds]);
 
-  // بعد ما تأثيرات الاسترجاع + الحفظ الابتدائية تعدّي، نعلّم إن الاسترجاع خلّص.
-  // (لازم يكون آخر تأثير عشان تأثيرات الحفظ فوقه تتخطّى الكتابة الابتدائية
-  // الفاضية على المحفوظ.) بعد إعادة الرندر بالقيم المسترجَعة، الحفظ يكتب عادي.
-  useEffect(() => { listsHydrated.current = true; }, []);
 
   // Attach live camera stream to video element whenever stream changes
   useEffect(() => {

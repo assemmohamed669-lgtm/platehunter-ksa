@@ -51,3 +51,17 @@ describe("unexportedDeleteWarning — تحذير قبل مسح لوحات مش �
     expect(unexportedDeleteWarning(1)).toContain("1");
   });
 });
+
+describe("طابور الكتابة — الترتيب مضمون", () => {
+  it("كتابتين ورا بعض بينزلوا بالترتيب، والأخيرة هي اللي تفضل", async () => {
+    // من غير الطابور، كل نداء بيفتح اتصال IDB لوحده والترتيب مش مضمون —
+    // فكتابة قديمة ممكن تنزل بعد الجديدة وترجّع لوحات اتصدّرت.
+    const { saveDraft, loadDraft } = await import("@/lib/checkDrafts");
+    await Promise.all([
+      saveDraft("manual", "t-manual", [{ id: "a" }]),
+      saveDraft("manual", "t-manual", [{ id: "a" }, { id: "b" }]),
+      saveDraft("manual", "t-manual", []),
+    ]);
+    expect(await loadDraft("manual", "t-manual")).toEqual([]);
+  });
+})

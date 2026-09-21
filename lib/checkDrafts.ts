@@ -83,13 +83,26 @@ export async function loadDraft<T>(key: DraftKey, localKey: string): Promise<T[]
   }
 }
 
+/**
+ * طابور كتابة لكل مفتاح — كل حفظ بيستنى اللي قبله.
+ *
+ * ليه: كل نداء بيفتح اتصال IDB لوحده، والترتيب بين اتصالين **مش مضمون**. من
+ * غير الطابور، كتابة قديمة ممكن تنزل بعد الجديدة فترجّع لوحات اتصدّرت أو
+ * اتمسحت. مع سرعة المندوب في التسجيل ده مش احتمال نظري.
+ */
+const writeQueue = new Map<string, Promise<void>>();
+
 /** يحفظ في IDB (الأساسي) وlocalStorage (مرآة). أي فشل في واحدة مايوقفش التانية. */
-export async function saveDraft<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
-  try { localStorage.setItem(localKey, JSON.stringify(value)); } catch { /* ممتلئة/مقفولة */ }
-  try {
-    await idbPut(key, value);
-    await idbPut(key + INIT_SUFFIX, true);
-  } catch { /* IDB مش متاح — المرآة بتغطّي */ }
+export function saveDraft<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
+  const next = (writeQueue.get(key) ?? Promise.resolve()).then(async () => {
+    try { localStorage.setItem(localKey, JSON.stringify(value)); } catch { /* ممتلئة/مقفولة */ }
+    try {
+      await idbPut(key, value);
+      await idbPut(key + INIT_SUFFIX, true);
+    } catch { /* IDB مش متاح — المرآة بتغطّي */ }
+  });
+  writeQueue.set(key, next);
+  return next;
 }
 
 /**
