@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Users, FileUp, MapPin, AlertCircle, Barcode } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { parseExcelFile } from "@/lib/excel";
 import {
   collectReferralEntries, detectArabicPlateColumn, detectArabicPlateColumnByContent,
@@ -68,9 +69,9 @@ export default function GroupSortPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: me } = await supabase.from("profiles").select("team").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      const { data: me } = await supabase.from("profiles").select("team").eq("id", userId).single();
       const t = (me as { team?: string | null } | null)?.team ?? null;
       if (!t) { setReady("no-team"); return; }
       setTeam(t);

@@ -18,6 +18,7 @@ import {
   Coins, AlertCircle, Save, CircleUserRound, Mic, LayoutGrid, Megaphone, CalendarClock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { subStatus } from "@/lib/subscription";
 import { PLAN_LABEL, effectiveFee, agentPlanOf, monthKey, type Plan } from "@/lib/agentBilling";
 
@@ -120,9 +121,9 @@ export default function AdminAccounts() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      const { data: prof } = await supabase.from("profiles").select("role").eq("id", userId).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setAuthorized(true);
       await loadAgents();

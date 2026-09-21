@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { getStoredSessionToken, clearStoredSessionToken } from "@/lib/device";
+import { currentSession } from "@/lib/authSession";
 
 /**
  * Enforces "one active login at a time".
@@ -29,11 +30,15 @@ export default function SessionGuard({
     let channel: ReturnType<typeof supabase.channel> | null = null;
 
     async function setup() {
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData.user?.id;
+      // ⚠️ **مش getUser.** دي بتعمل نداء شبكة، ولما يفشل (نت ضعيف · التطبيق
+      // رجع من الخلفية على iOS) بترجّع user=null من غير ما تفرّق بينه وبين
+      // «الجلسة انتهت» — فالمندوب كان يتحط على شاشة الدخول وجلسته سليمة.
+      // getSession بتقرا محلياً، ومابنعتبرش الخروج حصل إلا لو مفيش جلسة
+      // **ومفيش خطأ**. (قاعدة المالك: مايخرجش إلا لو هو سجّل خروج.)
+      const { userId, signedOut } = await currentSession();
       if (!userId) {
-        router.replace("/login");
-        return;
+        if (signedOut) router.replace("/login");
+        return;                       // مشكلة شبكة → نسيبه مكانه
       }
 
       const localToken = getStoredSessionToken();

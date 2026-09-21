@@ -9,6 +9,7 @@ import {
   Eye, EyeOff, Pencil, UserRound, UserPlus, Users, X, Mic, LayoutGrid, Lock, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { subStatus } from "@/lib/subscription";
 import AgentVoiceKeys from "@/components/AgentVoiceKeys";
 import { normalizeServiceKeys, type ServiceKeys } from "@/lib/voiceKeys";
@@ -111,9 +112,9 @@ export default function AgentDetail() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", userId).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setIsSuper(!!prof?.is_super);
       load();

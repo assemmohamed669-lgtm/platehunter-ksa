@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck, LogOut, ArrowRight } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { logoutAgent } from "@/lib/auth";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -12,13 +13,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     async function checkAdmin() {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) { router.replace("/login"); return; }
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
 
       const { data: profile } = await supabase
         .from("profiles")
         .select("role")
-        .eq("id", userData.user.id)
+        .eq("id", userId)
         .single();
 
       if (!profile || profile.role !== "admin") {

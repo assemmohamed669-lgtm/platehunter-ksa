@@ -7,6 +7,7 @@ import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
   ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet, HardDriveDownload } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { ADMIN_RETURN_KEY, packAdminReturn, unpackAdminReturn, type AdminReturn } from "@/lib/adminListRestore";
 import { APP_VERSION } from "@/lib/appVersion";
@@ -203,9 +204,9 @@ export default function AdminDashboard() {
   // Access guard — admins only.
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
-      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
+      const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", userId).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setIsSuper(!!prof?.is_super);
       if (prof?.is_super) {

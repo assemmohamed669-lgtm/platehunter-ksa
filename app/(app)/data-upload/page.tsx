@@ -18,6 +18,7 @@ import {
   MessageCircle, Search, MoveRight, Crosshair,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
 import {
   parseAnySpreadsheet, buildExcelBlob, buildBigExcelBlob, openExcelBlob, shareExcelBlob,
   type ExcelTable,
@@ -88,8 +89,8 @@ export default function DataUploadPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) { router.replace("/login"); return; }
+      const { userId, signedOut } = await currentSession();   // مش getUser: فشل الشبكة ≠ خروج
+      if (!userId) { if (signedOut) router.replace("/login"); return; }
       setAllowed(true);
     })();
     syncUploadHistory().then(setHistory).catch(() => {});
