@@ -9,7 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   readyForAutoExport, waitingForLocation, hasRowLocation, loadAutoExport, saveAutoExport,
-  AUTO_EXPORT_TICK_MS, AUTO_EXPORT_KEY,
+  AUTO_EXPORT_INTERVAL_MS, AUTO_EXPORT_KEY, exportedMessage, nothingExportedMessage,
 } from "@/lib/autoExport";
 
 type R = { id: string; mapsLink?: string | null; lat?: number | null };
@@ -75,13 +75,38 @@ describe("hasRowLocation — قاعدة واحدة للتلات طرق", () => {
   });
 });
 
-describe("إيقاع المحرّك", () => {
-  it("بيبص كل شوية — بسرعة كفاية إن اللوحة تروح أول ما موقعها يوصل", () => {
-    expect(AUTO_EXPORT_TICK_MS).toBeLessThanOrEqual(5_000);
+describe("إيقاع اليدوي/الكاميرا", () => {
+  it("كل ٥ دقايق زي ما المالك طلب", () => {
+    expect(AUTO_EXPORT_INTERVAL_MS).toBe(5 * 60_000);
+  });
+});
+
+describe("رسالة التصدير", () => {
+  it("بتقول العدد", () => {
+    expect(exportedMessage(4, 0)).toContain("4");
   });
 
-  it("ومش سريع لدرجة إنه يتعب الجهاز", () => {
-    expect(AUTO_EXPORT_TICK_MS).toBeGreaterThanOrEqual(1_000);
+  it("لوحة واحدة بتتكتب مفرد", () => {
+    expect(exportedMessage(1, 0)).toContain("لوحة واحدة");
+  });
+
+  it("بتقول كمان عن اللي مستنية موقعها — عشان مايفتكرش إنها ضاعت", () => {
+    const m = exportedMessage(2, 3);
+    expect(m).toContain("2");
+    expect(m).toContain("3");
+    expect(m).toContain("مستنية موقعها");
+  });
+
+  it("مافيش مستنيين = سطر واحد بس", () => {
+    expect(exportedMessage(2, 0)).not.toContain("مستنية");
+  });
+
+  it("مفيش ولا لوحة جاهزة بس فيه مستنيين → رسالة توضيح", () => {
+    expect(nothingExportedMessage(2)).toContain("مستنية موقعها");
+  });
+
+  it("مفيش أي حاجة → مفيش رسالة (مانزنّش على المندوب)", () => {
+    expect(nothingExportedMessage(0)).toBeNull();
   });
 });
 
