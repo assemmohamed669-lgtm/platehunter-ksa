@@ -549,7 +549,12 @@ function readAllSheetsRawSync(data: Uint8Array): { name: string; aoa: unknown[][
 export async function readSheetNames(file: File): Promise<string[]> {
   try {
     const buf = await file.arrayBuffer();
-    return XLSX.read(new Uint8Array(buf), { type: "array", bookSheets: true }).SheetNames ?? [];
+    const data = new Uint8Array(buf);
+    const all = XLSX.read(data, { type: "array", bookSheets: true }).SheetNames ?? [];
+    if (all.length <= 1) return all;
+    // المخفية مابتتحسبش: ملف فيه ورقة ظاهرة + مخفيتين = **ملف بورقة واحدة**،
+    // مش متعدد الورقات. من غير كده بيروح لمسار الاختيار والمخفية تبان للمندوب.
+    return visibleNamesOf(data) ?? all;
   } catch {
     return [];
   }
@@ -561,7 +566,10 @@ export async function readAllSheets(
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: false, cellStyles: false });
   const out: { sheetName: string; headers: string[]; rows: Record<string, string>[] }[] = [];
-  for (const name of wb.SheetNames) {
+  // نفس القاعدة: الورقات المخفية مابتدخلش (وصمام الأمان لو كلها مخفية).
+  const hidden = hiddenFlags(wb);
+  const shown = wb.SheetNames.filter((_, i) => !hidden[i]);
+  for (const name of (shown.length > 0 ? shown : wb.SheetNames)) {
     const ws = wb.Sheets[name];
     if (!ws) continue;
     trimSheetToData(ws);
@@ -725,6 +733,37 @@ function cellToStr(v: unknown): string {
   return String(v);
 }
 
+/**
+ * أسماء الورقات **الظاهرة** بس. لو الميتاداتا مش متاحة (ملف محمي مثلاً) أو كل
+ * الورقات مخفية بنرجّع الكل — الفلترة مايصحّش ترفض ملف.
+ */
+function _visibleSheetNames(data: Uint8Array, all: string[], password?: string): string[] {
+  if (all.length <= 1) return all;
+  return visibleNamesOf(data, password) ?? all;
+}
+
+/**
+ * أسماء الورقات الظاهرة من ميتاداتا الملف، أو `null` لو مش متاحة.
+ *
+ * ⚠️ `bookSheets: true` **مابيجيبش** حالة الإخفاء (Workbook.Sheets بترجع
+ * undefined) — ده اللي خلّى أول محاولة للإصلاح تعدّي والورقة المخفية تفضل
+ * داخلة. `sheetRows: 1` بيجيب الميتاداتا كاملة وبيقرا صف واحد بس من كل ورقة
+ * (٣٠ مللي على محفظة ١٤٠٠ صف).
+ */
+function visibleNamesOf(data: Uint8Array, password?: string): string[] | null {
+  try {
+    const opts: XLSX.ParsingOptions = { type: "array", sheetRows: 1, cellStyles: false };
+    if (password) (opts as Record<string, unknown>).password = password;
+    const wb = XLSX.read(data, opts);
+    if (!wb.Workbook?.Sheets) return null;
+    const hidden = hiddenFlags(wb);
+    const shown = wb.SheetNames.filter((_, i) => !hidden[i]);
+    return shown.length > 0 ? shown : wb.SheetNames;
+  } catch {
+    return null;
+  }
+}
+
 function _parseExcelSync(data: Uint8Array, password?: string, forcedSheet?: string): ExcelTable {
   let sheetName: string | undefined;
   let allSheetNames: string[] = [];
@@ -737,13 +776,19 @@ function _parseExcelSync(data: Uint8Array, password?: string, forcedSheet?: stri
   // استيراد ملف متعدد الورقات (importMultiSheetData) يجيب كل ورقة على حدة.
   if (forcedSheet && allSheetNames.includes(forcedSheet)) sheetName = forcedSheet;
 
+  // ⛔ **الورقات المخفية بره خالص** — قرار المالك: الفرز على الصفحة الأساسية بس.
+  // القارئ ده كان الوحيد من الأربعة اللي مكانش فيه الفلتر، وهو اللي بيشتغل لما
+  // الـworker والمتدفّق يفشلوا. «محفظة التيسير المؤتمن الاول»: المخفية Sheet1
+  // (١٣٩١ صف) هي **أول ورقة**، فـ`allSheetNames[0]` كان بياخدها.
+  const pickNames = _visibleSheetNames(data, allSheetNames, password);
+
   // Multi-sheet detection: score every sheet by plate-like content and pick
   // the highest. Falls back to keyword header check if no sheet scores >= 0.3.
   const platesPerSheet = new Map<string, number>();
-  if (!forcedSheet && allSheetNames.length > 1) {
+  if (!forcedSheet && pickNames.length > 1) {
     let bestCount = 0;
     let bestName: string | undefined;
-    for (const name of allSheetNames) {
+    for (const name of pickNames) {
       const count = _sheetPlateCount(data, name, password);
       platesPerSheet.set(name, count);
       if (count > bestCount) { bestCount = count; bestName = name; }
@@ -751,13 +796,13 @@ function _parseExcelSync(data: Uint8Array, password?: string, forcedSheet?: stri
     if (bestCount > 0) {
       sheetName = bestName;
     } else {
-      for (const name of allSheetNames) {
+      for (const name of pickNames) {
         if (_sheetHasPlateCol(data, name, password)) { sheetName = name; break; }
       }
       if (!sheetName && bestName) sheetName = bestName;
     }
   }
-  sheetName = sheetName ?? allSheetNames[0];
+  sheetName = sheetName ?? pickNames[0] ?? allSheetNames[0];
 
   const opts: XLSX.ParsingOptions = {
     type: "array",
