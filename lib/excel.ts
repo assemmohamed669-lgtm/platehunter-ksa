@@ -8,7 +8,7 @@ import * as XLSX from "xlsx";
 import type ExcelJS from "exceljs";
 import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
-import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
+import { detectHeaderless, buildHeaderlessColumns, looksLikePlate } from "./headerlessColumns";
 import { makeHeadersUnique } from "./uniqueHeaders";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
@@ -16,6 +16,7 @@ import { gpsCellToLink } from "./gps";
 import { rtlAlignBlob } from "./rtlExcel";
 import { writeBlobInChunks, type CacheFs } from "./nativeFile";
 import { readAllSheetsRawStream } from "./xlsxStream";
+import { pickDenseHeaderRow } from "./headerRow";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -908,12 +909,15 @@ export function buildTableFromAoa(
     // header (e.g. row 339) and discarding all earlier data rows.
     if (headerRowIdx < 0) {
       let bestKwRow = -1, bestKwScore = 0, bestKwNonEmpty = -1;
-      let bestDenseRow = 0, bestDenseCount = 0;
       const DENSE_SCAN = Math.min(raw2d.length, 50);
+      // الاحتياطي بالكثافة اتنقل لـlib/headerRow: «أكتر صف مليان» كان بيخسّر
+      // صف العناوين لو فيه **عمود واحد بلا اسم** — وساعتها أول صف بيانات
+      // بيتحسب عناوين ولوحته تتاكل كاسم عمود وتختفي من الفرز. حصلت في محفظة
+      // «التيسير المؤتمن الاول» (عمود اللوحة بلا عنوان).
+      const bestDenseRow = pickDenseHeaderRow(raw2d as unknown[][], DENSE_SCAN);
       for (let ri = 0; ri < DENSE_SCAN; ri++) {
         const cells = raw2d[ri] as unknown[];
         const nonEmpty = cells.filter((c) => String(c ?? "").trim()).length;
-        if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
         let kwScore = 0;
         for (const c of cells) {
           const v = String(c ?? "").trim();
@@ -954,19 +958,32 @@ export function buildTableFromAoa(
       //
       // بس **اللي فيه داتا بس** — العمود الفاضي (من دمج خلايا أو فراغ) بيفضل
       // مرمي زي ما كان، عشان مانزحمش الجدول بأعمدة مالهاش لازمة.
-      if (opts.keepUnnamedColumns) {
-        const named = new Set(headerCols.map((h) => h.col));
-        const width = raw2d.reduce((m, r) => Math.max(m, (r as unknown[]).length), 0);
-        for (let col = 0; col < width; col++) {
-          if (named.has(col)) continue;
-          let hasData = false;
-          for (let i = dataStartRow; i < raw2d.length && !hasData; i++) {
-            if (cellToStr((raw2d[i] as unknown[])[col]).trim()) hasData = true;
-          }
-          if (hasData) headerCols.push({ name: `عمود ${XLSX.utils.encode_col(col)}`, col });
+      // ⚠️ **عمود اللوحة بلا عنوان بيتحفظ دايماً** — مش بس لما الصفحة تطلب.
+      //    محفظة «التيسير المؤتمن الاول» عمود لوحاتها مالوش عنوان خالص، فكان
+      //    بيترمي هنا والكشف يقع على LOANNO فيطلّع «لوحات» زي ع36476 —
+      //    محفظة كاملة مابتفرزش. أي عمود بلا اسم نص قيمه لوحات بياخد اسم
+      //    «رقم اللوحة» ويفضل.
+      const named = new Set(headerCols.map((h) => h.col));
+      const width = raw2d.reduce((m, r) => Math.max(m, (r as unknown[]).length), 0);
+      let addedAny = false;
+      for (let col = 0; col < width; col++) {
+        if (named.has(col)) continue;
+        const vals: string[] = [];
+        let hasData = false;
+        for (let i = dataStartRow; i < raw2d.length; i++) {
+          const v = cellToStr((raw2d[i] as unknown[])[col]).trim();
+          if (v) { hasData = true; if (vals.length < 50) vals.push(v); }
+          else if (hasData && vals.length >= 50) break;
         }
-        headerCols.sort((a, b) => a.col - b.col);
+        if (!hasData) continue;
+        const platey = vals.length >= 2 && vals.filter(looksLikePlate).length >= vals.length / 2;
+        if (platey) { headerCols.push({ name: "رقم اللوحة", col }); addedAny = true; }
+        else if (opts.keepUnnamedColumns) {
+          headerCols.push({ name: `عمود ${XLSX.utils.encode_col(col)}`, col });
+          addedAny = true;
+        }
       }
+      if (addedAny) headerCols.sort((a, b) => a.col - b.col);
     }
     makeHeadersUnique(headerCols);   // مشترك مع الـWorker — شوف lib/uniqueHeaders.ts
     const headers = headerCols.map((hc) => hc.name);
