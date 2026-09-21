@@ -46,9 +46,11 @@ export default function WheelPopup() {
       const uid = data.user?.id;
       const email = data.user?.email ?? "";
       if (!uid || !alive) return;
-      const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", uid).single();
+      const { data: prof } = await supabase.from("profiles").select("is_super, is_trial").eq("id", uid).single();
       if (!alive) return;
-      const isSuper = !!(prof as { is_super?: boolean } | null)?.is_super;
+      const p = prof as { is_super?: boolean; is_trial?: boolean } | null;
+      const isSuper = !!p?.is_super;
+      const isTrial = !!p?.is_trial;
 
       if (isSuper) {
         try { sessionStorage.setItem(SHOWN_KEY, "1"); } catch { /* */ }
@@ -57,10 +59,13 @@ export default function WheelPopup() {
         return;
       }
 
-      // مندوب: لازم اليوم مفعّل أو حساب تجربة.
-      const eventActive =
-        (!!WHEEL_EVENT_DATE && todayStr() === WHEEL_EVENT_DATE) || WHEEL_TEST_EMAILS.includes(email);
-      if (!eventActive) return;
+      // حسابات التجربة (للتأكد إن الأيام بتتضاف) بتشوفها دايماً بغضّ النظر عن اليوم.
+      const isTestAccount = WHEEL_TEST_EMAILS.includes(email);
+      if (!isTestAccount) {
+        // مندوب حقيقي: لازم يكون **مشترك مدفوع (مش تجربة)** واليوم مفعّل.
+        if (isTrial) return;                                            // حسابات التجربة متشوفش العجلة
+        if (!(!!WHEEL_EVENT_DATE && todayStr() === WHEEL_EVENT_DATE)) return; // اليوم مش مفعّل
+      }
 
       // لفّ قبل كده؟ متظهرش. (لو تجاهلها بلا لفّ، مفيش صف → هتظهر تاني.)
       const { data: spinRow } = await supabase
