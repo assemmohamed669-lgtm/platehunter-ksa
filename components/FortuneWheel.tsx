@@ -9,6 +9,7 @@
  * واحدة لكل مندوب) — والعجلة هتوقف على القيمة اللي السيرفر يرجّعها.
  */
 import { useRef, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 // ١٢ خانة: كل قيمة (١/٢/٣/٤) بتتكرّر ٣ مرات.
 const VALUES = [1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4];
@@ -43,34 +44,45 @@ export default function FortuneWheel({ mode = "test" }: { mode?: "test" | "real"
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState<number | null>(null);
   const [confetti, setConfetti] = useState(false);
+  const [err, setErr] = useState("");
   const rotRef = useRef(0);
+  const pendingDaysRef = useRef(1);
 
-  function spin() {
-    if (spinning) return;
-    setResult(null);
-    setConfetti(false);
-    setSpinning(true);
-
-    const days = pickDays();
-    // اختَر واحدة من الخانات الـ٣ اللي قيمتها = days لتقف العجلة عندها.
+  // بيلفّ العجلة ويوقفها على خانة قيمتها = days (تحت المؤشّر فوق).
+  function animateTo(days: number) {
+    pendingDaysRef.current = days;
     const idxs = VALUES.map((v, i) => (v === days ? i : -1)).filter((i) => i >= 0);
     const k = idxs[Math.floor(Math.random() * idxs.length)];
-    const mid = k * SEG + SEG / 2; // مركز الخانة (من فوق، مع العقارب)
-    // نلفّ ٥ لفّات كاملة + الإزاحة اللي تجيب مركز الخانة تحت المؤشّر (فوق).
+    const mid = k * SEG + SEG / 2;
     const base = rotRef.current;
-    const target = base + 360 * 5 + ((360 - mid - (base % 360)) + 720) % 360;
+    const target = base + 360 * 5 + (((360 - mid - (base % 360)) % 360) + 360) % 360;
     rotRef.current = target;
     setRotation(target);
+  }
+
+  async function spin() {
+    if (spinning) return;
+    setResult(null); setConfetti(false); setErr(""); setSpinning(true);
+    if (mode === "real") {
+      // السيرفر بيقرّر النتيجة ويضيف الأيام (لفّة واحدة لكل مندوب) — العجلة توقف
+      // على اللي رجّعه.
+      try {
+        const { data, error } = await supabase.rpc("spin_wheel");
+        const res = (data ?? {}) as { days?: number; applied_to?: string; already?: boolean; error?: string };
+        if (error || res.error || !res.days) { setSpinning(false); setErr("تعذّر اللف — حاول تاني"); return; }
+        animateTo(res.days);
+      } catch {
+        setSpinning(false); setErr("تعذّر اللف — تأكّد من النت وحاول تاني");
+      }
+      return;
+    }
+    animateTo(pickDays());
   }
 
   function onSpinEnd() {
     if (!spinning) return;
     setSpinning(false);
-    // القيمة اللي وقفت عندها = من زاوية العجلة النهائية.
-    const norm = ((360 - (rotRef.current % 360)) % 360);
-    const k = Math.floor(norm / SEG) % VALUES.length;
-    const days = VALUES[k];
-    setResult(days);
+    setResult(pendingDaysRef.current);
     setConfetti(true);
     setTimeout(() => setConfetti(false), 3500);
   }
@@ -150,6 +162,7 @@ export default function FortuneWheel({ mode = "test" }: { mode?: "test" | "real"
       {mode === "test" && (
         <p className="text-[11px] text-muted">وضع تجربة — مفيش أيام بتتضاف فعلاً</p>
       )}
+      {err && <p className="text-xs font-bold text-danger">{err}</p>}
 
       {/* نتيجة + مبروك */}
       {result != null && !spinning && (
