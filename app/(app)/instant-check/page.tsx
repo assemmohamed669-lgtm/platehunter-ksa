@@ -1665,7 +1665,12 @@ export default function InstantCheckPage() {
    * هنا تصحيح حالة المطابقة على الصف، مش إنذار جديد.
    */
   function searchInCheck(rawPlate: string, opts?: { silent?: boolean }): PlateResult | null {
-    if (!checkPlateCol || checkIndex.size === 0) return null;
+    // ⚠️ الفهرس هو الحكم، **مش** عمود الملف الأساسي. `checkIndex` مبني من
+    //    الملف الأساسي **وكل ملفات التشييك الإضافية**؛ فلو الأساسي مالوش عمود
+    //    لوحة واضح (أو اتشال) بس الإضافي فيه لوحات، الشرط القديم
+    //    (`!checkPlateCol`) كان بيرجّع null ⇒ **صفر بحث وصفر صفّارات** والمربع
+    //    مكتوب عليه عدد اللوحات عادي.
+    if (checkIndex.size === 0) return null;
     const normalized = normalizePlate(bankPlateToArabic(rawPlate));
     if (!normalized) return null;
     const silent = opts?.silent === true;
@@ -2867,6 +2872,11 @@ export default function InstantCheckPage() {
         if (decision === "none") break;
         if (decision === "drop-incoming") return;
         // "drop-twin" — امسح صف التوأم الموجود (والحالات المعلّقة عليه) وكمّل.
+        // ⛔ **إلا لو التوأم ده لوحة مطلوبة بتطابق تام.** التجاوز فوق بيحمي
+        //    اللوحة الواردة بس؛ من غير الشرط ده الحارس كان بيشيل صف لوحة
+        //    مطلوبة **من على الشاشة** (ومن التصدير معاها) عشان لوحة جديدة
+        //    قريبة منها برقم. المطلوب مايتشالش أبداً.
+        if (checkIndex.has(normalizePlate(`${v.letters ?? ""}${v.digits ?? ""}`))) break;
         pttRowIdsRef.current.delete(v.id);
         seen.delete(k);
         setPttResults((prev) => prev.filter((r) => r.id !== v.id));
@@ -3339,6 +3349,9 @@ export default function InstantCheckPage() {
     // فوراً، قبل إعادة الرسم: أي رد طيّار في الطريق للصف ده يبقى بلا أي فعل
     // (لا ترقيع ولا صفّارة ولا كارت) — `deletePttRow` مابيلغيش الطلب نفسه.
     pttRowIdsRef.current.delete(id);
+    // وشيله من خريطة «اتشاف قريب» كمان — من غير كده، لو المندوب مسح الصف وقال
+    // اللوحة تاني خلال ٦ ثواني، النطق التاني بيتبلع في صمت ومابيرجعش صف.
+    for (const [k, v] of seenPttRef.current) if (v.id === id) seenPttRef.current.delete(k);
     setPttResults((prev) => prev.filter((r) => r.id !== id));
     setPttExportedIds((s) => { const n = new Set(s); n.delete(id); return n; });
     setPttAlert((a) => (a?.id === id ? null : a));
