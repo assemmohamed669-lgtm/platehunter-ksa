@@ -71,6 +71,7 @@ import {
   exportedMessage, nothingExportedMessage, AUTO_EXPORT_INTERVAL_MS,
 } from "@/lib/autoExport";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
+import { firstFailureReason, saveFailureMessage } from "@/lib/saveFailure";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -2138,7 +2139,7 @@ export default function InstantCheckPage() {
       const res = await Promise.allSettled(toSave.map((e) => saveFieldCheckEntry(e)));
       const saved = toSave.filter((_, i) => res[i].status === "fulfilled");
       const failed = toSave.length - saved.length;
-      if (saved.length === 0) throw new Error("تعذّر حفظ أي لوحة — كلها فضلت مكانها.");
+      if (saved.length === 0) throw new Error(saveFailureMessage(firstFailureReason(res)));
       setFieldEntries((prev) => [...saved, ...prev]);
       const gone = new Set(saved.map((e) => e.id));
       setManualDraft((prev) => prev.filter((e) => !gone.has(e.id)));
@@ -2235,7 +2236,7 @@ export default function InstantCheckPage() {
       const res = await Promise.allSettled(toSave.map((e) => saveFieldCheckEntry(e)));
       const saved = toSave.filter((_, i) => res[i].status === "fulfilled");
       const failed = toSave.length - saved.length;
-      if (saved.length === 0) throw new Error("تعذّر حفظ أي لوحة — كلها فضلت مكانها.");
+      if (saved.length === 0) throw new Error(saveFailureMessage(firstFailureReason(res)));
       setFieldEntries((prev) => [...saved, ...prev]);
       const freshIds = new Set(saved.map((e) => e.srcId).filter(Boolean) as string[]);
       setManualHits((prev) => prev.filter((h) => !freshIds.has(h.id)));
@@ -3556,7 +3557,7 @@ export default function InstantCheckPage() {
       const res = await Promise.allSettled(toSave.map((e) => saveFieldCheckEntry(e)));
       const saved = toSave.filter((_, i) => res[i].status === "fulfilled");
       const failedCount = toSave.length - saved.length;
-      if (saved.length === 0) throw new Error("تعذّر حفظ أي لوحة — كلها فضلت مكانها.");
+      if (saved.length === 0) throw new Error(saveFailureMessage(firstFailureReason(res)));
       setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined));
       const savedSrcIds = saved.map((e) => e.srcId).filter(Boolean) as string[];
       markJudgeExportedIfArmed(savedSrcIds); // قياس الطيّار: الصف اتصدّر فعلاً
