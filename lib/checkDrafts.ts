@@ -90,19 +90,78 @@ export async function loadDraft<T>(key: DraftKey, localKey: string): Promise<T[]
  * غير الطابور، كتابة قديمة ممكن تنزل بعد الجديدة فترجّع لوحات اتصدّرت أو
  * اتمسحت. مع سرعة المندوب في التسجيل ده مش احتمال نظري.
  */
-const writeQueue = new Map<string, Promise<void>>();
+const writeQueue = new Map<DraftKey, Promise<void>>();
 
-/** يحفظ في IDB (الأساسي) وlocalStorage (مرآة). أي فشل في واحدة مايوقفش التانية. */
-export function saveDraft<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
+/** آخر قيمة مستنية الكتابة لكل مفتاح + مؤقّت التجميع. */
+const pending = new Map<DraftKey, { localKey: string; value: unknown[]; timer: ReturnType<typeof setTimeout>; waiters: Array<() => void> }>();
+
+/** المفاتيح اللي اتكتب فيها علم `:init` في الجلسة دي — مانكتبوش كل مرة. */
+const initialised = new Set<DraftKey>();
+
+/** عدّاد كتابات فعلية — للاختبار بس. */
+let writeCount = 0;
+export function __writeCountForTest(): number { return writeCount; }
+
+/**
+ * **تجميع الكتابات.** كل تغيير في القائمة كان بيكتبها **كلها** في IndexedDB.
+ * اللوحة الواحدة بتعمل ٣-٤ تغييرات (دخول الصف · وصول الموقع · النوع/الملاحظة ·
+ * الشيل وقت التصدير)، فمندوب بـ١٥٠ لوحة كان بيكتب ميجابايتات في جلسة واحدة —
+ * والحصّة في المتصفّح **لكل أصل مش لكل قاعدة**، فلما تمتلئ **كل** كتابة في
+ * **كل** قاعدة بتفشل، وده شكل «تعذّر حفظ أي لوحة» بالظبط.
+ *
+ * بنستنى ٣٠٠ مللي: الرشقة بتتكتب مرة واحدة بآخر قيمة، والمندوب مش بيحس بفرق.
+ */
+const COALESCE_MS = 300;
+
+function flushNow<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
   const next = (writeQueue.get(key) ?? Promise.resolve()).then(async () => {
-    try { localStorage.setItem(localKey, JSON.stringify(value)); } catch { /* ممتلئة/مقفولة */ }
+    writeCount += 1;
     try {
       await idbPut(key, value);
-      await idbPut(key + INIT_SUFFIX, true);
+      // علم الترحيل يتكتب **مرة واحدة** في الجلسة — كان بيتكتب مع كل حفظ.
+      if (!initialised.has(key)) { await idbPut(key + INIT_SUFFIX, true); initialised.add(key); }
     } catch { /* IDB مش متاح — المرآة بتغطّي */ }
   });
   writeQueue.set(key, next);
   return next;
+}
+
+/** يحفظ في IDB (الأساسي) وlocalStorage (مرآة)، بتجميع الرشقات. */
+export function saveDraft<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
+  // ⚠️ **الحفظ في ذاكرة المتصفّح بيفضل فوري — مش مؤجّل.** هو متزامن ورخيص،
+  // وكان بيحصل فوراً من قبل ما أضيف IndexedDB أصلاً. تأجيله كان هيفتح نافذة
+  // ٣٠٠ مللي لو التطبيق اتقفل فجأة تضيع فيها آخر لوحة — والقاعدة إن شغل
+  // المندوب مايضيعش. اللي بيتجمّع هو **كتابة IndexedDB بس**، وهي اللي أنا
+  // ضفتها وهي اللي كانت بتضغط على مساحة التليفون.
+  try { localStorage.setItem(localKey, JSON.stringify(value)); } catch { /* ممتلئة/مقفولة */ }
+  return new Promise<void>((resolve) => {
+    // الكتابة اللي اتأجّلت **وعدها بيتقفل مع الكتابة اللي حلّت محلها** — قيمتها
+    // أقدم فالأحدث بتغطّيها. من غير كده المنادي الأول بيستنى للأبد.
+    const cur = pending.get(key);
+    const waiters = cur ? cur.waiters : [];
+    if (cur) clearTimeout(cur.timer);
+    waiters.push(resolve);
+    const timer = setTimeout(() => {
+      const p = pending.get(key);
+      pending.delete(key);
+      if (!p) { resolve(); return; }
+      const done = () => p.waiters.forEach((w) => w());
+      void flushNow(key, p.localKey, p.value).then(done, done);
+    }, COALESCE_MS);
+    pending.set(key, { localKey, value: value as unknown[], timer, waiters });
+  });
+}
+
+/** يكتب أي حاجة مستنية فوراً — قبل الإغلاق أو التصدير. */
+export async function flushDrafts(): Promise<void> {
+  const items = [...pending.entries()];
+  for (const [key, p] of items) {
+    clearTimeout(p.timer);
+    pending.delete(key);
+    const done = () => p.waiters.forEach((w) => w());
+    void flushNow(key, p.localKey, p.value).then(done, done);
+  }
+  await Promise.allSettled([...writeQueue.values()]);
 }
 
 /**
