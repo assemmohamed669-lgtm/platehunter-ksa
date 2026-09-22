@@ -137,7 +137,10 @@ export default function RegistrationV2Page() {
     try {
       const { startVoicexEngine } = await import("@/lib/voicexEngine");
       const ctrl = await startVoicexEngine({
-        transcribeUrl: modelUrl.trim().replace(/\/+$/, ""),
+        // 🔴 المحرّك عايز **مسار `/transcribe` كامل** مش الأساس — `voicexPointer.ts:59`
+        // بيعمل نفس الحاجة. من غيرها الطلب بيروح على الجذر ويرجع **http_404**
+        // (والـ`/health` بينجح عادي، فالشاشة بتقول «متصل» والتفريغ بيفشل).
+        transcribeUrl: modelUrl.trim().replace(/\/+$/, "") + "/transcribe",
         token: modelToken.trim(),
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           setRows((prev) => {
