@@ -279,7 +279,9 @@ export default function RegistrationV2Page() {
           if (bestEntry) bestEntry.used = true;
           const now = Date.now();
           setRows((prev) => {
-            if (prev.some((r) => r.plate === plate && Math.abs(r.atMs - meta.tMs) < 3000)) return prev;
+            // نفس اللوحة خلال ٨ث = نفس العربية. كان ٣ث فـ`درق6894` اتكررت
+            // في تقرير المالك (صفّين فرقهم ٣ ثواني).
+            if (prev.some((r) => r.plate === plate && Math.abs(r.atMs - meta.tMs) < 8000)) return prev;
             return [{
               id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf,
               atMs: meta.tMs, shownAt: now,
