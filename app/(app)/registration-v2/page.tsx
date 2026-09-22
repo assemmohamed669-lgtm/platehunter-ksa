@@ -18,6 +18,7 @@ import { runBatchTranscription, type MergedPlate, type BatchProgress } from "@/l
 import { transcribeWithEngine, makeSliceReader } from "@/lib/batchAudio";
 import { resolveModelBase } from "@/lib/modelEndpoint";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
+import { canOpenTrialPage, planTrialRun } from "@/lib/trialModelGate";
 import { getGroqKey } from "@/lib/voiceKeys";
 import PlateBadge from "@/components/PlateBadge";
 
@@ -57,9 +58,11 @@ export default function RegistrationV2Page() {
       const { data, error: authErr } = await supabase.auth.getUser();
       if (authErr || !data.user) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
       const { data: prof, error: profErr } = await supabase
-        .from("profiles").select("is_super").eq("id", data.user.id).single();
+        .from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
-      if (!prof?.is_super) { setDenied("الصفحة دي للسوبر أدمن بس، وحسابك الحالي مش سوبر أدمن."); return; }
+      // 🔴 بقت **للأدمنز** (`role === "admin"`) والسوبر أدمن — بطلب المالك.
+      // القرار في `canOpenTrialPage` عشان يتغطّى باختبار: الفشل بيقفل مش بيفتح.
+      if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
       const saved = readJudgeEndpoint();
       if (saved) { setModelUrl(saved.base); setModelToken(saved.token); }
       setAllowed(true);
@@ -109,6 +112,17 @@ export default function RegistrationV2Page() {
       const base = await resolveModelBase(manual?.base ?? null);
       const token = manual?.token ?? "";
 
+      /**
+       * 🔴 **التجربة ماتشتغلش بلا موديلنا** (بطلب المالك: «شيل اللي فيه وحط
+       * الجديد بتاعنا مكانه»).
+       *
+       * من غير الحارس ده `runBatchTranscription` بيكمّل بالمحرك العام ويرجّع
+       * `usedModel: false` — يعني المالك بيجرّب «الموديل الجديد» وهو شايف
+       * نتيجة المحرك العام، والتجربة تبقى باطلة وهو مش واخد باله.
+       */
+      const plan = planTrialRun({ base, token });
+      if (!plan.ok) { setError(plan.message); return; }
+
       const out = await runBatchTranscription(audio, {
         // التسجيل الطويل بيتبعت أجزاء — العدّاد بيبيّن الجزء الحالي عشان
         // التسجيل الكبير مايبانش وكأنه واقف.
@@ -125,6 +139,12 @@ export default function RegistrationV2Page() {
       });
       setPlates(out.plates);
       setUsedModel(out.usedModel);
+      // حزام أمان تاني: حتى بعد ما الحارس فوق يعدّي، ممكن الخدمة ماتردّش على
+      // أي لوحة (نفق واقع وسط الشغل). ساعتها النتيجة **من المحرك العام** —
+      // ولازم تتقال بصوت عالي، مش تتعرض كأنها نتيجة موديلنا.
+      if (!out.usedModel && out.plates.length > 0) {
+        setError("⚠️ الخدمة مارّدتش على ولا لوحة — النتيجة دي من المحرك العام مش من موديلنا. اتأكد إن النفق شغّال (جرّب الاتصال تحت) وأعد التفريغ.");
+      }
     } catch (e) {
       setError((e as Error)?.message ?? "تعذّر التفريغ.");
     } finally {
