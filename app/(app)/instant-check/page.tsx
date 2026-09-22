@@ -1033,7 +1033,8 @@ export default function InstantCheckPage() {
             import("@/lib/voicexPointer"),
           ]);
           if (!alive) return;
-          voicexEndpointRef.current = await ptr.resolveVoicexEndpoint();
+          // 🔀 معرّف المندوب بيحدّد صندوقه — ثابت له، والوقوع بيحرّكه لوحده.
+          voicexEndpointRef.current = await ptr.resolveVoicexEndpoint(uid);
           if (!alive) return;
           // فشل الجلب (Supabase متعثّرة) = رجوع صامت لديبجرام — وكان بيفضل كده
           // لحد ما المندوب يقفل البرنامج ويفتحه، حتى بعد رجوع الداتابيز بساعات.
@@ -1041,7 +1042,7 @@ export default function InstantCheckPage() {
           // لو الجلب نجح من أول مرة — وهي الحالة العادية.
           if (!voicexEndpointRef.current) {
             cancelVoicexRetry = ptr.retryVoicexEndpoint(
-              () => ptr.resolveVoicexEndpoint(),
+              () => ptr.resolveVoicexEndpoint(uid),
               (ep) => { if (alive) voicexEndpointRef.current = ep; },
             );
           }
@@ -1051,7 +1052,7 @@ export default function InstantCheckPage() {
           judgeArmedRef.current = true;
           // تدوير النفق: اللابتوب بيكتب اللينك الجديد في المؤشّر ⇒ نعيد حسم العنوان.
           unsubPointer = ptr.subscribeVoicexPointer(async () => {
-            try { voicexEndpointRef.current = await ptr.resolveVoicexEndpoint(); }
+            try { voicexEndpointRef.current = await ptr.resolveVoicexEndpoint(uid); }
             catch { voicexEndpointRef.current = null; }
           });
           return;
