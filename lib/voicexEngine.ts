@@ -89,6 +89,39 @@ export interface VoicexEngineOpts {
    * صوتك» (الكاشف محلي)، ومافيش أي أثر. أي تخطّي لازم يتبلّغ.
    */
   onSkip?: (reason: string) => void;
+  /**
+   * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
+   * (كوهير) بالتوازي. ده أسلوب المعمل بالظبط: «الفوري مابينديش كوهير —
+   * **العميل** هو اللي بينده سيرفر النوع» (`deploy/نشر-على-كوريا.md`).
+   * `tMs` نفس زمن اللوحة فالمطابقة بينهم مضمونة.
+   */
+  onAudioWindow?: (wav: Blob, tMs: number) => void;
+  /**
+   * 🔬 **كل قراءة خام من الموديل** — قبل الإجماع وقبل أي فلترة.
+   *
+   * اللوحة النهائية (`onPlate`) بتخفي اللي بيحصل قبلها: القراءات اللي اتحجبت
+   * بحاجز الاختراع، واللي اترفضت (`accepted:false`)، والنص اللي الموديل سمعه
+   * فعلاً مقابل اللوحة اللي اتطلعت منه. من غير ده مستحيل نعرف «الغلط جاي
+   * منين» ولا «فيه رقم ماتكتبش».
+   */
+  onRead?: (r: {
+    /** نص الموديل الخام (`raw_text`) — مش اللوحة المستخلَصة */
+    rawText: string;
+    /** اللوحة/اللوحات اللي السيرفر استخلصها */
+    plate: string;
+    accepted: boolean;
+    /** exp(mean_logprob) */
+    conf: number;
+    /** أوطى توكن — أقل من ‎-0.5 = النافذة اتحجبت كاختراع */
+    minLogprob: number | null;
+    /** اتحجبت بحاجز الاختراع؟ */
+    blocked: boolean;
+    tMs: number;
+    /** زمن الموديل نفسه (مللي) */
+    msModel: number | null;
+    /** زمن الرحلة كاملة من الجهاز (مللي) */
+    msWall: number;
+  }) => void;
 }
 
 export interface VoicexEngineController {
@@ -187,11 +220,13 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       // `network` · `bad_token` …). من غيره كل فشل بيبان «الطلب فشل» وخلاص،
       // وبنفضل نخمّن السبب بدل ما الجهاز يقوله.
       let lastErr: string | null = null;
+      const t0 = Date.now();
       const resp = await postAudioForPlate(wav, {
         transcribeUrl: opts.transcribeUrl, token: opts.token,
         mimeType: "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
         onError: (code: string) => { lastErr = code; },
       });
+      const msWall = Date.now() - t0;
       if (!resp) {
         fails += 1;
         opts.onSkip?.(("request_failed:" + (lastErr ?? "no_response")));
@@ -199,6 +234,19 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
         return;
       }
       fails = 0;
+      const confAll = typeof resp.meanLogprob === "number" ? Math.exp(resp.meanLogprob) : 0.6;
+      const minLpAll = typeof resp.minLogprob === "number" ? resp.minLogprob : null;
+      try {
+        opts.onRead?.({
+          rawText: String(resp.rawText ?? resp.plate ?? ""),
+          plate: String(resp.plate ?? ""),
+          accepted: !!resp.accepted,
+          conf: confAll,
+          minLogprob: minLpAll,
+          blocked: minLpAll !== null && minLpAll < MIN_TOKEN_LOGPROB,
+          tMs, msModel: resp.serverMs, msWall,
+        });
+      } catch { /* ignore */ }
       // زي المعمل: المرفوضة (accepted=false) ماتظهرش — بلا إسقاط تخمين.
       if (!resp.accepted) return;
       // ثقة النافذة = exp(mean_logprob) (زي المعمل) — أعلى ثقة تكسب في التصويت.
@@ -231,6 +279,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     const tMs = ((fromSec + toSec) / 2) * 1000;
     inflight += 1;
     opts.onStatus?.("processing");
+    try { opts.onAudioWindow?.(wav, tMs); } catch { /* ignore */ }
     const pr = sendWav(wav, tMs);
     inflightSet.add(pr);
     void pr.finally(() => {
