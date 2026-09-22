@@ -34,6 +34,11 @@ import { getUploadedFile } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { buildCombinedCheckIndex } from "@/lib/checkSheets";
 import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
+import {
+  pickTypeForPlate,
+  pruneTypeQueue,
+  type TypeWindow,
+} from "@/lib/typeForPlate";
 import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
@@ -84,6 +89,8 @@ interface ReadLog {
 
 const WELL = /^[ء-ي]{3}\d{4}$/;
 
+/* 🏷️ ثوابت نافذة النوع وقرارها في `lib/typeForPlate.ts` — مغطّاة باختبار. */
+
 export default function RegistrationV2Page() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [denied, setDenied] = useState<string | null>(null);
@@ -119,17 +126,31 @@ export default function RegistrationV2Page() {
   const startedAtRef = useRef(0);
   const gpsRef = useRef<GpsCoords | null>(null);
   /**
-   * 🔴 **طابور أنواع بيتستهلك مرة واحدة** — مش «آخر نوع سمعناه».
+   * 🔴 **طابور نصوص كوهير الخام** — النوع بيتحسب **لكل لوحة على حدة**.
    *
-   * النوافذ **متداخلة بالتصميم** (٥ث كل ١.٥ث)، فكلمة «ونيت» اتقالت مرة
-   * بتظهر في ٣-٤ نوافذ ورا بعض. لما كنا بنمسك «آخر نوع» كان بيلزق على
-   * **كل لوحة** بعدها (شكوى المالك: «كل لوحة بيكتب قدامها ونيت»).
+   * ── العلّة اللي ده بيصلّحها ───────────────────────────────────────
+   * بلاغ المالك (٢٢ سبتمبر ٢٠٢٦): «أقول `حبك1234` — يحطّ قدامها ونيت
+   * وأنا مقولتهاش». السبب إن الصفحة كانت بتاخد النوع **بالتوقيت وحده**:
+   * كوهير بيمسح النافذة (٥ث) **كلها** ويرجّع أي نوع فيها، والصفحة
+   * بتلزّقه على أقرب لوحة خلال ١.٢ث. والنافذة بتبدأ ٢.٥ث قبل مركزها،
+   * يعني أولها **ذيل اللوحة اللي قبلها** — فنوع الجارة بيترحّل.
    *
-   * القاعدة دلوقتي: كل نوع **يتصرف لأقرب لوحة مرة واحدة وخلاص**، والتكرار
-   * من نفس النطق بيتلغى بمفتاح (النص + أقرب ثانيتين).
+   * ── الحارس المقيس ──────────────────────────────────────────────
+   * الحل مش توقيت أدقّ — الحل إن النوع يتقصّ **عند أرقام لوحتنا** في
+   * نصّ كوهير، وناخد أول مطابقة **بعدها**. ده الحارس المقيس في المعمل
+   * على ١١١ حالة بحقيقة مكتوبة بإيد المالك:
+   *
+   *     القصّ نجح : صح ٧٥ · غلط ٤  ⇒ ٩٤.٩٪
+   *     القصّ فشل : صح  ٦ · غلط ٩  ⇒ ٤٠.٠٪   ← بترجع فاضية بالقصد
+   *
+   * فبنخزّن **النص الخام** بدل نوع محسوب، والقرار بيتاخد وقت التصريف
+   * لما نبقى عارفين اللوحة. شوف `lib/vehicleTypeScan.ts`.
+   *
+   * ⇒ و`used` اتشالت: نافذة ٥ث ممكن تشيل **لوحتين**، وكل واحدة بتقصّ
+   *   عند أرقامها هي. لو أول لوحة «استهلكت» النافذة كانت التانية تضيع.
+   *   اللي بيمنع الكتابة فوق بعضها هو إن الصف اللي عنده نوع بيتخطّى.
    */
-  const typeQueueRef = useRef<Array<{ type: string | null; note: string | null; tMs: number; used: boolean }>>([]);
-  const typeSeenRef = useRef<Map<string, number>>(new Map());
+  const typeQueueRef = useRef<TypeWindow[]>([]);
 
   const checkIndex = useMemo(
     () => buildCombinedCheckIndex(checkTable ? [checkTable] : []),
@@ -231,7 +252,13 @@ export default function RegistrationV2Page() {
     return () => clearInterval(id);
   }, [listening]);
 
-  /** 🏷️ يسأل كوهير عن النوع/الملاحظة لنفس النافذة. فشله بيتبلع بالقصد. */
+  /**
+   * 🏷️ يسأل كوهير عن **نصّ** النافذة. فشله بيتبلع بالقصد.
+   *
+   * ⚠️ بناخد `text` **مش** `type`/`note` اللي السيرفر حسبهم: السيرفر
+   * بيمسح النافذة كلها بلا ما يعرف لوحتنا، والقصّ عند أرقامها هو اللي
+   * بيمنع نوع الجارة. شوف تعليق `typeQueueRef`.
+   */
   const askType = useCallback(async (wav: Blob, tMs: number) => {
     try {
       const res = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
@@ -240,42 +267,46 @@ export default function RegistrationV2Page() {
         body: wav,
       });
       if (!res.ok) return;
-      const j = await res.json() as { ok?: boolean; type?: string | null; note?: string | null };
+      const j = await res.json() as { ok?: boolean; text?: string | null };
       if (!j?.ok) return;
-      if (!j.type && !j.note) return;
+      const text = String(j.text ?? "").trim();
+      if (!text) return;
       /**
-       * 🔴 نفس النطق بيوصل في **كذا نافذة متداخلة** — بنعدّه مرة واحدة.
+       * 🔴 **مافيش إلغاء تكرار بالنص هنا بعد دلوقتي.**
        *
-       * أول محاولة كانت بمفتاح `round(tMs/2000)` وده **غلط**: خطوة النوافذ
-       * ١٥٠٠ مللي، فنفس الكلمة بتقع في دلوين مختلفين وبتتعدّ مرتين —
-       * التانية بتتصرف للوحة **اللي بعدها**. ده اللي خلّى «ونيت» تظهر على
-       * `امن9107` (صح) وكمان على `برد9680` و`دسك2206` (غلط).
-       *
-       * القاعدة الصح: **نفس النص خلال ٦ ثواني = نفس النطق**، مهما كانت
-       * النافذة. ٦ث أكبر من طول النافذة (٥ث) فمستحيل نطقان مختلفان لنفس
-       * الكلمة يتلموا، وأكبر من الخطوة (١.٥ث) فالتكرار بيتمسك.
+       * كان فيه مفتاح «نفس النص خلال ٦ث = نفس النطق» عشان يمنع الكلمة
+       * تتعدّ مرتين من نافذتين متداخلتين وتلحق اللوحة **اللي بعدها**.
+       * القصّ عند أرقام اللوحة بيمنع ده **بنيوياً** (النافذة التانية
+       * بتقصّ عند نفس الأرقام فبتدّي نفس النتيجة لنفس الصف، والصف اللي
+       * عنده نوع بيتخطّى) — والمفتاح بقى بيأذي: مندوبين بيقولوا «ونيت»
+       * لعربيتين ورا بعض، والتانية كانت بتتلغى.
        */
-      const sig = (j.type ?? "") + "|" + (j.note ?? "");
-      const last = typeSeenRef.current.get(sig);
-      if (last != null && Math.abs(tMs - last) < 6000) return;
-      typeSeenRef.current.set(sig, tMs);
-      const entry = { type: j.type ?? null, note: j.note ?? null, tMs, used: false };
-      typeQueueRef.current.push(entry);
-      // لوحة ظهرت خلاص في نفس النافذة ولسه بلا نوع؟ تاخده بأثر رجعي (كوهير أبطأ).
-      let consumed = false;
-      setRows((prev) => prev.map((r) => {
-        if (consumed || r.type || r.note || Math.abs(r.atMs - tMs) > 1200) return r;
-        consumed = true;
-        return { ...r, type: entry.type, note: entry.note };
-      }));
-      if (consumed) entry.used = true;
+      typeQueueRef.current = pruneTypeQueue([...typeQueueRef.current, { text, tMs }], tMs);
+      /**
+       * لوحة ظهرت خلاص ولسه بلا نوع؟ تاخده بأثر رجعي (كوهير أبطأ من
+       * الموديل). كل صف بيقصّ النص عند **أرقامه هو** — فصفّين في نفس
+       * النافذة كل واحد بياخد نوعه.
+       */
+      setRows((prev) => {
+        let touched = false;
+        const one = [{ text, tMs }];
+        const next = prev.map((r) => {
+          if (r.type || r.note) return r;
+          // نفس القرار المغطّى باختبار — بنافذة واحدة (اللي لسه وصلت).
+          const sc = pickTypeForPlate(one, r.plate, r.atMs);
+          if (!sc) return r;
+          touched = true;
+          return { ...r, type: sc.type, note: sc.note };
+        });
+        return touched ? next : prev;
+      });
     } catch { /* النوع إضافة — مايوقّفش اللوحات */ }
   }, [modelToken]);
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setSkips({}); setReads([]);
-    typeQueueRef.current = []; typeSeenRef.current = new Map();
+    typeQueueRef.current = [];
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }
@@ -294,17 +325,15 @@ export default function RegistrationV2Page() {
           const key = normalizePlate(bankPlateToArabic(plate));
           const hit = checkIndexRef.current.get(key) ?? null;
           const g = gpsRef.current;
-          // أقرب نوع غير مستهلَك في نافذة اللوحة — ويتستهلك فوراً فمايتكررش.
-          let ty: { type: string | null; note: string | null } | null = null;
-          let best = Infinity;
-          let bestEntry: { used: boolean } | null = null;
-          for (const e of typeQueueRef.current) {
-            if (e.used) continue;
-            const d = Math.abs(e.tMs - meta.tMs);
-            // ١.٢ث < خطوة النوافذ (١.٥ث) ⇒ مستحيل يلحق لوحة النافذة اللي بعدها.
-            if (d < 1200 && d < best) { best = d; ty = { type: e.type, note: e.note }; bestEntry = e; }
-          }
-          if (bestEntry) bestEntry.used = true;
+          /**
+           * 🏷️ النوع من **أقرب نافذة أرقام اللوحة دي فيها**.
+           *
+           * مش أقرب نافذة وخلاص: بنقصّ نصّ كل نافذة قريبة عند أرقام
+           * `plate` وناخد أول واحدة بتدّي نتيجة. لو أرقامنا مش في نصّ
+           * أي نافذة ⇒ **الخانة تفضل فاضية** — الفاضية بتبان وتتملّى،
+           * والغلط بيتكتب في داتا المالك في صمت.
+           */
+          const ty = pickTypeForPlate(typeQueueRef.current, plate, meta.tMs);
           const now = Date.now();
           const fresh: LiveRow = {
             id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf,
