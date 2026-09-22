@@ -44,7 +44,7 @@ interface Cluster {
   tMs: number;
   times: number[];
   /** إملاء كامل → {عدد مرات ظهوره، مجموع ثقته، أعلى ثقة مفردة} */
-  spellings: Map<string, { count: number; confSum: number; maxConf: number }>;
+  spellings: Map<string, { count: number; confSum: number; maxConf: number; minLps: number[] }>;
   confs: number[];
   minLps: number[];
   lastMs: number;
@@ -55,17 +55,6 @@ const LETTERS_RE = /^[ء-ي]{3}/;
 function lettersOf(plate: string): string {
   const m = plate.match(LETTERS_RE);
   return m ? m[0] : plate.slice(0, 3);
-}
-
-/** عدد الخانات المختلفة بين أرقام لوحتين (نفس الحروف). ≤١ = ضجيج نافذة لنفس
- *  النطق؛ ≥٢ = أرقام مختلفة فعلاً. لو الطول مختلف = مختلفين شكلاً. */
-function digitDist(a: string, b: string): number {
-  const da = a.replace(/\D/g, "");
-  const db = b.replace(/\D/g, "");
-  if (da.length !== db.length) return Math.max(da.length, db.length);
-  let d = 0;
-  for (let i = 0; i < da.length; i++) if (da[i] !== db[i]) d++;
-  return d;
 }
 
 export interface ConsensusOptions {
@@ -150,10 +139,11 @@ export class LiveConsensus {
     }
     target.times.push(read.tMs);
     target.tMs = target.times.reduce((a, b) => a + b, 0) / target.times.length;
-    const cur = target.spellings.get(read.plate) ?? { count: 0, confSum: 0, maxConf: -Infinity };
+    const cur = target.spellings.get(read.plate) ?? { count: 0, confSum: 0, maxConf: -Infinity, minLps: [] };
     cur.count += 1;
     cur.confSum += read.conf;
     cur.maxConf = Math.max(cur.maxConf, read.conf);
+    if (typeof read.minLp === "number") cur.minLps.push(read.minLp);
     target.spellings.set(read.plate, cur);
     target.confs.push(read.conf);
     if (typeof read.minLp === "number") target.minLps.push(read.minLp);
@@ -197,66 +187,52 @@ export class LiveConsensus {
      * وثقتها المفردة أعلى من أي غلط. فاختيار أعلى ثقة مفردة رفع الدقة من
      * **٣٣٪ لـ٨٥٪**. (المجموع كان بيتصرّف زي التكرار وبيضيّع الصح.)
      */
-    // نجمّع الإملاءات في **مجموعات أرقام** (فرق ≤١ خانة = نفس النطق، ضجيج نافذة).
-    type G = { rep: string; totalCount: number; maxConf: number; best: string; bestConf: number };
-    const groups: G[] = [];
-    const entries = [...cl.spellings.entries()].sort(
-      (a, b) => b[1].maxConf - a[1].maxConf
-    );
-    for (const [spelling, s] of entries) {
-      let g = groups.find((g) => digitDist(g.rep, spelling) <= 1);
-      if (!g) {
-        g = { rep: spelling, totalCount: 0, maxConf: -Infinity, best: spelling, bestConf: -Infinity };
-        groups.push(g);
-      }
-      g.totalCount += s.count;
-      g.maxConf = Math.max(g.maxConf, s.maxConf);
-      if (s.maxConf > g.bestConf) {
-        g.bestConf = s.maxConf;
-        g.best = spelling;
-      }
-    }
-
     /**
-     * ⚠️ **تقسيم لوحتين بنفس الحروف اتنطقوا ورا بعض (مقيس ٢٩ أغسطس).**
-     * الأساطيل المتباعدة زمنياً بتتفصل بالتوقيت لوحده. لكن لو المندوب قال
-     * لوحتين بنفس ٣ الحروف **بسرعة** (فرق زمني < نافذة العنقود) بيتدمجوا
-     * وواحدة بتضيع (دوا7299 + دوا7116 → واحدة). الإشارة الآمنة اللي بتفرّقهم
-     * عن ضجيج النافذة: **كل مجموعة أرقام ظهرت ٢+ مرة (ثابتة)**. ضجيج النطق
-     * الواحد بيظهر مرة واحدة، فمابيتقسمش. ده بيسترجع اللوحة الضايعة من غير
-     * ما يقسّم أسطول (لسه محمي بالتوقيت + شرط الثبات).
+     * ⚠️ **كل إملاء مختلف = لوحة مختلفة** (قرار المالك ٢٠٢٦-٠٩-٢١:
+     * «لو قال أسطول سيارات لشركة وفيها اختلاف فقط في آخر رقم بردو يطلعوا،
+     *   أي لوحات يقولها المندوب تطلع»).
+     *
+     * كان فيه دمج للإملاءات اللي فرقها **خانة واحدة** على إنها ضجيج نافذة
+     * لنفس النطق. القاعدة دي كانت بتاكل أساطيل حقيقية: ربع4821 و ربع4822
+     * و ربع4823 (أرقام متتالية، مركونين ورا بعض) كانوا بيطلعوا **لوحة واحدة**.
+     * وفي محفظة المالك ٧٦٪ من اللوحات بتشارك حروفها مع لوحة تانية — فالحالة
+     * دي هي القاعدة مش الاستثناء.
+     *
+     * الثمن المعروف والمقبول: النطق الواحد اللي النافذة قطعته وقراه الموديل
+     * برقم غلط هيطلّع لوحة زيادة. الحماية: اللوحة الزيادة مابتدقّش جرس إلا لو
+     * طابقت ملف التشييك **بالظبط**، وحواجز الاختراع (الثقة/أضعف توكن) لسه
+     * شغّالة على كل إملاء اتقرا مرة واحدة.
      */
-    const stable = groups.filter((g) => g.totalCount >= this.greenMinMult);
-    if (stable.length >= 2) {
-      return stable.map((g) => ({
+    type G = { best: string; totalCount: number; maxConf: number; minLps: number[] };
+    const entries = [...cl.spellings.entries()].sort((a, b) => b[1].maxConf - a[1].maxConf);
+    const groups: G[] = entries.map(([spelling, sp]) => ({
+      best: spelling,
+      totalCount: sp.count,
+      maxConf: sp.maxConf,
+      minLps: sp.minLps,
+    }));
+
+    const out: CommittedPlate[] = [];
+    for (const g of groups) {
+      const solo = g.totalCount < this.greenMinMult;
+      /**
+       * 🔴 حاجز الاختراع (مقيس ٣١ أغسطس): قراءة **نافذة-واحدة** بثقة واطية
+       * جداً = اختراع في الوقفة/الانتقال بين لوحتين (ردس8211 ثقته ٠.٣٥).
+       * اللوحات الحقيقية النافذة-الواحدة ثقتها ≥٠.٩. اللي اتأكدت في نافذتين+
+       * بتعدّي مهما كانت — الاتفاق نفسه دليل إنها حقيقية.
+       */
+      if (solo && g.maxConf < this.minSoloConf) continue;
+      /** وحاجز التلفيق على القراءة المفردة: أضعف توكن واطي جداً = احتمال اختراع. */
+      if (solo && g.minLps.length && Math.max(...g.minLps) < this.soloMinLp) continue;
+      out.push({
         plate: g.best,
-        tier: "green" as Tier,
+        tier: !solo || g.maxConf >= this.greenSoloConf ? "green" : "yellow",
         mult: g.totalCount,
         conf: g.maxConf,
         tMs: cl.tMs,
-      }));
+      });
     }
-
-    // الحالة العادية: إملاء واحد بأعلى ثقة، mult = كل قراءات العنقود (زي ما كان).
-    const best = entries.length ? entries[0][0] : "";
-    const mult = cl.times.length;
-    const conf = cl.confs.length ? Math.max(...cl.confs) : 0;
-    /**
-     * 🔴 **حاجز الاختراع (مقيس ٣١ أغسطس).** قراءة **نافذة-واحدة** بثقة واطية
-     * جداً = اختراع في الوقفة/الانتقال بين لوحتين (ردس8211 ثقته ٠.٣٥). اللوحات
-     * الحقيقية النافذة-الواحدة ثقتها ≥٠.٩ (دبر2898=٠.٩٠)، والمتعددة كلها ≥٠.٨؛
-     * وكل ما ظهر تحت ٠.٦ نافذة-واحدة كان اختراع/رفرفة خسرانة. فبنحجبها هنا —
-     * بيشيل الاختراع بلا خسارة لوحة حقيقية.
-     */
-    if (mult < this.greenMinMult && conf < this.minSoloConf) return [];
-    // حاجز الاختراع على القراءة **المفردة** بس (اللوحة اللي اتأكدت في نافذتين+
-    // تعدّي مهما كانت): أضعف توكن واطي جداً في قراءة مفردة = احتمال تلفيق.
-    if (mult < this.greenMinMult && cl.minLps.length) {
-      const bestMinLp = Math.max(...cl.minLps);
-      if (bestMinLp < this.soloMinLp) return [];
-    }
-    const green = mult >= this.greenMinMult || conf >= this.greenSoloConf;
-    return [{ plate: best, tier: green ? "green" : "yellow", mult, conf, tMs: cl.tMs }];
+    return out;
   }
 
   reset(): void {
