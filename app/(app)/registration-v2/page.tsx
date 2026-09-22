@@ -1,371 +1,352 @@
 "use client";
 
 /**
- * «التسجيل الجديد» — سجّل أو ارفع، وبعدين فرّغ مرة واحدة.
+ * ══════════════════════════════════════════════════════════════════════
+ *  «التسجيل الجديد (تجربة)» — الموديل الجديد **حيّ**
+ * ══════════════════════════════════════════════════════════════════════
  *
- * الفرق عن الصفحة القديمة: مافيش بثّ لحظي. المندوب بيسجّل كلامه كله متصل
- * (أو يرفع ملف) ويدوس «تفريغ» — والبرنامج بيفرّغ التسجيل كله ويطلّع اللوحات.
- * الملف الكامل بيدّي دقة أعلى من البثّ لأن المحرك بيشوف السياق كله ويراجع
- * نفسه — نفس السبب اللي خلّى دقة المنافس عالية.
+ * المالك (٢٢ سبتمبر ٢٠٢٦): «شيل كل حاجة في الصفحة دي، امسحها مش عايزها،
+ * وحطّ الموديل الجديد مكانها».
  *
- * **للسوبر أدمن بس** لحد ما تتجرّب — نفس قفل الصفحة القديمة بالظبط.
+ * اللي كان هنا قبل كده (سجّل ← ارفع ← فرّغ مرة واحدة بالمحرك العام + مراجعة
+ * موديلنا) **اتشال بالكامل**. مكانه: تسجيل حيّ — تقول اللوحة وتطلع قدامك،
+ * نفس اللي المالك بيجرّبه في المعمل بالظبط.
+ *
+ * 🔬 **بيشتغل على سيرفر التجربة (ماليزيا)** — `checkpoint-7500`، نفس موديل
+ *    المعمل بالبايت (md5 `6d7edc70…`)، ومخرَجه اتقارن ٣٢/٣٢ متطابق حرفياً.
+ *
+ * ⚙️ **الكود مشترك مش نسخة:** بينده `startVoicexEngine` — نفس محرّك صفحة
+ *    التشييك بالحرف (ميك → كشف كلام → نوافذ → إجماع). الفرق الوحيد إن
+ *    العنوان بيروح لسيرفر التجربة بدل مؤشّر فويس اكس. كده أي فرق في النتيجة
+ *    يبقى **الموديل** مش الصفحة.
+ *
+ * 🔒 **للأدمنز والسوبر أدمن** — الحارس في `canOpenTrialPage`.
  */
 
-import { useState, useRef, useEffect } from "react";
-import { Mic, Square, Upload, FileAudio, Loader2, AlertTriangle, CheckCircle2, X, Cpu, Check } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  Mic, Square, Loader2, AlertTriangle, Cpu, Trash2, Copy, Check, RefreshCw,
+} from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { runBatchTranscription, type MergedPlate, type BatchProgress } from "@/lib/batchTranscript";
-import { transcribeWithEngine, makeSliceReader } from "@/lib/batchAudio";
-import { resolveModelBase } from "@/lib/modelEndpoint";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
-import { getGroqKey } from "@/lib/voiceKeys";
+import {
+  canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
+} from "@/lib/trialModelGate";
+import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 import PlateBadge from "@/components/PlateBadge";
+
+interface LiveRow {
+  id: string;
+  plate: string;
+  /** 🟢 مؤكّدة (نافذتين+) · 🟡 محتاجة نظرة (نافذة واحدة) */
+  tier: "green" | "yellow";
+  conf: number;
+  at: number;
+}
 
 export default function RegistrationV2Page() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [denied, setDenied] = useState<string | null>(null);
 
-  const [recording, setRecording] = useState(false);
+  const [listening, setListening] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [audio, setAudio] = useState<Blob | null>(null);
-  const [audioName, setAudioName] = useState("");
-
-  const [busy, setBusy] = useState<string | null>(null);
+  const [speaking, setSpeaking] = useState(false);
+  const [level, setLevel] = useState(0);
+  const [rows, setRows] = useState<LiveRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [plates, setPlates] = useState<MergedPlate[] | null>(null);
-  const [usedModel, setUsedModel] = useState(false);
+  const [copied, setCopied] = useState(false);
+  /** كام نافذة اتخطّت — بيتملا من `onSkip` (الرمي الصامت كان الباج الأصلي). */
+  const [skipped, setSkipped] = useState(0);
 
-  // عنوان خدمة الموديل + توكنها. مكانهم هنا **بالقصد**: ده إعداد بتاع الصفحة
-  // دي لوحدها، فمالوش لازمة يتحط في صفحة تانية والمندوب شغّال عليها.
   const [modelUrl, setModelUrl] = useState("");
   const [modelToken, setModelToken] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [saved, setSaved] = useState(false);
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const recRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
+  const engineRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  /* ─── الصلاحية + العنوان المثبّت ──────────────────────────────────── */
   useEffect(() => {
     (async () => {
-      // القفل بيقول **ليه** رفض، ومابيحوّلش بصمت.
-      //
-      // كان بيعمل router.replace ساكت: الصفحة بتختفي وإنت في صفحة تانية
-      // فاكر نفسك في التسجيل، وتدوّر على مربّع مش موجود لأنك أصلاً مش هنا.
-      // التحويل الصامت بيخفي السبب ويخلّي الغلط يبان وكأنه «الميزة مااترفعتش».
       const { data, error: authErr } = await supabase.auth.getUser();
       if (authErr || !data.user) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
       const { data: prof, error: profErr } = await supabase
-        .from("profiles").select("is_super").eq("id", data.user.id).single();
+        .from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
-      if (!prof?.is_super) { setDenied("الصفحة دي للسوبر أدمن بس، وحسابك الحالي مش سوبر أدمن."); return; }
-      const saved = readJudgeEndpoint();
-      if (saved) { setModelUrl(saved.base); setModelToken(saved.token); }
+      if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
+      const ep = resolveTrialEndpoint(readJudgeEndpoint());
+      setModelUrl(ep.base);
+      setModelToken(ep.token);
       setAllowed(true);
     })();
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      try { engineRef.current?.stop(); } catch { /* ignore */ }
+    };
   }, []);
 
-  async function startRecording() {
-    setError(null);
-    setPlates(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      chunksRef.current = [];
-      rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
-      rec.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
-        setAudio(blob);
-        setAudioName("تسجيل " + new Date().toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" }));
-        stream.getTracks().forEach((t) => t.stop());
-      };
-      rec.start();
-      recRef.current = rec;
-      setRecording(true);
-      setSeconds(0);
-      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-    } catch {
-      setError("مش قادر يفتح الميكروفون — اسمح للتطبيق بالتسجيل وجرّب تاني.");
-    }
-  }
-
-  function stopRecording() {
-    try { recRef.current?.stop(); } catch { /* اتوقف خلاص */ }
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    setRecording(false);
-  }
-
-  async function transcribe() {
-    if (!audio) return;
-    setError(null);
-    setPlates(null);
-    setBusy("جاري التفريغ…");
-    try {
-      const apiKey = (await getGroqKey()) ?? "";
-      // عنوان الموديل: المسجّل تلقائياً من الخدمة، وإلا اللي محطوط يدوي هنا
-      const manual = readJudgeEndpoint();
-      const base = await resolveModelBase(manual?.base ?? null);
-      const token = manual?.token ?? "";
-
-      const out = await runBatchTranscription(audio, {
-        // التسجيل الطويل بيتبعت أجزاء — العدّاد بيبيّن الجزء الحالي عشان
-        // التسجيل الكبير مايبانش وكأنه واقف.
-        transcribe: (a) => transcribeWithEngine(a, apiKey, (done, total) => {
-          setBusy(total > 1 ? "جاري تفريغ التسجيل… جزء " + (done || 1) + " من " + total : "جاري تفريغ التسجيل…");
-        }),
-        modelBase: base && token ? base : null,
-        token,
-        // بيبعت نافذة اللوحة بس للموديل، مش التسجيل كله مع كل لوحة
-        readSlice: makeSliceReader(audio),
-        onProgress: (p: BatchProgress) => {
-          if (p.phase === "reading") setBusy("جاري قراءة اللوحات… " + p.done + " من " + p.total);
-        },
-      });
-      setPlates(out.plates);
-      setUsedModel(out.usedModel);
-    } catch (e) {
-      setError((e as Error)?.message ?? "تعذّر التفريغ.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  /**
-   * اختبار حقيقي — رحلة كاملة للخدمة بالتوكن، مش مجرد «فيه حاجة متخزّنة».
-   *
-   * `/health` بالذات لأنه بيتحقق من **الاتنين مرة واحدة**: العنوان (النفق
-   * لازم يرد) والتوكن (بيرجع ٤٠١ لو غلط). `/ping` كان هيقول «واصل» حتى
-   * والتوكن غلط — ودي بالظبط الغلطة اللي ضيّعت جلسة كاملة قبل كده.
-   */
-  async function probeModel() {
+  /* ─── فحص الاتصال — تلقائي عند الفتح ─────────────────────────────── */
+  const probeModel = useCallback(async (base?: string, token?: string) => {
+    const b = (base ?? modelUrl).trim().replace(/\/+$/, "");
+    const t = (token ?? modelToken).trim();
+    if (!b || !t) { setProbe({ ok: false, msg: "مافيش عنوان أو توكن." }); return; }
     setProbing(true);
     setProbe(null);
-    const base = modelUrl.trim().replace(/\/+$/, "");
     try {
-      // AbortSignal.timeout مش موجود في WebView قديم — من غير الحارس ده
-      // الاختبار كان هيرمي ويقول «مافيش رد» والخدمة شغالة فعلاً.
       const timeout = typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
         ? AbortSignal.timeout(20000) : undefined;
-      const res = await fetch(base + "/health", {
-        headers: { "X-Plate-Token": modelToken.trim() },
-        signal: timeout,
-      });
-      if (res.status === 401) {
-        setProbe({ ok: false, msg: "النفق واصل بس التوكن مرفوض — راجع التوكن." });
-      } else if (!res.ok) {
-        setProbe({ ok: false, msg: "الخدمة ردّت بكود " + res.status + "." });
-      } else {
+      const res = await fetch(b + "/health", { headers: { "X-Plate-Token": t }, signal: timeout });
+      if (res.status === 401) setProbe({ ok: false, msg: "واصل بس التوكن مرفوض." });
+      else if (!res.ok) setProbe({ ok: false, msg: "السيرفر ردّ بكود " + res.status + "." });
+      else {
         const body = await res.json() as { model?: string; device?: string };
         setProbe({
           ok: true,
-          msg: "واصل — " + (body.model ?? "الموديل") + " على " + (body.device === "cuda" ? "كارت الشاشة" : body.device ?? "الجهاز"),
+          msg: (body.model ?? "الموديل") + " على " + (body.device === "cuda" ? "كارت الشاشة" : body.device ?? "الجهاز"),
         });
       }
     } catch {
-      // مافيش رد خالص: النفق واقع، أو الجهاز مقفول، أو الأصل مرفوض في CORS.
-      setProbe({ ok: false, msg: "مافيش رد — الخدمة مقفولة أو عنوان النفق اتغيّر." });
+      setProbe({ ok: false, msg: "مافيش رد — السيرفر مقفول أو عنوان النفق اتغيّر." });
     } finally {
       setProbing(false);
     }
+  }, [modelUrl, modelToken]);
+
+  useEffect(() => {
+    if (allowed !== true || !modelUrl || !modelToken) return;
+    void probeModel();
+    // مرة واحدة عند الفتح — الإعادة بزرار «أعِد الفحص».
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed]);
+
+  /* ─── التسجيل الحيّ ───────────────────────────────────────────────── */
+  async function start() {
+    setError(null);
+    setSkipped(0);
+    const plan = planTrialRun({ base: modelUrl, token: modelToken });
+    if (!plan.ok) { setError(plan.message); return; }
+    try {
+      const { startVoicexEngine } = await import("@/lib/voicexEngine");
+      const ctrl = await startVoicexEngine({
+        transcribeUrl: modelUrl.trim().replace(/\/+$/, ""),
+        token: modelToken.trim(),
+        onPlate: (plate: string, meta: VoicexPlateMeta) => {
+          setRows((prev) => {
+            // نفس اللوحة في نفس اللحظة = ترفرف نوافذ، مش لوحة تانية.
+            if (prev.some((r) => r.plate === plate && Math.abs(r.at - meta.tMs) < 3000)) return prev;
+            return [{ id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf, at: meta.tMs }, ...prev];
+          });
+        },
+        onSpeech: (active: boolean) => setSpeaking(active),
+        onLevel: (lvl: number) => setLevel(lvl),
+        // 🔴 الرمي الصامت كان الباج الأصلي — هنا بيتعدّ ويتعرض.
+        onSkip: () => setSkipped((n) => n + 1),
+        onFatal: (reason: string) => {
+          try { engineRef.current?.stop(); } catch { /* ignore */ }
+          engineRef.current = null;
+          stopTimer();
+          setListening(false);
+          setError(reason === "mic_denied"
+            ? "الميكروفون مرفوض — اسمح للمتصفّح بالتسجيل وجرّب تاني."
+            : "السيرفر فصل وسط التسجيل. دوس «أعِد الفحص» واتأكد إنه واصل.");
+        },
+      });
+      if (!ctrl) { setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني."); return; }
+      engineRef.current = ctrl;
+      setListening(true);
+      setSeconds(0);
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+    } catch {
+      setError("مش قادر يشغّل المحرك — جرّب تاني.");
+    }
   }
 
+  function stopTimer() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }
+
+  function stop() {
+    try { engineRef.current?.stop(); } catch { /* ignore */ }
+    engineRef.current = null;
+    stopTimer();
+    setListening(false);
+    setSpeaking(false);
+    setLevel(0);
+  }
+
+  /* ─── العرض ──────────────────────────────────────────────────────── */
   if (denied) {
     return (
-      <div className="flex flex-col gap-3 py-10">
-        <h1 className="text-xl font-black text-ink">التسجيل الجديد</h1>
-        <div className="flex items-start gap-2 rounded-xl border border-alert/40 bg-alert/10 px-3 py-3">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-alert" />
+      <div className="py-10">
+        <div className="mx-auto flex max-w-sm items-start gap-2 rounded-xl border border-border bg-surface p-4">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-alert" />
           <p className="flex-1 text-xs leading-relaxed text-ink">{denied}</p>
         </div>
       </div>
     );
   }
-
   if (allowed === null) return <div className="py-16 text-center text-sm text-muted">جارٍ التحقق…</div>;
 
-  const configured = !!modelUrl && !!modelToken;
-  const statusLabel = !configured ? "محتاج إعداد"
-    : probe?.ok ? "واصل ✓"
-    : probe ? "مش واصل ✗"
-    : "محفوظ (مش متجرَّب)";
-  const statusTone = !configured ? "text-alert"
-    : probe?.ok ? "text-brand"
-    : probe ? "text-danger"
-    : "text-amber-500";
-
+  const statusLabel = probing ? "بفحص…" : probe?.ok ? "🟢 متصل" : probe ? "🔴 مش واصل" : "بفحص…";
+  const statusTone = probe?.ok ? "text-brand" : probe ? "text-danger" : "text-amber-500";
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
-  const review = plates?.filter((p) => p.needsReview).length ?? 0;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
-      <h1 className="text-xl font-black text-ink">التسجيل الجديد</h1>
-      <p className="-mt-2 text-xs leading-relaxed text-muted">
-        سجّل كلامك كله على راحتك — قول اللوحات ورا بعض من غير ما تستنى — وبعدين
-        دوس <b className="text-ink">تفريغ</b> مرة واحدة.
-      </p>
+      <div>
+        <h1 className="text-xl font-black text-ink">التسجيل الجديد</h1>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          <b className="text-ink">الموديل الجديد — تجربة.</b> دوس تسجيل وقول اللوحات
+          ورا بعض؛ كل لوحة هتظهر قدامك أول ما تتقال.
+        </p>
+      </div>
 
-      {error && (
-        <div className="flex items-start gap-2 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2">
-          <AlertTriangle size={15} className="mt-0.5 shrink-0 text-danger" />
-          <p className="flex-1 text-xs text-danger">{error}</p>
-          <button onClick={() => setError(null)} className="text-danger" aria-label="إخفاء"><X size={14} /></button>
-        </div>
-      )}
-
-      <section className="rounded-xl border border-border bg-surface p-4">
-        {recording ? (
-          <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2 text-2xl font-black tabular-nums text-danger">
-              <span className="h-3 w-3 animate-pulse rounded-full bg-danger" /> {mmss}
-            </div>
-            <button
-              onClick={stopRecording}
-              className="flex items-center gap-2 rounded-xl bg-danger px-6 py-3 text-sm font-bold text-white"
-            >
-              <Square size={16} /> وقف التسجيل
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={startRecording}
-            disabled={!!busy}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-base font-bold text-night disabled:opacity-50"
-          >
-            <Mic size={20} /> ابدأ التسجيل
-          </button>
-        )}
-      </section>
-
-      {!recording && (
-        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface py-3 text-sm text-muted transition hover:border-primary">
-          <Upload size={16} /> أو ارفع ملف صوتي
-          <input
-            type="file"
-            accept="audio/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) { setAudio(f); setAudioName(f.name); setPlates(null); setError(null); }
-              e.target.value = "";
-            }}
-          />
-        </label>
-      )}
-
-      {audio && !recording && (
-        <section className="rounded-xl border-2 border-brand/50 bg-brand/5 p-3">
-          <div className="mb-2 flex items-center gap-2 text-sm text-ink">
-            <FileAudio size={16} className="shrink-0 text-brand" />
-            <span className="min-w-0 flex-1 truncate">{audioName}</span>
-            <span className="shrink-0 text-[11px] text-muted">{(audio.size / 1048576).toFixed(1)} MB</span>
-          </div>
-          <button
-            onClick={transcribe}
-            disabled={!!busy}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-3 text-sm font-bold text-night disabled:opacity-60"
-          >
-            {busy ? <><Loader2 size={16} className="animate-spin" /> {busy}</> : "تفريغ"}
-          </button>
-        </section>
-      )}
-
-      {plates && (
-        <section className="rounded-xl border border-border bg-surface p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="flex items-center gap-1.5 text-sm font-bold text-ink">
-              <CheckCircle2 size={15} className="text-brand" /> {plates.length} لوحة
-            </h2>
-            <div className="flex items-center gap-2 text-[11px]">
-              {review > 0 && (
-                <span className="rounded-full bg-alert/15 px-2 py-0.5 font-bold text-alert">
-                  {review} محتاجة مراجعة
-                </span>
-              )}
-              <span className="text-muted">{usedModel ? "بموديلنا" : "بالمحرك العام"}</span>
-            </div>
-          </div>
-
-          {plates.length === 0 ? (
-            <p className="py-4 text-center text-xs text-muted">مالقيناش لوحات في التسجيل ده.</p>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {plates.map((p, i) => (
-                <div
-                  key={p.normalized + "-" + i}
-                  className={
-                    "flex items-center gap-2 rounded-lg border px-2 py-1.5 " +
-                    (p.needsReview ? "border-alert/50 bg-alert/5" : "border-border")
-                  }
-                >
-                  <span className="w-12 shrink-0 text-[10px] tabular-nums text-muted">
-                    {pad(p.startSec / 60)}:{pad(p.startSec % 60)}
-                  </span>
-                  <PlateBadge value={p.plate || p.normalized} size="sm" />
-                  <span className="flex-1 truncate text-[11px] text-muted">{p.vehicleType ?? ""}</span>
-                  {p.needsReview && <AlertTriangle size={13} className="shrink-0 text-alert" />}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* إعداد خدمة الموديل — ظاهر على طول بالقصد (مش مطوي): العنوان نفق
-          مؤقت بيتغيّر كل مرة الخدمة تشتغل، فده إعداد بتتفقده كل يوم مش
-          مرة واحدة وتنساه. ومكانه هنا مش في صفحة شغل المناديب. */}
+      {/* ── حالة سيرفر التجربة ── */}
       <section className="rounded-xl border border-border bg-surface p-3">
         <div className="mb-1.5 flex items-center gap-1.5">
-          <Cpu size={14} className="shrink-0 text-muted" />
-          <h2 className="text-xs font-bold text-ink">إعداد موديلنا</h2>
+          <Cpu size={14} className="shrink-0 text-brand" />
+          <h2 className="text-xs font-bold text-ink">سيرفر التجربة</h2>
           <span className={"mr-auto text-[10px] font-bold " + statusTone}>{statusLabel}</span>
         </div>
-        <p className="mb-2 text-[11px] leading-relaxed text-muted">
-          من غير الإعداد ده التفريغ بيشتغل بالمحرك العام لوحده — شغّال، بس من
-          غير مراجعة موديلنا لكل لوحة.
-        </p>
-        <div className="flex flex-col gap-1.5">
+        {probe && (
+          <p className={"mb-2 text-[11px] leading-relaxed " + (probe.ok ? "text-brand" : "text-danger")}>
+            {probe.ok ? "✓ " : "✗ "}{probe.msg}
+          </p>
+        )}
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => void probeModel()}
+            disabled={probing || listening}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink disabled:opacity-50"
+          >
+            {probing ? <><Loader2 size={14} className="animate-spin" /> بفحص…</> : <><RefreshCw size={14} /> أعِد الفحص</>}
+          </button>
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            disabled={listening}
+            className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted disabled:opacity-50"
+          >
+            {showAdvanced ? "إخفاء" : "تغيير العنوان"}
+          </button>
+        </div>
+        <div className={showAdvanced ? "mt-2 flex flex-col gap-1.5" : "hidden"}>
+          <p className="text-[11px] leading-relaxed text-muted">
+            العنوان نفق مؤقّت وممكن يتغيّر لو السيرفر اتعاد تشغيله — حطّ الجديد هنا.
+          </p>
           <input
             dir="ltr" inputMode="url" autoComplete="off" spellCheck={false}
             value={modelUrl}
             onChange={(e) => { setModelUrl(e.target.value); setSaved(false); setProbe(null); }}
-            placeholder="https://xxx.trycloudflare.com"
             className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
           />
           <input
             dir="ltr" autoComplete="off" spellCheck={false}
             value={modelToken}
             onChange={(e) => { setModelToken(e.target.value); setSaved(false); setProbe(null); }}
-            placeholder="التوكن"
             className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
           />
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => {
-                const ok = saveJudgeEndpoint(modelUrl, modelToken);
-                setSaved(ok);
-                if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
-              }}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
-            >
-              {saved ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ"}
-            </button>
-            <button
-              onClick={probeModel}
-              disabled={probing || !modelUrl || !modelToken}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night disabled:opacity-50"
-            >
-              {probing ? <><Loader2 size={14} className="animate-spin" /> بجرّب…</> : "اختبار"}
-            </button>
+          <button
+            onClick={() => {
+              const ok = saveJudgeEndpoint(modelUrl, modelToken);
+              setSaved(ok);
+              if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
+              else void probeModel();
+            }}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
+          >
+            {saved ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ وافحص"}
+          </button>
+        </div>
+      </section>
+
+      {/* ── زرار التسجيل ── */}
+      <section className="rounded-2xl border border-border bg-surface p-4">
+        <button
+          onClick={listening ? stop : () => void start()}
+          className={"flex w-full items-center justify-center gap-2 rounded-xl py-4 text-base font-black text-white transition "
+            + (listening ? "bg-danger" : "bg-primary")}
+        >
+          {listening ? <><Square size={20} /> إيقاف التسجيل</> : <><Mic size={20} /> ابدأ التسجيل</>}
+        </button>
+
+        {listening && (
+          <div className="mt-3 flex flex-col items-center gap-1.5">
+            <span className="font-mono text-lg font-black tabular-nums text-danger">{mmss}</span>
+            <span className={"text-xs font-bold " + (speaking ? "text-brand" : "text-muted")}>
+              {speaking ? "● بيسمع صوتك" : "○ مستني…"}
+            </span>
+            <div className="h-1.5 w-40 overflow-hidden rounded-full bg-surface-2">
+              <div className="h-full bg-brand transition-all" style={{ width: Math.round(Math.min(1, level) * 100) + "%" }} />
+            </div>
           </div>
-          {probe && (
-            <p className={"text-[11px] leading-relaxed " + (probe.ok ? "text-brand" : "text-danger")}>
-              {probe.ok ? "✓ " : "✗ "}{probe.msg}
-            </p>
+        )}
+
+        {error && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface-2 p-2.5">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0 text-alert" />
+            <p className="flex-1 text-[11px] leading-relaxed text-ink">{error}</p>
+          </div>
+        )}
+      </section>
+
+      {/* ── اللوحات ── */}
+      <section className="rounded-2xl border border-border bg-surface p-3">
+        <div className="mb-2 flex items-center gap-2">
+          <h2 className="text-sm font-black text-ink">اللوحات</h2>
+          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-muted">{rows.length}</span>
+          {skipped > 0 && (
+            /* شفافية: النوافذ اللي المحرّك تخطّاها. صفر = مافيش ضغط. */
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-amber-500">
+              اتخطّى {skipped}
+            </span>
+          )}
+          {rows.length > 0 && (
+            <div className="mr-auto flex gap-1.5">
+              <button
+                onClick={() => {
+                  try {
+                    void navigator.clipboard.writeText(rows.map((r) => r.plate).join("\n"));
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  } catch { /* ignore */ }
+                }}
+                className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2 py-1 text-[11px] font-bold text-ink"
+              >
+                {copied ? <><Check size={12} className="text-brand" /> اتنسخ</> : <><Copy size={12} /> نسخ</>}
+              </button>
+              <button
+                onClick={() => setRows([])}
+                className="flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2 py-1 text-[11px] font-bold text-danger"
+              >
+                <Trash2 size={12} /> مسح
+              </button>
+            </div>
           )}
         </div>
+
+        {rows.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted">
+            {listening ? "قول لوحة…" : "مافيش لوحات لسه — دوس ابدأ التسجيل."}
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {rows.map((r) => (
+              <li key={r.id} className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2 py-1.5">
+                <PlateBadge value={r.plate} size="sm" />
+                <span className={"mr-auto text-[10px] font-bold " + (r.tier === "green" ? "text-brand" : "text-amber-500")}>
+                  {r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
+                </span>
+                <span className="font-mono text-[10px] tabular-nums text-muted">
+                  {Math.round(r.conf * 100)}%
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );

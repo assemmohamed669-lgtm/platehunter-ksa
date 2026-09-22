@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
+import { canOpenTrialPage } from "@/lib/trialModelGate";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
@@ -51,9 +52,11 @@ export default function AppMenu({
   /** اللينك يظهر للمندوب ده؟ المشترك صوت-فقط بيشوف المسموح بس — نفس سياسة
       الحارس بالظبط، فاللي بيتخفي هو اللي بيترمي، مافيش فرق بينهم. */
   const canOpen = (href: string) => !voiceOnly || isAllowedForVoiceOnly(href);
-  // مدخل مؤقّت لصفحة التسجيل الجديدة اللي بتتجرَّب. الافتراضي **مقفول**: أي
-  // فشل في القراءة = الرابط مايظهرش، فالمندوب مايشوفهوش بأي حال.
-  const [isSuper, setIsSuper] = useState(false);
+  // مدخل مؤقّت لصفحة التسجيل الجديدة اللي بتتجرَّب — بقت **للأدمنز** (بطلب
+  // المالك) والسوبر أدمن. الافتراضي **مقفول**: أي فشل في القراءة = الرابط
+  // مايظهرش، فالمندوب مايشوفهوش بأي حال. القرار في `canOpenTrialPage` —
+  // نفس الدالة اللي الصفحة نفسها بتتحرس بيها، فمستحيل القايمة والحارس يختلفوا.
+  const [canTrial, setCanTrial] = useState(false);
   // إيميل المندوب — بيظهر فوق في القائمة عشان كل مندوب يعرف هو داخل بأنهي حساب.
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
@@ -159,7 +162,7 @@ export default function AppMenu({
           const { data: prof } = await supabase.from("profiles")
             .select("role, subscription_end, is_super").eq("id", data.user.id).single();
           if (prof?.role === "agent") setSubEnd(prof.subscription_end ?? null);
-          setIsSuper(!!prof?.is_super);   // مزوّدة على نفس الطلب — مافيش رحلة زيادة
+          setCanTrial(canOpenTrialPage(prof));   // مزوّدة على نفس الطلب — مافيش رحلة زيادة
         }
       } catch { /* offline */ }
       setStats({ field: fieldEntries.length, wanted, rec });
@@ -319,7 +322,7 @@ export default function AppMenu({
               <FileUp size={16} className="text-alert" /> رفع للداتا
             </Link>
             ) : null}
-            {isSuper && (
+            {canTrial && (
               <Link href="/registration-v2" onClick={() => onOpenChange(false)}
                 className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
                 <Mic size={16} className="text-brand" /> التسجيل الجديد (تجربة)

@@ -15,6 +15,7 @@ import { LiveConsensus } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
 import { Vad } from "./vad";
 import { audioPregate } from "./audioPregate";
+import { planVoicexAdmission } from "./voicexAdmission";
 
 const WELL = /^[ء-ي]{3}\d{4}$/;
 
@@ -30,7 +31,19 @@ const MIN_TOKEN_LOGPROB = -0.5;
 const WIN_S = 5;              // نافذة ٥ث: لازم تحتوي اللوحة كاملة (زي المعمل)
 const STEP_MS = 1500;         // نزحلق كل ١.٥ث أثناء الكلام (زي المعمل)
 const DRAIN_MS = 500;         // نصرّف العناقيد المستقرّة كل نص ثانية (زي المعمل)
-const MAX_INFLIGHT = 2;       // نافذتين متوازيتين بحد أقصى (زي المعمل)
+/**
+ * سقف الطلبات المتوازية — **يساوي سقف السيرفر بالظبط، ولا حرف زيادة.**
+ *
+ * 🔴 ممنوع نرفعه «عشان نسرّع»: `serving/seg_server.py:891` افتراضيه ٢، و`/health`
+ * **مابيعلنش** السقف (متحقَّق على السيرفرين)، وأي ٥٠٣ بيرجّع `null`
+ * (`plateJudgeClient.ts:993`) بيتحسب فشل نفق (تحت) وبعد ٨ متتالية بنهرب
+ * لديبجرام **في صمت**. يعني رفع الرقم من غير دليل = خسارة الدقة كلها.
+ *
+ * ضياع اللوحات اتصلّح بـ**الأولوية** مش بالرقم — شوف `voicexAdmission.ts`.
+ */
+const MAX_INFLIGHT = 2;
+/** أقصى قراءات نطق مستنية — فوقها بنعلن التخطّي بدل ما نبلعه. */
+const MAX_PENDING_UTTERANCES = 3;
 const FATAL_FAILS = 8;        // فشل نفق متتالي كتير → رجوع لديبجرام
 const REQ_TIMEOUT_MS = 9000;
 
@@ -54,6 +67,16 @@ export interface VoicexEngineOpts {
   onFatal?: (reason: string) => void;
   /** هوية المندوب — تتمرّر لـ postAudioForPlate كترويسة X-Agent-Id (وسم الحصاد). */
   agentId?: string | null;
+  /**
+   * سقف الطلبات المتوازية. الافتراضي `MAX_INFLIGHT` — **ماترفعوش إلا لو
+   * السيرفر أعلن سقفه فعلاً** (اقرا التحذير فوق الثابت).
+   */
+  maxInflight?: number;
+  /**
+   * 🔴 نافذة اتخطّت. **الرمي الصامت هو الباج الأصلي** — الشاشة كانت بتقول
+   * «بيسمع صوتك» وكل نافذة بتترمى بلا أثر. أي تخطّي من دلوقتي **يتبلّغ**.
+   */
+  onSkip?: (reason: "busy_window" | "yield_to_utterance" | "utterance_queue_full") => void;
 }
 
 export interface VoicexEngineController {
@@ -67,6 +90,23 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   let fails = 0;
   let speaking = false;        // الـVad بيقول دلوقتي فيه كلام؟
   let lastSpokeSec = 0;        // آخر ثانية اتسمع فيها كلام (نهاية آخر نطق)
+
+  const maxInflight = Number.isFinite(opts.maxInflight as number) && (opts.maxInflight as number) >= 1
+    ? Math.floor(opts.maxInflight as number)
+    : MAX_INFLIGHT;
+
+  /**
+   * 🔴 طابور **قراءات النطق الكامل** — قلب الإصلاح.
+   *
+   * كانت بتترمى لما الموديل يبقى مشغول (`inflight < MAX_INFLIGHT` في شرط
+   * `onUtterance`)، وهي **أهم قراءة عندنا**: بتدّي اللوحة كلها مرة واحدة مهما
+   * كان إيقاع النطق. دلوقتي بتستنى دورها.
+   *
+   * مداها الزمني بس (`from`/`to`) مش الصوت نفسه — الذاكرة الدوّارة في
+   * `micEngine` بتشيل **٩٠ ثانية** (`LIVE_RING_SECONDS`)، والانتظار الواقعي
+   * أقل من مهلة الطلب (٩ث)، فالقصّ المتأخّر بيدّي نفس البايتات بالظبط.
+   */
+  const pending: Array<{ from: number; to: number }> = [];
 
   // إعدادات الإجماع **زي المعمل بالحرف**: نافذة ٢ث single-linkage (أكبر من خطوة
   // الزحلقة ١.٥ث وأصغر من إيقاع نطق اللوحة ~٣.٤ث فالأسطول يتفصل)، العنقود يفضل
@@ -106,9 +146,22 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       // واحدة** مهما كان الإيقاع، فتأكّد الشكل الصح (قراءة نضيفة) وحارس التوأم يشيل
       // الجزئية. بنحدّه بطول معقول (≤٦ث) عشان مانبعتش مقطع ضخم للموديل.
       const dur = u.endSec - u.startSec;
-      if (!stopped && dur >= 0.6 && dur <= 6 && inflight < MAX_INFLIGHT) {
-        sliceAndSend(Math.max(0, u.startSec - 0.15), u.endSec + 0.15);
+      if (stopped || dur < 0.6 || dur > 6) return;
+      const from = Math.max(0, u.startSec - 0.15);
+      const to = u.endSec + 0.15;
+      // 🔴 كانت `&& inflight < MAX_INFLIGHT` — يعني **اللوحة تترمى** لو الموديل
+      // مشغول. دلوقتي بتستنى دورها: الصوت لسه في الذاكرة الدوّارة (٩٠ث) فالقصّ
+      // المتأخّر بيدّي نفس البايتات، و`tMs` مركز النطق مش وقت الوصول فالإجماع
+      // مايتلخبطش.
+      const plan = planVoicexAdmission({
+        source: "utterance", inflight, maxInflight, utteranceQueued: pending.length > 0,
+      });
+      if (plan === "send") { sliceAndSend(from, to); return; }
+      if (pending.length >= MAX_PENDING_UTTERANCES) {
+        opts.onSkip?.("utterance_queue_full");   // نادر — بس ماينفعش يتبلع
+        return;
       }
+      pending.push({ from, to });
     },
   });
 
@@ -160,16 +213,44 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     void pr.finally(() => {
       inflight -= 1;
       inflightSet.delete(pr);
+      drainPending();          // 🔴 سلوت فضي ⇒ أول قراءة نطق مستنية تمشي فوراً
       if (!stopped) opts.onStatus?.("listening");
     });
   }
 
+  /**
+   * بتصرّف الطابور أول ما سلوت يفضى. `sliceAndSend` بتزوّد `inflight` فوراً
+   * (متزامن) فالحلقة بتقف لوحدها — مافيش دوران لا نهائي.
+   */
+  function drainPending(): void {
+    // ⚠️ **مافيش شرط `!stopped` هنا عن قصد** — `finalize` بينده الدالة دي بعد
+    // الإيقاف عشان يبعت اللي في الطابور. القراءات المستنية لوحات حقيقية.
+    while (pending.length > 0) {
+      const plan = planVoicexAdmission({
+        source: "utterance", inflight, maxInflight, utteranceQueued: true,
+      });
+      if (plan !== "send") break;
+      const w = pending.shift();
+      if (!w) break;
+      sliceAndSend(w.from, w.to);
+    }
+  }
+
   const segTimer = setInterval(() => {
     if (stopped) return;
-    if (inflight >= MAX_INFLIGHT) return;   // مشغول — النافذة الجاية هتلحق
     const elapsed = mic.elapsedSec;
     // اقرا بس أثناء الكلام أو بعده بلحظة (١.٥ث) — بلاش نقرا سكوت (زي المعمل).
     if (!speaking && elapsed - lastSpokeSec > 1.5) return;
+    // النافذة الزاحفة **فايضة بالتصميم** (كل ١.٥ث على آخر ٥ث، متداخلة)، فهي
+    // اللي تتنازل: للسقف، ولأي قراءة نطق مستنية. والتخطّي **بيتبلّغ** دلوقتي
+    // بدل `return` أخرس — ده كان نص الباج.
+    const plan = planVoicexAdmission({
+      source: "window", inflight, maxInflight, utteranceQueued: pending.length > 0,
+    });
+    if (plan !== "send") {
+      opts.onSkip?.(pending.length > 0 ? "yield_to_utterance" : "busy_window");
+      return;
+    }
     sliceAndSend(Math.max(0, elapsed - WIN_S), elapsed);
   }, STEP_MS);
 
@@ -192,6 +273,14 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // مكررة، خصوصاً مع النفق اللي بيقع ويرجع فبيتكرر الإيقاف). آخر لوحة اتقالت
     // موجودة أصلاً في آخر نافذة دورية (عنقود مفتوح لسه ماستقرّش) والـflush بيطلّعها
     // بلا إعادة قراءة. فبنكتفي بـ: نقفل الميك، نستنى النوافذ الجارية، ثم flush واحد.
+    // 🔴 **الطابور الأول، وقبل `mic.stop()`** — `sliceWav` بتقرا من ذاكرة الميك،
+    // ولو قفلناه قبلها كل قراءة نطق مستنية تتحوّل لـ`null` = لوحة ضايعة (نفس
+    // الباج الأصلي بشكل تاني). بنلف عشان كل ما سلوت يفضى واحدة تمشي.
+    for (let guard = 0; guard < 50 && (pending.length > 0 || inflightSet.size > 0); guard++) {
+      drainPending();
+      if (inflightSet.size === 0) break;
+      try { await Promise.race([...inflightSet]); } catch { /* ignore */ }
+    }
     try { mic.stop(); } catch { /* ignore */ }
     try { await Promise.allSettled([...inflightSet]); } catch { /* ignore */ }
     for (const c of consensus.flush()) emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
