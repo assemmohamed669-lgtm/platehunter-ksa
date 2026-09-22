@@ -123,7 +123,7 @@ export default function RegistrationV2Page() {
    * من نفس النطق بيتلغى بمفتاح (النص + أقرب ثانيتين).
    */
   const typeQueueRef = useRef<Array<{ type: string | null; note: string | null; tMs: number; used: boolean }>>([]);
-  const typeSeenRef = useRef<Set<string>>(new Set());
+  const typeSeenRef = useRef<Map<string, number>>(new Map());
 
   const checkIndex = useMemo(
     () => buildCombinedCheckIndex(checkTable ? [checkTable] : []),
@@ -219,16 +219,28 @@ export default function RegistrationV2Page() {
       const j = await res.json() as { ok?: boolean; type?: string | null; note?: string | null };
       if (!j?.ok) return;
       if (!j.type && !j.note) return;
-      // نفس النطق بيوصل في كذا نافذة متداخلة — بنعدّه **مرة واحدة**.
-      const sig = (j.type ?? "") + "|" + (j.note ?? "") + "|" + Math.round(tMs / 2000);
-      if (typeSeenRef.current.has(sig)) return;
-      typeSeenRef.current.add(sig);
+      /**
+       * 🔴 نفس النطق بيوصل في **كذا نافذة متداخلة** — بنعدّه مرة واحدة.
+       *
+       * أول محاولة كانت بمفتاح `round(tMs/2000)` وده **غلط**: خطوة النوافذ
+       * ١٥٠٠ مللي، فنفس الكلمة بتقع في دلوين مختلفين وبتتعدّ مرتين —
+       * التانية بتتصرف للوحة **اللي بعدها**. ده اللي خلّى «ونيت» تظهر على
+       * `امن9107` (صح) وكمان على `برد9680` و`دسك2206` (غلط).
+       *
+       * القاعدة الصح: **نفس النص خلال ٦ ثواني = نفس النطق**، مهما كانت
+       * النافذة. ٦ث أكبر من طول النافذة (٥ث) فمستحيل نطقان مختلفان لنفس
+       * الكلمة يتلموا، وأكبر من الخطوة (١.٥ث) فالتكرار بيتمسك.
+       */
+      const sig = (j.type ?? "") + "|" + (j.note ?? "");
+      const last = typeSeenRef.current.get(sig);
+      if (last != null && Math.abs(tMs - last) < 6000) return;
+      typeSeenRef.current.set(sig, tMs);
       const entry = { type: j.type ?? null, note: j.note ?? null, tMs, used: false };
       typeQueueRef.current.push(entry);
       // لوحة ظهرت خلاص في نفس النافذة ولسه بلا نوع؟ تاخده بأثر رجعي (كوهير أبطأ).
       let consumed = false;
       setRows((prev) => prev.map((r) => {
-        if (consumed || r.type || r.note || Math.abs(r.atMs - tMs) > 2500) return r;
+        if (consumed || r.type || r.note || Math.abs(r.atMs - tMs) > 1200) return r;
         consumed = true;
         return { ...r, type: entry.type, note: entry.note };
       }));
@@ -239,7 +251,7 @@ export default function RegistrationV2Page() {
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setSkips({}); setReads([]);
-    typeQueueRef.current = []; typeSeenRef.current = new Set();
+    typeQueueRef.current = []; typeSeenRef.current = new Map();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }
@@ -261,7 +273,8 @@ export default function RegistrationV2Page() {
           for (const e of typeQueueRef.current) {
             if (e.used) continue;
             const d = Math.abs(e.tMs - meta.tMs);
-            if (d < 2500 && d < best) { best = d; ty = { type: e.type, note: e.note }; bestEntry = e; }
+            // ١.٢ث < خطوة النوافذ (١.٥ث) ⇒ مستحيل يلحق لوحة النافذة اللي بعدها.
+            if (d < 1200 && d < best) { best = d; ty = { type: e.type, note: e.note }; bestEntry = e; }
           }
           if (bestEntry) bestEntry.used = true;
           const now = Date.now();
