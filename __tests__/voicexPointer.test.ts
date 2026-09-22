@@ -51,11 +51,20 @@ describe("buildVoicexEndpoint", () => {
   });
 });
 
-// resolvePointerRow: يحسم صف المؤشّر الخام (من select) لـ{url, isUp} — فشل-مغلق.
+// resolvePointerRow: يحسم صف المؤشّر الخام (من select) لـ{url, isUp, servers} — فشل-مغلق.
 describe("resolvePointerRow", () => {
-  it("صف سليم ⇒ {url, isUp}", () => {
+  /**
+   * ⚠️ الشكل زاد عليه `servers` (٢٣ سبتمبر ٢٠٢٦) عشان توزيع المناديب على
+   * أكتر من صندوق. صف قديم بلا العمود ⇒ القايمة فيها الأساسي بس = نفس
+   * السلوك بالحرف. شوف `voicexServerPick.test.ts`.
+   */
+  it("صف سليم ⇒ {url, isUp, servers}", () => {
     expect(resolvePointerRow({ url: "https://x.dev", is_up: true }, null))
-      .toEqual({ url: "https://x.dev", isUp: true });
+      .toEqual({
+        url: "https://x.dev",
+        isUp: true,
+        servers: [{ url: "https://x.dev", isUp: true }],
+      });
   });
 
   it("is_up مش false ⇒ يعتبر شغّال (الافتراضي true)", () => {
