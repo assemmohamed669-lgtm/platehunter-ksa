@@ -76,7 +76,17 @@ export interface VoicexEngineOpts {
    * 🔴 نافذة اتخطّت. **الرمي الصامت هو الباج الأصلي** — الشاشة كانت بتقول
    * «بيسمع صوتك» وكل نافذة بتترمى بلا أثر. أي تخطّي من دلوقتي **يتبلّغ**.
    */
-  onSkip?: (reason: "busy_window" | "yield_to_utterance" | "utterance_queue_full") => void;
+  onSkip?: (reason:
+    | "busy_window" | "yield_to_utterance" | "utterance_queue_full"
+    /** النافذة أقصر من ٠.٦ث */
+    | "too_short"
+    /** بوابة السكوت رفضت — الصوت واطي أو مافيش كلام فيه */
+    | "silence_gate"
+    /** القصّ رجع فاضي — الذاكرة الدوّارة مالهاش صوت في المدى ده */
+    | "slice_failed"
+    /** الطلب اتبعت وفشل (شبكة/مهلة/كود مش ٢٠٠) */
+    | "request_failed"
+  ) => void;
 }
 
 export interface VoicexEngineController {
@@ -177,6 +187,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       });
       if (!resp) {
         fails += 1;
+        opts.onSkip?.("request_failed");   // كان بيتبلع لحد الـ٨ متتالية
         if (fails >= FATAL_FAILS) opts.onFatal?.("tunnel_down");
         return;
       }
@@ -199,12 +210,15 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   // يقصّ نافذة [from,to] معلّاة (بعد بوابة السكوت) ويبعتها، ويتتبّع وعدها للإيقاف.
   function sliceAndSend(fromSec: number, toSec: number): void {
-    if (toSec - fromSec < 0.6) return;
+    // 🔴 التلات رجعات دي كانت **صامتة تماماً**: المندوب بيتكلّم، الشاشة بتقول
+    // «بيسمع صوتك» (الكاشف محلي)، و**ولا بايت بيخرج من الجهاز** — ومحدش يعرف
+    // ليه. دلوقتي كل واحدة بتتبلّغ باسمها.
+    if (toSec - fromSec < 0.6) { opts.onSkip?.("too_short"); return; }
     // 🔇 بوابة السكوت على الصوت الخام قبل التعلية (زي المعمل).
     const q = mic.sliceQuality(fromSec, toSec, 0.2);
-    if (q && !audioPregate(q).accept) return;
+    if (q && !audioPregate(q).accept) { opts.onSkip?.("silence_gate"); return; }
     const wav = mic.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى
-    if (!wav) return;
+    if (!wav) { opts.onSkip?.("slice_failed"); return; }
     const tMs = ((fromSec + toSec) / 2) * 1000;
     inflight += 1;
     opts.onStatus?.("processing");
