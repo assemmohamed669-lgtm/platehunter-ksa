@@ -11,7 +11,6 @@ import WantedAlertOverlay from "@/components/WantedAlertOverlay";
 import GroupFindNotifier from "@/components/GroupFindNotifier";
 import PushRegistrar from "@/components/PushRegistrar";
 import AppMenu from "@/components/AppMenu";
-import WheelPopup from "@/components/WheelPopup";
 import UpdateBanner from "@/components/UpdateBanner";
 import NoticeBanner from "@/components/NoticeBanner";
 import AgentNoticeBanner from "@/components/AgentNoticeBanner";
@@ -249,7 +248,6 @@ export default function AppShellLayout({
         <WantedAlertOverlay />
         <GroupFindNotifier />
         <PushRegistrar />
-        <WheelPopup />
         <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} voiceOnly={!restPagesEnabled} />
       </div>
     </SessionGuard>
