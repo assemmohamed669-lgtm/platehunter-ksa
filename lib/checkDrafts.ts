@@ -116,7 +116,6 @@ const COALESCE_MS = 300;
 function flushNow<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
   const next = (writeQueue.get(key) ?? Promise.resolve()).then(async () => {
     writeCount += 1;
-    try { localStorage.setItem(localKey, JSON.stringify(value)); } catch { /* ممتلئة/مقفولة */ }
     try {
       await idbPut(key, value);
       // علم الترحيل يتكتب **مرة واحدة** في الجلسة — كان بيتكتب مع كل حفظ.
@@ -129,6 +128,12 @@ function flushNow<T>(key: DraftKey, localKey: string, value: T[]): Promise<void>
 
 /** يحفظ في IDB (الأساسي) وlocalStorage (مرآة)، بتجميع الرشقات. */
 export function saveDraft<T>(key: DraftKey, localKey: string, value: T[]): Promise<void> {
+  // ⚠️ **الحفظ في ذاكرة المتصفّح بيفضل فوري — مش مؤجّل.** هو متزامن ورخيص،
+  // وكان بيحصل فوراً من قبل ما أضيف IndexedDB أصلاً. تأجيله كان هيفتح نافذة
+  // ٣٠٠ مللي لو التطبيق اتقفل فجأة تضيع فيها آخر لوحة — والقاعدة إن شغل
+  // المندوب مايضيعش. اللي بيتجمّع هو **كتابة IndexedDB بس**، وهي اللي أنا
+  // ضفتها وهي اللي كانت بتضغط على مساحة التليفون.
+  try { localStorage.setItem(localKey, JSON.stringify(value)); } catch { /* ممتلئة/مقفولة */ }
   return new Promise<void>((resolve) => {
     // الكتابة اللي اتأجّلت **وعدها بيتقفل مع الكتابة اللي حلّت محلها** — قيمتها
     // أقدم فالأحدث بتغطّيها. من غير كده المنادي الأول بيستنى للأبد.

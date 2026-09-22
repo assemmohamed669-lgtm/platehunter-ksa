@@ -90,3 +90,22 @@ describe("تقليل الكتابة — الكتابة كانت O(N²)", () => {
     expect(await loadDraft("manual", "t-last")).toHaveLength(4);
   });
 });
+
+describe("الحفظ في ذاكرة المتصفّح فوري — مش مؤجّل", () => {
+  it("القيمة موجودة **قبل** ما مؤقّت التجميع يعدّي", async () => {
+    // لو أجّلناها، قفلة مفاجئة للتطبيق في الـ٣٠٠ مللي دي بتضيّع آخر لوحة.
+    const { saveDraft } = await import("@/lib/checkDrafts");
+    void saveDraft("ptt", "t-immediate", [{ id: "زي" }, { id: "كده" }]);
+    const raw = localStorage.getItem("t-immediate");        // بلا أي انتظار
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw as string)).toHaveLength(2);
+  });
+
+  it("وكل تغيير بيحدّثها فوراً حتى لو الرشقة لسه بتتجمّع", async () => {
+    const { saveDraft } = await import("@/lib/checkDrafts");
+    void saveDraft("ptt", "t-immediate2", [{ id: "1" }]);
+    void saveDraft("ptt", "t-immediate2", [{ id: "1" }, { id: "2" }]);
+    void saveDraft("ptt", "t-immediate2", [{ id: "1" }, { id: "2" }, { id: "3" }]);
+    expect(JSON.parse(localStorage.getItem("t-immediate2") as string)).toHaveLength(3);
+  });
+});
