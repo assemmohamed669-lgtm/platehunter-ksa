@@ -54,7 +54,26 @@ export function sameCarTwin(a: TwinRow, b: TwinRow, windowMs: number): boolean {
   const pa = String(a?.plate ?? "");
   const pb = String(b?.plate ?? "");
   if (!WELL.test(pa) || !WELL.test(pb)) return false;
-  if (pa.slice(0, 3) !== pb.slice(0, 3)) return false;
   if (Math.abs((a.atMs ?? 0) - (b.atMs ?? 0)) > windowMs) return false;
-  return digitsDiff(pa.slice(3), pb.slice(3)) <= TWIN_MAX_DIGIT_DIFF;
+
+  const la = pa.slice(0, 3), lb = pb.slice(0, 3);
+  const da = pa.slice(3), db = pb.slice(3);
+
+  // ① نفس الحروف + فرق ≤ رقمين  (دطس2112 / دطس2177)
+  if (la === lb) return digitsDiff(da, db) <= TWIN_MAX_DIGIT_DIFF;
+
+  /**
+   * ② **نفس الأرقام بالظبط + حرف واحد مختلف** (`دطس2177` / `بطس2177` —
+   * من تقرير المالك الرابع). أربع أرقام متطابقة في نفس الثواني احتمال
+   * إنها عربيتين مختلفتين ضئيل جداً، والفرق حرف واحد = سمع مش عربية تانية.
+   *
+   * ⚠️ مشدود عن قصد: **الأرقام لازم تتطابق بالكامل**. لو سمحنا برقم مختلف
+   * كمان كنا هنلمّ لوحات حقيقية.
+   */
+  if (da === db) {
+    let diff = 0;
+    for (let i = 0; i < 3; i++) if (la[i] !== lb[i]) diff += 1;
+    return diff <= 1;
+  }
+  return false;
 }

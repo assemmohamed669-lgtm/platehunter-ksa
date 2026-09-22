@@ -27,6 +27,24 @@ export interface PlateRead {
   minLp?: number;
 }
 
+/**
+ * 🕐 **ساعة التصريف** — بتحوّل زمن الحائط لزمن النطق.
+ *
+ * 🔴 `stableMs` بيتقارن بـ`tMs` وهو **مركز النافذة** (زمن النطق)، بينما
+ * المؤقّت في المحرّك بيعدّ **زمن الحائط**. والقراءة بتوصل بعد نطقها بـ
+ * (نص النافذة + الشبكة) — فالعنقود بيبان «مستقر» وهو لسه بيتولد، وكل قراءة
+ * بتتصرّف لوحدها بـ`mult = 1`.
+ *
+ * الأثر مش تجميلي: `greenMinMult` بيبقى **ميت** وحاجز القراءة المفردة بيحكم
+ * كل حاجة — وده اللي خلّى حجب واحد يضيّع لوحات صح في تجارب المالك.
+ *
+ * ⇒ رجّع الساعة **نص نافذة** لورا فتبقى في نفس توقيت `tMs`.
+ * (نفس دالة المعمل بالحرف — `plate-voice-lab/client/src/lib/liveConsensus.ts`.)
+ */
+export function drainClockMs(elapsedMs: number, winS: number): number {
+  return elapsedMs - (winS * 1000) / 2;
+}
+
 export type Tier = "green" | "yellow";
 
 export interface CommittedPlate {
