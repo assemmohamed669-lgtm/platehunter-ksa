@@ -286,6 +286,10 @@ export default function RegistrationV2Page() {
       const ctrl = await startVoicexEngine({
         transcribeUrl: modelUrl.trim().replace(/\/+$/, "") + "/transcribe",
         token: modelToken.trim(),
+        // 🔒 الإصلاحات الجديدة مفتوحة **هنا بس** — بطلب المالك «خليها في
+        // صفحة الموديل الجديد فقط لحد ما أجرّب». صفحة التشييك على السلوك
+        // القديم بالحرف لحد ما يتأكّد على جهاز حقيقي.
+        fixes: true,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           const hit = checkIndexRef.current.get(key) ?? null;

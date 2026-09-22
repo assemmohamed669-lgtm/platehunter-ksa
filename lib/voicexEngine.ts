@@ -89,6 +89,21 @@ export interface VoicexEngineOpts {
    * 🔴 الرمي الصامت هو الباج الأصلي: المندوب بيتكلّم، الشاشة بتقول «بيسمع
    * صوتك» (الكاشف محلي)، ومافيش أي أثر. أي تخطّي لازم يتبلّغ.
    */
+  /**
+   * 🔒 **إصلاحات مقيسة لسه ماتجربتش على المناديب — مقفولة افتراضياً.**
+   *
+   * التلاتة دول اتقاسوا على صفحة التجربة عند المالك بس (٢٢ سبتمبر ٢٠٢٦)
+   * و**مااتجربوش على صفحة التشييك ولا على جهاز مندوب**:
+   *   ① طابور قراءة النطق بدل الرمي لما الموديل يبقى مشغول
+   *   ② شيل حاجز الاختراع المسطّح ومرور `minLp` للإجماع (الحجب على المفردة بس)
+   *   ③ ساعة تصريف بتوقيت النطق — الإجماع بيتجمّع فعلاً لأول مرة
+   *
+   * `false` (الافتراضي) = **سلوك المناديب الحالي بالحرف**. المالك طلب
+   * (٢٢ سبتمبر): «خليها في صفحة الموديل الجديد فقط لحد ما أجرّب».
+   *
+   * ⚠️ أي تغيير هنا بيمسّ ٤٠-٨٠ مندوب بيدفعوا — مايتفتحش إلا بإثبات جهاز حقيقي.
+   */
+  fixes?: boolean;
   onSkip?: (reason: string) => void;
   /**
    * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
@@ -136,6 +151,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   let fails = 0;
   let speaking = false;        // الـVad بيقول دلوقتي فيه كلام؟
   let lastSpokeSec = 0;        // آخر ثانية اتسمع فيها كلام (نهاية آخر نطق)
+
+  /** 🔒 الإصلاحات المعزولة — شوف `VoicexEngineOpts.fixes`. */
+  const FIXES = opts.fixes === true;
 
   const maxInflight = Number.isFinite(opts.maxInflight as number) && (opts.maxInflight as number) >= 1
     ? Math.floor(opts.maxInflight as number)
@@ -199,6 +217,12 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       // مشغول. دلوقتي بتستنى دورها: الصوت لسه في الذاكرة الدوّارة (٩٠ث) فالقصّ
       // المتأخّر بيدّي نفس البايتات، و`tMs` مركز النطق مش وقت الوصول فالإجماع
       // مايتلخبطش.
+      // 🔒 بلا `fixes`: السلوك القديم بالحرف — الرمي لو مشغول، بلا طابور.
+      if (!FIXES) {
+        if (inflight < maxInflight) sliceAndSend(from, to);
+        else opts.onSkip?.("utterance_dropped_legacy");
+        return;
+      }
       const plan = planVoicexAdmission({
         source: "utterance", inflight, maxInflight, utteranceQueued: pending.length > 0,
       });
@@ -271,10 +295,12 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
        * **الاتفاق دليل**. كده حطو6826 (نافذتين) تعدّي، والاختراع المفرد يتحجب.
        */
       const minLp = typeof resp.minLogprob === "number" ? resp.minLogprob : undefined;
+      // 🔒 بلا `fixes`: الحاجز المسطّح زي ما كان — النافذة كلها تترمى.
+      if (!FIXES && minLp !== undefined && minLp < MIN_TOKEN_LOGPROB) return;
       // زمن الإجماع = **مركز النافذة** (زي المعمل) — عرض فوري ~٢.٥ث.
       for (const p of String(resp.plate || "").trim().split(/\s+/)) {
         const norm = p.replace(/\s+/g, "");
-        if (WELL.test(norm)) consensus.add({ plate: norm, tMs, conf, minLp });
+        if (WELL.test(norm)) consensus.add({ plate: norm, tMs, conf, minLp: FIXES ? minLp : undefined });
       }
     } catch { /* تجاهل — شبكة/تحليل */ }
   }
@@ -347,7 +373,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // 🔴 **بتوقيت النطق مش الحائط.** كان `mic.elapsedSec * 1000` خام، والقراءة
     // بتوصل بعد نطقها بـ(نص نافذة + شبكة) فكل عنقود كان بيتصرّف فوراً بـmult=1
     // والإجماع مايتجمّعش أصلاً. شوف `drainClockMs`.
-    for (const c of consensus.drain(drainClockMs(mic.elapsedSec * 1000, WIN_S))) {
+    // 🔒 بلا `fixes`: الساعة الخام زي ما كانت (الإجماع مايتجمّعش).
+    const clock = FIXES ? drainClockMs(mic.elapsedSec * 1000, WIN_S) : mic.elapsedSec * 1000;
+    for (const c of consensus.drain(clock)) {
       emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
     }
   }, DRAIN_MS);
