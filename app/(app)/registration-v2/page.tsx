@@ -41,6 +41,7 @@ import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
 } from "@/lib/trialModelGate";
 import { sameCarTwin } from "@/lib/trialTwin";
+import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
 /** صف لوحة ظهرت. */
@@ -57,6 +58,8 @@ interface LiveRow {
   latencyMs: number;
   /** كام نافذة أكّدت اللوحة — بيحسم مين يفضل لما تتلمّ توأمين. */
   mult: number;
+  /** 🟡 ظهرت من القراءة الأولى ولسه الإجماع مأكّدهاش. */
+  provisional: boolean;
   match: Record<string, string> | null;
   type: string | null;
   note: string | null;
@@ -210,6 +213,24 @@ export default function RegistrationV2Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowed]);
 
+  /**
+   * 🧹 **المبدئي اللي ماحدش أكّده بيتشال.**
+   *
+   * القراءة عالية الثقة ممكن تكون اختراع برضه (وسيط ثقة الاختراع ٠.٩٩ زي
+   * الصح — مقيس). الإجماع هو اللي بيفرّق، فاللي ماوصلوش تأكيد خلال المهلة
+   * **مايفضلش معروض**. من غير الكنس ده الظهور الفوري بيتحوّل لعرض اختراع.
+   */
+  useEffect(() => {
+    if (!listening) return;
+    const id = setInterval(() => {
+      const cut = Date.now() - PROVISIONAL_TTL_MS;
+      setRows((prev) => prev.some((r) => r.provisional && r.shownAt < cut)
+        ? prev.filter((r) => !(r.provisional && r.shownAt < cut))
+        : prev);
+    }, 2000);
+    return () => clearInterval(id);
+  }, [listening]);
+
   /** 🏷️ يسأل كوهير عن النوع/الملاحظة لنفس النافذة. فشله بيتبلع بالقصد. */
   const askType = useCallback(async (wav: Blob, tMs: number) => {
     try {
@@ -283,7 +304,7 @@ export default function RegistrationV2Page() {
           const now = Date.now();
           const fresh: LiveRow = {
             id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf,
-            mult: meta.mult,
+            mult: meta.mult, provisional: false,
             atMs: meta.tMs, shownAt: now,
             latencyMs: Math.max(0, now - startedAtRef.current - meta.tMs),
             match: hit, type: ty?.type ?? null, note: ty?.note ?? null,
@@ -300,11 +321,8 @@ export default function RegistrationV2Page() {
              */
             const twin = prev.find((r) => sameCarTwin(r, fresh, 12000));
             if (!twin) return [fresh, ...prev];
-            const keepFresh =
-              fresh.mult > twin.mult ||
-              (fresh.mult === twin.mult && fresh.conf > twin.conf) ||
-              (fresh.mult === twin.mult && fresh.conf === twin.conf && fresh.atMs > twin.atMs);
-            if (!keepFresh) return prev;
+            // المؤكّد بيغلب المبدئي دايماً — القاعدة في `provisionalRow.ts`.
+            if (!confirmedWins(fresh, twin)) return prev;
             // الصف الجديد بيكسب — بس بياخد نوع/ملاحظة/مطلوبة القديم لو عنده.
             const merged: LiveRow = {
               ...fresh,
@@ -316,7 +334,38 @@ export default function RegistrationV2Page() {
           });
           if (hit) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
         },
-        onRead: (r) => setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400)),
+        onRead: (r) => {
+          setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400));
+          /**
+           * ⚡ **الظهور الفوري.** القراءة عالية الثقة بتطلع صف 🟡 «مبدئية» على
+           * طول (~٣ث)، والإجماع لما ييجي (~٧ث) يأكّدها 🟢 أو يصحّحها — لمّ
+           * التوائم بيدمجهم. البوابة والمهلة في `provisionalRow.ts`.
+           */
+          if (!showProvisional(r)) return;
+          const g2 = gpsRef.current;
+          const now2 = Date.now();
+          for (const raw of String(r.plate || "").trim().split(/\s+/)) {
+            const p2 = raw.replace(/\s+/g, "");
+            if (!WELL.test(p2)) continue;
+            const prov: LiveRow = {
+              id: "prov-" + p2 + "-" + r.tMs, plate: p2, tier: "yellow", conf: r.conf,
+              mult: 1, provisional: true, atMs: r.tMs, shownAt: now2,
+              latencyMs: Math.max(0, now2 - startedAtRef.current - r.tMs),
+              match: checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p2))) ?? null,
+              type: null, note: null,
+              lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
+            };
+            setRows((prev) => {
+              const twin = prev.find((x) => sameCarTwin(x, prov, 12000));
+              if (!twin) return [prov, ...prev];
+              if (!confirmedWins(prov, twin)) return prev;
+              return [{ ...prov, type: twin.type, note: twin.note, match: prov.match ?? twin.match },
+                ...prev.filter((x) => x.id !== twin.id)];
+            });
+            // 🔔 المطلوب بيصفّر فوراً — الانتظار ٧ث على عربية مطلوبة غالي.
+            if (prov.match) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
+          }
+        },
         onAudioWindow: (wav, tMs) => { void askType(wav, tMs); },
         onSpeech: (active: boolean) => setSpeaking(active),
         onLevel: (lvl: number) => setLevel(lvl),
@@ -393,7 +442,7 @@ export default function RegistrationV2Page() {
     L.push("الموقع       : " + (gps ? gps.lat.toFixed(6) + "," + gps.lng.toFixed(6) + " ±" + Math.round(gps.accuracy) + "م" : "مافيش"));
     L.push("");
     L.push("── الحصيلة ──");
-    L.push("لوحات ظهرت: " + rows.length + " · مطلوبة: " + hits + " · معاها نوع/ملاحظة: " + withType + " · معاها موقع: " + withGps);
+    L.push("لوحات ظهرت: " + rows.length + " (منها مبدئية لسه: " + rows.filter((r) => r.provisional).length + ") · مطلوبة: " + hits + " · معاها نوع/ملاحظة: " + withType + " · معاها موقع: " + withGps);
     L.push("وسيط التأخير من النطق للظهور: " + (medLatency != null ? t(medLatency) : "—"));
     L.push("وسيط زمن الموديل: " + (medModel != null ? Math.round(medModel) + "ms" : "—")
       + " · وسيط الرحلة كاملة: " + (medWall != null ? Math.round(medWall) + "ms" : "—"));
@@ -414,7 +463,8 @@ export default function RegistrationV2Page() {
       L.push([
         i + 1, r.plate, r.type ?? "-", r.note ?? "-", r.match ? "مطلوبة" : "-",
         new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        Math.round(r.conf * 100) + "%", r.mult + " نافذة", r.tier === "green" ? "مؤكّدة" : "محتاجة-نظرة",
+        Math.round(r.conf * 100) + "%", r.mult + " نافذة",
+        r.provisional ? "مبدئية-لم-تتأكد" : r.tier === "green" ? "مؤكّدة" : "محتاجة-نظرة",
         t(r.latencyMs), r.lat != null ? r.lat.toFixed(5) + "," + r.lng!.toFixed(5) : "-",
       ].join("\t"));
     });
@@ -591,12 +641,13 @@ export default function RegistrationV2Page() {
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={r.id}
-                    className={"border-b border-slate-100 " + (r.match ? "bg-rose-50" : "")}>
+                    className={"border-b border-slate-100 "
+                      + (r.match ? "bg-rose-50 " : "") + (r.provisional ? "opacity-60" : "")}>
                     <Td className="text-slate-400">{rows.length - i}</Td>
                     <Td>
                       {/* 🔤 اللوحة بخط ولون مختلفين — بطلب المالك */}
                       <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
-                        + (r.match ? "text-rose-700" : "text-indigo-700")}>{r.plate}</span>
+                        + (r.match ? "text-rose-700" : r.provisional ? "text-slate-500" : "text-indigo-700")}>{r.plate}</span>
                     </Td>
                     <Td className={r.type ? "font-bold text-slate-900" : "text-slate-300"}>{r.type || "—"}</Td>
                     <Td className={r.note ? "font-bold text-slate-900" : "text-slate-300"}>{r.note || "—"}</Td>
@@ -615,8 +666,10 @@ export default function RegistrationV2Page() {
                         : <span className="text-rose-500">مافيش</span>}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-500">{Math.round(r.conf * 100)}%</Td>
-                    <Td className={r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
-                      {r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
+                    <Td className={r.provisional ? "text-slate-400" : r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
+                      {r.provisional
+                        ? <span className="flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> مبدئية</span>
+                        : r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-400">{(r.latencyMs / 1000).toFixed(1)}ث</Td>
                   </tr>
