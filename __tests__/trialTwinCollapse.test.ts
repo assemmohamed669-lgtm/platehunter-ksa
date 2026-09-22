@@ -37,8 +37,10 @@ describe("sameCarTwin — نفس العربية ولا لوحتين؟", () => {
     expect(sameCarTwin({ plate: "رقب7499", atMs: 26000 }, { plate: "رقب7218", atMs: 26500 }, W)).toBe(false);
   });
 
-  it("حروف مختلفة = عربيتين مهما كانت الأرقام", () => {
-    expect(sameCarTwin({ plate: "دطس2177", atMs: 1000 }, { plate: "بطس2177", atMs: 1500 }, W)).toBe(false);
+  it("حرفين مختلفين أو أكتر = عربيتين مهما كانت الأرقام", () => {
+    // (حرف واحد مختلف + نفس الأرقام بالظبط = نفس العربية — تحت في describe التاني)
+    expect(sameCarTwin({ plate: "دطس2177", atMs: 1000 }, { plate: "بعس2177", atMs: 1500 }, W)).toBe(false);
+    expect(sameCarTwin({ plate: "دطس2177", atMs: 1000 }, { plate: "بعق2177", atMs: 1500 }, W)).toBe(false);
   });
 
   it("نفس اللوحة بالحرف = نفس العربية", () => {
@@ -52,5 +54,21 @@ describe("sameCarTwin — نفس العربية ولا لوحتين؟", () => {
   it("شكل بايظ مايلمّش حاجة", () => {
     expect(sameCarTwin({ plate: "", atMs: 0 }, { plate: "دطس2177", atMs: 0 }, W)).toBe(false);
     expect(sameCarTwin({ plate: "دطس21", atMs: 0 }, { plate: "دطس2177", atMs: 0 }, W)).toBe(false);
+  });
+});
+
+describe("sameCarTwin — نفس الأرقام وحرف مختلف", () => {
+  const W = 12000;
+
+  it("🔴 `دطس2177` و`بطس2177` نفس العربية (من تقرير المالك الرابع)", () => {
+    expect(sameCarTwin({ plate: "دطس2177", atMs: 62000 }, { plate: "بطس2177", atMs: 63500 }, W)).toBe(true);
+  });
+
+  it("حرفين مختلفين = عربيتين حتى لو الأرقام واحدة", () => {
+    expect(sameCarTwin({ plate: "دطس2177", atMs: 1000 }, { plate: "بعس2177", atMs: 2000 }, W)).toBe(false);
+  });
+
+  it("🔴 حرف مختلف **ورقم** مختلف = عربيتين — الحد مشدود عن قصد", () => {
+    expect(sameCarTwin({ plate: "دطس2177", atMs: 1000 }, { plate: "بطس2178", atMs: 2000 }, W)).toBe(false);
   });
 });

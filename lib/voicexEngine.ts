@@ -11,7 +11,7 @@
  * أي فرق عن المعمل = باج. أي فشل نفق متكرر → onFatal (رجوع صامت لديبجرام).
  */
 import { postAudioForPlate } from "./plateJudgeClient";
-import { LiveConsensus } from "./liveConsensus";
+import { LiveConsensus, drainClockMs } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
 import { Vad } from "./vad";
 import { audioPregate } from "./audioPregate";
@@ -344,7 +344,10 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   const drainTimer = setInterval(() => {
     if (stopped) return;
-    for (const c of consensus.drain(mic.elapsedSec * 1000)) {
+    // 🔴 **بتوقيت النطق مش الحائط.** كان `mic.elapsedSec * 1000` خام، والقراءة
+    // بتوصل بعد نطقها بـ(نص نافذة + شبكة) فكل عنقود كان بيتصرّف فوراً بـmult=1
+    // والإجماع مايتجمّعش أصلاً. شوف `drainClockMs`.
+    for (const c of consensus.drain(drainClockMs(mic.elapsedSec * 1000, WIN_S))) {
       emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
     }
   }, DRAIN_MS);
