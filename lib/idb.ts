@@ -131,8 +131,42 @@ export interface VoiceSessionRecord {
 
 let _db: IDBDatabase | null = null;
 
+/**
+ * الخطأ ده معناه إن **الاتصال بالقاعدة مقفول**، مش إن العملية نفسها غلط.
+ *
+ * ⚠️ مابيشملش الأخطاء الحقيقية (مساحة ممتلئة · صف بايظ · متجر مش موجود) —
+ * دي لازم توصل للمندوب زي ما هي، مانعيدش المحاولة عليها ومانبلعهاش.
+ */
+export function isClosedConnectionError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const name = String((e as { name?: unknown }).name ?? "");
+  if (name === "InvalidStateError" || name === "TransactionInactiveError") return true;
+  return /clos(ing|ed)/i.test(String((e as { message?: unknown }).message ?? ""));
+}
+
+/**
+ * الاتصال المخزّن لسه حي؟ بنجرّب نفتح معاملة ونلغيها فوراً — الطريقة الوحيدة
+ * اللي بتكشف الاتصال المقفول (مافيش `db.closed` في المواصفة).
+ */
+function isUsable(db: IDBDatabase): boolean {
+  try {
+    const name = db.objectStoreNames[0];
+    if (!name) return false;
+    db.transaction(name, "readonly").abort();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function openDB(): Promise<IDBDatabase> {
-  if (_db) return Promise.resolve(_db);
+  // ⚠️ **مانثقش في الاتصال المخزّن من غير فحص.** المتصفّح بيقفل اتصالات
+  // IndexedDB من نفسه — على iOS بالذات لما التطبيق يروح ورا أو الذاكرة تضيق —
+  // و`onversionchange` مابيتندهش في الحالة دي. والاتصال واحد مشترك، فلو مقفول
+  // **كل** العمليات بتفشل مرة واحدة: «تعذّر حفظ أي لوحة». وكان بيتصلّح لما
+  // المندوب يقفل التطبيق ويفتحه (اتصال جديد) — وده اللي خلّاه يبان متقطّع.
+  if (_db && isUsable(_db)) return Promise.resolve(_db);
+  _db = null;
 
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -421,14 +455,33 @@ export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): P
 // =====================================================================
 
 /** Add or overwrite one field-check entry (put by id). */
+/**
+ * بيشغّل عملية على القاعدة، ولو فشلت **بسبب اتصال مقفول** بيرمي الكاش ويعيد
+ * المحاولة مرة واحدة باتصال جديد.
+ *
+ * ليه محتاجينها رغم الفحص في `openDB`: الاتصال ممكن يموت في الجزء من الثانية
+ * اللي بين الفحص وفتح المعاملة (التطبيق بيروح ورا في اللحظة دي بالظبط). أي
+ * خطأ تاني (مساحة ممتلئة · صف بايظ) بيعدّي زي ما هو — مافيش إعادة ولا بلع.
+ */
+async function withLiveDb<T>(run: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  try {
+    return await run(await openDB());
+  } catch (e) {
+    if (!isClosedConnectionError(e)) throw e;
+    _db = null;
+    return await run(await openDB());
+  }
+}
+
 export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withLiveDb((db) => new Promise<void>((resolve, reject) => {
+    // `transaction()` بترمي فوراً لو الاتصال مقفول — والرمية جوّه المنفّذ
+    // بترفض الوعد، فـ`withLiveDb` بيمسكها ويعيد باتصال جديد.
     const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
     tx.objectStore(FIELD_CHECK_STORE).put(entry);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
-  });
+  }));
 }
 
 /**
