@@ -93,6 +93,7 @@ export default function RegistrationV2Page() {
   const [sirenOn, setSirenOn] = useState(false);
   const [reads, setReads] = useState<ReadLog[]>([]);
   const [showReport, setShowReport] = useState(true);
+  const [reportCopied, setReportCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
@@ -332,6 +333,70 @@ export default function RegistrationV2Page() {
     } finally { setBusy(null); }
   }
 
+  /**
+   * 📋 **التقرير كامل كنص** — المالك بينسخه ويبعته عشان نشوف الغلط سوا
+   * (نفس أسلوب المعمل). بيتكتب **كل حاجة**: الإعدادات، الحصيلة، الأزمنة،
+   * الهلوسة، النوافذ اللي ماتبعتتش، جدول اللوحات، وكل قراءة خام بنصّها.
+   *
+   * ⚠️ بلا اختصار ولا «…» — التقرير المقصوص بيخفي بالظبط الحاجة اللي
+   * بندوّر عليها.
+   */
+  function buildReportText(): string {
+    const L: string[] = [];
+    const t = (ms: number) => (ms / 1000).toFixed(1) + "ث";
+    L.push("════════ تقرير تجربة الموديل الجديد ════════");
+    L.push("التاريخ: " + new Date().toLocaleString("ar-EG"));
+    L.push("مدة التسجيل: " + mmss);
+    L.push("");
+    L.push("── الإعداد ──");
+    L.push("سيرفر اللوحات: " + modelUrl + "  [" + (probe?.ok ? "متصل ✓ " + probe.msg : probe ? "مش واصل ✗ " + probe.msg : "لم يُفحص") + "]");
+    L.push("سيرفر النوع  : " + TRIAL_TYPE_BASE + "  [" + (typeProbe?.ok ? "متصل ✓ " + typeProbe.msg : typeProbe ? "مش واصل ✗ " + typeProbe.msg : "لم يُفحص") + "]");
+    L.push("شيت التشييك  : " + (checkIndex.size ? checkName + " · " + checkIndex.size + " لوحة · عمود «" + (checkPlateCol ?? "؟") + "»" : "مافيش"));
+    L.push("الموقع       : " + (gps ? gps.lat.toFixed(6) + "," + gps.lng.toFixed(6) + " ±" + Math.round(gps.accuracy) + "م" : "مافيش"));
+    L.push("");
+    L.push("── الحصيلة ──");
+    L.push("لوحات ظهرت: " + rows.length + " · مطلوبة: " + hits + " · معاها نوع/ملاحظة: " + withType + " · معاها موقع: " + withGps);
+    L.push("وسيط التأخير من النطق للظهور: " + (medLatency != null ? t(medLatency) : "—"));
+    L.push("وسيط زمن الموديل: " + (medModel != null ? Math.round(medModel) + "ms" : "—")
+      + " · وسيط الرحلة كاملة: " + (medWall != null ? Math.round(medWall) + "ms" : "—"));
+    L.push("");
+    L.push("── الهلوسة والفقد ──");
+    L.push("اتحجبت كاختراع: " + blocked + " · السيرفر رفضها: " + refused);
+    L.push("لوحة اتسمعت وماظهرتش: " + heardNotShown.length + (heardNotShown.length ? "  [" + heardNotShown.join(" ") + "]" : ""));
+    L.push("نص فيه أرقام والشكل مش لوحة: " + malformed.length);
+    for (const m of malformed) L.push("   • «" + m.rawText + "» → «" + m.plate + "»");
+    L.push("");
+    L.push("── نوافذ ماتبعتتش ──");
+    if (!Object.keys(skips).length) L.push("ولا نافذة اتخطّت ✓");
+    for (const [r, n] of Object.entries(skips)) L.push(n + " × " + (SKIP_LABEL[r] ?? SKIP_LABEL[r.split(":")[0]] ?? r) + (r.includes(":") ? " [" + r.split(":").slice(1).join(":") + "]" : ""));
+    L.push("");
+    L.push("── اللوحات (" + rows.length + ") ──");
+    L.push("#\tاللوحة\tالنوع\tالملاحظة\tمطلوبة\tالوقت\tالثقة\tالحالة\tظهرت بعد\tالموقع");
+    rows.slice().reverse().forEach((r, i) => {
+      L.push([
+        i + 1, r.plate, r.type ?? "-", r.note ?? "-", r.match ? "مطلوبة" : "-",
+        new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        Math.round(r.conf * 100) + "%", r.tier === "green" ? "مؤكّدة" : "محتاجة-نظرة",
+        t(r.latencyMs), r.lat != null ? r.lat.toFixed(5) + "," + r.lng!.toFixed(5) : "-",
+      ].join("\t"));
+    });
+    L.push("");
+    L.push("── كل قراءة خام من الموديل (" + reads.length + ") ──");
+    L.push("زمن\tاللوحة\tالحالة\tالثقة\tمودل/رحلة\tالنص الخام");
+    reads.slice().reverse().forEach((r) => {
+      L.push([
+        (r.tMs / 1000).toFixed(1), r.plate || "-",
+        r.blocked ? "اختراع-محجوب" : r.accepted ? "مقبولة" : "مرفوضة",
+        Math.round(r.conf * 100) + "%",
+        (r.msModel ?? "?") + "/" + r.msWall + "ms",
+        r.rawText || "-",
+      ].join("\t"));
+    });
+    L.push("");
+    L.push("════════ آخر التقرير ════════");
+    return L.join("\n");
+  }
+
   /* ─── العرض ───────────────────────────────────────────────────────── */
   if (denied) {
     return (
@@ -549,10 +614,26 @@ export default function RegistrationV2Page() {
 
       {/* ══ 📋 التقرير الشامل — مؤقّت ══ */}
       <section className="mt-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-3">
-        <button onClick={() => setShowReport((v) => !v)} className="flex w-full items-center gap-2">
-          <h2 className="text-sm font-black">📋 التقرير الشامل</h2>
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">مؤقّت</span>
-          <span className="mr-auto text-slate-400">{showReport ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowReport((v) => !v)} className="flex flex-1 items-center gap-2">
+            <h2 className="text-sm font-black">📋 التقرير الشامل</h2>
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">مؤقّت</span>
+            <span className="mr-auto text-slate-400">{showReport ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
+          </button>
+        </div>
+        {/* 📋 نسخ التقرير كامل — المالك بيبعته وإحنا نشوف الغلط سوا (أسلوب المعمل) */}
+        <button
+          onClick={() => {
+            try {
+              void navigator.clipboard.writeText(buildReportText());
+              setReportCopied(true);
+              setTimeout(() => setReportCopied(false), 2000);
+            } catch { setError("المتصفّح رفض النسخ — افتح التقرير وانسخه بإيدك."); }
+          }}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-xs font-black text-white">
+          {reportCopied
+            ? <><Check size={15} className="text-emerald-400" /> اتنسخ — ابعته كده زي ما هو</>
+            : <><Copy size={15} /> انسخ التقرير كامل</>}
         </button>
 
         {showReport && (
