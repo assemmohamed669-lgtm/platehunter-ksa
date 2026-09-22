@@ -8,7 +8,11 @@
  * الملف الكامل بيدّي دقة أعلى من البثّ لأن المحرك بيشوف السياق كله ويراجع
  * نفسه — نفس السبب اللي خلّى دقة المنافس عالية.
  *
- * **للسوبر أدمن بس** لحد ما تتجرّب — نفس قفل الصفحة القديمة بالظبط.
+ * **للأدمنز والسوبر أدمن** (بطلب المالك) — الحارس في `canOpenTrialPage`.
+ *
+ * 🔬 **بتشتغل على سيرفر التجربة المثبّت (ماليزيا)** من أول فتحة — مافيش
+ * نسخ ولزق عنوان. وبترفض تشتغل لو موديلنا مش متاح بدل ما تكمّل بالمحرك
+ * العام وتطلّع نتيجة مضلِّلة.
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -18,7 +22,7 @@ import { runBatchTranscription, type MergedPlate, type BatchProgress } from "@/l
 import { transcribeWithEngine, makeSliceReader } from "@/lib/batchAudio";
 import { resolveModelBase } from "@/lib/modelEndpoint";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
-import { canOpenTrialPage, planTrialRun } from "@/lib/trialModelGate";
+import { canOpenTrialPage, planTrialRun, resolveTrialEndpoint } from "@/lib/trialModelGate";
 import { getGroqKey } from "@/lib/voiceKeys";
 import PlateBadge from "@/components/PlateBadge";
 
@@ -63,8 +67,12 @@ export default function RegistrationV2Page() {
       // 🔴 بقت **للأدمنز** (`role === "admin"`) والسوبر أدمن — بطلب المالك.
       // القرار في `canOpenTrialPage` عشان يتغطّى باختبار: الفشل بيقفل مش بيفتح.
       if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
-      const saved = readJudgeEndpoint();
-      if (saved) { setModelUrl(saved.base); setModelToken(saved.token); }
+      // 🔬 سيرفر التجربة **مثبّت في البرنامج** (ماليزيا) — المالك يفتح الصفحة
+      // يلاقيها موصّلة من غير ما ينسخ عنوان. المحفوظ يدوياً بيغلب، فلو النفق
+      // اتغيّر يقدر يحطّ الجديد من غير ما ننشر نسخة.
+      const ep = resolveTrialEndpoint(readJudgeEndpoint());
+      setModelUrl(ep.base);
+      setModelToken(ep.token);
       setAllowed(true);
     })();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
@@ -107,10 +115,14 @@ export default function RegistrationV2Page() {
     setBusy("جاري التفريغ…");
     try {
       const apiKey = (await getGroqKey()) ?? "";
-      // عنوان الموديل: المسجّل تلقائياً من الخدمة، وإلا اللي محطوط يدوي هنا
+      // الأولوية: اللي المالك حطّه يدوياً ← المسجّل في الإعدادات ← **سيرفر
+      // التجربة المثبّت (ماليزيا)**. آخر واحد ضمان إن الصفحة شغّالة من أول فتحة.
       const manual = readJudgeEndpoint();
-      const base = await resolveModelBase(manual?.base ?? null);
-      const token = manual?.token ?? "";
+      const registered = await resolveModelBase(manual?.base ?? null);
+      const { base, token } = resolveTrialEndpoint({
+        base: registered ?? manual?.base ?? null,
+        token: manual?.token ?? null,
+      });
 
       /**
        * 🔴 **التجربة ماتشتغلش بلا موديلنا** (بطلب المالك: «شيل اللي فيه وحط

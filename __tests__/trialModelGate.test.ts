@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { canOpenTrialPage, planTrialRun } from "../lib/trialModelGate";
+import {
+  canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
+  TRIAL_MODEL_BASE, TRIAL_MODEL_TOKEN,
+} from "../lib/trialModelGate";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -74,5 +77,37 @@ describe("planTrialRun — ماتشتغلش بلا موديلنا", () => {
     const r = planTrialRun({ base: "http://x.example", token: "t" });
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.reason).toBe("not_https");
+  });
+});
+
+describe("resolveTrialEndpoint — سيرفر التجربة مثبّت في البرنامج", () => {
+  /**
+   * المالك (٢٢ سبتمبر): «ثبّت الجديد اللي على سيرفر ماليزيا في البرنامج في
+   * صفحة التسجيل الجديد تجربة». يعني يفتح الصفحة ويلاقيها موصّلة — من غير ما
+   * ينسخ عنوان ويلزقه كل مرة.
+   *
+   * بس **الإعداد اليدوي لازم يفضل يغلب**: النفق السريع بيتغيّر مع كل إعادة
+   * تشغيل (توثيق Vast: «ephemeral … lost on restart — don't depend on them»)،
+   * فلو العنوان المثبّت بايظ لازم يقدر يحطّ الجديد من غير ما ننشر نسخة.
+   */
+  it("مافيش محفوظ ⇒ سيرفر ماليزيا المثبّت", () => {
+    expect(resolveTrialEndpoint(null)).toEqual({ base: TRIAL_MODEL_BASE, token: TRIAL_MODEL_TOKEN });
+    expect(resolveTrialEndpoint({})).toEqual({ base: TRIAL_MODEL_BASE, token: TRIAL_MODEL_TOKEN });
+  });
+
+  it("🔴 المحفوظ يدوياً **يغلب** المثبّت", () => {
+    expect(resolveTrialEndpoint({ base: "https://other.example", token: "tk" }))
+      .toEqual({ base: "https://other.example", token: "tk" });
+  });
+
+  it("محفوظ ناقص ⇒ الناقص بس يتاخد من المثبّت", () => {
+    expect(resolveTrialEndpoint({ base: "https://other.example", token: "" }))
+      .toEqual({ base: "https://other.example", token: TRIAL_MODEL_TOKEN });
+    expect(resolveTrialEndpoint({ base: "  ", token: "tk" }))
+      .toEqual({ base: TRIAL_MODEL_BASE, token: "tk" });
+  });
+
+  it("المثبّت نفسه لازم يعدّي حارس التشغيل (https + توكن)", () => {
+    expect(planTrialRun(resolveTrialEndpoint(null))).toEqual({ ok: true });
   });
 });
