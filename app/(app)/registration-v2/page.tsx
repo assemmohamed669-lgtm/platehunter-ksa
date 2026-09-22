@@ -358,7 +358,10 @@ export default function RegistrationV2Page() {
             {Object.entries(skips).map(([reason, n]) => (
               <li key={reason} className="flex items-center gap-2 text-[11px]">
                 <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono font-bold text-amber-500">{n}</span>
-                <span className="text-ink">{SKIP_LABEL[reason] ?? reason}</span>
+                <span className="text-ink">{SKIP_LABEL[reason] ?? SKIP_LABEL[reason.split(":")[0]] ?? reason}</span>
+                {reason.includes(":") && (
+                  <span dir="ltr" className="mr-auto font-mono text-[10px] text-muted">{reason.split(":").slice(1).join(":")}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -376,5 +379,6 @@ const SKIP_LABEL: Record<string, string> = {
   busy_window: "الموديل كان مشغول (نافذة زاحفة — عادي)",
   yield_to_utterance: "اتنازلت لقراءة نطق مستنية (عادي)",
   utterance_queue_full: "الطابور اتملا — بتتكلّم أسرع من رد السيرفر",
-  request_failed: "🔴 الطلب اتبعت وفشل — شبكة أو السيرفر",
+  request_failed: "🔴 الطلب اتبعت وفشل",
+  empty_slice: "المقطع طلع فاضي عملياً (بايت)",
 };
