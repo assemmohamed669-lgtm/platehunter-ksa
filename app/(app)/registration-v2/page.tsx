@@ -111,8 +111,18 @@ export default function RegistrationV2Page() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef(0);
   const gpsRef = useRef<GpsCoords | null>(null);
-  /** آخر نوع/ملاحظة سمعهم كوهير + زمنهم — بيتلزقوا على أقرب لوحة. */
-  const typeRef = useRef<{ type: string | null; note: string | null; tMs: number } | null>(null);
+  /**
+   * 🔴 **طابور أنواع بيتستهلك مرة واحدة** — مش «آخر نوع سمعناه».
+   *
+   * النوافذ **متداخلة بالتصميم** (٥ث كل ١.٥ث)، فكلمة «ونيت» اتقالت مرة
+   * بتظهر في ٣-٤ نوافذ ورا بعض. لما كنا بنمسك «آخر نوع» كان بيلزق على
+   * **كل لوحة** بعدها (شكوى المالك: «كل لوحة بيكتب قدامها ونيت»).
+   *
+   * القاعدة دلوقتي: كل نوع **يتصرف لأقرب لوحة مرة واحدة وخلاص**، والتكرار
+   * من نفس النطق بيتلغى بمفتاح (النص + أقرب ثانيتين).
+   */
+  const typeQueueRef = useRef<Array<{ type: string | null; note: string | null; tMs: number; used: boolean }>>([]);
+  const typeSeenRef = useRef<Set<string>>(new Set());
 
   const checkIndex = useMemo(
     () => buildCombinedCheckIndex(checkTable ? [checkTable] : []),
@@ -208,17 +218,27 @@ export default function RegistrationV2Page() {
       const j = await res.json() as { ok?: boolean; type?: string | null; note?: string | null };
       if (!j?.ok) return;
       if (!j.type && !j.note) return;
-      typeRef.current = { type: j.type ?? null, note: j.note ?? null, tMs };
-      // الصفوف اللي ظهرت في نفس النافذة تاخد النوع بأثر رجعي (كوهير أبطأ).
-      setRows((prev) => prev.map((r) =>
-        Math.abs(r.atMs - tMs) < 3000 && !r.type && !r.note
-          ? { ...r, type: j.type ?? null, note: j.note ?? null } : r));
+      // نفس النطق بيوصل في كذا نافذة متداخلة — بنعدّه **مرة واحدة**.
+      const sig = (j.type ?? "") + "|" + (j.note ?? "") + "|" + Math.round(tMs / 2000);
+      if (typeSeenRef.current.has(sig)) return;
+      typeSeenRef.current.add(sig);
+      const entry = { type: j.type ?? null, note: j.note ?? null, tMs, used: false };
+      typeQueueRef.current.push(entry);
+      // لوحة ظهرت خلاص في نفس النافذة ولسه بلا نوع؟ تاخده بأثر رجعي (كوهير أبطأ).
+      let consumed = false;
+      setRows((prev) => prev.map((r) => {
+        if (consumed || r.type || r.note || Math.abs(r.atMs - tMs) > 2500) return r;
+        consumed = true;
+        return { ...r, type: entry.type, note: entry.note };
+      }));
+      if (consumed) entry.used = true;
     } catch { /* النوع إضافة — مايوقّفش اللوحات */ }
   }, [modelToken]);
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setSkips({}); setReads([]);
+    typeQueueRef.current = []; typeSeenRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }
@@ -233,7 +253,16 @@ export default function RegistrationV2Page() {
           const key = normalizePlate(bankPlateToArabic(plate));
           const hit = checkIndexRef.current.get(key) ?? null;
           const g = gpsRef.current;
-          const ty = typeRef.current && Math.abs(typeRef.current.tMs - meta.tMs) < 3000 ? typeRef.current : null;
+          // أقرب نوع غير مستهلَك في نافذة اللوحة — ويتستهلك فوراً فمايتكررش.
+          let ty: { type: string | null; note: string | null } | null = null;
+          let best = Infinity;
+          let bestEntry: { used: boolean } | null = null;
+          for (const e of typeQueueRef.current) {
+            if (e.used) continue;
+            const d = Math.abs(e.tMs - meta.tMs);
+            if (d < 2500 && d < best) { best = d; ty = { type: e.type, note: e.note }; bestEntry = e; }
+          }
+          if (bestEntry) bestEntry.used = true;
           const now = Date.now();
           setRows((prev) => {
             if (prev.some((r) => r.plate === plate && Math.abs(r.atMs - meta.tMs) < 3000)) return prev;
@@ -438,43 +467,60 @@ export default function RegistrationV2Page() {
             {listening ? "قول لوحة…" : "مافيش لوحات لسه — دوس ابدأ التسجيل."}
           </p>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {rows.map((r) => (
-              <li key={r.id}
-                className={"rounded-xl border px-3 py-2.5 " + (r.match ? "border-rose-300 bg-rose-50" : "border-slate-200")}>
-                <div className="flex items-center gap-2">
-                  <span dir="ltr" className={"font-mono text-xl font-black tracking-[0.2em] tabular-nums "
-                    + (r.match ? "text-rose-700" : "text-indigo-700")}>{r.plate}</span>
-                  {r.match ? (
-                    <span className="flex items-center gap-1 rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-black text-white">
-                      <BellRing size={10} /> مطلوبة
-                    </span>
-                  ) : (
-                    <span className={"text-[10px] font-bold " + (r.tier === "green" ? "text-emerald-600" : "text-amber-500")}>
+          /* 📊 جدول زي الإكسل — كل عمود فيه حاجة واحدة، بطلب المالك.
+             بيتمرّر أفقياً على الموبايل بدل ما الأعمدة تتلخبط فوق بعض. */
+          <div className="-mx-1 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-[11px]">
+              <thead>
+                <tr className="border-b-2 border-slate-200 text-[10px] text-slate-500">
+                  <Th className="w-8">#</Th>
+                  <Th className="w-32">رقم اللوحة</Th>
+                  <Th className="w-20">النوع</Th>
+                  <Th className="w-24">الملاحظة</Th>
+                  <Th className="w-16">مطلوبة</Th>
+                  <Th className="w-20">الوقت</Th>
+                  <Th className="w-16">الموقع</Th>
+                  <Th className="w-14">الثقة</Th>
+                  <Th className="w-16">الحالة</Th>
+                  <Th className="w-16">ظهرت بعد</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.id}
+                    className={"border-b border-slate-100 " + (r.match ? "bg-rose-50" : "")}>
+                    <Td className="text-slate-400">{rows.length - i}</Td>
+                    <Td>
+                      {/* 🔤 اللوحة بخط ولون مختلفين — بطلب المالك */}
+                      <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
+                        + (r.match ? "text-rose-700" : "text-indigo-700")}>{r.plate}</span>
+                    </Td>
+                    <Td className={r.type ? "font-bold text-slate-900" : "text-slate-300"}>{r.type || "—"}</Td>
+                    <Td className={r.note ? "font-bold text-slate-900" : "text-slate-300"}>{r.note || "—"}</Td>
+                    <Td>
+                      {r.match
+                        ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
+                        : <span className="text-slate-300">—</span>}
+                    </Td>
+                    <Td className="font-mono tabular-nums text-slate-600">
+                      {new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    </Td>
+                    <Td>
+                      {r.lat != null && r.lng != null
+                        ? <a href={toMapsLink(r.lat, r.lng)} target="_blank" rel="noreferrer"
+                            className="flex items-center gap-0.5 font-bold text-indigo-600 underline"><MapPin size={10} /> فتح</a>
+                        : <span className="text-rose-500">مافيش</span>}
+                    </Td>
+                    <Td className="font-mono tabular-nums text-slate-500">{Math.round(r.conf * 100)}%</Td>
+                    <Td className={r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
                       {r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
-                    </span>
-                  )}
-                  <span className="mr-auto font-mono text-[10px] tabular-nums text-slate-400">{Math.round(r.conf * 100)}%</span>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
-                  <span><b className="text-slate-400">النوع:</b> {r.type || "—"}</span>
-                  <span><b className="text-slate-400">ملاحظة:</b> {r.note || "—"}</span>
-                  <span className="font-mono tabular-nums">
-                    {new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                  </span>
-                  {r.lat != null && r.lng != null ? (
-                    <a href={toMapsLink(r.lat, r.lng)} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-0.5 font-bold text-indigo-600 underline">
-                      <MapPin size={11} /> الموقع
-                    </a>
-                  ) : <span className="text-rose-500">مافيش موقع</span>}
-                  <span className="mr-auto font-mono text-[10px] tabular-nums text-slate-400">
-                    ظهرت بعد {(r.latencyMs / 1000).toFixed(1)}ث
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
+                    </Td>
+                    <Td className="font-mono tabular-nums text-slate-400">{(r.latencyMs / 1000).toFixed(1)}ث</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {/* 🧹📤 مسح وتصدير — زي التشييك */}
@@ -582,6 +628,13 @@ export default function RegistrationV2Page() {
 }
 
 /* ─── مكوّنات صغيرة ──────────────────────────────────────────────────── */
+
+function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <th className={"whitespace-nowrap px-1.5 py-1.5 text-right font-bold " + className}>{children}</th>;
+}
+function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <td className={"whitespace-nowrap px-1.5 py-2 text-right align-middle " + className}>{children}</td>;
+}
 
 function Stat({ icon, ok, title, sub }: { icon: React.ReactNode; ok: boolean; title: string; sub: string }) {
   return (
