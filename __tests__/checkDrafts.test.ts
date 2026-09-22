@@ -65,3 +65,28 @@ describe("طابور الكتابة — الترتيب مضمون", () => {
     expect(await loadDraft("manual", "t-manual")).toEqual([]);
   });
 })
+
+describe("تقليل الكتابة — الكتابة كانت O(N²)", () => {
+  /**
+   * #247 خلّى كل تغيير في القائمة يكتب **القائمة كلها** في IndexedDB. اللوحة
+   * الواحدة بتعمل ٣-٤ تغييرات (الصف + الموقع + النوع + الشيل)، يعني مندوب
+   * بـ١٥٠ لوحة بيكتب ميجابايتات في الجلسة الواحدة. والحصّة في المتصفّح **لكل
+   * أصل مش لكل قاعدة** — فلما تمتلئ، **كل** كتابة في **كل** قاعدة بتفشل،
+   * وده بالظبط شكل «تعذّر حفظ أي لوحة».
+   */
+  it("رشقة تغييرات بتتكتب مرة واحدة مش خمسة", async () => {
+    const { saveDraft, __writeCountForTest } = await import("@/lib/checkDrafts");
+    const before = __writeCountForTest();
+    for (let i = 1; i <= 5; i++) void saveDraft("ptt", "t-burst", Array.from({ length: i }, (_, k) => ({ id: `p${k}` })));
+    await new Promise((r) => setTimeout(r, 400));
+    const writes = __writeCountForTest() - before;
+    expect(writes).toBeLessThanOrEqual(2);   // مش ٥
+  });
+
+  it("وآخر قيمة هي اللي بتتحفظ", async () => {
+    const { saveDraft, loadDraft } = await import("@/lib/checkDrafts");
+    for (let i = 1; i <= 4; i++) void saveDraft("manual", "t-last", Array.from({ length: i }, (_, k) => ({ id: `m${k}` })));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await loadDraft("manual", "t-last")).toHaveLength(4);
+  });
+});
