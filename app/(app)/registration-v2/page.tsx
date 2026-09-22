@@ -45,7 +45,7 @@ import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
 } from "@/lib/trialModelGate";
-import { sameCarTwin } from "@/lib/trialTwin";
+import { sameCarTwin, heardNotShown } from "@/lib/trialTwin";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
@@ -492,7 +492,7 @@ export default function RegistrationV2Page() {
     L.push("");
     L.push("── الهلوسة والفقد ──");
     L.push("اتحجبت كاختراع: " + blocked + " · السيرفر رفضها: " + refused);
-    L.push("لوحة اتسمعت وماظهرتش: " + heardNotShown.length + (heardNotShown.length ? "  [" + heardNotShown.join(" ") + "]" : ""));
+    L.push("لوحة اتسمعت وماظهرتش: " + missed.length + (missed.length ? "  [" + missed.join(" ") + "]" : ""));
     L.push("نص فيه أرقام والشكل مش لوحة: " + malformed.length);
     for (const m of malformed) L.push("   • «" + m.rawText + "» → «" + m.plate + "»");
     L.push("");
@@ -550,12 +550,13 @@ export default function RegistrationV2Page() {
   /* ── حسابات التقرير ── */
   const blocked = reads.filter((r) => r.blocked).length;
   const refused = reads.filter((r) => !r.accepted && !r.blocked).length;
-  const shown = new Set(rows.map((r) => r.plate));
-  /** قراءات فيها لوحة سليمة الشكل ومع ذلك ماظهرتش — «فين راحت؟» */
-  const heardNotShown = reads
-    .filter((r) => r.accepted && !r.blocked)
-    .flatMap((r) => (r.plate || "").split(/\s+/).filter((p) => WELL.test(p)))
-    .filter((p) => !shown.has(p));
+  /**
+   * قراءات فيها لوحة سليمة الشكل ومع ذلك ماظهرتش — «فين راحت؟»
+   *
+   * 🔴 بيستبعد **توائم** اللوحات المعروضة: القراءة المسخّمة بخانة واحدة
+   * لـلوحة ظهرت فعلاً مش ضياع. شوف `heardNotShown` في `lib/trialTwin.ts`.
+   */
+  const missed = heardNotShown(reads, rows);
   /** نص فيه أرقام بس اللوحة مالهاش الشكل الصح = رقم/حرف ضاع في الكتابة */
   const malformed = reads.filter((r) => /\d/.test(r.rawText || "") && !(r.plate || "").split(/\s+/).some((p) => WELL.test(p)));
   const lat = rows.map((r) => r.latencyMs).sort((a, b) => a - b);
@@ -792,12 +793,12 @@ export default function RegistrationV2Page() {
             <Block title="الهلوسة والفقد">
               <Kv k="قراءات اتحجبت كاختراع (min_logprob &lt; -0.5)" v={String(blocked)} />
               <Kv k="قراءات السيرفر رفضها (accepted=false)" v={String(refused)} />
-              <Kv k="لوحة سليمة الشكل اتسمعت وماظهرتش" v={String(heardNotShown.length)}
-                tone={heardNotShown.length ? "bad" : undefined} />
+              <Kv k="لوحة سليمة الشكل اتسمعت وماظهرتش" v={String(missed.length)}
+                tone={missed.length ? "bad" : undefined} />
               <Kv k="نص فيه أرقام والشكل مش لوحة (رقم/حرف ضاع)" v={String(malformed.length)}
                 tone={malformed.length ? "bad" : undefined} />
-              {heardNotShown.length > 0 && (
-                <p dir="ltr" className="mt-1 font-mono text-[10px] text-rose-600">{heardNotShown.slice(0, 12).join(" · ")}</p>
+              {missed.length > 0 && (
+                <p dir="ltr" className="mt-1 font-mono text-[10px] text-rose-600">{missed.slice(0, 12).join(" · ")}</p>
               )}
             </Block>
 

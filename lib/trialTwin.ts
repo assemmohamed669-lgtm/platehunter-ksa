@@ -77,3 +77,70 @@ export function sameCarTwin(a: TwinRow, b: TwinRow, windowMs: number): boolean {
   }
   return false;
 }
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  «لوحة اتسمعت وماظهرتش» — بحساب التوائم، مش بالتطابق الحرفي
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * 🔴 **إنذار كاذب** (جلسة المالك ٢٢ سبتمبر ٢٠٢٦ · ٤٣ لوحة): التقرير قال
+ * «لوحة اتسمعت وماظهرتش: 1 [حبل6899]» — و`حبل6899` **مش ضياع**، دي قراءة
+ * مغلوطة لـ`حبل6819` اللي ظهرت فعلاً في الصف ٤٢. النافذة اللي بعدها
+ * قرتها صح، ولمّ التوائم شالها زي ما المفروض.
+ *
+ * العدّاد كان بيقارن بـ`Set` من نص اللوحات المعروضة، فأي قراءة مسخّمة
+ * بخانة واحدة كانت بتتعدّ ضياع.
+ *
+ * ⚠️ **وده أخطر من عيب تجميل**: المالك بيقرا الرقم ده عشان يحكم على
+ *    الموديل، فالتقرير بيدّيه فقد مالوش وجود.
+ *
+ * ⇒ القراءة ماتتحسبش ضياع لو فيه صف معروض **توأمها** (`sameCarTwin`) —
+ *   نفس الحكم اللي الصفحة بتلمّ بيه الصفوف أصلاً، فالاتنين مايختلفوش.
+ */
+
+/** ٣ حروف + ٤ أرقام — أي شكل تاني مش لوحة نحاسبها. */
+const WELL_FORM = /^[ء-ي]{3}\d{4}$/;
+
+export interface HeardRead {
+  /** ممكن تكون أكتر من لوحة في نافذة واحدة، مفصولة بمسافات. */
+  plate: string;
+  tMs: number;
+  accepted: boolean;
+  blocked: boolean;
+}
+
+export interface ShownRow {
+  plate: string;
+  atMs: number;
+}
+
+/**
+ * اللوحات اللي الموديل قراها وقبلناها ومع ذلك **ماوصلتش الجدول** —
+ * بعد استبعاد القراءات المسخّمة للوحات ظهرت فعلاً.
+ *
+ * `windowMs` هي نفس نافذة لمّ التوائم في الصفحة (١٢ث افتراضياً) عشان
+ * التقرير يحكم بنفس حكم العرض بالظبط.
+ */
+export function heardNotShown(
+  reads: readonly HeardRead[],
+  rows: readonly ShownRow[],
+  windowMs = 12000
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of reads ?? []) {
+    if (!r?.accepted || r.blocked) continue;
+    for (const p of String(r.plate ?? "").split(/\s+/)) {
+      if (!WELL_FORM.test(p) || seen.has(p)) continue;
+      const covered = (rows ?? []).some(
+        (row) =>
+          row.plate === p ||
+          sameCarTwin({ plate: p, atMs: r.tMs }, { plate: row.plate, atMs: row.atMs }, windowMs)
+      );
+      if (covered) continue;
+      seen.add(p);
+      out.push(p);
+    }
+  }
+  return out;
+}
