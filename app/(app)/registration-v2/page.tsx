@@ -40,6 +40,7 @@ import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
 } from "@/lib/trialModelGate";
+import { sameCarTwin } from "@/lib/trialTwin";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
 /** صف لوحة ظهرت. */
@@ -54,6 +55,8 @@ interface LiveRow {
   shownAt: number;
   /** التأخير من لحظة النطق لحد ما ظهر (مللي) */
   latencyMs: number;
+  /** كام نافذة أكّدت اللوحة — بيحسم مين يفضل لما تتلمّ توأمين. */
+  mult: number;
   match: Record<string, string> | null;
   type: string | null;
   note: string | null;
@@ -278,18 +281,38 @@ export default function RegistrationV2Page() {
           }
           if (bestEntry) bestEntry.used = true;
           const now = Date.now();
+          const fresh: LiveRow = {
+            id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf,
+            mult: meta.mult,
+            atMs: meta.tMs, shownAt: now,
+            latencyMs: Math.max(0, now - startedAtRef.current - meta.tMs),
+            match: hit, type: ty?.type ?? null, note: ty?.note ?? null,
+            lat: g?.lat ?? null, lng: g?.lng ?? null, gpsAccuracy: g?.accuracy ?? null,
+          };
           setRows((prev) => {
-            // نفس اللوحة خلال ٨ث = نفس العربية. كان ٣ث فـ`درق6894` اتكررت
-            // في تقرير المالك (صفّين فرقهم ٣ ثواني).
-            if (prev.some((r) => r.plate === plate && Math.abs(r.atMs - meta.tMs) < 8000)) return prev;
-            return [{
-              id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf,
-              atMs: meta.tMs, shownAt: now,
-              // التأخير = من لحظة النطق لحد ما الصف ظهر قدام المندوب.
-              latencyMs: Math.max(0, now - startedAtRef.current - meta.tMs),
-              match: hit, type: ty?.type ?? null, note: ty?.note ?? null,
-              lat: g?.lat ?? null, lng: g?.lng ?? null, gpsAccuracy: g?.accuracy ?? null,
-            }, ...prev];
+            /**
+             * 🔴 **لمّ التوائم على مستوى الصف.** الإجماع بيشتغل بنافذة ٢ث،
+             * والقراءات المختلفة لنفس اللوحة ممكن تمتد ٩ ثواني (`دطس2177`
+             * طلعت ٤ صفوف في تقرير المالك). القاعدة والحد في `trialTwin.ts`.
+             *
+             * مين يفضل؟ **الأكتر تأكيداً** (عدد النوافذ)، وبعدين الأعلى ثقة،
+             * وبعدين **الأحدث** (القراءة الأخيرة شافت النطق كامل).
+             */
+            const twin = prev.find((r) => sameCarTwin(r, fresh, 12000));
+            if (!twin) return [fresh, ...prev];
+            const keepFresh =
+              fresh.mult > twin.mult ||
+              (fresh.mult === twin.mult && fresh.conf > twin.conf) ||
+              (fresh.mult === twin.mult && fresh.conf === twin.conf && fresh.atMs > twin.atMs);
+            if (!keepFresh) return prev;
+            // الصف الجديد بيكسب — بس بياخد نوع/ملاحظة/مطلوبة القديم لو عنده.
+            const merged: LiveRow = {
+              ...fresh,
+              type: fresh.type ?? twin.type,
+              note: fresh.note ?? twin.note,
+              match: fresh.match ?? twin.match,
+            };
+            return [merged, ...prev.filter((r) => r.id !== twin.id)];
           });
           if (hit) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
         },
@@ -391,7 +414,7 @@ export default function RegistrationV2Page() {
       L.push([
         i + 1, r.plate, r.type ?? "-", r.note ?? "-", r.match ? "مطلوبة" : "-",
         new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        Math.round(r.conf * 100) + "%", r.tier === "green" ? "مؤكّدة" : "محتاجة-نظرة",
+        Math.round(r.conf * 100) + "%", r.mult + " نافذة", r.tier === "green" ? "مؤكّدة" : "محتاجة-نظرة",
         t(r.latencyMs), r.lat != null ? r.lat.toFixed(5) + "," + r.lng!.toFixed(5) : "-",
       ].join("\t"));
     });
