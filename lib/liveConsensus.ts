@@ -218,8 +218,20 @@ export class LiveConsensus {
     // نجمّع الإملاءات في **مجموعات أرقام** (فرق ≤١ خانة = نفس النطق، ضجيج نافذة).
     type G = { rep: string; totalCount: number; maxConf: number; best: string; bestConf: number };
     const groups: G[] = [];
+    /**
+     * 🔴 **والتعادل بيتحسم بعدد النوافذ، مش بترتيب الوصول.**
+     *
+     * بلاغ المالك (٢٢ سبتمبر ٢٠٢٦ · جلسة ٢٨ لوحة): `دعع1670` اتقرت مرة
+     * و`دعع1676` (الصح) اتقرت **مرتين** — وبنفس الثقة تماماً. والغلط كسب
+     * لأنه وصل الأول و`sort` مستقر.
+     *
+     * ⚠️ ده **مابيغيّرش** القاعدة المقيسة فوق: أي فرق حقيقي في الثقة لسه
+     *    بيحكم زي ما هو. اللي بيتغيّر هو التعادل بس — واللي كان بيتحسم
+     *    بترتيب الوصول، ومافيش أي قياس بيقول إن الأسبق أصح. الاتفاق في
+     *    نوافذ أكتر دليل أقوى من الصدفة.
+     */
     const entries = [...cl.spellings.entries()].sort(
-      (a, b) => b[1].maxConf - a[1].maxConf
+      (a, b) => (b[1].maxConf - a[1].maxConf) || (b[1].count - a[1].count)
     );
     for (const [spelling, s] of entries) {
       let g = groups.find((g) => digitDist(g.rep, spelling) <= 1);
