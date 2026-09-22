@@ -187,6 +187,16 @@ export interface JudgePlateResponse {
   /** زمن الخدمة الكامل بالملي ثانية (للقياس). */
   serverMs: number | null;
   model: string | null;
+  /**
+   * 🔬 نص الموديل **الخام** (`raw_text` من السيرفر) قبل استخلاص اللوحات.
+   *
+   * `plate` بيرجّع اللوحات المستخلَصة بس؛ `rawText` بيوري **اللي الموديل
+   * سمعه فعلاً**. الفرق بينهم هو اللي بيقول إيه اتقال ومااتكتبش (رقم ناقص،
+   * كلمة زيادة، لوحة مالهاش الشكل الصح) — من غيره مستحيل نعرف الغلط جاي منين.
+   *
+   * اختياري: السيرفرات القديمة مابترجّعهوش، فبيبقى `null` وماحدش يكسر.
+   */
+  rawText: string | null;
 }
 
 export interface PostAudioOptions {
@@ -944,6 +954,7 @@ export function parseJudgeResponse(raw: unknown): JudgePlateResponse | null {
     noSpeechProb: nsp,
     serverMs,
     model: typeof o.model === "string" ? o.model : null,
+    rawText: typeof o.raw_text === "string" ? o.raw_text : null,
   };
 }
 

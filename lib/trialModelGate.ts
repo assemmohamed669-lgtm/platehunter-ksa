@@ -31,6 +31,14 @@ export const TRIAL_MODEL_BASE = "https://email-equity-about-wireless.trycloudfla
 export const TRIAL_MODEL_TOKEN = "plate-voice-lab-local-dev";
 
 /**
+ * 🏷️ سيرفر **النوع والملاحظة** (كوهير) — نفق منفصل عن اللوحات.
+ * `CohereLabs/cohere-transcribe-arabic-07-2026` بنسخة المعمل بالظبط
+ * (md5 `7889a3fd…`) و**٨١ عنصر** في القاموس.
+ * ⚠️ نفس تحذير النفق المؤقّت اللي فوق.
+ */
+export const TRIAL_TYPE_BASE = "https://leisure-diagnostic-begin-nursing.trycloudflare.com";
+
+/**
  * العنوان اللي الصفحة هتستعمله: **المحفوظ يدوياً يغلب**، والمثبّت بيملا
  * الناقص. كده المالك يفتح الصفحة يلاقيها موصّلة، ولو النفق اتغيّر يقدر
  * يحطّ الجديد من غير ما ننشر نسخة.

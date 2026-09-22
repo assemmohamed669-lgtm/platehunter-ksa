@@ -107,7 +107,17 @@ describe("parseJudgeResponse — مافيش ثقة في السيرفر", () => {
       noSpeechProb: 0.0021,
       serverMs: 287,
       model: "whisper-plates-v5plus",
+      // 🔬 نص الموديل الخام — بيوري اللي اتقال مقابل اللي اتكتب. السيرفر
+      // في `serverBody()` مابيرجّعوش، فالمفروض `null` مش undefined.
+      rawText: null,
     });
+  });
+
+  it("raw_text بيتقرا لما السيرفر يرجّعه — وبيبقى null لو ماكانش نص", () => {
+    expect(parseJudgeResponse(serverBody({ raw_text: "ابح1234 ونيت" }))?.rawText)
+      .toBe("ابح1234 ونيت");
+    expect(parseJudgeResponse(serverBody({ raw_text: 42 }))?.rawText).toBe(null);
+    expect(parseJudgeResponse(serverBody())?.rawText).toBe(null);
   });
 
   it("رفض البوابة → اللوحة بترجع زي ما هي مع accepted=false والسبب", () => {
