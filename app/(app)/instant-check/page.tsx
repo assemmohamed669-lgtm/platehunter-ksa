@@ -794,6 +794,15 @@ export default function InstantCheckPage() {
   }
   const [icLocating, setIcLocating] = useState(false);
   const [pttError, setPttError] = useState<string | null>(null);
+  /**
+   * 🔇 **نوافذ اتخطّت** — عشان الرمي مايفضلش صامت.
+   *
+   * قبل كده المحرك كان بيرمي النطق لما الموديل يبقى مشغول **بلا أي أثر**:
+   * المندوب بيقول والشاشة فاضية ومافيش سطر يقول ليه (بلاغ المالك ٢٢
+   * سبتمبر: «بيشتغل شوي وبعدين ميطلعش لوحات»). الرمي اتصلّح، والعدّاد ده
+   * بيخلّي أي تخطٍّ **يبان** بدل ما نرجع نخمّن تاني.
+   */
+  const [pttSkips, setPttSkips] = useState<Record<string, number>>({});
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
   // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
@@ -4122,6 +4131,27 @@ export default function InstantCheckPage() {
       const ctrl = await startVoicexEngine({
         transcribeUrl: cfg.transcribeUrl,
         token: cfg.token,
+        /**
+         * 🔴 **الإصلاحات الثلاثة اتفتحت للمناديب** (٢٢ سبتمبر ٢٠٢٦).
+         *
+         * كانت مقفولة على صفحة التجربة بأمر المالك («خليها في صفحة الموديل
+         * الجديد بس لحد ما أجرب») — وجرّبها: **٤٣ من ٤٣ · صفر فقد · «ولا
+         * نافذة اتخطّت ✓»** على جهاز حقيقي، بنفس المحرك وبنفس العلم.
+         *
+         * اللي بتفتحه:
+         *   ① النطق **يستنى دوره** بدل ما يترمى لما الموديل يبقى مشغول.
+         *      ده سبب الوقفة: أول الجلسة `inflight=0` فبيعدّي، وأول ما
+         *      الرحلة تتقل بيثبت على السقف و**كل** نطق بعدها بيترمى بلا
+         *      رجعة. (`__tests__/voicexStallRecovery.test.ts`)
+         *   ② حاجز الاختراع بيتطبّق على **القراءة المفردة** بس بدل ما
+         *      يرمي النافذة كلها — الاتفاق في نافذتين دليل.
+         *   ③ ساعة التصريف الصح فالإجماع **بيتجمّع** فعلاً.
+         *
+         * ⚠️ الطلبات على السيرفر هتزيد (كانت بتترمى قبل ما تتبعت). كوريا
+         *    شغّالة `max-inflight=40` والصندوق مقيس ٩-١١ مندوب.
+         */
+        fixes: true,
+        onSkip: (why) => setPttSkips((p) => ({ ...p, [why]: (p[why] ?? 0) + 1 })),
         agentId: agentIdRef.current ?? undefined,   // وسم كل نافذة حصاد باسم المندوب
         onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow", undefined, meta.mult, meta.conf, meta.tMs),
         onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
@@ -4147,6 +4177,7 @@ export default function InstantCheckPage() {
 
   async function startPtt() {
     setPttError(null);
+    setPttSkips({});          // عدّاد نظيف لكل جلسة — زي سجل الديبج تحته
     setPttLiveText("");
     pttRawLogRef.current = []; setPttRawLog([]); // ابدأ ديبج نظيف لكل جلسة
     // جلسة تدريب جديدة: معرّف + بَفر صوت نظيف (بيتجمّع بس لو المفتاح شغّال).
@@ -5514,6 +5545,13 @@ export default function InstantCheckPage() {
 
               {pttError && (
                 <p className="text-center text-xs text-danger">{pttError}</p>
+              )}
+
+              {/* 🔇 نوافذ اتخطّت — ماينفعش يفضل صامت زي الأول */}
+              {Object.keys(pttSkips).length > 0 && (
+                <p className="text-center text-[10px] text-muted">
+                  نوافذ اتخطّت: {Object.entries(pttSkips).map(([k, n]) => k + " ×" + n).join(" · ")}
+                </p>
               )}
 
               {/* لوحة ديبج النص الخام — للسوبر أدمن فقط (اللي المحرك سمعه قبل التحليل) */}
