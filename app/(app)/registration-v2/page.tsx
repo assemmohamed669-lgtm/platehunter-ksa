@@ -47,6 +47,11 @@ export default function RegistrationV2Page() {
   const [saved, setSaved] = useState(false);
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState<{ ok: boolean; msg: string } | null>(null);
+  /**
+   * مربّعات العنوان/التوكن **مطويّة**. السيرفر مثبّت في البرنامج فالمالك مش
+   * محتاج يلمسها؛ بتتفتح بس لو النفق اتغيّر ومحتاج يحطّ عنوان جديد.
+   */
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -77,6 +82,20 @@ export default function RegistrationV2Page() {
     })();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
+
+  /**
+   * 🟢 اختبار الاتصال **تلقائي** أول ما الصفحة تفتح.
+   *
+   * قبل كده كان لازم المالك يدوس «اختبار» بإيده عشان يعرف الخدمة واصلة ولا
+   * لأ — فكان بيفتح الصفحة ومايعرفش حالتها غير لما يسجّل ويفشل. دلوقتي
+   * الحالة بتبان من أول لحظة.
+   */
+  useEffect(() => {
+    if (allowed !== true || !modelUrl || !modelToken) return;
+    void probeModel();
+    // مرة واحدة عند الفتح — إعادة الاختبار بزرار «أعِد الفحص».
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed]);
 
   async function startRecording() {
     setError(null);
@@ -218,10 +237,11 @@ export default function RegistrationV2Page() {
   if (allowed === null) return <div className="py-16 text-center text-sm text-muted">جارٍ التحقق…</div>;
 
   const configured = !!modelUrl && !!modelToken;
-  const statusLabel = !configured ? "محتاج إعداد"
-    : probe?.ok ? "واصل ✓"
-    : probe ? "مش واصل ✗"
-    : "محفوظ (مش متجرَّب)";
+  const statusLabel = !configured ? "مافيش عنوان"
+    : probing ? "بفحص…"
+    : probe?.ok ? "🟢 متصل"
+    : probe ? "🔴 مش واصل"
+    : "بفحص…";
   const statusTone = !configured ? "text-alert"
     : probe?.ok ? "text-brand"
     : probe ? "text-danger"
@@ -345,20 +365,44 @@ export default function RegistrationV2Page() {
         </section>
       )}
 
-      {/* إعداد خدمة الموديل — ظاهر على طول بالقصد (مش مطوي): العنوان نفق
-          مؤقت بيتغيّر كل مرة الخدمة تشتغل، فده إعداد بتتفقده كل يوم مش
-          مرة واحدة وتنساه. ومكانه هنا مش في صفحة شغل المناديب. */}
+      {/* 🔬 موديلنا الجديد — **مثبّت في البرنامج**. المربّعات مطويّة لأن
+          المالك مش محتاج يلمسها؛ بتتفتح بس لو النفق اتغيّر. */}
       <section className="rounded-xl border border-border bg-surface p-3">
         <div className="mb-1.5 flex items-center gap-1.5">
-          <Cpu size={14} className="shrink-0 text-muted" />
-          <h2 className="text-xs font-bold text-ink">إعداد موديلنا</h2>
+          <Cpu size={14} className="shrink-0 text-brand" />
+          <h2 className="text-xs font-bold text-ink">موديلنا الجديد</h2>
           <span className={"mr-auto text-[10px] font-bold " + statusTone}>{statusLabel}</span>
         </div>
         <p className="mb-2 text-[11px] leading-relaxed text-muted">
-          من غير الإعداد ده التفريغ بيشتغل بالمحرك العام لوحده — شغّال، بس من
-          غير مراجعة موديلنا لكل لوحة.
+          التفريغ بيشتغل على <b className="text-ink">سيرفر التجربة</b> — كل لوحة
+          بيقراها موديلنا. لو السيرفر مش واصل، الصفحة <b className="text-ink">بترفض
+          تفرّغ</b> بدل ما تطلّع نتيجة من المحرك العام وأنت فاكرها بتاعة موديلنا.
         </p>
-        <div className="flex flex-col gap-1.5">
+        <div className="mb-2 flex gap-1.5">
+          <button
+            onClick={probeModel}
+            disabled={probing}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night disabled:opacity-50"
+          >
+            {probing ? <><Loader2 size={14} className="animate-spin" /> بفحص…</> : "أعِد الفحص"}
+          </button>
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-muted"
+          >
+            {showAdvanced ? "إخفاء" : "تغيير العنوان"}
+          </button>
+        </div>
+        {probe && (
+          <p className={"mb-2 text-[11px] leading-relaxed " + (probe.ok ? "text-brand" : "text-danger")}>
+            {probe.ok ? "✓ " : "✗ "}{probe.msg}
+          </p>
+        )}
+        <div className={showAdvanced ? "flex flex-col gap-1.5" : "hidden"}>
+          <p className="text-[11px] leading-relaxed text-muted">
+            عنوان السيرفر نفق مؤقّت وممكن يتغيّر لو السيرفر اتعاد تشغيله — حطّ
+            الجديد هنا واحفظ.
+          </p>
           <input
             dir="ltr" inputMode="url" autoComplete="off" spellCheck={false}
             value={modelUrl}
@@ -373,30 +417,17 @@ export default function RegistrationV2Page() {
             placeholder="التوكن"
             className="w-full rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-ink outline-none focus:border-primary"
           />
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => {
-                const ok = saveJudgeEndpoint(modelUrl, modelToken);
-                setSaved(ok);
-                if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
-              }}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
-            >
-              {saved ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ"}
-            </button>
-            <button
-              onClick={probeModel}
-              disabled={probing || !modelUrl || !modelToken}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night disabled:opacity-50"
-            >
-              {probing ? <><Loader2 size={14} className="animate-spin" /> بجرّب…</> : "اختبار"}
-            </button>
-          </div>
-          {probe && (
-            <p className={"text-[11px] leading-relaxed " + (probe.ok ? "text-brand" : "text-danger")}>
-              {probe.ok ? "✓ " : "✗ "}{probe.msg}
-            </p>
-          )}
+          <button
+            onClick={() => {
+              const ok = saveJudgeEndpoint(modelUrl, modelToken);
+              setSaved(ok);
+              if (!ok) setError("العنوان أو التوكن شكلهم مش سليم — العنوان لازم يبدأ بـhttps.");
+              else void probeModel();
+            }}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink"
+          >
+            {saved ? <><Check size={14} className="text-brand" /> اتحفظ</> : "احفظ وافحص"}
+          </button>
         </div>
       </section>
     </div>
