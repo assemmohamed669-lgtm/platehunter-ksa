@@ -15,7 +15,7 @@
  * ⚙️ **كله كود مشترك مش نسخة:**
  *   الصوت `startVoicexEngine` · الشيت `getUploadedFile("local","check")`
  *   الفهرس `buildCombinedCheckIndex` · الصفّارة `startAlertSiren`
- *   الموقع `gpsService` · التصدير `buildExcelBlob`/`shareExcelBlob`
+ *   الموقع `gpsService` · التصدير `saveFieldCheckEntry` (شيت السجلات)
  *
  * 🔴 **تطابق تام بس** للصفّارة — التقريبي بيزوّر «مطلوبة».
  * 🔬 الموديل على سيرفر التجربة (ماليزيا) · النوع من كوهير على نفق منفصل.
@@ -28,11 +28,12 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Mic, Square, Loader2, AlertTriangle, Cpu, Trash2, Copy, Check, RefreshCw,
   FileSpreadsheet, BellRing, BellOff, MapPin, Download, ChevronDown, ChevronUp,
+  Pencil, Building2, Hash, Car,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { getUploadedFile } from "@/lib/idb";
-import { type ExcelTable, buildExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { buildCombinedCheckIndex } from "@/lib/checkSheets";
+import { type ExcelTable } from "@/lib/excel";
+import { buildCombinedCheckIndex, loadAllCheckSources } from "@/lib/checkSheets";
 import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
 import {
   pickTypeForPlate,
@@ -46,6 +47,13 @@ import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
 } from "@/lib/trialModelGate";
 import { sameCarTwin, heardNotShown } from "@/lib/trialTwin";
+import { resolveCheckColumns } from "@/lib/wantedColumns";
+import { detectChassisColumn } from "@/lib/chassis";
+import {
+  trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
+} from "@/lib/trialRecords";
+import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
+import CertificateBadge from "@/components/CertificateBadge";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
@@ -110,6 +118,12 @@ export default function RegistrationV2Page() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const [checkTable, setCheckTable] = useState<ExcelTable | null>(null);
+  /** كل ملفات التشييك (الأساسي + الإضافية) — مش الأساسي بس. */
+  const [checkSources, setCheckSources] = useState<ExcelTable[]>([]);
+  /** لوحة ← رقم الهيكل، من كل ورقات الملف (الشاص كتير في ورقة تانية). */
+  const [plateChassis, setPlateChassis] = useState<Map<string, string>>(new Map());
+  /** الخانة اللي المندوب بيعدّلها دلوقتي (النوع أو الملاحظة). */
+  const [editing, setEditing] = useState<{ id: string; field: "type" | "note" } | null>(null);
   const [checkName, setCheckName] = useState<string>("");
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
@@ -152,13 +166,27 @@ export default function RegistrationV2Page() {
    */
   const typeQueueRef = useRef<TypeWindow[]>([]);
 
+  /**
+   * 🔴 كل ملفات التشييك، مش الأساسي بس. كانت `[checkTable]` — يعني سلوت
+   * `local:check` لوحده، واللوحة اللي في ملف إضافي (`check-2`…) مكانتش
+   * بتطلّع صفّارة خالص. صفحة التشييك بتقراهم من زمان.
+   */
   const checkIndex = useMemo(
-    () => buildCombinedCheckIndex(checkTable ? [checkTable] : []),
-    [checkTable],
+    () => buildCombinedCheckIndex(checkSources),
+    [checkSources],
   );
   const checkIndexRef = useRef(checkIndex);
   useEffect(() => { checkIndexRef.current = checkIndex; }, [checkIndex]);
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
+  /**
+   * 🏷️ أعمدة نوع السيارة والشركة (البنك) — بتتحل بالاسم من رؤوس كل
+   * الملفات. مش بـ`matchesPreferred` لأنها بتستبعد «رقم الهيكل» عن قصد
+   * (موثّق في CLAUDE.md وعليه اختبارات) وتعديلها كان هيغيّر صفحة الفرز.
+   */
+  const checkCols = useMemo(
+    () => resolveCheckColumns(checkSources.flatMap((t) => t.headers)),
+    [checkSources],
+  );
 
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -189,13 +217,47 @@ export default function RegistrationV2Page() {
 
   /* ─── الشيت ───────────────────────────────────────────────────────── */
   const loadCheck = useCallback(() => {
-    getUploadedFile("local", "check")
-      .then((rec) => {
-        if (!rec) { setCheckTable(null); setCheckName(""); return; }
+    void (async () => {
+      try {
+        const rec = await getUploadedFile("local", "check").catch(() => null);
+        if (!rec) { setCheckTable(null); setCheckSources([]); setCheckName(""); return; }
         setCheckTable({ headers: rec.headers, rows: rec.rows });
         setCheckName(rec.fileName || "ملف التشييك");
-      })
-      .catch(() => { /* مفيش شيت */ });
+
+        const all = await loadAllCheckSources().catch(() => [] as ExcelTable[]);
+        const sources = all.length ? all : [{ headers: rec.headers, rows: rec.rows }];
+        setCheckSources(sources);
+
+        /**
+         * 🔧 لوحة ← رقم الهيكل من **كل ورقات** الملف.
+         *
+         * `parseExcelFile` بيقرا ورقة واحدة (بيفضّل «تشييك»)، وعمود الهيكل
+         * كتير بيكون في ورقة تانية — فالاعتماد على صف التشييك لوحده بيسيب
+         * الشاص فاضي. بنعمل زي مود «شاص» في صفحة التشييك: نقرا الـblob كله.
+         * فشل القراءة مابيوقّفش حاجة — الشاص بس بيفضل فاضي.
+         */
+        const map = new Map<string, string>();
+        const addSheet = (headers: string[], rows: Record<string, string>[]) => {
+          const pCol = detectPlateColumn(headers, rows);
+          const cCol = detectChassisColumn(headers, rows);
+          if (!pCol || !cCol) return;
+          for (const row of rows) {
+            const key = normalizePlate(bankPlateToArabic(String(row[pCol] ?? "")));
+            const vin = String(row[cCol] ?? "").trim();
+            if (key && vin && !map.has(key)) map.set(key, vin);
+          }
+        };
+        for (const t of sources) addSheet(t.headers, t.rows);
+        if (rec.fileBlob) {
+          try {
+            const { readAllSheets } = await import("@/lib/excel");
+            const f = new File([rec.fileBlob], rec.fileName || "check.xlsx");
+            for (const sh of await readAllSheets(f)) addSheet(sh.headers, sh.rows);
+          } catch { /* blob مش مقروء — نكتفي بالورقة المحمّلة */ }
+        }
+        setPlateChassis(map);
+      } catch { /* مفيش شيت */ }
+    })();
   }, []);
   useEffect(() => { if (allowed === true) loadCheck(); }, [allowed, loadCheck]);
 
@@ -435,29 +497,86 @@ export default function RegistrationV2Page() {
   }
   function silence() { try { stopAlertSiren(); } catch { /* ignore */ } setSirenOn(false); }
 
+  /**
+   * ✏️ حفظ تعديل المندوب على النوع/الملاحظة.
+   * القيمة الفاضية بترجّع الخانة `null` (مش نص فاضي) عشان تفضل «فاضية»
+   * بنفس معنى اللي الصوت مجابهاش.
+   */
+  const saveCell = useCallback((id: string, field: "type" | "note", value: string) => {
+    const v = value.trim() || null;
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: v } : r)));
+  }, []);
+
   /* ─── 📤 التصدير — نفس أسلوب التشييك ─────────────────────────────── */
+  /**
+   * ══════════════════════════════════════════════════════════════════
+   *  📤 التصدير → **شيت السجلات** (مش ملف إكسل)
+   * ══════════════════════════════════════════════════════════════════
+   *
+   * طلب المالك: «لما يدوس تصدير اللوحات تتصدّر لصفحة السجلات، وبعد ما
+   * تتسجّل يطلع رسالة للمندوب إنه تم التصدير واللي اتصدّر، وتتأكد إنه
+   * اتصدّر يتمسح خلاص من صفحة التسجيل — زي اللي في صفحة التشييك».
+   *
+   * نفس حراس صفحة التشييك بالحرف:
+   *   · معرّف **ثابت** مشتق من الصف ⇒ مية ضغطة = سجل واحد
+   *   · `Promise.allSettled` ⇒ **اللي اتكتب بس** هو اللي يتمسح
+   *   · «مفيش تصدير بلا موقع» ⇒ اللي لسه ماخدش GPS يفضل مكانه
+   *
+   * ⚠️ الكتابة IndexedDB أولاً (ده «اتصدّر»)، والرفع لـSupabase بيحصل
+   *    بعدين عبر `pushPendingFieldChecks` — بننده عليها هنا كمان عشان
+   *    توصل السيرفر بدل ما تستنى فتح صفحة التشييك.
+   */
   async function exportRows() {
     if (!rows.length) return;
-    setBusy("بحضّر الملف…");
+    const ready = exportableTrialRows(rows);
+    const waiting = rows.length - ready.length;
+    if (!ready.length) {
+      setError("مفيش لوحة معاها موقع لسه — التصدير بيستنى الموقع (" + waiting + " مستنية).");
+      return;
+    }
+    setBusy("ببعت للسجلات…");
     try {
-      const data = rows.slice().reverse().map((r, i) => ({
-        "#": i + 1,
-        "رقم اللوحة": r.plate,
-        "النوع": r.type ?? "",
-        "الملاحظة": r.note ?? "",
-        "مطلوبة": r.match ? "نعم" : "",
-        "التاريخ": new Date(r.shownAt).toLocaleDateString("ar-EG"),
-        "الوقت": new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        "الموقع": r.lat != null && r.lng != null ? toMapsLink(r.lat, r.lng) : "",
-        "دقة الموقع (متر)": r.gpsAccuracy != null ? Math.round(r.gpsAccuracy) : "",
-        "الحالة": r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة",
-        "الثقة %": Math.round(r.conf * 100),
-        "زمن النطق (ث)": (r.atMs / 1000).toFixed(1),
-        "التأخير (ث)": (r.latencyMs / 1000).toFixed(1),
-      }));
-      const blob = buildExcelBlob(data, "تجربة الموديل الجديد");
-      const name = "تجربة-الموديل-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".xlsx";
-      await shareExcelBlob(blob, name, "تجربة الموديل الجديد");
+      // 🪪 وسم السجل باسم المندوب — نفس اللي بتستعمله صفحة التشييك
+      const uid = await supabase.auth.getUser()
+        .then((r) => r.data.user?.id ?? undefined).catch(() => undefined);
+      const agentId = uid;
+      const entries: FieldCheckEntry[] = ready.map((r) => {
+        const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
+        const d = carDetails(r.match, checkCols, vin);
+        return {
+          id: trialEntryId(r.id),
+          agentId,
+          plate: r.plate,
+          row: buildTrialFieldRow(r, d),
+          method: "تجربة الموديل الجديد",
+          lat: r.lat ?? undefined,
+          lng: r.lng ?? undefined,
+          mapsLink: r.lat != null && r.lng != null ? toMapsLink(r.lat, r.lng) : undefined,
+          checkedAt: new Date(r.shownAt).toISOString(),
+        };
+      });
+      const settled = await Promise.allSettled(entries.map((e) => saveFieldCheckEntry(e)));
+      const okIds = savedIds(entries.map((e) => e.id), settled);
+      if (!okIds.length) { setError("مانفعش يتحفظ ولا سجل — جرّب تاني."); return; }
+
+      // 🧹 اللي اتكتب بس يتشال — الباقي يفضل قدام المندوب
+      const savedRowIds = new Set(ready.filter((r) => okIds.includes(trialEntryId(r.id))).map((r) => r.id));
+      setRows((prev) => prev.filter((r) => !savedRowIds.has(r.id)));
+
+      // ☁️ نحاول نوصّلها السيرفر فوراً — فشلها مايأثرش، هتتزامن بعدين
+      try {
+        if (uid) {
+          const { pushPendingFieldChecks } = await import("@/lib/syncFieldCheck");
+          await pushPendingFieldChecks(uid);
+        }
+      } catch { /* المزامنة بتتم بعدين */ }
+
+      const failed = entries.length - okIds.length;
+      alert(
+        "✅ تم التصدير للسجلات: " + okIds.length + " لوحة."
+        + (waiting ? "\n⏳ " + waiting + " مستنية الموقع (ماتصدّرتش)." : "")
+        + (failed ? "\n⚠️ " + failed + " مانفعتش تتحفظ وفضلت مكانها." : "")
+      );
     } catch {
       setError("تعذّر التصدير — جرّب تاني.");
     } finally { setBusy(null); }
@@ -683,7 +802,7 @@ export default function RegistrationV2Page() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
+                {rows.flatMap((r, i) => [
                   <tr key={r.id}
                     className={"border-b border-slate-100 "
                       + (r.match ? "bg-rose-50 " : "") + (r.provisional ? "opacity-60" : "")}>
@@ -693,8 +812,8 @@ export default function RegistrationV2Page() {
                       <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
                         + (r.match ? "text-rose-700" : r.provisional ? "text-slate-500" : "text-indigo-700")}>{r.plate}</span>
                     </Td>
-                    <Td className={r.type ? "font-bold text-slate-900" : "text-slate-300"}>{r.type || "—"}</Td>
-                    <Td className={r.note ? "font-bold text-slate-900" : "text-slate-300"}>{r.note || "—"}</Td>
+                    <EditableTd row={r} field="type" editing={editing} setEditing={setEditing} onSave={saveCell} />
+                    <EditableTd row={r} field="note" editing={editing} setEditing={setEditing} onSave={saveCell} />
                     <Td>
                       {r.match
                         ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
@@ -716,8 +835,17 @@ export default function RegistrationV2Page() {
                         : r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-400">{(r.latencyMs / 1000).toFixed(1)}ث</Td>
-                  </tr>
-                ))}
+                  </tr>,
+                  /* 🚨 تفاصيل المطلوبة تحت الصف — نوع/شركة/شاص/شهادة */
+                  r.match ? (
+                    <tr key={r.id + "-d"} className="border-b border-rose-100 bg-rose-50">
+                      <td colSpan={10} className="px-2 pb-2">
+                        <MatchDetails row={r} cols={checkCols}
+                          vin={plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)))} />
+                      </td>
+                    </tr>
+                  ) : null,
+                ])}
               </tbody>
             </table>
           </div>
@@ -728,7 +856,7 @@ export default function RegistrationV2Page() {
           <div className="mt-3 flex gap-1.5">
             <button onClick={() => void exportRows()} disabled={!!busy}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white disabled:opacity-50">
-              {busy ? <><Loader2 size={14} className="animate-spin" /> {busy}</> : <><Download size={14} /> تصدير إكسل</>}
+              {busy ? <><Loader2 size={14} className="animate-spin" /> {busy}</> : <><Download size={14} /> تصدير للسجلات</>}
             </button>
             <button onClick={() => {
               try {
@@ -844,6 +972,83 @@ export default function RegistrationV2Page() {
 }
 
 /* ─── مكوّنات صغيرة ──────────────────────────────────────────────────── */
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  ✏️ خانة النوع/الملاحظة — المندوب يقدر يكتب فيها ويعدّل كلام الصوت
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * طلب المالك (٢٢ سبتمبر ٢٠٢٦): «ضيفلي علامة قلم في عمود النوع والملاحظة
+ * علشان المندوب لو حب يكتب فيهم حاجة، ولو طلع نوع أو ملاحظة قالها بالصوت
+ * يقدر يعدل فيها».
+ *
+ * 🔴 **واللي المندوب كتبه بإيده الصوت مايدوسش عليه**: الصف اللي فيه قيمة
+ *    بيتخطّى في تصريف كوهير أصلاً — فالتعديل اليدوي بيغلب.
+ */
+function EditableTd({ row, field, editing, setEditing, onSave }: {
+  row: { id: string; type: string | null; note: string | null };
+  field: "type" | "note";
+  editing: { id: string; field: "type" | "note" } | null;
+  setEditing: (e: { id: string; field: "type" | "note" } | null) => void;
+  onSave: (id: string, field: "type" | "note", value: string) => void;
+}) {
+  const value = field === "type" ? row.type : row.note;
+  const on = editing?.id === row.id && editing.field === field;
+  if (on) {
+    return (
+      <td className="px-1 py-1.5 align-top">
+        <input
+          autoFocus
+          defaultValue={value ?? ""}
+          onBlur={(e) => { onSave(row.id, field, e.currentTarget.value); setEditing(null); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { onSave(row.id, field, e.currentTarget.value); setEditing(null); }
+            if (e.key === "Escape") setEditing(null);
+          }}
+          className="w-full rounded-md border border-indigo-400 bg-white px-1 py-0.5 text-[11px] outline-none"
+        />
+      </td>
+    );
+  }
+  return (
+    <td className="px-1 py-1.5 align-top">
+      <button type="button" onClick={() => setEditing({ id: row.id, field })}
+        className="group flex w-full items-center gap-1 text-right">
+        <span className={value ? "font-bold text-slate-900" : "text-slate-300"}>{value || "—"}</span>
+        <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
+      </button>
+    </td>
+  );
+}
+
+/**
+ * 🚨 تفاصيل اللوحة **المطلوبة** — نوع السيارة وتبع أي شركة ورقم الشاص
+ * والشهادة. بتتعرض تحت الصف مش كأعمدة زيادة عشان الجدول يفضل مقروء على
+ * الموبايل. بتظهر للمطابقة التامة بس (طلب المالك).
+ */
+function MatchDetails({ row, cols, vin }: {
+  row: { plate: string; match: Record<string, string> | null };
+  cols: { brandCol: string | null; typeCol: string | null; bankCol: string | null };
+  vin?: string;
+}) {
+  const d = carDetails(row.match, cols, vin);
+  const Item = ({ icon, label, value }: { icon: React.ReactNode; label: string; value: string | null }) => (
+    <span className="flex items-center gap-1">
+      <span className="text-rose-400">{icon}</span>
+      <span className="text-rose-400">{label}</span>
+      <span className={value ? "font-black text-rose-900" : "text-rose-300"}>{value || "—"}</span>
+    </span>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+      <Item icon={<Car size={10} />} label="نوع السيارة" value={d.car} />
+      <Item icon={<Building2 size={10} />} label="الشركة" value={d.company} />
+      <Item icon={<Hash size={10} />} label="الهيكل" value={d.chassis} />
+      {/* 🔎 الشهادة بتتبحث تلقائياً بالشاص وإلا باللوحة، وبتختفي لو مفيش */}
+      <CertificateBadge plate={row.plate} chassis={d.chassis ?? undefined} />
+    </div>
+  );
+}
 
 function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <th className={"whitespace-nowrap px-1.5 py-1.5 text-right font-bold " + className}>{children}</th>;
