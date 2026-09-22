@@ -327,9 +327,17 @@ export default function RegistrationV2Page() {
             if (!twin) return [fresh, ...prev];
             // المؤكّد بيغلب المبدئي دايماً — القاعدة في `provisionalRow.ts`.
             if (!confirmedWins(fresh, twin)) return prev;
-            // الصف الجديد بيكسب — بس بياخد نوع/ملاحظة/مطلوبة القديم لو عنده.
+            /**
+             * 🕐 **زمن الظهور = أول مرة المندوب شافها**، مش وقت التأكيد.
+             *
+             * كان الصف المؤكّد بيكتب زمنه هو، فالتقرير كان بيقول ٦ث بينما
+             * اللوحة كانت بانت مبدئية في ~٣ث. الرقم ده بيتقاس عليه قرار
+             * السرعة، فلازم يكون **اللي المندوب عاشه** مش اللي النظام عمله.
+             */
             const merged: LiveRow = {
               ...fresh,
+              shownAt: Math.min(fresh.shownAt, twin.shownAt),
+              latencyMs: Math.min(fresh.latencyMs, twin.latencyMs),
               type: fresh.type ?? twin.type,
               note: fresh.note ?? twin.note,
               match: fresh.match ?? twin.match,
@@ -363,7 +371,9 @@ export default function RegistrationV2Page() {
               const twin = prev.find((x) => sameCarTwin(x, prov, 12000));
               if (!twin) return [prov, ...prev];
               if (!confirmedWins(prov, twin)) return prev;
-              return [{ ...prov, type: twin.type, note: twin.note, match: prov.match ?? twin.match },
+              return [{ ...prov, shownAt: Math.min(prov.shownAt, twin.shownAt),
+                latencyMs: Math.min(prov.latencyMs, twin.latencyMs),
+                type: twin.type, note: twin.note, match: prov.match ?? twin.match },
                 ...prev.filter((x) => x.id !== twin.id)];
             });
             // 🔔 المطلوب بيصفّر فوراً — الانتظار ٧ث على عربية مطلوبة غالي.
