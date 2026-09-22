@@ -76,17 +76,19 @@ export interface VoicexEngineOpts {
    * 🔴 نافذة اتخطّت. **الرمي الصامت هو الباج الأصلي** — الشاشة كانت بتقول
    * «بيسمع صوتك» وكل نافذة بتترمى بلا أثر. أي تخطّي من دلوقتي **يتبلّغ**.
    */
-  onSkip?: (reason:
-    | "busy_window" | "yield_to_utterance" | "utterance_queue_full"
-    /** النافذة أقصر من ٠.٦ث */
-    | "too_short"
-    /** بوابة السكوت رفضت — الصوت واطي أو مافيش كلام فيه */
-    | "silence_gate"
-    /** القصّ رجع فاضي — الذاكرة الدوّارة مالهاش صوت في المدى ده */
-    | "slice_failed"
-    /** الطلب اتبعت وفشل (شبكة/مهلة/كود مش ٢٠٠) */
-    | "request_failed"
-  ) => void;
+  /**
+   * 🔍 سبب تخطّي نافذة — **نصّ مفتوح بالقصد**. الأسباب الثابتة:
+   *   `busy_window` · `yield_to_utterance` · `utterance_queue_full`
+   *   `too_short` · `silence_gate` · `slice_failed`
+   * وفيه اتنين بيحملوا تفصيلة بعد نقطتين:
+   *   `request_failed:<code>` — الكود الحقيقي من طبقة الشبكة
+   *     (`http_503` · `timeout` · `network` · `bad_token` …)
+   *   `empty_slice:<bytes>`  — المقطع طلع فاضي عملياً
+   *
+   * 🔴 الرمي الصامت هو الباج الأصلي: المندوب بيتكلّم، الشاشة بتقول «بيسمع
+   * صوتك» (الكاشف محلي)، ومافيش أي أثر. أي تخطّي لازم يتبلّغ.
+   */
+  onSkip?: (reason: string) => void;
 }
 
 export interface VoicexEngineController {
@@ -181,13 +183,18 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // يبعت نافذة WAV واحدة، يطبّق حواجز المعمل، يضيف اللوحات للإجماع. مايلمسش المؤقتات.
   async function sendWav(wav: Blob, tMs: number): Promise<void> {
     try {
+      // 🔍 `onError` بيدّي **الكود الحقيقي** (`http_503` · `timeout` ·
+      // `network` · `bad_token` …). من غيره كل فشل بيبان «الطلب فشل» وخلاص،
+      // وبنفضل نخمّن السبب بدل ما الجهاز يقوله.
+      let lastErr: string | null = null;
       const resp = await postAudioForPlate(wav, {
         transcribeUrl: opts.transcribeUrl, token: opts.token,
         mimeType: "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
+        onError: (code: string) => { lastErr = code; },
       });
       if (!resp) {
         fails += 1;
-        opts.onSkip?.("request_failed");   // كان بيتبلع لحد الـ٨ متتالية
+        opts.onSkip?.(("request_failed:" + (lastErr ?? "no_response")));
         if (fails >= FATAL_FAILS) opts.onFatal?.("tunnel_down");
         return;
       }
@@ -219,6 +226,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     if (q && !audioPregate(q).accept) { opts.onSkip?.("silence_gate"); return; }
     const wav = mic.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى
     if (!wav) { opts.onSkip?.("slice_failed"); return; }
+    // مقطع فاضي بيعدّي الحارس فوق (Blob بترويسة بس) وبيترفض بعدين من غير سبب.
+    if (wav.size < 2048) { opts.onSkip?.(("empty_slice:" + wav.size)); return; }
     const tMs = ((fromSec + toSec) / 2) * 1000;
     inflight += 1;
     opts.onStatus?.("processing");
