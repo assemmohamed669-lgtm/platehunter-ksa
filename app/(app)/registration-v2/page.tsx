@@ -55,8 +55,14 @@ export default function RegistrationV2Page() {
   const [rows, setRows] = useState<LiveRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  /** كام نافذة اتخطّت — بيتملا من `onSkip` (الرمي الصامت كان الباج الأصلي). */
-  const [skipped, setSkipped] = useState(0);
+  /**
+   * 🔍 **سبب كل تخطّي بالاسم** — مش مجرّد عدّاد.
+   *
+   * لما المالك قال «بيسمع صوت بس مش بيطلع لوحات»، اتأكد من سجل السيرفر إن
+   * **ولا بايت وصل**. يعني الصوت بيتقفل في التليفون نفسه، وكل نقاط الرمي
+   * كانت `return` أخرس. الجدول ده بيقول فين بالظبط.
+   */
+  const [skips, setSkips] = useState<Record<string, number>>({});
 
   const [modelUrl, setModelUrl] = useState("");
   const [modelToken, setModelToken] = useState("");
@@ -125,7 +131,7 @@ export default function RegistrationV2Page() {
   /* ─── التسجيل الحيّ ───────────────────────────────────────────────── */
   async function start() {
     setError(null);
-    setSkipped(0);
+    setSkips({});
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try {
@@ -143,7 +149,7 @@ export default function RegistrationV2Page() {
         onSpeech: (active: boolean) => setSpeaking(active),
         onLevel: (lvl: number) => setLevel(lvl),
         // 🔴 الرمي الصامت كان الباج الأصلي — هنا بيتعدّ ويتعرض.
-        onSkip: () => setSkipped((n) => n + 1),
+        onSkip: (reason: string) => setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })),
         onFatal: (reason: string) => {
           try { engineRef.current?.stop(); } catch { /* ignore */ }
           engineRef.current = null;
@@ -298,12 +304,7 @@ export default function RegistrationV2Page() {
         <div className="mb-2 flex items-center gap-2">
           <h2 className="text-sm font-black text-ink">اللوحات</h2>
           <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-muted">{rows.length}</span>
-          {skipped > 0 && (
-            /* شفافية: النوافذ اللي المحرّك تخطّاها. صفر = مافيش ضغط. */
-            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-amber-500">
-              اتخطّى {skipped}
-            </span>
-          )}
+
           {rows.length > 0 && (
             <div className="mr-auto flex gap-1.5">
               <button
@@ -348,6 +349,32 @@ export default function RegistrationV2Page() {
           </ul>
         )}
       </section>
+
+      {/* ── 🔍 تشخيص: ليه المقطع ماتبعتش ── */}
+      {Object.keys(skips).length > 0 && (
+        <section className="rounded-xl border border-border bg-surface p-3">
+          <h2 className="mb-1.5 text-xs font-bold text-ink">🔍 نوافذ ماتبعتتش</h2>
+          <ul className="flex flex-col gap-1">
+            {Object.entries(skips).map(([reason, n]) => (
+              <li key={reason} className="flex items-center gap-2 text-[11px]">
+                <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono font-bold text-amber-500">{n}</span>
+                <span className="text-ink">{SKIP_LABEL[reason] ?? reason}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
+
+/** شرح بالعربي لكل سبب — عشان الرقم يبقى قابل للتصرّف مش مجرّد رقم. */
+const SKIP_LABEL: Record<string, string> = {
+  silence_gate: "بوابة السكوت رفضت — الصوت واطي أوي أو مافيش كلام واضح",
+  slice_failed: "القصّ رجع فاضي — الميك مش بيملا الذاكرة",
+  too_short: "النافذة أقصر من ٠.٦ ثانية",
+  busy_window: "الموديل كان مشغول (نافذة زاحفة — عادي)",
+  yield_to_utterance: "اتنازلت لقراءة نطق مستنية (عادي)",
+  utterance_queue_full: "الطابور اتملا — بتتكلّم أسرع من رد السيرفر",
+  request_failed: "🔴 الطلب اتبعت وفشل — شبكة أو السيرفر",
+};
