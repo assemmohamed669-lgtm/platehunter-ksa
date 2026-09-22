@@ -26,6 +26,7 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
  * التلفيق وماتخسّرش قراءة صحيحة. النافذة اللي أوطى توكن فيها < -0.5 تتحجب
  * كلها (مش على المفردة بس — المعمل بيرمي النافذة).
  */
+/** للتقرير بس — الحجب الفعلي بقى في الإجماع (`soloMinLp`) على المفردة. */
 const MIN_TOKEN_LOGPROB = -0.5;
 
 const WIN_S = 5;              // نافذة ٥ث: لازم تحتوي اللوحة كاملة (زي المعمل)
@@ -251,14 +252,29 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       if (!resp.accepted) return;
       // ثقة النافذة = exp(mean_logprob) (زي المعمل) — أعلى ثقة تكسب في التصويت.
       const conf = typeof resp.meanLogprob === "number" ? Math.exp(resp.meanLogprob) : 0.6;
-      // ⚠️ حاجز الاختراع **مسطّح** (زي المعمل): لو أوطى توكن < -0.5 = النافذة
-      // كلها ملفّقة (سكوت/حروف بس) → ترميها، ماتدخلش الإجماع أصلاً.
-      const minLp = typeof resp.minLogprob === "number" ? resp.minLogprob : null;
-      if (minLp !== null && minLp < MIN_TOKEN_LOGPROB) return;
+      /**
+       * 🔴 **الحاجز المسطّح اتشال — كان بيرمي لوحات صح.**
+       *
+       * كان: أي نافذة أوطى توكن فيها < -0.5 تترمى **قبل الإجماع**. وده
+       * بالظبط اللي `liveConsensus.ts:90-95` محذّر منه بالنص من زمان:
+       * «الحاجز على الكل **بيرمي نص اللوحات الحقيقية**؛ عليها مفردة بس آمن».
+       *
+       * الدليل من تقرير المالك (٢٢ سبتمبر · ٢٩ لوحة · ١٦ قراءة اتحجبت):
+       *   63.5  حطو6826          محجوب  91%
+       *   65.0  حطو6826 اسط4324  محجوب  93%
+       *   66.5  اسط4324          محجوب  88%
+       * التلاتة **قراءات صحيحة** (اللوحتين في ورقته)، واتحجبوا، فاللوحتين
+       * ماظهروش خالص.
+       *
+       * الصح: نمرّر `minLp` **للإجماع** — وهو بيطبّق الحاجز على القراءة
+       * **المفردة** بس (`soloMinLp`)، واللي اتأكدت في نافذتين+ تعدّي لأن
+       * **الاتفاق دليل**. كده حطو6826 (نافذتين) تعدّي، والاختراع المفرد يتحجب.
+       */
+      const minLp = typeof resp.minLogprob === "number" ? resp.minLogprob : undefined;
       // زمن الإجماع = **مركز النافذة** (زي المعمل) — عرض فوري ~٢.٥ث.
       for (const p of String(resp.plate || "").trim().split(/\s+/)) {
         const norm = p.replace(/\s+/g, "");
-        if (WELL.test(norm)) consensus.add({ plate: norm, tMs, conf });
+        if (WELL.test(norm)) consensus.add({ plate: norm, tMs, conf, minLp });
       }
     } catch { /* تجاهل — شبكة/تحليل */ }
   }
