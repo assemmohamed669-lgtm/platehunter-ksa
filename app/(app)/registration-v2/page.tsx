@@ -966,7 +966,15 @@ export default function RegistrationV2Page() {
                 {rows.flatMap((r, i) => [
                   <tr key={r.id}
                     className={"border-b border-slate-100 "
-                      + (r.match ? "bg-rose-50 " : "") + (r.provisional ? "opacity-60" : "")}>
+                      + (r.match ? "bg-rose-50 " : "")
+                      /**
+                       * 🔴 كان `opacity-60` — والمالك قال «بتظهر مطفية
+                       * وبتقعد فترة طويلة». اللوحة **موجودة وصحيحة**
+                       * وقتها، بس شكلها كان بيقول العكس فبيستنى الغامق.
+                       * بقت واضحة بخلفية صفرا خفيفة تقول «بتتأكّد» —
+                       * بيبان فوراً وبرضه متميّز عن المؤكّد.
+                       */
+                      + (r.provisional ? "bg-amber-50/70" : "")}>
                     <Td className="text-slate-400">{rows.length - i}</Td>
                     <Td>
                       {/* ✏️ اللوحة نفسها قابلة للتعديل — لو الموديل غلط المندوب يصحّحها.
@@ -983,7 +991,7 @@ export default function RegistrationV2Page() {
                         <button type="button" onClick={() => setEditing({ id: r.id, field: "plate" })}
                           className="group flex items-center gap-1">
                           <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
-                            + (r.match ? "text-rose-700" : r.provisional ? "text-slate-500" : "text-indigo-700")}>{r.plate}</span>
+                            + (r.match ? "text-rose-700" : r.provisional ? "text-amber-700" : "text-indigo-700")}>{r.plate}</span>
                           <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
                         </button>
                       )}
@@ -1013,7 +1021,7 @@ export default function RegistrationV2Page() {
                         : <span className="text-rose-500">مافيش</span>}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-500">{Math.round(r.conf * 100)}%</Td>
-                    <Td className={r.provisional ? "text-slate-400" : r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
+                    <Td className={r.provisional ? "text-amber-600" : r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
                       {r.provisional
                         ? <span className="flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> مبدئية</span>
                         : r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
