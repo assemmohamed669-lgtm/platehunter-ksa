@@ -244,3 +244,20 @@ export function rehydrateMatch<T extends DraftRow>(
     match: index.get(keyOf(r.plate)) ?? null,
   }));
 }
+
+/**
+ * المسودّة **وهي بتوصل** — لو الشيت جاهز، «مطلوبة» بترجع على طول.
+ *
+ * 🔴 الإرجاع كان بيحصل لما الفهرس يتغيّر بس. لو الشيت جه الأول (وده اللي
+ * بيحصل لما المندوب يرجع للصفحة والملف في الذاكرة) والمسودّة جت بعده،
+ * اللوحات المطلوبة كانت بترجع عادية. والشيت لسه ماجهزش ⇒ زي ما هي،
+ * والإرجاع بيحصل لما ييجي.
+ */
+export function restoreDraftRows<T extends DraftRow>(
+  saved: T[],
+  index: Map<string, Record<string, string>>,
+  keyOf: (plate: string) => string = (p) => p,
+): T[] {
+  if (!saved.length || index.size === 0) return saved;
+  return rehydrateMatch(saved, index, keyOf);
+}

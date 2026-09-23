@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canSeeTab, visibleTabs, type TabPerm } from "@/lib/navTabs";
+import { canSeeTab, visibleTabs, isTabActive, type TabPerm } from "@/lib/navTabs";
 
 const TABS: (TabPerm & { href: string; label: string })[] = [
   { href: "/sorting", label: "الفرز" },
@@ -81,5 +81,40 @@ describe("adminOrSuper — التبويب يطابق قفل الصفحة", () =>
 
   it("مابيأثرش على التبويبات العادية", () => {
     expect(canSeeTab({ href: "/sorting" }, { isSuper: false, isAdmin: false })).toBe(true);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  التبويب المنوّر — «الجديد» كانت بتنوّر «التسجيل» معاها
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «لما بتنقل لصفحة الجديد بتنوّر معاها صفحة
+ *  التسجيل… هما ليه مرتبطين ببعض؟». السبب: التبويب كان بينوّر لو العنوان
+ *  **بيبدأ بـ** عنوانه، و`/registration-v2` بيبدأ بـ`/registration`.
+ */
+describe("isTabActive", () => {
+  it("«الجديد» مابتنوّرش «التسجيل» — العنوان بيبدأ بيه بس صفحة تانية", () => {
+    expect(isTabActive("/registration-v2", "/registration")).toBe(false);
+    expect(isTabActive("/registration-v2", "/registration-v2")).toBe(true);
+  });
+
+  it("«التسجيل» مابتنوّرش «الجديد»", () => {
+    expect(isTabActive("/registration", "/registration-v2")).toBe(false);
+    expect(isTabActive("/registration", "/registration")).toBe(true);
+  });
+
+  it("الصفحات اللي جوّه التبويب بتنوّره (زي /maps/123)", () => {
+    expect(isTabActive("/maps/123", "/maps")).toBe(true);
+    expect(isTabActive("/registration/old", "/registration")).toBe(true);
+  });
+
+  it("شرطة في الآخر أو مافيش عنوان", () => {
+    expect(isTabActive("/maps/", "/maps")).toBe(true);
+    expect(isTabActive(null, "/maps")).toBe(false);
+    expect(isTabActive(undefined, "/maps")).toBe(false);
+  });
+
+  it("صفحة اسمها بيبدأ باسم تبويب تاني مابتنوّروش (/sorting-old ≠ /sorting)", () => {
+    expect(isTabActive("/sorting-old", "/sorting")).toBe(false);
   });
 });

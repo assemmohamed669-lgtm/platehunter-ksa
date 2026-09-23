@@ -34,7 +34,9 @@ import {
 import { supabase } from "@/lib/supabaseClient";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
-import { buildCombinedCheckIndex } from "@/lib/checkSheets";
+import { cachedCombinedCheckIndex } from "@/lib/checkSheets";
+import { currentSession } from "@/lib/authSession";
+import { rememberTrialGate, cachedTrialGate, forgetTrialGate } from "@/lib/trialGateCache";
 import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
 import {
   pickTypeForPlate,
@@ -58,7 +60,7 @@ import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
-  stripForDraft, rehydrateMatch, TRIAL_EXPORT_METHOD, sessionStamp,
+  stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
@@ -132,6 +134,10 @@ interface ReadLog {
 const WELL = /^[ء-ي]{3}\d{4}$/;
 
 /* 🏷️ ثوابت نافذة النوع وقرارها في `lib/typeForPlate.ts` — مغطّاة باختبار. */
+
+/** رسالة «مافيش توكن» — ثابتة عشان تتشال لوحدها لو التوكن وصل بعدين. */
+const NO_TRIAL_TOKEN_MSG = "مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
+  + "select public.set_trial_token('<السرّ>') — أو حطّه بإيدك في مربّع الإعداد تحت.";
 
 export default function RegistrationV2Page() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
@@ -277,8 +283,12 @@ export default function RegistrationV2Page() {
    * `local:check` لوحده، واللوحة اللي في ملف إضافي (`check-2`…) مكانتش
    * بتطلّع صفّارة خالص. صفحة التشييك بتقراهم من زمان.
    */
+  /**
+   * ⚡ `cached…` — الفهرس بيتبني **مرة لكل ملف** مش مع كل فتحة للصفحة
+   * (~١٥٠ مللي على الموبايل لـ٥٦ ألف صف). شوف `lib/checkSheets.ts`.
+   */
   const checkIndex = useMemo(
-    () => buildCombinedCheckIndex(checkSources),
+    () => cachedCombinedCheckIndex(checkSources),
     [checkSources],
   );
   const checkIndexRef = useRef(checkIndex);
@@ -295,15 +305,21 @@ export default function RegistrationV2Page() {
   );
 
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
+  /**
+   * ⚡ **الرجوع للصفحة فوري** — المالك (٢٣ سبتمبر ٢٠٢٦): «صفحة الجديد لما
+   * بروح عليها بتبقى تقيلة شوي، خليها أسرع».
+   *
+   * 🔴 كانت بتستنى **٣ نداءات شبكة ورا بعض** قبل ما ترسم أي حاجة («جارٍ
+   * التحقق…»): `getUser` ← البروفايل ← التوكن. دلوقتي:
+   *   · الجلسة من **الموبايل نفسه** (`currentSession` — بلا شبكة)
+   *   · البروفايل والتوكن **مع بعض** مش ورا بعض
+   *   · الرجوع بيفتح **على طول** من اللي اتفتكر (`lib/trialGateCache.ts`)
+   *     والتأكيد بيحصل في الخلفية — ولو الصلاحية اتقفلت الصفحة بتتقفل
+   */
   useEffect(() => {
-    (async () => {
-      const { data, error: authErr } = await supabase.auth.getUser();
-      if (authErr || !data.user) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
-      const { data: prof, error: profErr } = await supabase
-        .from("profiles").select("role, is_super").eq("id", data.user.id).single();
-      if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
-      if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
-      setIsSuper(prof?.is_super === true);
+    let alive = true;
+    /** يفتح الصفحة بالصلاحية والتوكن — من اللي اتفتكر أو من السيرفر. */
+    const openWith = (sup: boolean, dbToken: string | null) => {
       /**
        * 🔴 **التوكن من الداتابيز مش من الكود.**
        *
@@ -315,15 +331,52 @@ export default function RegistrationV2Page() {
        * ⚠️ فشل القراءة = توكن فاضي = `planTrialRun` بيرفض التشغيل برسالة
        * واضحة. **الفشل بيقفل** — مافيش رجوع لتوكن مكتوب.
        */
-      const dbToken = await fetchTrialToken();
       const ep = resolveTrialEndpoint(readJudgeEndpoint(), dbToken);
+      setIsSuper(sup);
       setModelUrl(ep.base); setModelToken(ep.token); setAllowed(true);
-      if (!ep.token) {
-        setError("مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
-          + "select public.set_trial_token('<السرّ>') — أو حطّه بإيدك في مربّع الإعداد تحت.");
+      if (!ep.token) setError(NO_TRIAL_TOKEN_MSG);
+      // التوكن وصل في التأكيد ⇒ رسالة «مافيش توكن» اللي طلعت من الكاش تتشال
+      else setError((e) => (e === NO_TRIAL_TOKEN_MSG ? null : e));
+    };
+    (async () => {
+      const sess = await currentSession();
+      let userId = sess.userId;
+      if (!userId && !sess.signedOut) {
+        // شك مش خروج (القراية المحلية ماجابتش حاجة) — نسأل السيرفر زي الأول
+        try { userId = (await supabase.auth.getUser()).data.user?.id ?? null; } catch { /* نت */ }
       }
+      if (!alive) return;
+      if (!userId) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
+
+      const hit = cachedTrialGate(userId);
+      if (hit) openWith(hit.isSuper, hit.token);
+
+      const [profRes, dbToken] = await Promise.all([
+        supabase.from("profiles").select("role, is_super").eq("id", userId).single(),
+        fetchTrialToken(),
+      ]);
+      if (!alive) return;
+      const { data: prof, error: profErr } = profRes;
+      if (profErr) {
+        // مفتوحة من اللي اتفتكر ⇒ عطل شبكة لحظي مايقفلهاش
+        if (!hit) setDenied("مش قادر أقرا صلاحيتك: " + profErr.message);
+        return;
+      }
+      if (!canOpenTrialPage(prof)) {
+        forgetTrialGate();
+        try { engineRef.current?.stop(); } catch { /* ignore */ }
+        setListening(false); setAllowed(false);
+        setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن.");
+        return;
+      }
+      const sup = prof?.is_super === true;
+      // فشل قراية التوكن والكاش فيه توكن من الداتابيز ⇒ نكمّل بيه
+      const token = dbToken || hit?.token || null;
+      rememberTrialGate(userId, { isSuper: sup, token });
+      if (!hit || hit.isSuper !== sup || hit.token !== token) openWith(sup, token);
     })();
     return () => {
+      alive = false;
       if (timerRef.current) clearInterval(timerRef.current);
       try { engineRef.current?.stop(); } catch { /* ignore */ }
       try { stopAlertSiren(); } catch { /* ignore */ }
@@ -398,13 +451,24 @@ export default function RegistrationV2Page() {
    * شوف `stripForDraft` / `rehydrateMatch`.
    */
   const draftReady = useRef(false);
+  /**
+   * ⚡ بتتقري **على طول** مع فتح الصفحة — مش بعد ما الصلاحية ترجع من الشبكة
+   * (بيانات المندوب على موبايله، والصفحة مابتترسمش لحد ما الصلاحية تيجي).
+   *
+   * 🔴 و«مطلوبة» بترجع **وهي بتوصل** (`restoreDraftRows`): لو الشيت جه قبلها
+   * — وده اللي بيحصل في الرجوع للصفحة — الإرجاع اللي تحت كان فات خلاص،
+   * واللوحات المطلوبة كانت بترجع عادية.
+   */
   useEffect(() => {
-    if (allowed !== true) return;
     void loadDraft<LiveRow>("trial", "rv2-rows")
-      .then((saved) => { if (saved.length) setRows(saved); })
+      .then((saved) => {
+        if (saved.length) {
+          setRows(restoreDraftRows(saved, checkIndexRef.current, (pl) => normalizePlate(bankPlateToArabic(pl))));
+        }
+      })
       .catch(() => { /* مافيش مسودّة */ })
       .finally(() => { draftReady.current = true; });
-  }, [allowed]);
+  }, []);
   useEffect(() => {
     // ⚠️ مانكتبش قبل ما نقرا — وإلا أول رسم (صفوف فاضية) بيمسح المسودّة.
     if (!draftReady.current) return;
@@ -560,7 +624,8 @@ export default function RegistrationV2Page() {
     loadCheck();
   }, [loadCheck]);
 
-  useEffect(() => { if (allowed === true) loadCheck(); }, [allowed, loadCheck]);
+  /** ⚡ الشيت بيتقري **مع فتح الصفحة** — بالتوازي مع الصلاحية مش بعدها. */
+  useEffect(() => { loadCheck(); }, [loadCheck]);
 
   /**
    * 🔥 **تسخين شنك المحرّك** — من أسباب «بدء التسجيل بيأخر».

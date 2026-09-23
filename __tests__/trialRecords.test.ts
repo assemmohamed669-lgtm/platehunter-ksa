@@ -7,6 +7,7 @@ import {
   savedIds,
   TRIAL_EXPORT_METHOD,
   sessionStamp,
+  restoreDraftRows,
 } from "@/lib/trialRecords";
 
 /**
@@ -206,5 +207,35 @@ describe("🔴 التصدير بياخد ختم **اللوحة** مش المرب
     const b = buildTrialFieldRow(base, noDetails, null, { area: "الروضة" });
     expect(a["اسم الحي - الشارع"]).toBe("النسيم");
     expect(b["اسم الحي - الشارع"]).toBe("الروضة");
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 المسودّة اللي بتوصل **بعد** الشيت كانت بترجع من غير «مطلوبة»
+ * ══════════════════════════════════════════════════════════════════════
+ *  المسودّة بتتحفظ من غير صف الشيت (الحصّة)، وبيرجعلها من الفهرس. الإرجاع
+ *  كان بيحصل **لما الفهرس يتغيّر بس** — فلو الشيت جه الأول (وده اللي بيحصل
+ *  لما المندوب يرجع للصفحة والملف في الذاكرة) والمسودّة جت بعده، اللوحات
+ *  المطلوبة كانت بترجع عادية. فالمسودّة لازم تترجّع **وهي بتوصل** كمان.
+ */
+describe("restoreDraftRows", () => {
+  const key = (p: string) => p.replace(/\s+/g, "");
+  const index = new Map<string, Record<string, string>>([["ابح1234", { "رقم اللوحة": "ا ب ح 1234" }]]);
+
+  it("الشيت جاهز قبل المسودّة ⇒ «مطلوبة» بترجع", () => {
+    const saved = [{ id: "1", plate: "ا ب ح 1234" }, { id: "2", plate: "س ص ط 5678" }];
+    const out = restoreDraftRows(saved as never, index, key) as unknown as { match: unknown }[];
+    expect(out[0].match).toEqual({ "رقم اللوحة": "ا ب ح 1234" });
+    expect(out[1].match).toBeNull();
+  });
+
+  it("الشيت لسه ماجهزش ⇒ المسودّة زي ما هي (الإرجاع بيحصل لما الشيت ييجي)", () => {
+    const saved = [{ id: "1", plate: "ا ب ح 1234" }];
+    expect(restoreDraftRows(saved as never, new Map(), key)).toBe(saved);
+  });
+
+  it("مسودّة فاضية ⇒ فاضية", () => {
+    expect(restoreDraftRows([], index, key)).toEqual([]);
   });
 });
