@@ -1,3 +1,5 @@
+import { ALL_FLAGGED_MIN_CONF } from "./liveConsensus";
+
 /**
  * ══════════════════════════════════════════════════════════════════════
  *  لمّ التوائم — «لوحة واحدة اتقرت كذا طريقة» مقابل «لوحتين حقيقيتين»
@@ -196,6 +198,71 @@ export function heardNotShown(
       );
       if (covered) continue;
       seen.add(p);
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 «محجوبة بثقة عالية وماظهرتش» — الضياع اللي `heardNotShown` مابيشوفوش
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * جلسة المالك (٢٣ سبتمبر ٢٠٢٦ · ١٠٠ لوحة): `اوه1552` **ماظهرتش خالص** —
+ * القرايتين اتحجبوا كاختراع (`روه1552` ٨٩٪ · `اوه1552` ٩١٪). والتقرير قال
+ * «لوحة اتسمعت وماظهرتش: 0»، لأن `heardNotShown` بيبص على **المقبولة بس**.
+ * يعني الضياع كان **في صمت** — وده أخطر حاجة، والمالك بيحكم على الموديل من
+ * الرقم ده.
+ *
+ * ليه اتحجبت أصلاً: الإجماع بيرمي **القراية المحجوبة المفردة** مهما كانت
+ * ثقتها (`liveConsensus.ts`: «مفردة ومحجوبة: زي ما كانت بالظبط»)، والقرايتين
+ * هنا حرفهم الأول مختلف فوقعوا في عنقودين مفردين.
+ *
+ * الحد = `ALL_FLAGGED_MIN_CONF` — **نفس الثابت** اللي الإجماع ماشي عليه،
+ * ومقيس هناك: «صح ومحجوبة ٩٣·٩١·٨٨ / مخترعة من ضجيج ٦٨·٦٠·٤٦».
+ *
+ * ⚠️ **تقرير بس** — مابيطلّعش اللوحة ولا بيغيّر الحارس. تغيير الحارس محتاج
+ *    قياس على كل الجلسات، مش جلسة واحدة.
+ */
+export interface BlockedRead {
+  plate: string;
+  /** ٠–١ */
+  conf: number;
+  tMs: number;
+  accepted: boolean;
+  blocked: boolean;
+}
+
+export function blockedNotShown(
+  reads: readonly BlockedRead[],
+  rows: readonly ShownRow[],
+  minConf: number = ALL_FLAGGED_MIN_CONF,
+  windowMs = 12000,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const found: ShownRow[] = [];
+  for (const r of reads ?? []) {
+    if (!r?.blocked || !(r.conf >= minConf)) continue;
+    for (const p of String(r.plate ?? "").split(/\s+/)) {
+      if (!WELL_FORM.test(p) || seen.has(p)) continue;
+      // توأمها ظهر ⇒ ده استبدال (قراية تانية فازت) مش ضياع
+      const covered = (rows ?? []).some(
+        (row) =>
+          row.plate === p ||
+          sameCarTwin({ plate: p, atMs: r.tMs }, { plate: row.plate, atMs: row.atMs }, windowMs)
+      );
+      if (covered) continue;
+      /**
+       * العربية الواحدة بتتعدّ **مرة**: `روه1552` و`اوه1552` (جلسة المالك)
+       * قرايتين لنفس العربية — لو اتعدّوا اتنين، الرقم بيقول ضاع ضعف اللي ضاع.
+       */
+      const dup = found.some(
+        (f) => sameCarTwin({ plate: p, atMs: r.tMs }, { plate: f.plate, atMs: f.atMs }, windowMs));
+      seen.add(p);
+      if (dup) continue;
+      found.push({ plate: p, atMs: r.tMs });
       out.push(p);
     }
   }
