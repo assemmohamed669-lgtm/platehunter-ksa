@@ -82,12 +82,44 @@ export function resolveTrialEndpoint(
   saved: { base?: string | null; token?: string | null } | null | undefined,
   dbToken?: string | null,
 ): { base: string; token: string } {
-  const base = String(saved?.base ?? "").trim();
-  const token = String(saved?.token ?? "").trim();
-  return {
-    base: base || TRIAL_MODEL_BASE,
-    token: token || String(dbToken ?? "").trim(),
-  };
+  const savedBase = String(saved?.base ?? "").trim();
+  const savedToken = String(saved?.token ?? "").trim();
+  const db = String(dbToken ?? "").trim();
+  const base = savedBase || TRIAL_MODEL_BASE;
+
+  /**
+   * 🔴 **توكن الداتابيز يغلب المحفوظ لما العنوان هو سيرفرنا.**
+   *
+   * بلاغ المالك (٢٣ سبتمبر ٢٠٢٦): «بقول لوحات مش بتطلع». كان حافظ التوكن
+   * القديم في مربّع الإعداد من قبل ما نغيّره، وقاعدة «المحفوظ يغلب» خلّت
+   * السيرفر يرفض **كل نافذة** بـ401 ⇒ ولا لوحة تطلع. التوكن بقى سرّ مُدار
+   * من الداتابيز، مش إعداد يدوي يتنسي في تخزين الموبايل.
+   *
+   * ⚠️ لكن **العنوان المخصّص بياخد توكنه المحفوظ**: لو الصفحة موجّهة
+   *    لسيرفر تاني (تجربة/طوارئ)، توكن سيرفرنا مالوش لازمة هناك.
+   */
+  const ours = base === TRIAL_MODEL_BASE;
+  const token = ours ? (db || savedToken) : (savedToken || db);
+  return { base, token };
+}
+
+/** حكم فحص التوكن. */
+export type TokenProbe = "ok" | "bad_token" | "other";
+
+/**
+ * 🔴 **`/health` مابيطلبش توكن**، فكان بيقول «متصل ✓» والصفحة بتترفض كل
+ * نافذة بصمت — وده أخطر من عطل واضح لأن المالك بيسجّل وهو مطمّن.
+ *
+ * الفحص الصح: `POST /transcribe` **بجسم فاضي**. السيرفر بيتحقق من التوكن
+ * **قبل** ما يبص على الصوت (`_auth()` ثم `if not raw`)، فالرد بيفرّق:
+ *   · **401** ⇒ التوكن غلط
+ *   · **400** ⇒ التوكن تمام (بس مافيش صوت)
+ * ورخيص: مافيش صوت بيترفع ومافيش شغل على الكارت.
+ */
+export function tokenProbeVerdict(status: number): TokenProbe {
+  if (status === 400) return "ok";
+  if (status === 401) return "bad_token";
+  return "other";
 }
 
 /** الشكل اللي بيرجع من `profiles` — أي حاجة تانية بتتعامل كـ«مقفول». */
