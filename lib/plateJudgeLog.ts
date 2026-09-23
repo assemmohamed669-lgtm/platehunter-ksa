@@ -21,12 +21,19 @@
  *
  * ─── العزل عن أي مستخدم تاني — طبقتين ────────────────────────────────────────
  *   ١. قاعدة منفصلة باسم خاص بالطيّار.
- *   ٢. `appendJudgeLog` **بترفض** أي سجل مش `agentId` بتاعه المالك
- *      (`isPilotOwner`). يعني لو الكود اتنادى بالغلط على جهاز تاني، مافيش ولا
- *      بايت بيتكتب. الفحص هنا كمان عشان الملف ده يبقى آمن لوحده مش معتمد على
- *      المنادي.
+ *   ٢. `appendJudgeLog` **بترفض** أي سجل مش `agentId` بتاعه واحد من المجرِّبين
+ *      (`isPilotIdentity`). يعني لو الكود اتنادى بالغلط على جهاز تاني، مافيش
+ *      ولا بايت بيتكتب. الفحص هنا كمان عشان الملف ده يبقى آمن لوحده مش معتمد
+ *      على المنادي.
+ *
+ *      ⚠️ الحارس ده **هوية**، مش مفتاح تشغيل الميزة: السؤال هنا «الصف ده بتاع
+ *      مين؟» — عزل عن أي مستخدم تاني. كان بينادي `isPilotOwner` (هوية **و**
+ *      `PILOT_ENABLED`)، فلما المفتاح اتقفل المخزن وقع معاه في صمت: كل كتابة
+ *      رجّعت false ومافيش سطر واحد اتسجّل، حتى في مسار VoiceX الشغّال في
+ *      الإنتاج اللي بيسجّل القياس بمعرّف المشترك نفسه. تشغيل/إيقاف الميزة مكانه
+ *      المنادي (`isPilotOwner` = الباب الأول في صفحة التشييك)، مش المخزن.
  */
-import { isPilotOwner } from "./plateJudgeGate";
+import { isPilotIdentity } from "./plateJudgeGate";
 
 export const JUDGE_LOG_DB_NAME = "platehunter_judge_pilot";
 const DB_VERSION = 1;
@@ -340,7 +347,7 @@ function openDB(): Promise<IDBDatabase> {
  * ترمي**: فشل التسجيل مايوقفش مسار الصوت.
  */
 export async function appendJudgeLog(record: JudgeLogRecord): Promise<boolean> {
-  if (!isPilotOwner(record?.agentId)) return false;
+  if (!isPilotIdentity(record?.agentId)) return false;
   try {
     const db = await openDB();
     await new Promise<void>((res, rej) => {

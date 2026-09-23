@@ -62,14 +62,20 @@ export const PILOT_ALLOWED_IDS: readonly string[] = Object.freeze([
 export const PILOT_ENABLED = false;
 
 /**
- * هل المستخدم ده مسموح له بالطيّار؟ **فشل مغلق** في كل الحالات الملتبسة:
- * فاضي، null، undefined، مسافات، هوية لسه ماتحلّتش، أوفلاين، خطأ كتابة،
- * قيمة مش سترنج، بادئة/لاحقة، وحروف كبيرة (Supabase بيرجّع صغير دايماً).
+ * **الهوية لوحدها**: هل المعرّف ده واحد من المجرِّبين المقصودين بالاسم؟ **فشل
+ * مغلق** في كل الحالات الملتبسة: فاضي، null، undefined، مسافات، هوية لسه
+ * ماتحلّتش، أوفلاين، خطأ كتابة، قيمة مش سترنج، بادئة/لاحقة، وحروف كبيرة
+ * (Supabase بيرجّع صغير دايماً).
  *
- * الاسم فضل `isPilotOwner` عشان كل نداءات الاستدعاء تفضل زي ما هي.
+ * ⚠️ الدالة دي **مش** بوابة الميزة — مافيهاش `PILOT_ENABLED`. استعملها بس
+ * للأسئلة اللي جوابها هوية بحتة: «الصف ده بتاع مين؟» زي عزل مخزن القياس في
+ * `plateJudgeLog.ts`. أي كود بيشغّل **الميزة** بينادي `isPilotOwner` تحت.
+ *
+ * ليه اتفصلت؟ لما المفتاح الرئيسي اتقفل (٢٠٢٦/٠٨) المخزن كان بيسأل بنفس الدالة،
+ * فوقع معاها: كل كتابة رجّعت false ومافيش ولا بايت اتكتب — حتى للمسار الشغّال
+ * في الإنتاج (VoiceX) اللي عزله المفروض هوية مش تشغيل/إيقاف. فشل صامت كامل.
  */
-export function isPilotOwner(uid: string | null | undefined): boolean {
-  if (!PILOT_ENABLED) return false;            // ← مفتاح الإيقاف الرئيسي (متوقّف حالياً)
+export function isPilotIdentity(uid: string | null | undefined): boolean {
   if (typeof uid !== "string" || !UUID_RE.test(uid)) return false;
   if (!Array.isArray(PILOT_ALLOWED_IDS)) return false;
   // الفلترة قبل المقارنة: عنصر مش سترنج أو مش UUID مايشاركش في القرار خالص.
@@ -78,6 +84,18 @@ export function isPilotOwner(uid: string | null | undefined): boolean {
   );
   if (allowed.length === 0) return false;      // قايمة فاضية = مقفول للكل
   return allowed.includes(uid);
+}
+
+/**
+ * هل الطيّار **مفتوح** للمستخدم ده؟ = مفتاح التشغيل **و** الهوية. دي البوابة
+ * اللي كل مسار بيشغّل الميزة بيعدّي منها (الباب الأول في صفحة التشييك)، وسلوكها
+ * زي ما هو بالحرف: `PILOT_ENABLED = false` ⇒ false للكل حتى المالك.
+ *
+ * الاسم فضل `isPilotOwner` عشان كل نداءات الاستدعاء تفضل زي ما هي.
+ */
+export function isPilotOwner(uid: string | null | undefined): boolean {
+  if (!PILOT_ENABLED) return false;            // ← مفتاح الإيقاف الرئيسي (متوقّف حالياً)
+  return isPilotIdentity(uid);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

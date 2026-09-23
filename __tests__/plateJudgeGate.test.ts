@@ -5,6 +5,8 @@ import {
   PILOT_ALLOWED_IDS,
   UUID_RE,
   isPilotOwner,
+  isPilotIdentity,
+  PILOT_ENABLED,
   resolvePlateJudgeEnabled,
   resolveJudgeRpc,
   LS_JUDGE_URL,
@@ -216,6 +218,67 @@ describe("isPilotOwner — المجرِّب التالت (الطيّار متو�
   it("وأي مندوب رابع مش في القايمة لسه مرفوض", () => {
     expect(isPilotOwner(OTHER)).toBe(false);
     expect(isPilotOwner("7b4bc404-0000-4000-8000-000000000000")).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// الهوية غير المفتاح — سؤالان مختلفان في دالة واحدة كانت غلطة
+// =============================================================================
+// `isPilotOwner` بتجمع سؤالين: «هل الطيّار شغّال أصلاً؟» (`PILOT_ENABLED`)
+// و«هل الهوية دي من التلاتة المقصودين؟» (القايمة المجمّدة). المنادي اللي عايز
+// **الميزة** محتاج الاتنين — وده الباب الأول في صفحة التشييك ولازم يفضل بالحرف.
+// لكن **مخزن القياس** (`appendJudgeLog`) سؤاله هوية بحتة: «الصف ده بتاع مين؟»،
+// لأن شغلته العزل عن أي مستخدم تاني مش تشغيل/إيقاف الميزة. لما المفتاح اتقفل
+// (٢٠٢٦/٠٨) المخزن وقع معاه في صمت: كل كتابة بترجّع false ومافيش ولا بايت
+// بيتكتب — حتى لما المنادي يبقى مسار VoiceX الشغّال في الإنتاج.
+// فـ`isPilotIdentity` هي طبقة الهوية لوحدها، و`isPilotOwner` تفضل
+// «المفتاح **و** الهوية» فسلوك الصفحة مايتغيّرش ولا حرف.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("isPilotIdentity — الهوية لوحدها (مستقلة عن مفتاح التشغيل)", () => {
+  it("التلاتة اللي في القايمة → true حتى والطيّار متوقّف", () => {
+    expect(isPilotIdentity(OWNER)).toBe(true);
+    expect(isPilotIdentity(BROTHER)).toBe(true);
+    expect(isPilotIdentity(THIRD_TESTER)).toBe(true);
+    expect(PILOT_ENABLED).toBe(false);          // والمفتاح لسه مقفول — مالوش دعوة
+  });
+
+  it("وأي حد تاني مرفوض — نفس تضييق الهوية بالحرف", () => {
+    for (const bad of [OTHER, "", "   ", "	", null, undefined, "not-a-uuid",
+                       "undefined", "null", "af40c1a6",
+                       OWNER.toUpperCase(), ` ${OWNER}`, `${OWNER} `,
+                       OWNER.slice(0, 35), OWNER + "0",
+                       [OWNER] as unknown as string, { toString: () => OWNER } as unknown as string]) {
+      expect(isPilotIdentity(bad as unknown as string), String(bad)).toBe(false);
+    }
+  });
+
+  it("التلاعب بالقايمة مابيفتحش الهوية كمان (التجميد هو اللي بيحمي فعلاً)", () => {
+    const IN = "11111111-2222-3333-4444-555555555555";
+    const arr = PILOT_ALLOWED_IDS as string[];
+    for (const attack of [
+      () => arr.push(IN),
+      () => { arr[3] = IN; },
+      () => arr.splice(1, 0, IN),
+      () => arr.unshift(IN),
+      () => arr.fill(IN),
+      () => { arr.length = 0; },
+      () => arr.push(IN.toUpperCase()),
+    ]) {
+      try { attack(); } catch { /* التجميد رمى — ده المطلوب */ }
+      expect(isPilotIdentity(IN)).toBe(false);
+      expect(isPilotIdentity(IN.toUpperCase())).toBe(false);
+      expect(isPilotIdentity(OWNER)).toBe(true);
+    }
+  });
+
+  it("الميزة = المفتاح **و** الهوية — فالباب الأول في الصفحة مايتغيّرش", () => {
+    for (const uid of [OWNER, BROTHER, THIRD_TESTER, OTHER, "", null, undefined]) {
+      // الهوية بتتحسب **قبل** الشرط عمداً: لو سبناها جوّه `&&` كان الاختصار
+      // هيخلّي التأكيد ينجح وهو مانادّاش الدالة أصلاً (المفتاح مقفول).
+      const id = isPilotIdentity(uid as string);
+      expect(isPilotOwner(uid as string), String(uid)).toBe(PILOT_ENABLED && id);
+    }
   });
 });
 
