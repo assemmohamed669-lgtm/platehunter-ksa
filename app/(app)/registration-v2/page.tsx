@@ -39,7 +39,10 @@ import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plat
 import {
   pickTypeForPlate,
   pruneTypeQueue,
+  nearestWindow,
+  pruneWindows,
   type TypeWindow,
+  type AudioWindow,
 } from "@/lib/typeForPlate";
 import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -173,6 +176,18 @@ export default function RegistrationV2Page() {
    *   اللي بيمنع الكتابة فوق بعضها هو إن الصف اللي عنده نوع بيتخطّى.
    */
   const typeQueueRef = useRef<TypeWindow[]>([]);
+  /**
+   * 🎯 **مخزن آخر نوافذ الصوت** — بنسأل سيرفر النوع **لكل لوحة** مش لكل
+   * نافذة.
+   *
+   * المندوب بيبعت نافذة كل ١.٥ث واللوحة بتتغطّى بـ٣-٤ نوافذ، فالسؤال عن
+   * كل نافذة = **٣-٤ أضعاف** الشغل، وأغلبه على نوافذ مالهاش لوحة أصلاً.
+   * وسيرفر النوع طاقته ~٤ متوازي (عند ١٠ مناديب كان بيرفض ٦٠٪).
+   * ⇒ بنخزّن، وأول ما الإجماع يأكّد لوحة بنبعت **نافذة واحدة** أقربها ليها.
+   */
+  const winBufRef = useRef<AudioWindow<Blob>[]>([]);
+  /** النوافذ اللي اتسألت خلاص — لوحتين في نافذة واحدة مايسألوش مرتين. */
+  const askedWinRef = useRef<Set<number>>(new Set());
 
   /**
    * 🔴 كل ملفات التشييك، مش الأساسي بس. كانت `[checkTable]` — يعني سلوت
@@ -429,7 +444,7 @@ export default function RegistrationV2Page() {
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setSkips({}); setReads([]);
-    typeQueueRef.current = [];
+    typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }
@@ -456,6 +471,16 @@ export default function RegistrationV2Page() {
            * أي نافذة ⇒ **الخانة تفضل فاضية** — الفاضية بتبان وتتملّى،
            * والغلط بيتكتب في داتا المالك في صمت.
            */
+          /**
+           * 🎯 اسأل سيرفر النوع عن **نافذة واحدة** أقربها لزمن اللوحة —
+           * ومرة واحدة لكل نافذة حتى لو فيها لوحتين (القصّ عند الأرقام
+           * بيدّي كل لوحة نوعها من نفس النص).
+           */
+          const w = nearestWindow(winBufRef.current, meta.tMs);
+          if (w && !askedWinRef.current.has(w.tMs)) {
+            askedWinRef.current.add(w.tMs);
+            void askType(w.wav, w.tMs);
+          }
           const ty = pickTypeForPlate(typeQueueRef.current, plate, meta.tMs);
           const now = Date.now();
           const fresh: LiveRow = {
@@ -532,7 +557,10 @@ export default function RegistrationV2Page() {
             if (prov.match) alertWanted(p2, prov.match);
           }
         },
-        onAudioWindow: (wav, tMs) => { void askType(wav, tMs); },
+        // 🎯 نخزّن بس — السؤال بيحصل لما لوحة تتأكّد (شوف `winBufRef`).
+        onAudioWindow: (wav, tMs) => {
+          winBufRef.current = pruneWindows([...winBufRef.current, { tMs, wav }], tMs);
+        },
         onSpeech: (active: boolean) => setSpeaking(active),
         onLevel: (lvl: number) => setLevel(lvl),
         onSkip: (reason: string) => setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })),
