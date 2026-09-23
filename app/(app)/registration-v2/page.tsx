@@ -52,7 +52,7 @@ import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
 } from "@/lib/trialModelGate";
-import { sameCarTwin, heardNotShown } from "@/lib/trialTwin";
+import { sameCarTwin, heardNotShown, isExactRepeatOfLatest } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
@@ -500,7 +500,15 @@ export default function RegistrationV2Page() {
              * مين يفضل؟ **الأكتر تأكيداً** (عدد النوافذ)، وبعدين الأعلى ثقة،
              * وبعدين **الأحدث** (القراءة الأخيرة شافت النطق كامل).
              */
-            const twin = prev.find((r) => sameCarTwin(r, fresh, 12000));
+            /**
+             * 🔴 **نفس اللوحة بالحرف تتلمّ بس لو هي آخر صف.**
+             * لو بينهم لوحات تانية فدي **إعادة مقصودة** (المالك قال
+             * `دمس5284` مرتين بينهم ٤ لوحات). شوف `isExactRepeatOfLatest`.
+             */
+            const exactRepeat = isExactRepeatOfLatest(fresh.plate, prev.map((r) => r.plate));
+            const twin = prev.find((r) => (r.plate === fresh.plate
+              ? exactRepeat && r.plate === prev[0]?.plate
+              : sameCarTwin(r, fresh, 12000)));
             if (!twin) return [fresh, ...prev];
             // المؤكّد بيغلب المبدئي دايماً — القاعدة في `provisionalRow.ts`.
             if (!confirmedWins(fresh, twin)) return prev;
@@ -545,7 +553,10 @@ export default function RegistrationV2Page() {
               lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
             };
             setRows((prev) => {
-              const twin = prev.find((x) => sameCarTwin(x, prov, 12000));
+              const exactRep = isExactRepeatOfLatest(prov.plate, prev.map((x) => x.plate));
+              const twin = prev.find((x) => (x.plate === prov.plate
+                ? exactRep && x.plate === prev[0]?.plate
+                : sameCarTwin(x, prov, 12000)));
               if (!twin) return [prov, ...prev];
               if (!confirmedWins(prov, twin)) return prev;
               return [{ ...prov, shownAt: Math.min(prov.shownAt, twin.shownAt),
