@@ -89,3 +89,26 @@ describe("mergeTwinRow — من غير تعديل يدوي: السلوك الق�
     expect(mergeTwinRow(row({ id: "B", match: null }), row({ match: hit })).match).toBe(hit);
   });
 });
+
+/**
+ * 🔴 **الحي والمسجّل من الختم الأول** — لو المندوب غيّر الشارع بين ما
+ * اللوحة ظهرت وما اتأكّدت (ثواني)، القيمة الصح هي اللي كانت **وقت ما
+ * قالها**. من غير ده التأكيد كان هيكتب الشارع الجديد على لوحة الشارع القديم.
+ */
+describe("mergeTwinRow — الحي والمسجّل من الختم الأول", () => {
+  it("🔴 التأكيد مابيغيّرش الحي", () => {
+    const twin: MergeRow = { ...row(), area: "النسيم", recorder: "أحمد" };
+    const fresh: MergeRow = { ...row({ id: "B" }), area: "الروضة", recorder: "سالم" };
+    const out = mergeTwinRow(fresh, twin);
+    expect(out.area).toBe("النسيم");
+    expect(out.recorder).toBe("أحمد");
+  });
+
+  it("الختم الأول فاضي ⇒ يفضل فاضي (مابيتملاش من التأكيد)", () => {
+    const twin: MergeRow = { ...row(), area: null, recorder: null };
+    const fresh: MergeRow = { ...row({ id: "B" }), area: "الروضة", recorder: "سالم" };
+    const out = mergeTwinRow(fresh, twin);
+    expect(out.area).toBeNull();
+    expect(out.recorder).toBeNull();
+  });
+});

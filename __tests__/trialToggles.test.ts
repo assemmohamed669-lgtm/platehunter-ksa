@@ -56,40 +56,56 @@ describe("⑨ صفوف الإكسيل", () => {
   });
 
   it("العمود الأساسي: اللوحة", () => {
-    const out = trialExcelRows([row()], {});
+    const out = trialExcelRows([row()]);
     expect(out[0]["رقم اللوحة"]).toBe("أبح1234");
   });
 
   it("المطلوبة بتتعلّم", () => {
-    const out = trialExcelRows([row({ match: { a: "b" } })], {});
+    const out = trialExcelRows([row({ match: { a: "b" } })]);
     expect(out[0]["مطلوبة"]).toBe("نعم");
   });
 
   it("🔴 النوع والملاحظة الفاضيين مابيطلعوش أعمدة", () => {
-    const out = trialExcelRows([row()], {});
+    const out = trialExcelRows([row()]);
     expect("النوع" in out[0]).toBe(false);
     expect("الملاحظة" in out[0]).toBe(false);
   });
 
-  it("حقول الجلسة بتتكرّر على كل صف", () => {
-    const out = trialExcelRows([row(), row()], { area: "النسيم", recorder: "أحمد" });
-    expect(out[0]["اسم الحي - الشارع"]).toBe("النسيم");
+  /**
+   * 🔴 **كان «حقول الجلسة بتتكرّر على كل صف»** — وده بالظبط اللي المالك
+   * رفضه: «بيتطبّق على كل اللوحات… أنا عايزه على اللي بقولها وقت ما بحط
+   * اسم الشارع». كل صف دلوقتي بياخد **ختمه هو**.
+   */
+  it("🔴 كل صف بحيّه ومسجّله — مش آخر اللي اتكتب", () => {
+    const out = trialExcelRows([
+      row({ plate: "أأأ1111", shownAt: 2, area: "الروضة", recorder: "سالم" }),
+      row({ plate: "ببب2222", shownAt: 1, area: "النسيم", recorder: "أحمد" }),
+    ]);
+    expect(out[0]["اسم الحي - الشارع"]).toBe("الروضة");
+    expect(out[0]["اسم المسجّل"]).toBe("سالم");
+    expect(out[1]["اسم الحي - الشارع"]).toBe("النسيم");
     expect(out[1]["اسم المسجّل"]).toBe("أحمد");
   });
 
+  it("🔴 صف من غير ختم ⇒ مافيش خانة ليه (اتقال والمربّع فاضي)", () => {
+    const out = trialExcelRows([row({ area: null, recorder: null })]);
+    expect("اسم الحي - الشارع" in out[0]).toBe(false);
+    expect("اسم المسجّل" in out[0]).toBe(false);
+  });
+
   it("الموقع بيطلع رابط خريطة", () => {
-    const out = trialExcelRows([row()], {});
+    const out = trialExcelRows([row()]);
     expect(String(out[0]["الموقع"])).toContain("25.3");
   });
 
   it("مافيش موقع ⇒ مافيش عمود موقع للصف ده", () => {
-    const out = trialExcelRows([row({ lat: null, lng: null })], {});
+    const out = trialExcelRows([row({ lat: null, lng: null })]);
     expect("الموقع" in out[0]).toBe(false);
   });
 
   it("الأحدث الأول — زي ما المندوب شايفهم", () => {
     const out = trialExcelRows(
-      [row({ plate: "أأأ1111", shownAt: 1 }), row({ plate: "ببب2222", shownAt: 2 })], {});
+      [row({ plate: "أأأ1111", shownAt: 1 }), row({ plate: "ببب2222", shownAt: 2 })]);
     expect(out[0]["رقم اللوحة"]).toBe("ببب2222");
   });
 });

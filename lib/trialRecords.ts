@@ -125,6 +125,27 @@ export interface TrialSession {
  */
 export const TRIAL_EXPORT_METHOD = "متشيكة بالصوت";
 
+/**
+ * 🔴 **الختم لحظة النطق** — الحي والمسجّل بيتحطّوا على الصف **وقت ما
+ * يتعمل**، ومابيتغيّروش بعد كده.
+ *
+ * بلاغ المالك (٢٣ سبتمبر ٢٠٢٦): «بيتطبّق على كل اللوحات اللي موجودة. أنا
+ * عايزه يضيفه على اللوحات اللي بقولها وقت ما بحط اسم الشارع… ميضيفش على
+ * القديم لأني بغيّر دايماً في نفس الجلسة… ولو شيلتهم ميتكتبش قدام اللوحة».
+ *
+ * كان الجدول والتصدير والإكسيل بيقروا **القيمة الحالية** للمربّع لكل الصفوف،
+ * فالمندوب اللي بيلفّ شوارع كتير كانت لوحاته بتتسجّل **في شارع غلط** —
+ * غلط بيتكتب في داتا المالك في صمت.
+ */
+export function sessionStamp(
+  area: string | null | undefined,
+  recorder: string | null | undefined,
+): { area: string | null; recorder: string | null } {
+  const a = String(area ?? "").trim();
+  const r = String(recorder ?? "").trim();
+  return { area: a || null, recorder: r || null };
+}
+
 export const AREA_KEY = "اسم الحي - الشارع";
 export const RECORDER_KEY = "اسم المسجّل";
 

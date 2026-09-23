@@ -58,7 +58,7 @@ import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
-  stripForDraft, rehydrateMatch, TRIAL_EXPORT_METHOD,
+  stripForDraft, rehydrateMatch, TRIAL_EXPORT_METHOD, sessionStamp,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
@@ -104,6 +104,12 @@ interface LiveRow {
    * في كل دمج جاي. شوف `lib/trialRowMerge.ts`.
    */
   edited?: Edited;
+  /**
+   * 🔴 **الحي والمسجّل مختومين لحظة النطق** — مابيتغيّروش بعد كده.
+   * المالك: «ميضيفش على القديم لأني بغيّر دايماً في نفس الجلسة».
+   */
+  area?: string | null;
+  recorder?: string | null;
 }
 
 /** قراءة خام من الموديل — للتقرير. */
@@ -167,8 +173,15 @@ export default function RegistrationV2Page() {
    */
   const [areaName, setAreaName] = useState("");
   const [recorderName, setRecorderName] = useState("");
-  const showArea = areaName.trim().length > 0;
-  const showRecorder = recorderName.trim().length > 0;
+  /**
+   * مراجع حيّة: `onPlate` بيتمسك في غلاف المحرّك **وقت التشغيل**، فقراءة
+   * الـstate جوّاه بتفضل على قيمتها وقت البداية — والمندوب بيغيّر الشارع
+   * **وهو بيسجّل**. المرجع بيدّي اللي في المربّع دلوقتي.
+   */
+  const areaRef = useRef("");
+  const recorderRef = useRef("");
+  useEffect(() => { areaRef.current = areaName; }, [areaName]);
+  useEffect(() => { recorderRef.current = recorderName; }, [recorderName]);
   /**
    * ⑩أ **قفل أخد الموقع** — بطلب المالك. لما يتفعّل، اللوحات **الجاية**
    * بتتسجّل بلا موقع. اللي اتسجّل قبله مايتلمسش.
@@ -735,6 +748,8 @@ export default function RegistrationV2Page() {
             latencyMs: latencyNow(meta.tMs),
             match: hit, type: ty?.type ?? null, note: ty?.note ?? null,
             lat: g?.lat ?? null, lng: g?.lng ?? null, gpsAccuracy: g?.accuracy ?? null,
+            // 🔴 الختم **دلوقتي** — اللي في المربّع وقت ما المندوب قالها.
+            ...sessionStamp(areaRef.current, recorderRef.current),
           };
           setRows((prev) => {
             /**
@@ -810,6 +825,7 @@ export default function RegistrationV2Page() {
               match: checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p2))) ?? null,
               type: null, note: null,
               lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
+              ...sessionStamp(areaRef.current, recorderRef.current),
             };
             setRows((prev) => {
               const nearbyP = isExactRepeatNearby(prov.plate, prev.map((x) => x.plate));
@@ -993,7 +1009,7 @@ export default function RegistrationV2Page() {
            */
           row: buildTrialFieldRow(
             { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d, null,
-            { area: areaName, recorder: recorderName }),
+            { area: r.area, recorder: r.recorder }),
           // 🔴 زي «صوتي» بالحرف — وإلا اللوحة **مابتدخلش النسخة الاحتياطية**
           // وبتظهر على الخريطة بأيقونة يدوي. شوف `TRIAL_EXPORT_METHOD`.
           method: TRIAL_EXPORT_METHOD,
@@ -1122,6 +1138,12 @@ export default function RegistrationV2Page() {
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
   const hits = rows.filter((r) => r.match).length;
+  /**
+   * العمود بيبان لو **أي لوحة** عندها ختم — مش لو المربّع مكتوب فيه.
+   * لو المندوب فضّى المربّع، لوحاته القديمة لسه عندها شارعها ولازم يبان.
+   */
+  const showArea = rows.some((r) => !!r.area);
+  const showRecorder = rows.some((r) => !!r.recorder);
   const gpsLevel = gps ? gpsAccuracyLevel(gps.accuracy) : null;
 
   /* ── حسابات التقرير ── */
@@ -1500,8 +1522,9 @@ export default function RegistrationV2Page() {
                       </div>
                     </td>
                     {/* ⑦ نفس القيمة على كل الصفوف — المندوب كتبها مرة فوق */}
-                    {showArea && <Td className="text-slate-700">{areaName.trim()}</Td>}
-                    {showRecorder && <Td className="text-slate-700">{recorderName.trim()}</Td>}
+                    {/* 🔴 ختم **الصف** — مش اللي في المربّع دلوقتي */}
+                    {showArea && <Td className="text-slate-700">{r.area ?? ""}</Td>}
+                    {showRecorder && <Td className="text-slate-700">{r.recorder ?? ""}</Td>}
                     <Td>
                       {r.match
                         ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
@@ -1579,7 +1602,7 @@ export default function RegistrationV2Page() {
               setBusy("ببعت الإكسيل…");
               try {
                 const { buildExcelBlob, shareExcelBlob } = await import("@/lib/excel");
-                const data = trialExcelRows(rows, { area: areaName, recorder: recorderName });
+                const data = trialExcelRows(rows);
                 const blob = buildExcelBlob(data, "اللوحات");
                 const stamp = new Date().toISOString().slice(0, 10);
                 await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
