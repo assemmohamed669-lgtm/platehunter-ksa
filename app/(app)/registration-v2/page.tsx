@@ -1009,15 +1009,29 @@ export default function RegistrationV2Page() {
                         </button>
                       )}
                     </Td>
-                    {/* 🏷️ النوع: نفس منسدلة صفحة التشييك بالحرف (`VehicleTypeSelect`) */}
+                    {/*
+                      * 🏷️ النوع والملاحظة: نفس منسدلة صفحة التشييك بالحرف
+                      * (`VehicleTypeSelect`) — نفس الخيارات بالظبط.
+                      *
+                      * ✏️ **والقلم جنبها بطلب المالك** (٢٣ سبتمبر ٢٠٢٦): سيرفر
+                      * النوع (كوهير) مقفول دلوقتي فالخانتين بيوصلوا **فاضيين**،
+                      * والمنسدلة الفاضية شكلها «مافيش حاجة» مش «اكتب هنا».
+                      * القلم بيقول للمندوب إنها بتتعدّل بإيده.
+                      */}
                     <td className="px-1 py-1.5 align-top">
-                      <VehicleTypeSelect value={r.type ?? ""}
-                        onChange={(code) => saveCell(r.id, "type", code)}
-                        className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
-                          + (r.type ? "font-bold text-slate-900" : "text-slate-400")} />
+                      <div className="flex items-center gap-0.5">
+                        <VehicleTypeSelect value={r.type ?? ""}
+                          onChange={(code) => saveCell(r.id, "type", code)}
+                          className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
+                            + (r.type ? "font-bold text-slate-900" : "text-slate-400")} />
+                        <Pencil size={9} className="shrink-0 text-slate-300" />
+                      </div>
                     </td>
                     <td className="px-1 py-1.5 align-top">
-                      <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
+                      <div className="flex items-center gap-0.5">
+                        <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
+                        <Pencil size={9} className="shrink-0 text-slate-300" />
+                      </div>
                     </td>
                     <Td>
                       {r.match

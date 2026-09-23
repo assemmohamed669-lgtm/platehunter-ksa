@@ -11,6 +11,14 @@ export interface TabPerm {
   superOnly?: boolean;
   /** للأدمن بس (رفع داتا). */
   adminOnly?: boolean;
+  /**
+   * للأدمن **أو** السوبر أدمن (تبويب «الجديد»).
+   *
+   * 🔴 مش زي `adminOnly`: ده بيطابق `canOpenTrialPage` بالظبط
+   * (`role === "admin" || is_super === true`). لو استعملنا `adminOnly`
+   * كان سوبر أدمن مش رول-أدمن هيبقى عنده صفحة **مفتوحة ومالهاش تبويب**.
+   */
+  adminOrSuper?: boolean;
 }
 
 export interface UserPerms {
@@ -29,6 +37,7 @@ export function canSeeTab(tab: unknown, perms: UserPerms): boolean {
   const t = (tab ?? {}) as TabPerm;
   if (t.superOnly && !perms.isSuper) return false;
   if (t.adminOnly && !perms.isAdmin) return false;
+  if (t.adminOrSuper && !perms.isAdmin && !perms.isSuper) return false;
   return true;
 }
 
