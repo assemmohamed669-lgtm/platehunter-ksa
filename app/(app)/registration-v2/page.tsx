@@ -66,6 +66,7 @@ import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSync";
+import { backfillMissingGps } from "@/lib/gpsBackfill";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -148,6 +149,8 @@ export default function RegistrationV2Page() {
   const [editing, setEditing] = useState<{ id: string; field: "type" | "note" | "plate" } | null>(null);
   const [checkName, setCheckName] = useState<string>("");
   const [checkFile, setCheckFile] = useState<File | null>(null);
+  /** ② بيدوّر على قراءة أدقّ لما المندوب يدوس التحديث اليدوي. */
+  const [gpsBusy, setGpsBusy] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -269,9 +272,36 @@ export default function RegistrationV2Page() {
   useEffect(() => {
     if (allowed !== true) return;
     gpsService.startTracking().catch(() => { /* المستخدم رفض — الصفحة بتفضل شغّالة */ });
-    const unsub = gpsService.subscribe((c) => { gpsRef.current = c; setGps(c); });
+    const unsub = gpsService.subscribe((c) => {
+      gpsRef.current = c; setGps(c);
+      /**
+       * ② 🔴 **«كل لوحة تاخد موقع»** — بطلب المالك.
+       *
+       * الموقع بيتختم على الصف لحظة ما يتعمل، وأول ثواني بعد فتح الصفحة
+       * الـGPS لسه بيقفل ⇒ أول لوحات المندوب بتتسجّل **بلا موقع**
+       * و`exportableTrialRows` بترميها من التصدير — شغل ضايع في صمت.
+       *
+       * فأول ما موقع ييجي بنختم الصفوف اللي فاضية **والجديدة بس**
+       * (مهلة دقيقتين) — الصف القديم ممكن يكون في حي تاني، وموقع غلط
+       * أسوأ من مافيش موقع. القرار مغطّى باختبارات في `lib/gpsBackfill.ts`.
+       */
+      setRows((prev) => backfillMissingGps(prev, c, Date.now()) as LiveRow[]);
+    });
     return () => { try { unsub(); } catch { /* ignore */ } };
   }, [allowed]);
+
+  /** ② 🔄 تحديث الموقع بإيد المندوب — بيدوّر على قراءة أدقّ وأحدث. */
+  const refreshGps = useCallback(async () => {
+    setGpsBusy(true);
+    try {
+      const c = await gpsService.getFreshFix({ maxAgeMs: 0, timeoutMs: 15000 });
+      if (c) {
+        gpsRef.current = c; setGps(c);
+        setRows((prev) => backfillMissingGps(prev, c, Date.now()) as LiveRow[]);
+      }
+    } catch { /* المستخدم رفض أو الشبكة — الحالة بتفضل زي ما هي */ }
+    finally { setGpsBusy(false); }
+  }, []);
 
   /**
    * 🔒 **قفل الشاشة أثناء التسجيل.**
@@ -988,9 +1018,16 @@ export default function RegistrationV2Page() {
           title={checkIndex.size ? checkIndex.size.toLocaleString("ar-EG") + " لوحة" : "مافيش شيت"}
           sub={checkIndex.size ? (checkName || "") : "ارفعه من تحت"} />
         <Stat icon={<Cpu size={13} />} ok={!!probe?.ok} title={statusLabel} sub={probe?.msg ?? ""} />
-        <Stat icon={<MapPin size={13} />} ok={!!gps && gpsLevel !== "poor"}
-          title={gps ? "الموقع " + (gpsLevel === "good" ? "🟢" : gpsLevel === "ok" ? "🟡" : "🔴") : "مافيش موقع"}
-          sub={gps ? "±" + Math.round(gps.accuracy) + " متر" : "اسمح بالموقع"} />
+        {/*
+          * ② 🔴 **المربّع كله بيتلوّن بدقّة الشبكة** — بطلب المالك:
+          * «مربّع حالة الجي بي إس يتغيّر لونه كله على حسب دقّة الشبكة،
+          * أخضر دقّة ممتازة برتقالي متوسطة أحمر ضعيفة، ويبقى فيه علامة
+          * تحديث يدوي وبرضه يحدّث تلقائي زي اللي في صفحة التشييك».
+          *
+          * اللون على **المربّع كله** مش أيقونة صغيرة: المندوب بيبص بطرف
+          * عينه وهو بيسوق، فالفرق لازم يبان من غير قراية.
+          */}
+        <GpsBox level={gpsLevel} accuracy={gps?.accuracy ?? null} busy={gpsBusy} onRefresh={() => void refreshGps()} />
       </section>
 
       {/*
@@ -1384,6 +1421,43 @@ export default function RegistrationV2Page() {
  * و«أخرى…» بتحوّل الخانة لكتابة حرّة. ولو الصوت جاب قيمة مش في القايمة
  * بتتعرض في المنسدلة زي ما هي — **مابتتشالش**.
  */
+/**
+ * ② 📍 **مربّع حالة الموقع** — لونه كله بيقول الدقّة.
+ *   🟢 ≤١٥م ممتازة · 🟠 ≤٣٥م متوسطة · 🔴 أوحش (أو مافيش إذن)
+ * وفيه زرّ تحديث يدوي جنب الحالة. الحدود المستعملة هي `gpsAccuracyLevel`
+ * نفسها اللي صفحة التشييك ماشية عليها — مش أرقام جديدة.
+ */
+function GpsBox({ level, accuracy, busy, onRefresh }: {
+  level: "good" | "ok" | "poor" | null;
+  accuracy: number | null;
+  busy: boolean;
+  onRefresh: () => void;
+}) {
+  const skin = level === "good"
+    ? { box: "border-emerald-300 bg-emerald-50", text: "text-emerald-900", sub: "text-emerald-700", dot: "🟢", label: "دقّة ممتازة" }
+    : level === "ok"
+    ? { box: "border-orange-300 bg-orange-50", text: "text-orange-900", sub: "text-orange-700", dot: "🟠", label: "دقّة متوسطة" }
+    : level === "poor"
+    ? { box: "border-rose-300 bg-rose-50", text: "text-rose-900", sub: "text-rose-700", dot: "🔴", label: "دقّة ضعيفة" }
+    : { box: "border-slate-200 bg-slate-50", text: "text-slate-700", sub: "text-slate-500", dot: "⚪", label: "مافيش موقع" };
+
+  return (
+    <div className={"flex items-center gap-2 rounded-xl border-2 px-2.5 py-2 " + skin.box}>
+      <MapPin size={15} className={"shrink-0 " + skin.text} />
+      <div className="min-w-0 flex-1">
+        <p className={"truncate text-[11px] font-black " + skin.text}>{skin.dot} {skin.label}</p>
+        <p className={"truncate text-[10px] " + skin.sub}>
+          {accuracy != null ? "±" + Math.round(accuracy) + " متر" : "اسمح بالموقع"}
+        </p>
+      </div>
+      <button onClick={onRefresh} disabled={busy} title="حدّث الموقع دلوقتي"
+        className={"shrink-0 rounded-lg border bg-white/70 p-1.5 disabled:opacity-50 " + skin.box}>
+        <RefreshCw size={14} className={(busy ? "animate-spin " : "") + skin.text} />
+      </button>
+    </div>
+  );
+}
+
 function NoteSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [free, setFree] = useState(false);
   const opts = useMemo(() => {
