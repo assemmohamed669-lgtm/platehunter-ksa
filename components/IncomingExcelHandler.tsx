@@ -217,7 +217,7 @@ export default function IncomingExcelHandler() {
   if (!pending) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
+    <div className="fixed inset-0 z-50 flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/50">
       <div
         className="w-full max-w-md rounded-t-2xl border-t border-border bg-surface px-5 py-6 shadow-2xl"
         style={{ direction: "rtl" }}

@@ -52,7 +52,7 @@ export default function PlateHistoryModal({
     : desc.tone === "warn" ? "bg-alert/15 text-alert" : "bg-danger/15 text-danger";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div dir="rtl" onClick={(e) => e.stopPropagation()}
         className="max-h-[90vh] w-full max-w-md overflow-auto rounded-t-2xl border border-border bg-surface sm:rounded-2xl">
 

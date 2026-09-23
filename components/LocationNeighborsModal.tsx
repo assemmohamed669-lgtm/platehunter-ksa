@@ -34,7 +34,7 @@ export default function LocationNeighborsModal({ view, onClose }: { view: Neighb
   ];
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 sm:items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/70 sm:items-center" onClick={onClose}>
       <div
         className="flex max-h-[92vh] w-full max-w-lg flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl"
         style={{ direction: "rtl" }}

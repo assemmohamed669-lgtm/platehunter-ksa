@@ -6465,7 +6465,7 @@ export default function InstantCheckPage() {
         const rows = peEntries.slice(win.start, win.end);
         const effShown = win.end;
         return (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
+          <div className="fixed inset-0 z-50 flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/60 sm:items-center">
             <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }}>
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <h3 className="text-sm font-bold text-ink">تعديل اللوحات ({peEntries.length})</h3>

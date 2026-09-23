@@ -412,7 +412,7 @@ export default function GroupsPage() {
 
       {/* مودال إنشاء مجموعة */}
       {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center" onClick={() => !busy && setCreateOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/70 p-4 sm:items-center" onClick={() => !busy && setCreateOpen(false)}>
           <div className="flex max-h-[85vh] w-full max-w-sm flex-col rounded-2xl border border-border bg-surface p-5" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-bold text-ink">مجموعة جديدة</h3>

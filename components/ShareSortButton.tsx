@@ -115,7 +115,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
 
       {/* قائمة الخيارات — bottom sheet */}
       {menuOpen && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 sm:items-center" onClick={() => setMenuOpen(false)}>
+        <div className="fixed inset-0 z-[60] flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/50 sm:items-center" onClick={() => setMenuOpen(false)}>
           <div className="w-full max-w-md rounded-t-2xl border-t border-border bg-surface p-4 sm:rounded-2xl" style={{ direction: "rtl" }} onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-bold text-ink">{btnLabel}</h3>
@@ -144,7 +144,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
 
       {/* معاينة الصور — تنزيل / مشاركة لكل صورة */}
       {images && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 sm:items-center" onClick={() => setImages(null)}>
+        <div className="fixed inset-0 z-[70] flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/70 sm:items-center" onClick={() => setImages(null)}>
           <div className="flex max-h-[92vh] w-full max-w-lg flex-col rounded-t-2xl border-t border-border bg-surface sm:rounded-2xl" style={{ direction: "rtl" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <h3 className="text-sm font-bold text-ink">{images.length > 1 ? `${images.length} صور` : "صورة النتائج"}</h3>
