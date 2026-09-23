@@ -99,10 +99,27 @@ export interface TrialRowLike {
  * 🔴 **الفاضي مابيتكتبش**: خانة فاضية في السجل أحسن من مفتاح بقيمة `""` —
  * لأن العرض والتصدير في السجلات بيلفّوا على المفاتيح الموجودة.
  */
+/**
+ * ⑦ حقول الجلسة — المندوب بيكتبها مرة فوق الجدول وبتتكرّر على كل لوحة.
+ *
+ * المالك (٢٣ سبتمبر ٢٠٢٦): «المندوب لما يكتب فيهم اسم الحي واسم الشارع
+ * يتضاف عمود جديد… ولو شالهم من المربّعات ميتكتبش حاجة».
+ */
+export interface TrialSession {
+  /** «الحي واسم الشارع» — بيطلع في عمود `اسم الحي - الشارع`. */
+  area?: string | null;
+  /** «اسم المسجّل». */
+  recorder?: string | null;
+}
+
+export const AREA_KEY = "اسم الحي - الشارع";
+export const RECORDER_KEY = "اسم المسجّل";
+
 export function buildTrialFieldRow(
   row: TrialRowLike,
   details: CarDetails,
-  certificate?: string | null
+  certificate?: string | null,
+  session?: TrialSession,
 ): Record<string, string> {
   const out: Record<string, string> = { "رقم اللوحة": row.plate };
   const put = (k: string, v: string | null | undefined) => {
@@ -117,6 +134,12 @@ export function buildTrialFieldRow(
   put("ملاحظة المندوب", row.note);
   if (row.match) out["مطلوبة"] = "نعم";
   put("الحالة", row.tier === "green" ? "مؤكّدة" : "محتاجة نظرة");
+  /**
+   * ⑦ حقول الجلسة — **آخر حاجة** عشان تفضل في آخر أعمدة السجل.
+   * ونفس قاعدة `put`: الفاضي مابيتكتبش، فمربّع فاضي = مافيش مفتاح خالص.
+   */
+  put(AREA_KEY, session?.area);
+  put(RECORDER_KEY, session?.recorder);
   return out;
 }
 

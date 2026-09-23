@@ -29,7 +29,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Mic, Square, Loader2, AlertTriangle, Cpu, Trash2, Copy, Check, RefreshCw,
   FileSpreadsheet, BellRing, BellOff, MapPin, Download, ChevronDown, ChevronUp,
-  Pencil, Building2, Hash, Car,
+  Pencil, Building2, Hash, Car, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
@@ -151,6 +151,14 @@ export default function RegistrationV2Page() {
   const [checkFile, setCheckFile] = useState<File | null>(null);
   /** ② بيدوّر على قراءة أدقّ لما المندوب يدوس التحديث اليدوي. */
   const [gpsBusy, setGpsBusy] = useState(false);
+  /**
+   * ⑦ حقول الجلسة — المندوب بيكتبها **مرة** فوق الجدول وبتتكرّر على كل لوحة.
+   * فاضي ⇒ **مافيش عمود ومافيش حاجة تتكتب** (قرار المالك بالحرف).
+   */
+  const [areaName, setAreaName] = useState("");
+  const [recorderName, setRecorderName] = useState("");
+  const showArea = areaName.trim().length > 0;
+  const showRecorder = recorderName.trim().length > 0;
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -849,8 +857,14 @@ export default function RegistrationV2Page() {
            * (`typeToCode(...) || الأصل`) — عشان السجلات تبقى شكل واحد،
            * سواء المندوب اختاره من المنسدلة أو الصوت قاله كلمة كاملة.
            */
+          /**
+           * ⑦ **حقول الجلسة بتتصدّر مع كل لوحة** — المالك: «كل حاجة في
+           * المربّع تتصدّر للسجلات زي ما هي مينقصش منها». والفاضي
+           * مابيتكتبش (مغطّى باختبارات في `buildTrialFieldRow`).
+           */
           row: buildTrialFieldRow(
-            { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d),
+            { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d, null,
+            { area: areaName, recorder: recorderName }),
           method: "تجربة الموديل الجديد",
           lat: r.lat ?? undefined,
           lng: r.lng ?? undefined,
@@ -1140,6 +1154,23 @@ export default function RegistrationV2Page() {
         )}
       </section>
 
+      {/*
+        * ⑦ 🏘️ **الحي والشارع واسم المسجّل** — تحت زرّ التسجيل وفوق الجدول.
+        *
+        * المالك (٢٣ سبتمبر ٢٠٢٦): «المندوب لما يكتب فيهم يتضاف عمود جديد
+        * في المربّع بتاع اللوحات… ولو شالهم من المربّعات ميتكتبش حاجة.
+        * وكل مربّع يتكتب فيه يبقى ليه عمود لوحده».
+        *
+        * ⇒ العمود **مايظهرش غير لما يتكتب فيه**، وبيتصدّر مع كل لوحة
+        *   (`buildTrialFieldRow` — مغطّى باختبارات).
+        */}
+      <section className="mt-3 grid grid-cols-2 gap-2">
+        <SessionField label="الحي واسم الشارع" value={areaName} onChange={setAreaName}
+          placeholder="مثال: النسيم - شارع ٣٠" />
+        <SessionField label="اسم المسجّل" value={recorderName} onChange={setRecorderName}
+          placeholder="اسم المندوب" />
+      </section>
+
       {/* ── اللوحات ── */}
       <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="mb-2 flex items-center gap-2">
@@ -1160,25 +1191,40 @@ export default function RegistrationV2Page() {
           /* 📊 جدول زي الإكسل — كل عمود فيه حاجة واحدة، بطلب المالك.
              بيتمرّر أفقياً على الموبايل بدل ما الأعمدة تتلخبط فوق بعض. */
           <div className="-mx-1 overflow-x-auto">
+            {/*
+              * ⑬ **فواصل بين كل عمود والتاني** بطلب المالك — `divide-x` على
+              * الصف بيرسم خط بين كل خليتين. والجدول نفسه محاط بحدود.
+              */}
             <table className="w-full min-w-[640px] border-collapse text-[11px]">
               <thead>
-                <tr className="border-b-2 border-slate-200 text-[10px] text-slate-500">
+                <tr className="divide-x divide-slate-200 border-b-2 border-slate-300 bg-slate-50 text-[10px] text-slate-500">
+                  {/* ⑥ عمود صغير للمسح — على قد العلامة بالظبط */}
+                  <Th className="w-7">{""}</Th>
                   <Th className="w-8">#</Th>
                   <Th className="w-32">رقم اللوحة</Th>
                   <Th className="w-20">النوع</Th>
                   <Th className="w-24">الملاحظة</Th>
+                  {showArea && <Th className="w-28">اسم الحي - الشارع</Th>}
+                  {showRecorder && <Th className="w-24">اسم المسجّل</Th>}
                   <Th className="w-16">مطلوبة</Th>
                   <Th className="w-20">الوقت</Th>
                   <Th className="w-16">الموقع</Th>
-                  <Th className="w-14">الثقة</Th>
+                  {/*
+                    * ⑧ **الثقة والحالة وظهرت بعد — للسوبر أدمن بس.**
+                    * المالك: «شيلهم… أخفيهم بس خليهم لينا احنا علشان لو
+                    * عملنا اختبار بعد كده ونعرف منه لو فيه تأخير أو أي
+                    * غلطات. المهم المندوب ميشوفهمش».
+                    * ⇒ **إخفاء مش حذف**: البيانات لسه متحسوبة وفي التقرير.
+                    */}
+                  {isSuper && <><Th className="w-14">الثقة</Th>
                   <Th className="w-16">الحالة</Th>
-                  <Th className="w-16">ظهرت بعد</Th>
+                  <Th className="w-16">ظهرت بعد</Th></>}
                 </tr>
               </thead>
               <tbody>
                 {rows.flatMap((r, i) => [
                   <tr key={r.id}
-                    className={"border-b border-slate-100 "
+                    className={"divide-x divide-slate-100 border-b border-slate-200 "
                       + (r.match ? "bg-rose-50 " : "")
                       /**
                        * 🔴 كان `opacity-60` — والمالك قال «بتظهر مطفية
@@ -1188,6 +1234,19 @@ export default function RegistrationV2Page() {
                        * بيبان فوراً وبرضه متميّز عن المؤكّد.
                        */
                       + (r.provisional ? "bg-amber-50/70" : "")}>
+                    {/*
+                      * ⑥ 🗑️ **مسح اللوحة الواحدة** — بطلب المالك: «عمود صغير
+                      * على قد علامة مسح لكل لوحة يقدر المندوب يمسح بيها
+                      * اللوحة لو لقى فيها غلط».
+                      * بلا سؤال تأكيد: صف واحد غلط، والسؤال على كل صف بيوجع.
+                      */}
+                    <td className="px-0.5 py-1.5 align-top">
+                      <button type="button" title="امسح اللوحة دي"
+                        onClick={() => setRows((prev) => prev.filter((x) => x.id !== r.id))}
+                        className="rounded-md p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600">
+                        <X size={12} />
+                      </button>
+                    </td>
                     <Td className="text-slate-400">{rows.length - i}</Td>
                     <Td>
                       {/* ✏️ اللوحة نفسها قابلة للتعديل — لو الموديل غلط المندوب يصحّحها.
@@ -1233,6 +1292,9 @@ export default function RegistrationV2Page() {
                         <Pencil size={9} className="shrink-0 text-slate-300" />
                       </div>
                     </td>
+                    {/* ⑦ نفس القيمة على كل الصفوف — المندوب كتبها مرة فوق */}
+                    {showArea && <Td className="text-slate-700">{areaName.trim()}</Td>}
+                    {showRecorder && <Td className="text-slate-700">{recorderName.trim()}</Td>}
                     <Td>
                       {r.match
                         ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
@@ -1247,6 +1309,8 @@ export default function RegistrationV2Page() {
                             className="flex items-center gap-0.5 font-bold text-indigo-600 underline"><MapPin size={10} /> فتح</a>
                         : <span className="text-rose-500">مافيش</span>}
                     </Td>
+                    {/* ⑧ إخفاء عن المندوب — البيانات لسه محسوبة ومتاحة في التقرير */}
+                    {isSuper && <>
                     <Td className="font-mono tabular-nums text-slate-500">{Math.round(r.conf * 100)}%</Td>
                     <Td className={r.provisional ? "text-amber-600" : r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
                       {r.provisional
@@ -1254,11 +1318,12 @@ export default function RegistrationV2Page() {
                         : r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-400">{(r.latencyMs / 1000).toFixed(1)}ث</Td>
+                    </>}
                   </tr>,
                   /* 🚨 تفاصيل المطلوبة تحت الصف — نوع/شركة/شاص/شهادة */
                   r.match ? (
                     <tr key={r.id + "-d"} className="border-b border-rose-100 bg-rose-50">
-                      <td colSpan={10} className="px-2 pb-2">
+                      <td colSpan={8 + (showArea ? 1 : 0) + (showRecorder ? 1 : 0) + (isSuper ? 3 : 0)} className="px-2 pb-2">
                         <MatchDetails row={r} cols={checkCols}
                           vin={plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)))} />
                       </td>
@@ -1427,6 +1492,21 @@ export default function RegistrationV2Page() {
  * وفيه زرّ تحديث يدوي جنب الحالة. الحدود المستعملة هي `gpsAccuracyLevel`
  * نفسها اللي صفحة التشييك ماشية عليها — مش أرقام جديدة.
  */
+/** ⑦ مربّع حقل جلسة — عنوان صغير فوق وخانة كتابة، بحدود واضحة (⑬). */
+function SessionField({ label, value, onChange, placeholder }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string;
+}) {
+  const filled = value.trim().length > 0;
+  return (
+    <div className={"rounded-xl border-2 px-2.5 py-1.5 transition "
+      + (filled ? "border-indigo-300 bg-indigo-50/60" : "border-slate-200 bg-white")}>
+      <p className={"text-[10px] font-bold " + (filled ? "text-indigo-700" : "text-slate-400")}>{label}</p>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full bg-transparent text-[12px] font-bold text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-300" />
+    </div>
+  );
+}
+
 function GpsBox({ level, accuracy, busy, onRefresh }: {
   level: "good" | "ok" | "poor" | null;
   accuracy: number | null;
