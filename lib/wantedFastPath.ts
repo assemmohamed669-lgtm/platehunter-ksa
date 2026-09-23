@@ -109,3 +109,24 @@ export function keepProvisional(
   if (r.match) return true;
   return r.shownAt >= cutMs;
 }
+
+/**
+ * الكنس على **الجلسة الحالية بس** — اللوحة من جلسة فاتت عمرها ما تتكنس.
+ *
+ * 🔴 المالك (٢٣ سبتمبر ٢٠٢٦): «اللوحات اللي اتقالت متتمسحش أبداً وتفضل
+ * محفوظة حتى لو المكالمة فصلت المايك… اللوحة متتمسحش غير لو المندوب مسحها
+ * بإيده أو صدّرها».
+ *
+ * المكالمة بتقطع التسجيل ⇒ اللوحة المبدئية اللي لسه ماجالهاش تأكيد بتفضل
+ * مبدئية. أول ما المندوب يبدأ تسجيل تاني، الكنس كان بيشوفها «قديمة» (أكتر
+ * من ١٢ث) ويمسحها في أول ثانيتين. فأي حاجة اتعرضت **قبل** بداية الجلسة
+ * الحالية بتفضل — والكنس جوّه الجلسة (ضد الاختراع) زي ما هو.
+ */
+export function sweepKeeps(
+  r: { provisional: boolean; shownAt: number; match: Record<string, string> | null },
+  cutMs: number,
+  sessionStartMs: number,
+): boolean {
+  if (r.shownAt < sessionStartMs) return true;
+  return keepProvisional(r, cutMs);
+}

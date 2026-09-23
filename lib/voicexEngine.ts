@@ -14,6 +14,7 @@ import { MissedWindows, canReplay, isStalled } from "./voicexReplay";
 import { postAudioForPlate } from "./plateJudgeClient";
 import { LiveConsensus, drainClockMs } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
+import { MicLossDetector, type MicLossReason } from "./micLoss";
 import { Vad } from "./vad";
 import { audioPregate } from "./audioPregate";
 import { planVoicexAdmission } from "./voicexAdmission";
@@ -171,6 +172,17 @@ export interface VoicexEngineOpts {
    */
   onReplay?: () => void;
   /**
+   * 📞 **الميك اتاخد** — مكالمة (تليفون/واتساب) أو تطبيق تاني (`fixes` بس).
+   *
+   * ⚠️ بعته = **أولوية المكالمة كلها**: الكاشف + الميك بيتساب فوراً وقت
+   * الإيقاف. «صوتي» مابتبعتوش فمافيش أي تغيير عليها.
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «المكالمة يبقى ليها الأولوية، وتلقائي المسجّل
+   * يفصل لو جه مكالمة». الصفحة بتوقف التسجيل لما ده يتنده. بيتنده مرة واحدة.
+   * شوف `lib/micLoss.ts`.
+   */
+  onMicLost?: (reason: MicLossReason) => void;
+  /**
    * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
    * (كوهير) بالتوازي. ده أسلوب المعمل بالظبط: «الفوري مابينديش كوهير —
    * **العميل** هو اللي بينده سيرفر النوع» (`deploy/نشر-على-كوريا.md`).
@@ -206,7 +218,12 @@ export interface VoicexEngineOpts {
 }
 
 export interface VoicexEngineController {
-  stop: () => void;
+  /**
+   * بيرجّع وعد بيخلص لما **آخر اللوحات** توصل (النوافذ الجارية + التصريف
+   * الأخير) — عشان الصفحة ماتسمحش بتحديث تلقائي في النص. اللي مش محتاجه
+   * يتجاهله عادي.
+   */
+  stop: () => Promise<void>;
   readonly stopped: boolean;
   /**
    * ساعة الصوت دلوقتي (مللي من فتح المايك) — **نفس ساعة `tMs`**.
@@ -254,11 +271,33 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // يتعرّف قبل الميك عشان مرجع onChunk يكون آمن؛ يتبني بعد ما نعرف معدل العيّنات.
   let vad: Vad | null = null;
 
+  /**
+   * 📞 كاشف «الميك اتاخد» — `fixes` + الصفحة طلبته بس. «صوتي» مابيطلبوش
+   * فالميك بتاعه **مابيتربطلوش أي مستمع زيادة**.
+   */
+  const lossOn = FIXES && typeof opts.onMicLost === "function";
+  let loss: MicLossDetector | null = null;
+  const reportLoss = (r: MicLossReason | null) => {
+    if (!r || stopped) return;
+    try { opts.onMicLost?.(r); } catch { /* ignore */ }
+  };
+
   // الـVad بيتغذّى من onChunk (الصوت **المعالَج**) — زي المعمل بالظبط.
   const mic = new MicEngine({
     mode: "live",
     onChunk: (pcm, startSec) => { try { vad?.push(pcm, startSec); } catch { /* ignore */ } },
     onLevel: (level) => { opts.onLevel?.(level); },
+    ...(lossOn ? {
+      // الصوت **الخام** قبل الفلاتر — الأصفار الرقمية بتبان فيه بالظبط
+      onRawChunk: (pcm: Float32Array) => { if (loss) reportLoss(loss.feed(pcm)); },
+      onTrackState: (st: "ended" | "muted" | "unmuted") => {
+        if (!loss) return;
+        if (st === "ended") reportLoss(loss.trackEnded());
+        else if (st === "muted") loss.trackMuted(Date.now());
+        else loss.trackUnmuted();
+      },
+      onContextState: (st: string) => { if (loss) reportLoss(loss.contextState(st)); },
+    } : {}),
   });
 
   try {
@@ -271,6 +310,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // و«الشبكة/السيرفر». بيتنده مرة واحدة، ومحميّ عشان كولباك بيرمي مايوقفش
   // فتح الميك (نفس عقد باقي الكولباكس في الملف ده).
   try { opts.onReady?.({ sampleRate: mic.sampleRate }); } catch { /* ignore */ }
+  if (lossOn) loss = new MicLossDetector(mic.sampleRate);
 
   // الـVad **بعد** الميك عشان يعرف معدل العيّنات الحقيقي — قيم «المقاطع» من المعمل.
   vad = new Vad({
@@ -525,6 +565,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   const drainTimer = setInterval(() => {
     if (stopped) return;
+    // 📞 الكتم لو طوّل = الميك اتاخد (`fixes` + الصفحة طلبته بس)
+    if (loss) reportLoss(loss.tick(Date.now()));
     // 🔴 **بتوقيت النطق مش الحائط.** كان `mic.elapsedSec * 1000` خام، والقراءة
     // بتوصل بعد نطقها بـ(نص نافذة + شبكة) فكل عنقود كان بيتصرّف فوراً بـmult=1
     // والإجماع مايتجمّعش أصلاً. شوف `drainClockMs`.
@@ -542,6 +584,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   //  (٢) **نستنى كل النوافذ الجارية** (اللي لسه بترجع من السيرفر) — السباق القديم كان
   //      flush بيتنفّذ قبل ما نافذة جارية ترجّع، فلوحتها تتضاف للإجماع بعد الفوات = تضيع.
   //  (٣) بعد ما كله يهدا، نعمل flush **مرة واحدة** ونعرض كل العناقيد المتبقية.
+  /** وعد الإيقاف — نفس الوعد لو `stop` اتندهت أكتر من مرة. */
+  let finalizing: Promise<void> | null = null;
   async function finalize(): Promise<void> {
     // ⚠️ مابنعيدش قراءة آخر نافذة (كانت بتقرا لوحات ظهرت خلاص بشكل مترفرف = صفوف
     // مكررة، خصوصاً مع النفق اللي بيقع ويرجع فبيتكرر الإيقاف). آخر لوحة اتقالت
@@ -570,13 +614,25 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       return v > 0 ? v * 1000 : null;
     },
     stop() {
-      if (stopped) return;
+      if (stopped) return finalizing ?? Promise.resolve();
       stopped = true;
       clearInterval(segTimer);
       clearInterval(drainTimer);
       opts.onSpeech?.(false);
       opts.onLevel?.(0);
-      void finalize();   // انتظار النوافذ الجارية + flush (بلا إعادة قراءة = بلا تكرار)
+      /**
+       * 📞 **الميك بيتساب فوراً** — المالك: «المكالمة يبقى ليها
+       * الأولوية». كان بيفضل مفتوح لحد ما آخر النوافذ ترجع من السيرفر (ثواني)،
+       * والمكالمة مستنية الميك. آخر اللوحات مابتضيعش: القصّ بيقرا من **ذاكرة**
+       * الميك (مش من الميك نفسه) وأي نطق جديد بعد الإيقاف بيترمى أصلاً
+       * (`if (stopped) return` في `onUtterance`). و`mic.stop()` مرتين آمنة.
+       *
+       * ⚠️ **مربوط بـ`onMicLost` مش بـ`fixes`** — «صوتي» شغّالة بـ`fixes: true`
+       *    برضه ومابتبعتش `onMicLost`، فسلوكها **بالحرف زي ما هو**. «الجديد» بس.
+       */
+      if (lossOn) { try { mic.stop(); } catch { /* ignore */ } }
+      finalizing = finalize();   // انتظار النوافذ الجارية + flush (بلا إعادة قراءة = بلا تكرار)
+      return finalizing;
     },
   };
 }

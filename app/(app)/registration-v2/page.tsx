@@ -76,7 +76,11 @@ import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
 import { isLetterTwin, resolveLetterTwin } from "@/lib/letterTwin";
-import { wantedHits, shouldAlertNow, keepProvisional } from "@/lib/wantedFastPath";
+import { wantedHits, shouldAlertNow, sweepKeeps } from "@/lib/wantedFastPath";
+import { setMicBusy } from "@/lib/micBusy";
+import { createBusyHold, type BusyHold } from "@/lib/busyHold";
+import { micLostNotice, type AutoStopReason } from "@/lib/micLoss";
+import SessionField from "@/components/SessionField";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -134,6 +138,13 @@ interface ReadLog {
 const WELL = /^[ء-ي]{3}\d{4}$/;
 
 /* 🏷️ ثوابت نافذة النوع وقرارها في `lib/typeForPlate.ts` — مغطّاة باختبار. */
+
+/**
+ * أقصى انتظار لآخر اللوحات بعد «إيقاف» قبل ما نسأل عن التصدير ونسمح بالتحديث.
+ * النافذة الواحدة مهلتها ٩ث (`REQ_TIMEOUT_MS`)، فـ١٥ث بتغطّي نافذة جارية +
+ * واحدة من الطابور — وعطل مايأجّلش التحديث للأبد.
+ */
+const STOP_SETTLE_MAX_MS = 15_000;
 
 /** رسالة «مافيش توكن» — ثابتة عشان تتشال لوحدها لو التوكن وصل بعدين. */
 const NO_TRIAL_TOKEN_MSG = "مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
@@ -234,6 +245,21 @@ export default function RegistrationV2Page() {
   const typeProbeRef = useRef<{ ok: boolean; msg: string } | null>(null);
 
   const engineRef = useRef<VoicexEngineController | null>(null);
+  /**
+   * 🔄 **التحديث التلقائي مايقطعش التسجيل** — المالك (٢٣ سبتمبر ٢٠٢٦): «لما
+   * بنزّل تحديث بيتعمل تحديث تلقائي معايا وأنا مشغّل المايك وبقول لوحات،
+   * فبيفصل مني التسجيل. خلّي التحديث يتعمل بعد ما أقفل المسجّل».
+   *
+   * `UpdateBanner` بيأجّل نفسه طول ما `isMicBusy()` — و«صوتي» بتبلّغه من
+   * زمان، بس «الجديد» **ماكانتش بتبلّغه خالص**. والمسكة بتفضل لحد **آخر
+   * خطوة**: آخر لوحات من السيرفر ← سؤال التصدير ← التصدير. شوف `lib/busyHold.ts`.
+   */
+  const holdRef = useRef<BusyHold | null>(null);
+  if (!holdRef.current) holdRef.current = createBusyHold(setMicBusy);
+  /** سيب مسكة جلسة التسجيل الحالية (لو فيه). */
+  const recReleaseRef = useRef<(() => void) | null>(null);
+  /** 📞 رسالة «التسجيل وقف لوحده» — مكالمة أو تطبيق تاني أخد المايك. */
+  const [notice, setNotice] = useState<string | null>(null);
   /** ساعة الصوت للتأخير — بتفضل بعد الإيقاف عشان آخر اللوحات تتحسب صح. */
   const clockRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -440,6 +466,30 @@ export default function RegistrationV2Page() {
       void wake.release();
     };
   }, [listening]);
+
+  /**
+   * 📞 **المكالمة ليها الأولوية** — نفس حارس «صوتي» بالظبط، وكان ناقص هنا.
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «مش عايز لو جه مكالمة والمندوب بيسجّل تتعارض
+   * مع المايك، وتقفل المايك للمكالمة… سواء مكالمة تليفون أو على أي تطبيق
+   * تواصل». أول ما التطبيق يروح للخلفية (فتح المكالمة، أو بدّل تطبيق، أو
+   * قفل الشاشة بإيده) بنسيب الميك فوراً. واللي التطبيق فيه قدام الشاشة
+   * والمكالمة أخدت الميك برضه بيتكشف من المحرك (`onMicLost`).
+   */
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "hidden" && engineRef.current) stopRef.current("background");
+    };
+    const onHide = () => { if (engineRef.current) stopRef.current("background"); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", onHide);
+      // الصفحة اتقفلت ⇒ «الميك مشغول» يتشال (وإلا التحديث يفضل مستني للأبد)
+      holdRef.current?.reset();
+    };
+  }, []);
 
   /* ─── 💾 مسودّة الجلسة ────────────────────────────────────────────── */
   /**
@@ -710,10 +760,15 @@ export default function RegistrationV2Page() {
     if (!listening) return;
     const id = setInterval(() => {
       const cut = Date.now() - PROVISIONAL_TTL_MS;
-      // 🔴 المطلوبة مابتتكنسش — الصفّارة ضربت والمندوب ممكن يكون واقف قدامها.
-      setRows((prev) => prev.every((r) => keepProvisional(r, cut))
+      /**
+       * 🔴 المطلوبة مابتتكنسش — الصفّارة ضربت والمندوب ممكن يكون واقف قدامها.
+       * 🔴 واللي من **جلسة فاتت** مابتتكنسش كمان: المكالمة بتقطع التسجيل قبل
+       * التأكيد، والكنس كان بيمسحها أول ما المندوب يكمّل. شوف `sweepKeeps`.
+       */
+      const since = startedAtRef.current;
+      setRows((prev) => prev.every((r) => sweepKeeps(r, cut, since))
         ? prev
-        : prev.filter((r) => keepProvisional(r, cut)));
+        : prev.filter((r) => sweepKeeps(r, cut, since)));
     }, 2000);
     return () => clearInterval(id);
   }, [listening]);
@@ -794,7 +849,7 @@ export default function RegistrationV2Page() {
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
-    setError(null); setSkips({}); setReads([]); setReplays(0);
+    setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -811,6 +866,9 @@ export default function RegistrationV2Page() {
      * يرجع للصفحة (`visibilitychange`).
      */
     setStarting(true);
+    // 🔄 من اللحظة دي التحديث التلقائي بيستنى — لحد آخر خطوة في الإيقاف
+    recReleaseRef.current?.();
+    recReleaseRef.current = holdRef.current!.hold();
     const pressedAt = Date.now();
     const marks: Mark[] = [];
     startedAtRef.current = pressedAt;
@@ -1005,47 +1063,105 @@ export default function RegistrationV2Page() {
         onLevel: (lvl: number) => setLevel(lvl),
         onSkip: (reason: string) => setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })),
         onReplay: () => setReplays((n) => n + 1),
+        /**
+         * 📞 **الميك اتاخد** — مكالمة (تليفون/واتساب) أو تطبيق تاني. المالك:
+         * «المكالمة يبقى ليها الأولوية، وتلقائي المسجّل يفصل لو جه مكالمة».
+         * اللوحات **كلها بتفضل** — الإيقاف مابيمسحش حاجة.
+         */
+        onMicLost: (reason) => stopRef.current(reason),
         onFatal: (reason: string) => {
-          try { engineRef.current?.stop(); } catch { /* ignore */ }
-          engineRef.current = null; stopTimer(); setListening(false);
+          stopRef.current("fatal");
           setError(reason === "mic_denied"
             ? "الميكروفون مرفوض — اسمح للمتصفّح بالتسجيل وجرّب تاني."
             : "السيرفر فصل وسط التسجيل. دوس «أعِد الفحص» واتأكد إنه واصل.");
         },
       });
-      if (!ctrl) { setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني."); return; }
+      if (!ctrl) {
+        recReleaseRef.current?.(); recReleaseRef.current = null;
+        setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني.");
+        return;
+      }
       marks.push({ label: "المايك", at: Date.now() });
       engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
+      // 📞 التطبيق راح للخلفية وهو بيفتح الميك (مكالمة جت في النص) ⇒ نقفل على طول
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        stopRef.current("background");
+        return;
+      }
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
       // 📏 الرقم بيتعرض في التقرير — عشان المرة الجاية نعرف مين البطيء
       // بالظبط بدل ما نخمّن. شوف `lib/startupMarks.ts`.
       setStartMs(startupBreakdown(marks, pressedAt).text);
-    } catch { setError("مش قادر يشغّل المحرك — جرّب تاني."); }
+    } catch {
+      if (!engineRef.current) { recReleaseRef.current?.(); recReleaseRef.current = null; }
+      setError("مش قادر يشغّل المحرك — جرّب تاني.");
+    }
     finally { setStarting(false); }
   }
 
   function stopTimer() { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } }
-  function stop() {
-    try { engineRef.current?.stop(); } catch { /* ignore */ }
+  /**
+   * ⏹️ إيقاف التسجيل — بإيد المندوب (`manual`) أو **لوحده** (مكالمة/خلفية/
+   * الميك اتاخد) أو عطل (`fatal`).
+   *
+   * 🔴 **مابيمسحش ولا لوحة.** المالك (٢٣ سبتمبر ٢٠٢٦): «اللوحات اللي اتقالت
+   * متتمسحش أبداً وتفضل محفوظة حتى لو المكالمة فصلت المايك… اللوحة متتمسحش
+   * غير لو المندوب مسحها بإيده أو صدّرها». الصفوف في المسودّة (IndexedDB)
+   * مع كل تغيير، والمحرك بيكمّل آخر النوافذ من ذاكرة الميك بعد ما يسيبه.
+   */
+  function stop(why: "manual" | "fatal" | AutoStopReason = "manual") {
+    const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
-    /**
-     * ⑩ب 📤 **التصدير التلقائي** — بطلب المالك: «لما تتفعّل، يحصل بعد ما
-     * المندوب يقفل التسجيل: تيجيله رسالة سيتم تصدير عدد كذا ويظهر
-     * اللوحات اللي متصدرتش عددها، هل تريد التصدير للسجلات؟».
-     *
-     * 🔴 **بيسأل، مش بيصدّر لوحده.** ده طلبه بالحرف، وكمان التصدير
-     * بيمسح اللي اتصدّر — فحاجة بتمسح شغل المندوب لازم تعدّي على عينه.
-     *
-     * والعدد **في الرسالة** مش «تمام؟» مجرّدة — بيدوس وهو واقف في
-     * الشارع، فلازم يعرف هو موافق على إيه.
-     */
-    if (!autoExport) return;
-    const msg = autoExportStopPrompt(rows.length);
-    if (!msg) return;
-    // مهلة صغيرة عشان الواجهة تحدّث حالة «وقف» الأول بدل ما الحوار يتجمّد فوقها
-    setTimeout(() => { if (confirm(msg)) void exportRows(); }, 150);
+    const release = recReleaseRef.current;
+    recReleaseRef.current = null;
+    let done: Promise<void> = Promise.resolve();
+    try { if (ctrl) done = ctrl.stop() ?? Promise.resolve(); } catch { /* ignore */ }
+    if (why !== "manual" && why !== "fatal") setNotice(micLostNotice(why));
+    void (async () => {
+      try {
+        // ⏳ آخر اللوحات توصل الأول (بحد أقصى — عطل مايأجّلش التحديث للأبد)
+        await Promise.race([done.catch(() => {}), new Promise((r) => setTimeout(r, STOP_SETTLE_MAX_MS))]);
+        /**
+         * ⑩ب 📤 **التصدير التلقائي** — بطلب المالك: «لما تتفعّل، يحصل بعد ما
+         * المندوب يقفل التسجيل: تيجيله رسالة سيتم تصدير عدد كذا ويظهر
+         * اللوحات اللي متصدرتش عددها، هل تريد التصدير للسجلات؟».
+         *
+         * 🔴 **بيسأل، مش بيصدّر لوحده.** ده طلبه بالحرف، وكمان التصدير
+         * بيمسح اللي اتصدّر — فحاجة بتمسح شغل المندوب لازم تعدّي على عينه.
+         *
+         * والعدد **في الرسالة** مش «تمام؟» مجرّدة — بيدوس وهو واقف في
+         * الشارع، فلازم يعرف هو موافق على إيه.
+         *
+         * 📞 **بيسأل بس لو المندوب هو اللي قفل.** الوقف لوحده (مكالمة) مايسألش —
+         * الرسالة كانت هتطلعله وهو في المكالمة. هيتسأل لما يقفل بإيده بعدين.
+         * ⏳ وبيسأل **بعد** ما آخر لوحات توصل — فالعدد والتصدير بيشملوهم.
+         */
+        if (why !== "manual" || !autoExportRef.current) return;
+        // المندوب بدأ تسجيل جديد وإحنا مستنيين ⇒ مانقاطعوش بسؤال
+        if (engineRef.current) return;
+        const msg = autoExportStopPrompt(rowsRef.current.length);
+        if (!msg) return;
+        // مهلة صغيرة عشان الواجهة تحدّث حالة «وقف» الأول بدل ما الحوار يتجمّد فوقها
+        await new Promise((r) => setTimeout(r, 150));
+        if (engineRef.current) return;
+        if (confirm(msg)) await exportRowsRef.current();
+      } finally {
+        release?.();   // 🔄 دلوقتي بس التحديث التلقائي يقدر يشتغل
+      }
+    })();
   }
+  /** آخر نسخة من `stop` — الكولباكس (المكالمة/الخلفية) بتتربط مرة واحدة. */
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+  /** آخر نسخة من الصفوف والتصدير — الإيقاف بيستنى آخر لوحات قبل ما يسأل. */
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const exportRowsRef = useRef(exportRows);
+  exportRowsRef.current = exportRows;
+  const autoExportRef = useRef(autoExport);
+  autoExportRef.current = autoExport;
+
   function silence() { try { stopAlertSiren(); } catch { /* ignore */ } setSirenOn(false); }
 
   /**
@@ -1140,6 +1256,11 @@ export default function RegistrationV2Page() {
    */
   async function exportRows() {
     if (!rows.length) return;
+    // 🔄 التحديث التلقائي مايقطعش تصدير في النص
+    const releaseExport = holdRef.current!.hold();
+    try { await exportRowsInner(); } finally { releaseExport(); }
+  }
+  async function exportRowsInner() {
     const ready = exportableTrialRows(rows);
     const waiting = rows.length - ready.length;
     if (!ready.length) {
@@ -1451,7 +1572,7 @@ export default function RegistrationV2Page() {
           * المندوب يشوف إن ضغطته **وصلت** بدل ما الزرّ يفضل شكله واقف
           * فيدوس تاني.
           */}
-        <button onClick={listening ? stop : () => void start()} disabled={starting}
+        <button onClick={listening ? () => stop("manual") : () => void start()} disabled={starting}
           className={"flex w-full items-center justify-center gap-2 rounded-xl py-4 text-base font-black text-white shadow-sm transition disabled:opacity-80 "
             + (listening ? "bg-rose-600" : "bg-indigo-600")}>
           {starting
@@ -1481,6 +1602,14 @@ export default function RegistrationV2Page() {
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5">
             <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600" />
             <p className="flex-1 text-[11px] leading-relaxed text-amber-900">{error}</p>
+          </div>
+        )}
+        {/* 📞 التسجيل وقف لوحده (مكالمة/خلفية) — واللوحات محفوظة */}
+        {notice && !listening && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-2.5">
+            <p className="flex-1 text-[11px] font-bold leading-relaxed text-sky-900">{notice}</p>
+            <button type="button" onClick={() => setNotice(null)} aria-label="إخفاء"
+              className="shrink-0 text-sky-700"><X size={14} /></button>
           </div>
         )}
       </section>
@@ -1958,20 +2087,6 @@ function ToggleButton({ on, onLabel, offLabel, tone, onClick }: {
 }
 
 /** ⑦ مربّع حقل جلسة — عنوان صغير فوق وخانة كتابة، بحدود واضحة (⑬). */
-function SessionField({ label, value, onChange, placeholder }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string;
-}) {
-  const filled = value.trim().length > 0;
-  return (
-    <div className={"rounded-xl border-2 px-2.5 py-1.5 transition "
-      + (filled ? "border-indigo-300 bg-indigo-50/60" : "border-slate-200 bg-white")}>
-      <p className={"text-[10px] font-bold " + (filled ? "text-indigo-700" : "text-slate-400")}>{label}</p>
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full bg-transparent text-[12px] font-bold text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-300" />
-    </div>
-  );
-}
-
 function GpsBox({ level, accuracy, busy, onRefresh }: {
   level: "good" | "ok" | "poor" | null;
   accuracy: number | null;

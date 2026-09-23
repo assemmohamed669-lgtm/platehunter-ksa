@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { wantedHits, shouldAlertNow, keepProvisional, WANTED_REALERT_MS } from "../lib/wantedFastPath";
+import { wantedHits, shouldAlertNow, keepProvisional, sweepKeeps, WANTED_REALERT_MS } from "../lib/wantedFastPath";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -111,5 +111,37 @@ describe("keepProvisional — 🔴 المطلوبة مابتتكنسش", () => {
   });
   it("مؤكّد ⇒ يفضل دايماً", () => {
     expect(keepProvisional({ provisional: false, shownAt: 1, match: null }, cut)).toBe(true);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 اللوحة المبدئية من جلسة فاتت عمرها ما تتكنس
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «اللوحات اللي اتقالت متتمسحش أبداً وتفضل
+ *  محفوظة حتى لو المكالمة فصلت المايك».
+ *
+ *  المكالمة بتقطع التسجيل ⇒ لوحة مبدئية ماجالهاش تأكيد بتفضل مبدئية. أول ما
+ *  المندوب يبدأ تسجيل تاني، الكنس (١٢ث) كان بيشوفها «قديمة» ويمسحها في أول
+ *  ثانيتين. الكنس بقى على **الجلسة الحالية بس**.
+ */
+describe("sweepKeeps — الكنس على الجلسة الحالية بس", () => {
+  const base = { provisional: true, match: null as Record<string, string> | null };
+
+  it("مبدئية من جلسة فاتت ⇒ بتفضل مهما كانت قديمة", () => {
+    expect(sweepKeeps({ ...base, shownAt: 1_000 }, 999_999, 500_000)).toBe(true);
+  });
+
+  it("مبدئية من الجلسة الحالية وعدّت المهلة ⇒ بتتشال (زي الأول)", () => {
+    expect(sweepKeeps({ ...base, shownAt: 600_000 }, 700_000, 500_000)).toBe(false);
+  });
+
+  it("مبدئية من الجلسة الحالية ولسه في المهلة ⇒ بتفضل", () => {
+    expect(sweepKeeps({ ...base, shownAt: 750_000 }, 700_000, 500_000)).toBe(true);
+  });
+
+  it("المؤكّدة والمطلوبة ⇒ بيفضلوا دايماً", () => {
+    expect(sweepKeeps({ ...base, provisional: false, shownAt: 600_000 }, 700_000, 500_000)).toBe(true);
+    expect(sweepKeeps({ ...base, match: { a: "b" }, shownAt: 600_000 }, 700_000, 500_000)).toBe(true);
   });
 });
