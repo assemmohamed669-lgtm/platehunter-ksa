@@ -50,7 +50,7 @@ import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
-  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
+  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
 } from "@/lib/trialModelGate";
 import { sameCarTwin, heardNotShown, isExactRepeatNearby } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
@@ -145,6 +145,12 @@ export default function RegistrationV2Page() {
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState<{ ok: boolean; msg: string } | null>(null);
   const [typeProbe, setTypeProbe] = useState<{ ok: boolean; msg: string } | null>(null);
+  /**
+   * آخر نتيجة فحص لسيرفر النوع — **كمرجع** مش state.
+   * `askType` بيتمسك في غلاف `startVoicexEngine` وقت التشغيل، فأي state
+   * بيتقرا جوّاه بيفضل على قيمته وقت البداية. المرجع بيدّي القيمة الحيّة.
+   */
+  const typeProbeRef = useRef<{ ok: boolean; msg: string } | null>(null);
 
   const engineRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -220,8 +226,24 @@ export default function RegistrationV2Page() {
         .from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
       if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
-      const ep = resolveTrialEndpoint(readJudgeEndpoint());
+      /**
+       * 🔴 **التوكن من الداتابيز مش من الكود.**
+       *
+       * كان مكتوب صريح في `trialModelGate.ts`، يعني بيتشحن جوّه التطبيق
+       * لكل موبايل — وأي حد يفتح ملفات التطبيق ياخده ويبعت صوت على طول
+       * للسيرفر. دلوقتي بيتجاب من `app_settings` (جدول مالوش سياسة SELECT)
+       * زي ما صفحة التشييك بتعمل بالظبط.
+       *
+       * ⚠️ فشل القراءة = توكن فاضي = `planTrialRun` بيرفض التشغيل برسالة
+       * واضحة. **الفشل بيقفل** — مافيش رجوع لتوكن مكتوب.
+       */
+      const dbToken = await fetchTrialToken();
+      const ep = resolveTrialEndpoint(readJudgeEndpoint(), dbToken);
       setModelUrl(ep.base); setModelToken(ep.token); setAllowed(true);
+      if (!ep.token) {
+        setError("مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
+          + "select public.set_trial_token('<السرّ>') — أو حطّه بإيدك في مربّع الإعداد تحت.");
+      }
     })();
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -342,7 +364,7 @@ export default function RegistrationV2Page() {
     const b = modelUrl.trim().replace(/\/+$/, "");
     const t = modelToken.trim();
     if (!b || !t) { setProbe({ ok: false, msg: "مافيش عنوان أو توكن." }); return; }
-    setProbing(true); setProbe(null); setTypeProbe(null);
+    setProbing(true); setProbe(null); setTypeProbe(null); typeProbeRef.current = null;
     const to = () => (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(20000) : undefined);
     try {
       const res = await fetch(b + "/health", { headers: { "X-Plate-Token": t }, signal: to() });
@@ -358,12 +380,13 @@ export default function RegistrationV2Page() {
     // 🏷️ سيرفر النوع منفصل — فشله **مايمنعش** اللوحات، بس لازم يبان.
     try {
       const r2 = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/health", { signal: to() });
-      if (!r2.ok) setTypeProbe({ ok: false, msg: "كود " + r2.status });
+      if (!r2.ok) { const v = { ok: false, msg: "كود " + r2.status }; setTypeProbe(v); typeProbeRef.current = v; }
       else {
         const b2 = await r2.json() as { types?: number };
-        setTypeProbe({ ok: true, msg: (b2.types ?? 0) + " عنصر" });
+        const v = { ok: true, msg: (b2.types ?? 0) + " عنصر" };
+        setTypeProbe(v); typeProbeRef.current = v;
       }
-    } catch { setTypeProbe({ ok: false, msg: "مافيش رد" }); }
+    } catch { const v = { ok: false, msg: "مافيش رد" }; setTypeProbe(v); typeProbeRef.current = v; }
   }, [modelUrl, modelToken]);
 
   useEffect(() => {
@@ -398,6 +421,12 @@ export default function RegistrationV2Page() {
    * بيمنع نوع الجارة. شوف تعليق `typeQueueRef`.
    */
   const askType = useCallback(async (wav: Blob, tMs: number) => {
+    /**
+     * 🔴 **سيرفر النوع مقفول ⇒ ماننداهوش.** النداء بيرفع **الصوت كامل**
+     * (~١٦٠ كيلو للنافذة) قبل ما ياخد 502، يعني ~٦ ميجا/دقيقة من داتا
+     * موبايل المندوب على الفاضي. الفحص متعمل أصلاً عند فتح الصفحة.
+     */
+    if (!shouldAskType(typeProbeRef.current)) return;
     try {
       const res = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
         method: "POST",
@@ -996,15 +1025,29 @@ export default function RegistrationV2Page() {
                         </button>
                       )}
                     </Td>
-                    {/* 🏷️ النوع: نفس منسدلة صفحة التشييك بالحرف (`VehicleTypeSelect`) */}
+                    {/*
+                      * 🏷️ النوع والملاحظة: نفس منسدلة صفحة التشييك بالحرف
+                      * (`VehicleTypeSelect`) — نفس الخيارات بالظبط.
+                      *
+                      * ✏️ **والقلم جنبها بطلب المالك** (٢٣ سبتمبر ٢٠٢٦): سيرفر
+                      * النوع (كوهير) مقفول دلوقتي فالخانتين بيوصلوا **فاضيين**،
+                      * والمنسدلة الفاضية شكلها «مافيش حاجة» مش «اكتب هنا».
+                      * القلم بيقول للمندوب إنها بتتعدّل بإيده.
+                      */}
                     <td className="px-1 py-1.5 align-top">
-                      <VehicleTypeSelect value={r.type ?? ""}
-                        onChange={(code) => saveCell(r.id, "type", code)}
-                        className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
-                          + (r.type ? "font-bold text-slate-900" : "text-slate-400")} />
+                      <div className="flex items-center gap-0.5">
+                        <VehicleTypeSelect value={r.type ?? ""}
+                          onChange={(code) => saveCell(r.id, "type", code)}
+                          className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
+                            + (r.type ? "font-bold text-slate-900" : "text-slate-400")} />
+                        <Pencil size={9} className="shrink-0 text-slate-300" />
+                      </div>
                     </td>
                     <td className="px-1 py-1.5 align-top">
-                      <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
+                      <div className="flex items-center gap-0.5">
+                        <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
+                        <Pencil size={9} className="shrink-0 text-slate-300" />
+                      </div>
                     </td>
                     <Td>
                       {r.match

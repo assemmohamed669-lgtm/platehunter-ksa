@@ -50,3 +50,36 @@ describe("تبويبات الشريط السفلي", () => {
     expect(visibleTabs(TABS, { isSuper: true, isAdmin: true })).toHaveLength(6);
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  تبويب «الجديد» — أدمن **أو** سوبر، مش أدمن بس
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «هنضيف صفحة زيادة تحت هنسميها الجديد وهنحط
+ *  فيها الموديل اللي على ماليزيا».
+ *
+ *  🔴 **ليه علم جديد مش `adminOnly`:** الصفحة نفسها بتفتح بـ
+ *  `canOpenTrialPage` = `role === "admin" || is_super === true`. و`adminOnly`
+ *  بيتطلّب `isAdmin` **لوحده** — فسوبر أدمن مش رول-أدمن كان هيبقى عنده صفحة
+ *  **مفتوحة ومالهاش تبويب**. التبويب لازم يطابق قفل الصفحة بالظبط، وإلا يا
+ *  تبويب بيرمي برّه يا صفحة محدش يوصلها.
+ */
+describe("adminOrSuper — التبويب يطابق قفل الصفحة", () => {
+  const tab = { href: "/registration-v2", label: "الجديد", adminOrSuper: true };
+
+  it("الأدمن يشوفه", () => {
+    expect(canSeeTab(tab, { isSuper: false, isAdmin: true })).toBe(true);
+  });
+
+  it("السوبر أدمن يشوفه حتى لو مش رول-أدمن", () => {
+    expect(canSeeTab(tab, { isSuper: true, isAdmin: false })).toBe(true);
+  });
+
+  it("المندوب العادي مايشوفهوش", () => {
+    expect(canSeeTab(tab, { isSuper: false, isAdmin: false })).toBe(false);
+  });
+
+  it("مابيأثرش على التبويبات العادية", () => {
+    expect(canSeeTab({ href: "/sorting" }, { isSuper: false, isAdmin: false })).toBe(true);
+  });
+});

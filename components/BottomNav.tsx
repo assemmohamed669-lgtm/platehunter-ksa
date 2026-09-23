@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck } from "lucide-react";
+import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { visibleTabs } from "@/lib/navTabs";
 import { serviceActive } from "@/lib/subscription";
@@ -23,6 +23,17 @@ const VOICE_TABS: { tab: CheckTab; label: string; icon: typeof Mic }[] = [
 const TABS = [
   { href: "/sorting", label: "الفرز", icon: ListFilter },
   { href: "/instant-check", label: "التشييك", icon: ScanLine },
+  /**
+   * ✨ «الجديد» — صفحة الموديل الجديد (ماليزيا · ckpt-7500).
+   *
+   * 🔴 **صفحة زيادة، مش بديلة.** المالك (٢٣ سبتمبر ٢٠٢٦): «احنا مش هنلغي
+   * صفحة التشييك اللي فيها باقي الخدمات، هنخليها عادي — احنا بس هنضيف صفحة
+   * زيادة تحت هنسميها الجديد». فالتشييك بتفضل زي ما هي بالحرف، ودي جنبها.
+   *
+   * `adminOrSuper` بيطابق `canOpenTrialPage` بالظبط — أي اختلاف معناه تبويب
+   * بيرمي برّه أو صفحة محدش يوصلها. الفتح للمناديب قرار منفصل لسه ماتاخدش.
+   */
+  { href: "/registration-v2", label: "الجديد", icon: Sparkles, adminOrSuper: true },
   // التسجيل للسوبر أدمن فقط (superOnly) — مخفي عن المناديب.
   { href: "/registration", label: "التسجيل", icon: Mic, superOnly: true },
   { href: "/maps", label: "الخرائط", icon: MapPin },

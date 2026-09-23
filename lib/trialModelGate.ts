@@ -31,10 +31,35 @@
 export const TRIAL_MODEL_BASE = "https://voice.qannas-ksa.com";
 
 /**
- * ⚠️ التوكن الافتراضي للخدمة. النفق عام، فده **مش سرّ حقيقي** — مقبول
- * لتجربة قصيرة، وأي تشغيل طويل لازم يتغيّر (`PLATE_JUDGE_TOKEN` على السيرفر).
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 مافيش توكن في الكود — بيجي من الداتابيز
+ * ══════════════════════════════════════════════════════════════════════
+ *  كان هنا `TRIAL_MODEL_TOKEN = "plate-voice-lab-local-dev"`، وتعليقه نفسه
+ *  كان بيقول «مش سرّ حقيقي — أي تشغيل طويل لازم يتغيّر». وده **بيتشحن جوّه
+ *  التطبيق لكل موبايل**: أي حد يفتح ملفات التطبيق ياخده، ويبعت صوت على طول
+ *  للسيرفر ⇒ ياكل الكارت والمناديب يبطّوا أو يترفضوا (503).
+ *
+ *  وصفحة التشييك بتعمل الصح أصلاً (`fetchVoicexToken`): التوكن في
+ *  `app_settings` — جدول **مالوش سياسة SELECT** — وبيتجاب وقت التشغيل عبر
+ *  دالة `SECURITY DEFINER` للمسجّلين بس. نفس الشكل هنا بالظبط.
+ *
+ *  التشغيل: `docs/sql/trial-model-token.sql` ثم
+ *  `select public.set_trial_token('<السرّ>')`، ونفس السرّ في متغيّر
+ *  `PLATE_JUDGE_TOKEN` على سيرفر ماليزيا.
  */
-export const TRIAL_MODEL_TOKEN = "plate-voice-lab-local-dev";
+
+/** يقرا توكن الموديل الجديد (سرّ) عبر RPC. `null` على أي خطأ/غير محدّد. */
+export async function fetchTrialToken(): Promise<string | null> {
+  try {
+    const { supabase } = await import("./supabaseClient");
+    const { data, error } = await supabase.rpc("get_trial_token");
+    if (error) return null;
+    const t = String(data ?? "").trim();
+    return t || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 🏷️ سيرفر **النوع والملاحظة** (كوهير) — نفق منفصل عن اللوحات.
@@ -45,18 +70,23 @@ export const TRIAL_MODEL_TOKEN = "plate-voice-lab-local-dev";
 export const TRIAL_TYPE_BASE = "https://type.qannas-ksa.com";
 
 /**
- * العنوان اللي الصفحة هتستعمله: **المحفوظ يدوياً يغلب**، والمثبّت بيملا
- * الناقص. كده المالك يفتح الصفحة يلاقيها موصّلة، ولو النفق اتغيّر يقدر
- * يحطّ الجديد من غير ما ننشر نسخة.
+ * العنوان اللي الصفحة هتستعمله: **المحفوظ يدوياً يغلب**، وبعده توكن
+ * الداتابيز والعنوان المثبّت بيملوا الناقص. كده المالك يفتح الصفحة يلاقيها
+ * موصّلة، ولو حصل أي عطل يقدر يحطّ عنوان/توكن بإيده من غير ما ننشر نسخة.
+ *
+ * ⚠️ **والفشل بيقفل**: مافيش توكن محفوظ ولا في الداتابيز ⇒ سلسلة فاضية،
+ * و`planTrialRun` بيرفض التشغيل برسالة واضحة. **مافيش رجوع لتوكن مكتوب في
+ * الكود** — ده كان بالظبط الخطر.
  */
 export function resolveTrialEndpoint(
   saved: { base?: string | null; token?: string | null } | null | undefined,
+  dbToken?: string | null,
 ): { base: string; token: string } {
   const base = String(saved?.base ?? "").trim();
   const token = String(saved?.token ?? "").trim();
   return {
     base: base || TRIAL_MODEL_BASE,
-    token: token || TRIAL_MODEL_TOKEN,
+    token: token || String(dbToken ?? "").trim(),
   };
 }
 
@@ -118,4 +148,27 @@ export function planTrialRun(input: { base: string | null | undefined; token: st
     };
   }
   return { ok: true };
+}
+
+/** نتيجة فحص سيرفر النوع زي ما الصفحة بتخزّنها. */
+export interface TypeProbe {
+  ok: boolean;
+  msg?: string;
+}
+
+/**
+ * ننادي سيرفر النوع ولا لأ؟
+ *
+ * 🔴 **الرفع هو التكلفة مش الخطأ.** `askType` بيرفع **الصوت كامل** (نافذة
+ * ٥ث ≈ ١٦٠ كيلو) مع كل نافذة. لما كوهير يتقفل، النفق بيرجّع 502 **بعد** ما
+ * الجسم يترفع — فالمندوب بيدفع ~٤٠ رفعة في الدقيقة (**~٦ ميجا/دقيقة من
+ * داتا الموبايل**) مقابل لا حاجة. والفحص متعمل أصلاً عند فتح الصفحة.
+ *
+ * ⚠️ **الفشل بيفتح مش بيقفل** — عكس `canOpenTrialPage`. فحص لسه ماتعملش
+ * (`null`) = بنسأل عادي؛ القفل على **رد صريح بالفشل** بس، عشان عطل لحظة
+ * في الفحص مايلغيش النوع لبقية الجلسة.
+ */
+export function shouldAskType(probe: TypeProbe | null | undefined): boolean {
+  if (!probe || typeof probe !== "object") return true;
+  return probe.ok !== false;
 }
