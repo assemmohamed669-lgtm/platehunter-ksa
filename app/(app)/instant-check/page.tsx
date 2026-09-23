@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff, Plus, Zap, ZapOff } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
+import { summarizeSkips } from "@/lib/skipLabels";
 import FileUploadBox from "@/components/FileUploadBox";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, deleteFieldCheckEntries } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
@@ -761,6 +762,32 @@ export default function InstantCheckPage() {
   const [pttEngine, setPttEngine] = useState<null | "deepgram" | "speechmatics" | "whisper" | "local" | "voicex">(null);
   const [pttMicActive, setPttMicActive] = useState(false);
   const [pttLevel, setPttLevel] = useState(0);   // مستوى الصوت اللحظي ٠..١ (مؤشّر VoiceX المتحرك)
+  const pttLevelAtRef = useRef(0);
+  /**
+   * 🔴 خنق مؤشّر الصوت — **ده سبب «الصفحة بتهنج» و«٥ لوحات مرة واحدة».**
+   *
+   * `onLevel` بيتنده من `requestAnimationFrame` (`micEngine.ts:157-165`) يعني
+   * **٦٠-١٢٠ مرة في الثانية**، وكل نداء كان `setPttLevel` = إعادة رسم كاملة
+   * لمكوّن طوله ~٢٠٠٠ سطر وجوّاه جدولين بيلفّوا على **كل** صفوف التشييك
+   * بـ`sortNear()` (map+sort+map على كل رندر). النتيجة خيط رئيسي مزنوق.
+   *
+   * وde مش بطء عرض بس: `setInterval` **مابيكوّمش** النداءات الفايتة، فأي
+   * تجميد بيخلّي تيكة تصريف واحدة تطلّع **كل** اللوحات المستحقة مرة واحدة
+   * (= الرشقة)، وتجميد أطول من ~٣.٥ث بيخلّي صوت **مايتبعتش للموديل خالص**
+   * (= لوحات مش بتتكتب).
+   *
+   * ٨٠ms = ١٢.٥ إطار/ث — المؤشّر لسه بيتحرّك بسلاسة للعين.
+   *
+   * ⚠️ **الصفر بيعدّي دايماً بلا خنق**: `stop()` بينده `onLevel(0)`
+   *    (`voicexEngine.ts:428`)، ولو اتخنق المؤشّر بيتجمّد مضوّي بعد ما
+   *    المندوب يقفل التسجيل.
+   */
+  function throttledPttLevel(lvl: number) {
+    const now = Date.now();
+    if (lvl !== 0 && now - pttLevelAtRef.current < 80) return;
+    pttLevelAtRef.current = now;
+    setPttLevel(lvl);
+  }
   // عرض «الصالة»: بطاقة لكل لوحة برقمها بخط كبير، وباقي البيانات ورا سحبة
   // لليسار. الجدول القديم لسه موجود بضغطة زرار (مافيش حاجة اتشالت).
   const [pttCardView, setPttCardView] = useState(true);
@@ -803,6 +830,12 @@ export default function InstantCheckPage() {
    * بيخلّي أي تخطٍّ **يبان** بدل ما نرجع نخمّن تاني.
    */
   const [pttSkips, setPttSkips] = useState<Record<string, number>>({});
+  /**
+   * 🎚️ معدّل العيّنات الحقيقي للميك. بيتعرض جنب عدّاد التخطّي لما يبقى **مش**
+   * ١٦kHz — لأن ساعتها الجهاز بيرفع ٣ أضعاف البايتات وده لوحده بيفسّر «تقيل
+   * عندي» من غير أي عيب في السيرفر. شوف `onReady` في `lib/voicexEngine.ts`.
+   */
+  const [pttSampleRate, setPttSampleRate] = useState<number | null>(null);
   const [pttSel, setPttSel] = useState<Set<string>>(new Set());
   // The most recent MATCHED (wanted) plate — shown as a big prominent alert.
   const [pttAlert, setPttAlert] = useState<PttRow | null>(null);
@@ -919,6 +952,15 @@ export default function InstantCheckPage() {
   // رد الطيّار بيوصل بعد ٤١٠–٢٣٠٢ms (المقيس)، وفي الوقت ده المالك يقدر يمسح الصف؛
   // ورد لصف ممسوح كان بيلفّ صفّارة ويفتح كارت «مطلوبة» لصف مش في القائمة.
   const pttRowIdsRef = useRef<Set<string>>(new Set());
+  /**
+   * نسخة **طازجة دايماً** من `pttExportedIds` لحارس التوأم.
+   *
+   * 🔴 `addOnePttRow` بيتنده من كولباك المحرّك اللي اتسجّل مرة واحدة عند بداية
+   * التسجيل، فأي `useState` جوّاه ممكن يبقى **لقطة قديمة**. وهنا الفرق مش
+   * تجميلي: الحارس بيقرّر يمسح صف أو لأ، ولو قرا قايمة مصدَّرة قديمة بيمسح صف
+   * اتصدّر فعلاً — وساعتها `fc-ptt-<id>` بيفضل في شيت السجلات بلا صف يقابله.
+   */
+  const pttExportedIdsRef = useRef<Set<string>>(new Set());
   const judgePausedMsRef = useRef(0);                    // مجموع الإيقاف المؤقت (ساعة الحقيقة ≠ زمن الميديا)
   const judgePauseAtRef = useRef<number | null>(null);
   const [judgeVisible, setJudgeVisible] = useState(false);   // مربّع الإعداد + علامات الصفوف
@@ -1437,6 +1479,7 @@ export default function InstantCheckPage() {
   }, [hitsExportedIds]);
 
   useEffect(() => {
+    pttExportedIdsRef.current = pttExportedIds;   // للحارس — لازم تفضل طازجة
     if (!listsHydrated.current) return;
     const arr = [...pttExportedIds];
     icPttExportedCache = arr;
@@ -2866,6 +2909,17 @@ export default function InstantCheckPage() {
     if (mult !== undefined && !wantedExact) {
       for (const [k, v] of seen) {
         if (v.mult === undefined || nowMs - v.at > 6000) continue;
+        // 🔴 **صف لوحة مطلوبة عمره ما يتمسح.**
+        // الإعفاء فوق (`wantedExact`) بيحمي اللوحة **الواردة** بس — والتوأم
+        // **الموجود** مكانش بيتشيّك على الفهرس خالص. يعني صف مطلوبة بتطابق
+        // تام (صفّارته ضربت · `group_finds` اتكتب · الإشعار راح لكل الفريق)
+        // كان ممكن يتمسح بقراءة ترفرف **غير مطلوبة** ثقتها أعلى — فالفريق
+        // كله اتبلّغ والمندوب مايلاقيش صف يصدّره، **بلا أي مسار تراجع**.
+        // المفتاح `k` هو نفس تطبيع `searchInCheck` فالمقارنة مباشرة.
+        if (checkIndex.has(k)) continue;
+        // 🔴 وصف **اتصدّر** خلاص عمره ما يتمسح: الصف بيروح من الصفحة بينما
+        // `fc-ptt-<id>` بيفضل في شيت السجلات للأبد بلا صف يقابله.
+        if (pttExportedIdsRef.current.has(v.id)) continue;
         if (!areTwins(
           { letters: cLetters, digits: cDigits },
           { letters: v.letters ?? "", digits: v.digits ?? "" },
@@ -4156,7 +4210,8 @@ export default function InstantCheckPage() {
         onPlate: (plate, meta) => addOnePttRow(plate, undefined, 0, meta.tier === "yellow", undefined, meta.mult, meta.conf, meta.tMs),
         onStatus: (s) => { if (s === "listening") setPttMicActive(false); },
         onSpeech: (active) => setPttMicActive(active),
-        onLevel: (lvl) => setPttLevel(lvl),
+        onLevel: (lvl) => throttledPttLevel(lvl),
+        onReady: ({ sampleRate }) => setPttSampleRate(sampleRate),
         onFatal: () => {
           // النفق فصل وسط الجلسة → وقّف VoiceX وارجع لديبجرام لو فيه مفتاح.
           try { voicexEngineRef.current?.stop(); } catch { /* ignore */ }
@@ -5547,10 +5602,22 @@ export default function InstantCheckPage() {
                 <p className="text-center text-xs text-danger">{pttError}</p>
               )}
 
-              {/* 🔇 نوافذ اتخطّت — ماينفعش يفضل صامت زي الأول */}
-              {Object.keys(pttSkips).length > 0 && (
+              {/* 🔇 نوافذ اتخطّت — ماينفعش يفضل صامت زي الأول.
+                  الأسماء واللمّ في `lib/skipLabels.ts` (٦ اختبارات): من غيره
+                  المفاتيح اللي ليها ذيل رقمي بتتحوّل لحيطة نص على التليفون. */}
+              {summarizeSkips(pttSkips).length > 0 && (
                 <p className="text-center text-[10px] text-muted">
-                  نوافذ اتخطّت: {Object.entries(pttSkips).map(([k, n]) => k + " ×" + n).join(" · ")}
+                  نوافذ اتخطّت: {summarizeSkips(pttSkips).map((s) => s.label + " ×" + s.n).join(" · ")}
+                </p>
+              )}
+
+              {/* 🎚️ تحذير معدّل العيّنات — بيظهر **بس** لما الجهاز مايكونش على
+                  ١٦kHz، وساعتها بيرفع ٣ أضعاف البايتات لنفس الثانية صوت. ده
+                  لوحده بيفسّر «تقيل عندي» من غير أي عيب في السيرفر. */}
+              {pttSampleRate !== null && pttSampleRate !== 16000 && (
+                <p className="text-center text-[10px] text-warn">
+                  ⚠️ جهازك بيسجّل على {(pttSampleRate / 1000).toFixed(0)} كيلو بدل ١٦ — بيرفع{" "}
+                  {(pttSampleRate / 16000).toFixed(1)}× بيانات، فالصوت بيوصل أبطأ. ابعت الرسالة دي للإدارة.
                 </p>
               )}
 
