@@ -7,6 +7,7 @@ import {
   savedIds,
   TRIAL_EXPORT_METHOD,
   sessionStamp,
+  firstFailureReason,
   restoreDraftRows,
 } from "@/lib/trialRecords";
 
@@ -237,5 +238,41 @@ describe("restoreDraftRows", () => {
 
   it("مسودّة فاضية ⇒ فاضية", () => {
     expect(restoreDraftRows([], index, key)).toEqual([]);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  «مانفعش يتحفظ» لازم تقول **ليه**
+ * ══════════════════════════════════════════════════════════════════════
+ *  بلاغ المالك (٢٤ سبتمبر ٢٠٢٦): الرسالة كانت «مانفعش يتحفظ ولا سجل — جرّب
+ *  تاني» بس، فمكانش فيه طريقة نعرف السبب من صورة الشاشة (اتصال ميت؟ مساحة
+ *  خلصت؟). دلوقتي اسم الغلط بيتكتب في آخرها.
+ */
+describe("firstFailureReason", () => {
+  const rej = (reason: unknown): PromiseSettledResult<unknown> => ({ status: "rejected", reason });
+  const ok: PromiseSettledResult<unknown> = { status: "fulfilled", value: undefined };
+
+  it("اسم الغلط (زي QuotaExceededError)", () => {
+    expect(firstFailureReason([ok, rej(new DOMException("full", "QuotaExceededError"))])).toBe("QuotaExceededError");
+  });
+
+  it("الغلط العام بيرجّع رسالته لو اسمه «Error» بس", () => {
+    expect(firstFailureReason([rej(new Error("Connection to Indexed Database server lost"))]))
+      .toBe("Connection to Indexed Database server lost");
+  });
+
+  it("نص أو قيمة غريبة ⇒ نص قصير", () => {
+    expect(firstFailureReason([rej("boom")])).toBe("boom");
+    expect(firstFailureReason([rej(null)])).toBe("غير معروف");
+  });
+
+  it("مافيش فشل ⇒ null", () => {
+    expect(firstFailureReason([ok, ok])).toBeNull();
+    expect(firstFailureReason([])).toBeNull();
+  });
+
+  it("الرسالة الطويلة بتتقص (عشان تتقري على الموبايل)", () => {
+    expect(firstFailureReason([rej(new Error("x".repeat(300)))])!.length).toBeLessThanOrEqual(80);
   });
 });

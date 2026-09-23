@@ -168,6 +168,8 @@ function openDB(): Promise<IDBDatabase> {
         try { _db?.close(); } catch { /* already closing */ }
         _db = null;
       };
+      // 🔴 الاتصال اتقفل غصب (الآيفون قتله) ⇒ ننساه، والنداء الجاي يفتح جديد
+      _db.onclose = () => { _db = null; };
       resolve(_db);
     };
 
@@ -421,14 +423,51 @@ export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): P
 // =====================================================================
 
 /** Add or overwrite one field-check entry (put by id). */
-export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void> {
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 «مانفعش يتحفظ ولا سجل» — الاتصال مات والبرنامج كان ماسك فيه
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * بلاغ المالك (٢٤ سبتمبر ٢٠٢٦): مندوب على آيفون بيصدّر من «الجديد» و**كل**
+ * اللوحات (٢٩) فشلت. `openDB` بيفتح الاتصال **مرة** وبيمسك فيه للأبد، والآيفون
+ * معروف إنه بيقتل اتصال IndexedDB بعد ما التطبيق يروح للخلفية شوية
+ * («Connection to Indexed Database server lost»). الاتصال الميت بيفضل متخزّن
+ * ⇒ كل حفظ بعده بيفشل لحد ما البرنامج يتقفل ويتفتح.
+ *
+ * دلوقتي الحفظ لو فشل **بيسيب الاتصال ويفتح واحد جديد ويحاول تاني مرة**.
+ * آمن: `put` بالمعرّف، فالمحاولة التانية بتكتب نفس الصف مش صف زيادة، والمعاملة
+ * اللي فشلت ماكتبتش حاجة أصلاً.
+ */
+function dropConnection(): void {
+  try { _db?.close(); } catch { /* already closed */ }
+  _db = null;
+}
+
+async function withFreshRetry<T>(op: () => Promise<T>): Promise<T> {
+  try {
+    return await op();
+  } catch {
+    dropConnection();
+    return await op();
+  }
+}
+
+async function putFieldChecksOnce(entries: FieldCheckEntry[]): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
+    // `db.transaction` على اتصال ميت بيرمي على طول — جوّه الوعد فبيتحوّل لرفض
     const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
-    tx.objectStore(FIELD_CHECK_STORE).put(entry);
+    const store = tx.objectStore(FIELD_CHECK_STORE);
+    for (const e of entries) store.put(e);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // الحصّة خلصت أو الاتصال اتقطع في النص ⇒ `abort` — كان بيعلّق للأبد
+    tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
   });
+}
+
+export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void> {
+  return withFreshRetry(() => putFieldChecksOnce([entry]));
 }
 
 /**
@@ -441,15 +480,7 @@ export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void>
  */
 export async function saveFieldCheckEntries(entries: FieldCheckEntry[]): Promise<void> {
   if (entries.length === 0) return;
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
-    const store = tx.objectStore(FIELD_CHECK_STORE);
-    for (const e of entries) store.put(e);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
+  return withFreshRetry(() => putFieldChecksOnce(entries));
 }
 
 /** All field-check entries, newest first. */
@@ -575,4 +606,9 @@ export async function clearFieldCheck(): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+/** للاختبارات بس — بيقفل الاتصال **من غير** ما يشيله (زي الآيفون لما يقتله). */
+export function __breakDbConnectionForTest(): void {
+  try { _db?.close(); } catch { /* ignore */ }
 }
