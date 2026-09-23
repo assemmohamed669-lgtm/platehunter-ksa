@@ -54,6 +54,9 @@ import {
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import CertificateBadge from "@/components/CertificateBadge";
+import VehicleTypeSelect from "@/components/VehicleTypeSelect";
+import { typeToCode } from "@/lib/vehicleType";
+import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
@@ -123,7 +126,7 @@ export default function RegistrationV2Page() {
   /** لوحة ← رقم الهيكل، من كل ورقات الملف (الشاص كتير في ورقة تانية). */
   const [plateChassis, setPlateChassis] = useState<Map<string, string>>(new Map());
   /** الخانة اللي المندوب بيعدّلها دلوقتي (النوع أو الملاحظة). */
-  const [editing, setEditing] = useState<{ id: string; field: "type" | "note" } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; field: "type" | "note" | "plate" } | null>(null);
   const [checkName, setCheckName] = useState<string>("");
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
@@ -502,6 +505,21 @@ export default function RegistrationV2Page() {
    * القيمة الفاضية بترجّع الخانة `null` (مش نص فاضي) عشان تفضل «فاضية»
    * بنفس معنى اللي الصوت مجابهاش.
    */
+  /**
+   * ✏️ تصحيح اللوحة بإيد المندوب.
+   *
+   * 🔴 بنعيد حساب **المطابقة مع شيت التشييك** على القيمة الجديدة — من غير
+   * كده اللوحة المصحّحة تفضل «مش مطلوبة» غلط، وهي أصلاً اتصحّحت عشان
+   * الموديل غلط فيها. والصفّارة بتشتغل لو طلعت مطلوبة.
+   */
+  const savePlate = useCallback((id: string, value: string) => {
+    const p = value.replace(/\s+/g, "").trim();
+    if (!p) return;
+    const hit = checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p))) ?? null;
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, plate: p, match: hit } : r)));
+    if (hit) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
+  }, []);
+
   const saveCell = useCallback((id: string, field: "type" | "note", value: string) => {
     const v = value.trim() || null;
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: v } : r)));
@@ -547,7 +565,13 @@ export default function RegistrationV2Page() {
           id: trialEntryId(r.id),
           agentId,
           plate: r.plate,
-          row: buildTrialFieldRow(r, d),
+          /**
+           * 🔴 النوع بيتصدّر **بالحرف المختصر** زي صفحة التشييك بالحرف
+           * (`typeToCode(...) || الأصل`) — عشان السجلات تبقى شكل واحد،
+           * سواء المندوب اختاره من المنسدلة أو الصوت قاله كلمة كاملة.
+           */
+          row: buildTrialFieldRow(
+            { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d),
           method: "تجربة الموديل الجديد",
           lat: r.lat ?? undefined,
           lng: r.lng ?? undefined,
@@ -814,12 +838,35 @@ export default function RegistrationV2Page() {
                       + (r.match ? "bg-rose-50 " : "") + (r.provisional ? "opacity-60" : "")}>
                     <Td className="text-slate-400">{rows.length - i}</Td>
                     <Td>
-                      {/* 🔤 اللوحة بخط ولون مختلفين — بطلب المالك */}
-                      <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
-                        + (r.match ? "text-rose-700" : r.provisional ? "text-slate-500" : "text-indigo-700")}>{r.plate}</span>
+                      {/* ✏️ اللوحة نفسها قابلة للتعديل — لو الموديل غلط المندوب يصحّحها.
+                          طلب المالك ٢٣ سبتمبر: «قلم عند اللوحة علشان لو غلط المندوب يعدلها بإيده». */}
+                      {editing?.id === r.id && editing.field === "plate" ? (
+                        <input autoFocus defaultValue={r.plate} dir="ltr"
+                          onBlur={(e) => { savePlate(r.id, e.currentTarget.value); setEditing(null); }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { savePlate(r.id, e.currentTarget.value); setEditing(null); }
+                            if (e.key === "Escape") setEditing(null);
+                          }}
+                          className="w-28 rounded-md border border-indigo-400 bg-white px-1 py-0.5 text-center font-mono text-sm font-black tracking-wider outline-none" />
+                      ) : (
+                        <button type="button" onClick={() => setEditing({ id: r.id, field: "plate" })}
+                          className="group flex items-center gap-1">
+                          <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
+                            + (r.match ? "text-rose-700" : r.provisional ? "text-slate-500" : "text-indigo-700")}>{r.plate}</span>
+                          <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
+                        </button>
+                      )}
                     </Td>
-                    <EditableTd row={r} field="type" editing={editing} setEditing={setEditing} onSave={saveCell} />
-                    <EditableTd row={r} field="note" editing={editing} setEditing={setEditing} onSave={saveCell} />
+                    {/* 🏷️ النوع: نفس منسدلة صفحة التشييك بالحرف (`VehicleTypeSelect`) */}
+                    <td className="px-1 py-1.5 align-top">
+                      <VehicleTypeSelect value={r.type ?? ""}
+                        onChange={(code) => saveCell(r.id, "type", code)}
+                        className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
+                          + (r.type ? "font-bold text-slate-900" : "text-slate-400")} />
+                    </td>
+                    <td className="px-1 py-1.5 align-top">
+                      <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
+                    </td>
                     <Td>
                       {r.match
                         ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
@@ -980,58 +1027,50 @@ export default function RegistrationV2Page() {
 /* ─── مكوّنات صغيرة ──────────────────────────────────────────────────── */
 
 /**
- * ══════════════════════════════════════════════════════════════════════
- *  ✏️ خانة النوع/الملاحظة — المندوب يقدر يكتب فيها ويعدّل كلام الصوت
- * ══════════════════════════════════════════════════════════════════════
- *
- * طلب المالك (٢٢ سبتمبر ٢٠٢٦): «ضيفلي علامة قلم في عمود النوع والملاحظة
- * علشان المندوب لو حب يكتب فيهم حاجة، ولو طلع نوع أو ملاحظة قالها بالصوت
- * يقدر يعدل فيها».
- *
- * 🔴 **واللي المندوب كتبه بإيده الصوت مايدوسش عليه**: الصف اللي فيه قيمة
- *    بيتخطّى في تصريف كوهير أصلاً — فالتعديل اليدوي بيغلب.
- */
-function EditableTd({ row, field, editing, setEditing, onSave }: {
-  row: { id: string; type: string | null; note: string | null };
-  field: "type" | "note";
-  editing: { id: string; field: "type" | "note" } | null;
-  setEditing: (e: { id: string; field: "type" | "note" } | null) => void;
-  onSave: (id: string, field: "type" | "note", value: string) => void;
-}) {
-  const value = field === "type" ? row.type : row.note;
-  const on = editing?.id === row.id && editing.field === field;
-  if (on) {
-    return (
-      <td className="px-1 py-1.5 align-top">
-        <input
-          autoFocus
-          defaultValue={value ?? ""}
-          onBlur={(e) => { onSave(row.id, field, e.currentTarget.value); setEditing(null); }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") { onSave(row.id, field, e.currentTarget.value); setEditing(null); }
-            if (e.key === "Escape") setEditing(null);
-          }}
-          className="w-full rounded-md border border-indigo-400 bg-white px-1 py-0.5 text-[11px] outline-none"
-        />
-      </td>
-    );
-  }
-  return (
-    <td className="px-1 py-1.5 align-top">
-      <button type="button" onClick={() => setEditing({ id: row.id, field })}
-        className="group flex w-full items-center gap-1 text-right">
-        <span className={value ? "font-bold text-slate-900" : "text-slate-300"}>{value || "—"}</span>
-        <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
-      </button>
-    </td>
-  );
-}
-
-/**
  * 🚨 تفاصيل اللوحة **المطلوبة** — نوع السيارة وتبع أي شركة ورقم الشاص
  * والشهادة. بتتعرض تحت الصف مش كأعمدة زيادة عشان الجدول يفضل مقروء على
  * الموبايل. بتظهر للمطابقة التامة بس (طلب المالك).
  */
+/**
+ * 📝 **ملاحظة المندوب — منسدلة بنفس خيارات صفحة التشييك + كتابة حرّة.**
+ *
+ * طلب المالك (٢٣ سبتمبر ٢٠٢٦): «لو قال النوع أو الملاحظة بالصوت ومطلعتش
+ * قدامه يقدر يختارها يدوي». الخيارات هي **نفس** اللي الصوت بيدوّر عليها
+ * (`VEHICLE_CONDITION_KINDS` + `VEHICLE_PLACE_KINDS`) — فاللي بيتكتب
+ * بالإيد يبقى نفس اللي بيتكتب بالصوت بالحرف.
+ *
+ * و«أخرى…» بتحوّل الخانة لكتابة حرّة. ولو الصوت جاب قيمة مش في القايمة
+ * بتتعرض في المنسدلة زي ما هي — **مابتتشالش**.
+ */
+function NoteSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [free, setFree] = useState(false);
+  const opts = useMemo(() => {
+    const all = [...VEHICLE_CONDITION_KINDS, ...VEHICLE_PLACE_KINDS] as readonly string[];
+    return value && !all.includes(value) ? [value, ...all] : all;
+  }, [value]);
+  if (free) {
+    return (
+      <input autoFocus defaultValue={value}
+        onBlur={(e) => { onChange(e.currentTarget.value); setFree(false); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { onChange(e.currentTarget.value); setFree(false); }
+          if (e.key === "Escape") setFree(false);
+        }}
+        className="w-full rounded-md border border-indigo-400 bg-white px-1 py-0.5 text-[11px] outline-none" />
+    );
+  }
+  return (
+    <select value={value} dir="rtl"
+      onChange={(e) => { if (e.target.value === "__free") setFree(true); else onChange(e.target.value); }}
+      className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
+        + (value ? "font-bold text-slate-900" : "text-slate-400")}>
+      <option value="">—</option>
+      {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+      <option value="__free">أخرى…</option>
+    </select>
+  );
+}
+
 function MatchDetails({ row, cols, vin }: {
   row: { plate: string; match: Record<string, string> | null };
   cols: { brandCol: string | null; typeCol: string | null; bankCol: string | null };
