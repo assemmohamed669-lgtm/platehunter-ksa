@@ -16,7 +16,10 @@ const DB_VERSION = 1;
 /** علم بيتكتب أول ما نحفظ في IDB — بعده IDB هو مصدر الحقيقة. */
 const INIT_SUFFIX = ":init";
 
-export type DraftKey = "hits" | "ptt" | "manual" | "hits-exported" | "ptt-exported";
+export type DraftKey =
+  | "hits" | "ptt" | "manual" | "hits-exported" | "ptt-exported"
+  /** صفوف صفحة «التسجيل الجديد» — كانت في الذاكرة بس وبتضيع لو التطبيق قفل. */
+  | "trial";
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
