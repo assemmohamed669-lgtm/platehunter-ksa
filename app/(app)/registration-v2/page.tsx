@@ -58,7 +58,7 @@ import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
-  stripForDraft, rehydrateMatch,
+  stripForDraft, rehydrateMatch, TRIAL_EXPORT_METHOD, sessionStamp,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
@@ -71,6 +71,7 @@ import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } 
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
+import { speechEndLatencyMs } from "@/lib/trialLatency";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -103,6 +104,12 @@ interface LiveRow {
    * في كل دمج جاي. شوف `lib/trialRowMerge.ts`.
    */
   edited?: Edited;
+  /**
+   * 🔴 **الحي والمسجّل مختومين لحظة النطق** — مابيتغيّروش بعد كده.
+   * المالك: «ميضيفش على القديم لأني بغيّر دايماً في نفس الجلسة».
+   */
+  area?: string | null;
+  recorder?: string | null;
 }
 
 /** قراءة خام من الموديل — للتقرير. */
@@ -166,8 +173,15 @@ export default function RegistrationV2Page() {
    */
   const [areaName, setAreaName] = useState("");
   const [recorderName, setRecorderName] = useState("");
-  const showArea = areaName.trim().length > 0;
-  const showRecorder = recorderName.trim().length > 0;
+  /**
+   * مراجع حيّة: `onPlate` بيتمسك في غلاف المحرّك **وقت التشغيل**، فقراءة
+   * الـstate جوّاه بتفضل على قيمتها وقت البداية — والمندوب بيغيّر الشارع
+   * **وهو بيسجّل**. المرجع بيدّي اللي في المربّع دلوقتي.
+   */
+  const areaRef = useRef("");
+  const recorderRef = useRef("");
+  useEffect(() => { areaRef.current = areaName; }, [areaName]);
+  useEffect(() => { recorderRef.current = recorderName; }, [recorderName]);
   /**
    * ⑩أ **قفل أخد الموقع** — بطلب المالك. لما يتفعّل، اللوحات **الجاية**
    * بتتسجّل بلا موقع. اللي اتسجّل قبله مايتلمسش.
@@ -207,6 +221,8 @@ export default function RegistrationV2Page() {
   const typeProbeRef = useRef<{ ok: boolean; msg: string } | null>(null);
 
   const engineRef = useRef<VoicexEngineController | null>(null);
+  /** ساعة الصوت للتأخير — بتفضل بعد الإيقاف عشان آخر اللوحات تتحسب صح. */
+  const clockRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef(0);
   const gpsRef = useRef<GpsCoords | null>(null);
@@ -640,6 +656,23 @@ export default function RegistrationV2Page() {
     } catch { /* النوع إضافة — مايوقّفش اللوحات */ }
   }, [modelToken]);
 
+  /**
+   * ① ⏱️ **«ظهرت بعد» من آخر كلام المندوب** — مش من نص النافذة.
+   *
+   * كان `now - startedAt - tMs`: `tMs` = **نص نافذة الـ٥ث** (٢.٥ث قبل آخرها)
+   * فالرقم كان بيزوّد ٢.٥ث هندسة مالهاش علاقة بالسرعة — ومن تقرير المالك:
+   * 2.5 + 0.57 (الرحلة) = 3.07ث، بالظبط الـ«٣ ثواني» اللي شافها. وكمان كان
+   * بيقارن ساعة الضغطة بساعة المايك، فزمن فتح المايك كان بيتضاف عليه.
+   * دلوقتي ساعة واحدة (ساعة الصوت نفسها). شوف `lib/trialLatency.ts`.
+   */
+  const latencyNow = (tMs: number): number => {
+    // ⚠️ `clockRef` مش `engineRef`: الإيقاف بيمسح `engineRef` وبعدين المحرّك
+    // بيصرّف آخر اللوحات — فكانت آخر لوحة بتاخد تأخير «صفر» غلط.
+    const e = clockRef.current;
+    if (!e) return 0;
+    return speechEndLatencyMs({ nowMs: e.audioNowMs, tMs, lastVoiceEndMs: e.lastVoiceEndMs });
+  };
+
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setSkips({}); setReads([]);
@@ -705,9 +738,11 @@ export default function RegistrationV2Page() {
             id: plate + "-" + meta.tMs, plate, tier: meta.tier, conf: meta.conf,
             mult: meta.mult, provisional: false,
             atMs: meta.tMs, shownAt: now,
-            latencyMs: Math.max(0, now - startedAtRef.current - meta.tMs),
+            latencyMs: latencyNow(meta.tMs),
             match: hit, type: ty?.type ?? null, note: ty?.note ?? null,
             lat: g?.lat ?? null, lng: g?.lng ?? null, gpsAccuracy: g?.accuracy ?? null,
+            // 🔴 الختم **دلوقتي** — اللي في المربّع وقت ما المندوب قالها.
+            ...sessionStamp(areaRef.current, recorderRef.current),
           };
           setRows((prev) => {
             /**
@@ -779,10 +814,11 @@ export default function RegistrationV2Page() {
             const prov: LiveRow = {
               id: "prov-" + p2 + "-" + r.tMs, plate: p2, tier: "yellow", conf: r.conf,
               mult: 1, provisional: true, atMs: r.tMs, shownAt: now2,
-              latencyMs: Math.max(0, now2 - startedAtRef.current - r.tMs),
+              latencyMs: latencyNow(r.tMs),
               match: checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p2))) ?? null,
               type: null, note: null,
               lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
+              ...sessionStamp(areaRef.current, recorderRef.current),
             };
             setRows((prev) => {
               const nearbyP = isExactRepeatNearby(prov.plate, prev.map((x) => x.plate));
@@ -821,7 +857,7 @@ export default function RegistrationV2Page() {
       });
       if (!ctrl) { setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني."); return; }
       marks.push({ label: "المايك", at: Date.now() });
-      engineRef.current = ctrl;
+      engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
       // 📏 الرقم بيتعرض في التقرير — عشان المرة الجاية نعرف مين البطيء
@@ -966,8 +1002,10 @@ export default function RegistrationV2Page() {
            */
           row: buildTrialFieldRow(
             { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d, null,
-            { area: areaName, recorder: recorderName }),
-          method: "تجربة الموديل الجديد",
+            { area: r.area, recorder: r.recorder }),
+          // 🔴 زي «صوتي» بالحرف — وإلا اللوحة **مابتدخلش النسخة الاحتياطية**
+          // وبتظهر على الخريطة بأيقونة يدوي. شوف `TRIAL_EXPORT_METHOD`.
+          method: TRIAL_EXPORT_METHOD,
           lat: r.lat ?? undefined,
           lng: r.lng ?? undefined,
           mapsLink: r.lat != null && r.lng != null ? toMapsLink(r.lat, r.lng) : undefined,
@@ -1093,6 +1131,12 @@ export default function RegistrationV2Page() {
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
   const hits = rows.filter((r) => r.match).length;
+  /**
+   * العمود بيبان لو **أي لوحة** عندها ختم — مش لو المربّع مكتوب فيه.
+   * لو المندوب فضّى المربّع، لوحاته القديمة لسه عندها شارعها ولازم يبان.
+   */
+  const showArea = rows.some((r) => !!r.area);
+  const showRecorder = rows.some((r) => !!r.recorder);
   const gpsLevel = gps ? gpsAccuracyLevel(gps.accuracy) : null;
 
   /* ── حسابات التقرير ── */
@@ -1471,8 +1515,9 @@ export default function RegistrationV2Page() {
                       </div>
                     </td>
                     {/* ⑦ نفس القيمة على كل الصفوف — المندوب كتبها مرة فوق */}
-                    {showArea && <Td className="text-slate-700">{areaName.trim()}</Td>}
-                    {showRecorder && <Td className="text-slate-700">{recorderName.trim()}</Td>}
+                    {/* 🔴 ختم **الصف** — مش اللي في المربّع دلوقتي */}
+                    {showArea && <Td className="text-slate-700">{r.area ?? ""}</Td>}
+                    {showRecorder && <Td className="text-slate-700">{r.recorder ?? ""}</Td>}
                     <Td>
                       {r.match
                         ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
@@ -1550,7 +1595,7 @@ export default function RegistrationV2Page() {
               setBusy("ببعت الإكسيل…");
               try {
                 const { buildExcelBlob, shareExcelBlob } = await import("@/lib/excel");
-                const data = trialExcelRows(rows, { area: areaName, recorder: recorderName });
+                const data = trialExcelRows(rows);
                 const blob = buildExcelBlob(data, "اللوحات");
                 const stamp = new Date().toISOString().slice(0, 10);
                 await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
@@ -1622,8 +1667,8 @@ export default function RegistrationV2Page() {
               <Kv k="وسيط زمن الموديل نفسه" v={medModel != null ? Math.round(medModel) + " مللي" : "—"} />
               <Kv k="وسيط الرحلة كاملة (شبكة + موديل)" v={medWall != null ? Math.round(medWall) + " مللي" : "—"} />
               <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-                التأخير = الموديل + الشبكة + <b>الإجماع</b> (اللوحة بتستنى نافذة تانية تأكّدها قبل
-                ما تتعرض 🟢). لو الرحلة أكبر من الموديل بكتير ⇒ الشبكة هي السبب، مش الموديل.
+                التأخير بيتحسب <b>من آخر كلامك</b> لحد ما اللوحة ظهرت = انتظار النافذة الجاية
+                (٠–١.٥ث) + الشبكة + الموديل. لو الرحلة أكبر من الموديل بكتير ⇒ الشبكة هي السبب.
               </p>
             </Block>
 

@@ -10,7 +10,7 @@
  */
 
 import { toMapsLink } from "./gps";
-import { AREA_KEY, RECORDER_KEY, type TrialSession } from "./trialRecords";
+import { AREA_KEY, RECORDER_KEY } from "./trialRecords";
 
 /** ⑩أ تحذير قفل الموقع — بيوضّح إنه على **اللي جاي** مش اللي فات. */
 export function noGpsWarning(): string {
@@ -39,6 +39,10 @@ export interface TrialExcelRow {
   lat?: number | null;
   lng?: number | null;
   shownAt: number;
+  /** الحي والشارع — مختوم على الصف لحظة النطق. */
+  area?: string | null;
+  /** اسم المسجّل — مختوم على الصف لحظة النطق. */
+  recorder?: string | null;
 }
 
 /**
@@ -50,11 +54,12 @@ export interface TrialExcelRow {
  */
 export function trialExcelRows(
   rows: readonly TrialExcelRow[],
-  session: TrialSession,
 ): Record<string, unknown>[] {
-  const area = String(session?.area ?? "").trim();
-  const recorder = String(session?.recorder ?? "").trim();
-
+  /**
+   * 🔴 **كل صف بختمه هو** — كان بياخد قيمة المربّع **الحالية** لكل الصفوف،
+   * فالمندوب اللي بيلفّ شوارع كتير كانت لوحاته بتطلع في الإكسيل **في آخر
+   * شارع كتبه**. المالك: «ميضيفش على القديم لأني بغيّر دايماً».
+   */
   return rows.slice()
     .sort((a, b) => b.shownAt - a.shownAt)     // الأحدث الأول — زي العرض
     .map((r) => {
@@ -66,8 +71,8 @@ export function trialExcelRows(
       put("النوع", r.type);
       put("الملاحظة", r.note);
       if (r.match) out["مطلوبة"] = "نعم";
-      if (area) out[AREA_KEY] = area;
-      if (recorder) out[RECORDER_KEY] = recorder;
+      put(AREA_KEY, r.area);
+      put(RECORDER_KEY, r.recorder);
       const d = new Date(r.shownAt);
       out["التاريخ"] = d.toLocaleDateString("ar-EG");
       out["الوقت"] = d.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" });

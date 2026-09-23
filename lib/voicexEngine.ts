@@ -202,6 +202,14 @@ export interface VoicexEngineOpts {
 export interface VoicexEngineController {
   stop: () => void;
   readonly stopped: boolean;
+  /**
+   * ساعة الصوت دلوقتي (مللي من فتح المايك) — **نفس ساعة `tMs`**.
+   * قراءة بس، ومابتغيّرش أي سلوك — بتستعملها صفحة «الجديد» عشان تحسب
+   * «ظهرت بعد» صح. شوف `lib/trialLatency.ts`.
+   */
+  readonly audioNowMs: number;
+  /** آخر لحظة الكاشف سمع فيها صوت (مللي، نفس الساعة)، أو `null`. */
+  readonly lastVoiceEndMs: number | null;
 }
 
 export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexEngineController | null> {
@@ -484,6 +492,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   return {
     get stopped() { return stopped; },
+    get audioNowMs() { return mic.elapsedSec * 1000; },
+    get lastVoiceEndMs() {
+      const v = vad?.lastVoiceEndSec ?? 0;
+      return v > 0 ? v * 1000 : null;
+    },
     stop() {
       if (stopped) return;
       stopped = true;
