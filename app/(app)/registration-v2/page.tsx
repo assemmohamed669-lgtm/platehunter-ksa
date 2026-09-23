@@ -67,6 +67,7 @@ import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSync";
 import { backfillMissingGps } from "@/lib/gpsBackfill";
+import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -159,6 +160,17 @@ export default function RegistrationV2Page() {
   const [recorderName, setRecorderName] = useState("");
   const showArea = areaName.trim().length > 0;
   const showRecorder = recorderName.trim().length > 0;
+  /**
+   * ⑩أ **قفل أخد الموقع** — بطلب المالك. لما يتفعّل، اللوحات **الجاية**
+   * بتتسجّل بلا موقع. اللي اتسجّل قبله مايتلمسش.
+   * ⚠️ مرجع كمان مش state بس: `onPlate` بيتمسك في غلاف المحرّك وقت
+   * التشغيل، فقراءة الـstate جوّاه بتفضل على قيمتها وقت البداية.
+   */
+  const [noGps, setNoGps] = useState(false);
+  const noGpsRef = useRef(false);
+  useEffect(() => { noGpsRef.current = noGps; }, [noGps]);
+  /** ⑩ب التصدير التلقائي — بيسأل عند قفل التسجيل. */
+  const [autoExport, setAutoExport] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -618,7 +630,12 @@ export default function RegistrationV2Page() {
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           const hit = checkIndexRef.current.get(key) ?? null;
-          const g = gpsRef.current;
+          /**
+           * ⑩أ 🚫 **قفل أخد الموقع** — بطلب المالك. لما يبقى مفعّل،
+           * اللوحة بتتسجّل **بلا موقع** (واللي اتسجّل قبله مايتلمسش).
+           * مرجع مش state: الغلاف ده اتمسك وقت تشغيل المحرّك.
+           */
+          const g = noGpsRef.current ? null : gpsRef.current;
           /**
            * 🏷️ النوع من **أقرب نافذة أرقام اللوحة دي فيها**.
            *
@@ -756,6 +773,22 @@ export default function RegistrationV2Page() {
   function stop() {
     try { engineRef.current?.stop(); } catch { /* ignore */ }
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
+    /**
+     * ⑩ب 📤 **التصدير التلقائي** — بطلب المالك: «لما تتفعّل، يحصل بعد ما
+     * المندوب يقفل التسجيل: تيجيله رسالة سيتم تصدير عدد كذا ويظهر
+     * اللوحات اللي متصدرتش عددها، هل تريد التصدير للسجلات؟».
+     *
+     * 🔴 **بيسأل، مش بيصدّر لوحده.** ده طلبه بالحرف، وكمان التصدير
+     * بيمسح اللي اتصدّر — فحاجة بتمسح شغل المندوب لازم تعدّي على عينه.
+     *
+     * والعدد **في الرسالة** مش «تمام؟» مجرّدة — بيدوس وهو واقف في
+     * الشارع، فلازم يعرف هو موافق على إيه.
+     */
+    if (!autoExport) return;
+    const msg = autoExportStopPrompt(rows.length);
+    if (!msg) return;
+    // مهلة صغيرة عشان الواجهة تحدّث حالة «وقف» الأول بدل ما الحوار يتجمّد فوقها
+    setTimeout(() => { if (confirm(msg)) void exportRows(); }, 150);
   }
   function silence() { try { stopAlertSiren(); } catch { /* ignore */ } setSirenOn(false); }
 
@@ -1335,6 +1368,26 @@ export default function RegistrationV2Page() {
           </div>
         )}
 
+        {/*
+          * ⑩ **زرّين**: قفل الموقع · التصدير التلقائي.
+          * الاتنين بيسألوا قبل ما يتفعّلوا. إلغاؤهم رجوع للوضع الطبيعي
+          * فمالوش خطر ومابيسألش.
+          */}
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          <ToggleButton on={noGps} onLabel="🚫 الموقع مقفول" offLabel="📍 الموقع شغّال"
+            tone={noGps ? "warn" : "ok"}
+            onClick={() => {
+              if (!noGps) { if (!confirm(noGpsWarning())) return; setNoGps(true); }
+              else setNoGps(false);
+            }} />
+          <ToggleButton on={autoExport} onLabel="⚡ تصدير تلقائي" offLabel="✋ تصدير يدوي"
+            tone={autoExport ? "on" : "off"}
+            onClick={() => {
+              if (!autoExport) { if (!confirm(autoExportPrompt())) return; setAutoExport(true); }
+              else setAutoExport(false);
+            }} />
+        </div>
+
         {/* 🧹📤 مسح وتصدير — زي التشييك */}
         {rows.length > 0 && (
           <div className="mt-3 flex gap-1.5">
@@ -1342,14 +1395,27 @@ export default function RegistrationV2Page() {
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white disabled:opacity-50">
               {busy ? <><Loader2 size={14} className="animate-spin" /> {busy}</> : <><Download size={14} /> تصدير للسجلات</>}
             </button>
-            <button onClick={() => {
+            {/*
+              * ⑨ 📄 **مشاركة إكسيل** — بطلب المالك بدل «نسخ»: «يشارك التشييك
+              * اللي في المربّع في ملف إكسيل». الأعمدة هي اللي المندوب شايفها
+              * بالظبط + حقول الجلسة (`trialExcelRows`، مغطّى باختبارات).
+              */}
+            <button onClick={async () => {
+              if (!rows.length) return;
+              setBusy("ببعت الإكسيل…");
               try {
-                void navigator.clipboard.writeText(rows.slice().reverse()
-                  .map((r) => [r.plate, r.type ?? "", r.note ?? "", r.match ? "مطلوبة" : ""].filter(Boolean).join("  ")).join("\n"));
+                const { buildExcelBlob, shareExcelBlob } = await import("@/lib/excel");
+                const data = trialExcelRows(rows, { area: areaName, recorder: recorderName });
+                const blob = buildExcelBlob(data, "اللوحات");
+                const stamp = new Date().toISOString().slice(0, 10);
+                await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
                 setCopied(true); setTimeout(() => setCopied(false), 1500);
-              } catch { /* ignore */ }
-            }} className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700">
-              {copied ? <><Check size={13} className="text-emerald-600" /> اتنسخ</> : <><Copy size={13} /> نسخ</>}
+              } catch (e) {
+                setError("مانفعش يتشارك الإكسيل: " + (e instanceof Error ? e.message : String(e)));
+              } finally { setBusy(null); }
+            }} disabled={!!busy}
+              className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700 disabled:opacity-50">
+              {copied ? <><Check size={13} className="text-emerald-600" /> اتبعت</> : <><FileSpreadsheet size={13} /> إكسيل</>}
             </button>
             <button onClick={() => {
               // 🔴 نفس تحذير التشييك: اللي مش متصدّر بيضيع — لازم يتقال بالعدد.
@@ -1492,6 +1558,23 @@ export default function RegistrationV2Page() {
  * وفيه زرّ تحديث يدوي جنب الحالة. الحدود المستعملة هي `gpsAccuracyLevel`
  * نفسها اللي صفحة التشييك ماشية عليها — مش أرقام جديدة.
  */
+/** ⑩ زرّ تشغيل/إيقاف — الحالة باينة من اللون والكلمة مع بعض. */
+function ToggleButton({ on, onLabel, offLabel, tone, onClick }: {
+  on: boolean; onLabel: string; offLabel: string;
+  tone: "ok" | "warn" | "on" | "off"; onClick: () => void;
+}) {
+  const skin = tone === "warn" ? "border-rose-300 bg-rose-50 text-rose-800"
+    : tone === "on" ? "border-indigo-300 bg-indigo-50 text-indigo-800"
+    : tone === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : "border-slate-200 bg-white text-slate-600";
+  return (
+    <button onClick={onClick}
+      className={"rounded-xl border-2 py-2 text-[11px] font-black transition " + skin}>
+      {on ? onLabel : offLabel}
+    </button>
+  );
+}
+
 /** ⑦ مربّع حقل جلسة — عنوان صغير فوق وخانة كتابة، بحدود واضحة (⑬). */
 function SessionField({ label, value, onChange, placeholder }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string;
