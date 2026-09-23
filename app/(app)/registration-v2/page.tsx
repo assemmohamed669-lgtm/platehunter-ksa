@@ -68,7 +68,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } from "@/lib/checkSheetSync";
 import { backfillMissingGps } from "@/lib/gpsBackfill";
 import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chassisCache";
-import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
+import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows, modelBoxDetail } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
@@ -1276,10 +1276,8 @@ export default function RegistrationV2Page() {
 
   return (
     <div dir="rtl" className="-mx-4 -mt-4 min-h-screen bg-white px-4 pb-10 pt-4 text-slate-900">
+      {/* سطر «الموديل الجديد — تجربة…» اللي تحت العنوان اتشال بطلب المالك (٢٣ سبتمبر ٢٠٢٦). */}
       <h1 className="text-2xl font-black tracking-tight">التسجيل الجديد</h1>
-      <p className="mt-1 text-xs leading-relaxed text-slate-500">
-        الموديل الجديد — تجربة. اللي في شيت التشييك هتطلع <b className="text-rose-600">بصفّارة</b>.
-      </p>
 
       {/*
         * ── الحالة: الشيت · الموديل · الموقع ──
@@ -1291,7 +1289,7 @@ export default function RegistrationV2Page() {
         <Stat icon={<FileSpreadsheet size={13} />} ok={checkIndex.size > 0}
           title={checkIndex.size ? checkIndex.size.toLocaleString("ar-EG") + " لوحة" : "مافيش شيت"}
           sub={checkIndex.size ? (checkName || "") : "ارفعه من تحت"} />
-        <Stat icon={<Cpu size={13} />} ok={!!probe?.ok} title={statusLabel} sub={probe?.msg ?? ""} />
+        <Stat icon={<Cpu size={13} />} ok={!!probe?.ok} title={statusLabel} sub={modelBoxDetail(probe?.msg, isSuper)} />
         {/*
           * ② 🔴 **المربّع كله بيتلوّن بدقّة الشبكة** — بطلب المالك:
           * «مربّع حالة الجي بي إس يتغيّر لونه كله على حسب دقّة الشبكة،
