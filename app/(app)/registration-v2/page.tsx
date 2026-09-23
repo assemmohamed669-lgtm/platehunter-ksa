@@ -70,6 +70,7 @@ import { backfillMissingGps } from "@/lib/gpsBackfill";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
+import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -97,6 +98,11 @@ interface LiveRow {
   lat: number | null;
   lng: number | null;
   gpsAccuracy: number | null;
+  /**
+   * الخانات اللي المندوب عدّلها **بإيده** — بتغلب أي حاجة جاية من الموديل
+   * في كل دمج جاي. شوف `lib/trialRowMerge.ts`.
+   */
+  edited?: Edited;
 }
 
 /** قراءة خام من الموديل — للتقرير. */
@@ -737,14 +743,22 @@ export default function RegistrationV2Page() {
              * اللوحة كانت بانت مبدئية في ~٣ث. الرقم ده بيتقاس عليه قرار
              * السرعة، فلازم يكون **اللي المندوب عاشه** مش اللي النظام عمله.
              */
-            const merged: LiveRow = {
-              ...fresh,
-              shownAt: Math.min(fresh.shownAt, twin.shownAt),
-              latencyMs: Math.min(fresh.latencyMs, twin.latencyMs),
-              type: fresh.type ?? twin.type,
-              note: fresh.note ?? twin.note,
-              match: fresh.match ?? twin.match,
-            };
+            /**
+             * 🔴 **الصف بيحافظ على هويته، وشغل المندوب بيغلب.**
+             *
+             * بلاغ المالك: «لما بختار النوع أو الملاحظة يدوي مش بتظهر».
+             * كان `{ ...fresh }` ⇒ `id` جديد في كل تأكيد (أول ٢-٣ ثواني،
+             * بالظبط وقت ما المندوب بيختار) ⇒ React بيعيد تركيب الصف
+             * فالمنسدلة بتتقفل تحت إيده، واختياره بيروح لـid مابقاش موجود.
+             * القاعدة والاختبارات في `lib/trialRowMerge.ts`.
+             *
+             * ⚠️ **الترتيب زي ما كان** (الصف المتأكّد بيطلع لفوق): قاعدة
+             * لمّ التكرار `isExactRepeatNearby` بتبص على **أول ٣ صفوف**،
+             * ولو الصف بطّل يطلع لفوق، قراءة متأخرة ليه كانت هتطلع صف مكرر.
+             * وجلسة الـ٩٩/٩٩ اتقاست على الترتيب ده. ومع الـid الثابت React
+             * بينقل الصف **من غير ما يعيد تركيبه**، فالمنسدلة مابتتقفلش.
+             */
+            const merged = mergeTwinRow(fresh, twin);
             return [merged, ...prev.filter((r) => r.id !== twin.id)];
           });
           if (hit) alertWanted(plate, hit);
@@ -777,10 +791,14 @@ export default function RegistrationV2Page() {
                 : sameCarTwin(x, prov, 12000)));
               if (!twin) return [prov, ...prev];
               if (!confirmedWins(prov, twin)) return prev;
-              return [{ ...prov, shownAt: Math.min(prov.shownAt, twin.shownAt),
-                latencyMs: Math.min(prov.latencyMs, twin.latencyMs),
-                type: twin.type, note: twin.note, match: prov.match ?? twin.match },
-                ...prev.filter((x) => x.id !== twin.id)];
+              /**
+               * 🔴 **نفس علّة الدمج المؤكّد بالظبط** — كان `{ ...prov }`
+               * بـid جديد وبيطلع لفوق. الصف المبدئي بيتبدّل بمبدئي أقوى
+               * في أول ثانيتين، وده وقت ما المندوب بيختار النوع.
+               * نفس القاعدة: الهوية بتفضل، وشغل المندوب بيغلب.
+               */
+              const merged = mergeTwinRow(prov, twin);
+              return [merged, ...prev.filter((x) => x.id !== twin.id)];
             });
             // 🔔 المطلوب بيصفّر فوراً — الانتظار ٧ث على عربية مطلوبة غالي.
             if (prov.match) alertWanted(p2, prov.match);
@@ -852,7 +870,10 @@ export default function RegistrationV2Page() {
     const p = value.replace(/\s+/g, "").trim();
     if (!p) return;
     const hit = checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p))) ?? null;
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, plate: p, match: hit } : r)));
+    // ✋ التصحيح بإيد المندوب بيغلب أي قراءة جاية من الإجماع لنفس الصف.
+    setRows((prev) => prev.map((r) => (r.id === id
+      ? { ...r, plate: p, match: hit, edited: { ...r.edited, plate: true } }
+      : r)));
     if (hit) alertWanted(p, hit);
   }, []);
 
@@ -886,7 +907,11 @@ export default function RegistrationV2Page() {
 
   const saveCell = useCallback((id: string, field: "type" | "note", value: string) => {
     const v = value.trim() || null;
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: v } : r)));
+    // ✋ علامة «المندوب عدّلها بإيده» — بتخلّي أي تأكيد جاي من الإجماع
+    // مايكتبش فوق اختياره. شوف `lib/trialRowMerge.ts`.
+    setRows((prev) => prev.map((r) => (r.id === id
+      ? { ...r, [field]: v, edited: { ...r.edited, [field]: true } }
+      : r)));
   }, []);
 
   /* ─── 📤 التصدير — نفس أسلوب التشييك ─────────────────────────────── */
@@ -1343,8 +1368,13 @@ export default function RegistrationV2Page() {
                   <Th className="w-7">{""}</Th>
                   <Th className="w-8">#</Th>
                   <Th className="w-32">رقم اللوحة</Th>
-                  <Th className="w-20">النوع</Th>
-                  <Th className="w-24">الملاحظة</Th>
+                  {/*
+                    * المالك: «العمود بتاعهم صغير». كانوا w-20/w-24 (٨٠/٩٦px)
+                    * وجوّاهم القلم + سهم المنسدلة ⇒ النص الفعلي ~٤٥px
+                    * فـ«و (ونيت)» و«تحت تنده» كانوا بيتقصّوا.
+                    */}
+                  <Th className="min-w-[7.5rem]">النوع</Th>
+                  <Th className="min-w-[8.5rem]">الملاحظة</Th>
                   {showArea && <Th className="w-28">اسم الحي - الشارع</Th>}
                   {showRecorder && <Th className="w-24">اسم المسجّل</Th>}
                   <Th className="w-16">مطلوبة</Th>
@@ -1425,16 +1455,16 @@ export default function RegistrationV2Page() {
                       * والمنسدلة الفاضية شكلها «مافيش حاجة» مش «اكتب هنا».
                       * القلم بيقول للمندوب إنها بتتعدّل بإيده.
                       */}
-                    <td className="px-1 py-1.5 align-top">
+                    <td className="min-w-[7.5rem] px-1 py-1.5 align-top">
                       <div className="flex items-center gap-0.5">
                         <VehicleTypeSelect value={r.type ?? ""}
                           onChange={(code) => saveCell(r.id, "type", code)}
-                          className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
+                          className={"min-w-[6.25rem] w-full rounded-md border border-slate-200 bg-white px-1 py-1 text-[12px] outline-none "
                             + (r.type ? "font-bold text-slate-900" : "text-slate-400")} />
                         <Pencil size={9} className="shrink-0 text-slate-300" />
                       </div>
                     </td>
-                    <td className="px-1 py-1.5 align-top">
+                    <td className="min-w-[8.5rem] px-1 py-1.5 align-top">
                       <div className="flex items-center gap-0.5">
                         <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
                         <Pencil size={9} className="shrink-0 text-slate-300" />
@@ -1751,13 +1781,13 @@ function NoteSelect({ value, onChange }: { value: string; onChange: (v: string) 
           if (e.key === "Enter") { onChange(e.currentTarget.value); setFree(false); }
           if (e.key === "Escape") setFree(false);
         }}
-        className="w-full rounded-md border border-indigo-400 bg-white px-1 py-0.5 text-[11px] outline-none" />
+        className="min-w-[7.25rem] w-full rounded-md border border-indigo-400 bg-white px-1 py-1 text-[12px] outline-none" />
     );
   }
   return (
     <select value={value} dir="rtl"
       onChange={(e) => { if (e.target.value === "__free") setFree(true); else onChange(e.target.value); }}
-      className={"w-full rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] outline-none "
+      className={"min-w-[7.25rem] w-full rounded-md border border-slate-200 bg-white px-1 py-1 text-[12px] outline-none "
         + (value ? "font-bold text-slate-900" : "text-slate-400")}>
       <option value="">—</option>
       {opts.map((o) => <option key={o} value={o}>{o}</option>)}
