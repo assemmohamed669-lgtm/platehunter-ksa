@@ -25,28 +25,62 @@ import {
  *     شايف نتيجة المحرك العام. التجربة لازم **ترفض تشتغل** بلا موديلنا.
  */
 
-describe("canOpenTrialPage — للأدمنز", () => {
-  it("الأدمن يفتح", () => {
-    expect(canOpenTrialPage({ role: "admin", is_super: false })).toBe(true);
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  مين يفتح «الجديد» — **نفس قاعدة «صوتي» بالظبط**
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦):
+ *    «الصفحة تتقفل فقط على اللي مش مشترك معانا في خدمة الصوت»
+ *    «واربطلي الصفحة دي بزرّ فتح الصوت… لو مقفول عنده الصوت، الصفحة دي
+ *     متظهرش معاه ولا صوتي»
+ *
+ *  🔴 **مصدر واحد للحقيقة**: `voiceTabVisible` — الدالة اللي «صوتي»
+ *  ماشية عليها. والزرّين بتوع المالك (عند عمل الإيميل `create-agent`،
+ *  وفي صفحة كل مندوب `manage-agent`) بيكتبوا `voicex_enabled` — فالزرّ
+ *  الواحد بيقفل ويفتح الاتنين مع بعض **من غير أي كود في صفحات الأدمن**.
+ *
+ *  ⚠️ **الأدمن مالوش استثناء**: «صوتي» مابتفتحش لأدمن مالوش صوت، و«الجديد»
+ *  زيها بالظبط. السوبر أدمن بس هو اللي مالوش حدّ (زي «صوتي»).
+ */
+describe("canOpenTrialPage — نفس قاعدة «صوتي»", () => {
+  // عمود `voicex_until` نوعه `date` في الداتابيز ⇒ صيغة YYYY-MM-DD (زي ما
+  // `serviceActive` مستنية). تاريخ بالساعة كان بيطلع Invalid Date.
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const future = ymd(new Date(Date.now() + 30 * 864e5));
+  const past = ymd(new Date(Date.now() - 3 * 864e5));
+
+  it("🔴 مشترك الصوت (مفعّل + أيامه سارية) يفتح", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: future })).toBe(true);
   });
 
-  it("السوبر أدمن يفتح كمان (مالكش معنى تقفلها عليه)", () => {
+  it("مشترك الصوت بلا تاريخ نهاية = سارية (زي صوتي)", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: null })).toBe(true);
+  });
+
+  it("🔴 الصوت مقفول ⇒ **مايفتحش**", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: false })).toBe(false);
+  });
+
+  it("🔴 أيام الصوت خلصت ⇒ **مايفتحش**", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: past })).toBe(false);
+  });
+
+  it("السوبر أدمن يفتح دايماً (زي صوتي)", () => {
     expect(canOpenTrialPage({ role: "agent", is_super: true })).toBe(true);
   });
 
-  it("🔴 المندوب العادي **مايفتحش**", () => {
-    expect(canOpenTrialPage({ role: "agent", is_super: false })).toBe(false);
-    expect(canOpenTrialPage({ role: "leader", is_super: false })).toBe(false);
-    expect(canOpenTrialPage({ role: "member", is_super: false })).toBe(false);
-    expect(canOpenTrialPage({ role: "off", is_super: false })).toBe(false);
+  it("⚠️ الأدمن بلا صوت مايفتحش — زي صوتي بالظبط", () => {
+    expect(canOpenTrialPage({ role: "admin", voicex_enabled: false })).toBe(false);
+  });
+
+  it("الأدمن اللي عنده صوت يفتح", () => {
+    expect(canOpenTrialPage({ role: "admin", voicex_enabled: true, voicex_until: future })).toBe(true);
   });
 
   it("🔴 بروفايل ناقص/بايظ = **مقفول** — الفشل بيقفل مش بيفتح", () => {
     expect(canOpenTrialPage(null)).toBe(false);
     expect(canOpenTrialPage(undefined)).toBe(false);
     expect(canOpenTrialPage({})).toBe(false);
-    expect(canOpenTrialPage({ role: null, is_super: null })).toBe(false);
-    expect(canOpenTrialPage({ role: "Admin", is_super: false })).toBe(false);   // حسّاس لحالة الحروف
   });
 });
 

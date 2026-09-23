@@ -10,7 +10,14 @@
  */
 
 /** أصول المسارات المسموحة. أي حاجة تانية ممنوعة (الافتراضي الآمن). */
-const ALLOWED_ROOTS = ["/instant-check", "/appearance", "/help", "/keys"];
+/**
+ * ✨ `/registration-v2` = صفحة «الجديد» — المالك (٢٣ سبتمبر ٢٠٢٦): «لو مشترك
+ * الصوت فقط بيظهر عنده صوتي تحت، يظهر جنبها الصفحة الجديدة». من غيرها في
+ * القايمة، حارس `app/(app)/layout.tsx` كان بيرجّعه للتشييك أول ما يدوس.
+ * ⚠️ ده «مسموح يروح» بس — الدخول نفسه بيتقفل على اللي مالوش صوت
+ *    (`canOpenTrialPage`). و`/registration` القديمة لسه ممنوعة (حدود المسار).
+ */
+const ALLOWED_ROOTS = ["/instant-check", "/appearance", "/help", "/keys", "/registration-v2"];
 
 export function isAllowedForVoiceOnly(pathname: string): boolean {
   if (!pathname) return false;
