@@ -87,3 +87,49 @@ describe("سجلات صفحة التجربة", () => {
     expect(savedIds(["a", "b"], res)).toEqual([]);
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  ⑦ الحي والشارع واسم المسجّل — بيتصدّروا مع اللوحة
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «المندوب لما يكتب فيهم اسم الحي واسم الشارع
+ *  يتضاف عمود جديد في المربّع بتاع اللوحات… ولو شالهم من المربّعات
+ *  ميتكتبش حاجة»، و«كل حاجة في المربّع تتصدّر للسجلات زي ما هي مينقصش
+ *  منها».
+ *
+ *  🔴 فالقاعدة القديمة «الفاضي مابيتكتبش» بتنطبق عليهم بالظبط: مربّع فاضي
+ *  ⇒ **مافيش مفتاح خالص** في السجل، مش مفتاح بقيمة فاضية — لأن العرض
+ *  والتصدير في السجلات بيلفّوا على المفاتيح الموجودة.
+ */
+describe("buildTrialFieldRow — حقول الجلسة", () => {
+  const base = {
+    id: "1", plate: "أبح1234", type: null, note: null, match: null,
+    lat: null, lng: null, gpsAccuracy: null, shownAt: 0,
+    tier: "green" as const, conf: 1,
+  };
+  const noDetails = { car: null, company: null, chassis: null };
+
+  it("مكتوبين ⇒ عمودين في السجل", () => {
+    const out = buildTrialFieldRow(base, noDetails, null,
+      { area: "النسيم - شارع ٣٠", recorder: "أحمد" });
+    expect(out["اسم الحي - الشارع"]).toBe("النسيم - شارع ٣٠");
+    expect(out["اسم المسجّل"]).toBe("أحمد");
+  });
+
+  it("🔴 فاضيين ⇒ **مافيش مفاتيح خالص**", () => {
+    const out = buildTrialFieldRow(base, noDetails, null, { area: "", recorder: "  " });
+    expect("اسم الحي - الشارع" in out).toBe(false);
+    expect("اسم المسجّل" in out).toBe(false);
+  });
+
+  it("مافيش جلسة أصلاً ⇒ السلوك القديم بالحرف", () => {
+    expect(buildTrialFieldRow(base, noDetails)).toEqual(
+      buildTrialFieldRow(base, noDetails, null, {}));
+  });
+
+  it("واحد مكتوب والتاني لأ ⇒ المكتوب بس", () => {
+    const out = buildTrialFieldRow(base, noDetails, null, { recorder: "سالم" });
+    expect(out["اسم المسجّل"]).toBe("سالم");
+    expect("اسم الحي - الشارع" in out).toBe(false);
+  });
+});

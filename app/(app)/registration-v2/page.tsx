@@ -29,10 +29,10 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Mic, Square, Loader2, AlertTriangle, Cpu, Trash2, Copy, Check, RefreshCw,
   FileSpreadsheet, BellRing, BellOff, MapPin, Download, ChevronDown, ChevronUp,
-  Pencil, Building2, Hash, Car,
+  Pencil, Building2, Hash, Car, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { getUploadedFile } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
 import { buildCombinedCheckIndex, loadAllCheckSources } from "@/lib/checkSheets";
 import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
@@ -64,6 +64,11 @@ import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
+import FileUploadBox from "@/components/FileUploadBox";
+import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSync";
+import { backfillMissingGps } from "@/lib/gpsBackfill";
+import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
+import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -113,6 +118,14 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
 
 export default function RegistrationV2Page() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  /**
+   * 🔒 **السوبر أدمن بس** — التقرير الشامل ومربّع الإعداد.
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «عايزك متظهرش التقرير الشامل ده لحد غيري…
+   * شيله من صفحة المناديب والأدمن، بس السوبر أدمن اللي يظهرله».
+   * والصفحة بتفتح لـ`admin || is_super`، فالأدمن العادي مايشوفهمش.
+   */
+  const [isSuper, setIsSuper] = useState(false);
   const [denied, setDenied] = useState<string | null>(null);
 
   const [listening, setListening] = useState(false);
@@ -137,6 +150,32 @@ export default function RegistrationV2Page() {
   /** الخانة اللي المندوب بيعدّلها دلوقتي (النوع أو الملاحظة). */
   const [editing, setEditing] = useState<{ id: string; field: "type" | "note" | "plate" } | null>(null);
   const [checkName, setCheckName] = useState<string>("");
+  const [checkFile, setCheckFile] = useState<File | null>(null);
+  /** ② بيدوّر على قراءة أدقّ لما المندوب يدوس التحديث اليدوي. */
+  const [gpsBusy, setGpsBusy] = useState(false);
+  /**
+   * ⑦ حقول الجلسة — المندوب بيكتبها **مرة** فوق الجدول وبتتكرّر على كل لوحة.
+   * فاضي ⇒ **مافيش عمود ومافيش حاجة تتكتب** (قرار المالك بالحرف).
+   */
+  const [areaName, setAreaName] = useState("");
+  const [recorderName, setRecorderName] = useState("");
+  const showArea = areaName.trim().length > 0;
+  const showRecorder = recorderName.trim().length > 0;
+  /**
+   * ⑩أ **قفل أخد الموقع** — بطلب المالك. لما يتفعّل، اللوحات **الجاية**
+   * بتتسجّل بلا موقع. اللي اتسجّل قبله مايتلمسش.
+   * ⚠️ مرجع كمان مش state بس: `onPlate` بيتمسك في غلاف المحرّك وقت
+   * التشغيل، فقراءة الـstate جوّاه بتفضل على قيمتها وقت البداية.
+   */
+  const [noGps, setNoGps] = useState(false);
+  const noGpsRef = useRef(false);
+  useEffect(() => { noGpsRef.current = noGps; }, [noGps]);
+  /** ⑩ب التصدير التلقائي — بيسأل عند قفل التسجيل. */
+  const [autoExport, setAutoExport] = useState(false);
+  /** ⑫ زوم جدول اللوحات — جوّه المربّع بس، مش زوم الصفحة. */
+  const [zoom, setZoom] = useState(1);
+  /** ⑭ شكل تاني للمربّع — «فخم وعصري وبخط مختلف» بطلب المالك. */
+  const [fancy, setFancy] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -227,6 +266,7 @@ export default function RegistrationV2Page() {
         .from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
       if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
+      setIsSuper(prof?.is_super === true);
       /**
        * 🔴 **التوكن من الداتابيز مش من الكود.**
        *
@@ -257,9 +297,36 @@ export default function RegistrationV2Page() {
   useEffect(() => {
     if (allowed !== true) return;
     gpsService.startTracking().catch(() => { /* المستخدم رفض — الصفحة بتفضل شغّالة */ });
-    const unsub = gpsService.subscribe((c) => { gpsRef.current = c; setGps(c); });
+    const unsub = gpsService.subscribe((c) => {
+      gpsRef.current = c; setGps(c);
+      /**
+       * ② 🔴 **«كل لوحة تاخد موقع»** — بطلب المالك.
+       *
+       * الموقع بيتختم على الصف لحظة ما يتعمل، وأول ثواني بعد فتح الصفحة
+       * الـGPS لسه بيقفل ⇒ أول لوحات المندوب بتتسجّل **بلا موقع**
+       * و`exportableTrialRows` بترميها من التصدير — شغل ضايع في صمت.
+       *
+       * فأول ما موقع ييجي بنختم الصفوف اللي فاضية **والجديدة بس**
+       * (مهلة دقيقتين) — الصف القديم ممكن يكون في حي تاني، وموقع غلط
+       * أسوأ من مافيش موقع. القرار مغطّى باختبارات في `lib/gpsBackfill.ts`.
+       */
+      setRows((prev) => backfillMissingGps(prev, c, Date.now()) as LiveRow[]);
+    });
     return () => { try { unsub(); } catch { /* ignore */ } };
   }, [allowed]);
+
+  /** ② 🔄 تحديث الموقع بإيد المندوب — بيدوّر على قراءة أدقّ وأحدث. */
+  const refreshGps = useCallback(async () => {
+    setGpsBusy(true);
+    try {
+      const c = await gpsService.getFreshFix({ maxAgeMs: 0, timeoutMs: 15000 });
+      if (c) {
+        gpsRef.current = c; setGps(c);
+        setRows((prev) => backfillMissingGps(prev, c, Date.now()) as LiveRow[]);
+      }
+    } catch { /* المستخدم رفض أو الشبكة — الحالة بتفضل زي ما هي */ }
+    finally { setGpsBusy(false); }
+  }, []);
 
   /**
    * 🔒 **قفل الشاشة أثناء التسجيل.**
@@ -319,9 +386,13 @@ export default function RegistrationV2Page() {
     void (async () => {
       try {
         const rec = await getUploadedFile("local", "check").catch(() => null);
-        if (!rec) { setCheckTable(null); setCheckSources([]); setCheckName(""); return; }
+        if (!rec) { setCheckTable(null); setCheckSources([]); setCheckName(""); setCheckFile(null); return; }
         setCheckTable({ headers: rec.headers, rows: rec.rows });
         setCheckName(rec.fileName || "ملف التشييك");
+        // المربّع بيعرض الملف المرفوع — بنعيد بناء `File` من الـblob المحفوظ.
+        try {
+          if (rec.fileBlob) setCheckFile(new File([rec.fileBlob], rec.fileName || "check.xlsx"));
+        } catch { /* الـblob مش مقروء — الاسم لوحده كفاية */ }
 
         const all = await loadAllCheckSources().catch(() => [] as ExcelTable[]);
         const sources = all.length ? all : [{ headers: rec.headers, rows: rec.rows }];
@@ -358,6 +429,54 @@ export default function RegistrationV2Page() {
       } catch { /* مفيش شيت */ }
     })();
   }, []);
+
+  /**
+   * ① 📥 **الشيت مشترك بين الصفحتين — والتحديث تلقائي.**
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «ممكن يترفع من صفحة التشييك عادي وممكن من
+   * صفحة الجديد، واللي يترفع سواء هنا أو هنا تظهر في التانية».
+   *
+   * الملف نفسه مشترك من الأول (سلوت `local:check`)، اللي كان ناقص هو
+   * **الإشارة**: الصفحة التانية مكانتش تعرف إن فيه حاجة اتغيّرت فبتفضل
+   * على النسخة اللي في ذاكرتها.
+   *
+   * وبنعيد القراءة كمان لما المندوب **يرجع للصفحة** (`visibilitychange`)
+   * — لأن الصفحتين مسارين منفصلين وواحدة بس بتكون متركّبة.
+   */
+  useEffect(() => {
+    const off = onCheckSheetChanged(() => loadCheck());
+    const onVis = () => { if (document.visibilityState === "visible") loadCheck(); };
+    try { document.addEventListener("visibilitychange", onVis); } catch { /* ignore */ }
+    return () => {
+      off();
+      try { document.removeEventListener("visibilitychange", onVis); } catch { /* ignore */ }
+    };
+  }, [loadCheck]);
+
+  /**
+   * رفع/تغيير ملف التشييك **من الصفحة دي** — نفس سلوت «التشييك» بالظبط
+   * (`local:check`)، فاللي يترفع هنا بيشتغل هناك والعكس.
+   *
+   * ⛔ **مابنمسحش لوحات المندوب** لما الملف يتغيّر — نفس قرار صفحة التشييك:
+   * حالة «مطلوبة» ممكن تبقى قديمة، لكن اللوحة والموقع والوقت شغل المندوب.
+   */
+  const onCheckParsed = useCallback(async (table: ExcelTable, file: File) => {
+    const record: UploadedFileRecord = {
+      key: "local:check", agentId: "local", slot: "check",
+      fileName: file.name, headers: table.headers, rows: table.rows,
+      uploadedAt: new Date().toISOString(), fileBlob: file,
+    };
+    await saveUploadedFile(record);
+    notifyCheckSheetChanged();
+    loadCheck();
+  }, [loadCheck]);
+
+  const onCheckClear = useCallback(async () => {
+    await deleteUploadedFile("local", "check").catch(() => {});
+    notifyCheckSheetChanged();
+    loadCheck();
+  }, [loadCheck]);
+
   useEffect(() => { if (allowed === true) loadCheck(); }, [allowed, loadCheck]);
 
   /* ─── فحص السيرفرين ──────────────────────────────────────────────── */
@@ -516,7 +635,12 @@ export default function RegistrationV2Page() {
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           const hit = checkIndexRef.current.get(key) ?? null;
-          const g = gpsRef.current;
+          /**
+           * ⑩أ 🚫 **قفل أخد الموقع** — بطلب المالك. لما يبقى مفعّل،
+           * اللوحة بتتسجّل **بلا موقع** (واللي اتسجّل قبله مايتلمسش).
+           * مرجع مش state: الغلاف ده اتمسك وقت تشغيل المحرّك.
+           */
+          const g = noGpsRef.current ? null : gpsRef.current;
           /**
            * 🏷️ النوع من **أقرب نافذة أرقام اللوحة دي فيها**.
            *
@@ -654,6 +778,22 @@ export default function RegistrationV2Page() {
   function stop() {
     try { engineRef.current?.stop(); } catch { /* ignore */ }
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
+    /**
+     * ⑩ب 📤 **التصدير التلقائي** — بطلب المالك: «لما تتفعّل، يحصل بعد ما
+     * المندوب يقفل التسجيل: تيجيله رسالة سيتم تصدير عدد كذا ويظهر
+     * اللوحات اللي متصدرتش عددها، هل تريد التصدير للسجلات؟».
+     *
+     * 🔴 **بيسأل، مش بيصدّر لوحده.** ده طلبه بالحرف، وكمان التصدير
+     * بيمسح اللي اتصدّر — فحاجة بتمسح شغل المندوب لازم تعدّي على عينه.
+     *
+     * والعدد **في الرسالة** مش «تمام؟» مجرّدة — بيدوس وهو واقف في
+     * الشارع، فلازم يعرف هو موافق على إيه.
+     */
+    if (!autoExport) return;
+    const msg = autoExportStopPrompt(rows.length);
+    if (!msg) return;
+    // مهلة صغيرة عشان الواجهة تحدّث حالة «وقف» الأول بدل ما الحوار يتجمّد فوقها
+    setTimeout(() => { if (confirm(msg)) void exportRows(); }, 150);
   }
   function silence() { try { stopAlertSiren(); } catch { /* ignore */ } setSirenOn(false); }
 
@@ -755,8 +895,14 @@ export default function RegistrationV2Page() {
            * (`typeToCode(...) || الأصل`) — عشان السجلات تبقى شكل واحد،
            * سواء المندوب اختاره من المنسدلة أو الصوت قاله كلمة كاملة.
            */
+          /**
+           * ⑦ **حقول الجلسة بتتصدّر مع كل لوحة** — المالك: «كل حاجة في
+           * المربّع تتصدّر للسجلات زي ما هي مينقصش منها». والفاضي
+           * مابيتكتبش (مغطّى باختبارات في `buildTrialFieldRow`).
+           */
           row: buildTrialFieldRow(
-            { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d),
+            { ...r, type: r.type ? (typeToCode(r.type) || r.type) : null }, d, null,
+            { area: areaName, recorder: recorderName }),
           method: "تجربة الموديل الجديد",
           lat: r.lat ?? undefined,
           lng: r.lng ?? undefined,
@@ -875,7 +1021,11 @@ export default function RegistrationV2Page() {
   }
   if (allowed === null) return <div className="py-16 text-center text-sm text-slate-500">جارٍ التحقق…</div>;
 
-  const statusLabel = probing ? "بفحص…" : probe?.ok ? "🟢 متصل" : probe ? "🔴 مش واصل" : "بفحص…";
+  /**
+   * ④ **«متصل» اتشالت** بطلب المالك — الدايرة الخضرا بتقول اللي هي بتقوله
+   * وبلا زحمة كلام. والتفصيل (اسم الموديل وحالة التوكن) في السطر اللي تحت.
+   */
+  const statusLabel = probing ? "بفحص…" : probe?.ok ? "🟢" : probe ? "🔴 مش واصل" : "بفحص…";
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
   const hits = rows.filter((r) => r.match).length;
@@ -909,20 +1059,63 @@ export default function RegistrationV2Page() {
         الموديل الجديد — تجربة. اللي في شيت التشييك هتطلع <b className="text-rose-600">بصفّارة</b>.
       </p>
 
-      {/* ── الحالة: الشيت · الموديل · النوع · الموقع ── */}
+      {/*
+        * ── الحالة: الشيت · الموديل · الموقع ──
+        * ③ **مربّع «النوع» اتشال** بطلب المالك: «شيل المربّع اللي فيه النوع
+        * مفيش رد ده مالوش لازمة». كوهير مقفول بقراره، فالمربّع كان بيقول
+        * «🔴 مافيش رد» على طول ومالوش أي فايدة للمندوب.
+        */}
       <section className="mt-4 grid grid-cols-2 gap-2">
         <Stat icon={<FileSpreadsheet size={13} />} ok={checkIndex.size > 0}
           title={checkIndex.size ? checkIndex.size.toLocaleString("ar-EG") + " لوحة" : "مافيش شيت"}
-          sub={checkIndex.size ? (checkName || "") : "ارفعه من صفحة التشييك"} />
+          sub={checkIndex.size ? (checkName || "") : "ارفعه من تحت"} />
         <Stat icon={<Cpu size={13} />} ok={!!probe?.ok} title={statusLabel} sub={probe?.msg ?? ""} />
-        <Stat icon={<span className="text-[11px]">🏷️</span>} ok={!!typeProbe?.ok}
-          title={typeProbe?.ok ? "النوع 🟢" : "النوع 🔴"} sub={typeProbe?.msg ?? "بفحص…"} />
-        <Stat icon={<MapPin size={13} />} ok={!!gps && gpsLevel !== "poor"}
-          title={gps ? "الموقع " + (gpsLevel === "good" ? "🟢" : gpsLevel === "ok" ? "🟡" : "🔴") : "مافيش موقع"}
-          sub={gps ? "±" + Math.round(gps.accuracy) + " متر" : "اسمح بالموقع"} />
+        {/*
+          * ② 🔴 **المربّع كله بيتلوّن بدقّة الشبكة** — بطلب المالك:
+          * «مربّع حالة الجي بي إس يتغيّر لونه كله على حسب دقّة الشبكة،
+          * أخضر دقّة ممتازة برتقالي متوسطة أحمر ضعيفة، ويبقى فيه علامة
+          * تحديث يدوي وبرضه يحدّث تلقائي زي اللي في صفحة التشييك».
+          *
+          * اللون على **المربّع كله** مش أيقونة صغيرة: المندوب بيبص بطرف
+          * عينه وهو بيسوق، فالفرق لازم يبان من غير قراية.
+          */}
+        <GpsBox level={gpsLevel} accuracy={gps?.accuracy ?? null} busy={gpsBusy} onRefresh={() => void refreshGps()} />
       </section>
 
-      <div className="mt-2 flex gap-1.5">
+      {/*
+        * ① 📥 **مربّع رفع شيت التشييك — نفس سلوت «التشييك» بالحرف.**
+        *
+        * المالك (٢٣ سبتمبر ٢٠٢٦): «هنظهر المربّع اللي بيترفع فيه شيت
+        * التشييك في صفحة الجديد كمان… واللي يترفع سواء هنا أو هنا تظهر في
+        * التانية، يعني لو المندوب حدّث التشييك يتحدّث تلقائي ويشتغل تلقائي
+        * في الصفحتين».
+        *
+        * السلوت واحد (`local:check`) فالملف مشترك أصلاً؛ الإشارة في
+        * `lib/checkSheetSync.ts` هي اللي بتخلّي الصفحة التانية تعيد قراءته.
+        */}
+      <section className="mt-3">
+        <FileUploadBox
+          title="ملف التشييك"
+          hint="اللي فيه هيطلع بصفّارة"
+          parsedFile={checkFile}
+          parsedRowCount={checkTable?.rows.length ?? null}
+          plateCount={checkIndex.size}
+          onParsed={onCheckParsed}
+          onClear={onCheckClear}
+          showReplaceButtons
+          sky
+        />
+      </section>
+
+      {/*
+        * ⑤ **«أعِد الفحص» و«تغيير العنوان» اتشالوا من عين المندوب.**
+        *
+        * المالك: «شيل كلمتين أعد الفحص وتغيير العنوان». والمربّع اللي
+        * جوّاه فيه **عنوان السيرفر والتوكن** — دول مالهمش لازمة عند
+        * المندوب أصلاً، والتوكن بقى بيتجاب من الداتابيز لوحده.
+        * سايبينهم **للسوبر أدمن** عشان يفضل عنده طريق طوارئ بلا نشر.
+        */}
+      <div className={isSuper ? "mt-2 flex gap-1.5" : "hidden"}>
         <button onClick={() => { void probeModel(); loadCheck(); }} disabled={probing || listening}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2 text-xs font-bold text-slate-700 disabled:opacity-50">
           {probing ? <><Loader2 size={14} className="animate-spin" /> بفحص…</> : <><RefreshCw size={14} /> أعِد الفحص</>}
@@ -932,7 +1125,7 @@ export default function RegistrationV2Page() {
           {showAdvanced ? "إخفاء" : "تغيير العنوان"}
         </button>
       </div>
-      <div className={showAdvanced ? "mt-2 flex flex-col gap-1.5" : "hidden"}>
+      <div className={showAdvanced && isSuper ? "mt-2 flex flex-col gap-1.5" : "hidden"}>
         <input dir="ltr" inputMode="url" autoComplete="off" spellCheck={false} value={modelUrl}
           onChange={(e) => { setModelUrl(e.target.value); setSaved(false); setProbe(null); }}
           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] outline-none focus:border-indigo-500" />
@@ -999,46 +1192,137 @@ export default function RegistrationV2Page() {
         )}
       </section>
 
-      {/* ── اللوحات ── */}
-      <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+      {/*
+        * ⑦ 🏘️ **الحي والشارع واسم المسجّل** — تحت زرّ التسجيل وفوق الجدول.
+        *
+        * المالك (٢٣ سبتمبر ٢٠٢٦): «المندوب لما يكتب فيهم يتضاف عمود جديد
+        * في المربّع بتاع اللوحات… ولو شالهم من المربّعات ميتكتبش حاجة.
+        * وكل مربّع يتكتب فيه يبقى ليه عمود لوحده».
+        *
+        * ⇒ العمود **مايظهرش غير لما يتكتب فيه**، وبيتصدّر مع كل لوحة
+        *   (`buildTrialFieldRow` — مغطّى باختبارات).
+        */}
+      <section className="mt-3 grid grid-cols-2 gap-2">
+        <SessionField label="الحي واسم الشارع" value={areaName} onChange={setAreaName}
+          placeholder="مثال: النسيم - شارع ٣٠" />
+        <SessionField label="اسم المسجّل" value={recorderName} onChange={setRecorderName}
+          placeholder="اسم المندوب" />
+      </section>
+
+      {/*
+        * ── اللوحات ──
+        * ⑭ **شكلين**: العادي، و«الفخم» اللي المالك طلبه — خلفية غامقة
+        * متدرّجة وحدود ذهبية وخط أوسع. الزرّ جنب العنوان بيبدّل بينهم،
+        * وبيغيّر **خروج اللوحات** كمان (الصفوف بتبقى أوسع وأوضح).
+        */}
+      <section className={"mt-3 rounded-2xl p-3 shadow-sm transition "
+        + (fancy
+          ? "border-2 border-amber-300/70 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-100 shadow-lg shadow-amber-900/10"
+          : "border border-slate-200 bg-white")}>
         <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-sm font-black">اللوحات</h2>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{rows.length}</span>
+          <h2 className={"text-sm font-black " + (fancy ? "tracking-widest" : "")}>اللوحات</h2>
+          {/*
+            * ⑭ 🎨 **زرّ الشكل** — جنب كلمة «اللوحات» بطلب المالك:
+            * «ضيف في المربّع من فوق شكل تاني مختلف تماماً وعصري وبخط مختلف،
+            * يبقى زي ديزاين للمربّع يكون فخم، ولما المندوب يدوس عليه وعايز
+            * يغيّر شكل ديزاين المربّع وخروج اللوحات يظهر معاه».
+            */}
+          <button onClick={() => setFancy((v) => !v)} title="غيّر شكل المربّع"
+            className={"rounded-full border px-2 py-0.5 text-[10px] font-black transition "
+              + (fancy
+                ? "border-amber-400/60 bg-gradient-to-l from-amber-200 to-amber-50 text-amber-900"
+                : "border-slate-200 bg-white text-slate-500")}>
+            ✨ الشكل
+          </button>
+          <span className={"rounded-full px-2 py-0.5 text-[11px] font-bold "
+            + (fancy ? "bg-amber-400/15 text-amber-200" : "bg-slate-100 text-slate-600")}>{rows.length}</span>
           {hits > 0 && (
             <span className="flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-700">
               <BellRing size={11} /> مطلوبة {hits}
             </span>
           )}
+          {/* ⑫ ➖ ➕ — والبنش بالصباعين شغّال كمان (touch-pinch-zoom) */}
+          {rows.length > 0 && (
+            <div className="mr-auto flex items-center gap-0.5">
+              <button onClick={() => setZoom((z) => stepZoom(z, -1))} disabled={zoom <= ZOOM_MIN}
+                title="تصغير" className="rounded-lg border border-slate-200 px-2 py-0.5 text-sm font-black text-slate-600 disabled:opacity-40">−</button>
+              <span className="w-9 text-center font-mono text-[10px] tabular-nums text-slate-400">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button onClick={() => setZoom((z) => stepZoom(z, +1))} disabled={zoom >= ZOOM_MAX}
+                title="تكبير" className="rounded-lg border border-slate-200 px-2 py-0.5 text-sm font-black text-slate-600 disabled:opacity-40">+</button>
+            </div>
+          )}
         </div>
 
         {rows.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-400">
+          <p className={"py-8 text-center text-xs " + (fancy ? "text-slate-400" : "text-slate-400")}>
             {listening ? "قول لوحة…" : "مافيش لوحات لسه — دوس ابدأ التسجيل."}
           </p>
         ) : (
           /* 📊 جدول زي الإكسل — كل عمود فيه حاجة واحدة، بطلب المالك.
              بيتمرّر أفقياً على الموبايل بدل ما الأعمدة تتلخبط فوق بعض. */
-          <div className="-mx-1 overflow-x-auto">
-            <table className="w-full min-w-[640px] border-collapse text-[11px]">
+          /*
+             * ⑫ **الزوم جوّه المربّع** — `touch-pinch-zoom` بيدّي البنش
+             * بالصباعين، و`scale` مع `zoomedMinWidth` بيدّي الزرّين.
+             *
+             * 🔴 **وليه العرض الأدنى بيتكبّر مع الزوم**: `scale` بيكبّر
+             * المحتوى **من غير** ما يكبّر المساحة اللي بيتمرّر فيها، فآخر
+             * عمود بيتقص ومافيش تمرير يوصّله. تكبير العرض بنفس النسبة هو
+             * اللي بيحقّق شرط المالك «ميتاكلش منه حاجة».
+             * (`origin-top-right` عشان الجدول عربي بيبدأ من اليمين.)
+             */
+          <div className="-mx-1 overflow-x-auto" style={{ touchAction: "pinch-zoom pan-x pan-y" }}>
+            {/*
+              * ⑬ **فواصل بين كل عمود والتاني** بطلب المالك — `divide-x` على
+              * الصف بيرسم خط بين كل خليتين. والجدول نفسه محاط بحدود.
+              */}
+            <table
+              className={"w-full border-collapse origin-top-right transition-[transform] "
+                + (fancy
+                  ? "text-[12px] font-[system-ui] tracking-wide"
+                  : "text-[11px]")}
+              style={{
+                minWidth: zoomedMinWidth(640, zoom) + "px",
+                transform: "scale(" + clampZoom(zoom) + ")",
+                width: (100 / clampZoom(zoom)) + "%",
+              }}>
               <thead>
-                <tr className="border-b-2 border-slate-200 text-[10px] text-slate-500">
+                <tr className={"divide-x border-b-2 text-[10px] "
+                  + (fancy
+                    ? "divide-slate-700 border-amber-400/50 bg-slate-950/40 text-amber-300/80"
+                    : "divide-slate-200 border-slate-300 bg-slate-50 text-slate-500")}>
+                  {/* ⑥ عمود صغير للمسح — على قد العلامة بالظبط */}
+                  <Th className="w-7">{""}</Th>
                   <Th className="w-8">#</Th>
                   <Th className="w-32">رقم اللوحة</Th>
                   <Th className="w-20">النوع</Th>
                   <Th className="w-24">الملاحظة</Th>
+                  {showArea && <Th className="w-28">اسم الحي - الشارع</Th>}
+                  {showRecorder && <Th className="w-24">اسم المسجّل</Th>}
                   <Th className="w-16">مطلوبة</Th>
                   <Th className="w-20">الوقت</Th>
                   <Th className="w-16">الموقع</Th>
-                  <Th className="w-14">الثقة</Th>
+                  {/*
+                    * ⑧ **الثقة والحالة وظهرت بعد — للسوبر أدمن بس.**
+                    * المالك: «شيلهم… أخفيهم بس خليهم لينا احنا علشان لو
+                    * عملنا اختبار بعد كده ونعرف منه لو فيه تأخير أو أي
+                    * غلطات. المهم المندوب ميشوفهمش».
+                    * ⇒ **إخفاء مش حذف**: البيانات لسه متحسوبة وفي التقرير.
+                    */}
+                  {isSuper && <><Th className="w-14">الثقة</Th>
                   <Th className="w-16">الحالة</Th>
-                  <Th className="w-16">ظهرت بعد</Th>
+                  <Th className="w-16">ظهرت بعد</Th></>}
                 </tr>
               </thead>
               <tbody>
                 {rows.flatMap((r, i) => [
                   <tr key={r.id}
-                    className={"border-b border-slate-100 "
-                      + (r.match ? "bg-rose-50 " : "")
+                    className={"divide-x border-b "
+                      /* ⑭ الشكل الفخم بيغيّر **خروج اللوحات** كمان — صفوف
+                         أوسع وحدود أهدى وخلفية غامقة، زي ما المالك طلب. */
+                      + (fancy ? "divide-slate-800 border-slate-700/70 [&>td]:py-2.5 " : "divide-slate-100 border-slate-200 ")
+                      + (r.match ? (fancy ? "bg-rose-950/40 " : "bg-rose-50 ") : "")
                       /**
                        * 🔴 كان `opacity-60` — والمالك قال «بتظهر مطفية
                        * وبتقعد فترة طويلة». اللوحة **موجودة وصحيحة**
@@ -1047,6 +1331,19 @@ export default function RegistrationV2Page() {
                        * بيبان فوراً وبرضه متميّز عن المؤكّد.
                        */
                       + (r.provisional ? "bg-amber-50/70" : "")}>
+                    {/*
+                      * ⑥ 🗑️ **مسح اللوحة الواحدة** — بطلب المالك: «عمود صغير
+                      * على قد علامة مسح لكل لوحة يقدر المندوب يمسح بيها
+                      * اللوحة لو لقى فيها غلط».
+                      * بلا سؤال تأكيد: صف واحد غلط، والسؤال على كل صف بيوجع.
+                      */}
+                    <td className="px-0.5 py-1.5 align-top">
+                      <button type="button" title="امسح اللوحة دي"
+                        onClick={() => setRows((prev) => prev.filter((x) => x.id !== r.id))}
+                        className="rounded-md p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600">
+                        <X size={12} />
+                      </button>
+                    </td>
                     <Td className="text-slate-400">{rows.length - i}</Td>
                     <Td>
                       {/* ✏️ اللوحة نفسها قابلة للتعديل — لو الموديل غلط المندوب يصحّحها.
@@ -1062,8 +1359,12 @@ export default function RegistrationV2Page() {
                       ) : (
                         <button type="button" onClick={() => setEditing({ id: r.id, field: "plate" })}
                           className="group flex items-center gap-1">
-                          <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
-                            + (r.match ? "text-rose-700" : r.provisional ? "text-amber-700" : "text-indigo-700")}>{r.plate}</span>
+                          <span dir="ltr" className={"font-mono font-black tabular-nums "
+                            /* ⑭ في الشكل الفخم اللوحة أكبر وحروفها أوسع */
+                            + (fancy ? "text-lg tracking-[0.25em] " : "text-base tracking-[0.15em] ")
+                            + (fancy
+                              ? (r.match ? "text-rose-300" : r.provisional ? "text-amber-300" : "text-amber-100")
+                              : (r.match ? "text-rose-700" : r.provisional ? "text-amber-700" : "text-indigo-700"))}>{r.plate}</span>
                           <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
                         </button>
                       )}
@@ -1092,6 +1393,9 @@ export default function RegistrationV2Page() {
                         <Pencil size={9} className="shrink-0 text-slate-300" />
                       </div>
                     </td>
+                    {/* ⑦ نفس القيمة على كل الصفوف — المندوب كتبها مرة فوق */}
+                    {showArea && <Td className="text-slate-700">{areaName.trim()}</Td>}
+                    {showRecorder && <Td className="text-slate-700">{recorderName.trim()}</Td>}
                     <Td>
                       {r.match
                         ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-black text-white">مطلوبة</span>
@@ -1106,6 +1410,8 @@ export default function RegistrationV2Page() {
                             className="flex items-center gap-0.5 font-bold text-indigo-600 underline"><MapPin size={10} /> فتح</a>
                         : <span className="text-rose-500">مافيش</span>}
                     </Td>
+                    {/* ⑧ إخفاء عن المندوب — البيانات لسه محسوبة ومتاحة في التقرير */}
+                    {isSuper && <>
                     <Td className="font-mono tabular-nums text-slate-500">{Math.round(r.conf * 100)}%</Td>
                     <Td className={r.provisional ? "text-amber-600" : r.tier === "green" ? "text-emerald-600" : "text-amber-500"}>
                       {r.provisional
@@ -1113,11 +1419,12 @@ export default function RegistrationV2Page() {
                         : r.tier === "green" ? "مؤكّدة" : "محتاجة نظرة"}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-400">{(r.latencyMs / 1000).toFixed(1)}ث</Td>
+                    </>}
                   </tr>,
                   /* 🚨 تفاصيل المطلوبة تحت الصف — نوع/شركة/شاص/شهادة */
                   r.match ? (
                     <tr key={r.id + "-d"} className="border-b border-rose-100 bg-rose-50">
-                      <td colSpan={10} className="px-2 pb-2">
+                      <td colSpan={8 + (showArea ? 1 : 0) + (showRecorder ? 1 : 0) + (isSuper ? 3 : 0)} className="px-2 pb-2">
                         <MatchDetails row={r} cols={checkCols}
                           vin={plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)))} />
                       </td>
@@ -1129,6 +1436,26 @@ export default function RegistrationV2Page() {
           </div>
         )}
 
+        {/*
+          * ⑩ **زرّين**: قفل الموقع · التصدير التلقائي.
+          * الاتنين بيسألوا قبل ما يتفعّلوا. إلغاؤهم رجوع للوضع الطبيعي
+          * فمالوش خطر ومابيسألش.
+          */}
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          <ToggleButton on={noGps} onLabel="🚫 الموقع مقفول" offLabel="📍 الموقع شغّال"
+            tone={noGps ? "warn" : "ok"}
+            onClick={() => {
+              if (!noGps) { if (!confirm(noGpsWarning())) return; setNoGps(true); }
+              else setNoGps(false);
+            }} />
+          <ToggleButton on={autoExport} onLabel="⚡ تصدير تلقائي" offLabel="✋ تصدير يدوي"
+            tone={autoExport ? "on" : "off"}
+            onClick={() => {
+              if (!autoExport) { if (!confirm(autoExportPrompt())) return; setAutoExport(true); }
+              else setAutoExport(false);
+            }} />
+        </div>
+
         {/* 🧹📤 مسح وتصدير — زي التشييك */}
         {rows.length > 0 && (
           <div className="mt-3 flex gap-1.5">
@@ -1136,14 +1463,27 @@ export default function RegistrationV2Page() {
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white disabled:opacity-50">
               {busy ? <><Loader2 size={14} className="animate-spin" /> {busy}</> : <><Download size={14} /> تصدير للسجلات</>}
             </button>
-            <button onClick={() => {
+            {/*
+              * ⑨ 📄 **مشاركة إكسيل** — بطلب المالك بدل «نسخ»: «يشارك التشييك
+              * اللي في المربّع في ملف إكسيل». الأعمدة هي اللي المندوب شايفها
+              * بالظبط + حقول الجلسة (`trialExcelRows`، مغطّى باختبارات).
+              */}
+            <button onClick={async () => {
+              if (!rows.length) return;
+              setBusy("ببعت الإكسيل…");
               try {
-                void navigator.clipboard.writeText(rows.slice().reverse()
-                  .map((r) => [r.plate, r.type ?? "", r.note ?? "", r.match ? "مطلوبة" : ""].filter(Boolean).join("  ")).join("\n"));
+                const { buildExcelBlob, shareExcelBlob } = await import("@/lib/excel");
+                const data = trialExcelRows(rows, { area: areaName, recorder: recorderName });
+                const blob = buildExcelBlob(data, "اللوحات");
+                const stamp = new Date().toISOString().slice(0, 10);
+                await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
                 setCopied(true); setTimeout(() => setCopied(false), 1500);
-              } catch { /* ignore */ }
-            }} className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700">
-              {copied ? <><Check size={13} className="text-emerald-600" /> اتنسخ</> : <><Copy size={13} /> نسخ</>}
+              } catch (e) {
+                setError("مانفعش يتشارك الإكسيل: " + (e instanceof Error ? e.message : String(e)));
+              } finally { setBusy(null); }
+            }} disabled={!!busy}
+              className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700 disabled:opacity-50">
+              {copied ? <><Check size={13} className="text-emerald-600" /> اتبعت</> : <><FileSpreadsheet size={13} /> إكسيل</>}
             </button>
             <button onClick={() => {
               // 🔴 نفس تحذير التشييك: اللي مش متصدّر بيضيع — لازم يتقال بالعدد.
@@ -1159,8 +1499,15 @@ export default function RegistrationV2Page() {
         )}
       </section>
 
-      {/* ══ 📋 التقرير الشامل — مؤقّت ══ */}
-      <section className="mt-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-3">
+      {/*
+        * ══ 📋 التقرير الشامل — **للسوبر أدمن بس** ══
+        * المالك (٢٣ سبتمبر ٢٠٢٦): «عايزك متظهرش التقرير الشامل ده لحد
+        * غيري علشان لو هنجرّب حاجة — اقفله وشيله من صفحة المناديب والأدمن،
+        * بس السوبر أدمن اللي يظهرله».
+        */}
+      <section className={isSuper
+        ? "mt-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-3"
+        : "hidden"}>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowReport((v) => !v)} className="flex flex-1 items-center gap-2">
             <h2 className="text-sm font-black">📋 التقرير الشامل</h2>
@@ -1273,6 +1620,75 @@ export default function RegistrationV2Page() {
  * و«أخرى…» بتحوّل الخانة لكتابة حرّة. ولو الصوت جاب قيمة مش في القايمة
  * بتتعرض في المنسدلة زي ما هي — **مابتتشالش**.
  */
+/**
+ * ② 📍 **مربّع حالة الموقع** — لونه كله بيقول الدقّة.
+ *   🟢 ≤١٥م ممتازة · 🟠 ≤٣٥م متوسطة · 🔴 أوحش (أو مافيش إذن)
+ * وفيه زرّ تحديث يدوي جنب الحالة. الحدود المستعملة هي `gpsAccuracyLevel`
+ * نفسها اللي صفحة التشييك ماشية عليها — مش أرقام جديدة.
+ */
+/** ⑩ زرّ تشغيل/إيقاف — الحالة باينة من اللون والكلمة مع بعض. */
+function ToggleButton({ on, onLabel, offLabel, tone, onClick }: {
+  on: boolean; onLabel: string; offLabel: string;
+  tone: "ok" | "warn" | "on" | "off"; onClick: () => void;
+}) {
+  const skin = tone === "warn" ? "border-rose-300 bg-rose-50 text-rose-800"
+    : tone === "on" ? "border-indigo-300 bg-indigo-50 text-indigo-800"
+    : tone === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : "border-slate-200 bg-white text-slate-600";
+  return (
+    <button onClick={onClick}
+      className={"rounded-xl border-2 py-2 text-[11px] font-black transition " + skin}>
+      {on ? onLabel : offLabel}
+    </button>
+  );
+}
+
+/** ⑦ مربّع حقل جلسة — عنوان صغير فوق وخانة كتابة، بحدود واضحة (⑬). */
+function SessionField({ label, value, onChange, placeholder }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string;
+}) {
+  const filled = value.trim().length > 0;
+  return (
+    <div className={"rounded-xl border-2 px-2.5 py-1.5 transition "
+      + (filled ? "border-indigo-300 bg-indigo-50/60" : "border-slate-200 bg-white")}>
+      <p className={"text-[10px] font-bold " + (filled ? "text-indigo-700" : "text-slate-400")}>{label}</p>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full bg-transparent text-[12px] font-bold text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-300" />
+    </div>
+  );
+}
+
+function GpsBox({ level, accuracy, busy, onRefresh }: {
+  level: "good" | "ok" | "poor" | null;
+  accuracy: number | null;
+  busy: boolean;
+  onRefresh: () => void;
+}) {
+  const skin = level === "good"
+    ? { box: "border-emerald-300 bg-emerald-50", text: "text-emerald-900", sub: "text-emerald-700", dot: "🟢", label: "دقّة ممتازة" }
+    : level === "ok"
+    ? { box: "border-orange-300 bg-orange-50", text: "text-orange-900", sub: "text-orange-700", dot: "🟠", label: "دقّة متوسطة" }
+    : level === "poor"
+    ? { box: "border-rose-300 bg-rose-50", text: "text-rose-900", sub: "text-rose-700", dot: "🔴", label: "دقّة ضعيفة" }
+    : { box: "border-slate-200 bg-slate-50", text: "text-slate-700", sub: "text-slate-500", dot: "⚪", label: "مافيش موقع" };
+
+  return (
+    <div className={"flex items-center gap-2 rounded-xl border-2 px-2.5 py-2 " + skin.box}>
+      <MapPin size={15} className={"shrink-0 " + skin.text} />
+      <div className="min-w-0 flex-1">
+        <p className={"truncate text-[11px] font-black " + skin.text}>{skin.dot} {skin.label}</p>
+        <p className={"truncate text-[10px] " + skin.sub}>
+          {accuracy != null ? "±" + Math.round(accuracy) + " متر" : "اسمح بالموقع"}
+        </p>
+      </div>
+      <button onClick={onRefresh} disabled={busy} title="حدّث الموقع دلوقتي"
+        className={"shrink-0 rounded-lg border bg-white/70 p-1.5 disabled:opacity-50 " + skin.box}>
+        <RefreshCw size={14} className={(busy ? "animate-spin " : "") + skin.text} />
+      </button>
+    </div>
+  );
+}
+
 function NoteSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [free, setFree] = useState(false);
   const opts = useMemo(() => {

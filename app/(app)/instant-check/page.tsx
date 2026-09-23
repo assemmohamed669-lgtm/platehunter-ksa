@@ -6,6 +6,7 @@ import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import { summarizeSkips } from "@/lib/skipLabels";
 import FileUploadBox from "@/components/FileUploadBox";
+import { notifyCheckSheetChanged } from "@/lib/checkSheetSync";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, deleteFieldCheckEntries } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
@@ -4529,6 +4530,8 @@ export default function InstantCheckPage() {
       fileBlob: file,
     };
     await saveUploadedFile(record);
+    // 📣 «الشيت اتغيّر» — صفحة «الجديد» بتقراها تلقائي. شوف lib/checkSheetSync.ts
+    notifyCheckSheetChanged();
     setCheckTable(table);
     setCheckFile(file);
     const plate = detectPlateColumn(table.headers);
@@ -4551,6 +4554,7 @@ export default function InstantCheckPage() {
       fileName: file.name, headers: table.headers, rows: table.rows,
       uploadedAt: new Date().toISOString(), fileBlob: file,
     });
+    notifyCheckSheetChanged();
     setExtraChecks((prev) => prev.map((e) => (e.id === id ? { ...e, table, file } : e)));
     const plate = detectPlateColumn(table.headers);
     setSelectedCheckCols((prev) => {
@@ -4577,11 +4581,13 @@ export default function InstantCheckPage() {
       });
     }
     setExtraChecks(renumbered);
+    notifyCheckSheetChanged();
     clearAutoCheck();
   }
 
   async function handleClear() {
     await deleteUploadedFile("local", "check");
+    notifyCheckSheetChanged();
     setCheckTable(null);
     setCheckFile(null);
     setSelectedCheckCols(new Set());
