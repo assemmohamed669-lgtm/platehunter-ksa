@@ -978,7 +978,7 @@ export default function AdminDashboard() {
           وأول ما المندوب يدوس على خانة بتتزحلق لنص الشاشة بعد ما الكيبورد
           يخلّص حركته — فالكلام اللي بيتكتب يفضل باين. */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/70 p-4 sm:items-center">
+        <div className="fixed inset-0 z-50 flex items-end pb-[env(safe-area-inset-bottom)] justify-center overflow-y-auto bg-black/70 p-4 sm:items-center">
           <div
             onFocus={(e) => {
               const el = e.target as HTMLElement;
