@@ -97,3 +97,57 @@ export function pruneTypeQueue(
   const cut = nowMs - TYPE_QUEUE_KEEP_MS;
   return (queue ?? []).filter((w) => w.tMs >= cut);
 }
+
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🎯 نسأل سيرفر النوع **لكل لوحة**، مش لكل نافذة
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * المندوب بيبعت نافذة كل ١.٥ث، واللوحة الواحدة بتتغطّى بـ٣-٤ نوافذ.
+ * فالسؤال عن كل نافذة معناه **٣-٤ أضعاف** الشغل اللازم — وأغلبه على
+ * نوافذ مالهاش لوحة أصلاً.
+ *
+ * وده مهم لأن سيرفر النوع طاقته **~٤ متوازي** (قياس ٢٣ سبتمبر ٢٠٢٦: عند
+ * ١٠ مناديب كان بيرفض ٦٠٪ من الطلبات). التقليل هو اللي بيخلّيه يلحق.
+ *
+ * ⇒ بنخزّن آخر النوافذ، وأول ما الإجماع يأكّد لوحة بنبعت **واحدة بس** —
+ *   أقربها لزمن اللوحة.
+ */
+
+/** أطول مدة نحتفظ فيها بنافذة صوت مستنية لوحة تتأكّد. */
+export const TYPE_BUF_KEEP_MS = 15_000;
+
+/**
+ * 🔴 أبعد ما تكون النافذة عن اللوحة وتفضل صالحة.
+ * النافذة ٥ث، فاللي أبعد من كده مافيهاش صوت اللوحة أصلاً — والنوع الغلط
+ * أوحش من الخانة الفاضية (قاعدة المشروع المتكرّرة).
+ */
+const MAX_PICK_GAP_MS = 5_000;
+
+export interface AudioWindow<T = unknown> {
+  tMs: number;
+  wav: T;
+}
+
+/** أقرب نافذة للوحة — أو `null` لو كلها بعيدة. */
+export function nearestWindow<T>(
+  windows: readonly AudioWindow<T>[],
+  atMs: number,
+): AudioWindow<T> | null {
+  let best: AudioWindow<T> | null = null;
+  let bestGap = Infinity;
+  for (const w of windows ?? []) {
+    const gap = Math.abs(w.tMs - atMs);
+    if (gap < bestGap) { bestGap = gap; best = w; }
+  }
+  return best && bestGap <= MAX_PICK_GAP_MS ? best : null;
+}
+
+/** بيشيل النوافذ القديمة من المخزن. */
+export function pruneWindows<T>(
+  windows: readonly AudioWindow<T>[],
+  nowMs: number,
+): AudioWindow<T>[] {
+  return (windows ?? []).filter((w) => nowMs - w.tMs <= TYPE_BUF_KEEP_MS);
+}
