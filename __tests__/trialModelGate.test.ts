@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
-  TRIAL_MODEL_BASE, TRIAL_MODEL_TOKEN, shouldAskType,
+  TRIAL_MODEL_BASE, shouldAskType,
 } from "../lib/trialModelGate";
 
 /**
@@ -90,25 +90,48 @@ describe("resolveTrialEndpoint — سيرفر التجربة مثبّت في ا�
    * تشغيل (توثيق Vast: «ephemeral … lost on restart — don't depend on them»)،
    * فلو العنوان المثبّت بايظ لازم يقدر يحطّ الجديد من غير ما ننشر نسخة.
    */
-  it("مافيش محفوظ ⇒ سيرفر ماليزيا المثبّت", () => {
-    expect(resolveTrialEndpoint(null)).toEqual({ base: TRIAL_MODEL_BASE, token: TRIAL_MODEL_TOKEN });
-    expect(resolveTrialEndpoint({})).toEqual({ base: TRIAL_MODEL_BASE, token: TRIAL_MODEL_TOKEN });
+  /**
+   * ══════════════════════════════════════════════════════════════════
+   *  🔴 التوكن **مابقاش في الكود** — بيجي من الداتابيز
+   * ══════════════════════════════════════════════════════════════════
+   *  كان `TRIAL_MODEL_TOKEN = "plate-voice-lab-local-dev"` مكتوب صريح،
+   *  والتعليق نفسه كان بيقول «مش سرّ حقيقي — أي تشغيل طويل لازم يتغيّر».
+   *  والتوكن ده **بيتشحن جوّه التطبيق لكل موبايل**، فأي حد يفتح ملفات
+   *  التطبيق ياخده ويبعت صوت على طول للسيرفر ⇒ ياكل الكارت والمناديب
+   *  يبطّوا أو يترفضوا.
+   *
+   *  وصفحة التشييك بتعمل الصح أصلاً: التوكن في `app_settings` (جدول مالوش
+   *  سياسة SELECT) وبيتجاب وقت التشغيل بـ`get_voicex_token`. بنعمل نفس
+   *  الشكل بالظبط — `get_trial_token`.
+   *
+   *  ⚠️ **والفشل بيقفل**: مافيش توكن ⇒ سلسلة فاضية ⇒ `planTrialRun` بيرفض
+   *  التشغيل برسالة واضحة. مافيش رجوع لتوكن مكتوب في الكود خالص.
+   */
+  it("مافيش محفوظ ⇒ العنوان المثبّت + توكن الداتابيز", () => {
+    expect(resolveTrialEndpoint(null, "db-secret")).toEqual({ base: TRIAL_MODEL_BASE, token: "db-secret" });
+    expect(resolveTrialEndpoint({}, "db-secret")).toEqual({ base: TRIAL_MODEL_BASE, token: "db-secret" });
   });
 
-  it("🔴 المحفوظ يدوياً **يغلب** المثبّت", () => {
-    expect(resolveTrialEndpoint({ base: "https://other.example", token: "tk" }))
+  it("🔴 مافيش توكن في الداتابيز ولا محفوظ ⇒ فاضي (الفشل بيقفل)", () => {
+    expect(resolveTrialEndpoint(null, null)).toEqual({ base: TRIAL_MODEL_BASE, token: "" });
+    expect(resolveTrialEndpoint(null)).toEqual({ base: TRIAL_MODEL_BASE, token: "" });
+    expect(planTrialRun(resolveTrialEndpoint(null, null)).ok).toBe(false);
+  });
+
+  it("🔴 المحفوظ يدوياً **يغلب** الاتنين", () => {
+    expect(resolveTrialEndpoint({ base: "https://other.example", token: "tk" }, "db-secret"))
       .toEqual({ base: "https://other.example", token: "tk" });
   });
 
-  it("محفوظ ناقص ⇒ الناقص بس يتاخد من المثبّت", () => {
-    expect(resolveTrialEndpoint({ base: "https://other.example", token: "" }))
-      .toEqual({ base: "https://other.example", token: TRIAL_MODEL_TOKEN });
-    expect(resolveTrialEndpoint({ base: "  ", token: "tk" }))
+  it("محفوظ ناقص ⇒ الناقص بس يتاخد من المثبّت/الداتابيز", () => {
+    expect(resolveTrialEndpoint({ base: "https://other.example", token: "" }, "db-secret"))
+      .toEqual({ base: "https://other.example", token: "db-secret" });
+    expect(resolveTrialEndpoint({ base: "  ", token: "tk" }, "db-secret"))
       .toEqual({ base: TRIAL_MODEL_BASE, token: "tk" });
   });
 
-  it("المثبّت نفسه لازم يعدّي حارس التشغيل (https + توكن)", () => {
-    expect(planTrialRun(resolveTrialEndpoint(null))).toEqual({ ok: true });
+  it("المثبّت + توكن الداتابيز لازم يعدّوا حارس التشغيل (https + توكن)", () => {
+    expect(planTrialRun(resolveTrialEndpoint(null, "db-secret"))).toEqual({ ok: true });
   });
 });
 

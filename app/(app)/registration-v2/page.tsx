@@ -50,7 +50,7 @@ import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
-  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType,
+  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
 } from "@/lib/trialModelGate";
 import { sameCarTwin, heardNotShown, isExactRepeatNearby } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
@@ -226,8 +226,24 @@ export default function RegistrationV2Page() {
         .from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
       if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
-      const ep = resolveTrialEndpoint(readJudgeEndpoint());
+      /**
+       * 🔴 **التوكن من الداتابيز مش من الكود.**
+       *
+       * كان مكتوب صريح في `trialModelGate.ts`، يعني بيتشحن جوّه التطبيق
+       * لكل موبايل — وأي حد يفتح ملفات التطبيق ياخده ويبعت صوت على طول
+       * للسيرفر. دلوقتي بيتجاب من `app_settings` (جدول مالوش سياسة SELECT)
+       * زي ما صفحة التشييك بتعمل بالظبط.
+       *
+       * ⚠️ فشل القراءة = توكن فاضي = `planTrialRun` بيرفض التشغيل برسالة
+       * واضحة. **الفشل بيقفل** — مافيش رجوع لتوكن مكتوب.
+       */
+      const dbToken = await fetchTrialToken();
+      const ep = resolveTrialEndpoint(readJudgeEndpoint(), dbToken);
       setModelUrl(ep.base); setModelToken(ep.token); setAllowed(true);
+      if (!ep.token) {
+        setError("مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
+          + "select public.set_trial_token('<السرّ>') — أو حطّه بإيدك في مربّع الإعداد تحت.");
+      }
     })();
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
