@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { visibleTabs, isTabActive } from "@/lib/navTabs";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
-import { voiceTabVisible, loadCachedVoiceAccess } from "@/lib/voiceAccess";
+import { canOpenTrialPage } from "@/lib/trialModelGate";
 
 // تبويبات المشترك «صوت فقط» في الشريط التحتي (زي قناص) — كل واحدة بتبدّل خيار
 // التشييك من مخزن checkTab (مش رابط)، ونفس ترتيب المالك.
@@ -51,13 +51,17 @@ export default function BottomNav() {
   const [isSuper, setIsSuper] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   /**
-   * عنده خدمة الصوت؟ — **نفس حساب «صوتي» بالظبط** (`voiceTabVisible`).
-   * بتبدأ من آخر قيمة معروفة على الجهاز عشان التبويب مايرمشش أول ما البرنامج
-   * يفتح، وبتتحدّث من السيرفر.
+   * يقدر يفتح «الجديد»؟ — **نفس الدالة اللي بتقفل الصفحة** (`canOpenTrialPage`
+   * = `voiceTabVisible` بتاعة «صوتي» من غير كاش): مفتاح الصوت مفتوح وأيامه
+   * سارية (مشترك أو تجربة)، أو السوبر أدمن.
+   *
+   * 🔴 **بتبدأ مخفية وماتظهرش إلا بعد ما السيرفر يأكّد.** المالك (٢٣ سبتمبر
+   * ٢٠٢٦): «الصفحة مش هتظهر غير لمشتركين الصوت فقط… أهم حاجة مفتاح الصوت
+   * يكون فعّال عندهم». كانت بتبدأ من آخر قيمة محفوظة على الجهاز، فاللي
+   * الصوت اتقفل عنده كان بيلمح التابة لحظة — أو تفضل ظاهرة لو فتح من غير
+   * نت. «الجديد» محتاجة الشبكة أصلاً (سيرفر ماليزيا)، فمافيش فايدة تظهر أوفلاين.
    */
-  const [hasVoice, setHasVoice] = useState<boolean>(() => {
-    try { return loadCachedVoiceAccess() === true; } catch { return false; }
-  });
+  const [hasVoice, setHasVoice] = useState<boolean>(false);
   // التبويب النشط في صفحة التشييك (للمشترك صوت-فقط) — يتزامن مع مخزن checkTab.
   const [activeTab, setActiveTab] = useState<CheckTab>(getCheckTab());
   useEffect(() => onCheckTabChange(setActiveTab), []);
@@ -103,7 +107,7 @@ export default function BottomNav() {
         setIsSuper(!!prof?.is_super);
         setIsAdmin(prof?.role === "admin");
         // ✨ «الجديد» بتظهر مع «صوتي» وبتختفي معاها — زرّ «فتح الصوت» الواحد.
-        setHasVoice(voiceTabVisible(prof as Parameters<typeof voiceTabVisible>[0], loadCachedVoiceAccess()));
+        setHasVoice(canOpenTrialPage(prof as Parameters<typeof canOpenTrialPage>[0]));
         // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه سارية) — أو سوبر أدمن.
         const rp = prof as { is_super?: boolean; rest_pages_enabled?: boolean; rest_until?: string | null } | null;
         setRestPages(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));

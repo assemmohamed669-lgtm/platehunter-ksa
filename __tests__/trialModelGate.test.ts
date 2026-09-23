@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { voiceTabVisible } from "@/lib/voiceAccess";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
   TRIAL_MODEL_BASE, shouldAskType, tokenProbeVerdict,
@@ -81,6 +82,58 @@ describe("canOpenTrialPage — نفس قاعدة «صوتي»", () => {
     expect(canOpenTrialPage(null)).toBe(false);
     expect(canOpenTrialPage(undefined)).toBe(false);
     expect(canOpenTrialPage({})).toBe(false);
+  });
+
+  /**
+   * 🔴 المالك (٢٣ سبتمبر ٢٠٢٦) قبل الفتح للمناديب: «الصفحة مش هتظهر غير
+   * لمشتركين الصوت فقط، سواء مشتركين أو مفتوحلهم تجربة — أهم حاجة مفتاح
+   * الصوت يكون فعّال عندهم… لازم تأكدلي عليها».
+   *
+   * حساب التجربة (`create-agent`) بياخد `voicex_enabled` من نفس زرّ «فتح
+   * الصوت» و`voicex_until` = نهاية التجربة — فالحكم هو المفتاح + التاريخ.
+   */
+  // التاريخ بتوقيت الجهاز — `serviceActive` بتقارن بنص ليل الجهاز
+  const local = (d: Date) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+    + "-" + String(d.getDate()).padStart(2, "0");
+  const today = local(new Date());
+  const yesterday = local(new Date(Date.now() - 864e5));
+  const trial = (p: Record<string, unknown>) => ({ role: "agent", is_trial: true, ...p }) as never;
+
+  it("🔴 تجربة ومفتاح الصوت مفتوح ⇒ تفتح", () => {
+    expect(canOpenTrialPage(trial({ voicex_enabled: true, voicex_until: future }))).toBe(true);
+  });
+
+  it("🔴 تجربة ومفتاح الصوت مقفول ⇒ **ماتفتحش**", () => {
+    expect(canOpenTrialPage(trial({ voicex_enabled: false, voicex_until: future }))).toBe(false);
+  });
+
+  it("🔴 التجربة خلصت ⇒ **ماتفتحش** حتى لو المفتاح مفتوح", () => {
+    expect(canOpenTrialPage(trial({ voicex_enabled: true, voicex_until: yesterday }))).toBe(false);
+  });
+
+  it("آخر يوم في الاشتراك/التجربة هو النهارده ⇒ لسه تفتح", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: today })).toBe(true);
+  });
+
+  it("🔴 المفتاح مش متسجّل (فاضي) حتى لو التاريخ ساري ⇒ **ماتفتحش**", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: null, voicex_until: future } as never)).toBe(false);
+    expect(canOpenTrialPage({ role: "agent", voicex_until: future })).toBe(false);
+  });
+
+  it("باقي الصفحات مالهاش دعوة: صوت بس ⇒ تفتح · كل الصفحات بلا صوت ⇒ ماتفتحش", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: future, rest_pages_enabled: false } as never)).toBe(true);
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: false, voicex_until: future, rest_pages_enabled: true } as never)).toBe(false);
+  });
+
+  it("🔴 **نفس حكم «صوتي» في كل الحالات** — مصدر واحد للحقيقة", () => {
+    const enabled = [true, false, null, undefined];
+    const until = [future, today, yesterday, past, null, undefined];
+    const roles = ["agent", "admin"];
+    const supers = [true, false, null, undefined];
+    for (const e of enabled) for (const u of until) for (const role of roles) for (const sp of supers) {
+      const prof = { role, is_super: sp, voicex_enabled: e, voicex_until: u } as never;
+      expect(canOpenTrialPage(prof)).toBe(voiceTabVisible(prof, null));
+    }
   });
 });
 
