@@ -53,7 +53,7 @@ import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
   tokenProbeVerdict,
 } from "@/lib/trialModelGate";
-import { sameCarTwin, heardNotShown, isExactRepeatNearby, blockedNotShown } from "@/lib/trialTwin";
+import { sameCarTwin, heardNotShown, isExactRepeatNearby, blockedNotShown, sameUtterance } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
@@ -153,6 +153,8 @@ export default function RegistrationV2Page() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [skips, setSkips] = useState<Record<string, number>>({});
+  /** 🔴 نوافذ فايتة اتبعتت تاني بعد وقعة الشبكة — عشان الاسترجاع يبان في التقرير. */
+  const [replays, setReplays] = useState(0);
   const [sirenOn, setSirenOn] = useState(false);
   const [reads, setReads] = useState<ReadLog[]>([]);
   const [showReport, setShowReport] = useState(true);
@@ -727,7 +729,7 @@ export default function RegistrationV2Page() {
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
-    setError(null); setSkips({}); setReads([]);
+    setError(null); setSkips({}); setReads([]); setReplays(0);
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -831,8 +833,13 @@ export default function RegistrationV2Page() {
             if (lt) return prev.map((r) => (r.id === lt.id ? resolveLetterTwin(lt, fresh) : r));
 
             const nearby = isExactRepeatNearby(fresh.plate, prev.map((r) => r.plate));
+            /**
+             * 🔴 **أو نفس النطقة بزمن الصوت** — القراية المتأخّرة بعد وقعة
+             * الشبكة (`voicexReplay`) بتيجي بعد ما اللوحة نزلت تحت أول ٣
+             * صفوف، فـ`nearby` لوحده كان هيطلّعها صف مكرّر.
+             */
             const twin = prev.find((r) => (r.plate === fresh.plate
-              ? nearby && sameCarTwin(r, fresh, 12000)
+              ? (nearby || sameUtterance(r, fresh)) && sameCarTwin(r, fresh, 12000)
               : sameCarTwin(r, fresh, 12000)));
             if (!twin) return [fresh, ...prev];
             // المؤكّد بيغلب المبدئي دايماً — القاعدة في `provisionalRow.ts`.
@@ -908,7 +915,7 @@ export default function RegistrationV2Page() {
               if (ltP) return prev.map((x) => (x.id === ltP.id ? resolveLetterTwin(ltP, prov) : x));
               const nearbyP = isExactRepeatNearby(prov.plate, prev.map((x) => x.plate));
               const twin = prev.find((x) => (x.plate === prov.plate
-                ? nearbyP && sameCarTwin(x, prov, 12000)
+                ? (nearbyP || sameUtterance(x, prov)) && sameCarTwin(x, prov, 12000)
                 : sameCarTwin(x, prov, 12000)));
               if (!twin) return [prov, ...prev];
               if (!confirmedWins(prov, twin)) return prev;
@@ -932,6 +939,7 @@ export default function RegistrationV2Page() {
         onSpeech: (active: boolean) => setSpeaking(active),
         onLevel: (lvl: number) => setLevel(lvl),
         onSkip: (reason: string) => setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })),
+        onReplay: () => setReplays((n) => n + 1),
         onFatal: (reason: string) => {
           try { engineRef.current?.stop(); } catch { /* ignore */ }
           engineRef.current = null; stopTimer(); setListening(false);
@@ -1169,6 +1177,8 @@ export default function RegistrationV2Page() {
       + (lostToGuard.length ? "  [" + lostToGuard.join(" ") + "]" : ""));
     L.push("نص فيه أرقام والشكل مش لوحة: " + malformed.length);
     for (const m of malformed) L.push("   • «" + m.rawText + "» → «" + m.plate + "»");
+    L.push("");
+    L.push("🔁 نوافذ فايتة اتبعتت تاني بعد وقعة الشبكة: " + replays);
     L.push("");
     L.push("── نوافذ ماتبعتتش ──");
     if (!Object.keys(skips).length) L.push("ولا نافذة اتخطّت ✓");
@@ -1794,6 +1804,14 @@ export default function RegistrationV2Page() {
               )}
             </Block>
 
+            <Block title="🔁 الاسترجاع بعد وقعة الشبكة">
+              <Kv k="نوافذ فايتة اتبعتت تاني" v={String(replays)} />
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                لما الشبكة تقع، النوافذ اللي ماوصلتش بتتحفظ، وأول ما ترجع بتتبعت تاني
+                من ذاكرة الموبايل (آخر ٩٠ ثانية) — فاللوحات ماتضيعش.
+              </p>
+            </Block>
+
             <Block title="نوافذ ماتبعتتش">
               {Object.keys(skips).length === 0
                 ? <p className="text-[11px] text-emerald-600">✓ ولا نافذة اتخطّت</p>
@@ -2041,8 +2059,9 @@ const SKIP_LABEL: Record<string, string> = {
   slice_failed: "القصّ رجع فاضي — الميك مش بيملا الذاكرة",
   empty_slice: "المقطع طلع فاضي عملياً (بايت)",
   too_short: "النافذة أقصر من ٠.٦ ثانية",
-  busy_window: "الموديل كان مشغول (نافذة زاحفة — عادي)",
+  busy_window: "الموديل كان مشغول (نافذة زاحفة — بتتسجّل وتتبعت تاني)",
   yield_to_utterance: "اتنازلت لقراءة نطق مستنية (عادي)",
   utterance_queue_full: "الطابور اتملا — بتتكلّم أسرع من رد السيرفر",
-  request_failed: "🔴 الطلب اتبعت وفشل",
+  request_failed: "🔴 الطلب اتبعت وفشل (بيتسجّل ويتبعت تاني لما الشبكة ترجع)",
+  replay_failed: "🔁 إعادة إرسال فشلت (الشبكة لسه مش مستقرّة — هتتعاد)",
 };
