@@ -686,18 +686,21 @@ export async function parseExcelStream(data: Uint8Array): Promise<ExcelTable> {
   }
   const main = buildTableFromAoa(chosen.aoa, chosen.name, allSheetNames);
 
-  // محفظة على أكتر من ورقة → ندمج كل ورقة فيها لوحات. من غير كده لوحات
+  // محفظة على أكتر من ورقة → ندمج **كل** ورقة فيها لوحات. من غير كده لوحات
   // الورقة التانية ماكانتش تدخل الفرز خالص («مجمع الجبر»: ٧ لوحات ضاعوا).
-  // ورقة «تشييك» استثناء — لها معنى محدد فبتفضل لوحدها.
-  const hasCheckSheet = sheets.some((s) => s.name.trim() === "تشييك");
+  //
+  // 🔴 قبل كده كنا بنستثني الدمج لو فيه ورقة اسمها «تشييك» (نفترض إنها هي
+  // الداتا والباقي ضجيج). لكن ده كان بيرمي لوحات في صمت: ملف تشييك حقيقي كان
+  // الداتا فيه في ورقة «العربي» (٦٣ ألف لوحة) وورقة «تشييك» مجرّد ملخّص بلا
+  // لوحات — والاستثناء كان بيمنع دمج أي ورقة تانية. دلوقتي بندمج كل ورقة فيها
+  // لوحات فعلاً (الورقات اللي بلا لوحات — تعليمات/ملخّص — بتتخطى بشرط العدّ)،
+  // فمافيش لوحة مطلوبة بتضيع من المطابقة. أول ظهور يكسب عند التكرار.
   const extras: ExcelTable[] = [];
-  if (!hasCheckSheet) {
-    for (const s of withRows) {
-      if (s === chosen || _plateCountInAoa(s.aoa) === 0 || s.aoa.length < 2) continue;
-      try {
-        extras.push(buildTableFromAoa(s.aoa, s.name, allSheetNames));
-      } catch { /* ورقة مكسورة — نتخطاها بدل ما نرفض المحفظة كلها */ }
-    }
+  for (const s of withRows) {
+    if (s === chosen || _plateCountInAoa(s.aoa) === 0 || s.aoa.length < 2) continue;
+    try {
+      extras.push(buildTableFromAoa(s.aoa, s.name, allSheetNames));
+    } catch { /* ورقة مكسورة — نتخطاها بدل ما نرفض المحفظة كلها */ }
   }
   return extras.length ? mergeExcelTables([main, ...extras]) : main;
 }
