@@ -68,6 +68,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSync";
 import { backfillMissingGps } from "@/lib/gpsBackfill";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
+import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -171,6 +172,10 @@ export default function RegistrationV2Page() {
   useEffect(() => { noGpsRef.current = noGps; }, [noGps]);
   /** ⑩ب التصدير التلقائي — بيسأل عند قفل التسجيل. */
   const [autoExport, setAutoExport] = useState(false);
+  /** ⑫ زوم جدول اللوحات — جوّه المربّع بس، مش زوم الصفحة. */
+  const [zoom, setZoom] = useState(1);
+  /** ⑭ شكل تاني للمربّع — «فخم وعصري وبخط مختلف» بطلب المالك. */
+  const [fancy, setFancy] = useState(false);
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -1204,33 +1209,89 @@ export default function RegistrationV2Page() {
           placeholder="اسم المندوب" />
       </section>
 
-      {/* ── اللوحات ── */}
-      <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+      {/*
+        * ── اللوحات ──
+        * ⑭ **شكلين**: العادي، و«الفخم» اللي المالك طلبه — خلفية غامقة
+        * متدرّجة وحدود ذهبية وخط أوسع. الزرّ جنب العنوان بيبدّل بينهم،
+        * وبيغيّر **خروج اللوحات** كمان (الصفوف بتبقى أوسع وأوضح).
+        */}
+      <section className={"mt-3 rounded-2xl p-3 shadow-sm transition "
+        + (fancy
+          ? "border-2 border-amber-300/70 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-100 shadow-lg shadow-amber-900/10"
+          : "border border-slate-200 bg-white")}>
         <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-sm font-black">اللوحات</h2>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{rows.length}</span>
+          <h2 className={"text-sm font-black " + (fancy ? "tracking-widest" : "")}>اللوحات</h2>
+          {/*
+            * ⑭ 🎨 **زرّ الشكل** — جنب كلمة «اللوحات» بطلب المالك:
+            * «ضيف في المربّع من فوق شكل تاني مختلف تماماً وعصري وبخط مختلف،
+            * يبقى زي ديزاين للمربّع يكون فخم، ولما المندوب يدوس عليه وعايز
+            * يغيّر شكل ديزاين المربّع وخروج اللوحات يظهر معاه».
+            */}
+          <button onClick={() => setFancy((v) => !v)} title="غيّر شكل المربّع"
+            className={"rounded-full border px-2 py-0.5 text-[10px] font-black transition "
+              + (fancy
+                ? "border-amber-400/60 bg-gradient-to-l from-amber-200 to-amber-50 text-amber-900"
+                : "border-slate-200 bg-white text-slate-500")}>
+            ✨ الشكل
+          </button>
+          <span className={"rounded-full px-2 py-0.5 text-[11px] font-bold "
+            + (fancy ? "bg-amber-400/15 text-amber-200" : "bg-slate-100 text-slate-600")}>{rows.length}</span>
           {hits > 0 && (
             <span className="flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-700">
               <BellRing size={11} /> مطلوبة {hits}
             </span>
           )}
+          {/* ⑫ ➖ ➕ — والبنش بالصباعين شغّال كمان (touch-pinch-zoom) */}
+          {rows.length > 0 && (
+            <div className="mr-auto flex items-center gap-0.5">
+              <button onClick={() => setZoom((z) => stepZoom(z, -1))} disabled={zoom <= ZOOM_MIN}
+                title="تصغير" className="rounded-lg border border-slate-200 px-2 py-0.5 text-sm font-black text-slate-600 disabled:opacity-40">−</button>
+              <span className="w-9 text-center font-mono text-[10px] tabular-nums text-slate-400">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button onClick={() => setZoom((z) => stepZoom(z, +1))} disabled={zoom >= ZOOM_MAX}
+                title="تكبير" className="rounded-lg border border-slate-200 px-2 py-0.5 text-sm font-black text-slate-600 disabled:opacity-40">+</button>
+            </div>
+          )}
         </div>
 
         {rows.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-400">
+          <p className={"py-8 text-center text-xs " + (fancy ? "text-slate-400" : "text-slate-400")}>
             {listening ? "قول لوحة…" : "مافيش لوحات لسه — دوس ابدأ التسجيل."}
           </p>
         ) : (
           /* 📊 جدول زي الإكسل — كل عمود فيه حاجة واحدة، بطلب المالك.
              بيتمرّر أفقياً على الموبايل بدل ما الأعمدة تتلخبط فوق بعض. */
-          <div className="-mx-1 overflow-x-auto">
+          /*
+             * ⑫ **الزوم جوّه المربّع** — `touch-pinch-zoom` بيدّي البنش
+             * بالصباعين، و`scale` مع `zoomedMinWidth` بيدّي الزرّين.
+             *
+             * 🔴 **وليه العرض الأدنى بيتكبّر مع الزوم**: `scale` بيكبّر
+             * المحتوى **من غير** ما يكبّر المساحة اللي بيتمرّر فيها، فآخر
+             * عمود بيتقص ومافيش تمرير يوصّله. تكبير العرض بنفس النسبة هو
+             * اللي بيحقّق شرط المالك «ميتاكلش منه حاجة».
+             * (`origin-top-right` عشان الجدول عربي بيبدأ من اليمين.)
+             */
+          <div className="-mx-1 overflow-x-auto" style={{ touchAction: "pinch-zoom pan-x pan-y" }}>
             {/*
               * ⑬ **فواصل بين كل عمود والتاني** بطلب المالك — `divide-x` على
               * الصف بيرسم خط بين كل خليتين. والجدول نفسه محاط بحدود.
               */}
-            <table className="w-full min-w-[640px] border-collapse text-[11px]">
+            <table
+              className={"w-full border-collapse origin-top-right transition-[transform] "
+                + (fancy
+                  ? "text-[12px] font-[system-ui] tracking-wide"
+                  : "text-[11px]")}
+              style={{
+                minWidth: zoomedMinWidth(640, zoom) + "px",
+                transform: "scale(" + clampZoom(zoom) + ")",
+                width: (100 / clampZoom(zoom)) + "%",
+              }}>
               <thead>
-                <tr className="divide-x divide-slate-200 border-b-2 border-slate-300 bg-slate-50 text-[10px] text-slate-500">
+                <tr className={"divide-x border-b-2 text-[10px] "
+                  + (fancy
+                    ? "divide-slate-700 border-amber-400/50 bg-slate-950/40 text-amber-300/80"
+                    : "divide-slate-200 border-slate-300 bg-slate-50 text-slate-500")}>
                   {/* ⑥ عمود صغير للمسح — على قد العلامة بالظبط */}
                   <Th className="w-7">{""}</Th>
                   <Th className="w-8">#</Th>
@@ -1257,8 +1318,11 @@ export default function RegistrationV2Page() {
               <tbody>
                 {rows.flatMap((r, i) => [
                   <tr key={r.id}
-                    className={"divide-x divide-slate-100 border-b border-slate-200 "
-                      + (r.match ? "bg-rose-50 " : "")
+                    className={"divide-x border-b "
+                      /* ⑭ الشكل الفخم بيغيّر **خروج اللوحات** كمان — صفوف
+                         أوسع وحدود أهدى وخلفية غامقة، زي ما المالك طلب. */
+                      + (fancy ? "divide-slate-800 border-slate-700/70 [&>td]:py-2.5 " : "divide-slate-100 border-slate-200 ")
+                      + (r.match ? (fancy ? "bg-rose-950/40 " : "bg-rose-50 ") : "")
                       /**
                        * 🔴 كان `opacity-60` — والمالك قال «بتظهر مطفية
                        * وبتقعد فترة طويلة». اللوحة **موجودة وصحيحة**
@@ -1295,8 +1359,12 @@ export default function RegistrationV2Page() {
                       ) : (
                         <button type="button" onClick={() => setEditing({ id: r.id, field: "plate" })}
                           className="group flex items-center gap-1">
-                          <span dir="ltr" className={"font-mono text-base font-black tracking-[0.15em] tabular-nums "
-                            + (r.match ? "text-rose-700" : r.provisional ? "text-amber-700" : "text-indigo-700")}>{r.plate}</span>
+                          <span dir="ltr" className={"font-mono font-black tabular-nums "
+                            /* ⑭ في الشكل الفخم اللوحة أكبر وحروفها أوسع */
+                            + (fancy ? "text-lg tracking-[0.25em] " : "text-base tracking-[0.15em] ")
+                            + (fancy
+                              ? (r.match ? "text-rose-300" : r.provisional ? "text-amber-300" : "text-amber-100")
+                              : (r.match ? "text-rose-700" : r.provisional ? "text-amber-700" : "text-indigo-700"))}>{r.plate}</span>
                           <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
                         </button>
                       )}
