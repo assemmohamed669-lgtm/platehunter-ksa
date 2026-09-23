@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
-  TRIAL_MODEL_BASE, shouldAskType,
+  TRIAL_MODEL_BASE, shouldAskType, tokenProbeVerdict,
 } from "../lib/trialModelGate";
 
 /**
@@ -126,8 +126,13 @@ describe("resolveTrialEndpoint — سيرفر التجربة مثبّت في ا�
   it("محفوظ ناقص ⇒ الناقص بس يتاخد من المثبّت/الداتابيز", () => {
     expect(resolveTrialEndpoint({ base: "https://other.example", token: "" }, "db-secret"))
       .toEqual({ base: "https://other.example", token: "db-secret" });
+    /**
+     * ⚠️ عنوان فاضي ⇒ بنقع على سيرفرنا المثبّت ⇒ **توكن الداتابيز يغلب**
+     * المحفوظ. القاعدة دي اتغيّرت بقصد بعد بلاغ «اللوحات مش بتطلع» —
+     * التفصيل في وصف `توكن الداتابيز يغلب المحفوظ القديم` تحت.
+     */
     expect(resolveTrialEndpoint({ base: "  ", token: "tk" }, "db-secret"))
-      .toEqual({ base: TRIAL_MODEL_BASE, token: "tk" });
+      .toEqual({ base: TRIAL_MODEL_BASE, token: "db-secret" });
   });
 
   it("المثبّت + توكن الداتابيز لازم يعدّوا حارس التشغيل (https + توكن)", () => {
@@ -165,5 +170,77 @@ describe("shouldAskType — ماننداش سيرفر النوع وهو مقفو
   it("بيسأل لو الفحص لسه ماتعملش — الفشل بيفتح مش بيقفل", () => {
     expect(shouldAskType(null)).toBe(true);
     expect(shouldAskType(undefined)).toBe(true);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 توكن محفوظ **قديم** كان بيكتّم الصفحة
+ * ══════════════════════════════════════════════════════════════════════
+ *  بلاغ المالك (٢٣ سبتمبر ٢٠٢٦، بعد تغيير التوكن): «ظهرت تحت تمام بس
+ *  المشكلة إني بقول لوحات مش بتطلع معايا».
+ *
+ *  السبب: الصفحة فيها مربّع إعداد بيحفظ العنوان **والتوكن** في تخزين
+ *  الموبايل (`readJudgeEndpoint`). والمالك كان حافظ فيه التوكن القديم
+ *  (`plate-voice-lab-local-dev`) من قبل ما نغيّره. وقاعدة «المحفوظ يدوياً
+ *  يغلب» خلّت القديم يغلب اللي جاي من الداتابيز ⇒ السيرفر بيرفض **كل
+ *  نافذة** بـ401 ⇒ **ولا لوحة تطلع**.
+ *
+ *  وأسوأ حاجة إن الصفحة كانت بتقول «متصل ✓» — لأن `/health` على السيرفر
+ *  **مابيطلبش توكن أصلاً**، ففحص الاتصال كان بيعدّي بأي توكن غلط.
+ *
+ *  ⇒ التوكن بقى **سرّ مُدار من الداتابيز**، مش إعداد يدوي. فلما العنوان
+ *    هو سيرفرنا المثبّت، **توكن الداتابيز يغلب** أي محفوظ قديم.
+ *
+ *  ⚠️ بس **العنوان المخصّص بيفضل ياخد توكنه المحفوظ**: لو المالك وجّه
+ *    الصفحة لسيرفر تاني (تجربة/طوارئ)، توكن سيرفرنا مالوش لازمة هناك.
+ */
+describe("توكن الداتابيز يغلب المحفوظ القديم", () => {
+  it("🔴 عنوان مثبّت + محفوظ قديم ⇒ **توكن الداتابيز**", () => {
+    expect(resolveTrialEndpoint({ base: TRIAL_MODEL_BASE, token: "plate-voice-lab-local-dev" }, "db-secret"))
+      .toEqual({ base: TRIAL_MODEL_BASE, token: "db-secret" });
+  });
+
+  it("مافيش عنوان محفوظ + محفوظ قديم ⇒ توكن الداتابيز", () => {
+    expect(resolveTrialEndpoint({ token: "plate-voice-lab-local-dev" }, "db-secret"))
+      .toEqual({ base: TRIAL_MODEL_BASE, token: "db-secret" });
+  });
+
+  it("⚠️ عنوان **مخصّص** ⇒ التوكن المحفوظ يفضل يغلب", () => {
+    expect(resolveTrialEndpoint({ base: "https://other.example", token: "tk" }, "db-secret"))
+      .toEqual({ base: "https://other.example", token: "tk" });
+  });
+
+  it("عنوان مخصّص بلا توكن محفوظ ⇒ توكن الداتابيز (أحسن من ولا حاجة)", () => {
+    expect(resolveTrialEndpoint({ base: "https://other.example" }, "db-secret"))
+      .toEqual({ base: "https://other.example", token: "db-secret" });
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 فحص الاتصال لازم يفحص **التوكن** كمان
+ * ══════════════════════════════════════════════════════════════════════
+ *  `/health` مابيطلبش توكن، فكان بيقول «متصل ✓» وكل نافذة بتترفض بصمت.
+ *  ده أخطر من عطل واضح — المالك بيسجّل وهو فاكر إن كل حاجة تمام.
+ *
+ *  الحل: نبعت `POST /transcribe` **بجسم فاضي**. السيرفر بيتحقق من التوكن
+ *  **قبل** ما يبص على الصوت (`_auth()` ثم `if not raw`)، فالرد بيفرّق:
+ *      401 ⇒ التوكن غلط          400 ⇒ التوكن تمام (بس مافيش صوت)
+ *  وده فحص رخيص — مافيش صوت بيترفع ومافيش شغل على الكارت.
+ */
+describe("tokenProbeVerdict — الفحص يفرّق بين توكن غلط وسيرفر واقع", () => {
+  it("400 (مافيش صوت) ⇒ التوكن سليم", () => {
+    expect(tokenProbeVerdict(400)).toBe("ok");
+  });
+
+  it("401 ⇒ التوكن مرفوض", () => {
+    expect(tokenProbeVerdict(401)).toBe("bad_token");
+  });
+
+  it("أي كود تاني ⇒ مش معروف، مانقولش إنه سليم", () => {
+    expect(tokenProbeVerdict(500)).toBe("other");
+    expect(tokenProbeVerdict(404)).toBe("other");
+    expect(tokenProbeVerdict(0)).toBe("other");
   });
 });

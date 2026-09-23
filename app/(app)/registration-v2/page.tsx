@@ -48,9 +48,10 @@ import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
-import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
+import { readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
+  tokenProbeVerdict,
 } from "@/lib/trialModelGate";
 import { sameCarTwin, heardNotShown, isExactRepeatNearby } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
@@ -372,7 +373,31 @@ export default function RegistrationV2Page() {
       else if (!res.ok) setProbe({ ok: false, msg: "السيرفر ردّ بكود " + res.status + "." });
       else {
         const body = await res.json() as { model?: string; device?: string };
-        setProbe({ ok: true, msg: (body.model ?? "الموديل") + " على " + (body.device === "cuda" ? "كارت الشاشة" : body.device ?? "الجهاز") });
+        /**
+         * 🔴 **`/health` مابيطلبش توكن** — فنجاحه **مش** دليل إن التوكن سليم.
+         *
+         * بلاغ المالك (٢٣ سبتمبر ٢٠٢٦): الصفحة قالت «متصل ✓» وكل نافذة
+         * بتترفض بصمت (توكن قديم محفوظ) ⇒ ولا لوحة طلعت. ده أخطر من عطل
+         * واضح لأنه بيسجّل وهو مطمّن.
+         *
+         * فبنبعت `POST /transcribe` **بجسم فاضي**: السيرفر بيتحقق من التوكن
+         * قبل ما يبص على الصوت، فـ401 = توكن غلط و400 = توكن تمام. رخيص —
+         * مافيش صوت بيترفع ومافيش شغل على الكارت.
+         */
+        let verdict: ReturnType<typeof tokenProbeVerdict> = "other";
+        try {
+          const r = await fetch(b + "/transcribe", {
+            method: "POST", headers: { "X-Plate-Token": t }, body: new Blob([]), signal: to(),
+          });
+          verdict = tokenProbeVerdict(r.status);
+        } catch { /* الشبكة — بنسيبها "other" */ }
+
+        if (verdict === "bad_token") {
+          setProbe({ ok: false, msg: "واصل بس **التوكن مرفوض** — اضغط «مسح الإعداد» تحت وافتح الصفحة تاني." });
+        } else {
+          const dev = body.device === "cuda" ? "كارت الشاشة" : body.device ?? "الجهاز";
+          setProbe({ ok: true, msg: (body.model ?? "الموديل") + " على " + dev + (verdict === "ok" ? " · التوكن سليم ✓" : "") });
+        }
       }
     } catch {
       setProbe({ ok: false, msg: "مافيش رد — السيرفر مقفول أو عنوان النفق اتغيّر." });
@@ -919,6 +944,24 @@ export default function RegistrationV2Page() {
           if (!ok) setError("العنوان أو التوكن شكلهم مش سليم."); else void probeModel();
         }} className="rounded-lg border border-slate-200 py-2 text-xs font-bold text-slate-700">
           {saved ? "اتحفظ ✓" : "احفظ وافحص"}
+        </button>
+        {/*
+          * 🧹 **مسح الإعداد** — بيرجّع الصفحة للعنوان المثبّت وتوكن الداتابيز.
+          *
+          * لازم لأن الإعداد المحفوظ بيعيش في تخزين الموبايل: المالك كان حافظ
+          * التوكن القديم، وبعد ما غيّرناه فضلت كل نافذة تترفض بـ401 **وولا
+          * لوحة تطلع** — والصفحة كانت بتقول «متصل ✓» لأن /health مابيطلبش توكن.
+          */}
+        <button onClick={async () => {
+          try { clearJudgeEndpoint(); } catch { /* ignore */ }
+          setSaved(false); setProbe(null); setError(null);
+          const dbToken = await fetchTrialToken();
+          const ep = resolveTrialEndpoint(null, dbToken);
+          setModelUrl(ep.base); setModelToken(ep.token);
+          if (!ep.token) setError("مافيش توكن في الداتابيز — شغّل docs/sql/trial-model-token.sql.");
+          else void probeModel();
+        }} className="col-span-2 rounded-lg border border-amber-300 bg-amber-50 py-2 text-xs font-bold text-amber-800">
+          🧹 مسح الإعداد وارجع للمثبّت
         </button>
       </div>
 
