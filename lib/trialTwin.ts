@@ -48,6 +48,28 @@ export const TWIN_MAX_DIGIT_DIFF = 2;
  */
 export const EXACT_REPEAT_MS = 120_000;
 
+/**
+ * 🔴 **الفاصل هو اللي يحكم، مش الوقت** (جلسة المالك ٢٣ سبتمبر · ٥٠ لوحة).
+ *
+ * الحد الزمني (دقيقتين) ضيّع إعادة مقصودة: المالك قال `دمس5284` مرتين
+ * بينهم **٤ لوحات تانية**، وطلعت مرة واحدة.
+ *
+ * القاعدة الصح: نفس اللوحة تتلمّ **بس لو هي آخر صف** — يعني النطقة
+ * الواحدة اتقرت في نافذتين. أما لو بينهم لوحات تانية فدي **إعادة
+ * مقصودة** ولازم تطلع صف لوحدها.
+ *
+ * وده بيصلّح الشكوى الأصلية كمان: الصفوف المكرّرة اللي اشتكى منها
+ * (`رره6232` ×٣) كانت **متتالية**، فبتتلمّ عادي.
+ */
+export function isExactRepeatOfLatest(
+  plate: string,
+  shownPlatesNewestFirst: readonly string[],
+): boolean {
+  const p = String(plate ?? "").trim();
+  if (!p) return false;
+  return (shownPlatesNewestFirst ?? [])[0] === p;
+}
+
 export interface TwinRow {
   plate: string;
   /** زمن النطق داخل الجلسة (مللي) */
@@ -71,8 +93,18 @@ export function sameCarTwin(a: TwinRow, b: TwinRow, windowMs: number): boolean {
   const pb = String(b?.plate ?? "");
   if (!WELL.test(pa) || !WELL.test(pb)) return false;
   const gap = Math.abs((a.atMs ?? 0) - (b.atMs ?? 0));
-  // 🔴 المتطابقة حرف بحرف: نافذة أوسع (نفس العربية يقيناً). شوف `EXACT_REPEAT_MS`.
-  if (pa === pb) return gap <= EXACT_REPEAT_MS;
+  /**
+   * 🔴 **المتطابقة حرف بحرف بيحكمها الفاصل، مش الوقت.**
+   *
+   * الحد الزمني (دقيقتين) ضيّع إعادة مقصودة عند المالك: قال `دمس5284`
+   * مرتين بينهم ٤ لوحات، وطلعت مرة واحدة. فالمقارنة الزمنية هنا بقت
+   * **مساعدة بس** — القرار الحقيقي عند المنادي عبر
+   * `isExactRepeatOfLatest` (تتلمّ لو هي **آخر صف** بس).
+   *
+   * وبنسيب حد زمني صغير كحارس أخير: نطقة واحدة بتتقري في نوافذ خلال
+   * ثواني، مش دقايق.
+   */
+  if (pa === pb) return gap <= windowMs;
   if (gap > windowMs) return false;
 
   const la = pa.slice(0, 3), lb = pb.slice(0, 3);
