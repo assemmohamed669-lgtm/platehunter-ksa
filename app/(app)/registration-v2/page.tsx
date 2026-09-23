@@ -60,7 +60,7 @@ import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
-  stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp,
+  stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp, firstFailureReason,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
@@ -1309,7 +1309,12 @@ export default function RegistrationV2Page() {
       });
       const settled = await Promise.allSettled(entries.map((e) => saveFieldCheckEntry(e)));
       const okIds = savedIds(entries.map((e) => e.id), settled);
-      if (!okIds.length) { setError("مانفعش يتحفظ ولا سجل — جرّب تاني."); return; }
+      if (!okIds.length) {
+        // 🔎 السبب في آخر الرسالة — من غيره صورة الشاشة ماكانتش بتقول حاجة
+        const why = firstFailureReason(settled);
+        setError("مانفعش يتحفظ ولا سجل — جرّب تاني." + (why ? " (السبب: " + why + ")" : ""));
+        return;
+      }
 
       // 🧹 اللي اتكتب بس يتشال — الباقي يفضل قدام المندوب
       const savedRowIds = new Set(ready.filter((r) => okIds.includes(trialEntryId(r.id))).map((r) => r.id));

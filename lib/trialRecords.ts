@@ -193,6 +193,30 @@ export function exportableTrialRows<T extends { lat: number | null; lng: number 
  * نفس حارس صفحة التشييك (`Promise.allSettled` + فلترة `fulfilled`): لو
  * الكتابة فشلت، الصف يفضل قدام المندوب بدل ما يختفي ويضيع.
  */
+/**
+ * سبب أول فشل في الحفظ — بيتكتب في آخر رسالة «مانفعش يتحفظ».
+ *
+ * بلاغ المالك (٢٤ سبتمبر ٢٠٢٦): الرسالة ماكانتش بتقول السبب، فمكانش فيه طريقة
+ * نعرف من صورة الشاشة إذا كان اتصال ميت ولا مساحة خلصت. اسم الغلط (زي
+ * `QuotaExceededError`) لو فيه، وإلا الرسالة، ومقصوص عشان يتقري على الموبايل.
+ */
+export function firstFailureReason(settled: readonly PromiseSettledResult<unknown>[]): string | null {
+  const bad = (settled ?? []).find((s) => s?.status === "rejected") as PromiseRejectedResult | undefined;
+  if (!bad) return null;
+  const e = bad.reason as { name?: unknown; message?: unknown } | null | undefined;
+  let text = "";
+  if (e && typeof e === "object") {
+    const name = typeof e.name === "string" ? e.name : "";
+    const msg = typeof e.message === "string" ? e.message : "";
+    text = name && name !== "Error" ? name : (msg || name);
+  } else if (e != null) {
+    text = String(e);
+  }
+  text = text.trim();
+  if (!text) return "غير معروف";
+  return text.length > 80 ? text.slice(0, 79) + "…" : text;
+}
+
 export function savedIds(
   ids: readonly string[],
   settled: readonly PromiseSettledResult<unknown>[]
