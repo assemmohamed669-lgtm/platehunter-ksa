@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { voiceTabVisible } from "@/lib/voiceAccess";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
   TRIAL_MODEL_BASE, shouldAskType, tokenProbeVerdict,
@@ -25,28 +26,114 @@ import {
  *     شايف نتيجة المحرك العام. التجربة لازم **ترفض تشتغل** بلا موديلنا.
  */
 
-describe("canOpenTrialPage — للأدمنز", () => {
-  it("الأدمن يفتح", () => {
-    expect(canOpenTrialPage({ role: "admin", is_super: false })).toBe(true);
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  مين يفتح «الجديد» — **نفس قاعدة «صوتي» بالظبط**
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦):
+ *    «الصفحة تتقفل فقط على اللي مش مشترك معانا في خدمة الصوت»
+ *    «واربطلي الصفحة دي بزرّ فتح الصوت… لو مقفول عنده الصوت، الصفحة دي
+ *     متظهرش معاه ولا صوتي»
+ *
+ *  🔴 **مصدر واحد للحقيقة**: `voiceTabVisible` — الدالة اللي «صوتي»
+ *  ماشية عليها. والزرّين بتوع المالك (عند عمل الإيميل `create-agent`،
+ *  وفي صفحة كل مندوب `manage-agent`) بيكتبوا `voicex_enabled` — فالزرّ
+ *  الواحد بيقفل ويفتح الاتنين مع بعض **من غير أي كود في صفحات الأدمن**.
+ *
+ *  ⚠️ **الأدمن مالوش استثناء**: «صوتي» مابتفتحش لأدمن مالوش صوت، و«الجديد»
+ *  زيها بالظبط. السوبر أدمن بس هو اللي مالوش حدّ (زي «صوتي»).
+ */
+describe("canOpenTrialPage — نفس قاعدة «صوتي»", () => {
+  // عمود `voicex_until` نوعه `date` في الداتابيز ⇒ صيغة YYYY-MM-DD (زي ما
+  // `serviceActive` مستنية). تاريخ بالساعة كان بيطلع Invalid Date.
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const future = ymd(new Date(Date.now() + 30 * 864e5));
+  const past = ymd(new Date(Date.now() - 3 * 864e5));
+
+  it("🔴 مشترك الصوت (مفعّل + أيامه سارية) يفتح", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: future })).toBe(true);
   });
 
-  it("السوبر أدمن يفتح كمان (مالكش معنى تقفلها عليه)", () => {
+  it("مشترك الصوت بلا تاريخ نهاية = سارية (زي صوتي)", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: null })).toBe(true);
+  });
+
+  it("🔴 الصوت مقفول ⇒ **مايفتحش**", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: false })).toBe(false);
+  });
+
+  it("🔴 أيام الصوت خلصت ⇒ **مايفتحش**", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: past })).toBe(false);
+  });
+
+  it("السوبر أدمن يفتح دايماً (زي صوتي)", () => {
     expect(canOpenTrialPage({ role: "agent", is_super: true })).toBe(true);
   });
 
-  it("🔴 المندوب العادي **مايفتحش**", () => {
-    expect(canOpenTrialPage({ role: "agent", is_super: false })).toBe(false);
-    expect(canOpenTrialPage({ role: "leader", is_super: false })).toBe(false);
-    expect(canOpenTrialPage({ role: "member", is_super: false })).toBe(false);
-    expect(canOpenTrialPage({ role: "off", is_super: false })).toBe(false);
+  it("⚠️ الأدمن بلا صوت مايفتحش — زي صوتي بالظبط", () => {
+    expect(canOpenTrialPage({ role: "admin", voicex_enabled: false })).toBe(false);
+  });
+
+  it("الأدمن اللي عنده صوت يفتح", () => {
+    expect(canOpenTrialPage({ role: "admin", voicex_enabled: true, voicex_until: future })).toBe(true);
   });
 
   it("🔴 بروفايل ناقص/بايظ = **مقفول** — الفشل بيقفل مش بيفتح", () => {
     expect(canOpenTrialPage(null)).toBe(false);
     expect(canOpenTrialPage(undefined)).toBe(false);
     expect(canOpenTrialPage({})).toBe(false);
-    expect(canOpenTrialPage({ role: null, is_super: null })).toBe(false);
-    expect(canOpenTrialPage({ role: "Admin", is_super: false })).toBe(false);   // حسّاس لحالة الحروف
+  });
+
+  /**
+   * 🔴 المالك (٢٣ سبتمبر ٢٠٢٦) قبل الفتح للمناديب: «الصفحة مش هتظهر غير
+   * لمشتركين الصوت فقط، سواء مشتركين أو مفتوحلهم تجربة — أهم حاجة مفتاح
+   * الصوت يكون فعّال عندهم… لازم تأكدلي عليها».
+   *
+   * حساب التجربة (`create-agent`) بياخد `voicex_enabled` من نفس زرّ «فتح
+   * الصوت» و`voicex_until` = نهاية التجربة — فالحكم هو المفتاح + التاريخ.
+   */
+  // التاريخ بتوقيت الجهاز — `serviceActive` بتقارن بنص ليل الجهاز
+  const local = (d: Date) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+    + "-" + String(d.getDate()).padStart(2, "0");
+  const today = local(new Date());
+  const yesterday = local(new Date(Date.now() - 864e5));
+  const trial = (p: Record<string, unknown>) => ({ role: "agent", is_trial: true, ...p }) as never;
+
+  it("🔴 تجربة ومفتاح الصوت مفتوح ⇒ تفتح", () => {
+    expect(canOpenTrialPage(trial({ voicex_enabled: true, voicex_until: future }))).toBe(true);
+  });
+
+  it("🔴 تجربة ومفتاح الصوت مقفول ⇒ **ماتفتحش**", () => {
+    expect(canOpenTrialPage(trial({ voicex_enabled: false, voicex_until: future }))).toBe(false);
+  });
+
+  it("🔴 التجربة خلصت ⇒ **ماتفتحش** حتى لو المفتاح مفتوح", () => {
+    expect(canOpenTrialPage(trial({ voicex_enabled: true, voicex_until: yesterday }))).toBe(false);
+  });
+
+  it("آخر يوم في الاشتراك/التجربة هو النهارده ⇒ لسه تفتح", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: today })).toBe(true);
+  });
+
+  it("🔴 المفتاح مش متسجّل (فاضي) حتى لو التاريخ ساري ⇒ **ماتفتحش**", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: null, voicex_until: future } as never)).toBe(false);
+    expect(canOpenTrialPage({ role: "agent", voicex_until: future })).toBe(false);
+  });
+
+  it("باقي الصفحات مالهاش دعوة: صوت بس ⇒ تفتح · كل الصفحات بلا صوت ⇒ ماتفتحش", () => {
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: true, voicex_until: future, rest_pages_enabled: false } as never)).toBe(true);
+    expect(canOpenTrialPage({ role: "agent", voicex_enabled: false, voicex_until: future, rest_pages_enabled: true } as never)).toBe(false);
+  });
+
+  it("🔴 **نفس حكم «صوتي» في كل الحالات** — مصدر واحد للحقيقة", () => {
+    const enabled = [true, false, null, undefined];
+    const until = [future, today, yesterday, past, null, undefined];
+    const roles = ["agent", "admin"];
+    const supers = [true, false, null, undefined];
+    for (const e of enabled) for (const u of until) for (const role of roles) for (const sp of supers) {
+      const prof = { role, is_super: sp, voicex_enabled: e, voicex_until: u } as never;
+      expect(canOpenTrialPage(prof)).toBe(voiceTabVisible(prof, null));
+    }
   });
 });
 

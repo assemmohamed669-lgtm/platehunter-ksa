@@ -378,7 +378,7 @@ export default function RegistrationV2Page() {
       if (hit) openWith(hit.isSuper, hit.token);
 
       const [profRes, dbToken] = await Promise.all([
-        supabase.from("profiles").select("role, is_super").eq("id", userId).single(),
+        supabase.from("profiles").select("role, is_super, voicex_enabled, voicex_until").eq("id", userId).single(),
         fetchTrialToken(),
       ]);
       if (!alive) return;
@@ -388,11 +388,16 @@ export default function RegistrationV2Page() {
         if (!hit) setDenied("مش قادر أقرا صلاحيتك: " + profErr.message);
         return;
       }
+      /**
+       * 🔴 **نفس قاعدة «صوتي» بالظبط** — زرّ «فتح الصوت» (عند عمل الإيميل
+       * وفي صفحة كل مندوب) بيقفل ويفتح الاتنين مع بعض. شوف `canOpenTrialPage`.
+       * ولو الصوت اتقفل وهو فاتح من الذاكرة ⇒ الصفحة بتتقفل في التأكيد.
+       */
       if (!canOpenTrialPage(prof)) {
         forgetTrialGate();
         try { engineRef.current?.stop(); } catch { /* ignore */ }
         setListening(false); setAllowed(false);
-        setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن.");
+        setDenied("الصفحة دي لمشتركين خدمة الصوت. كلّم الإدارة تفتحلك الصوت.");
         return;
       }
       const sup = prof?.is_super === true;

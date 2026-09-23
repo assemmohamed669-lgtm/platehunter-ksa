@@ -25,8 +25,11 @@ describe("isAllowedForVoiceOnly", () => {
   });
 
   it("صفحات الخدمة المقفولة ممنوعة", () => {
+    // ⚠️ `/registration-v2` **اتشالت من هنا بقرار المالك** (٢٣ سبتمبر ٢٠٢٦) —
+    // كانت ممنوعة وهي للأدمن بس، ودلوقتي «الجديد» لمشتركين الصوت. التفصيل
+    // في «الجديد» لمشترك الصوت فقط تحت. `/registration` القديمة لسه ممنوعة.
     for (const p of ["/sorting", "/maps", "/wanted", "/list", "/backup",
-                     "/data-upload", "/group-records", "/group-sort", "/registration-v2"]) {
+                     "/data-upload", "/group-records", "/group-sort", "/registration"]) {
       expect(isAllowedForVoiceOnly(p)).toBe(false);
     }
   });
@@ -45,5 +48,33 @@ describe("isAllowedForVoiceOnly", () => {
   it("مسار فاضي أو مش معروف = ممنوع (الافتراضي الآمن)", () => {
     expect(isAllowedForVoiceOnly("")).toBe(false);
     expect(isAllowedForVoiceOnly("/حاجة-جديدة")).toBe(false);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 «الجديد» لمشترك الصوت فقط — كان هيترمي على التشييك
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «لو مشترك الصوت فقط بيظهر عنده صوتي تحت،
+ *  يظهر جنبها الصفحة الجديدة وتشتغل تصدير وكل حاجة زيها زي صوتي بالظبط».
+ *
+ *  التبويب اتضاف في الشريط، بس `app/(app)/layout.tsx` فيه حارس بيرجّع
+ *  مشترك الصوت فقط لـ`/instant-check` من **أي** مسار مش في القايمة — فكان
+ *  هيدوس «الجديد» **ويترمي على طول**. الصفحة لازم تبقى في القايمة.
+ *
+ *  ⚠️ والصفحة نفسها لسه بتقفل على اللي مالوش صوت (`canOpenTrialPage`) —
+ *     القايمة دي بتقول بس «مسموح يروح هناك»، مش «يدخل».
+ */
+describe("«الجديد» لمشترك الصوت فقط", () => {
+  it("🔴 مسموح — وإلا الحارس بيرجّعه للتشييك", () => {
+    expect(isAllowedForVoiceOnly("/registration-v2")).toBe(true);
+  });
+
+  it("بالكويري كمان", () => {
+    expect(isAllowedForVoiceOnly("/registration-v2?x=1")).toBe(true);
+  });
+
+  it("⚠️ **الصفحة القديمة** `/registration` لسه ممنوعة — حدود المسار", () => {
+    expect(isAllowedForVoiceOnly("/registration")).toBe(false);
   });
 });
