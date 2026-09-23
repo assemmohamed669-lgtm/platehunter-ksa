@@ -22,6 +22,14 @@ export interface MicEngineOptions {
   onLevel?: (level: number, waveform: Uint8Array) => void;
   onMaxDuration?: () => void;
   onError?: (error: Error) => void;
+  /**
+   * 📞 حالة تراك الميك — عشان نعرف إن **مكالمة أو تطبيق تاني أخد الميك**
+   * (`lib/micLoss.ts`). بيتربط **بس لو اتبعت** — «صوتي» مابيبعتوش فمافيش أي
+   * تغيير عليه.
+   */
+  onTrackState?: (state: "ended" | "muted" | "unmuted") => void;
+  /** 📞 حالة سياق الصوت (`interrupted` على الآيفون وقت المكالمة). نفس الشرط. */
+  onContextState?: (state: string) => void;
 }
 
 const WORKLET_SOURCE = `
@@ -105,6 +113,7 @@ export class MicEngine {
     this.actualSampleRate = this.ctx.sampleRate;
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this.source = this.ctx.createMediaStreamSource(this.stream);
+    this.watchInterruptions();
 
     const highpass = this.ctx.createBiquadFilter();
     highpass.type = "highpass"; highpass.frequency.value = 85; highpass.Q.value = 0.7;
@@ -172,6 +181,36 @@ export class MicEngine {
     this.running = true;
   }
 
+  /** 📞 مستمعين المكالمة — بيتربطوا بس لو الصفحة طلبتهم (شوف `onTrackState`). */
+  private unwatch: (() => void) | null = null;
+  private watchInterruptions(): void {
+    const { onTrackState, onContextState } = this.options;
+    if (!onTrackState && !onContextState) return;
+    const offs: Array<() => void> = [];
+    if (onTrackState) {
+      for (const track of this.stream?.getAudioTracks?.() ?? []) {
+        const onEnded = () => onTrackState("ended");
+        const onMute = () => onTrackState("muted");
+        const onUnmute = () => onTrackState("unmuted");
+        track.addEventListener("ended", onEnded);
+        track.addEventListener("mute", onMute);
+        track.addEventListener("unmute", onUnmute);
+        offs.push(() => {
+          track.removeEventListener("ended", onEnded);
+          track.removeEventListener("mute", onMute);
+          track.removeEventListener("unmute", onUnmute);
+        });
+      }
+    }
+    const ctx = this.ctx;
+    if (onContextState && ctx) {
+      const onState = () => onContextState(String(ctx.state));
+      ctx.addEventListener("statechange", onState);
+      offs.push(() => ctx.removeEventListener("statechange", onState));
+    }
+    this.unwatch = () => { for (const off of offs) { try { off(); } catch { /* ignore */ } } };
+  }
+
   private handleChunk(chunk: Float32Array) {
     if (!this.running) return;
     const startSec = (this.droppedSamples + this.storedSamples) / this.actualSampleRate;
@@ -203,6 +242,8 @@ export class MicEngine {
 
   stop(): void {
     this.running = false;
+    // 📞 نفك المستمعين **قبل** ما نقفل — القفل نفسه بيغيّر الحالة ومش مكالمة
+    if (this.unwatch) { this.unwatch(); this.unwatch = null; }
     if (this.levelTimer !== null) { cancelAnimationFrame(this.levelTimer); this.levelTimer = null; }
     for (const tap of [this.worklet, this.rawWorklet]) {
       if (!tap) continue;

@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 import path from "path";
 
 export default defineConfig({
+  // اختبارات المكوّنات (`.tsx`) — tsconfig بتاع Next على `jsx: preserve`، فمن
+  // غير ده أي اختبار بيستورد مكوّن فيه JSX بيفشل في التحليل قبل ما يشتغل.
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     environment: "jsdom",
     globals: true,
