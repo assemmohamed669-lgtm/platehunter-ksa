@@ -34,7 +34,7 @@ import {
 import { supabase } from "@/lib/supabaseClient";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
-import { buildCombinedCheckIndex, loadAllCheckSources } from "@/lib/checkSheets";
+import { buildCombinedCheckIndex } from "@/lib/checkSheets";
 import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
 import {
   pickTypeForPlate,
@@ -65,14 +65,16 @@ import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
-import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSync";
+import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } from "@/lib/checkSheetSync";
 import { backfillMissingGps } from "@/lib/gpsBackfill";
+import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chassisCache";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
 import { isLetterTwin, resolveLetterTwin } from "@/lib/letterTwin";
+import { wantedHits, shouldAlertNow, keepProvisional } from "@/lib/wantedFastPath";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -166,6 +168,8 @@ export default function RegistrationV2Page() {
   const [editing, setEditing] = useState<{ id: string; field: "type" | "note" | "plate" } | null>(null);
   const [checkName, setCheckName] = useState<string>("");
   const [checkFile, setCheckFile] = useState<File | null>(null);
+  /** آخر ختم تغيير للشيت اتقرا عنده — الرجوع من الخلفية بيقارن بيه. */
+  const loadedStampRef = useRef<string | null>(null);
   /** ② بيدوّر على قراءة أدقّ لما المندوب يدوس التحديث اليدوي. */
   const [gpsBusy, setGpsBusy] = useState(false);
   /**
@@ -413,30 +417,67 @@ export default function RegistrationV2Page() {
   }, [checkIndex]);
 
   /* ─── الشيت ───────────────────────────────────────────────────────── */
+  /**
+   * 📥 تحميل شيت التشييك — **خفيف**.
+   *
+   * 🔴 المالك (٢٣ سبتمبر ٢٠٢٦): «التنقل بين الصفحات بقى تقيل بعد ما ضيفنا
+   * الجديد». كانت كل فتحة للصفحة (وكل ما الموبايل يصحى) بتعمل:
+   *   ① تقرا الـ٤٩ ألف لوحة من IndexedDB
+   *   ② **تقراهم تاني** (`loadAllCheckSources` بيبدأ من الملف الأساسي نفسه)
+   *   ③ **تحلّل ملف الإكسيل كله من جديد** (`readAllSheets`) عشان الشاص
+   * والتالتة أتقل حاجة — ثواني على الخيط الرئيسي.
+   *
+   * دلوقتي:
+   *   · قراية واحدة للملف الأساسي، والإضافية بس بعده
+   *   · الصفحة بتتملى **على طول** (الشيت والصفّارة شغّالين فوراً)
+   *   · خريطة الشاص من **الكاش** لو نفس الملف (`lib/chassisCache.ts`)،
+   *     وإلا بتتحسب **بعد ما الصفحة تترسم** — فمابتعطّلش التنقل
+   */
   const loadCheck = useCallback(() => {
     void (async () => {
       try {
         const rec = await getUploadedFile("local", "check").catch(() => null);
-        if (!rec) { setCheckTable(null); setCheckSources([]); setCheckName(""); setCheckFile(null); return; }
-        setCheckTable({ headers: rec.headers, rows: rec.rows });
+        loadedStampRef.current = lastCheckSheetStamp();
+        if (!rec) {
+          setCheckTable(null); setCheckSources([]); setCheckName(""); setCheckFile(null);
+          setPlateChassis(new Map());
+          return;
+        }
+        const main: ExcelTable = { headers: rec.headers, rows: rec.rows };
+        // الإضافية (`check-2`، `check-3`…) — **من غير** ما نقرا الأساسي تاني
+        const sources: ExcelTable[] = [main];
+        for (let n = 2; n < 100; n++) {
+          const x = await getUploadedFile("local", `check-${n}`).catch(() => null);
+          if (!x) break;
+          sources.push({ headers: x.headers, rows: x.rows });
+        }
+        // ⚡ الصفحة بتتملى هنا — الشيت والصفّارة شغّالين من اللحظة دي
+        setCheckTable(main);
         setCheckName(rec.fileName || "ملف التشييك");
+        setCheckSources(sources);
         // المربّع بيعرض الملف المرفوع — بنعيد بناء `File` من الـblob المحفوظ.
         try {
           if (rec.fileBlob) setCheckFile(new File([rec.fileBlob], rec.fileName || "check.xlsx"));
         } catch { /* الـblob مش مقروء — الاسم لوحده كفاية */ }
 
-        const all = await loadAllCheckSources().catch(() => [] as ExcelTable[]);
-        const sources = all.length ? all : [{ headers: rec.headers, rows: rec.rows }];
-        setCheckSources(sources);
-
         /**
          * 🔧 لوحة ← رقم الهيكل من **كل ورقات** الملف.
          *
          * `parseExcelFile` بيقرا ورقة واحدة (بيفضّل «تشييك»)، وعمود الهيكل
-         * كتير بيكون في ورقة تانية — فالاعتماد على صف التشييك لوحده بيسيب
-         * الشاص فاضي. بنعمل زي مود «شاص» في صفحة التشييك: نقرا الـblob كله.
-         * فشل القراءة مابيوقّفش حاجة — الشاص بس بيفضل فاضي.
+         * كتير بيكون في ورقة تانية — فلازم نقرا الـblob كله. **بس مرة واحدة
+         * لكل ملف**: البصمة (من غير تاريخ) بتقول لو اتحسبت قبل كده.
          */
+        const extraKey = sources.slice(1).map((t) => t.rows.length).join(",");
+        const fp = (checkFingerprint(rec) ?? "") + "#" + extraKey;
+        const cached = getCachedChassis(fp);
+        if (cached) { setPlateChassis(cached); return; }
+
+        // ⏳ الحساب بعد ما الصفحة تترسم — مايعطّلش التنقل ولا أول لمسة.
+        await new Promise<void>((res) => {
+          const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+          if (typeof ric === "function") ric(() => res(), { timeout: 1500 });
+          else setTimeout(res, 50);
+        });
         const map = new Map<string, string>();
         const addSheet = (headers: string[], rows: Record<string, string>[]) => {
           const pCol = detectPlateColumn(headers, rows);
@@ -456,6 +497,7 @@ export default function RegistrationV2Page() {
             for (const sh of await readAllSheets(f)) addSheet(sh.headers, sh.rows);
           } catch { /* blob مش مقروء — نكتفي بالورقة المحمّلة */ }
         }
+        setCachedChassis(fp, map);
         setPlateChassis(map);
       } catch { /* مفيش شيت */ }
     })();
@@ -475,8 +517,16 @@ export default function RegistrationV2Page() {
    * — لأن الصفحتين مسارين منفصلين وواحدة بس بتكون متركّبة.
    */
   useEffect(() => {
-    const off = onCheckSheetChanged(() => loadCheck());
-    const onVis = () => { if (document.visibilityState === "visible") loadCheck(); };
+    // `idbEvent`: الشيت الجاي من واتساب كمان — كان مابيوصلش للصفحة دي.
+    const off = onCheckSheetChanged(() => loadCheck(), { idbEvent: true });
+    /**
+     * 🔴 الرجوع من الخلفية **بيعيد القراية بس لو فاتنا تغيير** — كانت بتقرا
+     * الـ٤٩ ألف لوحة من الأول كل ما الموبايل يصحى من القفل.
+     */
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      if (lastCheckSheetStamp() !== loadedStampRef.current) loadCheck();
+    };
     try { document.addEventListener("visibilitychange", onVis); } catch { /* ignore */ }
     return () => {
       off();
@@ -593,9 +643,10 @@ export default function RegistrationV2Page() {
     if (!listening) return;
     const id = setInterval(() => {
       const cut = Date.now() - PROVISIONAL_TTL_MS;
-      setRows((prev) => prev.some((r) => r.provisional && r.shownAt < cut)
-        ? prev.filter((r) => !(r.provisional && r.shownAt < cut))
-        : prev);
+      // 🔴 المطلوبة مابتتكنسش — الصفّارة ضربت والمندوب ممكن يكون واقف قدامها.
+      setRows((prev) => prev.every((r) => keepProvisional(r, cut))
+        ? prev
+        : prev.filter((r) => keepProvisional(r, cut)));
     }, 2000);
     return () => clearInterval(id);
   }, [listening]);
@@ -820,12 +871,28 @@ export default function RegistrationV2Page() {
            * طول (~٣ث)، والإجماع لما ييجي (~٧ث) يأكّدها 🟢 أو يصحّحها — لمّ
            * التوائم بيدمجهم. البوابة والمهلة في `provisionalRow.ts`.
            */
-          if (!showProvisional(r)) return;
+          /**
+           * 🔴 **الصفّارة من أول قراية — قبل أي بوابة.**
+           *
+           * المالك: «السيارة المطلوبة بتأخر ٦ ثواني… الصفّارة متأخرش أبداً».
+           * البوابة اللي تحت (ثقة ≥٩٠٪ ومش محجوبة) كانت بتخلّي العربية
+           * المطلوبة تستنى الإجماع لو أول قراية ليها أقل من كده.
+           * ⇒ الشيت بيتفحص **هنا الأول**، وتطابق تام ⇒ صفّارة + صف فوراً.
+           * شوف `lib/wantedFastPath.ts`.
+           */
+          const hits = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)));
+          for (const h of hits) alertWanted(h.plate, h.row);
+          const wantedSet = new Set(hits.map((h) => h.plate));
+
+          // المطلوبة بتطلع صف حتى لو ثقتها أقل من بوابة الظهور — لازم تبان.
+          if (!showProvisional(r) && wantedSet.size === 0) return;
           const g2 = gpsRef.current;
           const now2 = Date.now();
           for (const raw of String(r.plate || "").trim().split(/\s+/)) {
             const p2 = raw.replace(/\s+/g, "");
             if (!WELL.test(p2)) continue;
+            // لو القراية مش عالية الثقة، بس المطلوبة منها اللي تطلع صف
+            if (!showProvisional(r) && !wantedSet.has(p2)) continue;
             const prov: LiveRow = {
               id: "prov-" + p2 + "-" + r.tMs, plate: p2, tier: "yellow", conf: r.conf,
               mult: 1, provisional: true, atMs: r.tMs, shownAt: now2,
@@ -943,7 +1010,18 @@ export default function RegistrationV2Page() {
    * والحدث كمان بيطلّع الـoverlay الموحّد بزرّ «تم» — نفس اللي المندوب
    * شايفه في التشييك بالظبط، فمابيتلغبطش.
    */
+  /** 🔴 آخر مرة كل عربية صفّرت — الصفّارة مرة واحدة لكل عربية في الدقيقة. */
+  const alertedRef = useRef<Map<string, number>>(new Map());
   const alertWanted = useCallback((plate: string, row: Record<string, string> | null) => {
+    /**
+     * 🔴 **مرة واحدة لكل عربية** — الطابور بيمنع التكرار طول ما اللوحة فيه
+     * بس، فلو المندوب داس «تم» والإجماع أكّد بعدها كانت بتصفّر تاني. ومع
+     * الفحص على كل قراية كانت هتصفّر ٣-٤ مرات. شوف `shouldAlertNow`.
+     */
+    const key = normalizePlate(bankPlateToArabic(plate));
+    const now = Date.now();
+    if (!shouldAlertNow(alertedRef.current, key, now)) return;
+    alertedRef.current.set(key, now);
     try {
       fireWantedAlert({
         plate,

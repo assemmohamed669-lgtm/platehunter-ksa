@@ -74,9 +74,46 @@ export function notifyCheckSheetChanged(): void {
   fire();
 }
 
+/** سلوت ملف تشييك؟ (`check` أو `check-2`، `check-3`…) — الفاضي بيتحسب. */
+function isCheckSlot(slot: string | undefined): boolean {
+  if (slot == null || slot === "") return true;
+  return slot === "check" || /^check-\d+$/.test(slot);
+}
+
+export interface SubscribeOpts {
+  /**
+   * كمان اسمع `idbFileUpdated` — الحدث اللي بيبعته استقبال الإكسيل من واتساب
+   * (`IncomingExcelHandler`).
+   *
+   * 🔴 من غيره الشيت الجاي من واتساب **مكانش بيوصل لـ«الجديد»** لحد ما
+   * المندوب يخرج ويرجع — التشييك بس اللي كانت بتسمعه.
+   *
+   * ⚠️ **اختياري** لأن التشييك عندها مستمع خاص بيه من زمان؛ لو سمعته مرتين
+   *    كانت هتعيد قراية ٤٩ ألف لوحة مرتين على كل رسالة واتساب.
+   */
+  idbEvent?: boolean;
+}
+
 /** يشترك في إشارة التغيير. بيرجّع دالة إلغاء الاشتراك. */
-export function onCheckSheetChanged(cb: Listener): () => void {
+export function onCheckSheetChanged(cb: Listener, opts: SubscribeOpts = {}): () => void {
   wire();
   listeners.add(cb);
-  return () => { listeners.delete(cb); };
+  let onIdb: ((e: Event) => void) | null = null;
+  if (opts.idbEvent && typeof window !== "undefined") {
+    onIdb = (e: Event) => {
+      const slot = (e as CustomEvent<{ slot?: string }>).detail?.slot;
+      if (!isCheckSlot(slot)) return;
+      try { cb(); } catch { /* مشترك واقع مايوقّعش الحدث */ }
+    };
+    try { window.addEventListener("idbFileUpdated", onIdb); } catch { onIdb = null; }
+  }
+  return () => {
+    listeners.delete(cb);
+    if (onIdb) { try { window.removeEventListener("idbFileUpdated", onIdb); } catch { /* ignore */ } }
+  };
+}
+
+/** آخر ختم تغيير اتسجّل — عشان صفحة ترجع من الخلفية تعرف لو فاتها حاجة. */
+export function lastCheckSheetStamp(): string | null {
+  try { return localStorage.getItem(CHECK_SYNC_KEY); } catch { return null; }
 }

@@ -72,3 +72,64 @@ describe("مزامنة شيت التشييك", () => {
     offA(); offB();
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 الشيت اللي جاي من واتساب مكانش بيوصل لـ«الجديد»
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «لما يترفع من صفحة التشييك يظهر في صفحة الجديد
+ *  والعكس».
+ *
+ *  استقبال الإكسيل من واتساب (`IncomingExcelHandler`) بيبعت حدث تاني خالص
+ *  — `idbFileUpdated` — والتشييك بس اللي بتسمعله. فلو الشيت جه من واتساب
+ *  والمندوب على «الجديد»، **مكانش بيتحدّث** لحد ما يخرج ويرجع.
+ *
+ *  ⇒ `idbEvent: true` بيخلّي المشترك يسمع الحدث ده كمان. **اختياري** لأن
+ *    التشييك عندها مستمع خاص بيه من زمان — لو سمعته مرتين كانت هتعيد القراية
+ *    مرتين (٤٩ ألف لوحة) على كل رسالة واتساب.
+ */
+describe("idbFileUpdated — الشيت الجاي من واتساب", () => {
+  const fire = (slot?: string) =>
+    window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: slot === undefined ? {} : { slot } }));
+
+  it("🔴 `idbEvent: true` + سلوت التشييك ⇒ بيوصل", () => {
+    const cb = vi.fn();
+    const off = onCheckSheetChanged(cb, { idbEvent: true });
+    fire("check");
+    expect(cb).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("ملف تشييك إضافي (`check-2`) ⇒ بيوصل", () => {
+    const cb = vi.fn();
+    const off = onCheckSheetChanged(cb, { idbEvent: true });
+    fire("check-2");
+    expect(cb).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("سلوت الداتا ⇒ **مابيوصلش** (مش شيت تشييك)", () => {
+    const cb = vi.fn();
+    const off = onCheckSheetChanged(cb, { idbEvent: true });
+    fire("data");
+    fire("referral");
+    expect(cb).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("من غير `idbEvent` ⇒ مابيسمعوش (التشييك عندها مستمعها الخاص)", () => {
+    const cb = vi.fn();
+    const off = onCheckSheetChanged(cb);
+    fire("check");
+    expect(cb).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("بعد إلغاء الاشتراك ⇒ مابيوصلش", () => {
+    const cb = vi.fn();
+    const off = onCheckSheetChanged(cb, { idbEvent: true });
+    off();
+    fire("check");
+    expect(cb).not.toHaveBeenCalled();
+  });
+});
