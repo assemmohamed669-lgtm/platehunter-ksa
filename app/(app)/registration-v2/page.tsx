@@ -32,7 +32,7 @@ import {
   Pencil, Building2, Hash, Car,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { getUploadedFile } from "@/lib/idb";
+import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
 import { buildCombinedCheckIndex, loadAllCheckSources } from "@/lib/checkSheets";
 import { normalizePlate, bankPlateToArabic, detectPlateColumn } from "@/lib/plateParser";
@@ -64,6 +64,8 @@ import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
+import FileUploadBox from "@/components/FileUploadBox";
+import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSync";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -113,6 +115,14 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
 
 export default function RegistrationV2Page() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  /**
+   * 🔒 **السوبر أدمن بس** — التقرير الشامل ومربّع الإعداد.
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «عايزك متظهرش التقرير الشامل ده لحد غيري…
+   * شيله من صفحة المناديب والأدمن، بس السوبر أدمن اللي يظهرله».
+   * والصفحة بتفتح لـ`admin || is_super`، فالأدمن العادي مايشوفهمش.
+   */
+  const [isSuper, setIsSuper] = useState(false);
   const [denied, setDenied] = useState<string | null>(null);
 
   const [listening, setListening] = useState(false);
@@ -137,6 +147,7 @@ export default function RegistrationV2Page() {
   /** الخانة اللي المندوب بيعدّلها دلوقتي (النوع أو الملاحظة). */
   const [editing, setEditing] = useState<{ id: string; field: "type" | "note" | "plate" } | null>(null);
   const [checkName, setCheckName] = useState<string>("");
+  const [checkFile, setCheckFile] = useState<File | null>(null);
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -227,6 +238,7 @@ export default function RegistrationV2Page() {
         .from("profiles").select("role, is_super").eq("id", data.user.id).single();
       if (profErr) { setDenied("مش قادر أقرا صلاحيتك: " + profErr.message); return; }
       if (!canOpenTrialPage(prof)) { setDenied("الصفحة دي للأدمنز بس، وحسابك الحالي مش أدمن."); return; }
+      setIsSuper(prof?.is_super === true);
       /**
        * 🔴 **التوكن من الداتابيز مش من الكود.**
        *
@@ -319,9 +331,13 @@ export default function RegistrationV2Page() {
     void (async () => {
       try {
         const rec = await getUploadedFile("local", "check").catch(() => null);
-        if (!rec) { setCheckTable(null); setCheckSources([]); setCheckName(""); return; }
+        if (!rec) { setCheckTable(null); setCheckSources([]); setCheckName(""); setCheckFile(null); return; }
         setCheckTable({ headers: rec.headers, rows: rec.rows });
         setCheckName(rec.fileName || "ملف التشييك");
+        // المربّع بيعرض الملف المرفوع — بنعيد بناء `File` من الـblob المحفوظ.
+        try {
+          if (rec.fileBlob) setCheckFile(new File([rec.fileBlob], rec.fileName || "check.xlsx"));
+        } catch { /* الـblob مش مقروء — الاسم لوحده كفاية */ }
 
         const all = await loadAllCheckSources().catch(() => [] as ExcelTable[]);
         const sources = all.length ? all : [{ headers: rec.headers, rows: rec.rows }];
@@ -358,6 +374,54 @@ export default function RegistrationV2Page() {
       } catch { /* مفيش شيت */ }
     })();
   }, []);
+
+  /**
+   * ① 📥 **الشيت مشترك بين الصفحتين — والتحديث تلقائي.**
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «ممكن يترفع من صفحة التشييك عادي وممكن من
+   * صفحة الجديد، واللي يترفع سواء هنا أو هنا تظهر في التانية».
+   *
+   * الملف نفسه مشترك من الأول (سلوت `local:check`)، اللي كان ناقص هو
+   * **الإشارة**: الصفحة التانية مكانتش تعرف إن فيه حاجة اتغيّرت فبتفضل
+   * على النسخة اللي في ذاكرتها.
+   *
+   * وبنعيد القراءة كمان لما المندوب **يرجع للصفحة** (`visibilitychange`)
+   * — لأن الصفحتين مسارين منفصلين وواحدة بس بتكون متركّبة.
+   */
+  useEffect(() => {
+    const off = onCheckSheetChanged(() => loadCheck());
+    const onVis = () => { if (document.visibilityState === "visible") loadCheck(); };
+    try { document.addEventListener("visibilitychange", onVis); } catch { /* ignore */ }
+    return () => {
+      off();
+      try { document.removeEventListener("visibilitychange", onVis); } catch { /* ignore */ }
+    };
+  }, [loadCheck]);
+
+  /**
+   * رفع/تغيير ملف التشييك **من الصفحة دي** — نفس سلوت «التشييك» بالظبط
+   * (`local:check`)، فاللي يترفع هنا بيشتغل هناك والعكس.
+   *
+   * ⛔ **مابنمسحش لوحات المندوب** لما الملف يتغيّر — نفس قرار صفحة التشييك:
+   * حالة «مطلوبة» ممكن تبقى قديمة، لكن اللوحة والموقع والوقت شغل المندوب.
+   */
+  const onCheckParsed = useCallback(async (table: ExcelTable, file: File) => {
+    const record: UploadedFileRecord = {
+      key: "local:check", agentId: "local", slot: "check",
+      fileName: file.name, headers: table.headers, rows: table.rows,
+      uploadedAt: new Date().toISOString(), fileBlob: file,
+    };
+    await saveUploadedFile(record);
+    notifyCheckSheetChanged();
+    loadCheck();
+  }, [loadCheck]);
+
+  const onCheckClear = useCallback(async () => {
+    await deleteUploadedFile("local", "check").catch(() => {});
+    notifyCheckSheetChanged();
+    loadCheck();
+  }, [loadCheck]);
+
   useEffect(() => { if (allowed === true) loadCheck(); }, [allowed, loadCheck]);
 
   /* ─── فحص السيرفرين ──────────────────────────────────────────────── */
@@ -875,7 +939,11 @@ export default function RegistrationV2Page() {
   }
   if (allowed === null) return <div className="py-16 text-center text-sm text-slate-500">جارٍ التحقق…</div>;
 
-  const statusLabel = probing ? "بفحص…" : probe?.ok ? "🟢 متصل" : probe ? "🔴 مش واصل" : "بفحص…";
+  /**
+   * ④ **«متصل» اتشالت** بطلب المالك — الدايرة الخضرا بتقول اللي هي بتقوله
+   * وبلا زحمة كلام. والتفصيل (اسم الموديل وحالة التوكن) في السطر اللي تحت.
+   */
+  const statusLabel = probing ? "بفحص…" : probe?.ok ? "🟢" : probe ? "🔴 مش واصل" : "بفحص…";
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
   const hits = rows.filter((r) => r.match).length;
@@ -909,20 +977,56 @@ export default function RegistrationV2Page() {
         الموديل الجديد — تجربة. اللي في شيت التشييك هتطلع <b className="text-rose-600">بصفّارة</b>.
       </p>
 
-      {/* ── الحالة: الشيت · الموديل · النوع · الموقع ── */}
+      {/*
+        * ── الحالة: الشيت · الموديل · الموقع ──
+        * ③ **مربّع «النوع» اتشال** بطلب المالك: «شيل المربّع اللي فيه النوع
+        * مفيش رد ده مالوش لازمة». كوهير مقفول بقراره، فالمربّع كان بيقول
+        * «🔴 مافيش رد» على طول ومالوش أي فايدة للمندوب.
+        */}
       <section className="mt-4 grid grid-cols-2 gap-2">
         <Stat icon={<FileSpreadsheet size={13} />} ok={checkIndex.size > 0}
           title={checkIndex.size ? checkIndex.size.toLocaleString("ar-EG") + " لوحة" : "مافيش شيت"}
-          sub={checkIndex.size ? (checkName || "") : "ارفعه من صفحة التشييك"} />
+          sub={checkIndex.size ? (checkName || "") : "ارفعه من تحت"} />
         <Stat icon={<Cpu size={13} />} ok={!!probe?.ok} title={statusLabel} sub={probe?.msg ?? ""} />
-        <Stat icon={<span className="text-[11px]">🏷️</span>} ok={!!typeProbe?.ok}
-          title={typeProbe?.ok ? "النوع 🟢" : "النوع 🔴"} sub={typeProbe?.msg ?? "بفحص…"} />
         <Stat icon={<MapPin size={13} />} ok={!!gps && gpsLevel !== "poor"}
           title={gps ? "الموقع " + (gpsLevel === "good" ? "🟢" : gpsLevel === "ok" ? "🟡" : "🔴") : "مافيش موقع"}
           sub={gps ? "±" + Math.round(gps.accuracy) + " متر" : "اسمح بالموقع"} />
       </section>
 
-      <div className="mt-2 flex gap-1.5">
+      {/*
+        * ① 📥 **مربّع رفع شيت التشييك — نفس سلوت «التشييك» بالحرف.**
+        *
+        * المالك (٢٣ سبتمبر ٢٠٢٦): «هنظهر المربّع اللي بيترفع فيه شيت
+        * التشييك في صفحة الجديد كمان… واللي يترفع سواء هنا أو هنا تظهر في
+        * التانية، يعني لو المندوب حدّث التشييك يتحدّث تلقائي ويشتغل تلقائي
+        * في الصفحتين».
+        *
+        * السلوت واحد (`local:check`) فالملف مشترك أصلاً؛ الإشارة في
+        * `lib/checkSheetSync.ts` هي اللي بتخلّي الصفحة التانية تعيد قراءته.
+        */}
+      <section className="mt-3">
+        <FileUploadBox
+          title="ملف التشييك"
+          hint="اللي فيه هيطلع بصفّارة"
+          parsedFile={checkFile}
+          parsedRowCount={checkTable?.rows.length ?? null}
+          plateCount={checkIndex.size}
+          onParsed={onCheckParsed}
+          onClear={onCheckClear}
+          showReplaceButtons
+          sky
+        />
+      </section>
+
+      {/*
+        * ⑤ **«أعِد الفحص» و«تغيير العنوان» اتشالوا من عين المندوب.**
+        *
+        * المالك: «شيل كلمتين أعد الفحص وتغيير العنوان». والمربّع اللي
+        * جوّاه فيه **عنوان السيرفر والتوكن** — دول مالهمش لازمة عند
+        * المندوب أصلاً، والتوكن بقى بيتجاب من الداتابيز لوحده.
+        * سايبينهم **للسوبر أدمن** عشان يفضل عنده طريق طوارئ بلا نشر.
+        */}
+      <div className={isSuper ? "mt-2 flex gap-1.5" : "hidden"}>
         <button onClick={() => { void probeModel(); loadCheck(); }} disabled={probing || listening}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2 text-xs font-bold text-slate-700 disabled:opacity-50">
           {probing ? <><Loader2 size={14} className="animate-spin" /> بفحص…</> : <><RefreshCw size={14} /> أعِد الفحص</>}
@@ -932,7 +1036,7 @@ export default function RegistrationV2Page() {
           {showAdvanced ? "إخفاء" : "تغيير العنوان"}
         </button>
       </div>
-      <div className={showAdvanced ? "mt-2 flex flex-col gap-1.5" : "hidden"}>
+      <div className={showAdvanced && isSuper ? "mt-2 flex flex-col gap-1.5" : "hidden"}>
         <input dir="ltr" inputMode="url" autoComplete="off" spellCheck={false} value={modelUrl}
           onChange={(e) => { setModelUrl(e.target.value); setSaved(false); setProbe(null); }}
           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] outline-none focus:border-indigo-500" />
@@ -1159,8 +1263,15 @@ export default function RegistrationV2Page() {
         )}
       </section>
 
-      {/* ══ 📋 التقرير الشامل — مؤقّت ══ */}
-      <section className="mt-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-3">
+      {/*
+        * ══ 📋 التقرير الشامل — **للسوبر أدمن بس** ══
+        * المالك (٢٣ سبتمبر ٢٠٢٦): «عايزك متظهرش التقرير الشامل ده لحد
+        * غيري علشان لو هنجرّب حاجة — اقفله وشيله من صفحة المناديب والأدمن،
+        * بس السوبر أدمن اللي يظهرله».
+        */}
+      <section className={isSuper
+        ? "mt-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-3"
+        : "hidden"}>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowReport((v) => !v)} className="flex flex-1 items-center gap-2">
             <h2 className="text-sm font-black">📋 التقرير الشامل</h2>
