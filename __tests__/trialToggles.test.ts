@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows,
+  noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows, modelBoxDetail,
 } from "../lib/trialToggles";
 
 /**
@@ -107,5 +107,33 @@ describe("⑨ صفوف الإكسيل", () => {
     const out = trialExcelRows(
       [row({ plate: "أأأ1111", shownAt: 1 }), row({ plate: "ببب2222", shownAt: 2 })]);
     expect(out[0]["رقم اللوحة"]).toBe("ببب2222");
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  مربّع الموديل — التفصيل التقني للسوبر أدمن بس
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «ckpt-7500 على كارت الشاشة · التوكن سليم
+ *  اخفي دي عن المناديب». المندوب بيكفيه العنوان (🟢 / 🔴 مش واصل).
+ */
+describe("modelBoxDetail", () => {
+  const msg = "ckpt-7500 على كارت الشاشة · التوكن سليم ✓";
+
+  it("السوبر أدمن بيشوف اسم الموديل وحالة التوكن", () => {
+    expect(modelBoxDetail(msg, true)).toBe(msg);
+  });
+
+  it("المندوب مابيشوفش أي تفصيل تقني", () => {
+    expect(modelBoxDetail(msg, false)).toBe("");
+  });
+
+  it("المندوب مابيشوفش رسايل الغلط التقنية كمان (التوكن/النفق)", () => {
+    expect(modelBoxDetail("واصل بس **التوكن مرفوض** — اضغط «مسح الإعداد»", false)).toBe("");
+  });
+
+  it("لسه مافيش فحص → فاضي للاتنين", () => {
+    expect(modelBoxDetail(undefined, true)).toBe("");
+    expect(modelBoxDetail(undefined, false)).toBe("");
   });
 });
