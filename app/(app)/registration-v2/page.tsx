@@ -51,8 +51,10 @@ import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
+  stripForDraft, rehydrateMatch,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
+import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode } from "@/lib/vehicleType";
@@ -217,6 +219,36 @@ export default function RegistrationV2Page() {
     const unsub = gpsService.subscribe((c) => { gpsRef.current = c; setGps(c); });
     return () => { try { unsub(); } catch { /* ignore */ } };
   }, [allowed]);
+
+  /* ─── 💾 مسودّة الجلسة ────────────────────────────────────────────── */
+  /**
+   * 🔴 **الصفوف كانت في الذاكرة بس** — جلسة ٢٣٥ لوحة بتضيع بالكامل لو
+   * التطبيق اتقفل أو الموبايل عمل ريستارت. صفحة التشييك بتحفظ مسودّاتها من
+   * زمان؛ دي كانت ناقصة الحماية دي.
+   *
+   * بنحفظ **بلا صف شيت التشييك** (`match`) عشان الحصّة — ونرجّعه من الفهرس.
+   * شوف `stripForDraft` / `rehydrateMatch`.
+   */
+  const draftReady = useRef(false);
+  useEffect(() => {
+    if (allowed !== true) return;
+    void loadDraft<LiveRow>("trial", "rv2-rows")
+      .then((saved) => { if (saved.length) setRows(saved); })
+      .catch(() => { /* مافيش مسودّة */ })
+      .finally(() => { draftReady.current = true; });
+  }, [allowed]);
+  useEffect(() => {
+    // ⚠️ مانكتبش قبل ما نقرا — وإلا أول رسم (صفوف فاضية) بيمسح المسودّة.
+    if (!draftReady.current) return;
+    void saveDraft("trial", "rv2-rows", stripForDraft(rows));
+  }, [rows]);
+  /** أول ما شيت التشييك يجهز، الصفوف المحمّلة تاخد «مطلوبة» بتاعتها. */
+  useEffect(() => {
+    if (!draftReady.current || checkIndex.size === 0) return;
+    setRows((prev) => (prev.some((r) => !r.match)
+      ? rehydrateMatch(prev, checkIndex, (pl) => normalizePlate(bankPlateToArabic(pl)))
+      : prev));
+  }, [checkIndex]);
 
   /* ─── الشيت ───────────────────────────────────────────────────────── */
   const loadCheck = useCallback(() => {
@@ -920,7 +952,13 @@ export default function RegistrationV2Page() {
             }} className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700">
               {copied ? <><Check size={13} className="text-emerald-600" /> اتنسخ</> : <><Copy size={13} /> نسخ</>}
             </button>
-            <button onClick={() => { if (confirm("تمسح كل اللوحات؟")) { setRows([]); setReads([]); setSkips({}); } }}
+            <button onClick={() => {
+              // 🔴 نفس تحذير التشييك: اللي مش متصدّر بيضيع — لازم يتقال بالعدد.
+              const warn = unexportedDeleteWarning(rows.length);
+              if (warn && !confirm(warn)) return;
+              if (!warn && !confirm("تمسح كل اللوحات؟")) return;
+              setRows([]); setReads([]); setSkips({});
+            }}
               className="flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-bold text-rose-600">
               <Trash2 size={13} /> مسح
             </button>
