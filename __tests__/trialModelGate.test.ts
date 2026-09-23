@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint,
-  TRIAL_MODEL_BASE, TRIAL_MODEL_TOKEN,
+  TRIAL_MODEL_BASE, TRIAL_MODEL_TOKEN, shouldAskType,
 } from "../lib/trialModelGate";
 
 /**
@@ -109,5 +109,38 @@ describe("resolveTrialEndpoint — سيرفر التجربة مثبّت في ا�
 
   it("المثبّت نفسه لازم يعدّي حارس التشغيل (https + توكن)", () => {
     expect(planTrialRun(resolveTrialEndpoint(null))).toEqual({ ok: true });
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  ③ ماننداش سيرفر النوع وهو مقفول — توفير داتا المندوب
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «أوقف كوهير دلوقتي لحد ما نظبطه».
+ *
+ *  🔴 **المشكلة مش الخطأ — هي الرفع.** `askType` بيرفع **الصوت كامل**
+ *  (نافذة ٥ث ≈ ١٦٠ كيلو) لسيرفر النوع مع كل نافذة. لما كوهير يتقفل النفق
+ *  بيرجّع 502 **بعد** ما الجسم يترفع — يعني ~٤٠ رفعة في الدقيقة على الفاضي،
+ *  **~٦ ميجا/دقيقة من داتا موبايل المندوب** بلا أي مقابل.
+ *
+ *  والفحص بيتعمل أصلاً عند فتح الصفحة (`typeProbe`)، فالمعلومة موجودة —
+ *  كنا بس مش بنستعملها.
+ *
+ *  ⚠️ **الفشل بيفتح مش بيقفل** هنا، عكس `canOpenTrialPage`: لو الفحص
+ *  لسه ماتعملش (`null`) بنسأل عادي. القفل بيتم على **رد صريح بالفشل** بس،
+ *  عشان عطل مؤقّت في الفحص مايلغيش النوع لبقية الجلسة.
+ */
+describe("shouldAskType — ماننداش سيرفر النوع وهو مقفول", () => {
+  it("بيسأل لما الفحص يقول واصل", () => {
+    expect(shouldAskType({ ok: true, msg: "81 عنصر" })).toBe(true);
+  });
+
+  it("ماينداش لما الفحص يقول مش واصل", () => {
+    expect(shouldAskType({ ok: false, msg: "مافيش رد" })).toBe(false);
+  });
+
+  it("بيسأل لو الفحص لسه ماتعملش — الفشل بيفتح مش بيقفل", () => {
+    expect(shouldAskType(null)).toBe(true);
+    expect(shouldAskType(undefined)).toBe(true);
   });
 });

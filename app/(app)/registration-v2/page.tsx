@@ -50,7 +50,7 @@ import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
-  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE,
+  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType,
 } from "@/lib/trialModelGate";
 import { sameCarTwin, heardNotShown, isExactRepeatNearby } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
@@ -145,6 +145,12 @@ export default function RegistrationV2Page() {
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState<{ ok: boolean; msg: string } | null>(null);
   const [typeProbe, setTypeProbe] = useState<{ ok: boolean; msg: string } | null>(null);
+  /**
+   * آخر نتيجة فحص لسيرفر النوع — **كمرجع** مش state.
+   * `askType` بيتمسك في غلاف `startVoicexEngine` وقت التشغيل، فأي state
+   * بيتقرا جوّاه بيفضل على قيمته وقت البداية. المرجع بيدّي القيمة الحيّة.
+   */
+  const typeProbeRef = useRef<{ ok: boolean; msg: string } | null>(null);
 
   const engineRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -342,7 +348,7 @@ export default function RegistrationV2Page() {
     const b = modelUrl.trim().replace(/\/+$/, "");
     const t = modelToken.trim();
     if (!b || !t) { setProbe({ ok: false, msg: "مافيش عنوان أو توكن." }); return; }
-    setProbing(true); setProbe(null); setTypeProbe(null);
+    setProbing(true); setProbe(null); setTypeProbe(null); typeProbeRef.current = null;
     const to = () => (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(20000) : undefined);
     try {
       const res = await fetch(b + "/health", { headers: { "X-Plate-Token": t }, signal: to() });
@@ -358,12 +364,13 @@ export default function RegistrationV2Page() {
     // 🏷️ سيرفر النوع منفصل — فشله **مايمنعش** اللوحات، بس لازم يبان.
     try {
       const r2 = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/health", { signal: to() });
-      if (!r2.ok) setTypeProbe({ ok: false, msg: "كود " + r2.status });
+      if (!r2.ok) { const v = { ok: false, msg: "كود " + r2.status }; setTypeProbe(v); typeProbeRef.current = v; }
       else {
         const b2 = await r2.json() as { types?: number };
-        setTypeProbe({ ok: true, msg: (b2.types ?? 0) + " عنصر" });
+        const v = { ok: true, msg: (b2.types ?? 0) + " عنصر" };
+        setTypeProbe(v); typeProbeRef.current = v;
       }
-    } catch { setTypeProbe({ ok: false, msg: "مافيش رد" }); }
+    } catch { const v = { ok: false, msg: "مافيش رد" }; setTypeProbe(v); typeProbeRef.current = v; }
   }, [modelUrl, modelToken]);
 
   useEffect(() => {
@@ -398,6 +405,12 @@ export default function RegistrationV2Page() {
    * بيمنع نوع الجارة. شوف تعليق `typeQueueRef`.
    */
   const askType = useCallback(async (wav: Blob, tMs: number) => {
+    /**
+     * 🔴 **سيرفر النوع مقفول ⇒ ماننداهوش.** النداء بيرفع **الصوت كامل**
+     * (~١٦٠ كيلو للنافذة) قبل ما ياخد 502، يعني ~٦ ميجا/دقيقة من داتا
+     * موبايل المندوب على الفاضي. الفحص متعمل أصلاً عند فتح الصفحة.
+     */
+    if (!shouldAskType(typeProbeRef.current)) return;
     try {
       const res = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
         method: "POST",

@@ -119,3 +119,26 @@ export function planTrialRun(input: { base: string | null | undefined; token: st
   }
   return { ok: true };
 }
+
+/** نتيجة فحص سيرفر النوع زي ما الصفحة بتخزّنها. */
+export interface TypeProbe {
+  ok: boolean;
+  msg?: string;
+}
+
+/**
+ * ننادي سيرفر النوع ولا لأ؟
+ *
+ * 🔴 **الرفع هو التكلفة مش الخطأ.** `askType` بيرفع **الصوت كامل** (نافذة
+ * ٥ث ≈ ١٦٠ كيلو) مع كل نافذة. لما كوهير يتقفل، النفق بيرجّع 502 **بعد** ما
+ * الجسم يترفع — فالمندوب بيدفع ~٤٠ رفعة في الدقيقة (**~٦ ميجا/دقيقة من
+ * داتا الموبايل**) مقابل لا حاجة. والفحص متعمل أصلاً عند فتح الصفحة.
+ *
+ * ⚠️ **الفشل بيفتح مش بيقفل** — عكس `canOpenTrialPage`. فحص لسه ماتعملش
+ * (`null`) = بنسأل عادي؛ القفل على **رد صريح بالفشل** بس، عشان عطل لحظة
+ * في الفحص مايلغيش النوع لبقية الجلسة.
+ */
+export function shouldAskType(probe: TypeProbe | null | undefined): boolean {
+  if (!probe || typeof probe !== "object") return true;
+  return probe.ok !== false;
+}
