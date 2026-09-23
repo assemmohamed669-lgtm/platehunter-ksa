@@ -15,14 +15,20 @@
  *  (`md5 6d7edc70c4e26670b16002e659697688`)، ومخرَجه اتقارن على ٣٢ مقطع
  *  مندوبين × تشغيلتين = **٣٢/٣٢ متطابق حرفياً**.
  *
- * 🔴 **العنوان ده نفق سريع (quick tunnel) ومش دائم.** توثيق Vast بالحرف:
- *    «ephemeral, rate-limited, and lost on restart — don't depend on them».
- *    فلو السيرفر أو النفق اتعاد تشغيله، العنوان بيتغيّر و**لازم يتحدّث**:
- *      · إمّا من مربّع الإعداد في الصفحة (بيغلب المثبّت — بلا نشر نسخة)
- *      · أو هنا وننشر
- *    العنوان الدائم محتاج نطاق على Cloudflare (`CF_TUNNEL_TOKEN`).
+ * ✅ **نفق ثابت باسم دائم** (٢٣ سبتمبر ٢٠٢٦) — بدل النفق السريع.
+ *
+ * النفق السريع (`trycloudflare`) كان **مؤقّت بالتصميم**: العنوان بيتغيّر مع
+ * كل إعادة تشغيل، و**محدود بعدد المرات** — وفعلاً Cloudflare حظرتنا بـ429
+ * بعد إعادات متتالية وفضلنا بلا نفق. مايصلحش لمناديب بيعتمدوا عليه.
+ *
+ * دلوقتي نفق Cloudflare باسم ثابت على دومين المالك:
+ *   · اللوحات → `voice.qannas-ksa.com`  → 127.0.0.1:8761
+ *   · النوع   → `type.qannas-ksa.com`   → 127.0.0.1:8762
+ *
+ * العنوان **مايتغيّرش أبداً** مهما اتعمل restart، ومافيش حدّ على المرات،
+ * والخدمة بتقوم مع إقلاع الجهاز (`cloudflared service install`).
  */
-export const TRIAL_MODEL_BASE = "https://email-equity-about-wireless.trycloudflare.com";
+export const TRIAL_MODEL_BASE = "https://voice.qannas-ksa.com";
 
 /**
  * ⚠️ التوكن الافتراضي للخدمة. النفق عام، فده **مش سرّ حقيقي** — مقبول
@@ -34,9 +40,9 @@ export const TRIAL_MODEL_TOKEN = "plate-voice-lab-local-dev";
  * 🏷️ سيرفر **النوع والملاحظة** (كوهير) — نفق منفصل عن اللوحات.
  * `CohereLabs/cohere-transcribe-arabic-07-2026` بنسخة المعمل بالظبط
  * (md5 `7889a3fd…`) و**٨١ عنصر** في القاموس.
- * ⚠️ نفس تحذير النفق المؤقّت اللي فوق.
+ * ✅ نفق ثابت زي اللي فوق — العنوان مايتغيّرش.
  */
-export const TRIAL_TYPE_BASE = "https://leisure-diagnostic-begin-nursing.trycloudflare.com";
+export const TRIAL_TYPE_BASE = "https://type.qannas-ksa.com";
 
 /**
  * العنوان اللي الصفحة هتستعمله: **المحفوظ يدوياً يغلب**، والمثبّت بيملا
