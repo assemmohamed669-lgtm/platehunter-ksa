@@ -66,7 +66,15 @@ interface Cluster {
   confs: number[];
   minLps: number[];
   lastMs: number;
+  /**
+   * ⚡ آخر لحظة ظهر فيها **إملاء جديد** على العنقود.
+   * التأكيد بيستنى **الاستقرار مش السكوت**: القراءة المتطابقة المتكرّرة
+   * مابتضيفش معلومة فمالهاش لازمة تأخّر. الإملاء الجديد بيرجّع الشك.
+   */
+  lastNewMs: number;
   committed: boolean;
+  /** وصلت قراءة **بعد** التأكيد ⇒ يترجّع تحديث لنفس اللوحة. */
+  dirty: boolean;
 }
 
 const LETTERS_RE = /^[ء-ي]{3}/;
@@ -164,7 +172,14 @@ export class LiveConsensus {
     // بآخر قراءة (مش المتوسط) بتمنع «انجراف المتوسط» اللي كان بيقسّم اللوحة.
     let target: Cluster | null = null;
     for (const cl of this.clusters) {
-      if (cl.committed) continue;
+      /**
+       * 🔴 **كان `if (cl.committed) continue;`** — فالقراءة اللي توصل بعد
+       * التأكيد كانت بتعمل **عنقود جديد** ⇒ صف مكرّر. وده اللي كان بيجبرنا
+       * نستنى طويل قبل التأكيد عشان نلحق كل القراءات.
+       *
+       * دلوقتي بتنضمّ للعنقود المؤكَّد ويترجّع **تحديث** (`dirty`) لنفس
+       * اللوحة — فنقدر نأكّد بدري من غير ما نخسر ولا قراءة.
+       */
       if (cl.letters === letters && Math.abs(read.tMs - cl.lastMs) <= this.windowMs) {
         target = cl;
         break;
@@ -179,12 +194,23 @@ export class LiveConsensus {
         confs: [],
         minLps: [],
         lastMs: read.tMs,
+        lastNewMs: read.tMs,
+        dirty: false,
         committed: false,
       };
       this.clusters.push(target);
     }
     target.times.push(read.tMs);
     target.tMs = target.times.reduce((a, b) => a + b, 0) / target.times.length;
+    // ⚡ إملاء جديد ⇒ الشك رجع ⇒ نجدّد عدّاد الاستقرار
+    if (!target.spellings.has(read.plate)) target.lastNewMs = Math.max(target.lastNewMs, read.tMs);
+    /**
+     * 🔴 **القراءة اللي توصل بعد التأكيد مابتضيعش ومابتعملش صف جديد.**
+     * بتنضمّ للعنقود المؤكَّد ويترجّع **تحديث** لنفس اللوحة — الصفحة
+     * بتلمّه على نفس الصف. من غير ده كان لازم نختار: تأكيد بطيء، ولا
+     * تأكيد سريع بصفوف مكرّرة.
+     */
+    if (target.committed) target.dirty = true;
     const cur = target.spellings.get(read.plate) ?? { count: 0, confSum: 0, maxConf: -Infinity };
     cur.count += 1;
     cur.confSum += read.conf;
@@ -202,10 +228,23 @@ export class LiveConsensus {
   drain(nowMs: number): CommittedPlate[] {
     const out: CommittedPlate[] = [];
     for (const cl of this.clusters) {
-      if (cl.committed) continue;
-      if (nowMs - cl.lastMs < this.stableMs) continue;
-      cl.committed = true;
-      out.push(...this.finalize(cl));
+      /**
+       * ⚡ **الاستقرار مش السكوت** (طلب المالك ٢٣ سبتمبر: «ليه لازم يكون
+       * فيه تمن؟»). كان `lastMs` — بيتجدّد مع **كل** قراءة حتى المتطابقة،
+       * فـ`درط3533` (٤ قراءات متطابقة) استنت ٣ ثواني بلا معلومة جديدة.
+       */
+      if (nowMs - cl.lastNewMs < this.stableMs) continue;
+      if (!cl.committed) {
+        cl.committed = true;
+        cl.dirty = false;
+        out.push(...this.finalize(cl));
+        continue;
+      }
+      // 🔁 اتأكّد خلاص، بس وصلته قراءة بعدين ⇒ تحديث لنفس اللوحة
+      if (cl.dirty) {
+        cl.dirty = false;
+        out.push(...this.finalize(cl));
+      }
     }
     return out;
   }
