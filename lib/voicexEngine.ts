@@ -10,6 +10,7 @@
  *
  * أي فرق عن المعمل = باج. أي فشل نفق متكرر → onFatal (رجوع صامت لديبجرام).
  */
+import { MissedWindows, canReplay, isStalled } from "./voicexReplay";
 import { postAudioForPlate } from "./plateJudgeClient";
 import { LiveConsensus, drainClockMs } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
@@ -165,6 +166,11 @@ export interface VoicexEngineOpts {
   fixes?: boolean;
   onSkip?: (reason: string) => void;
   /**
+   * نافذة فايتة اتبعتت **تاني** بعد ما الشبكة رجعت (`fixes` بس). للعدّ في
+   * التقرير — عشان المالك يشوف الاسترجاع بيحصل فعلاً.
+   */
+  onReplay?: () => void;
+  /**
    * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
    * (كوهير) بالتوازي. ده أسلوب المعمل بالظبط: «الفوري مابينديش كوهير —
    * **العميل** هو اللي بينده سيرفر النوع» (`deploy/نشر-على-كوريا.md`).
@@ -319,9 +325,25 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   // وعود النوافذ الجارية — عشان الإيقاف يستناها قبل التصريف النهائي (آخر لوحة ماتضيعش).
   const inflightSet = new Set<Promise<void>>();
+  /**
+   * 🔴 **النوافذ الفايتة** (`fixes` بس) — اتخطّت «مشغول» أو اتبعتت وفشلت.
+   * أول رد ناجح بعد الوقعة بيبدأ يبعتها تاني من ذاكرة الميك (٩٠ث).
+   * شوف `lib/voicexReplay.ts` — ٧ لوحات ضاعوا في وقعة ٢٢ث في آخر تجربة.
+   */
+  const missed = new MissedWindows();
+  /** آخر رد: نجح ولا لأ. الإعادة بتستنى رد ناجح (مافيش لازمة تعيد والشبكة واقعة). */
+  let networkOk = true;
+  /** بدايات الطلبات الجارية — عشان نعرف لو فيه طلب معلّق (`isStalled`). */
+  const inflightStarts = new Map<Promise<void>, number>();
 
   // يبعت نافذة WAV واحدة، يطبّق حواجز المعمل، يضيف اللوحات للإجماع. مايلمسش المؤقتات.
-  async function sendWav(wav: Blob, tMs: number): Promise<void> {
+  async function sendWav(
+    wav: Blob, tMs: number,
+    /** نجح ولا لأ — للإعادة (`fixes`). */
+    onOutcome?: (ok: boolean) => void,
+    /** نافذة فايتة بتتبعت تاني؟ فشلها **مابيقرّبش** من «النفق واقع». */
+    isReplay = false,
+  ): Promise<void> {
     try {
       // 🔍 `onError` بيدّي **الكود الحقيقي** (`http_503` · `timeout` ·
       // `network` · `bad_token` …). من غيره كل فشل بيبان «الطلب فشل» وخلاص،
@@ -335,12 +357,20 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       });
       const msWall = Date.now() - t0;
       if (!resp) {
-        fails += 1;
-        opts.onSkip?.(("request_failed:" + (lastErr ?? "no_response")));
-        if (fails >= FATAL_FAILS) opts.onFatal?.("tunnel_down");
+        /**
+         * ⚠️ فشل الإعادة **مابيتعدّش** في `fails`: الإعادة بتحصل بس والشبكة
+         * بان إنها رجعت، ولو اتعدّت كانت هتقرّب «النفق واقع» ⇒ التسجيل يقف.
+         */
+        if (!isReplay) {
+          fails += 1;
+          if (fails >= FATAL_FAILS) opts.onFatal?.("tunnel_down");
+        }
+        opts.onSkip?.((isReplay ? "replay_failed:" : "request_failed:") + (lastErr ?? "no_response"));
+        try { onOutcome?.(false); } catch { /* ignore */ }
         return;
       }
       fails = 0;
+      try { onOutcome?.(true); } catch { /* ignore */ }
       const confAll = typeof resp.meanLogprob === "number" ? Math.exp(resp.meanLogprob) : 0.6;
       const minLpAll = typeof resp.minLogprob === "number" ? resp.minLogprob : null;
       try {
@@ -388,7 +418,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   }
 
   // يقصّ نافذة [from,to] معلّاة (بعد بوابة السكوت) ويبعتها، ويتتبّع وعدها للإيقاف.
-  function sliceAndSend(fromSec: number, toSec: number): void {
+  function sliceAndSend(fromSec: number, toSec: number, isReplay = false): void {
     // 🔴 التلات رجعات دي كانت **صامتة تماماً**: المندوب بيتكلّم، الشاشة بتقول
     // «بيسمع صوتك» (الكاشف محلي)، و**ولا بايت بيخرج من الجهاز** — ومحدش يعرف
     // ليه. دلوقتي كل واحدة بتتبلّغ باسمها.
@@ -404,12 +434,20 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     inflight += 1;
     opts.onStatus?.("processing");
     try { opts.onAudioWindow?.(wav, tMs); } catch { /* ignore */ }
-    const pr = sendWav(wav, tMs);
+    const pr = sendWav(wav, tMs, (ok) => {
+      if (!FIXES) return;
+      networkOk = ok;
+      // 🔴 فشلت ⇒ تتسجّل وتتبعت تاني لما الشبكة ترجع (الصوت لسه في الذاكرة)
+      if (!ok) missed.record(fromSec, toSec, mic.elapsedSec);
+    }, isReplay);
     inflightSet.add(pr);
+    inflightStarts.set(pr, Date.now());
     void pr.finally(() => {
       inflight -= 1;
       inflightSet.delete(pr);
+      inflightStarts.delete(pr);
       drainPending();          // 🔴 سلوت فضي ⇒ أول قراءة نطق مستنية تمشي فوراً
+      drainReplay();           // وبعدها الفايتة — بس لو الشبكة رجعت
       if (!stopped) opts.onStatus?.("listening");
     });
   }
@@ -432,6 +470,30 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     }
   }
 
+  /**
+   * 🔴 **يبعت النوافذ الفايتة تاني** — بعد ما الشبكة ترجع (`networkOk`).
+   *
+   * الأقدم الأول، و**سلوت واحد ساعة الفراغ بس** (`canReplay`): بعد وقعة ٢٢ث
+   * فيه ~١٥ نافذة، ولو اتبعتوا مرة واحدة كانوا هيأخّروا اللوحات **الحيّة**.
+   * الإجماع شغّال بزمن الصوت، فالقراية المتأخّرة بتدخل عنقودها الصح.
+   *
+   * ⚠️ **مافيش شرط `!stopped` عن قصد** — زي `drainPending`: `finalize`
+   *    بينده الدالة دي بعد الإيقاف وقبل ما الميك يتقفل، فوقعة قبل «إيقاف»
+   *    على طول مابتضيّعش آخر اللوحات.
+   */
+  function drainReplay(): void {
+    if (!FIXES || !networkOk) return;
+    let guard = 0;
+    while (guard++ < 100 && canReplay(inflight, maxInflight, pending.length)) {
+      const w = missed.take(mic.elapsedSec);
+      if (!w) break;
+      const before = inflight;
+      sliceAndSend(w.from, w.to, true);
+      // اتبعتت فعلاً (مش سكوت/قصّ فاشل) ⇒ نعدّها
+      if (inflight > before) { try { opts.onReplay?.(); } catch { /* ignore */ } }
+    }
+  }
+
   const segTimer = setInterval(() => {
     if (stopped) return;
     const elapsed = mic.elapsedSec;
@@ -447,6 +509,15 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     });
     if (plan !== "send") {
       opts.onSkip?.(pending.length > 0 ? "yield_to_utterance" : "busy_window");
+      /**
+       * 🔴 اتخطّت **وقت وقعة** ⇒ تتسجّل وتتبعت تاني لما الشبكة ترجع.
+       * ⚠️ **وقت الوقعة بس** (`isStalled`): «مشغول» بيحصل في التشغيل العادي
+       * كمان والنوافذ المتداخلة بتغطّيه — تسجيلهم كلهم كان هيعيد إرسال نوافذ
+       * كل جلسة بلا أي مشكلة شبكة.
+       */
+      if (FIXES && isStalled(networkOk, [...inflightStarts.values()], Date.now())) {
+        missed.record(Math.max(0, elapsed - WIN_S), elapsed, elapsed);
+      }
       return;
     }
     sliceAndSend(Math.max(0, elapsed - WIN_S), elapsed);
@@ -479,8 +550,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // 🔴 **الطابور الأول، وقبل `mic.stop()`** — `sliceWav` بتقرا من ذاكرة الميك،
     // ولو قفلناه قبلها كل قراءة نطق مستنية تتحوّل لـ`null` = لوحة ضايعة (نفس
     // الباج الأصلي بشكل تاني). بنلف عشان كل ما سلوت يفضى واحدة تمشي.
-    for (let guard = 0; guard < 50 && (pending.length > 0 || inflightSet.size > 0); guard++) {
+    for (let guard = 0; guard < 50 && (pending.length > 0 || inflightSet.size > 0 || (FIXES && networkOk && missed.size > 0)); guard++) {
       drainPending();
+      drainReplay();   // 🔴 وقعة قبل «إيقاف» على طول مابتضيّعش آخر اللوحات
       if (inflightSet.size === 0) break;
       try { await Promise.race([...inflightSet]); } catch { /* ignore */ }
     }
