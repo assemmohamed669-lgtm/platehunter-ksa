@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildCombinedCheckIndex, type CheckSource } from "@/lib/checkSheets";
+import { buildCombinedCheckIndex, cachedCombinedCheckIndex, clearCheckIndexCache, type CheckSource } from "@/lib/checkSheets";
 
 /**
  * المندوب بيرفع ملف تشييك أساسي، وبعدين بتنزل إحالة أو اتنين جداد مش موجودين
@@ -125,5 +125,71 @@ describe("renumberCheckSlots", () => {
   it("شيل آخر مربع بيسيب القايمة فاضية", async () => {
     const { renumberCheckSlots } = await import("@/lib/checkSheets");
     expect(renumberCheckSlots([box(2, "أ")], 2)).toEqual([]);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  الفهرس بيتبني مرة لكل ملف — مش مع كل فتحة للصفحة
+ * ══════════════════════════════════════════════════════════════════════
+ *  فهرس ٥٦ ألف صف = ~٣٠ مللي على اللابتوب (~١٥٠ على الموبايل) — وكان بيتبني
+ *  من الأول كل ما «الجديد» تتفتح، والملف هو هو. كاش `getUploadedFile` بيرجّع
+ *  **نفس الكائن** طول ما الملف ماتغيّرش، فبنربط الفهرس بيه بالمرجع: أي رفع
+ *  أو تغيير أو مسح بيعمل كائن جديد ⇒ الفهرس بيتبني تاني لوحده.
+ */
+describe("cachedCombinedCheckIndex", () => {
+  const mk = (plates: string[]): CheckSource => ({
+    headers: ["رقم اللوحة"],
+    rows: plates.map((p) => ({ "رقم اللوحة": p })),
+  });
+
+  it("نفس الملفات (بالمرجع) ⇒ نفس الفهرس من غير ما يتبني تاني", () => {
+    clearCheckIndexCache();
+    const a = mk(["ا ب ح 1234"]);
+    const m1 = cachedCombinedCheckIndex([a]);
+    // مصفوفة مصادر جديدة بس بنفس الملفات — ده اللي بيحصل في كل فتحة
+    const m2 = cachedCombinedCheckIndex([{ headers: a.headers, rows: a.rows }]);
+    expect(m2).toBe(m1);
+    expect(m1.has("ابح1234")).toBe(true);
+  });
+
+  it("🔴 ملف اتغيّر (كائن صفوف جديد) ⇒ فهرس جديد — حتى لو نفس الاسم والعدد", () => {
+    clearCheckIndexCache();
+    const m1 = cachedCombinedCheckIndex([mk(["ا ب ح 1234"])]);
+    const m2 = cachedCombinedCheckIndex([mk(["س ص ط 5678"])]);
+    expect(m2).not.toBe(m1);
+    expect(m2.has("سصط5678")).toBe(true);
+    expect(m2.has("ابح1234")).toBe(false);
+  });
+
+  it("ملف إضافي اتضاف أو اتشال ⇒ فهرس جديد", () => {
+    clearCheckIndexCache();
+    const a = mk(["ا ب ح 1234"]);
+    const b = mk(["س ص ط 5678"]);
+    const m1 = cachedCombinedCheckIndex([a]);
+    const m2 = cachedCombinedCheckIndex([a, b]);
+    expect(m2).not.toBe(m1);
+    expect(m2.has("سصط5678")).toBe(true);
+    const m3 = cachedCombinedCheckIndex([a]);
+    expect(m3.has("سصط5678")).toBe(false);
+  });
+
+  it("الترتيب اتغيّر ⇒ فهرس جديد (الأول بيكسب)", () => {
+    clearCheckIndexCache();
+    const a: CheckSource = { headers: ["رقم اللوحة", "م"], rows: [{ "رقم اللوحة": "ا ب ح 1234", "م": "أ" }] };
+    const b: CheckSource = { headers: ["رقم اللوحة", "م"], rows: [{ "رقم اللوحة": "ا ب ح 1234", "م": "ب" }] };
+    expect(cachedCombinedCheckIndex([a, b]).get("ابح1234")?.["م"]).toBe("أ");
+    expect(cachedCombinedCheckIndex([b, a]).get("ابح1234")?.["م"]).toBe("ب");
+  });
+
+  it("مافيش ملفات ⇒ فهرس فاضي", () => {
+    clearCheckIndexCache();
+    expect(cachedCombinedCheckIndex([]).size).toBe(0);
+  });
+
+  it("نفس نتيجة البناء العادي بالظبط", () => {
+    clearCheckIndexCache();
+    const a = mk(["ا ب ح 1234", "NKD 5678", "7709 ABS"]);
+    expect([...cachedCombinedCheckIndex([a]).keys()]).toEqual([...buildCombinedCheckIndex([a]).keys()]);
   });
 });

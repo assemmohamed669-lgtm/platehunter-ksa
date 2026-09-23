@@ -45,3 +45,16 @@ export function canSeeTab(tab: unknown, perms: UserPerms): boolean {
 export function visibleTabs<T>(tabs: readonly T[], perms: UserPerms): T[] {
   return tabs.filter((t) => canSeeTab(t, perms));
 }
+
+/**
+ * التبويب ده منوّر؟ — العنوان هو **هو** أو صفحة **جوّاه** (`/maps/123`).
+ *
+ * 🔴 كان `pathname.startsWith(href)`، فـ`/registration-v2` («الجديد») كانت
+ * بتنوّر `/registration` («التسجيل») معاها. المالك (٢٣ سبتمبر ٢٠٢٦): «لما
+ * بتنقل لصفحة الجديد بتنوّر معاها صفحة التسجيل… هما ليه مرتبطين ببعض؟».
+ * فالصفحة الفرعية لازم يبقى بعدها `/` مش أي حرف.
+ */
+export function isTabActive(pathname: string | null | undefined, href: string): boolean {
+  if (!pathname) return false;
+  return pathname === href || pathname.startsWith(href.replace(/\/+$/, "") + "/");
+}

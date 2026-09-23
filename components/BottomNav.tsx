@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { visibleTabs } from "@/lib/navTabs";
+import { visibleTabs, isTabActive } from "@/lib/navTabs";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
 
@@ -139,7 +139,8 @@ export default function BottomNav() {
           })
         ) : (
           tabs.map(({ href, label, icon: Icon }) => {
-            const active = pathname?.startsWith(href);
+            // 🔴 مش `startsWith` — «الجديد» (/registration-v2) كانت بتنوّر «التسجيل» معاها.
+            const active = isTabActive(pathname, href);
             return (
               <Link
                 key={href}
