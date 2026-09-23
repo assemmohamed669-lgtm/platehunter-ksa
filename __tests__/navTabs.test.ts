@@ -118,3 +118,35 @@ describe("isTabActive", () => {
     expect(isTabActive("/sorting-old", "/sorting")).toBe(false);
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  needsVoice — تبويب «الجديد» مربوط بخدمة الصوت زي «صوتي»
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٣ سبتمبر ٢٠٢٦): «اللي مشترك كل خدمات البرنامج الصفحة تضاف
+ *  معاه تحت ويشوفها… الصفحة تتقفل فقط على اللي مش مشترك معانا في خدمة
+ *  الصوت».
+ *
+ *  ⇒ مالوش علاقة بالرول. بيظهر **لأي حد عنده صوت** (`hasVoice` محسوبة
+ *    بـ`voiceTabVisible` — نفس دالة «صوتي»)، وبيختفي عند اللي مالوش.
+ */
+describe("needsVoice — الصوت بس هو اللي بيحكم", () => {
+  const tab = { href: "/registration-v2", label: "الجديد", needsVoice: true };
+
+  it("🔴 عنده صوت ⇒ يشوفه، مهما كان رولّه", () => {
+    expect(canSeeTab(tab, { isSuper: false, isAdmin: false, hasVoice: true })).toBe(true);
+  });
+
+  it("🔴 مالوش صوت ⇒ مايشوفهوش — حتى لو أدمن", () => {
+    expect(canSeeTab(tab, { isSuper: false, isAdmin: true, hasVoice: false })).toBe(false);
+    expect(canSeeTab(tab, { isSuper: false, isAdmin: false, hasVoice: false })).toBe(false);
+  });
+
+  it("⚠️ الصوت مش معروف (مثلاً القراءة لسه ماخلصتش) ⇒ مخفي — الفشل بيقفل", () => {
+    expect(canSeeTab(tab, { isSuper: false, isAdmin: false })).toBe(false);
+  });
+
+  it("مابيأثرش على التبويبات التانية", () => {
+    expect(canSeeTab({ href: "/sorting" }, { isSuper: false, isAdmin: false, hasVoice: false })).toBe(true);
+  });
+});

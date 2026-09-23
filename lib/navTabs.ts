@@ -19,11 +19,24 @@ export interface TabPerm {
    * كان سوبر أدمن مش رول-أدمن هيبقى عنده صفحة **مفتوحة ومالهاش تبويب**.
    */
   adminOrSuper?: boolean;
+  /**
+   * لأي حد عنده **خدمة الصوت** (تبويب «الجديد»).
+   *
+   * المالك (٢٣ سبتمبر ٢٠٢٦): «الصفحة تتقفل فقط على اللي مش مشترك معانا في
+   * خدمة الصوت». مالوش علاقة بالرول — بيطابق `canOpenTrialPage`، واللي
+   * الاتنين ماشيين على `voiceTabVisible` (نفس دالة «صوتي»).
+   */
+  needsVoice?: boolean;
 }
 
 export interface UserPerms {
   isSuper: boolean;
   isAdmin: boolean;
+  /**
+   * عنده خدمة الصوت؟ (`voiceTabVisible`). اختياري: لو مش معروفة لسه
+   * بتتعامل **مقفولة** — التبويب مايظهرش قبل ما نتأكد.
+   */
+  hasVoice?: boolean;
 }
 
 /**
@@ -38,6 +51,7 @@ export function canSeeTab(tab: unknown, perms: UserPerms): boolean {
   if (t.superOnly && !perms.isSuper) return false;
   if (t.adminOnly && !perms.isAdmin) return false;
   if (t.adminOrSuper && !perms.isAdmin && !perms.isSuper) return false;
+  if (t.needsVoice && perms.hasVoice !== true) return false;
   return true;
 }
 

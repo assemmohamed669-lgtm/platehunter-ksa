@@ -1,3 +1,5 @@
+import { voiceTabVisible } from "./voiceAccess";
+
 /**
  * ══════════════════════════════════════════════════════════════════════
  *  صفحة «التسجيل الجديد (تجربة)» — حدّ الصلاحية وشرط التشغيل
@@ -126,19 +128,34 @@ export function tokenProbeVerdict(status: number): TokenProbe {
 export interface TrialProfile {
   role?: string | null;
   is_super?: boolean | null;
+  /** زرّ «فتح الصوت» — عند عمل الإيميل وفي صفحة كل مندوب. */
+  voicex_enabled?: boolean | null;
+  /** نهاية أيام اشتراك الصوت. */
+  voicex_until?: string | null;
 }
 
 /**
- * 🔴 **الفشل بيقفل مش بيفتح.** بروفايل ناقص أو قراءة فاشلة = مايفتحش.
+ * 🔴 **نفس قاعدة «صوتي» بالظبط** — `voiceTabVisible`.
  *
- * مافيش عمود `is_admin` في `profiles` — الأدمن في المشروع ده
- * **`role === "admin"`** (٢٠ موضع في الريبو: `app/(app)/layout.tsx:77`،
- * `app/admin/layout.tsx:25`، …)، والسوبر أدمن علم منفصل `is_super`.
- * والسوبر أدمن بيفتح كمان لأنه صلاحية أعلى — مالوش معنى نقفلها عليه.
+ * المالك (٢٣ سبتمبر ٢٠٢٦): «الصفحة تتقفل فقط على اللي مش مشترك معانا في
+ * خدمة الصوت… واربطلي الصفحة دي بزرّ فتح الصوت، لو مقفول عنده الصوت الصفحة
+ * دي متظهرش معاه ولا صوتي».
+ *
+ * مصدر واحد للحقيقة: الزرّين (`create-agent` عند عمل الإيميل و`manage-agent`
+ * في صفحة كل مندوب) بيكتبوا `voicex_enabled`، و`voiceTabVisible` بتقراه مع
+ * `voicex_until`. فالزرّ الواحد بيقفل ويفتح «صوتي» و«الجديد» مع بعض — **من
+ * غير أي سطر في صفحات الأدمن**، ومن غير ما يبقى فيه قاعدتين ممكن يختلفوا.
+ *
+ * ⚠️ **الأدمن مالوش استثناء** — «صوتي» مابتفتحش لأدمن مالوش صوت. السوبر أدمن
+ *    بس هو اللي مالوش حدّ، زي «صوتي».
+ *
+ * 🔴 **والفشل بيقفل**: بروفايل ناقص أو قراءة فاشلة = `null` = مقفول. مش
+ * بنستعمل النسخة المحفوظة على الجهاز هنا — الصفحة محتاجة الشبكة أصلاً
+ * (سيرفر ماليزيا)، فمافيش فايدة نفتحها أوفلاين.
  */
 export function canOpenTrialPage(profile: TrialProfile | null | undefined): boolean {
   if (!profile || typeof profile !== "object") return false;
-  return profile.role === "admin" || profile.is_super === true;
+  return voiceTabVisible(profile, null);
 }
 
 export type TrialRunPlan =
