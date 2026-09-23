@@ -69,6 +69,7 @@ import { notifyCheckSheetChanged, onCheckSheetChanged } from "@/lib/checkSheetSy
 import { backfillMissingGps } from "@/lib/gpsBackfill";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
+import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -176,6 +177,13 @@ export default function RegistrationV2Page() {
   const [zoom, setZoom] = useState(1);
   /** ⑭ شكل تاني للمربّع — «فخم وعصري وبخط مختلف» بطلب المالك. */
   const [fancy, setFancy] = useState(false);
+  /**
+   * 🔴 **«بدوس ابدأ التسجيل بيأخر»** — بلاغ المالك ٢٣ سبتمبر ٢٠٢٦.
+   * الزرّ بيرد **فوراً** بحالة «بيجهّز» بدل ما يفضل شكله واقف، والقياس
+   * بيتسجّل عشان نعرف مين البطيء بالظبط (`lib/startupMarks.ts`).
+   */
+  const [starting, setStarting] = useState(false);
+  const [startMs, setStartMs] = useState<string | null>(null);
   const [gps, setGps] = useState<GpsCoords | null>(null);
 
   const [modelUrl, setModelUrl] = useState("");
@@ -479,6 +487,18 @@ export default function RegistrationV2Page() {
 
   useEffect(() => { if (allowed === true) loadCheck(); }, [allowed, loadCheck]);
 
+  /**
+   * 🔥 **تسخين شنك المحرّك** — من أسباب «بدء التسجيل بيأخر».
+   *
+   * `import("@/lib/voicexEngine")` أول مرة بينزّل الشنك ويفكّه **جوّه
+   * الضغطة**. بنسحبه في الخلفية أول ما الصفحة تفتح، فالضغطة بتلاقيه جاهز.
+   * فشله مايأثرش — الاستيراد هيتم عادي وقت الضغط.
+   */
+  useEffect(() => {
+    if (allowed !== true) return;
+    void import("@/lib/voicexEngine").catch(() => { /* هيتحمّل وقت الضغط */ });
+  }, [allowed]);
+
   /* ─── فحص السيرفرين ──────────────────────────────────────────────── */
   const probeModel = useCallback(async () => {
     const b = modelUrl.trim().replace(/\/+$/, "");
@@ -621,10 +641,24 @@ export default function RegistrationV2Page() {
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }
-    loadCheck();
-    startedAtRef.current = Date.now();
+    /**
+     * 🔴 **`loadCheck()` اتشال من هنا** — ده كان سبب «بيأخر على ما بيبدأ».
+     *
+     * `loadCheck` بيعمل `readAllSheets` على ملف التشييك **كله** (٤٩ ألف
+     * لوحة) عشان يبني خريطة الشاص — تحليل إكسل كامل **على الخيط الرئيسي**
+     * جوّه الضغطة نفسها، فالصفحة بتتجمّد.
+     *
+     * وهو **مالوش لازمة هنا**: الشيت بيتحمّل عند فتح الصفحة، وبقى بيتحدّث
+     * لوحده مع أي رفع في أي صفحة (`onCheckSheetChanged`) ولما المندوب
+     * يرجع للصفحة (`visibilitychange`).
+     */
+    setStarting(true);
+    const pressedAt = Date.now();
+    const marks: Mark[] = [];
+    startedAtRef.current = pressedAt;
     try {
       const { startVoicexEngine } = await import("@/lib/voicexEngine");
+      marks.push({ label: "المحرّك", at: Date.now() });
       const ctrl = await startVoicexEngine({
         transcribeUrl: modelUrl.trim().replace(/\/+$/, "") + "/transcribe",
         token: modelToken.trim(),
@@ -768,10 +802,15 @@ export default function RegistrationV2Page() {
         },
       });
       if (!ctrl) { setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني."); return; }
+      marks.push({ label: "المايك", at: Date.now() });
       engineRef.current = ctrl;
       setListening(true); setSeconds(0);
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+      // 📏 الرقم بيتعرض في التقرير — عشان المرة الجاية نعرف مين البطيء
+      // بالظبط بدل ما نخمّن. شوف `lib/startupMarks.ts`.
+      setStartMs(startupBreakdown(marks, pressedAt).text);
     } catch { setError("مش قادر يشغّل المحرك — جرّب تاني."); }
+    finally { setStarting(false); }
   }
 
   function stopTimer() { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } }
@@ -1160,10 +1199,18 @@ export default function RegistrationV2Page() {
 
       {/* ── التسجيل + مؤشّر الصوت ── */}
       <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <button onClick={listening ? stop : () => void start()}
-          className={"flex w-full items-center justify-center gap-2 rounded-xl py-4 text-base font-black text-white shadow-sm transition "
+        {/*
+          * 🔴 **الزرّ بيرد فوراً** — بلاغ المالك «بيأخر على ما بيبدأ».
+          * فتح المايك بياخد وقته مهما عملنا (إذن + جهاز)، فاللي بيفرق إن
+          * المندوب يشوف إن ضغطته **وصلت** بدل ما الزرّ يفضل شكله واقف
+          * فيدوس تاني.
+          */}
+        <button onClick={listening ? stop : () => void start()} disabled={starting}
+          className={"flex w-full items-center justify-center gap-2 rounded-xl py-4 text-base font-black text-white shadow-sm transition disabled:opacity-80 "
             + (listening ? "bg-rose-600" : "bg-indigo-600")}>
-          {listening ? <><Square size={20} /> إيقاف التسجيل</> : <><Mic size={20} /> ابدأ التسجيل</>}
+          {starting
+            ? <><Loader2 size={20} className="animate-spin" /> بيجهّز المايك…</>
+            : listening ? <><Square size={20} /> إيقاف التسجيل</> : <><Mic size={20} /> ابدأ التسجيل</>}
         </button>
 
         {listening && (
@@ -1541,6 +1588,7 @@ export default function RegistrationV2Page() {
 
             <Block title="سرعة الظهور — وليه اتأخرت">
               <Kv k="وسيط التأخير من النطق للظهور" v={medLatency != null ? (medLatency / 1000).toFixed(1) + " ث" : "—"} />
+              <Kv k="⏱️ بدء التسجيل (من الضغطة للمايك)" v={startMs ?? "—"} />
               <Kv k="وسيط زمن الموديل نفسه" v={medModel != null ? Math.round(medModel) + " مللي" : "—"} />
               <Kv k="وسيط الرحلة كاملة (شبكة + موديل)" v={medWall != null ? Math.round(medWall) + " مللي" : "—"} />
               <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
