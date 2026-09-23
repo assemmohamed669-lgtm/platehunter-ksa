@@ -72,6 +72,7 @@ import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/t
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
+import { isLetterTwin, resolveLetterTwin } from "@/lib/letterTwin";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -764,6 +765,20 @@ export default function RegistrationV2Page() {
              * المندوب بيقول لوحتين بالتبادل. والإعادة المقصودة بينها
              * لوحات وثواني أكتر. شوف `isExactRepeatNearby`.
              */
+            /**
+             * 🔴 **«نفس الأرقام + حرفين» = نفس العربية، والأقدم صح** — قبل أي
+             * لمّ تاني. اتقاس على ٦ جلسات بحقيقة المالك (٣٣٢ لوحة): ٣ زيادات
+             * اتشالت وصفر لوحة حقيقية ضاعت. `sameCarTwin` بيلمّ حرف واحد بس،
+             * و«الأقوى يكسب» كان بيشيل الصح (`بنط9093` عنده نوافذ أكتر).
+             * شوف `lib/letterTwin.ts`.
+             *
+             * ⚠️ **الصفّارة تحت بتضرب برضه لو القراية دي مطلوبة** — عن قصد.
+             * لو في الحالة النادرة المتأخّرة هي اللي صح وكانت مطلوبة، المندوب
+             * لسه بيتنبّه. صفّارة زيادة أرخص بكتير من عربية مطلوبة تعدّي.
+             */
+            const lt = prev.find((r) => isLetterTwin(r, fresh));
+            if (lt) return prev.map((r) => (r.id === lt.id ? resolveLetterTwin(lt, fresh) : r));
+
             const nearby = isExactRepeatNearby(fresh.plate, prev.map((r) => r.plate));
             const twin = prev.find((r) => (r.plate === fresh.plate
               ? nearby && sameCarTwin(r, fresh, 12000)
@@ -821,6 +836,9 @@ export default function RegistrationV2Page() {
               ...sessionStamp(areaRef.current, recorderRef.current),
             };
             setRows((prev) => {
+              // 🔴 نفس القاعدة — المبدئي كمان بيطلع صف زيادة لو اتسابت.
+              const ltP = prev.find((x) => isLetterTwin(x, prov));
+              if (ltP) return prev.map((x) => (x.id === ltP.id ? resolveLetterTwin(ltP, prov) : x));
               const nearbyP = isExactRepeatNearby(prov.plate, prev.map((x) => x.plate));
               const twin = prev.find((x) => (x.plate === prov.plate
                 ? nearbyP && sameCarTwin(x, prov, 12000)
