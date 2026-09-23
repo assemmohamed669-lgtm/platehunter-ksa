@@ -63,6 +63,12 @@ export class Vad {
   get currentThreshold(): number { return Math.max(this.o.absoluteThreshold, this.noiseFloor * 3.2); }
 
   /** تُنادى لكل قطعة صوت. startSec = ثانية بداية القطعة (زمن مطلق). */
+  /**
+   * آخر لحظة اتسمع فيها صوت (ثواني من فتح المايك). بتتحدّث **فوراً** مع
+   * كل قطعة فيها كلام — مش بعد ٩٠٠ms سكوت زي `onUtterance`. قراءة بس.
+   */
+  get lastVoiceEndSec(): number { return this.lastVoiceEnd; }
+
   push(chunk: Float32Array, startSec: number): void {
     const energy = rmsOf(chunk);
     const durSec = chunk.length / this.o.sampleRate;

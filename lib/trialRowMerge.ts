@@ -38,6 +38,10 @@ export interface MergeRow {
   shownAt: number;
   latencyMs: number;
   edited?: Edited;
+  /** الحي والشارع — مختوم لحظة النطق (`sessionStamp`). */
+  area?: string | null;
+  /** اسم المسجّل — مختوم لحظة النطق. */
+  recorder?: string | null;
 }
 
 /**
@@ -62,5 +66,12 @@ export function mergeTwinRow<T extends MergeRow>(fresh: T, twin: T): T {
     type: ed.type ? twin.type : (fresh.type ?? twin.type),
     note: ed.note ? twin.note : (fresh.note ?? twin.note),
     edited: twin.edited,
+    /**
+     * 🔴 **الحي والمسجّل من الختم الأول** — لو المندوب غيّر الشارع بين ما
+     * اللوحة ظهرت وما اتأكّدت، القيمة الصح هي اللي كانت **وقت ما قالها**.
+     * والختم الفاضي بيفضل فاضي (مابيتملاش من التأكيد).
+     */
+    area: twin.area ?? null,
+    recorder: twin.recorder ?? null,
   };
 }
