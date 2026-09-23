@@ -14,7 +14,8 @@
  *
  * ⚙️ **كله كود مشترك مش نسخة:**
  *   الصوت `startVoicexEngine` · الشيت `getUploadedFile("local","check")`
- *   الفهرس `buildCombinedCheckIndex` · الصفّارة `startAlertSiren`
+ *   الفهرس `buildCombinedCheckIndex` · التنبيه `fireWantedAlert` (الحدث
+ *   الموحّد — بيطلّع الـoverlay **ويبلّغ المجموعة**)
  *   الموقع `gpsService` · التصدير `saveFieldCheckEntry` (شيت السجلات)
  *
  * 🔴 **تطابق تام بس** للصفّارة — التقريبي بيزوّر «مطلوبة».
@@ -40,7 +41,9 @@ import {
   pruneTypeQueue,
   type TypeWindow,
 } from "@/lib/typeForPlate";
-import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
+import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
+import { fireWantedAlert } from "@/lib/wantedAlert";
+import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { readJudgeEndpoint, saveJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
@@ -219,6 +222,29 @@ export default function RegistrationV2Page() {
     const unsub = gpsService.subscribe((c) => { gpsRef.current = c; setGps(c); });
     return () => { try { unsub(); } catch { /* ignore */ } };
   }, [allowed]);
+
+  /**
+   * 🔒 **قفل الشاشة أثناء التسجيل.**
+   *
+   * 🔴 من غيره: مهلة الشاشة العادية بتطفيها والمندوب بيسجّل، و**أندرويد
+   * بيعتبر إطفاء الشاشة إخفاءً للصفحة** فالمتصفّح بيوقف المايك —
+   * والمندوب بيشوفها «التسجيل بيقف لوحده». صفحة التشييك عندها القفل ده
+   * من زمان، ودي كانت من غيره.
+   *
+   * القفل اختياري: لو الويب-ڤيو مش داعم أو النظام رفض، التسجيل بيكمّل.
+   */
+  useEffect(() => {
+    if (!listening) return;
+    const wake = browserScreenWake();
+    void wake.acquire();
+    // النظام بيسحب القفل لما الصفحة تتخفي — نمسكه تاني لما المندوب يرجع.
+    const onVis = () => { if (document.visibilityState === "visible") void wake.acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      void wake.release();
+    };
+  }, [listening]);
 
   /* ─── 💾 مسودّة الجلسة ────────────────────────────────────────────── */
   /**
@@ -470,7 +496,7 @@ export default function RegistrationV2Page() {
             };
             return [merged, ...prev.filter((r) => r.id !== twin.id)];
           });
-          if (hit) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
+          if (hit) alertWanted(plate, hit);
         },
         onRead: (r) => {
           setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400));
@@ -503,7 +529,7 @@ export default function RegistrationV2Page() {
                 ...prev.filter((x) => x.id !== twin.id)];
             });
             // 🔔 المطلوب بيصفّر فوراً — الانتظار ٧ث على عربية مطلوبة غالي.
-            if (prov.match) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
+            if (prov.match) alertWanted(p2, prov.match);
           }
         },
         onAudioWindow: (wav, tMs) => { void askType(wav, tMs); },
@@ -549,7 +575,35 @@ export default function RegistrationV2Page() {
     if (!p) return;
     const hit = checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p))) ?? null;
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, plate: p, match: hit } : r)));
-    if (hit) { try { startAlertSiren(); setSirenOn(true); } catch { /* ignore */ } }
+    if (hit) alertWanted(p, hit);
+  }, []);
+
+  /**
+   * 🚨 **تنبيه اللوحة المطلوبة — بالحدث الموحّد مش بالصفّارة المباشرة.**
+   *
+   * 🔴 الصفحة كانت بتنادي `startAlertSiren()` على طول. ده بيدّي صوت
+   * عند المندوب **وبس** — و`GroupFindNotifier` بيسمع لحدث
+   * `fireWantedAlert` عشان يكتب في `group_finds` ويبعت **إشعار لكل
+   * الفريق**. يعني العربية المطلوبة كانت بتتلاقى والمجموعة **عمرها ما
+   * بتتبلّغ**. (متحقَّق: `components/GroupFindNotifier.tsx:88`.)
+   *
+   * والحدث كمان بيطلّع الـoverlay الموحّد بزرّ «تم» — نفس اللي المندوب
+   * شايفه في التشييك بالظبط، فمابيتلغبطش.
+   */
+  const alertWanted = useCallback((plate: string, row: Record<string, string> | null) => {
+    try {
+      fireWantedAlert({
+        plate,
+        matchType: "exact",
+        source: "voice",
+        info: row
+          ? Object.entries(row)
+              .filter(([, v]) => String(v ?? "").trim())
+              .map(([k, v]) => [k, String(v)] as [string, string])
+          : [],
+      });
+      setSirenOn(true);
+    } catch { /* التنبيه إضافة — مايوقّفش التسجيل */ }
   }, []);
 
   const saveCell = useCallback((id: string, field: "type" | "note", value: string) => {
