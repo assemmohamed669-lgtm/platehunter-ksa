@@ -94,7 +94,7 @@ const LETTERS_RE = /^[ء-ي]{3}/;
  *
  * ⚠️ **مفصّل على ٨ حالات — مش قانون.** أي تعديل يتقاس على نفس الجلسات.
  */
-const ALL_FLAGGED_MIN_CONF = 0.86;
+export const ALL_FLAGGED_MIN_CONF = 0.86;
 function lettersOf(plate: string): string {
   const m = plate.match(LETTERS_RE);
   return m ? m[0] : plate.slice(0, 3);

@@ -53,7 +53,7 @@ import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
   tokenProbeVerdict,
 } from "@/lib/trialModelGate";
-import { sameCarTwin, heardNotShown, isExactRepeatNearby } from "@/lib/trialTwin";
+import { sameCarTwin, heardNotShown, isExactRepeatNearby, blockedNotShown } from "@/lib/trialTwin";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
@@ -1069,6 +1069,8 @@ export default function RegistrationV2Page() {
     L.push("── الهلوسة والفقد ──");
     L.push("اتحجبت كاختراع: " + blocked + " · السيرفر رفضها: " + refused);
     L.push("لوحة اتسمعت وماظهرتش: " + missed.length + (missed.length ? "  [" + missed.join(" ") + "]" : ""));
+    L.push("اتحجبت بثقة ≥٨٦٪ وماظهرتش (غالباً لوحة ضاعت): " + lostToGuard.length
+      + (lostToGuard.length ? "  [" + lostToGuard.join(" ") + "]" : ""));
     L.push("نص فيه أرقام والشكل مش لوحة: " + malformed.length);
     for (const m of malformed) L.push("   • «" + m.rawText + "» → «" + m.plate + "»");
     L.push("");
@@ -1149,6 +1151,12 @@ export default function RegistrationV2Page() {
    * لـلوحة ظهرت فعلاً مش ضياع. شوف `heardNotShown` في `lib/trialTwin.ts`.
    */
   const missed = heardNotShown(reads, rows);
+  /**
+   * 🔴 **الضياع اللي `missed` مابيشوفوش** — لوحة كل قرايتها اتحجبت.
+   * جلسة المالك (٢٣ سبتمبر · ١٠٠ لوحة): `اوه1552` ضاعت والتقرير قال «صفر».
+   * شوف `blockedNotShown` في `lib/trialTwin.ts`.
+   */
+  const lostToGuard = blockedNotShown(reads, rows);
   /** نص فيه أرقام بس اللوحة مالهاش الشكل الصح = رقم/حرف ضاع في الكتابة */
   const malformed = reads.filter((r) => /\d/.test(r.rawText || "") && !(r.plate || "").split(/\s+/).some((p) => WELL.test(p)));
   const lat = rows.map((r) => r.latencyMs).sort((a, b) => a - b);
@@ -1681,6 +1689,12 @@ export default function RegistrationV2Page() {
                 tone={malformed.length ? "bad" : undefined} />
               {missed.length > 0 && (
                 <p dir="ltr" className="mt-1 font-mono text-[10px] text-rose-600">{missed.slice(0, 12).join(" · ")}</p>
+              )}
+              {/* 🔴 الضياع اللي كان بيعدّي في صمت — كل قرايات اللوحة اتحجبت */}
+              <Kv k="اتحجبت بثقة ≥٨٦٪ وماظهرتش (غالباً لوحة ضاعت)" v={String(lostToGuard.length)}
+                tone={lostToGuard.length ? "bad" : undefined} />
+              {lostToGuard.length > 0 && (
+                <p dir="ltr" className="mt-1 font-mono text-[10px] text-rose-600">{lostToGuard.slice(0, 12).join(" · ")}</p>
               )}
             </Block>
 
