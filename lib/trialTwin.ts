@@ -32,6 +32,22 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
 /** أقصى فرق في الأرقام عشان نعتبرهم نفس العربية. */
 export const TWIN_MAX_DIGIT_DIFF = 2;
 
+/**
+ * 🔴 **اللوحة المتطابقة حرف بحرف بتتلمّ لمدة أطول بكتير.**
+ *
+ * بلاغ المالك (٢٣ سبتمبر ٢٠٢٦): «بيكتب اللوحة مرتين» — `رره6232` طلعت
+ * **٣ صفوف**، و`ردق8637` و`رطص9784` و`رحج2976` كمان.
+ *
+ * السبب إن النافذة كانت **١٢ث لكل الحالات**. والحد ده متحط للتوائم
+ * **المسخّمة** (`دطس2112`/`دطس2177`) عشان مايلمّش لوحتين حقيقيتين
+ * متشابهتين — وده لازم يفضل ضيّق.
+ *
+ * لكن **لوحتين متطابقتين حرف بحرف = نفس العربية**، مستحيل غير كده. فدي
+ * نافذتها أوسع: دقيقتين. أطول من أي تأخير إجماع أو تكرار نطق، وأقصر من
+ * إن المندوب يلفّ ويرجع لنفس العربية في جلسة طويلة.
+ */
+export const EXACT_REPEAT_MS = 120_000;
+
 export interface TwinRow {
   plate: string;
   /** زمن النطق داخل الجلسة (مللي) */
@@ -54,7 +70,10 @@ export function sameCarTwin(a: TwinRow, b: TwinRow, windowMs: number): boolean {
   const pa = String(a?.plate ?? "");
   const pb = String(b?.plate ?? "");
   if (!WELL.test(pa) || !WELL.test(pb)) return false;
-  if (Math.abs((a.atMs ?? 0) - (b.atMs ?? 0)) > windowMs) return false;
+  const gap = Math.abs((a.atMs ?? 0) - (b.atMs ?? 0));
+  // 🔴 المتطابقة حرف بحرف: نافذة أوسع (نفس العربية يقيناً). شوف `EXACT_REPEAT_MS`.
+  if (pa === pb) return gap <= EXACT_REPEAT_MS;
+  if (gap > windowMs) return false;
 
   const la = pa.slice(0, 3), lb = pb.slice(0, 3);
   const da = pa.slice(3), db = pb.slice(3);
