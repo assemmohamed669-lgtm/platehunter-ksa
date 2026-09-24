@@ -39,9 +39,26 @@ const ROW = {
 };
 
 describe("سجلات صفحة التجربة", () => {
+  const AGENT_A = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const AGENT_B = "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
   it("المعرّف ثابت من الصف — مية ضغطة = سجل واحد", () => {
-    expect(trialEntryId(ROW.id)).toBe("fc-trial-دطس2177-9000");
-    expect(trialEntryId(ROW.id)).toBe(trialEntryId(ROW.id));
+    expect(trialEntryId(ROW, AGENT_A)).toBe(trialEntryId(ROW, AGENT_A));
+    expect(trialEntryId(ROW, AGENT_A)).toBe("fc-trial-" + AGENT_A + "-" + ROW.shownAt + "-" + ROW.id);
+  });
+
+  /**
+   * 🔴 المالك (٢٤ سبتمبر): «اللوحات بتاع كل مندوب تروح لاسمه… مش عايز أي غلط حتى لو صغير».
+   * السيرفر بيعرف السجل بـ`local_id` لوحده (unique على الجدول كله). المعرّف القديم كان
+   * «اللوحة + زمنها جوّه التسجيل» ⇒ بيتكرّر: نفس العربية أول الجلسة (~٣.٥ث) يومين ورا بعض
+   * كانت بتمسح سجل امبارح، ومندوبين على نفس العربية ⇒ التاني السيرفر بيرفضه في صمت.
+   */
+  it("🔴 نفس اللوحة ونفس الزمن في جلستين (يومين) ⇒ سجلين مختلفين (مايمسحش القديم)", () => {
+    const today = { ...ROW, shownAt: ROW.shownAt + 86_400_000 };
+    expect(trialEntryId(today, AGENT_A)).not.toBe(trialEntryId(ROW, AGENT_A));
+  });
+  it("🔴 مندوبين على نفس الصف بالظبط ⇒ معرّفين مختلفين (السيرفر مايرفضش التاني)", () => {
+    expect(trialEntryId(ROW, AGENT_A)).not.toBe(trialEntryId(ROW, AGENT_B));
   });
 
   it("بيطلّع نوع السيارة والشركة والشاص من صف الشيت", () => {
@@ -160,7 +177,7 @@ describe("TRIAL_EXPORT_METHOD — زي صوتي بالحرف", () => {
   });
 
   it("التمييز في الداتا باقي من المعرّف", () => {
-    expect(trialEntryId("x-1")).toMatch(/^fc-trial-/);
+    expect(trialEntryId({ id: "x-1", shownAt: 1 }, "agent-x")).toMatch(/^fc-trial-/);
   });
 });
 
