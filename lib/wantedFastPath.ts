@@ -130,3 +130,42 @@ export function sweepKeeps(
   if (r.shownAt < sessionStartMs) return true;
   return keepProvisional(r, cutMs);
 }
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔔 «مطلوبة» والصفّارة **بعد التأكد** — نافذتين بنفس اللوحة بالظبط
+ * ══════════════════════════════════════════════════════════════════════
+ * المالك (٢٥ سبتمبر ٢٠٢٦): «أنا عايزه يظهر بعد التأكد من اللوحة، مش يطلع بعد
+ * القراية المباشرة اللي قبل التعديل». قراية واحدة غلط («رلم6146» اتسمعت
+ * «رلم6113» مرة) كانت بتصفّر وتعلّم عربية مش مطلوبة.
+ *
+ * التأكيد = نفس معيار 🟢 في الإجماع (`greenMinMult: 2`) — نافذتين **مختلفتين**
+ * سمعوا اللوحة **بالظبط** — من غير ما نستنى الإجماع يخلص (~٦ث، واتشكى منه).
+ * نفس النافذة لو اتبعتت تاني (استرجاع بعد وقعة الشبكة) **مش** تأكيد: نفس الصوت.
+ */
+export const WANTED_CONFIRM_READS = 2;
+/** أقصى مسافة (بزمن الصوت) بين نافذتين يتحسبوا نفس النطق — أبعد = عربية تانية. */
+export const WANTED_CONFIRM_SPAN_MS = 8000;
+
+/** بيسجّل إن النافذة `tMs` سمعت اللوحة، وبيرجّع true لو كده اتأكّدت. */
+export function confirmWanted(
+  seen: Map<string, number[]>,
+  key: string,
+  tMs: number,
+  spanMs: number = WANTED_CONFIRM_SPAN_MS,
+): boolean {
+  const list = (seen.get(key) ?? []).filter((t) => Math.abs(tMs - t) <= spanMs);
+  if (!list.includes(tMs)) list.push(tMs);
+  seen.set(key, list);
+  return list.length >= WANTED_CONFIRM_READS;
+}
+
+/** كام نافذة سمعت اللوحة جوّه المدى حوالين `tMs` — من غير ما يسجّل. */
+export function wantedReadCount(
+  seen: ReadonlyMap<string, number[]>,
+  key: string,
+  tMs: number,
+  spanMs: number = WANTED_CONFIRM_SPAN_MS,
+): number {
+  return (seen.get(key) ?? []).filter((t) => Math.abs(tMs - t) <= spanMs).length;
+}
