@@ -47,6 +47,25 @@ export function resolveCheckColumns(headers: string[]): CheckColumns {
   return { brandCol, typeCol, bankCol };
 }
 
+/**
+ * 📥 أعمدة **الصف نفسه** — لملفات تشييك إضافية بأسامي أعمدة تانية.
+ *
+ * `resolveCheckColumns` على رؤوس **كل** الملفات بيرجّع اسم واحد لكل دور (الأول يكسب،
+ * غالباً من الملف الأساسي). فصف من ملف إضافي بصيغة البنك (`Vehicle Name` · `Bank`)
+ * كان بيطلع «مطلوبة» **من غير** نوع السيارة ولا الشركة — على الشاشة وفي التصدير.
+ * ⇒ أعمدة الصف من مفاتيحه هو، والناقص منها من القايمة العامة (صف الملف الأساسي = نفس
+ * النتيجة بالظبط).
+ */
+export function rowCheckCols(row: Record<string, string> | null | undefined, global: CheckColumns): CheckColumns {
+  if (!row) return global;
+  const own = resolveCheckColumns(Object.keys(row));
+  return {
+    brandCol: own.brandCol ?? global.brandCol,
+    typeCol: own.typeCol ?? global.typeCol,
+    bankCol: own.bankCol ?? global.bankCol,
+  };
+}
+
 // ترتيب الأولوية مهم: الأكثر تحديداً الأول.
 const TYPE_KEYWORDS: Array<[string, string[]]> = [
   ["ونيت", ["ونيت", "wanit", "pickup"]],
