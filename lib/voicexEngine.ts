@@ -14,7 +14,7 @@ import { MissedWindows, canReplay, isStalled } from "./voicexReplay";
 import { postAudioForPlate } from "./plateJudgeClient";
 import { LiveConsensus, drainClockMs } from "./liveConsensus";
 import { MicEngine } from "./micEngine";
-import { MicLossDetector, type MicLossReason } from "./micLoss";
+import { MicLossDetector, stopsRecording, type MicLossReason } from "./micLoss";
 import { Vad } from "./vad";
 import { audioPregate } from "./audioPregate";
 import { planVoicexAdmission } from "./voicexAdmission";
@@ -278,7 +278,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   const lossOn = FIXES && typeof opts.onMicLost === "function";
   let loss: MicLossDetector | null = null;
   const reportLoss = (r: MicLossReason | null) => {
-    if (!r || stopped) return;
+    if (!r || stopped || !stopsRecording(r)) return;
     try { opts.onMicLost?.(r); } catch { /* ignore */ }
   };
 
@@ -288,8 +288,10 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     onChunk: (pcm, startSec) => { try { vad?.push(pcm, startSec); } catch { /* ignore */ } },
     onLevel: (level) => { opts.onLevel?.(level); },
     ...(lossOn ? {
-      // الصوت **الخام** قبل الفلاتر — الأصفار الرقمية بتبان فيه بالظبط
-      onRawChunk: (pcm: Float32Array) => { if (loss) reportLoss(loss.feed(pcm)); },
+      // 🔴 **السكوت الرقمي مش متوصّل عن قصد** (بلاغ ٢٥ سبتمبر): كاتم ضوضاء
+      // بعض الموبايلات بيطلّع صفر في كل سكتة، فكان بيقفل التسجيل بين اللوحات.
+      // ومش بنغذّي الكاشف بيه كمان — لإن الكاشف بيبلّغ **مرة واحدة**، فلو
+      // «سكوت» سبق كان هيقفل الباب قدام سبب حقيقي (الميك اتقفل) بعده.
       onTrackState: (st: "ended" | "muted" | "unmuted") => {
         if (!loss) return;
         if (st === "ended") reportLoss(loss.trackEnded());
