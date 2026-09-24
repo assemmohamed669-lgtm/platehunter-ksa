@@ -81,6 +81,8 @@ import { setMicBusy } from "@/lib/micBusy";
 import { createBusyHold, type BusyHold } from "@/lib/busyHold";
 import { micLostNotice, type AutoStopReason } from "@/lib/micLoss";
 import SessionField from "@/components/SessionField";
+import { AreaResolver, areaSource, autoAreaEligible } from "@/lib/autoArea";
+import { reverseGeocode } from "@/lib/geocoding";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
@@ -119,6 +121,11 @@ interface LiveRow {
    */
   area?: string | null;
   recorder?: string | null;
+  /**
+   * 🏘️ الصف مستني «الحي تلقائي» — اتعلّم **لحظة النطق** (الزرار مفتوح والمربع
+   * فاضي). بيتملّى بعدين من إحداثيات الصف نفسه، وبعدها بيبقى `false`.
+   */
+  areaAuto?: boolean;
 }
 
 /** قراءة خام من الموديل — للتقرير. */
@@ -145,6 +152,9 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
  * واحدة من الطابور — وعطل مايأجّلش التحديث للأبد.
  */
 const STOP_SETTLE_MAX_MS = 15_000;
+
+/** 🏘️ حالة زرار «الحي تلقائي» على الموبايل. */
+const AUTO_AREA_KEY = "rv2-auto-area";
 
 /** رسالة «مافيش توكن» — ثابتة عشان تتشال لوحدها لو التوكن وصل بعدين. */
 const NO_TRIAL_TOKEN_MSG = "مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
@@ -203,8 +213,27 @@ export default function RegistrationV2Page() {
    * **وهو بيسجّل**. المرجع بيدّي اللي في المربّع دلوقتي.
    */
   const areaRef = useRef("");
+  /**
+   * 🏘️ **«الحي تلقائي»** — المالك (٢٥ سبتمبر ٢٠٢٦): «زر لما يفتحه المندوب ياخد
+   * اسم الحي واسم الشارع تلقائي… لو المندوب كتب في المربع يتطبق اللي كاتبه، ولو
+   * فاضي ياخد من الجي بي اس ويكون دقيق». محفوظ على الموبايل (تسهيل للمندوب).
+   * القواعد والاختبارات في `lib/autoArea.ts`.
+   */
+  const [autoArea, setAutoArea] = useState(false);
+  const autoAreaRef = useRef(false);
+  const areaResolverRef = useRef<AreaResolver | null>(null);
+  if (!areaResolverRef.current) areaResolverRef.current = new AreaResolver(reverseGeocode);
+  /** الصفوف اللي اتطلب ليها عنوان — مايتطلبش مرتين. */
+  const areaAskedRef = useRef<Set<string>>(new Set());
   const recorderRef = useRef("");
   useEffect(() => { areaRef.current = areaName; }, [areaName]);
+  useEffect(() => {
+    try { if (localStorage.getItem(AUTO_AREA_KEY) === "1") setAutoArea(true); } catch { /* مش متاح */ }
+  }, []);
+  useEffect(() => {
+    autoAreaRef.current = autoArea;
+    try { localStorage.setItem(AUTO_AREA_KEY, autoArea ? "1" : "0"); } catch { /* مش متاح */ }
+  }, [autoArea]);
   useEffect(() => { recorderRef.current = recorderName; }, [recorderName]);
   /**
    * ⑩أ **قفل أخد الموقع** — بطلب المالك. لما يتفعّل، اللوحات **الجاية**
@@ -495,6 +524,30 @@ export default function RegistrationV2Page() {
       holdRef.current?.reset();
     };
   }, []);
+
+  /**
+   * 🏘️ **يملا «الحي تلقائي»** للصفوف اللي اتعلّمت لحظة النطق — من إحداثيات
+   * **الصف نفسه** (مش مكان المندوب دلوقتي). الصف اللي موقعه لسه ماوصلش بيستنى
+   * (ختم الموقع المتأخر بيملاه)، واللي دقته ضعيفة **بيفضل فاضي** — الفاضي أحسن
+   * من شارع غلط. والطلبات واحد ورا التاني (`AreaResolver`).
+   */
+  useEffect(() => {
+    for (const r of rows) {
+      if (!r.areaAuto || r.area || areaAskedRef.current.has(r.id)) continue;
+      if (r.lat == null || r.lng == null) continue;          // الموقع لسه جاي
+      areaAskedRef.current.add(r.id);
+      const id = r.id;
+      if (!autoAreaEligible(r)) {
+        setRows((prev) => prev.map((x) => (x.id === id ? { ...x, areaAuto: false } : x)));
+        continue;
+      }
+      void areaResolverRef.current!.resolve(r.lat, r.lng).then((label) => {
+        setRows((prev) => prev.map((x) => (x.id === id && !x.area
+          ? { ...x, area: label || null, areaAuto: false }
+          : x)));
+      });
+    }
+  }, [rows]);
 
   /* ─── 💾 مسودّة الجلسة ────────────────────────────────────────────── */
   /**
@@ -933,6 +986,7 @@ export default function RegistrationV2Page() {
             lat: g?.lat ?? null, lng: g?.lng ?? null, gpsAccuracy: g?.accuracy ?? null,
             // 🔴 الختم **دلوقتي** — اللي في المربّع وقت ما المندوب قالها.
             ...sessionStamp(areaRef.current, recorderRef.current),
+            areaAuto: areaSource(areaRef.current, autoAreaRef.current) === "auto",
           };
           setRows((prev) => {
             /**
@@ -1053,6 +1107,7 @@ export default function RegistrationV2Page() {
               type: null, note: null,
               lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
               ...sessionStamp(areaRef.current, recorderRef.current),
+              areaAuto: areaSource(areaRef.current, autoAreaRef.current) === "auto",
             };
             setRows((prev0) => {
               /**
@@ -1667,10 +1722,19 @@ export default function RegistrationV2Page() {
         */}
       <section className="mt-3 grid grid-cols-2 gap-2">
         <SessionField label="الحي واسم الشارع" value={areaName} onChange={setAreaName}
-          placeholder="مثال: النسيم - شارع ٣٠" />
+          placeholder={autoArea ? "📍 تلقائي من الـGPS (أو اكتب)" : "مثال: النسيم - شارع ٣٠"} />
         <SessionField label="اسم المسجّل" value={recorderName} onChange={setRecorderName}
           placeholder="اسم المندوب" />
       </section>
+      {/*
+        * 🏘️ **«الحي تلقائي»** — مفتوح: المربع فاضي ⇒ «الشارع - الحي» من الـGPS لكل
+        * لوحة لحظة ما اتقالت؛ المندوب كاتب ⇒ اللي كتبه. «اسم المسجّل» مالوش دعوة.
+        */}
+      <div className="mt-2 grid">
+        <ToggleButton on={autoArea} onLabel="🏘️ الحي تلقائي من الـGPS" offLabel="🏘️ الحي تلقائي — مقفول"
+          tone={autoArea ? "on" : "off"}
+          onClick={() => setAutoArea((v) => !v)} />
+      </div>
 
       {/*
         * ── اللوحات ──
