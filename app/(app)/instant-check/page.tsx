@@ -63,7 +63,7 @@ import { serviceActive } from "@/lib/subscription";
 import { STREET_KEY, withStreetName, loadStreetName, saveStreetName } from "@/lib/streetName";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import { typeToCode, vehicleTypeLabel } from "@/lib/vehicleType";
-import { applyEntryEdit, entryType, entryNotes, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
+import { applyEntryEdit, entryType, entryNotes, notesKeyOf, NOTES_KEY, TYPE_KEY, type EntryEdit } from "@/lib/fieldCheckEdit";
 import { setMicBusy } from "@/lib/micBusy";
 import { clampManualPlate, manualStatus, manualHint } from "@/lib/manualPlateInput";
 import { plateKeyboardMode, readSmartKeyboard, writeSmartKeyboard } from "@/lib/keyboardMode";
@@ -6446,7 +6446,9 @@ export default function InstantCheckPage() {
 
       {/* ── نافذة «إظهار وتعديل اللوحات» — تعديل/حذف بتأكيد حفظ ── */}
       {platesEditorOpen && (() => {
-        const allCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
+        // 🔴 نفس استبعاد العرض المصغّر بالحرف: النوع والملاحظات ليهم أعمدة خاصة
+        //    تحت، فلو سابناهم هنا كمان هيتكرّروا مرتين في نفس الجدول.
+        const allCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
         const shownCols = allCols.filter((h) => peCols.has(h));
         // بحث برقم اللوحة — نطبّع الاتنين عشان المطابقة تشتغل مع/بدون فراغات وحروف EN.
         // المحرّر بيفتح على **نفس الشريحة** اللي المندوب واقف عليها: واقف على
@@ -6516,9 +6518,19 @@ export default function InstantCheckPage() {
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-surface-2 text-muted">
                         <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                        {/* 📋 نفس أعمدة العرض المصغّر بالظبط — المحرّر كان بيعرض
+                            أعمدة **ملف التشييك** بس، فالمندوب يفتح «إظهار وتعديل»
+                            ويلاقي بيانات العربية (النوع · الحي-الشارع · الموقع ·
+                            التاريخ) مختفية رغم إنها ظاهرة في الـ٤ اللي فوق. */}
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">النوع</th>
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
                         {shownCols.map((h) => (
                           <th key={h} className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                         ))}
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">الحالة</th>
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                        <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                         <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">حذف</th>
                       </tr>
                     </thead>
@@ -6533,12 +6545,38 @@ export default function InstantCheckPage() {
                             <input dir="rtl" value={e.plate} onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
                               className={`w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none ${hit ? "font-black text-primary" : "font-bold"}`} />
                           </td>
+                          {/* النوع والملاحظات — بيتعدّلوا في **المسوّدة** زي باقي
+                              الخانات (بيتحفظوا مع «احفظ التعديلات»)، مش فوراً زي
+                              العرض المصغّر. الاتنين بيتخزّنوا جوّه `row`. */}
+                          <td className="border-l border-border p-1 whitespace-nowrap">
+                            <input dir="rtl" value={e.row[TYPE_KEY] ?? ""} onChange={(ev) => peUpdateField(e.id, TYPE_KEY, ev.target.value)}
+                              placeholder="النوع…"
+                              className="w-24 rounded border border-transparent bg-transparent px-2 py-1 text-ink placeholder:text-muted hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
+                          </td>
+                          <td className="border-l border-border p-1 whitespace-nowrap">
+                            <input dir="rtl" value={entryNotes(e)} onChange={(ev) => peUpdateField(e.id, notesKeyOf(e.row ?? {}), ev.target.value)}
+                              placeholder="ملاحظة…"
+                              className="w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink placeholder:text-muted hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
+                          </td>
+                          <td className="border-l border-border p-1 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] || "—"}</td>
                           {shownCols.map((h) => (
                             <td key={h} className="border-l border-border p-1 whitespace-nowrap">
                               <input dir="rtl" value={e.row[h] ?? ""} onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}
                                 className="w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
                             </td>
                           ))}
+                          <td className="border-l border-border p-1 whitespace-nowrap">
+                            <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-bold text-brand">{e.method}</span>
+                          </td>
+                          <td className="border-l border-border p-1 whitespace-nowrap">
+                            {e.mapsLink ? (
+                              <a href={e.mapsLink} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                                <MapPin size={10} /> خريطة
+                              </a>
+                            ) : <span className="text-muted">—</span>}
+                          </td>
+                          <td className="border-l border-border p-1 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
                           <td className="p-1 text-center">
                             <button onClick={() => peDeleteEntry(e.id)} title="حذف اللوحة"
                               className="rounded-lg border border-danger/40 bg-danger/10 p-1.5 text-danger transition hover:bg-danger/20"><Trash2 size={14} /></button>

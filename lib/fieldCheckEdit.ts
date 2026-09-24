@@ -22,7 +22,7 @@ export const TYPE_KEY = "النوع";
 const NOTES_RE = /ملاح/;
 
 /** اسم عمود الملاحظات الموجود في السجل، وإلا الافتراضي. */
-function notesKeyOf(row: Record<string, string>): string {
+export function notesKeyOf(row: Record<string, string>): string {
   return Object.keys(row).find((k) => NOTES_RE.test(k)) ?? NOTES_KEY;
 }
 
