@@ -28,7 +28,7 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
 import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
-import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate } from "@/lib/locationNeighbors";
+import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
@@ -1891,8 +1891,12 @@ export default function SortingPage() {
     const src = r.srcIdx != null ? sources[r.srcIdx] : undefined;
     if (!src?.slot) return null;
     const ed = extraData.find((e) => e.streamSlot === src.slot);
+    // 🔴 كانت `sheets: null` ثابتة — يعني «موقعها» بتقرا **كل** ورقات الملف
+    // الإضافي بينما الفرز قرا الورقات المختارة بس. ده بيغيّر فضاء الفهرسة
+    // كله (الجيران بيتقروا من ورقات المندوب مااختارهاش). لازم نفس فلتر الفرز.
     return { slot: src.slot, plateCol: src.plateCol,
-             headers: ed?.table?.headers ?? Object.keys(r.dataRow ?? {}), sheets: null, primary: false };
+             headers: ed?.table?.headers ?? Object.keys(r.dataRow ?? {}),
+             sheets: src.sheets ?? null, primary: false };
   }
 
   /** «موقعها» لصف جاي من ملف على الجهاز — مرور على الدفعات بذاكرة دفعة واحدة. */
@@ -1912,9 +1916,17 @@ export default function SortingPage() {
     try {
       // (١) الفهرس المخزّن وقت الفرز — بيشتغل للملف الأساسي (أول مصدر فالفهرس محلّي).
       let res: Awaited<ReturnType<typeof neighborsFromStream>> | null = null;
-      if (src.primary && r.dataIdx != null && r.dataIdx >= 0) {
+      // 🔴 **اتشال شرط `src.primary`.** الفرز بيدّي كل صف `dataIdx` خاص بيه في
+      // الملفات الإضافية كمان (`pushMatch(dataRow, n, dataBase + gj, …)`)، بس
+      // الشرط ده كان بيتخطّى الرقم ده تماماً لأي ملف غير الأساسي ⇒ بيقع على
+      // `findIndexByPlate` اللي بترجّع **أول** ظهور للوحة ⇒ اللوحة المكررة في
+      // ٣ مواقع بتفتح تلات مرات على نفس الموقع الأول. (بلاغ المالك ٢٤ سبتمبر)
+      if (r.dataIdx != null && r.dataIdx >= 0) {
         const byIdx = await neighborsFromStream(iterate, r.dataIdx, locCol);
-        if (byIdx.target) res = byIdx;
+        // ⚠️ **مانقبلش الصف من غير ما نتأكد إنه هو هو.** الرقم متخزّن وقت الفرز،
+        // ولو بقى قديم بيقع على صف تاني — وكان بيتعرض **بلا أي فحص**. ومقارنة
+        // اللوحة وحدها ماتنفعش هنا بالذات: نفس اللوحة مسجّلة كذا مرة.
+        if (byIdx.target && (!r.dataRow || sameDataRow(byIdx.target, r.dataRow))) res = byIdx;
       }
       // (٢) لو الفهرس مالقاش الصف الصح (نتيجة قديمة، أو مربع إضافي فهرسه عام) —
       //     ندوّر باللوحة نفسها: أدق من أي حسابات إزاحة.
@@ -1951,7 +1963,14 @@ export default function SortingPage() {
     // الموضع: dataIdx المخزّن وقت الفرز (بيصمد بعد إعادة الفتح لأن نفس ملف
     // الداتا وترتيبه)، وإلا الـidentity (نفس مرجع الصف في نفس الجلسة).
     let idx = (r.dataIdx != null && r.dataIdx >= 0 && r.dataIdx < orderedRows.length) ? r.dataIdx : -1;
+    // ⚠️ **الرقم المتخزّن مايتصدّقش بلا فحص.** لو وقع على صف تاني (الملف اتغيّر ·
+    // فلتر اختلف) كان بيتعرض زي ما هو = **عربية غلط** للمندوب يروح لها.
+    if (idx >= 0 && r.dataRow && !sameDataRow(orderedRows[idx], r.dataRow)) idx = -1;
     if (idx < 0 && r.dataRow) idx = orderedRows.indexOf(r.dataRow);
+    // مطابقة **بالقيم** — بتمسك الصف بعد إعادة الفتح (النتايج بترجع من JSON
+    // فالمرجع بيروح و`indexOf` بترجّع -1)، وبتفرّق بين نسخ **نفس اللوحة** في
+    // مواقع مختلفة — ودي بالظبط اللي البحث باللوحة وحده بيفشل فيها.
+    if (idx < 0 && r.dataRow) idx = orderedRows.findIndex((row) => sameDataRow(row, r.dataRow));
     // احتياطي: نتايج قديمة اتفرزت قبل ميزة «موقعها» (مفيش dataIdx ولا نفس المرجع)
     // — ندوّر على أول صف داتا بنفس اللوحة المطبّعة.
     if (idx < 0) {
@@ -4160,7 +4179,7 @@ export default function SortingPage() {
                         })}
                         {/* موقعها في الداتا (لوحات اللصق بتطابق ملف الداتا فليها موضع) */}
                         <td className="border-l border-border px-2 py-1.5 text-center">
-                          <button onClick={() => void showNeighbors({ dataRow: p.row, refPlateNorm: pasteKey } as unknown as MatchResult)} disabled={neighborsLoading}
+                          <button onClick={() => void showNeighbors({ dataRow: p.row, refPlateNorm: pasteKey, dataIdx: p.dataIdx } as unknown as MatchResult)} disabled={neighborsLoading}
                             title="شوف موقعها بين الجيران في الداتا"
                             className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition disabled:opacity-50">
                             <MapPin size={12} /> {neighborsLoading ? "..." : "موقعها"}
