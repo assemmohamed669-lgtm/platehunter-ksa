@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { wantedHits, shouldAlertNow, keepProvisional, sweepKeeps, WANTED_REALERT_MS } from "../lib/wantedFastPath";
+import { wantedHits, shouldAlertNow, keepProvisional, sweepKeeps, confirmWanted, wantedReadCount, WANTED_CONFIRM_SPAN_MS, WANTED_REALERT_MS } from "../lib/wantedFastPath";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -143,5 +143,59 @@ describe("sweepKeeps — الكنس على الجلسة الحالية بس", ()
   it("المؤكّدة والمطلوبة ⇒ بيفضلوا دايماً", () => {
     expect(sweepKeeps({ ...base, provisional: false, shownAt: 600_000 }, 700_000, 500_000)).toBe(true);
     expect(sweepKeeps({ ...base, match: { a: "b" }, shownAt: 600_000 }, 700_000, 500_000)).toBe(true);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔔 «المطلوبة» والصفّارة **بعد التأكد** — مش من أول قراية
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٥ سبتمبر ٢٠٢٦): «أنا عايزه يظهر بعد التأكد من اللوحة، مش يطلع
+ *  بعد القراية المباشرة اللي قبل التعديل». الحالة: «رلم6146» (مش في الشيت)
+ *  اتسمعت **مرة** «رلم6113» (في الشيت) ⇒ صفّارة غلط.
+ *
+ *  التأكيد = نفس اللوحة المطلوبة **بالظبط** في **نافذتين مختلفتين** — نفس معيار
+ *  🟢 «مؤكّدة» في الإجماع (`greenMinMult: 2`)، بس من غير ما نستنى الإجماع يخلص
+ *  (كان ~٦ث، والمالك اشتكى منه قبل كده). النافذة بتتكرر كل ١.٥ث فاللوحة
+ *  المقولة بتتسمع ~٣ مرات ⇒ التأكيد بييجي ~١.٥ث بعد أول قراية.
+ */
+describe("confirmWanted — نافذتين بنفس اللوحة", () => {
+  it("🔴 قراية واحدة ⇒ لأ (دي حالة رلم6113 بالظبط)", () => {
+    const seen = new Map<string, number[]>();
+    expect(confirmWanted(seen, "رلم6113", 10_000)).toBe(false);
+  });
+
+  it("نافذة تانية بنفس اللوحة ⇒ أيوه", () => {
+    const seen = new Map<string, number[]>();
+    confirmWanted(seen, "ابح1234", 10_000);
+    expect(confirmWanted(seen, "ابح1234", 11_500)).toBe(true);
+  });
+
+  it("نفس النافذة اتبعتت تاني (استرجاع بعد وقعة الشبكة) ⇒ مش تأكيد — نفس الصوت", () => {
+    const seen = new Map<string, number[]>();
+    confirmWanted(seen, "ابح1234", 10_000);
+    expect(confirmWanted(seen, "ابح1234", 10_000)).toBe(false);
+  });
+
+  it("القراية التانية بعيدة زمنياً (عربية تانية بنفس الرقم بعد شوية) ⇒ مش تأكيد للأولى", () => {
+    const seen = new Map<string, number[]>();
+    confirmWanted(seen, "ابح1234", 10_000);
+    expect(confirmWanted(seen, "ابح1234", 10_000 + WANTED_CONFIRM_SPAN_MS + 1)).toBe(false);
+    expect(confirmWanted(seen, "ابح1234", 10_000 + WANTED_CONFIRM_SPAN_MS + 1500)).toBe(true);
+  });
+
+  it("لوحتين مختلفتين مابيأكّدوش بعض", () => {
+    const seen = new Map<string, number[]>();
+    confirmWanted(seen, "رلم6113", 10_000);
+    expect(confirmWanted(seen, "رلم6146", 11_500)).toBe(false);
+  });
+
+  it("wantedReadCount — عدد النوافذ اللي سمعتها جوّه المدى (للإجماع)", () => {
+    const seen = new Map<string, number[]>();
+    expect(wantedReadCount(seen, "ابح1234", 10_000)).toBe(0);
+    confirmWanted(seen, "ابح1234", 10_000);
+    confirmWanted(seen, "ابح1234", 11_500);
+    expect(wantedReadCount(seen, "ابح1234", 12_000)).toBe(2);
+    expect(wantedReadCount(seen, "ابح1234", 12_000 + WANTED_CONFIRM_SPAN_MS * 2)).toBe(0);
   });
 });

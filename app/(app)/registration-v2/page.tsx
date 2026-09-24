@@ -76,7 +76,7 @@ import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
 import { isLetterTwin, resolveLetterTwin } from "@/lib/letterTwin";
-import { wantedHits, shouldAlertNow, sweepKeeps } from "@/lib/wantedFastPath";
+import { wantedHits, shouldAlertNow, sweepKeeps, confirmWanted, wantedReadCount } from "@/lib/wantedFastPath";
 import { setMicBusy } from "@/lib/micBusy";
 import { createBusyHold, type BusyHold } from "@/lib/busyHold";
 import { micLostNotice, type AutoStopReason } from "@/lib/micLoss";
@@ -855,6 +855,7 @@ export default function RegistrationV2Page() {
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
+    wantedSeenRef.current = new Map();
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -889,7 +890,14 @@ export default function RegistrationV2Page() {
         fixes: true,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
-          const hit = checkIndexRef.current.get(key) ?? null;
+          /**
+           * 🔔 **مطلوبة بعد التأكد بس** — الإجماع شافها في نافذتين أو أكتر، أو
+           * القراءات المباشرة أكّدتها قبله. لوحة الإجماع طلّعها من نافذة واحدة
+           * (`mult = 1`) مش متأكّدة ⇒ مابتتعلّمش ولا بتصفّر.
+           */
+          const inSheet = checkIndexRef.current.get(key) ?? null;
+          const hit = inSheet && (meta.mult >= 2 || wantedReadCount(wantedSeenRef.current, key, meta.tMs) >= 2)
+            ? inSheet : null;
           /**
            * ⑩أ 🚫 **قفل أخد الموقع** — بطلب المالك. لما يبقى مفعّل،
            * اللوحة بتتسجّل **بلا موقع** (واللي اتسجّل قبله مايتلمسش).
@@ -1015,29 +1023,47 @@ export default function RegistrationV2Page() {
            * ⇒ الشيت بيتفحص **هنا الأول**، وتطابق تام ⇒ صفّارة + صف فوراً.
            * شوف `lib/wantedFastPath.ts`.
            */
-          const hits = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)));
+          /**
+           * 🔔 **بعد التأكد** — المالك (٢٥ سبتمبر ٢٠٢٦): «عايزه يظهر بعد التأكد
+           * من اللوحة، مش يطلع بعد القراية المباشرة اللي قبل التعديل». كانت
+           * بتصفّر من أول قراية، فقراية واحدة غلط («رلم6146» اتسمعت «رلم6113»)
+           * صفّرت على عربية مش مطلوبة. دلوقتي: نافذتين بنفس اللوحة بالظبط
+           * (~١.٥ث زيادة، مش ~٦ث بتوع الإجماع).
+           */
+          const hits = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)))
+            .filter((h) => confirmWanted(wantedSeenRef.current, normalizePlate(bankPlateToArabic(h.plate)), r.tMs));
           for (const h of hits) alertWanted(h.plate, h.row);
-          const wantedSet = new Set(hits.map((h) => h.plate));
+          const wantedMap = new Map(hits.map((h) => [h.plate, h.row]));
 
-          // المطلوبة بتطلع صف حتى لو ثقتها أقل من بوابة الظهور — لازم تبان.
-          if (!showProvisional(r) && wantedSet.size === 0) return;
+          // المطلوبة **المتأكّدة** بتطلع صف حتى لو ثقتها أقل من بوابة الظهور.
+          if (!showProvisional(r) && wantedMap.size === 0) return;
           const g2 = gpsRef.current;
           const now2 = Date.now();
           for (const raw of String(r.plate || "").trim().split(/\s+/)) {
             const p2 = raw.replace(/\s+/g, "");
             if (!WELL.test(p2)) continue;
             // لو القراية مش عالية الثقة، بس المطلوبة منها اللي تطلع صف
-            if (!showProvisional(r) && !wantedSet.has(p2)) continue;
+            if (!showProvisional(r) && !wantedMap.has(p2)) continue;
             const prov: LiveRow = {
               id: "prov-" + p2 + "-" + r.tMs, plate: p2, tier: "yellow", conf: r.conf,
               mult: 1, provisional: true, atMs: r.tMs, shownAt: now2,
               latencyMs: latencyNow(r.tMs),
-              match: checkIndexRef.current.get(normalizePlate(bankPlateToArabic(p2))) ?? null,
+              // 🔔 مبدئية ⇒ **من غير «مطلوبة»** لحد ما تتأكّد (نافذتين)
+              match: wantedMap.get(p2) ?? null,
               type: null, note: null,
               lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
               ...sessionStamp(areaRef.current, recorderRef.current),
             };
-            setRows((prev) => {
+            setRows((prev0) => {
+              /**
+               * 🔔 التأكيد وصل ⇒ الصف اللي ظاهر بنفس اللوحة ياخد «مطلوبة» **على
+               * طول** — حتى لو القراية دي مش هتتدمج فيه (`confirmedWins`).
+               * اللي المندوب صحّح لوحته بإيده مايتلمسش.
+               */
+              const wRow = wantedMap.get(p2);
+              const prev = wRow
+                ? prev0.map((x) => (x.plate === p2 && !x.match && !x.edited?.plate ? { ...x, match: wRow } : x))
+                : prev0;
               // 🔴 نفس القاعدة — المبدئي كمان بيطلع صف زيادة لو اتسابت.
               const ltP = prev.find((x) => isLetterTwin(x, prov));
               if (ltP) return prev.map((x) => (x.id === ltP.id ? resolveLetterTwin(ltP, prov) : x));
@@ -1056,8 +1082,7 @@ export default function RegistrationV2Page() {
               const merged = mergeTwinRow(prov, twin);
               return [merged, ...prev.filter((x) => x.id !== twin.id)];
             });
-            // 🔔 المطلوب بيصفّر فوراً — الانتظار ٧ث على عربية مطلوبة غالي.
-            if (prov.match) alertWanted(p2, prov.match);
+            // 🔔 الصفّارة ضربت فوق لما اتأكّدت (نافذتين) — مش هنا من أول قراية.
           }
         },
         // 🎯 نخزّن بس — السؤال بيحصل لما لوحة تتأكّد (شوف `winBufRef`).
@@ -1206,6 +1231,12 @@ export default function RegistrationV2Page() {
    */
   /** 🔴 آخر مرة كل عربية صفّرت — الصفّارة مرة واحدة لكل عربية في الدقيقة. */
   const alertedRef = useRef<Map<string, number>>(new Map());
+  /**
+   * 🔔 نوافذ سمعت كل لوحة مطلوبة — «مطلوبة» والصفّارة **بعد التأكد** (نافذتين).
+   * المالك (٢٥ سبتمبر ٢٠٢٦): «عايزه يظهر بعد التأكد من اللوحة، مش بعد القراية
+   * المباشرة». شوف `confirmWanted` في `lib/wantedFastPath.ts`.
+   */
+  const wantedSeenRef = useRef<Map<string, number[]>>(new Map());
   const alertWanted = useCallback((plate: string, row: Record<string, string> | null) => {
     /**
      * 🔴 **مرة واحدة لكل عربية** — الطابور بيمنع التكرار طول ما اللوحة فيه
