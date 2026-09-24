@@ -51,18 +51,34 @@ export interface MergeRow {
  * زي ما هي — دي معلومات الإجماع اللي اتحسّنت. اللي بيتحمى هو **الهوية
  * وشغل المندوب**.
  */
+/** مقارنة لوحتين بلا مسافات وبلا فرق همزة — نفس تطبيع الشيت. */
+function normPlate(p: string): string {
+  return String(p ?? "").replace(/\s+/g, "").replace(/[أإآ]/g, "ا");
+}
+
 export function mergeTwinRow<T extends MergeRow>(fresh: T, twin: T): T {
   const ed = twin.edited ?? {};
   // اللوحة ومطابقتها مع بعض: لو المندوب صحّح اللوحة، المطابقة اتحسبت على
   // تصحيحه (`savePlate`)، ففصلهم كان هيطلّع لوحة بمطابقة لوحة تانية.
   const keepPlate = ed.plate === true;
+  /**
+   * 🔴 **ولو اللوحة نفسها اتغيّرت، المطابقة القديمة مالهاش مكان.** بلاغ
+   * المالك (٢٥ سبتمبر ٢٠٢٦): قراية غلط «رلم6113» (في الشيت) علّمت الصف
+   * مطلوب، والإجماع صحّحه لـ«رلم6146» (مش في الشيت) — و`fresh.match ?? twin.match`
+   * خلّى الصف رقم لوحة **ببيانات وشهادة لوحة تانية**. الرجوع للقديمة مسموح
+   * بس لو **نفس اللوحة** (القراءة الجديدة ممكن تكون اتحسبت قبل الشيت).
+   */
+  const samePlate = normPlate(fresh.plate) === normPlate(twin.plate);
+  const match = keepPlate
+    ? twin.match
+    : (samePlate ? (fresh.match ?? twin.match) : fresh.match);
   return {
     ...fresh,
     id: twin.id,
     shownAt: Math.min(fresh.shownAt, twin.shownAt),
     latencyMs: Math.min(fresh.latencyMs, twin.latencyMs),
     plate: keepPlate ? twin.plate : fresh.plate,
-    match: keepPlate ? twin.match : (fresh.match ?? twin.match),
+    match,
     type: ed.type ? twin.type : (fresh.type ?? twin.type),
     note: ed.note ? twin.note : (fresh.note ?? twin.note),
     edited: twin.edited,
