@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { visibleTabs, isTabActive } from "@/lib/navTabs";
+import { voiceProNames } from "@/lib/voiceProName";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
 import { canOpenTrialPage } from "@/lib/trialModelGate";
@@ -177,7 +178,8 @@ export default function BottomNav() {
                   strokeWidth={onNew ? 2.5 : 2}
                   className={onNew ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
                 />
-                <span className={`w-full truncate text-center ${onNew ? "font-bold" : ""}`}>الجديد</span>
+                {/* 🏷️ «Voice PRO» — السوبر أدمن الأول (`lib/voiceProName.ts`) */}
+                <span className={`w-full truncate text-center ${onNew ? "font-bold" : ""}`}>{voiceProNames(isSuper).tab}</span>
               </button>
             )];
           })
@@ -198,7 +200,9 @@ export default function BottomNav() {
                   strokeWidth={active ? 2.5 : 2}
                   className={active ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
                 />
-                <span className={`w-full truncate text-center ${active ? "font-bold" : ""}`}>{label}</span>
+                <span className={`w-full truncate text-center ${active ? "font-bold" : ""}`}>
+                  {href === "/registration-v2" ? voiceProNames(isSuper).tab : label}
+                </span>
               </Link>
             );
           })
