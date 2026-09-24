@@ -15,8 +15,10 @@
  * 🔴 **مفيش شغل يضيع**: لوحات «صوتي» بتتشال منها بعد ما تتصدّر، فلو لسه فيها لوحات
  * يبقى فيه شغل ماتصدّرش ⇒ التاب بيفضل ظاهر لحد ما المندوب يصدّرها أو يمسحها.
  */
-export function sawtiHiddenFor(isSuper: boolean): boolean {
-  return isSuper;
+export function sawtiHiddenFor(_isSuper?: boolean): boolean {
+  // 🙈 للكل — المالك (٢٤ سبتمبر ٢٠٢٦): «اقفل على المناديب بقى صوتي» (وسيرفر كوريا اتقفل).
+  void _isSuper;
+  return true;
 }
 
 export function sawtiTabVisible(o: { hidden: boolean; leftover: number }): boolean {
