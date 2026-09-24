@@ -18,6 +18,7 @@ import { subStatus } from "@/lib/subscription";
 import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
+import { voiceProNames } from "@/lib/voiceProName";
 
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
@@ -57,6 +58,7 @@ export default function AppMenu({
   // مايظهرش، فالمندوب مايشوفهوش بأي حال. القرار في `canOpenTrialPage` —
   // نفس الدالة اللي الصفحة نفسها بتتحرس بيها، فمستحيل القايمة والحارس يختلفوا.
   const [canTrial, setCanTrial] = useState(false);
+  const [menuSuper, setMenuSuper] = useState(false);
   // إيميل المندوب — بيظهر فوق في القائمة عشان كل مندوب يعرف هو داخل بأنهي حساب.
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
@@ -163,6 +165,7 @@ export default function AppMenu({
             .select("role, subscription_end, is_super").eq("id", data.user.id).single();
           if (prof?.role === "agent") setSubEnd(prof.subscription_end ?? null);
           setCanTrial(canOpenTrialPage(prof));   // مزوّدة على نفس الطلب — مافيش رحلة زيادة
+          setMenuSuper(prof?.is_super === true);  // 🏷️ «Voice PRO» للسوبر أدمن الأول
         }
       } catch { /* offline */ }
       setStats({ field: fieldEntries.length, wanted, rec });
@@ -325,7 +328,7 @@ export default function AppMenu({
             {canTrial && (
               <Link href="/registration-v2" onClick={() => onOpenChange(false)}
                 className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
-                <Mic size={16} className="text-brand" /> التسجيل الجديد (تجربة)
+                <Mic size={16} className="text-brand" /> {voiceProNames(menuSuper).menu}
               </Link>
             )}
             <button onClick={() => refreshAppNow()}

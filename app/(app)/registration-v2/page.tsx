@@ -51,6 +51,7 @@ import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
+import { voiceProNames } from "@/lib/voiceProName";
 import { readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
@@ -1629,7 +1630,7 @@ export default function RegistrationV2Page() {
           const data = trialExcelRows(rows);
           const blob = buildExcelBlob(data, "اللوحات");
           const stamp = new Date().toISOString().slice(0, 10);
-          await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
+          await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", voiceProNames(isSuper).share);
           setCopied(true); setTimeout(() => setCopied(false), 1500);
         } catch (e) {
           setError("مانفعش يتشارك الإكسيل: " + (e instanceof Error ? e.message : String(e)));
@@ -1654,7 +1655,8 @@ export default function RegistrationV2Page() {
   return (
     <div dir="rtl" className="-mx-4 -mt-4 min-h-screen bg-white px-4 pb-10 pt-4 text-slate-900">
       {/* سطر «الموديل الجديد — تجربة…» اللي تحت العنوان اتشال بطلب المالك (٢٣ سبتمبر ٢٠٢٦). */}
-      <h1 className="text-2xl font-black tracking-tight">التسجيل الجديد</h1>
+      {/* 🏷️ «Voice PRO» — السوبر أدمن الأول (`lib/voiceProName.ts`) */}
+      <h1 className="text-2xl font-black tracking-tight">{voiceProNames(isSuper).title}</h1>
 
       {/*
         * ── الحالة: الشيت · الموديل · الموقع ──
