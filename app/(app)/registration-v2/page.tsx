@@ -472,15 +472,15 @@ export default function RegistrationV2Page() {
   /**
    * 📍 **تحديث الموقع لوحده كل ٣ ثواني** — المالك (٢٤ سبتمبر): «عايز الجي بي اس يعمل
    * تحديث لنفسه كل ٣ ثواني». نفس زرار «تحديث» بس لوحده، قراية واحدة في المرة.
-   * 🔒 السوبر أدمن بس لحد ما المالك يجرّب. شوف `lib/gpsAutoRefresh.ts`.
+   * للكل — المالك جرّبه كسوبر أدمن وقال «انشر للمناديب». شوف `lib/gpsAutoRefresh.ts`.
    */
   useEffect(() => {
-    if (allowed !== true || !isSuper) return;
+    if (allowed !== true) return;
     return startGpsAutoRefresh({
       getFix: () => gpsService.getFreshFix({ maxAgeMs: 0, timeoutMs: 2800 }),
       onFix: (c) => { gpsRef.current = c; setGps(c); },
     });
-  }, [allowed, isSuper]);
+  }, [allowed]);
 
   /** ② 🔄 تحديث الموقع بإيد المندوب — بيدوّر على قراءة أدقّ وأحدث. */
   const refreshGps = useCallback(async () => {
@@ -1404,13 +1404,10 @@ export default function RegistrationV2Page() {
       /**
        * ⚡ **أسرع زي «صوتي»** — المالك (٢٤ سبتمبر): «تصدير اللوحات بياخد وقت… كان في
        * صوتي أسرع». `getUser()` نداء للسيرفر عبر النت؛ `getSession()` قراية من الموبايل
-       * بلا نت (نفس الحساب). 🔒 السوبر أدمن بس لحد ما المالك يجرّب.
+       * بلا نت (نفس الحساب). للكل بعد تجربة المالك.
        */
-      const uid = isSuper
-        ? await supabase.auth.getSession()
-          .then((r) => r.data.session?.user?.id ?? undefined).catch(() => undefined)
-        : await supabase.auth.getUser()
-          .then((r) => r.data.user?.id ?? undefined).catch(() => undefined);
+      const uid = await supabase.auth.getSession()
+        .then((r) => r.data.session?.user?.id ?? undefined).catch(() => undefined);
       const agentId = uid;
       const entries: FieldCheckEntry[] = ready.map((r) => {
         const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
@@ -1455,24 +1452,15 @@ export default function RegistrationV2Page() {
       setRows((prev) => prev.filter((r) => !savedRowIds.has(r.id)));
 
       // ☁️ نحاول نوصّلها السيرفر فوراً — فشلها مايأثرش، هتتزامن بعدين
-      if (isSuper) {
-        /**
-         * ⚡ زي «صوتي»: الرسالة **على طول** بعد الحفظ في الموبايل، والرفع للسيرفر بيكمل في
-         * الخلفية (كان المندوب بيستنى الرفع يخلص قبل ما يشوف «تم»). الرفع بيبدأ **قبل**
-         * الرسالة فمابيتأخرش. ولو فشل: هتتزامن بعدين زي ما هي.
-         */
-        if (uid) {
-          void import("@/lib/syncFieldCheck")
-            .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(uid))
-            .catch(() => { /* المزامنة بتتم بعدين */ });
-        }
-      } else {
-        try {
-          if (uid) {
-            const { pushPendingFieldChecks } = await import("@/lib/syncFieldCheck");
-            await pushPendingFieldChecks(uid);
-          }
-        } catch { /* المزامنة بتتم بعدين */ }
+      /**
+       * ⚡ زي «صوتي»: الرسالة **على طول** بعد الحفظ في الموبايل، والرفع للسيرفر بيكمل في
+       * الخلفية (كان المندوب بيستنى الرفع يخلص قبل ما يشوف «تم»). الرفع بيبدأ **قبل**
+       * الرسالة فمابيتأخرش. ولو فشل: هتتزامن بعدين زي ما هي.
+       */
+      if (uid) {
+        void import("@/lib/syncFieldCheck")
+          .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(uid))
+          .catch(() => { /* المزامنة بتتم بعدين */ });
       }
 
       const failed = entries.length - okIds.length;
@@ -1620,7 +1608,7 @@ export default function RegistrationV2Page() {
   /**
    * 🧹📤 صف «تصدير · إكسيل · مسح». المالك (٢٤ سبتمبر): «عايز أنقل زر تصدير اللوحات
    * أخليه فوق المربع بتاع اللوحات، علشان المندوب بيسكرول كتير على ما بينزل للزر».
-   * 🔒 السوبر أدمن بس فوق الجدول لحد ما المالك يجرّب — الباقي في مكانه تحت.
+   * فوق الجدول للكل — المالك جرّبه كسوبر أدمن وقال «انشر للمناديب».
    */
   const renderActions = (top: boolean) => rows.length > 0 && (
     <div className={top ? "mb-3 flex gap-1.5" : "mt-3 flex gap-1.5"}>
@@ -1889,7 +1877,7 @@ export default function RegistrationV2Page() {
           )}
         </div>
 
-        {isSuper && renderActions(true)}
+        {renderActions(true)}
 
         {rows.length === 0 ? (
           <p className={"py-8 text-center text-xs " + (fancy ? "text-slate-400" : "text-slate-400")}>
@@ -2098,8 +2086,6 @@ export default function RegistrationV2Page() {
             }} />
         </div>
 
-        {/* 🧹📤 مسح وتصدير — زي التشييك (السوبر أدمن: فوق الجدول) */}
-        {!isSuper && renderActions(false)}
       </section>
 
       {/*
