@@ -50,6 +50,7 @@ import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
+import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
@@ -467,6 +468,19 @@ export default function RegistrationV2Page() {
     });
     return () => { try { unsub(); } catch { /* ignore */ } };
   }, [allowed]);
+
+  /**
+   * 📍 **تحديث الموقع لوحده كل ٣ ثواني** — المالك (٢٤ سبتمبر): «عايز الجي بي اس يعمل
+   * تحديث لنفسه كل ٣ ثواني». نفس زرار «تحديث» بس لوحده، قراية واحدة في المرة.
+   * 🔒 السوبر أدمن بس لحد ما المالك يجرّب. شوف `lib/gpsAutoRefresh.ts`.
+   */
+  useEffect(() => {
+    if (allowed !== true || !isSuper) return;
+    return startGpsAutoRefresh({
+      getFix: () => gpsService.getFreshFix({ maxAgeMs: 0, timeoutMs: 2800 }),
+      onFix: (c) => { gpsRef.current = c; setGps(c); },
+    });
+  }, [allowed, isSuper]);
 
   /** ② 🔄 تحديث الموقع بإيد المندوب — بيدوّر على قراءة أدقّ وأحدث. */
   const refreshGps = useCallback(async () => {
@@ -1387,8 +1401,16 @@ export default function RegistrationV2Page() {
     setBusy("ببعت للسجلات…");
     try {
       // 🪪 وسم السجل باسم المندوب — نفس اللي بتستعمله صفحة التشييك
-      const uid = await supabase.auth.getUser()
-        .then((r) => r.data.user?.id ?? undefined).catch(() => undefined);
+      /**
+       * ⚡ **أسرع زي «صوتي»** — المالك (٢٤ سبتمبر): «تصدير اللوحات بياخد وقت… كان في
+       * صوتي أسرع». `getUser()` نداء للسيرفر عبر النت؛ `getSession()` قراية من الموبايل
+       * بلا نت (نفس الحساب). 🔒 السوبر أدمن بس لحد ما المالك يجرّب.
+       */
+      const uid = isSuper
+        ? await supabase.auth.getSession()
+          .then((r) => r.data.session?.user?.id ?? undefined).catch(() => undefined)
+        : await supabase.auth.getUser()
+          .then((r) => r.data.user?.id ?? undefined).catch(() => undefined);
       const agentId = uid;
       const entries: FieldCheckEntry[] = ready.map((r) => {
         const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
@@ -1433,12 +1455,25 @@ export default function RegistrationV2Page() {
       setRows((prev) => prev.filter((r) => !savedRowIds.has(r.id)));
 
       // ☁️ نحاول نوصّلها السيرفر فوراً — فشلها مايأثرش، هتتزامن بعدين
-      try {
+      if (isSuper) {
+        /**
+         * ⚡ زي «صوتي»: الرسالة **على طول** بعد الحفظ في الموبايل، والرفع للسيرفر بيكمل في
+         * الخلفية (كان المندوب بيستنى الرفع يخلص قبل ما يشوف «تم»). الرفع بيبدأ **قبل**
+         * الرسالة فمابيتأخرش. ولو فشل: هتتزامن بعدين زي ما هي.
+         */
         if (uid) {
-          const { pushPendingFieldChecks } = await import("@/lib/syncFieldCheck");
-          await pushPendingFieldChecks(uid);
+          void import("@/lib/syncFieldCheck")
+            .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(uid))
+            .catch(() => { /* المزامنة بتتم بعدين */ });
         }
-      } catch { /* المزامنة بتتم بعدين */ }
+      } else {
+        try {
+          if (uid) {
+            const { pushPendingFieldChecks } = await import("@/lib/syncFieldCheck");
+            await pushPendingFieldChecks(uid);
+          }
+        } catch { /* المزامنة بتتم بعدين */ }
+      }
 
       const failed = entries.length - okIds.length;
       alert(
@@ -1581,6 +1616,52 @@ export default function RegistrationV2Page() {
   const medModel = mm.length ? mm[Math.floor(mm.length / 2)] : null;
   const withType = rows.filter((r) => r.type || r.note).length;
   const withGps = rows.filter((r) => r.lat != null).length;
+
+  /**
+   * 🧹📤 صف «تصدير · إكسيل · مسح». المالك (٢٤ سبتمبر): «عايز أنقل زر تصدير اللوحات
+   * أخليه فوق المربع بتاع اللوحات، علشان المندوب بيسكرول كتير على ما بينزل للزر».
+   * 🔒 السوبر أدمن بس فوق الجدول لحد ما المالك يجرّب — الباقي في مكانه تحت.
+   */
+  const renderActions = (top: boolean) => rows.length > 0 && (
+    <div className={top ? "mb-3 flex gap-1.5" : "mt-3 flex gap-1.5"}>
+      <button onClick={() => void exportRows()} disabled={!!busy}
+        className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white disabled:opacity-50">
+        {busy ? <><Loader2 size={14} className="animate-spin" /> {busy}</> : <><Download size={14} /> تصدير للسجلات</>}
+      </button>
+      {/*
+        * ⑨ 📄 **مشاركة إكسيل** — بطلب المالك بدل «نسخ»: «يشارك التشييك
+        * اللي في المربّع في ملف إكسيل». الأعمدة هي اللي المندوب شايفها
+        * بالظبط + حقول الجلسة (`trialExcelRows`، مغطّى باختبارات).
+        */}
+      <button onClick={async () => {
+        if (!rows.length) return;
+        setBusy("ببعت الإكسيل…");
+        try {
+          const { buildExcelBlob, shareExcelBlob } = await import("@/lib/excel");
+          const data = trialExcelRows(rows);
+          const blob = buildExcelBlob(data, "اللوحات");
+          const stamp = new Date().toISOString().slice(0, 10);
+          await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
+          setCopied(true); setTimeout(() => setCopied(false), 1500);
+        } catch (e) {
+          setError("مانفعش يتشارك الإكسيل: " + (e instanceof Error ? e.message : String(e)));
+        } finally { setBusy(null); }
+      }} disabled={!!busy}
+        className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700 disabled:opacity-50">
+        {copied ? <><Check size={13} className="text-emerald-600" /> اتبعت</> : <><FileSpreadsheet size={13} /> إكسيل</>}
+      </button>
+      <button onClick={() => {
+        // 🔴 نفس تحذير التشييك: اللي مش متصدّر بيضيع — لازم يتقال بالعدد.
+        const warn = unexportedDeleteWarning(rows.length);
+        if (warn && !confirm(warn)) return;
+        if (!warn && !confirm("تمسح كل اللوحات؟")) return;
+        setRows([]); setReads([]); setSkips({});
+      }}
+        className="flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-bold text-rose-600">
+        <Trash2 size={13} /> مسح
+      </button>
+    </div>
+  );
 
   return (
     <div dir="rtl" className="-mx-4 -mt-4 min-h-screen bg-white px-4 pb-10 pt-4 text-slate-900">
@@ -1808,6 +1889,8 @@ export default function RegistrationV2Page() {
           )}
         </div>
 
+        {isSuper && renderActions(true)}
+
         {rows.length === 0 ? (
           <p className={"py-8 text-center text-xs " + (fancy ? "text-slate-400" : "text-slate-400")}>
             {listening ? "قول لوحة…" : "مافيش لوحات لسه — دوس ابدأ التسجيل."}
@@ -2015,47 +2098,8 @@ export default function RegistrationV2Page() {
             }} />
         </div>
 
-        {/* 🧹📤 مسح وتصدير — زي التشييك */}
-        {rows.length > 0 && (
-          <div className="mt-3 flex gap-1.5">
-            <button onClick={() => void exportRows()} disabled={!!busy}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white disabled:opacity-50">
-              {busy ? <><Loader2 size={14} className="animate-spin" /> {busy}</> : <><Download size={14} /> تصدير للسجلات</>}
-            </button>
-            {/*
-              * ⑨ 📄 **مشاركة إكسيل** — بطلب المالك بدل «نسخ»: «يشارك التشييك
-              * اللي في المربّع في ملف إكسيل». الأعمدة هي اللي المندوب شايفها
-              * بالظبط + حقول الجلسة (`trialExcelRows`، مغطّى باختبارات).
-              */}
-            <button onClick={async () => {
-              if (!rows.length) return;
-              setBusy("ببعت الإكسيل…");
-              try {
-                const { buildExcelBlob, shareExcelBlob } = await import("@/lib/excel");
-                const data = trialExcelRows(rows);
-                const blob = buildExcelBlob(data, "اللوحات");
-                const stamp = new Date().toISOString().slice(0, 10);
-                await shareExcelBlob(blob, "لوحات-" + stamp + ".xlsx", "لوحات التسجيل الجديد");
-                setCopied(true); setTimeout(() => setCopied(false), 1500);
-              } catch (e) {
-                setError("مانفعش يتشارك الإكسيل: " + (e instanceof Error ? e.message : String(e)));
-              } finally { setBusy(null); }
-            }} disabled={!!busy}
-              className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700 disabled:opacity-50">
-              {copied ? <><Check size={13} className="text-emerald-600" /> اتبعت</> : <><FileSpreadsheet size={13} /> إكسيل</>}
-            </button>
-            <button onClick={() => {
-              // 🔴 نفس تحذير التشييك: اللي مش متصدّر بيضيع — لازم يتقال بالعدد.
-              const warn = unexportedDeleteWarning(rows.length);
-              if (warn && !confirm(warn)) return;
-              if (!warn && !confirm("تمسح كل اللوحات؟")) return;
-              setRows([]); setReads([]); setSkips({});
-            }}
-              className="flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-bold text-rose-600">
-              <Trash2 size={13} /> مسح
-            </button>
-          </div>
-        )}
+        {/* 🧹📤 مسح وتصدير — زي التشييك (السوبر أدمن: فوق الجدول) */}
+        {!isSuper && renderActions(false)}
       </section>
 
       {/*
