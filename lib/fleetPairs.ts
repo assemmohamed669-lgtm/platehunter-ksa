@@ -52,6 +52,10 @@ export function isFleetPair(a: string, b: string): boolean {
 export const FLEET_SEQ_PREV_WINDOWS = 2;
 /** والنافذة الأخيرة ليها من خلال ١٢ث (نفس نافذة لمّ الصفوف). */
 export const FLEET_SEQ_RECENT_MS = 12000;
+/** أول عربية: أسطول مثبت بالعدد ده أو أكتر ⇒ نافذة واحدة قبله كفاية. */
+export const FLEET_BIG_RUN = 3;
+/** «نضيفة»: نفس بوابة الظهور الفوري (`PROVISIONAL_MIN_CONF`). */
+export const FLEET_CLEAN_CONF = 0.9;
 
 /**
  * العربيات اللي **اتأكّد إنها عربيات حقيقية في أسطول** — كل واحدة اتسمعت في
@@ -79,6 +83,8 @@ export class FleetMemory {
    * التعديل غير للسوبر أدمن». من غيره التسلسل الفوري زي #320 بالحرف.
    */
   private readonly firstCar: boolean;
+  /** أعلى ثقة لكل إملاء في نافذة **كان لوحده فيها**. */
+  private clean = new Map<string, number>();
 
   constructor(opts: { sequence?: boolean; firstCar?: boolean } = {}) {
     this.sequence = opts.sequence === true;
@@ -89,7 +95,7 @@ export class FleetMemory {
    * كل اللوحات اللي نافذة واحدة سمعتها. `tMs` = زمن النافذة (مركزها) — من غيره
    * بيشتغل دليل النافذة المشتركة بس زي الأول.
    */
-  note(plates: readonly string[], tMs?: number): void {
+  note(plates: readonly string[], tMs?: number, conf?: number): void {
     const ps = [...new Set((plates ?? []).map((p) => String(p ?? "").replace(/\s+/g, "")))];
     for (let i = 0; i < ps.length; i++) {
       for (let j = i + 1; j < ps.length; j++) {
@@ -98,6 +104,10 @@ export class FleetMemory {
           this.members.add(ps[j]);
         }
       }
+    }
+    // قراية «نضيفة» = اللوحة لوحدها في النافذة — أعلى ثقة ليها (لأول عربية قدام أسطول سريع)
+    if (ps.length === 1 && WELL.test(ps[0]) && typeof conf === "number" && Number.isFinite(conf)) {
+      this.clean.set(ps[0], Math.max(this.clean.get(ps[0]) ?? 0, conf));
     }
     if (this.sequence && typeof tMs === "number" && Number.isFinite(tMs)) this.noteSequence(ps, tMs);
   }
@@ -152,6 +162,16 @@ export class FleetMemory {
    * العادية غالباً قراية مقطوعة لنفس العربية (طيك1233 ⇐ طيك1234) — بس ده
    * بيشتغل **جوّه أسطول مثبت بس**، واللوحات العادية عمرها ماتبقى أعضاء.
    */
+  /** كام عربية مثبتة بنفس حروف `q` ليها قراية خلال ١٢ث من `t0` (بما فيهم `q`). */
+  private fleetSize(q: string, t0: number): number {
+    let n = 0;
+    for (const x of this.members) {
+      if (x.slice(0, 3) !== q.slice(0, 3)) continue;
+      if ((this.windows.get(x) ?? []).some((t) => Math.abs(t - t0) <= FLEET_SEQ_RECENT_MS)) n++;
+    }
+    return n;
+  }
+
   private noteFirstCar(ps: string[]): void {
     const letters = new Set(ps.filter((p) => WELL.test(p)).map((p) => p.slice(0, 3)));
     if (!letters.size) return;
@@ -167,11 +187,27 @@ export class FleetMemory {
         if (x === q || x.slice(0, 3) !== q.slice(0, 3)) continue;
         for (const t of xt) if (t < qFirst && qFirst - t <= FLEET_SEQ_RECENT_MS) before.add(t);
       }
-      if (before.size < FLEET_SEQ_PREV_WINDOWS) continue;
+      /**
+       * أو **أسطول كبير مثبت** (٣ عربيات+ بنفس الحروف خلال ١٢ث) ⇒ نافذة واحدة قبله كفاية.
+       * جلسة المالك السريعة (٧:٥٧م): كل عربية اتسمعت مرة، والأسطول اتثبت بـ٦ عربيات،
+       * وحبل1232 (أولهم) كانت بتضيع لأن قبل ١٢٣٣ نافذة واحدة بس.
+       */
+      // ⚠️ بس لو **الكلام سريع** (العربية المثبتة نفسها اتسمعت مرة): لما العربية بتتسمع
+      // مرتين+، القراية الواحدة اللي قبلها على طول غالباً قراية مقطوعة ليها (مقيس: من غير
+      // الشرط ده طلعت عربيات غلط في أساطيل المناديب).
+      const fastRun = qt.length === 1 && this.fleetSize(q, qFirst) >= FLEET_BIG_RUN;
+      if (before.size < FLEET_SEQ_PREV_WINDOWS && !fastRun) continue;
+      /**
+       * في الأسطول السريع (نافذة واحدة قبله) القراية لازم تبقى **نضيفة**: لوحدها في النافذة
+       * وثقتها ≥ ٩٠٪ (جلسة المالك: حبل1232 ٩٩.٩٪ لوحدها). العربيات الغلط اللي طلعت في
+       * أساطيل المناديب من غير الشرط ده: عحو3517 ٦٠٪ · سان5554 ٧٢٪ · علن6336 جنب برو5143.
+       */
+      const needClean = before.size < FLEET_SEQ_PREV_WINDOWS;
       for (const [p, pt] of this.windows) {
         if (this.members.has(p) || p.slice(0, 3) !== q.slice(0, 3) || !pt.length) continue;
         if (Math.abs(Number(p.slice(3)) - Number(q.slice(3))) !== 1) continue;
         const pLast = Math.max(...pt);
+        if (needClean && (this.clean.get(p) ?? 0) < FLEET_CLEAN_CONF) continue;
         if (pLast < qFirst && qFirst - pLast <= FLEET_SEQ_RECENT_MS) this.members.add(p);
       }
     }
@@ -191,5 +227,6 @@ export class FleetMemory {
   reset(): void {
     this.members.clear();
     this.windows.clear();
+    this.clean.clear();
   }
 }

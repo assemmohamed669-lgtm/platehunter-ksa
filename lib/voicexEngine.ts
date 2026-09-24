@@ -474,7 +474,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       const plates = String(resp.plate || "").trim().split(/\s+/)
         .map((p) => p.replace(/\s+/g, "")).filter((p) => WELL.test(p));
       // 🚚 الدليل **قبل** الإضافة: النافذة دي سمعت عربيات الأسطول دول مع بعض
-      fleet?.note(plates, tMs);
+      fleet?.note(plates, tMs, conf);
       for (const norm of plates) consensus.add({ plate: norm, tMs, conf, minLp: FIXES ? minLp : undefined });
     } catch { /* تجاهل — شبكة/تحليل */ }
   }
