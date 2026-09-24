@@ -18,6 +18,7 @@ import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from 
 import CertificateBadge from "@/components/CertificateBadge";
 import CertificateSearch from "@/components/CertificateSearch";
 import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
+import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
 import { loadGpsOff, saveGpsOff } from "@/lib/gpsCapture";
 import { buildCombinedCheckIndex, renumberCheckSlots } from "@/lib/checkSheets";
 import { reverseGeocode } from "@/lib/geocoding";
@@ -803,6 +804,15 @@ export default function InstantCheckPage() {
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
+  /**
+   * 🙈 تاب «صوتي» ظاهر؟ — المالك: «ابدأ اخفي صفحة صوتي» (Voice PRO بديلها). 🔒 السوبر
+   * أدمن الأول. ولو لسه فيها لوحات ماتصدّرتش، بيفضل ظاهر لحد ما تخلص (`lib/sawtiHidden.ts`).
+   */
+  const sawtiShown = sawtiTabVisible({ hidden: sawtiHiddenFor(isSuper), leftover: pttResults.length });
+  // 🙈 «صوتي» اتخبّت ومفيش لوحات فيها ⇒ نطلّع المندوب منها — نفس سلوك قفل الصوت
+  useEffect(() => {
+    if (!sawtiShown && mode === "ptt") setMode(voiceOnly ? "sheet" : "manual");
+  }, [sawtiShown, mode, voiceOnly]);
   // «الأقرب» — ترتيب قوائم اللوحات (يدوي/صوتي/سجل) حسب أقرب سيارة لموقع المندوب.
   // مشترك بين القوائم التلاتة: زر في أي قائمة يفعّل الترتيب في كلها.
   const [icNearest, setIcNearest] = useState(false);
@@ -4624,7 +4634,7 @@ export default function InstantCheckPage() {
               { key: "chassis", Icon: Barcode, label: "شاص" },
               { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
             ] as const)
-        ).filter((t) => t.key !== "ptt" || voiceAllowed !== false);
+        ).filter((t) => t.key !== "ptt" || (voiceAllowed !== false && sawtiShown));
         const cols = tabs.length >= 6 ? "grid-cols-6"
           : tabs.length === 5 ? "grid-cols-5"
           : tabs.length === 4 ? "grid-cols-4"
