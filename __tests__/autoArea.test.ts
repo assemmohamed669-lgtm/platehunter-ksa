@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  areaSource, regionLabel, autoAreaEligible, AreaResolver,
+  areaSource, regionLabel, autoAreaEligible, AreaResolver, fallbackArea,
   AUTO_AREA_MAX_ACCURACY_M,
 } from "@/lib/autoArea";
 
@@ -97,5 +97,46 @@ describe("AreaResolver — نداء واحد لكل مكان · واحد ورا 
   it("الخدمة فشلت ⇒ فاضي (مش «غير متاح»)", async () => {
     const r = new AreaResolver(async () => { throw new Error("net"); }, { minGapMs: 0 });
     expect(await r.resolve(24.7, 46.7)).toBe("");
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 «مايسيبش خانات فاضية» — الـGPS ضعيف ⇒ حي العربية اللي قبلها
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك (٢٥ سبتمبر ٢٠٢٦): «لا، لو سيئة ياخد نفس اسم الحي والشارع تبع
+ *  السيارة اللي قبلها، ميسيبش خانات فاضية». ونفس الحكاية لو خدمة العناوين
+ *  فشلت. ولو مفيش عربية قبلها ليها حي (أول الجلسة) ⇒ أقرب عربية بعدها.
+ */
+describe("fallbackArea — حي أقرب عربية", () => {
+  const r = (id: string, shownAt: number, area: string | null) => ({ id, shownAt, area });
+
+  it("🔴 العربية اللي قبلها ليها حي ⇒ نفس الحي", () => {
+    const rows = [r("c", 3000, null), r("b", 2000, "شارع ٣٠ - النسيم"), r("a", 1000, "شارع ١٠ - الملز")];
+    expect(fallbackArea(rows, "c")).toBe("شارع ٣٠ - النسيم");
+  });
+
+  it("اللي قبلها على طول فاضية ⇒ أقرب واحدة قبلها ليها حي", () => {
+    const rows = [r("c", 3000, null), r("b", 2000, null), r("a", 1000, "شارع ١٠ - الملز")];
+    expect(fallbackArea(rows, "c")).toBe("شارع ١٠ - الملز");
+  });
+
+  it("أول عربية في الجلسة ⇒ أقرب واحدة بعدها ليها حي", () => {
+    const rows = [r("c", 3000, "شارع ٥ - العليا"), r("b", 2000, null), r("a", 1000, null)];
+    expect(fallbackArea(rows, "a")).toBe("شارع ٥ - العليا");
+  });
+
+  it("مفيش ولا عربية ليها حي ⇒ null (تستنى)", () => {
+    expect(fallbackArea([r("a", 1000, null), r("b", 2000, null)], "a")).toBeNull();
+  });
+
+  it("الصف نفسه مابيتحسبش، والفاضي/مسافات مابيتحسبش حي", () => {
+    const rows = [r("a", 1000, "   "), r("b", 2000, null)];
+    expect(fallbackArea(rows, "b")).toBeNull();
+    expect(fallbackArea([r("a", 1000, "النسيم")], "a")).toBeNull();
+  });
+
+  it("صف مش موجود ⇒ null", () => {
+    expect(fallbackArea([r("a", 1000, "النسيم")], "zzz")).toBeNull();
   });
 });
