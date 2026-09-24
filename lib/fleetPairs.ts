@@ -48,6 +48,11 @@ export function isFleetPair(a: string, b: string): boolean {
   return Math.abs(Number(pa.slice(3)) - Number(pb.slice(3))) <= FLEET_MAX_STEP;
 }
 
+/** التسلسل الفوري: اللوحة اللي قبلها لازم تكون اتسمعت في نافذتين على الأقل. */
+export const FLEET_SEQ_PREV_WINDOWS = 2;
+/** والنافذة الأخيرة ليها من خلال ١٢ث (نفس نافذة لمّ الصفوف). */
+export const FLEET_SEQ_RECENT_MS = 12000;
+
 /**
  * العربيات اللي **اتأكّد إنها عربيات حقيقية في أسطول** — كل واحدة اتسمعت في
  * نافذة واحدة مع جارتها في التسلسل.
@@ -62,9 +67,23 @@ export function isFleetPair(a: string, b: string): boolean {
  */
 export class FleetMemory {
   private members = new Set<string>();
+  /** نوافذ كل إملاء (بزمن النطق) — للتسلسل الفوري بس. */
+  private windows = new Map<string, number[]>();
+  /**
+   * 🔒 التسلسل الفوري **مقفول افتراضياً** — المالك: «ارفعه لسوبر أدمن بس أجرّبه».
+   * من غيره الذاكرة زي #315 بالحرف (النافذة المشتركة بس).
+   */
+  private readonly sequence: boolean;
 
-  /** كل اللوحات اللي نافذة واحدة سمعتها. */
-  note(plates: readonly string[]): void {
+  constructor(opts: { sequence?: boolean } = {}) {
+    this.sequence = opts.sequence === true;
+  }
+
+  /**
+   * كل اللوحات اللي نافذة واحدة سمعتها. `tMs` = زمن النافذة (مركزها) — من غيره
+   * بيشتغل دليل النافذة المشتركة بس زي الأول.
+   */
+  note(plates: readonly string[], tMs?: number): void {
     const ps = [...new Set((plates ?? []).map((p) => String(p ?? "").replace(/\s+/g, "")))];
     for (let i = 0; i < ps.length; i++) {
       for (let j = i + 1; j < ps.length; j++) {
@@ -73,6 +92,44 @@ export class FleetMemory {
           this.members.add(ps[j]);
         }
       }
+    }
+    if (this.sequence && typeof tMs === "number" && Number.isFinite(tMs)) this.noteSequence(ps, tMs);
+  }
+
+  /**
+   * 🚚 **التسلسل الفوري** — المالك: «حبل1211 حبل1212 حبل1213… كل اللوحات تطلع
+   * زي باقي اللوحات». لوحة بتتسمع **لأول مرة** وفرقها **١ بالظبط** عن لوحة
+   * بنفس الحروف اتسمعت في **نافذتين+ قبلها** (خلال ١٢ث) ⇒ الاتنين عربيات —
+   * **من أول قراية**، فالعربية الجديدة بتطلع في نفس وقت أي لوحة.
+   *
+   * مقيس على ٥ مجاري قرايات حقيقية (+١٣ ألف لوحة): الحالة دي كانت عربية حقيقية
+   * في كل مرة (الاستثناء الوحيد بعد ١٨ث ⇒ برّه الـ١٢ث). ولو اللي قبلها اتسمعت
+   * **مرة** بس ⇒ هي اللي كانت الغلط (٦٢–٧٩ مرة في ٤٠٤٥: طيك1233 ⇐ طيك1234،
+   * نافذة قطعت آخر رقم) ⇒ مش دليل، ولا حتى بسكتة.
+   *
+   * ⚠️ الفرق ٢+ من غير نافذة مشتركة **مش** هنا عن قصد (سطل6787/6789 نطقة واحدة).
+   */
+  private noteSequence(ps: string[], tMs: number): void {
+    const fresh = ps.filter((p) => WELL.test(p) && !(this.windows.get(p)?.length));
+    for (const p of fresh) {
+      for (const [q, qt] of this.windows) {
+        if (q.slice(0, 3) !== p.slice(0, 3) || ps.includes(q)) continue;
+        if (Math.abs(Number(q.slice(3)) - Number(p.slice(3))) !== 1) continue;
+        // مرة واحدة بتكفي لو هي **عربية مثبتة** خلاص (أسطول سريع: حكم8412 ⇐ 8413 ⇐ 8414 —
+        // ٨٤١٤ جت و٨٤١٣ متسمعة مرة، والسلسلة كانت بتتقطع وتعدّل على ٨٤١٣). الخطر في
+        // «مرة واحدة» إنها تبقى هي الغلط — والعربية المثبتة مش غلط.
+        if (qt.length < FLEET_SEQ_PREV_WINDOWS && !this.members.has(q)) continue;
+        const last = Math.max(...qt);
+        if (last >= tMs || tMs - last > FLEET_SEQ_RECENT_MS) continue;
+        this.members.add(p);
+        this.members.add(q);
+      }
+    }
+    for (const p of ps) {
+      if (!WELL.test(p)) continue;
+      const ws = this.windows.get(p) ?? [];
+      if (!ws.includes(tMs)) ws.push(tMs);
+      this.windows.set(p, ws);
     }
   }
 
@@ -89,5 +146,6 @@ export class FleetMemory {
 
   reset(): void {
     this.members.clear();
+    this.windows.clear();
   }
 }

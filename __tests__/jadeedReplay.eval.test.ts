@@ -28,8 +28,8 @@ const PLATE = /[ء-ي]{3}\d{4}/g;
 const WELL = /^[ء-ي]{3}\d{4}$/;
 const nrm = (s: string) => s.replace(/\s+/g, "").replace(/[أإآ]/g, "ا");
 
-export function replay(rec: Rec, fleetOn: boolean): string[] {
-  const fleet = new FleetMemory();
+export function replay(rec: Rec, fleetOn: boolean, firstSeen?: Map<string, number>): string[] {
+  const fleet = new FleetMemory({ sequence: true });
   const distinct = fleetOn ? (a: string, b: string) => fleet.distinct(a, b) : undefined;
   const lc = new LiveConsensus({ windowMs: 2000, stableMs: 2500, greenMinMult: 2, distinct });
   let rows: Row[] = [];
@@ -49,7 +49,7 @@ export function replay(rec: Rec, fleetOn: boolean): string[] {
       if (!accepted) continue;
       const plates = (nrm(r.plate).match(PLATE) ?? []).filter((p) => WELL.test(p));
       // الصفحة (onRead): الدليل الأول، وبعدين الصف المبدئي
-      if (fleetOn) fleet.note(plates);
+      if (fleetOn) fleet.note(plates, r.tMs);
       if (showProvisional({ accepted, blocked, conf: r.conf })) {
         for (const p of plates) rows = placeLiveRow(rows, mk(p, r.tMs, now, { provisional: true, conf: r.conf }), distinct);
       }
@@ -60,6 +60,7 @@ export function replay(rec: Rec, fleetOn: boolean): string[] {
       const cut = now - PROVISIONAL_TTL_MS;
       rows = rows.filter((r) => sweepKeeps(r, cut, 0));
     }
+    if (firstSeen) for (const x of rows) if (!firstSeen.has(x.plate)) firstSeen.set(x.plate, now);
     for (const c of lc.drain(drainClockMs(now, 5))) {
       rows = placeLiveRow(rows, mk(c.plate, c.tMs, now, { tier: c.tier, mult: c.mult, conf: c.conf } as Partial<Row>), distinct);
     }
@@ -110,6 +111,19 @@ describe("🔬 خط «الجديد» على تسجيلات حقيقية", () => 
             (gained.length ? ` · رجعت ${gained.join(" ")}` : "") + (lostNow.length ? ` · 🔴 ضاعت ${lostNow.join(" ")}` : ""));
         }
       }
+      // ⏱️ وقت الظهور: لكل لوحة حقيقية ظهرت في الاتنين — بعد − قبل (مللي)
+      let slower = 0, faster = 0, same = 0, worst = 0;
+      for (const rec of recs) {
+        const fa = new Map<string, number>(), fb = new Map<string, number>();
+        replay(rec, false, fa); replay(rec, true, fb);
+        for (const t of new Set(rec.truth.map(nrm))) {
+          if (!fa.has(t) || !fb.has(t)) continue;
+          const d = fb.get(t)! - fa.get(t)!;
+          if (d > 0) slower++; else if (d < 0) faster++; else same++;
+          worst = Math.max(worst, d);
+        }
+      }
+      diffs.push(`  ⏱️ وقت الظهور (بعد − قبل): نفس الوقت ${same} · أبطأ ${slower} · أسرع ${faster} · أسوأ تأخير ${worst}مللي`);
       // eslint-disable-next-line no-console
       console.log(
         `\n╔═══ ${f.split(/[\/]/).pop()} · ${recs.length} تسجيل · ${A.total} لوحة ═══\n` +
