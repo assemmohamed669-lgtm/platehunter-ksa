@@ -7,9 +7,9 @@ import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
  * التاب بيفضل ظاهر لحد ما المندوب يخلّصها (بتتشال من «صوتي» بعد التصدير).
  */
 describe("sawtiHiddenFor", () => {
-  it("🔒 السوبر أدمن ⇒ مستخبية · الباقي ⇒ ظاهرة زي ما هي", () => {
+  it("🔴 للكل ⇒ مستخبية (المالك: «اقفل على المناديب بقى صوتي»)", () => {
     expect(sawtiHiddenFor(true)).toBe(true);
-    expect(sawtiHiddenFor(false)).toBe(false);
+    expect(sawtiHiddenFor(false)).toBe(true);
   });
 });
 
