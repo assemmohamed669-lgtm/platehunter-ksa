@@ -52,6 +52,7 @@ import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
+import { rowCheckCols } from "@/lib/wantedColumns";
 import { splitByAgent, isMine } from "@/lib/draftByAgent";
 
 /** صفوف بلا تكرار بالـid (الأحدث يكسب) — للوحات المستخبية. */
@@ -360,6 +361,8 @@ export default function RegistrationV2Page() {
     [checkSources],
   );
   const checkIndexRef = useRef(checkIndex);
+  /** مرجع لـ`isSuper` — `loadCheck` متمسك مرة واحدة (`useCallback([])`). */
+  const isSuperRef = useRef(false);
   useEffect(() => { checkIndexRef.current = checkIndex; }, [checkIndex]);
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   /**
@@ -709,8 +712,32 @@ export default function RegistrationV2Page() {
         const rec = await getUploadedFile("local", "check").catch(() => null);
         loadedStampRef.current = lastCheckSheetStamp();
         if (!rec) {
-          setCheckTable(null); setCheckSources([]); setCheckName(""); setCheckFile(null);
-          setPlateChassis(new Map());
+          /**
+           * 📥 الأساسي اتمسح والإضافية موجودة ⇒ الإضافية لوحدها — زي «صوتي» بالظبط (كانت
+           * بتتجاهلهم كلهم فمفيش ولا لوحة بتطلع مطلوبة). 🔒 السوبر أدمن الأول.
+           */
+          const extrasOnly: ExcelTable[] = [];
+          if (isSuperRef.current) {
+            for (let n = 2; n < 100; n++) {
+              const x = await getUploadedFile("local", `check-${n}`).catch(() => null);
+              if (!x) break;
+              extrasOnly.push({ headers: x.headers, rows: x.rows });
+            }
+          }
+          setCheckTable(null); setCheckSources(extrasOnly); setCheckFile(null);
+          setCheckName(extrasOnly.length ? "ملفات تشييك إضافية" : "");
+          const chassisOnly = new Map<string, string>();
+          for (const t of extrasOnly) {
+            const pCol = detectPlateColumn(t.headers, t.rows);
+            const cCol = detectChassisColumn(t.headers, t.rows);
+            if (!pCol || !cCol) continue;
+            for (const row of t.rows) {
+              const k = normalizePlate(bankPlateToArabic(String(row[pCol] ?? "")));
+              const v = String(row[cCol] ?? "").trim();
+              if (k && v && !chassisOnly.has(k)) chassisOnly.set(k, v);
+            }
+          }
+          setPlateChassis(chassisOnly);
           return;
         }
         const main: ExcelTable = { headers: rec.headers, rows: rec.rows };
@@ -786,6 +813,13 @@ export default function RegistrationV2Page() {
    * وبنعيد القراءة كمان لما المندوب **يرجع للصفحة** (`visibilitychange`)
    * — لأن الصفحتين مسارين منفصلين وواحدة بس بتكون متركّبة.
    */
+  /** 📥 السوبر أدمن اتعرف ومفيش ملفات محمّلة ⇒ نقرا تاني (يمكن فيه إضافية من غير أساسي). */
+  useEffect(() => {
+    isSuperRef.current = isSuper;
+    if (isSuper && checkSources.length === 0) loadCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuper]);
+
   useEffect(() => {
     // `idbEvent`: الشيت الجاي من واتساب كمان — كان مابيوصلش للصفحة دي.
     const off = onCheckSheetChanged(() => loadCheck(), { idbEvent: true });
@@ -1489,7 +1523,8 @@ export default function RegistrationV2Page() {
       const mineReady = isSuper && uid ? ready.filter((r) => isMine(r, uid)) : ready;
       const entries: FieldCheckEntry[] = mineReady.map((r) => {
         const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
-        const d = carDetails(r.match, checkCols, vin);
+        // 📥 بيانات العربية من أعمدة ملفها هي (ملف تشييك إضافي بأسامي تانية) — السوبر أدمن الأول
+        const d = carDetails(r.match, isSuper ? rowCheckCols(r.match, checkCols) : checkCols, vin);
         return {
           id: entryId(r),
           agentId,
@@ -2134,7 +2169,7 @@ export default function RegistrationV2Page() {
                   r.match ? (
                     <tr key={r.id + "-d"} className="border-b border-rose-100 bg-rose-50">
                       <td colSpan={8 + (showArea ? 1 : 0) + (showRecorder ? 1 : 0) + (isSuper ? 3 : 0)} className="px-2 pb-2">
-                        <MatchDetails row={r} cols={checkCols}
+                        <MatchDetails row={r} cols={isSuper ? rowCheckCols(r.match, checkCols) : checkCols}
                           vin={plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)))} />
                       </td>
                     </tr>
