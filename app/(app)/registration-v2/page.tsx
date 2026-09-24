@@ -81,7 +81,7 @@ import { setMicBusy } from "@/lib/micBusy";
 import { createBusyHold, type BusyHold } from "@/lib/busyHold";
 import { micLostNotice, type AutoStopReason } from "@/lib/micLoss";
 import SessionField from "@/components/SessionField";
-import { AreaResolver, areaSource, autoAreaEligible } from "@/lib/autoArea";
+import { AreaResolver, areaSource, autoAreaEligible, fallbackArea } from "@/lib/autoArea";
 import { reverseGeocode } from "@/lib/geocoding";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
@@ -126,6 +126,8 @@ interface LiveRow {
    * فاضي). بيتملّى بعدين من إحداثيات الصف نفسه، وبعدها بيبقى `false`.
    */
   areaAuto?: boolean;
+  /** 🏘️ الـGPS ضعيف أو العنوان فشل ⇒ بياخد حي أقرب عربية (`fallbackArea`). */
+  areaFallback?: boolean;
 }
 
 /** قراءة خام من الموديل — للتقرير. */
@@ -528,24 +530,40 @@ export default function RegistrationV2Page() {
   /**
    * 🏘️ **يملا «الحي تلقائي»** للصفوف اللي اتعلّمت لحظة النطق — من إحداثيات
    * **الصف نفسه** (مش مكان المندوب دلوقتي). الصف اللي موقعه لسه ماوصلش بيستنى
-   * (ختم الموقع المتأخر بيملاه)، واللي دقته ضعيفة **بيفضل فاضي** — الفاضي أحسن
-   * من شارع غلط. والطلبات واحد ورا التاني (`AreaResolver`).
+   * (ختم الموقع المتأخر بيملاه). والطلبات واحد ورا التاني (`AreaResolver`).
+   *
+   * 🔴 **مفيش خانة فاضية** — المالك (٢٥ سبتمبر ٢٠٢٦): «لو سيئة ياخد نفس اسم
+   * الحي والشارع تبع السيارة اللي قبلها». الـGPS أضعف من ٣٥م أو خدمة العناوين
+   * فشلت ⇒ حي أقرب عربية قبلها (أو بعدها لو أول الجلسة) — `fallbackArea`.
    */
   useEffect(() => {
+    const updates = new Map<string, string>();
     for (const r of rows) {
-      if (!r.areaAuto || r.area || areaAskedRef.current.has(r.id)) continue;
+      if (!r.areaAuto || r.area) continue;
+      if (r.areaFallback) {
+        const fb = fallbackArea(rows, r.id);
+        if (fb) updates.set(r.id, fb);
+        continue;
+      }
+      if (areaAskedRef.current.has(r.id)) continue;
       if (r.lat == null || r.lng == null) continue;          // الموقع لسه جاي
       areaAskedRef.current.add(r.id);
       const id = r.id;
       if (!autoAreaEligible(r)) {
-        setRows((prev) => prev.map((x) => (x.id === id ? { ...x, areaAuto: false } : x)));
+        setRows((prev) => prev.map((x) => (x.id === id ? { ...x, areaFallback: true } : x)));
         continue;
       }
       void areaResolverRef.current!.resolve(r.lat, r.lng).then((label) => {
-        setRows((prev) => prev.map((x) => (x.id === id && !x.area
-          ? { ...x, area: label || null, areaAuto: false }
-          : x)));
+        setRows((prev) => prev.map((x) => {
+          if (x.id !== id || x.area) return x;
+          return label ? { ...x, area: label, areaAuto: false } : { ...x, areaFallback: true };
+        }));
       });
+    }
+    if (updates.size) {
+      setRows((prev) => prev.map((x) => (updates.has(x.id) && !x.area
+        ? { ...x, area: updates.get(x.id)!, areaAuto: false, areaFallback: false }
+        : x)));
     }
   }, [rows]);
 

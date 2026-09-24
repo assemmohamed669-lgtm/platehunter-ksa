@@ -13,7 +13,8 @@
  * **إحداثيات اللوحة نفسها** (لحظة النطق) بصيغة «الشارع - الحي». وعشان «يكون
  * دقيق»:
  *   · **دقة GPS ≤ ٣٥م بس** (حدّ «متوسطة» في `gpsAccuracyLevel`) — أضعف من كده
- *     الشارع بيطلع غلط، والفاضي أحسن من الغلط.
+ *     الشارع بيطلع غلط، فبياخد **حي العربية اللي قبلها** (`fallbackArea`) —
+ *     المالك: «ميسيبش خانات فاضية».
  *   · «غير معروف»/«غير متاح» **مابيتكتبوش**.
  * وعشان Nominatim بيحظر أكتر من طلب في الثانية: آخر عنوان بيتعاد لو المكان
  * هو هو (<١٥م — نفس خنق صفحة التشييك)، والطلبات **واحد ورا التاني**.
@@ -57,7 +58,7 @@ export function autoAreaEligible(r: { lat: number | null; lng: number | null; gp
 
 /**
  * بيحوّل الإحداثيات لـ«الشارع - الحي» — طلب واحد في المرة، وآخر عنوان بيتعاد
- * لو المكان ماتغيّرش. الفشل ⇒ نص فاضي (الخانة بتفضل فاضية).
+ * لو المكان ماتغيّرش. الفشل ⇒ نص فاضي (والصفحة بتاخد حي أقرب عربية).
  */
 export class AreaResolver {
   private last: { lat: number; lng: number; label: string } | null = null;
@@ -94,4 +95,31 @@ export class AreaResolver {
     if (label) this.last = { lat, lng, label };
     return label;
   }
+}
+
+/**
+ * 🔴 **«مايسيبش خانات فاضية»** — المالك (٢٥ سبتمبر ٢٠٢٦): «لو سيئة ياخد نفس
+ * اسم الحي والشارع تبع السيارة اللي قبلها». الـGPS ضعيف أو خدمة العناوين فشلت
+ * ⇒ حي **أقرب عربية قبلها** ليها حي؛ ولو مفيش (أول الجلسة) ⇒ أقرب واحدة **بعدها**؛
+ * ولو مفيش خالص ⇒ `null` والصف بيستنى لحد ما عربية تاخد حي.
+ */
+export function fallbackArea(
+  rows: ReadonlyArray<{ id: string; shownAt: number; area?: string | null }>,
+  id: string,
+): string | null {
+  const me = rows.find((r) => r.id === id);
+  if (!me) return null;
+  let before: { t: number; a: string } | null = null;
+  let after: { t: number; a: string } | null = null;
+  for (const r of rows) {
+    if (r.id === id) continue;
+    const a = String(r.area ?? "").trim();
+    if (!a) continue;
+    if (r.shownAt <= me.shownAt) {
+      if (!before || r.shownAt > before.t) before = { t: r.shownAt, a };
+    } else if (!after || r.shownAt < after.t) {
+      after = { t: r.shownAt, a };
+    }
+  }
+  return before?.a ?? after?.a ?? null;
 }
