@@ -928,8 +928,8 @@ export default function RegistrationV2Page() {
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     wantedSeenRef.current = new Map();
-    // 🔒 التسلسل الفوري للسوبر أدمن بس — تجربة المالك قبل المناديب
-    fleetRef.current = new FleetMemory({ sequence: isSuper });
+    // 🚚 التسلسل الفوري للكل — المالك جرّبه (٢٤ سبتمبر): «شغّال زي الفل، ارفعوه للكل»
+    fleetRef.current = new FleetMemory({ sequence: true });
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -964,7 +964,7 @@ export default function RegistrationV2Page() {
         fixes: true,
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
-        fleetSequence: isSuper,
+        fleetSequence: true,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
