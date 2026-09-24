@@ -52,6 +52,12 @@ import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
+import { splitByAgent, isMine } from "@/lib/draftByAgent";
+
+/** صفوف بلا تكرار بالـid (الأحدث يكسب) — للوحات المستخبية. */
+function uniqueById<T extends { id: string }>(xs: readonly T[]): T[] {
+  return [...new Map(xs.map((x) => [x.id, x])).values()];
+}
 import { readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
@@ -63,7 +69,7 @@ import { FleetMemory } from "@/lib/fleetPairs";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
-  trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
+  trialEntryId, legacyTrialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
   stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp, firstFailureReason,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
@@ -131,6 +137,8 @@ interface LiveRow {
   areaAuto?: boolean;
   /** 🏘️ الـGPS ضعيف أو العنوان فشل ⇒ بياخد حي أقرب عربية (`fallbackArea`). */
   areaFallback?: boolean;
+  /** 🔴 حساب المندوب اللي قال اللوحة — لوحات حساب تاني بتتخبّى ومابتتصدّرش (`lib/draftByAgent.ts`). */
+  agentId?: string | null;
 }
 
 /** قراءة خام من الموديل — للتقرير. */
@@ -407,9 +415,22 @@ export default function RegistrationV2Page() {
       }
       if (!alive) return;
       if (!userId) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
+      agentRef.current = userId;
+      /** 🔒 السوبر أدمن: لوحات الحسابات التانية على الموبايل تتخبّى (مابتتمسحش). */
+      const uidForSplit = userId;
+      const applySplit = (sup: boolean) => {
+        if (!sup || splitUidRef.current === uidForSplit) return;
+        splitUidRef.current = uidForSplit;
+        setRows((prev) => {
+          const { mine, others } = splitByAgent(prev, uidForSplit);
+          if (!others.length) return prev;
+          othersRef.current = uniqueById([...othersRef.current, ...others]);
+          return mine;
+        });
+      };
 
       const hit = cachedTrialGate(userId);
-      if (hit) openWith(hit.isSuper, hit.token);
+      if (hit) { openWith(hit.isSuper, hit.token); applySplit(hit.isSuper); }
 
       const [profRes, dbToken] = await Promise.all([
         supabase.from("profiles").select("role, is_super, voicex_enabled, voicex_until").eq("id", userId).single(),
@@ -439,6 +460,17 @@ export default function RegistrationV2Page() {
       const token = dbToken || hit?.token || null;
       rememberTrialGate(userId, { isSuper: sup, token });
       if (!hit || hit.isSuper !== sup || hit.token !== token) openWith(sup, token);
+      applySplit(sup);
+      /**
+       * ☁️ **ارفع اللي مستني أول ما الصفحة تفتح** — زي صفحة التشييك بالظبط. لوحة اتصدّرت
+       * والنت فاصل كانت بتفضل على الموبايل لحد تصدير جاي أو فتح التشييك (و«صوتي» هتستخبى).
+       * لوحات المندوب ده بس (`requireSession` + فلتر الحساب). 🔒 السوبر أدمن الأول.
+       */
+      if (sup) {
+        void import("@/lib/syncFieldCheck")
+          .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(userId as string))
+          .catch(() => { /* هتتزامن بعدين */ });
+      }
     })();
     return () => {
       alive = false;
@@ -482,6 +514,20 @@ export default function RegistrationV2Page() {
       onFix: (c) => { gpsRef.current = c; setGps(c); },
     });
   }, [allowed]);
+
+  /** ☁️ النت رجع ⇒ ارفع اللي مستني (السوبر أدمن الأول) — نفس الدالة والحساب. */
+  useEffect(() => {
+    if (allowed !== true || !isSuper) return;
+    const onOnline = () => {
+      const uid = agentRef.current;
+      if (!uid) return;
+      void import("@/lib/syncFieldCheck")
+        .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(uid))
+        .catch(() => { /* هتتزامن بعدين */ });
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [allowed, isSuper]);
 
   /** ② 🔄 تحديث الموقع بإيد المندوب — بيدوّر على قراءة أدقّ وأحدث. */
   const refreshGps = useCallback(async () => {
@@ -593,6 +639,14 @@ export default function RegistrationV2Page() {
    * شوف `stripForDraft` / `rehydrateMatch`.
    */
   const draftReady = useRef(false);
+  /** 🔴 حساب المندوب الحالي (من الموبايل) — بيتختم على كل لوحة جديدة. */
+  const agentRef = useRef<string | null>(null);
+  /**
+   * 🔒 لوحات **حسابات تانية** على نفس الموبايل — مستخبية ومحفوظة في المسودّة لحد ما
+   * صاحبها يدخل (مابتتمسحش ومابتتصدّرش باسم حد تاني). السوبر أدمن الأول.
+   */
+  const othersRef = useRef<LiveRow[]>([]);
+  const splitUidRef = useRef<string | null>(null);
   /**
    * ⚡ بتتقري **على طول** مع فتح الصفحة — مش بعد ما الصلاحية ترجع من الشبكة
    * (بيانات المندوب على موبايله، والصفحة مابتترسمش لحد ما الصلاحية تيجي).
@@ -605,7 +659,14 @@ export default function RegistrationV2Page() {
     void loadDraft<LiveRow>("trial", "rv2-rows")
       .then((saved) => {
         if (saved.length) {
-          setRows(restoreDraftRows(saved, checkIndexRef.current, (pl) => normalizePlate(bankPlateToArabic(pl))));
+          const restored = restoreDraftRows(saved, checkIndexRef.current, (pl) => normalizePlate(bankPlateToArabic(pl)));
+          // 🔒 الحساب اتعرف قبل المسودّة ⇒ لوحات الحسابات التانية تتخبّى من الأول
+          const uidNow = splitUidRef.current;
+          if (uidNow) {
+            const { mine, others } = splitByAgent(restored, uidNow);
+            othersRef.current = uniqueById([...othersRef.current, ...others]);
+            setRows(mine);
+          } else setRows(restored);
         }
       })
       .catch(() => { /* مافيش مسودّة */ })
@@ -614,7 +675,8 @@ export default function RegistrationV2Page() {
   useEffect(() => {
     // ⚠️ مانكتبش قبل ما نقرا — وإلا أول رسم (صفوف فاضية) بيمسح المسودّة.
     if (!draftReady.current) return;
-    void saveDraft("trial", "rv2-rows", stripForDraft(rows));
+    // 🔒 المستخبية بتتحفظ مع الظاهرة — مسح/تصدير المندوب ده مايلمسش لوحات غيره
+    void saveDraft("trial", "rv2-rows", stripForDraft([...rows, ...othersRef.current]));
   }, [rows]);
   /** أول ما شيت التشييك يجهز، الصفوف المحمّلة تاخد «مطلوبة» بتاعتها. */
   useEffect(() => {
@@ -1028,6 +1090,7 @@ export default function RegistrationV2Page() {
             // 🔴 الختم **دلوقتي** — اللي في المربّع وقت ما المندوب قالها.
             ...sessionStamp(areaRef.current, recorderRef.current),
             areaAuto: areaSource(areaRef.current, autoAreaRef.current) === "auto",
+            agentId: agentRef.current,
           };
           setRows((prev) => {
             /**
@@ -1153,6 +1216,7 @@ export default function RegistrationV2Page() {
               lat: g2?.lat ?? null, lng: g2?.lng ?? null, gpsAccuracy: g2?.accuracy ?? null,
               ...sessionStamp(areaRef.current, recorderRef.current),
               areaAuto: areaSource(areaRef.current, autoAreaRef.current) === "auto",
+            agentId: agentRef.current,
             };
             setRows((prev0) => {
               /**
@@ -1409,12 +1473,25 @@ export default function RegistrationV2Page() {
        */
       const uid = await supabase.auth.getSession()
         .then((r) => r.data.session?.user?.id ?? undefined).catch(() => undefined);
+      /**
+       * 🔴 **مفيش تصدير من غير حساب المندوب** — السجل اللي من غير `agentId` بيتعرض ويترفع
+       * لأي مندوب يفتح بعد كده على نفس الموبايل (`getAllFieldCheckEntries`: «السجلات القديمة
+       * من غير ختم»). فاللوحات بتفضل مكانها لحد ما الحساب يبان. 🔒 السوبر أدمن الأول.
+       */
+      if (isSuper && !uid) {
+        setError("مش قادر أعرف حسابك دلوقتي — اقفل الصفحة وافتحها تاني، واللوحات فاضلة مكانها.");
+        return;
+      }
       const agentId = uid;
-      const entries: FieldCheckEntry[] = ready.map((r) => {
+      // 🔒 المعرّف الفريد (حساب + وقت الظهور) للسوبر أدمن الأول — `trialEntryId`
+      const entryId = (r: LiveRow) => (isSuper && uid ? trialEntryId(r, uid) : legacyTrialEntryId(r.id));
+      // 🔴 حارس زيادة: لوحة مختومة بحساب تاني ماتتصدّرش بالحساب ده (السوبر أدمن الأول)
+      const mineReady = isSuper && uid ? ready.filter((r) => isMine(r, uid)) : ready;
+      const entries: FieldCheckEntry[] = mineReady.map((r) => {
         const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
         const d = carDetails(r.match, checkCols, vin);
         return {
-          id: trialEntryId(r.id),
+          id: entryId(r),
           agentId,
           plate: r.plate,
           /**
@@ -1449,7 +1526,7 @@ export default function RegistrationV2Page() {
       }
 
       // 🧹 اللي اتكتب بس يتشال — الباقي يفضل قدام المندوب
-      const savedRowIds = new Set(ready.filter((r) => okIds.includes(trialEntryId(r.id))).map((r) => r.id));
+      const savedRowIds = new Set(mineReady.filter((r) => okIds.includes(entryId(r))).map((r) => r.id));
       setRows((prev) => prev.filter((r) => !savedRowIds.has(r.id)));
 
       // ☁️ نحاول نوصّلها السيرفر فوراً — فشلها مايأثرش، هتتزامن بعدين

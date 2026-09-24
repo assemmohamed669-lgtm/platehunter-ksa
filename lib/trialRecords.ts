@@ -23,7 +23,24 @@ import type { CheckColumns } from "./wantedColumns";
  * اتصلّح بمعرّف ثابت، ولسه موجود في مسار `exportToFieldCheck` لحد النهارده.
  * بنبدأ صح من الأول: مية ضغطة = سجل واحد.
  */
-export function trialEntryId(rowId: string): string {
+export function trialEntryId(row: { id: string; shownAt: number }, agentId: string): string {
+  /**
+   * 🔴 **فريد على السيرفر كله** — المالك (٢٤ سبتمبر ٢٠٢٦): «اللوحات بتاع كل مندوب تروح
+   * لاسمه… مش عايز أي غلط حتى لو صغير».
+   *
+   * `field_checks.local_id` **unique على الجدول كله** (هدف `onConflict` في الرفع). المعرّف
+   * القديم (`legacyTrialEntryId`) كان «اللوحة + زمنها جوّه التسجيل» ⇒ بيتكرّر:
+   *   · نفس المندوب، نفس العربية في جلستين في نفس الثانية (أول الجلسة ~٣.٥ث) ⇒ التصدير
+   *     التاني **بيمسح** سجل الأول (نفس المفتاح في الموبايل وعلى السيرفر)
+   *   · مندوبين نفس الحكاية ⇒ التاني **السيرفر بيرفضه** (الصف ملك الأول) — في صمت
+   * ⇒ حساب المندوب + وقت أول ظهور للصف (مللي، مابيتغيّرش بالدمج) + معرّف الصف.
+   *   مية ضغطة على نفس الصف = نفس المعرّف (سجل واحد) زي ما كان.
+   */
+  return "fc-trial-" + String(agentId ?? "") + "-" + String(row?.shownAt ?? "") + "-" + String(row?.id ?? "");
+}
+
+/** المعرّف القديم — لباقي المناديب لحد ما المالك يفتح الجديد للكل. */
+export function legacyTrialEntryId(rowId: string): string {
   return "fc-trial-" + String(rowId ?? "");
 }
 
