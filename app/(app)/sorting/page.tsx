@@ -2548,13 +2548,21 @@ export default function SortingPage() {
     const dataObjs = src.map((r) => {
       const o = buildRowObject(r);
       const g = rawGpsOf(r);                 // GPS كرابط خريطة شغّال (مش إحداثيات خام)
-      if ("GPS" in o && g) o["GPS"] = g;
+      // 🔴 كان `if ("GPS" in o && g)` — يعني الرابط مايتحطّش إلا لو العمود اسمه
+      //    **«GPS» بالحرف**. وملف الداتا ممكن يسمّيه «الموقع» أو «جي بي اس»
+      //    (`lib/sortingCols.ts` عارفة التلاتة)، وساعتها الشرط بيفشل والإكسيل
+      //    بيطلع بلا رابط خريطة. الشرط اتشال — الرابط بيتحط طول ما هو موجود.
+      if (g) o["GPS"] = g;
       return o;
     });
     const tashObjs = tash.map((r) => {
       const o = buildTashyeekRowObj(r);
       const g = rawGpsOfTashyeek(r);
-      if ("GPS" in o && g) o["GPS"] = g;
+      // 🔴 كان `if ("GPS" in o && g)` — يعني الموقع مايتحطّش إلا لو العمود موجود
+      //    أصلاً في أعمدة العرض. وشيت التشييك غالباً مافيهوش عمود موقع، فصفوف
+      //    السجلات كانت بتطلع في الإكسيل **بلا موقع** بينما صفوف الداتا موقعها
+      //    طالع. الشرط اتشال — الرابط بيتحط طول ما هو موجود.
+      if (g) o["GPS"] = g;
       return o;
     });
     // **الوضع المخصّص**: المندوب رتّب أعمدته بإيده ⇒ المشاركة تطلع بترتيبه
@@ -2624,6 +2632,27 @@ export default function SortingPage() {
         : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
     }
     if (nearestActive && dist != null && Number.isFinite(dist)) obj["المسافة"] = formatDistanceKm(dist);
+    return obj;
+  }
+  /**
+   * 📍 صف السجلات **للمشاركة/التصدير** = نفس أعمدة العرض + **عمود GPS**.
+   *
+   * 🔴 `buildTashyeekRowObj` بيبني الأعمدة من `orderedTashyeekCols` بس — وأعمدة
+   * شيت التشييك مافيهاش بالضرورة عمود موقع، فالإكسيل المشترك كان بيطلع
+   * **من غير موقع السيارة خالص** لصفوف السجلات (بلاغ المالك ٢٤ سبتمبر ٢٠٢٦)
+   * بينما صفوف الداتا موقعها طالع عادي.
+   *
+   * والحل كان موجود ومستعمل في مشاركة الواتساب بس: `rawGpsOfTashyeek` بتحلّ
+   * الرابط من عمود الموقع في شيت التشييك، وإلا من أي عمود خريطة في الصف،
+   * وإلا من صف الإحالة.
+   *
+   * ⚠️ **مابنحطّش المفتاح لو مفيش رابط** — عمود فاضي في الإكسيل أوحش من عمود
+   *    مش موجود، وبيزحزح باقي الأعمدة على الموبايل.
+   */
+  function tashyeekRowForShare(r: TashyeekResultRow, dist?: number): Record<string, unknown> {
+    const obj = buildTashyeekRowObj(r, dist);
+    const g = rawGpsOfTashyeek(r);
+    if (g) obj["GPS"] = g;
     return obj;
   }
   function removeTashyeekRow(i: number) {
@@ -3686,7 +3715,7 @@ export default function SortingPage() {
           <ShareSortButton title={g.title ?? "نتائج الفرز"}
             rows={() => [
               ...gRows.map(buildRowObject),
-              ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...buildTashyeekRowObj(r) })),
+              ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...tashyeekRowForShare(r) })),
             ]}
             imageTable={() => buildSortImageTable(gRows, tashyeekResults ?? [])}
             excelBlob={() => buildSortExcelBlob(gRows, tashyeekResults ?? [])} />
@@ -3701,7 +3730,7 @@ export default function SortingPage() {
             <ShareSortButton title="كل نتايج الفرز" label="مشاركة الكل"
               rows={() => [
                 ...displayResults.map(buildRowObject),
-                ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...buildTashyeekRowObj(r) })),
+                ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...tashyeekRowForShare(r) })),
               ]}
               imageTable={() => buildSortImageTable(displayResults, tashyeekResults ?? [])}
               excelBlob={() => buildSortExcelBlob(displayResults, tashyeekResults ?? [])} />
@@ -3814,6 +3843,11 @@ export default function SortingPage() {
                     ))}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسافة</th>}
                     {nearestActive && tashyeekGpsCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الوقت</th>}
+                    {/* 📍 موقع السيارة — النافذة دي كانت الوحيدة من غير عمود موقع.
+                        الرابط بيتحلّ بـ`rawGpsOfTashyeek` (نفس اللي مشاركة الواتساب
+                        شغّالة بيه من زمان): عمود الموقع في شيت التشييك، وإلا أي
+                        عمود خريطة في الصف، وإلا صف الإحالة. */}
+                    <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الموقع</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                     <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
                   </tr>
@@ -3868,6 +3902,17 @@ export default function SortingPage() {
                         {(() => {
                           const pk = normalizePlate(bankPlateToArabic(String(plate)));
                           return (<>
+                            <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">
+                              {(() => {
+                                const g = rawGpsOfTashyeek(r);
+                                return g ? (
+                                  <a href={g} target="_blank" rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-0.5 text-primary underline whitespace-nowrap">
+                                    <MapPin size={11} /> خريطة
+                                  </a>
+                                ) : <span className="text-muted">—</span>;
+                              })()}
+                            </td>
                             <td className="border-l border-border px-2 py-2 text-center whitespace-nowrap">{renderStatusCell(pk)}</td>
                             <td className="px-2 py-2 text-center whitespace-nowrap">{renderLogCell(pk)}</td>
                           </>);
@@ -3907,7 +3952,7 @@ export default function SortingPage() {
 
             {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
             <ShareSortButton title="سيارات مطلوبة من ملف التشييك (السجلات)"
-              rows={() => displayTashyeek.map(({ r, _dist }) => buildTashyeekRowObj(r, _dist))} />
+              rows={() => displayTashyeek.map(({ r, _dist }) => tashyeekRowForShare(r, _dist))} />
             <button onClick={clearTashyeekResults}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
               <Trash2 size={15} /> مسح نتايج الفرز
