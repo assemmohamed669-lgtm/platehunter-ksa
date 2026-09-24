@@ -55,11 +55,19 @@ interface Props {
   onShareAudio?: (entry: RecordingEntry) => void;
   playingId?: string | null;
   checkPlates?: Set<string>;
+  /**
+   * 📋 أعمدة زيادة تتعرض بعد GPS — بترتيبها. بتستخدمها صفحة «مطلوبة اتلاقت»
+   * عشان تعرض **كل** بيانات اللوحة: بتاعة السجل (النوع · الشارع · الحي) وبتاعة
+   * المحفظة كمان (الموديل · اللون · سنة الصنع). فاضية = الجدول زي ما هو بالحرف.
+   */
+  extraColumns?: string[];
+  /** قيم الأعمدة الزيادة لصف معيّن. بترجّع undefined = كل الخانات «—». */
+  extraValuesFor?: (entry: RecordingEntry) => Record<string, string> | undefined;
 }
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates, extraColumns, extraValuesFor }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -271,7 +279,10 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">التاريخ</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
                 <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">المسجّل</th>
-                <th className="border-b border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">GPS</th>
+                {(extraColumns ?? []).map((c) => (
+                  <th key={c} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -474,6 +485,13 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                         </a>
                       ) : "—"}
                     </td>
+
+                    {/* 📋 الأعمدة الزيادة — بيانات السجل والمحفظة كاملة */}
+                    {(extraColumns ?? []).map((c) => (
+                      <td key={c} className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">
+                        {extraValuesFor?.(entry)?.[c] || "—"}
+                      </td>
+                    ))}
                   </tr>
                 );
               })}

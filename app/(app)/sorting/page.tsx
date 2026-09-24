@@ -3958,8 +3958,16 @@ export default function SortingPage() {
         <div>
           <div className="mb-1 flex items-center justify-between">
             <label className="text-xs text-muted">الصق اللوحات هنا</label>
+            {/* 🧹 «مسح الكل» بيمسح **اللوحات ونتيجة الفرز مع بعض** (طلب المالك
+                ٢٤ سبتمبر ٢٠٢٦). قبل كده كان بيمسح النص بس، فنتيجة الفرز القديمة
+                تفضل معروضة تحت لوحات اتمسحت — والمندوب يفتكرها بتاعة اللي
+                هيلصقه بعد كده. */}
             {pasteText && (
-              <button onClick={() => setPasteText("")}
+              <button onClick={() => {
+                setPasteText("");
+                setPasteResults([]); setPasteRecordResults([]); setPasteSelected(new Set());
+                wipePasteResults();
+              }}
                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:text-danger">
                 <Trash2 size={13} /> مسح الكل
               </button>

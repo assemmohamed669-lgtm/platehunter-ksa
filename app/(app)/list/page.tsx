@@ -13,11 +13,13 @@ import { useEffect, useState } from "react";
 import { Crosshair, ScanLine, Mic } from "lucide-react";
 import RecordingsTable from "@/components/RecordingsTable";
 import {
-  getAllFieldCheckEntries, getAllRecordings, getUploadedFile,
+  getAllFieldCheckEntries, getAllRecordings,
   deleteFieldCheckEntries, deleteRecording,
   type RecordingEntry, type FieldCheckEntry,
 } from "@/lib/idb";
-import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+import { normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
+import { loadAllCheckSources, buildCombinedCheckIndex } from "@/lib/checkSheets";
+import { wantedExtraColumns, wantedExtraValues } from "@/lib/wantedRowDetails";
 import { supabase } from "@/lib/supabaseClient";
 import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
 import { collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
@@ -54,6 +56,13 @@ export default function ListPage() {
   // معرّف الصف الظاهر → كل معرّفات مجموعته المخفية. المسح لازم يشيل المجموعة
   // كلها، وإلا يطلع مكان الممسوح أخوه والمندوب يقول «مسحته ورجع».
   const [dupGroups, setDupGroups] = useState<Map<string, string[]>>(new Map());
+  /**
+   * 📋 بيانات كل لوحة مطلوبة كاملة: صف السجل + **صف المحفظة** المطابق له.
+   * المفتاح = `localId`. من غير ده الجدول بيعرض ٦ خانات بس والمندوب بيروح
+   * للعربية وهو مش عارف موديلها ولا لونها ولا سنة صنعها.
+   */
+  const [detailsById, setDetailsById] = useState<Map<string, Record<string, string>>>(new Map());
+  const [detailCols, setDetailCols] = useState<string[]>([]);
 
   async function load() {
     setLoading(true);
@@ -76,14 +85,24 @@ export default function ListPage() {
       setDupGroups(duplicateCheckIds(allEntries));
       const entries = collapseDuplicateChecks(allEntries);
       if (kind === "wanted") {
-        const check = await getUploadedFile("local", "check");
-        if (!check) { setRows([]); return; }
-        const col = detectPlateColumn(check.headers, check.rows);
-        const wanted = new Set(
-          check.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col ?? ""] ?? "")))).filter(Boolean),
-        );
-        setRows(entries.filter((e) => wanted.has(normalizePlate(bankPlateToArabic(e.plate)))).map(fieldToRec));
+        // 🔴 كانت بتقرا **ملف التشييك الأساسي بس** وبتتجاهل كل الملفات الإضافية —
+        //    عكس صفحة التشييك نفسها اللي بتقراهم كلهم بـ`loadAllCheckSources`.
+        //    النتيجة: لوحة اتلاقت مطلوبة من ملف إضافي **ماكانتش بتظهر هنا خالص**
+        //    (بلاغ المالك ٢٤ سبتمبر: «١٠ مطلوبة وبيظهر ٤»). دلوقتي نفس المصدر
+        //    ونفس الفهرس اللي بيقرّر «مطلوبة» في التشييك بالظبط.
+        const sources = await loadAllCheckSources();
+        const checkIndex = buildCombinedCheckIndex(sources);
+        if (checkIndex.size === 0) { setRows([]); setDetailsById(new Map()); setDetailCols([]); return; }
+        const keyOf = (plate: string) => normalizePlate(bankPlateToArabic(plate));
+        const hits = entries.filter((e) => checkIndex.has(keyOf(e.plate)));
+        // بيانات كاملة لكل صف: أعمدة السجل + أعمدة المحفظة المطابقة.
+        const details = new Map<string, Record<string, string>>();
+        for (const e of hits) details.set(e.id, wantedExtraValues(e.row, checkIndex.get(keyOf(e.plate))));
+        setDetailsById(details);
+        setDetailCols(wantedExtraColumns([...details.values()]));
+        setRows(hits.map(fieldToRec));
       } else {
+        setDetailsById(new Map()); setDetailCols([]);
         setRows(entries.map(fieldToRec));
       }
     } finally {
@@ -147,6 +166,8 @@ export default function ListPage() {
           recordings={rows}
           onDelete={handleDelete}
           onDeleteMany={handleDeleteMany}
+          extraColumns={detailCols}
+          extraValuesFor={(e) => detailsById.get(e.localId)}
         />
       )}
     </div>
