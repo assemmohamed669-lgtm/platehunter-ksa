@@ -929,7 +929,7 @@ export default function RegistrationV2Page() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     wantedSeenRef.current = new Map();
     // 🚚 التسلسل الفوري للكل — المالك جرّبه (٢٤ سبتمبر): «شغّال زي الفل، ارفعوه للكل»
-    fleetRef.current = new FleetMemory({ sequence: true, firstCar: isSuper });   // 🔒 أول عربية: السوبر أدمن بس
+    fleetRef.current = new FleetMemory({ sequence: true, firstCar: true });   // 🚚 أول عربية: للكل (المالك جرّبه ٢٤ سبتمبر)
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -965,8 +965,8 @@ export default function RegistrationV2Page() {
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
         fleetSequence: true,
-        // 🔒 «أول عربية في الأسطول» للسوبر أدمن بس — المالك: «متنشرش غير للسوبر أدمن»
-        fleetFirstCar: isSuper,
+        // 🚚 «أول عربية في الأسطول» للكل — المالك جرّبه كسوبر أدمن وقال «انشر للكل»
+        fleetFirstCar: true,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
