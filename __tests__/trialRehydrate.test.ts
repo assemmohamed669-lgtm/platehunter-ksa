@@ -30,6 +30,13 @@ describe("مسودّة صفحة التجربة", () => {
     expect(out[0].lat).toBe(1);
   });
 
+  it("🔴 نسخ الأسطول المتبلعة (`mergedFrom`) ماتتحفظش — فيها صفوف شيت كاملة", () => {
+    const withShadow = { ...row, mergedFrom: [{ ...row, id: "b", plate: "دطس2178" }] };
+    const out = stripForDraft([withShadow]);
+    expect("mergedFrom" in out[0]).toBe(false);
+    expect(out[0].plate).toBe("دطس2177");
+  });
+
   it("🔴 التحميل بيرجّع «مطلوبة» من الفهرس", () => {
     const idx = new Map([["دطس2177", { "رقم اللوحة": "دطس2177", "البنك": "الراجحي" }]]);
     const back = rehydrateMatch(stripForDraft([row]), idx);

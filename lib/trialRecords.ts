@@ -248,9 +248,17 @@ export interface DraftRow {
   match: Record<string, string> | null;
 }
 
-/** بيجهّز الصفوف للحفظ: بلا صف الشيت. */
+/**
+ * بيجهّز الصفوف للحفظ: بلا صف الشيت — ولا نسخ الأسطول المتبلعة (`mergedFrom`
+ * في `lib/placeLiveRow.ts`): كل نسخة فيها صف شيت كامل، ورجوعها بعد إعادة الفتح
+ * مالوش لازمة (الدليل نفسه مابيتحفظش).
+ */
 export function stripForDraft<T extends DraftRow>(rows: readonly T[]): T[] {
-  return (rows ?? []).map((r) => ({ ...r, match: null }));
+  return (rows ?? []).map((r) => {
+    const { mergedFrom: _shadows, ...rest } = r as T & { mergedFrom?: unknown };
+    void _shadows;
+    return { ...rest, match: null } as T;
+  });
 }
 
 /**

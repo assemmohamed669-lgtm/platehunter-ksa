@@ -1,8 +1,8 @@
 import { describe, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
-import { LiveConsensus, drainClockMs } from "@/lib/liveConsensus";
+import { LiveConsensus, drainClockMs, addWindowReads } from "@/lib/liveConsensus";
 import { FleetMemory } from "@/lib/fleetPairs";
-import { placeLiveRow, type PlaceableRow } from "@/lib/placeLiveRow";
+import { placeLiveRow, restoreFleetRows, type PlaceableRow } from "@/lib/placeLiveRow";
 import { showProvisional, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import { sweepKeeps } from "@/lib/wantedFastPath";
 
@@ -30,8 +30,12 @@ const nrm = (s: string) => s.replace(/\s+/g, "").replace(/[أإآ]/g, "ا");
 
 export function replay(rec: Rec, fleetOn: boolean): string[] {
   const fleet = new FleetMemory();
+  const engineFleet = fleetOn ? new FleetMemory() : null;
   const distinct = fleetOn ? (a: string, b: string) => fleet.distinct(a, b) : undefined;
-  const lc = new LiveConsensus({ windowMs: 2000, stableMs: 2500, greenMinMult: 2, distinct });
+  const lc = new LiveConsensus({
+    windowMs: 2000, stableMs: 2500, greenMinMult: 2,
+    distinct: engineFleet ? (a: string, b: string) => engineFleet.distinct(a, b) : undefined,
+  });
   let rows: Row[] = [];
   let n = 0;
   const mk = (plate: string, atMs: number, now: number, o: Partial<Row>): Row => ({
@@ -49,12 +53,15 @@ export function replay(rec: Rec, fleetOn: boolean): string[] {
       if (!accepted) continue;
       const plates = (nrm(r.plate).match(PLATE) ?? []).filter((p) => WELL.test(p));
       // الصفحة (onRead): الدليل الأول، وبعدين الصف المبدئي
-      if (fleetOn) fleet.note(plates);
+      if (fleetOn) {
+        fleet.note(plates, r.tMs);
+        rows = restoreFleetRows(rows, distinct);
+      }
       if (showProvisional({ accepted, blocked, conf: r.conf })) {
         for (const p of plates) rows = placeLiveRow(rows, mk(p, r.tMs, now, { provisional: true, conf: r.conf }), distinct);
       }
-      // المحرّك: نفس الدليل (نفس النافذة) وبعدين الإجماع
-      for (const p of plates) lc.add({ plate: p, tMs: r.tMs, conf: r.conf, minLp: r.blocked === undefined ? undefined : blocked ? -1 : 0 });
+      // المحرّك: نفس الخطوة بالحرف (ذاكرة المحرّك منفصلة عن ذاكرة الصفحة زي الحقيقة)
+      addWindowReads(lc, engineFleet, plates.join(" "), r.tMs, r.conf, r.blocked === undefined ? undefined : blocked ? -1 : 0);
     }
     if (now % 2000 === 0) {
       const cut = now - PROVISIONAL_TTL_MS;
