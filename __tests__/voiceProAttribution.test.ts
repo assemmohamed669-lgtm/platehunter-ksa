@@ -7,7 +7,7 @@ import path from "node:path";
  * حارس على نص صفحة Voice PRO — كل حلقة في السلسلة من اللوحة لحد السيرفر:
  *   ختم الحساب على كل لوحة · إخفاء لوحات الحسابات التانية (من غير مسح) · مفيش تصدير
  *   من غير حساب · معرّف فريد (حساب + وقت الظهور) · التصدير يرفض لوحة حساب تاني.
- * 🔒 السوبر أدمن الأول (قاعدة المالك).
+ * للكل — المالك جرّبه كسوبر أدمن وقال «يلا ارفع» (٢٤ سبتمبر).
  */
 const src = readFileSync(path.resolve(__dirname, "../app/(app)/registration-v2/page.tsx"), "utf8");
 const exportFn = src.slice(src.indexOf("async function exportRowsInner()"), src.indexOf("function buildReportText()"));
@@ -24,7 +24,7 @@ describe("🔴 Voice PRO — كل لوحة لاسم صاحبها", () => {
     expect(src).toMatch(/saveDraft\("trial", "rv2-rows", stripForDraft\(\[\.\.\.rows, \.\.\.othersRef\.current\]\)\)/);
   });
   it("🔴 مفيش تصدير من غير حساب", () => {
-    const guard = exportFn.indexOf("if (isSuper && !uid)");
+    const guard = exportFn.indexOf("if (!uid)");
     expect(guard).toBeGreaterThan(0);
     expect(guard).toBeLessThan(exportFn.indexOf("saveFieldCheckEntry"));
   });
@@ -34,7 +34,8 @@ describe("🔴 Voice PRO — كل لوحة لاسم صاحبها", () => {
   });
   it("🔴 المعرّف فريد (حساب + وقت الظهور) والتصدير بيرفض لوحة حساب تاني", () => {
     expect(exportFn).toMatch(/trialEntryId\(r, uid\)/);
-    expect(exportFn).toMatch(/ready\.filter\(\(r\) => isMine\(r, uid\)\)/);
+    expect(exportFn).toMatch(/const mineReady = ready\.filter\(\(r\) => isMine\(r, uid\)\);/);
+    expect(exportFn).not.toMatch(/legacyTrialEntryId/);
     expect(exportFn).toMatch(/mineReady\.map\(/);
     expect(exportFn).toMatch(/mineReady\.filter\(\(r\) => okIds\.includes\(entryId\(r\)\)\)/);
   });

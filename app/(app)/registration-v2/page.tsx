@@ -70,7 +70,7 @@ import { FleetMemory } from "@/lib/fleetPairs";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
-  trialEntryId, legacyTrialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
+  trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
   stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp, firstFailureReason,
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
@@ -361,8 +361,7 @@ export default function RegistrationV2Page() {
     [checkSources],
   );
   const checkIndexRef = useRef(checkIndex);
-  /** مرجع لـ`isSuper` — `loadCheck` متمسك مرة واحدة (`useCallback([])`). */
-  const isSuperRef = useRef(false);
+
   useEffect(() => { checkIndexRef.current = checkIndex; }, [checkIndex]);
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   /**
@@ -422,7 +421,7 @@ export default function RegistrationV2Page() {
       /** 🔒 السوبر أدمن: لوحات الحسابات التانية على الموبايل تتخبّى (مابتتمسحش). */
       const uidForSplit = userId;
       const applySplit = (sup: boolean) => {
-        if (!sup || splitUidRef.current === uidForSplit) return;
+        if (splitUidRef.current === uidForSplit) return;
         splitUidRef.current = uidForSplit;
         setRows((prev) => {
           const { mine, others } = splitByAgent(prev, uidForSplit);
@@ -467,13 +466,11 @@ export default function RegistrationV2Page() {
       /**
        * ☁️ **ارفع اللي مستني أول ما الصفحة تفتح** — زي صفحة التشييك بالظبط. لوحة اتصدّرت
        * والنت فاصل كانت بتفضل على الموبايل لحد تصدير جاي أو فتح التشييك (و«صوتي» هتستخبى).
-       * لوحات المندوب ده بس (`requireSession` + فلتر الحساب). 🔒 السوبر أدمن الأول.
+       * لوحات المندوب ده بس (`requireSession` + فلتر الحساب). للكل (المالك: «يلا ارفع»).
        */
-      if (sup) {
-        void import("@/lib/syncFieldCheck")
-          .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(userId as string))
-          .catch(() => { /* هتتزامن بعدين */ });
-      }
+      void import("@/lib/syncFieldCheck")
+        .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(userId as string))
+        .catch(() => { /* هتتزامن بعدين */ });
     })();
     return () => {
       alive = false;
@@ -520,7 +517,7 @@ export default function RegistrationV2Page() {
 
   /** ☁️ النت رجع ⇒ ارفع اللي مستني (السوبر أدمن الأول) — نفس الدالة والحساب. */
   useEffect(() => {
-    if (allowed !== true || !isSuper) return;
+    if (allowed !== true) return;
     const onOnline = () => {
       const uid = agentRef.current;
       if (!uid) return;
@@ -530,7 +527,7 @@ export default function RegistrationV2Page() {
     };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
-  }, [allowed, isSuper]);
+  }, [allowed]);
 
   /** ② 🔄 تحديث الموقع بإيد المندوب — بيدوّر على قراءة أدقّ وأحدث. */
   const refreshGps = useCallback(async () => {
@@ -714,15 +711,13 @@ export default function RegistrationV2Page() {
         if (!rec) {
           /**
            * 📥 الأساسي اتمسح والإضافية موجودة ⇒ الإضافية لوحدها — زي «صوتي» بالظبط (كانت
-           * بتتجاهلهم كلهم فمفيش ولا لوحة بتطلع مطلوبة). 🔒 السوبر أدمن الأول.
+           * بتتجاهلهم كلهم فمفيش ولا لوحة بتطلع مطلوبة). للكل (المالك: «يلا ارفع»).
            */
           const extrasOnly: ExcelTable[] = [];
-          if (isSuperRef.current) {
-            for (let n = 2; n < 100; n++) {
-              const x = await getUploadedFile("local", `check-${n}`).catch(() => null);
-              if (!x) break;
-              extrasOnly.push({ headers: x.headers, rows: x.rows });
-            }
+          for (let n = 2; n < 100; n++) {
+            const x = await getUploadedFile("local", `check-${n}`).catch(() => null);
+            if (!x) break;
+            extrasOnly.push({ headers: x.headers, rows: x.rows });
           }
           setCheckTable(null); setCheckSources(extrasOnly); setCheckFile(null);
           setCheckName(extrasOnly.length ? "ملفات تشييك إضافية" : "");
@@ -813,13 +808,6 @@ export default function RegistrationV2Page() {
    * وبنعيد القراءة كمان لما المندوب **يرجع للصفحة** (`visibilitychange`)
    * — لأن الصفحتين مسارين منفصلين وواحدة بس بتكون متركّبة.
    */
-  /** 📥 السوبر أدمن اتعرف ومفيش ملفات محمّلة ⇒ نقرا تاني (يمكن فيه إضافية من غير أساسي). */
-  useEffect(() => {
-    isSuperRef.current = isSuper;
-    if (isSuper && checkSources.length === 0) loadCheck();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuper]);
-
   useEffect(() => {
     // `idbEvent`: الشيت الجاي من واتساب كمان — كان مابيوصلش للصفحة دي.
     const off = onCheckSheetChanged(() => loadCheck(), { idbEvent: true });
@@ -1510,21 +1498,21 @@ export default function RegistrationV2Page() {
       /**
        * 🔴 **مفيش تصدير من غير حساب المندوب** — السجل اللي من غير `agentId` بيتعرض ويترفع
        * لأي مندوب يفتح بعد كده على نفس الموبايل (`getAllFieldCheckEntries`: «السجلات القديمة
-       * من غير ختم»). فاللوحات بتفضل مكانها لحد ما الحساب يبان. 🔒 السوبر أدمن الأول.
+       * من غير ختم»). فاللوحات بتفضل مكانها لحد ما الحساب يبان. للكل (المالك: «يلا ارفع»).
        */
-      if (isSuper && !uid) {
+      if (!uid) {
         setError("مش قادر أعرف حسابك دلوقتي — اقفل الصفحة وافتحها تاني، واللوحات فاضلة مكانها.");
         return;
       }
       const agentId = uid;
       // 🔒 المعرّف الفريد (حساب + وقت الظهور) للسوبر أدمن الأول — `trialEntryId`
-      const entryId = (r: LiveRow) => (isSuper && uid ? trialEntryId(r, uid) : legacyTrialEntryId(r.id));
+      const entryId = (r: LiveRow) => trialEntryId(r, uid);
       // 🔴 حارس زيادة: لوحة مختومة بحساب تاني ماتتصدّرش بالحساب ده (السوبر أدمن الأول)
-      const mineReady = isSuper && uid ? ready.filter((r) => isMine(r, uid)) : ready;
+      const mineReady = ready.filter((r) => isMine(r, uid));
       const entries: FieldCheckEntry[] = mineReady.map((r) => {
         const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
-        // 📥 بيانات العربية من أعمدة ملفها هي (ملف تشييك إضافي بأسامي تانية) — السوبر أدمن الأول
-        const d = carDetails(r.match, isSuper ? rowCheckCols(r.match, checkCols) : checkCols, vin);
+        // 📥 بيانات العربية من أعمدة ملفها هي (ملف تشييك إضافي بأسامي تانية) — للكل
+        const d = carDetails(r.match, rowCheckCols(r.match, checkCols), vin);
         return {
           id: entryId(r),
           agentId,
@@ -1767,7 +1755,7 @@ export default function RegistrationV2Page() {
   return (
     <div dir="rtl" className="-mx-4 -mt-4 min-h-screen bg-white px-4 pb-10 pt-4 text-slate-900">
       {/* سطر «الموديل الجديد — تجربة…» اللي تحت العنوان اتشال بطلب المالك (٢٣ سبتمبر ٢٠٢٦). */}
-      {/* 🏷️ «Voice PRO» — السوبر أدمن الأول (`lib/voiceProName.ts`) */}
+      {/* 🏷️ «Voice PRO» — للكل (`lib/voiceProName.ts`) */}
       <h1 className="text-2xl font-black tracking-tight">{voiceProNames(isSuper).title}</h1>
 
       {/*
@@ -2169,7 +2157,7 @@ export default function RegistrationV2Page() {
                   r.match ? (
                     <tr key={r.id + "-d"} className="border-b border-rose-100 bg-rose-50">
                       <td colSpan={8 + (showArea ? 1 : 0) + (showRecorder ? 1 : 0) + (isSuper ? 3 : 0)} className="px-2 pb-2">
-                        <MatchDetails row={r} cols={isSuper ? rowCheckCols(r.match, checkCols) : checkCols}
+                        <MatchDetails row={r} cols={rowCheckCols(r.match, checkCols)}
                           vin={plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)))} />
                       </td>
                     </tr>

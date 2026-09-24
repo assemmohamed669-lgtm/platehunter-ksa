@@ -72,9 +72,9 @@ import path from "node:path";
 
 describe("📥 صفحة Voice PRO — الحارس", () => {
   const src = readFileSync(path.resolve(__dirname, "../app/(app)/registration-v2/page.tsx"), "utf8");
-  it("🔴 التصدير والعرض بياخدوا أعمدة ملف الصف نفسه (السوبر أدمن الأول)", () => {
-    expect(src).toMatch(/carDetails\(r\.match, isSuper \? rowCheckCols\(r\.match, checkCols\) : checkCols, vin\)/);
-    expect(src).toMatch(/<MatchDetails row=\{r\} cols=\{isSuper \? rowCheckCols\(r\.match, checkCols\) : checkCols\}/);
+  it("🔴 التصدير والعرض بياخدوا أعمدة ملف الصف نفسه (للكل)", () => {
+    expect(src).toMatch(/carDetails\(r\.match, rowCheckCols\(r\.match, checkCols\), vin\)/);
+    expect(src).toMatch(/<MatchDetails row=\{r\} cols=\{rowCheckCols\(r\.match, checkCols\)\}/);
   });
   it("🔴 الإضافية بتتقري حتى لو الأساسي اتمسح (زي «صوتي»)", () => {
     expect(src).toMatch(/const extrasOnly: ExcelTable\[\] = \[\];/);
