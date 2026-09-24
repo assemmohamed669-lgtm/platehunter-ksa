@@ -55,7 +55,9 @@ import {
   canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
   tokenProbeVerdict,
 } from "@/lib/trialModelGate";
-import { sameCarTwin, heardNotShown, isExactRepeatNearby, blockedNotShown, sameUtterance } from "@/lib/trialTwin";
+import { heardNotShown, blockedNotShown } from "@/lib/trialTwin";
+import { placeLiveRow } from "@/lib/placeLiveRow";
+import { FleetMemory } from "@/lib/fleetPairs";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
 import {
@@ -73,9 +75,8 @@ import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chas
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows, modelBoxDetail } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
-import { mergeTwinRow, type Edited } from "@/lib/trialRowMerge";
+import { type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
-import { isLetterTwin, resolveLetterTwin } from "@/lib/letterTwin";
 import { wantedHits, shouldAlertNow, sweepKeeps, confirmWanted, wantedReadCount } from "@/lib/wantedFastPath";
 import { setMicBusy } from "@/lib/micBusy";
 import { createBusyHold, type BusyHold } from "@/lib/busyHold";
@@ -85,7 +86,7 @@ import { AreaResolver, areaSource, autoAreaEligible, fallbackArea } from "@/lib/
 import { reverseGeocode } from "@/lib/geocoding";
 import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
-import { showProvisional, confirmedWins, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
+import { showProvisional, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
 /** صف لوحة ظهرت. */
@@ -927,6 +928,7 @@ export default function RegistrationV2Page() {
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     wantedSeenRef.current = new Map();
+    fleetRef.current = new FleetMemory();
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -959,6 +961,8 @@ export default function RegistrationV2Page() {
         // صفحة الموديل الجديد فقط لحد ما أجرّب». صفحة التشييك على السلوك
         // القديم بالحرف لحد ما يتأكّد على جهاز حقيقي.
         fixes: true,
+        // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
+        fleetSplit: true,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
@@ -1037,21 +1041,13 @@ export default function RegistrationV2Page() {
              * لو في الحالة النادرة المتأخّرة هي اللي صح وكانت مطلوبة، المندوب
              * لسه بيتنبّه. صفّارة زيادة أرخص بكتير من عربية مطلوبة تعدّي.
              */
-            const lt = prev.find((r) => isLetterTwin(r, fresh));
-            if (lt) return prev.map((r) => (r.id === lt.id ? resolveLetterTwin(lt, fresh) : r));
-
-            const nearby = isExactRepeatNearby(fresh.plate, prev.map((r) => r.plate));
             /**
              * 🔴 **أو نفس النطقة بزمن الصوت** — القراية المتأخّرة بعد وقعة
              * الشبكة (`voicexReplay`) بتيجي بعد ما اللوحة نزلت تحت أول ٣
              * صفوف، فـ`nearby` لوحده كان هيطلّعها صف مكرّر.
+             *
+             * المؤكّد بيغلب المبدئي دايماً — القاعدة في `provisionalRow.ts`.
              */
-            const twin = prev.find((r) => (r.plate === fresh.plate
-              ? (nearby || sameUtterance(r, fresh)) && sameCarTwin(r, fresh, 12000)
-              : sameCarTwin(r, fresh, 12000)));
-            if (!twin) return [fresh, ...prev];
-            // المؤكّد بيغلب المبدئي دايماً — القاعدة في `provisionalRow.ts`.
-            if (!confirmedWins(fresh, twin)) return prev;
             /**
              * 🕐 **زمن الظهور = أول مرة المندوب شافها**، مش وقت التأكيد.
              *
@@ -1074,13 +1070,25 @@ export default function RegistrationV2Page() {
              * وجلسة الـ٩٩/٩٩ اتقاست على الترتيب ده. ومع الـid الثابت React
              * بينقل الصف **من غير ما يعيد تركيبه**، فالمنسدلة مابتتقفلش.
              */
-            const merged = mergeTwinRow(fresh, twin);
-            return [merged, ...prev.filter((r) => r.id !== twin.id)];
+            /**
+             * 🚚 **أسطول متسلسل** (`حبل1234 حبل1235`) اتسمع في نافذة واحدة ⇒
+             * عربيتين، مايتلمّوش — بلاغ المالك ٢٤ سبتمبر. شوف `fleetPairs.ts`.
+             * الخطوات كلها في `lib/placeLiveRow.ts` (نفس المبدئي تحت بالحرف).
+             */
+            return placeLiveRow(prev, fresh, fleetDistinct);
           });
           if (hit) alertWanted(plate, hit);
         },
         onRead: (r) => {
           setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400));
+          /**
+           * 🚚 **دليل الأسطول قبل أي صف** — النافذة دي سمعت `حبل1234 حبل1235`
+           * مع بعض ⇒ عربيتين. نفس القرايات اللي المحرّك بيدّيها للإجماع
+           * (المقبولة بس) فالطبقتين بيحكموا بنفس الدليل.
+           */
+          if (r.accepted) {
+            fleetRef.current.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")));
+          }
           /**
            * ⚡ **الظهور الفوري.** القراءة عالية الثقة بتطلع صف 🟡 «مبدئية» على
            * طول (~٣ث)، والإجماع لما ييجي (~٧ث) يأكّدها 🟢 أو يصحّحها — لمّ
@@ -1137,23 +1145,13 @@ export default function RegistrationV2Page() {
               const prev = wRow
                 ? prev0.map((x) => (x.plate === p2 && !x.match && !x.edited?.plate ? { ...x, match: wRow } : x))
                 : prev0;
-              // 🔴 نفس القاعدة — المبدئي كمان بيطلع صف زيادة لو اتسابت.
-              const ltP = prev.find((x) => isLetterTwin(x, prov));
-              if (ltP) return prev.map((x) => (x.id === ltP.id ? resolveLetterTwin(ltP, prov) : x));
-              const nearbyP = isExactRepeatNearby(prov.plate, prev.map((x) => x.plate));
-              const twin = prev.find((x) => (x.plate === prov.plate
-                ? (nearbyP || sameUtterance(x, prov)) && sameCarTwin(x, prov, 12000)
-                : sameCarTwin(x, prov, 12000)));
-              if (!twin) return [prov, ...prev];
-              if (!confirmedWins(prov, twin)) return prev;
               /**
-               * 🔴 **نفس علّة الدمج المؤكّد بالظبط** — كان `{ ...prov }`
-               * بـid جديد وبيطلع لفوق. الصف المبدئي بيتبدّل بمبدئي أقوى
-               * في أول ثانيتين، وده وقت ما المندوب بيختار النوع.
-               * نفس القاعدة: الهوية بتفضل، وشغل المندوب بيغلب.
+               * 🔴 نفس القاعدة — المبدئي كمان بيطلع صف زيادة لو اتسابت. وكان
+               * `{ ...prov }` بـid جديد (نفس علّة الدمج المؤكّد): الصف المبدئي
+               * بيتبدّل بمبدئي أقوى في أول ثانيتين، وده وقت ما المندوب بيختار
+               * النوع. الهوية بتفضل، وشغل المندوب بيغلب — `placeLiveRow`.
                */
-              const merged = mergeTwinRow(prov, twin);
-              return [merged, ...prev.filter((x) => x.id !== twin.id)];
+              return placeLiveRow(prev, prov, fleetDistinct);
             });
             // 🔔 الصفّارة ضربت فوق لما اتأكّدت (نافذتين) — مش هنا من أول قراية.
           }
@@ -1310,6 +1308,12 @@ export default function RegistrationV2Page() {
    * المباشرة». شوف `confirmWanted` في `lib/wantedFastPath.ts`.
    */
   const wantedSeenRef = useRef<Map<string, number[]>>(new Map());
+  /**
+   * 🚚 عربيات الأسطول المؤكّدة في الجلسة دي (اتسمعت في نافذة مع جارتها في
+   * التسلسل) — لمّ الصفوف مابيلمّهاش في بعض. جديد مع كل «ابدأ».
+   */
+  const fleetRef = useRef<FleetMemory>(new FleetMemory());
+  const fleetDistinct = (a: string, b: string) => fleetRef.current.distinct(a, b);
   const alertWanted = useCallback((plate: string, row: Record<string, string> | null) => {
     /**
      * 🔴 **مرة واحدة لكل عربية** — الطابور بيمنع التكرار طول ما اللوحة فيه

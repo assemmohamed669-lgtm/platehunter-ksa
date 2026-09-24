@@ -13,6 +13,7 @@
 import { MissedWindows, canReplay, isStalled } from "./voicexReplay";
 import { postAudioForPlate } from "./plateJudgeClient";
 import { LiveConsensus, drainClockMs } from "./liveConsensus";
+import { FleetMemory } from "./fleetPairs";
 import { MicEngine } from "./micEngine";
 import { MicLossDetector, stopsRecording, type MicLossReason } from "./micLoss";
 import { Vad } from "./vad";
@@ -183,6 +184,13 @@ export interface VoicexEngineOpts {
    */
   onMicLost?: (reason: MicLossReason) => void;
   /**
+   * 🚚 **أسطول متسلسل** (`حبل1234 حبل1235 حبل1236`) — لوحتين بنفس الحروف
+   * وأرقام متسلسلة **اتسمعوا في نافذة واحدة** = عربيتين، فالإجماع مابيلمّهمش
+   * في لوحة واحدة. «الجديد» بس اللي بيبعته — «صوتي» زي ما هي بالحرف.
+   * شوف `lib/fleetPairs.ts`.
+   */
+  fleetSplit?: boolean;
+  /**
    * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
    * (كوهير) بالتوازي. ده أسلوب المعمل بالظبط: «الفوري مابينديش كوهير —
    * **العميل** هو اللي بينده سيرفر النوع» (`deploy/نشر-على-كوريا.md`).
@@ -265,7 +273,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // إعدادات الإجماع **زي المعمل بالحرف**: نافذة ٢ث single-linkage (أكبر من خطوة
   // الزحلقة ١.٥ث وأصغر من إيقاع نطق اللوحة ~٣.٤ث فالأسطول يتفصل)، العنقود يفضل
   // مفتوح ٢.٥ث بعد آخر قراءة، نافذتين+ = 🟢 مؤكّدة.
-  const consensus = new LiveConsensus({ windowMs: 2000, stableMs: 2500, greenMinMult: 2 });
+  const fleet = opts.fleetSplit ? new FleetMemory() : null;
+  const consensus = new LiveConsensus({
+    windowMs: 2000, stableMs: 2500, greenMinMult: 2,
+    distinct: fleet ? (a, b) => fleet.distinct(a, b) : undefined,
+  });
   const emit = (p: string, meta: VoicexPlateMeta) => { if (WELL.test(p)) opts.onPlate(p, meta); };
 
   // يتعرّف قبل الميك عشان مرجع onChunk يكون آمن؛ يتبني بعد ما نعرف معدل العيّنات.
@@ -452,10 +464,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       // 🔒 بلا `fixes`: الحاجز المسطّح زي ما كان — النافذة كلها تترمى.
       if (!FIXES && minLp !== undefined && minLp < MIN_TOKEN_LOGPROB) return;
       // زمن الإجماع = **مركز النافذة** (زي المعمل) — عرض فوري ~٢.٥ث.
-      for (const p of String(resp.plate || "").trim().split(/\s+/)) {
-        const norm = p.replace(/\s+/g, "");
-        if (WELL.test(norm)) consensus.add({ plate: norm, tMs, conf, minLp: FIXES ? minLp : undefined });
-      }
+      const plates = String(resp.plate || "").trim().split(/\s+/)
+        .map((p) => p.replace(/\s+/g, "")).filter((p) => WELL.test(p));
+      // 🚚 الدليل **قبل** الإضافة: النافذة دي سمعت عربيات الأسطول دول مع بعض
+      fleet?.note(plates);
+      for (const norm of plates) consensus.add({ plate: norm, tMs, conf, minLp: FIXES ? minLp : undefined });
     } catch { /* تجاهل — شبكة/تحليل */ }
   }
 
