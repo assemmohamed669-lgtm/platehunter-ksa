@@ -56,7 +56,7 @@ import {
   tokenProbeVerdict,
 } from "@/lib/trialModelGate";
 import { heardNotShown, blockedNotShown } from "@/lib/trialTwin";
-import { placeLiveRow, restoreFleetRows } from "@/lib/placeLiveRow";
+import { placeLiveRow } from "@/lib/placeLiveRow";
 import { FleetMemory } from "@/lib/fleetPairs";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
@@ -928,13 +928,7 @@ export default function RegistrationV2Page() {
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     wantedSeenRef.current = new Map();
-    /**
-     * 🚚 دليل الأسطول **لكل تسجيل لوحده**، ومقفول عليه في الغلاف ده — لو
-     * المندوب داس «ابدأ» والتسجيل اللي قبله لسه بيخلّص، آخر لوحاته بتتحكم
-     * بدليلها هي مش بذاكرة فاضية (مراجعة الخصم، ٢٤ سبتمبر). شوف `fleetPairs.ts`.
-     */
-    const fleet = new FleetMemory();
-    const fleetDistinct = (a: string, b: string) => fleet.distinct(a, b);
+    fleetRef.current = new FleetMemory();
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -1093,9 +1087,7 @@ export default function RegistrationV2Page() {
            * (المقبولة بس) فالطبقتين بيحكموا بنفس الدليل.
            */
           if (r.accepted) {
-            fleet.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")), r.tMs);
-            // 🔁 الدليل وصل؟ العربية اللي كانت اتبلعت في جارتها ترجع صف لوحدها
-            setRows((prev) => restoreFleetRows(prev, fleetDistinct));
+            fleetRef.current.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")));
           }
           /**
            * ⚡ **الظهور الفوري.** القراءة عالية الثقة بتطلع صف 🟡 «مبدئية» على
@@ -1316,6 +1308,12 @@ export default function RegistrationV2Page() {
    * المباشرة». شوف `confirmWanted` في `lib/wantedFastPath.ts`.
    */
   const wantedSeenRef = useRef<Map<string, number[]>>(new Map());
+  /**
+   * 🚚 عربيات الأسطول المؤكّدة في الجلسة دي (اتسمعت في نافذة مع جارتها في
+   * التسلسل) — لمّ الصفوف مابيلمّهاش في بعض. جديد مع كل «ابدأ».
+   */
+  const fleetRef = useRef<FleetMemory>(new FleetMemory());
+  const fleetDistinct = (a: string, b: string) => fleetRef.current.distinct(a, b);
   const alertWanted = useCallback((plate: string, row: Record<string, string> | null) => {
     /**
      * 🔴 **مرة واحدة لكل عربية** — الطابور بيمنع التكرار طول ما اللوحة فيه
