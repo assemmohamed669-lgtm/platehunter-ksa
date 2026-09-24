@@ -10,6 +10,8 @@ import { voiceProNames } from "@/lib/voiceProName";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
 import { canOpenTrialPage } from "@/lib/trialModelGate";
+import { loadDraft } from "@/lib/checkDrafts";
+import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
 
 // تبويبات المشترك «صوت فقط» في الشريط التحتي (زي قناص) — كل واحدة بتبدّل خيار
 // التشييك من مخزن checkTab (مش رابط)، ونفس ترتيب المالك.
@@ -63,6 +65,18 @@ export default function BottomNav() {
    * نت. «الجديد» محتاجة الشبكة أصلاً (سيرفر ماليزيا)، فمافيش فايدة تظهر أوفلاين.
    */
   const [hasVoice, setHasVoice] = useState<boolean>(false);
+  /**
+   * 🙈 لوحات لسه في «صوتي» (ماتصدّرتش) — لو «صوتي» اتخبّت وفيها شغل، زرارها بيفضل ظاهر
+   * لحد ما المندوب يخلّصه. بنقرا مسودّتها نفسها (نفس اللي صفحة التشييك بتقراه) مع كل تنقّل.
+   */
+  const [pttLeft, setPttLeft] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    void loadDraft<unknown>("ptt", "ic-ptt-results")
+      .then((v) => { if (alive) setPttLeft(Array.isArray(v) ? v.length : 0); })
+      .catch(() => { /* مفيش مسودّة */ });
+    return () => { alive = false; };
+  }, [pathname]);
   // التبويب النشط في صفحة التشييك (للمشترك صوت-فقط) — يتزامن مع مخزن checkTab.
   const [activeTab, setActiveTab] = useState<CheckTab>(getCheckTab());
   useEffect(() => onCheckTabChange(setActiveTab), []);
@@ -120,6 +134,8 @@ export default function BottomNav() {
   const tabs = restPages
     ? visibleTabs(TABS, { isSuper, isAdmin, hasVoice })
     : TABS.filter((t) => t.href === "/instant-check");
+  /** 🙈 زرار «صوتي» ظاهر؟ — السوبر أدمن الأول، ولو فيها شغل بيفضل (`lib/sawtiHidden.ts`). */
+  const sawtiShown = sawtiTabVisible({ hidden: sawtiHiddenFor(isSuper), leftover: pttLeft });
   /** إحنا على صفحة «الجديد» دلوقتي؟ (عشان تبويبات التشييك ماتبانش نشطة غلط) */
   const onNew = !!pathname?.startsWith("/registration-v2");
 
@@ -136,7 +152,7 @@ export default function BottomNav() {
         {!restPages ? (
           // المشترك صوت-فقط: خيارات التشييك (صوتي/يدوي/شاص/شهايد/السجلات/فرز)
           // في الشريط التحتي زي قناص — بتبدّل الخيار من مخزن checkTab.
-          VOICE_TABS.flatMap(({ tab, label, icon: Icon }) => {
+          VOICE_TABS.filter((t) => t.tab !== "ptt" || sawtiShown).flatMap(({ tab, label, icon: Icon }, i) => {
             // على «الجديد» تبويبات التشييك مابتبانش نشطة — المندوب مش فيها.
             const active = !onNew && activeTab === tab;
             const btn = (
@@ -164,8 +180,12 @@ export default function BottomNav() {
              * الجديدة». ومربوطة بنفس شرط «صوتي»، فلو الصوت اتقفل الاتنين
              * بيختفوا مع بعض.
              */
-            if (tab !== "ptt" || !hasVoice) return [btn];
-            return [btn, (
+            /**
+             * 🙈 «صوتي» مستخبية ⇒ Voice PRO بتاخد أول مكان في الشريط (بدل ما تبقى جنبها).
+             */
+            const anchor = sawtiShown ? tab === "ptt" : i === 0;
+            if (!anchor || !hasVoice) return [btn];
+            const pro = (
               <button
                 key="new"
                 onClick={() => { if (!onNew) router.push("/registration-v2"); }}
@@ -181,7 +201,8 @@ export default function BottomNav() {
                 {/* 🏷️ «Voice PRO» — السوبر أدمن الأول (`lib/voiceProName.ts`) */}
                 <span className={`w-full truncate text-center ${onNew ? "font-bold" : ""}`}>{voiceProNames(isSuper).tab}</span>
               </button>
-            )];
+            );
+            return sawtiShown ? [btn, pro] : [pro, btn];
           })
         ) : (
           tabs.map(({ href, label, icon: Icon }) => {
