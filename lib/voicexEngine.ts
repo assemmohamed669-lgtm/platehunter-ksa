@@ -191,6 +191,11 @@ export interface VoicexEngineOpts {
    */
   fleetSplit?: boolean;
   /**
+   * 🔒 **التسلسل الفوري** للأسطول (`FleetMemory({ sequence })`) — «الجديد» بيبعته
+   * للسوبر أدمن بس لحد ما المالك يجرّب. من غيره `fleetSplit` زي ما كان بالحرف.
+   */
+  fleetSequence?: boolean;
+  /**
    * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
    * (كوهير) بالتوازي. ده أسلوب المعمل بالظبط: «الفوري مابينديش كوهير —
    * **العميل** هو اللي بينده سيرفر النوع» (`deploy/نشر-على-كوريا.md`).
@@ -273,7 +278,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // إعدادات الإجماع **زي المعمل بالحرف**: نافذة ٢ث single-linkage (أكبر من خطوة
   // الزحلقة ١.٥ث وأصغر من إيقاع نطق اللوحة ~٣.٤ث فالأسطول يتفصل)، العنقود يفضل
   // مفتوح ٢.٥ث بعد آخر قراءة، نافذتين+ = 🟢 مؤكّدة.
-  const fleet = opts.fleetSplit ? new FleetMemory() : null;
+  const fleet = opts.fleetSplit ? new FleetMemory({ sequence: opts.fleetSequence === true }) : null;
   const consensus = new LiveConsensus({
     windowMs: 2000, stableMs: 2500, greenMinMult: 2,
     distinct: fleet ? (a, b) => fleet.distinct(a, b) : undefined,
@@ -467,7 +472,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       const plates = String(resp.plate || "").trim().split(/\s+/)
         .map((p) => p.replace(/\s+/g, "")).filter((p) => WELL.test(p));
       // 🚚 الدليل **قبل** الإضافة: النافذة دي سمعت عربيات الأسطول دول مع بعض
-      fleet?.note(plates);
+      fleet?.note(plates, tMs);
       for (const norm of plates) consensus.add({ plate: norm, tMs, conf, minLp: FIXES ? minLp : undefined });
     } catch { /* تجاهل — شبكة/تحليل */ }
   }

@@ -928,7 +928,8 @@ export default function RegistrationV2Page() {
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     wantedSeenRef.current = new Map();
-    fleetRef.current = new FleetMemory();
+    // 🔒 التسلسل الفوري للسوبر أدمن بس — تجربة المالك قبل المناديب
+    fleetRef.current = new FleetMemory({ sequence: isSuper });
     typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
@@ -963,6 +964,7 @@ export default function RegistrationV2Page() {
         fixes: true,
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
+        fleetSequence: isSuper,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
@@ -1087,7 +1089,7 @@ export default function RegistrationV2Page() {
            * (المقبولة بس) فالطبقتين بيحكموا بنفس الدليل.
            */
           if (r.accepted) {
-            fleetRef.current.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")));
+            fleetRef.current.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")), r.tMs);
           }
           /**
            * ⚡ **الظهور الفوري.** القراءة عالية الثقة بتطلع صف 🟡 «مبدئية» على
