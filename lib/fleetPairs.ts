@@ -74,9 +74,15 @@ export class FleetMemory {
    * من غيره الذاكرة زي #315 بالحرف (النافذة المشتركة بس).
    */
   private readonly sequence: boolean;
+  /**
+   * 🔒 «أول عربية في الأسطول» (`noteFirstCar`) — مقفول افتراضياً. المالك: «متنشرش
+   * التعديل غير للسوبر أدمن». من غيره التسلسل الفوري زي #320 بالحرف.
+   */
+  private readonly firstCar: boolean;
 
-  constructor(opts: { sequence?: boolean } = {}) {
+  constructor(opts: { sequence?: boolean; firstCar?: boolean } = {}) {
     this.sequence = opts.sequence === true;
+    this.firstCar = opts.firstCar === true;
   }
 
   /**
@@ -130,6 +136,44 @@ export class FleetMemory {
       const ws = this.windows.get(p) ?? [];
       if (!ws.includes(tMs)) ws.push(tMs);
       this.windows.set(p, ws);
+    }
+    if (this.firstCar) this.noteFirstCar(ps);
+  }
+
+  /**
+   * 🚚 **أول عربية في الأسطول** — جلسة المالك (٢٤ سبتمبر ٧:٣٨م): قال دبح1232 ⇐
+   * دبح1239 من غير سكتة، و١٢٣٢ ضاعت. اتقالت في أول ثانيتين فاتسمعت **مرة**،
+   * ولما ١٢٣٣ جت مكانش فيه دليل. ١٢٣٣ اتثبتت بعدها في أسطول (سمعت مع ١٢٣٤).
+   *
+   * ⇒ عربية **مثبتة في أسطول**، واللوحة اللي فرقها **١** واتسمعت **كلها قبل أول
+   * قراية ليها** (خلال ١٢ث) ⇒ عربية هي كمان، حتى لو مرة واحدة.
+   *
+   * ليه ده آمن هنا ومش آمن للوحات العادية: «مرة واحدة قبلها بفرق ١» في اللوحات
+   * العادية غالباً قراية مقطوعة لنفس العربية (طيك1233 ⇐ طيك1234) — بس ده
+   * بيشتغل **جوّه أسطول مثبت بس**، واللوحات العادية عمرها ماتبقى أعضاء.
+   */
+  private noteFirstCar(ps: string[]): void {
+    const letters = new Set(ps.filter((p) => WELL.test(p)).map((p) => p.slice(0, 3)));
+    if (!letters.size) return;
+    for (const q of [...this.members]) {
+      if (!letters.has(q.slice(0, 3))) continue;
+      const qt = this.windows.get(q);
+      if (!qt?.length) continue;
+      const qFirst = Math.min(...qt);
+      // نطقة حقيقية قبلها = نافذتين+ بنفس الحروف قبل أول قراية ليها (١٢٣٠ ثم ١٢٣٢ في جلسة
+      // المالك). القراية المقطوعة للعربية نفسها بتبقى نافذة **واحدة** على طول قبلها.
+      const before = new Set<number>();
+      for (const [x, xt] of this.windows) {
+        if (x === q || x.slice(0, 3) !== q.slice(0, 3)) continue;
+        for (const t of xt) if (t < qFirst && qFirst - t <= FLEET_SEQ_RECENT_MS) before.add(t);
+      }
+      if (before.size < FLEET_SEQ_PREV_WINDOWS) continue;
+      for (const [p, pt] of this.windows) {
+        if (this.members.has(p) || p.slice(0, 3) !== q.slice(0, 3) || !pt.length) continue;
+        if (Math.abs(Number(p.slice(3)) - Number(q.slice(3))) !== 1) continue;
+        const pLast = Math.max(...pt);
+        if (pLast < qFirst && qFirst - pLast <= FLEET_SEQ_RECENT_MS) this.members.add(p);
+      }
     }
   }
 

@@ -29,7 +29,7 @@ const WELL = /^[ء-ي]{3}\d{4}$/;
 const nrm = (s: string) => s.replace(/\s+/g, "").replace(/[أإآ]/g, "ا");
 
 export function replay(rec: Rec, fleetOn: boolean, firstSeen?: Map<string, number>): string[] {
-  const fleet = new FleetMemory({ sequence: true });
+  const fleet = new FleetMemory({ sequence: true, firstCar: true });
   const distinct = fleetOn ? (a: string, b: string) => fleet.distinct(a, b) : undefined;
   const lc = new LiveConsensus({ windowMs: 2000, stableMs: 2500, greenMinMult: 2, distinct });
   let rows: Row[] = [];
