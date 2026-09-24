@@ -61,8 +61,8 @@ interface Cluster {
   letters: string;
   tMs: number;
   times: number[];
-  /** إملاء كامل → {عدد مرات ظهوره، مجموع ثقته، أعلى ثقة مفردة} */
-  spellings: Map<string, { count: number; confSum: number; maxConf: number }>;
+  /** إملاء كامل → {عدد مرات ظهوره، مجموع ثقته، أعلى ثقة مفردة، مجموع أزمنته، أحسن أضعف توكن} */
+  spellings: Map<string, Spelling>;
   confs: number[];
   minLps: number[];
   lastMs: number;
@@ -75,6 +75,16 @@ interface Cluster {
   committed: boolean;
   /** وصلت قراءة **بعد** التأكيد ⇒ يترجّع تحديث لنفس اللوحة. */
   dirty: boolean;
+}
+
+interface Spelling {
+  count: number;
+  confSum: number;
+  maxConf: number;
+  /** 🚚 مجموع أزمنة قراياته — زمن كل عربية في الأسطول لوحدها. */
+  tSum: number;
+  /** 🚚 أحسن «أضعف توكن» في قراياته (`-Infinity` لو مااتبعتش). */
+  bestLp: number;
 }
 
 const LETTERS_RE = /^[ء-ي]{3}/;
@@ -138,6 +148,12 @@ export interface ConsensusOptions {
    * المقاطع النضيفة)، فالحاجز على الكل بيرمي نص اللوحات الحقيقية؛ عليها مفردة بس آمن.
    */
   soloMinLp?: number;
+  /**
+   * 🚚 **أسطول متسلسل** (`حبل1234`/`حبل1235`) — عربيتين مختلفتين أكيد؟ الدليل
+   * من `FleetMemory` (اتسمعوا في نافذة واحدة). من غيره الإملاءات اللي فرقها خانة
+   * بتتحط في مجموعة واحدة وتطلع لوحة واحدة. «الجديد» بس اللي بيبعته.
+   */
+  distinct?: (a: string, b: string) => boolean;
 }
 
 /**
@@ -153,6 +169,7 @@ export class LiveConsensus {
   private readonly greenSoloConf: number;
   private readonly minSoloConf: number;
   private readonly soloMinLp: number;
+  private readonly distinct: ((a: string, b: string) => boolean) | null;
 
   constructor(opts: ConsensusOptions = {}) {
     this.windowMs = opts.windowMs ?? 2000;
@@ -161,6 +178,7 @@ export class LiveConsensus {
     this.greenSoloConf = opts.greenSoloConf ?? 0.95;
     this.minSoloConf = opts.minSoloConf ?? 0.6;
     this.soloMinLp = opts.soloMinLp ?? -0.5;
+    this.distinct = opts.distinct ?? null;
   }
 
   /** أضف قراءة نافذة واحدة (لوحة واحدة). */
@@ -211,10 +229,13 @@ export class LiveConsensus {
      * تأكيد سريع بصفوف مكرّرة.
      */
     if (target.committed) target.dirty = true;
-    const cur = target.spellings.get(read.plate) ?? { count: 0, confSum: 0, maxConf: -Infinity };
+    const cur = target.spellings.get(read.plate)
+      ?? { count: 0, confSum: 0, maxConf: -Infinity, tSum: 0, bestLp: -Infinity };
     cur.count += 1;
     cur.confSum += read.conf;
     cur.maxConf = Math.max(cur.maxConf, read.conf);
+    cur.tSum += read.tMs;
+    if (typeof read.minLp === "number") cur.bestLp = Math.max(cur.bestLp, read.minLp);
     target.spellings.set(read.plate, cur);
     target.confs.push(read.conf);
     if (typeof read.minLp === "number") target.minLps.push(read.minLp);
@@ -289,6 +310,16 @@ export class LiveConsensus {
     const entries = [...cl.spellings.entries()].sort(
       (a, b) => (b[1].maxConf - a[1].maxConf) || (b[1].count - a[1].count)
     );
+    /**
+     * 🚚 **أسطول متسلسل في العنقود** ⇒ كل عربية مؤكّدة لوحدها. من غير ده
+     * `حبل1234`/`حبل1235`/`حبل1236` (فرق خانة) بيقعوا في مجموعة واحدة تحت
+     * وبتطلع لوحة واحدة — بلاغ المالك ٢٤ سبتمبر.
+     */
+    if (this.distinct) {
+      const names = entries.map(([sp]) => sp);
+      const seeds = names.filter((sp) => names.some((o) => o !== sp && this.distinct!(sp, o)));
+      if (seeds.length >= 2) return this.finalizeFleet(cl, entries, seeds);
+    }
     for (const [spelling, s] of entries) {
       let g = groups.find((g) => digitDist(g.rep, spelling) <= 1);
       if (!g) {
@@ -376,6 +407,53 @@ export class LiveConsensus {
     }
     const green = mult >= this.greenMinMult || conf >= this.greenSoloConf;
     return [{ plate: best, tier: green ? "green" : "yellow", mult, conf, tMs: cl.tMs }];
+  }
+
+  /**
+   * 🚚 عنقود فيه أسطول: كل عربية مؤكّدة (`seeds`) بتطلع لوحدها بعدد نوافذها
+   * وزمنها هي. الإملاء اللي فرقه خانة عن عربية منهم = غلط سمع ليها ⇒ بيتحسب
+   * عليها (مابيطلعش عربية زيادة). اللي بعيد عن الكل ⇒ نفس قاعدة «الثابتة»
+   * تحت (نافذتين+) — زي ما كان.
+   *
+   * الحواجز زي ما هي: العنقود **كله محجوب** وثقته تحت `ALL_FLAGGED_MIN_CONF`
+   * ⇒ ولا حاجة (اختراع من ضجيج)؛ والعربية اللي اتقرت **مرة** بثقة ضعيفة
+   * أو محجوبة ⇒ تتحجب هي بس.
+   */
+  private finalizeFleet(cl: Cluster, entries: Array<[string, Spelling]>, seeds: string[]): CommittedPlate[] {
+    const clusterConf = cl.confs.length ? Math.max(...cl.confs) : 0;
+    if (cl.minLps.length && Math.max(...cl.minLps) < this.soloMinLp && clusterConf < ALL_FLAGGED_MIN_CONF) return [];
+    type F = { plate: string; count: number; maxConf: number; tSum: number; bestLp: number };
+    const take = (sp: string, s: Spelling): F =>
+      ({ plate: sp, count: s.count, maxConf: s.maxConf, tSum: s.tSum, bestLp: s.bestLp });
+    const add = (g: F, s: Spelling) => {
+      g.count += s.count;
+      g.maxConf = Math.max(g.maxConf, s.maxConf);
+      g.tSum += s.tSum;
+      g.bestLp = Math.max(g.bestLp, s.bestLp);
+    };
+    const fleet: F[] = entries.filter(([sp]) => seeds.includes(sp)).map(([sp, s]) => take(sp, s));
+    const rest: F[] = [];
+    for (const [sp, s] of entries) {
+      if (seeds.includes(sp)) continue;
+      const g = fleet.find((f) => digitDist(f.plate, sp) <= 1) ?? rest.find((r) => digitDist(r.plate, sp) <= 1);
+      if (g) add(g, s);
+      else rest.push(take(sp, s));
+    }
+    const hasLp = cl.minLps.length > 0;
+    const keep = (g: F) => {
+      if (g.count >= this.greenMinMult) return true;
+      if (g.maxConf < this.minSoloConf) return false;
+      return !(hasLp && g.bestLp < this.soloMinLp);
+    };
+    return [...fleet.filter(keep), ...rest.filter((g) => g.count >= this.greenMinMult)]
+      .map((g) => ({
+        plate: g.plate,
+        tier: (g.count >= this.greenMinMult || g.maxConf >= this.greenSoloConf ? "green" : "yellow") as Tier,
+        mult: g.count,
+        conf: g.maxConf,
+        tMs: g.tSum / g.count,
+      }))
+      .sort((a, b) => a.tMs - b.tMs);
   }
 
   reset(): void {
