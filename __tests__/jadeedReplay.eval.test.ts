@@ -49,7 +49,7 @@ export function replay(rec: Rec, fleetOn: boolean, firstSeen?: Map<string, numbe
       if (!accepted) continue;
       const plates = (nrm(r.plate).match(PLATE) ?? []).filter((p) => WELL.test(p));
       // الصفحة (onRead): الدليل الأول، وبعدين الصف المبدئي
-      if (fleetOn) fleet.note(plates, r.tMs);
+      if (fleetOn) fleet.note(plates, r.tMs, r.conf);
       if (showProvisional({ accepted, blocked, conf: r.conf })) {
         for (const p of plates) rows = placeLiveRow(rows, mk(p, r.tMs, now, { provisional: true, conf: r.conf }), distinct);
       }

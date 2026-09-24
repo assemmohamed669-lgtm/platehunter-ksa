@@ -1091,7 +1091,7 @@ export default function RegistrationV2Page() {
            * (المقبولة بس) فالطبقتين بيحكموا بنفس الدليل.
            */
           if (r.accepted) {
-            fleetRef.current.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")), r.tMs);
+            fleetRef.current.note(String(r.plate || "").trim().split(/\s+/).map((x) => x.replace(/\s+/g, "")), r.tMs, r.conf);
           }
           /**
            * ⚡ **الظهور الفوري.** القراءة عالية الثقة بتطلع صف 🟡 «مبدئية» على
