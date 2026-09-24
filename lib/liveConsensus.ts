@@ -18,6 +18,27 @@
  *  وأرقامها قريبة = نفس النطق اتقرا مرتين → تصويت.
  */
 
+const WELL_PLATE = /^[ء-ي]{3}\d{4}$/;
+
+/**
+ * خطوة المحرّك لكل نافذة رجعت من الموديل: اللوحات السليمة الشكل (مفصولة
+ * بمسافات زي ما السيرفر بيبعتها) ⇒ 🚚 دليل الأسطول **الأول** (لو فيه ذاكرة)
+ * ⇒ الإجماع. دالة واحدة عشان المحرّك ومقعد القياس يمشوا بنفس الخطوة بالحرف.
+ */
+export function addWindowReads(
+  consensus: LiveConsensus,
+  fleet: { note(plates: readonly string[], tMs: number): void } | null,
+  plateText: string,
+  tMs: number,
+  conf: number,
+  minLp: number | undefined,
+): void {
+  const plates = String(plateText || "").trim().split(/\s+/)
+    .map((p) => p.replace(/\s+/g, "")).filter((p) => WELL_PLATE.test(p));
+  fleet?.note(plates, tMs);
+  for (const plate of plates) consensus.add({ plate, tMs, conf, minLp });
+}
+
 /** قراءة واحدة من نافذة: لوحة مطبّعة (٣ حروف + أرقام)، لحظتها، ثقتها ٠..١ */
 export interface PlateRead {
   plate: string;
@@ -435,7 +456,14 @@ export class LiveConsensus {
     const rest: F[] = [];
     for (const [sp, s] of entries) {
       if (seeds.includes(sp)) continue;
-      const g = fleet.find((f) => digitDist(f.plate, sp) <= 1) ?? rest.find((r) => digitDist(r.plate, sp) <= 1);
+      /**
+       * غلط السمع بيتحسب للعربية **الأقرب في الوقت** — آخر رقم غلط (٢١٠٩) قريب
+       * خانة من **كل** عربيات أسطول متسلسل، فأول واحدة (الأعلى ثقة) مش صاحبته.
+       */
+      const tMean = s.tSum / s.count;
+      const near = fleet.filter((f) => digitDist(f.plate, sp) <= 1)
+        .sort((x, y) => Math.abs(x.tSum / x.count - tMean) - Math.abs(y.tSum / y.count - tMean));
+      const g = near[0] ?? rest.find((r) => digitDist(r.plate, sp) <= 1);
       if (g) add(g, s);
       else rest.push(take(sp, s));
     }

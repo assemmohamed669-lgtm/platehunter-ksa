@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { placeLiveRow, type PlaceableRow } from "@/lib/placeLiveRow";
+import { placeLiveRow, restoreFleetRows, type PlaceableRow } from "@/lib/placeLiveRow";
 import { FleetMemory } from "@/lib/fleetPairs";
 
 /**
@@ -67,34 +67,77 @@ describe("🚚 placeLiveRow — الأسطول المتسلسل", () => {
   it("🔴 من غير دليل: حبل1235 بتعدّل على حبل1234 (الباج اللي المالك شافه)", () => {
     const a = row("حبل1234", 1000);
     const b = row("حبل1235", 3000);
-    const out = placeLiveRow([a], b);
-    expect(out.length).toBe(1);
+    expect(placeLiveRow([a], b).length).toBe(1);
   });
 
-  it("🔴 اتسمعوا في نافذة واحدة ⇒ صفين", () => {
+  it("🔴 تجربة المالك: دبر2102 ثم دبر2103 ثم دبر2104 بسكتة ⇒ ٣ صفوف", () => {
     const fleet = new FleetMemory();
-    fleet.note(["حبل1234", "حبل1235"]);
-    const distinct = (x: string, y: string) => fleet.distinct(x, y);
-    const a = row("حبل1234", 1000);
-    const out = placeLiveRow([a], row("حبل1235", 3000), distinct);
-    expect(out.map((r) => r.plate)).toEqual(["حبل1235", "حبل1234"]);
-  });
-
-  it("🔴 التسلسل كله (١٢٣٤ ⇐ ١٢٣٨) ⇒ كل واحدة صف", () => {
-    const fleet = new FleetMemory();
-    const plates = ["حبل1234", "حبل1235", "حبل1236", "حبل1237", "حبل1238"];
-    for (let i = 0; i + 1 < plates.length; i++) fleet.note([plates[i], plates[i + 1]]);
     const distinct = (x: string, y: string) => fleet.distinct(x, y);
     let rows: R[] = [];
-    plates.forEach((p, i) => { rows = placeLiveRow(rows, row(p, 1000 + i * 1500), distinct); });
-    expect(rows.map((r) => r.plate).sort()).toEqual(plates);
+    ["دبر2102", "دبر2103", "دبر2104"].forEach((p, i) => {
+      const t = 1500 + i * 6000;
+      fleet.note([p], t); fleet.note([p], t + 1500);
+      rows = placeLiveRow(rows, row(p, t + 750), distinct);
+    });
+    expect(rows.map((r) => r.plate).sort()).toEqual(["دبر2102", "دبر2103", "دبر2104"]);
+  });
+
+  it("🔴 الدليل وصل **بعد** الدمج ⇒ العربية اللي اتبلعت بترجع صف لوحدها ببياناتها", () => {
+    // تأخير الشبكة عند المالك ~٣.٥ث: ٢١٠٣ اتأكّدت قبل ما تتثبت فعدّلت على ٢١٠٢
+    const fleet = new FleetMemory();
+    const distinct = (x: string, y: string) => fleet.distinct(x, y);
+    fleet.note(["دبر2102"], 1500); fleet.note(["دبر2102"], 3000); fleet.note(["دبر2103"], 7500);
+    const a = row("دبر2102", 2250, { match: { "اللوحة": "دبر2102" } as Record<string, string>, lat: 24.7 } as Partial<R>);
+    let rows = placeLiveRow([a], row("دبر2103", 7500, { mult: 3 }), distinct);
+    expect(rows.map((r) => r.plate)).toEqual(["دبر2103"]);          // اتبلعت (لسه مفيش دليل)
+    fleet.note(["دبر2103"], 9000);                                   // الدليل وصل
+    rows = restoreFleetRows(rows, distinct);
+    expect(rows.map((r) => r.plate).sort()).toEqual(["دبر2102", "دبر2103"]);
+    const back = rows.find((r) => r.plate === "دبر2102")!;
+    expect(back.match).toEqual({ "اللوحة": "دبر2102" });
+    expect(back.atMs).toBe(2250);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(2);
+  });
+
+  it("🔴 والعربية اللي خسرت (اتشالت من غير ما تظهر) بترجع كمان لما الدليل يوصل", () => {
+    const fleet = new FleetMemory();
+    const distinct = (x: string, y: string) => fleet.distinct(x, y);
+    fleet.note(["دبر2102"], 1500); fleet.note(["دبر2102"], 3000); fleet.note(["دبر2103"], 7500);
+    let rows = placeLiveRow([row("دبر2102", 2250, { mult: 4 })], row("دبر2103", 7500, { mult: 2 }), distinct);
+    expect(rows.map((r) => r.plate)).toEqual(["دبر2102"]);
+    fleet.note(["دبر2103"], 9000);
+    rows = placeLiveRow(rows, row("سار8888", 12000), distinct);      // أي وضع تاني بيعمل الاسترجاع
+    expect(rows.map((r) => r.plate).sort()).toEqual(["دبر2102", "دبر2103", "سار8888"]);
+  });
+
+  it("غلط سمع عادي (مش أسطول) عمره مايرجع — ومفيش صف مكرر لو العربية موجودة أصلاً", () => {
+    const fleet = new FleetMemory();
+    const distinct = (x: string, y: string) => fleet.distinct(x, y);
+    let rows = placeLiveRow([row("دطس2112", 60500, { provisional: true, mult: 1 })], row("دطس2177", 69500), distinct);
+    rows = restoreFleetRows(rows, distinct);
+    expect(rows.map((r) => r.plate)).toEqual(["دطس2177"]);
+    expect(rows[0].mergedFrom).toBeUndefined();                     // مفيش نسخ لغلط سمع عادي
+    // الدليل وصل بس الصف بتاعها رجع لوحده قبل كده ⇒ مفيش تكرار
+    fleet.note(["دبر2102"], 1500); fleet.note(["دبر2102"], 3000);
+    let r2 = placeLiveRow([row("دبر2102", 2250)], row("دبر2103", 7500, { mult: 3 }), distinct);
+    r2 = [row("دبر2102", 2300), ...r2];
+    fleet.note(["دبر2103"], 7500); fleet.note(["دبر2103"], 9000);
+    r2 = restoreFleetRows(r2, distinct);
+    expect(r2.map((r) => r.plate).sort()).toEqual(["دبر2102", "دبر2103"]);
+  });
+
+  it("من غير أسطول خالص ⇒ restoreFleetRows مابيغيّرش حاجة (نفس المصفوفة)", () => {
+    const rows = [row("سار8888", 1000), row("حيو3456", 3000)];
+    expect(restoreFleetRows(rows, () => false)).toBe(rows);
+    expect(restoreFleetRows(rows, undefined)).toBe(rows);
   });
 
   it("وغلط السمع لسه بيتلمّ عادي مع الدليل", () => {
     const fleet = new FleetMemory();
-    fleet.note(["حبل1234", "حبل1235"]);
+    fleet.note(["حبل1234"], 0); fleet.note(["حبل1234", "حبل1235"], 1500); fleet.note(["حبل1235"], 3000);
+    // حبل1284 = غلط سمع لـحبل1234 (اتقرت مرة)
+    fleet.note(["حبل1284"], 1000);
     const distinct = (x: string, y: string) => fleet.distinct(x, y);
-    // حبل1284 = غلط سمع لـحبل1234 (مااتسمعوش مع بعض)
     const out = placeLiveRow([row("حبل1234", 1000, { mult: 3 })], row("حبل1284", 2500, { provisional: true, mult: 1 }), distinct);
     expect(out.length).toBe(1);
     expect(out[0].plate).toBe("حبل1234");
