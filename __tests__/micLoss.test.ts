@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MicLossDetector, SILENCED_MS, MUTED_MS, micLostNotice } from "@/lib/micLoss";
+import { MicLossDetector, SILENCED_MS, MUTED_MS, micLostNotice, stopsRecording } from "@/lib/micLoss";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -109,5 +109,40 @@ describe("micLostNotice — الرسالة للمندوب", () => {
 
   it("الخلفية بتذكر المكالمة أو تبديل التطبيق", () => {
     expect(micLostNotice("background")).toContain("مكالمة");
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔴 السكوت الرقمي **مايوقفش** التسجيل — بلاغ مندوب (٢٥ سبتمبر ٢٠٢٦)
+ * ══════════════════════════════════════════════════════════════════════
+ *  المالك: «بيقول لوحات ورا بعض ٥ أو ٦ وبعدين يسكت شوية، ويرجع يقول لوحات
+ *  تاني ماياخدش معاه… وتظهر الرسالة دي. مش بتحصل مع كله، بتحصل مع المندوب
+ *  ده بس، ومش بيبقى معاه مكالمة».
+ *
+ *  موبايلات فيها **كاتم ضوضاء** بيطلّع صفر رقمي بالظبط في السكوت — فسكتة
+ *  ٣ ثواني بين اللوحات كانت بتتحسب «مكالمة أخدت الميك» وتقفل التسجيل،
+ *  واللوحات اللي بعدها **مابتتسجّلش**. وده أسوأ من اللي الحارس بيحمي منه:
+ *  لو مكالمة أخدت الميك فعلاً، الأندرويد بيديها الأولوية أصلاً وإحنا بنسجّل
+ *  سكوت مابيتبعتش — والتسجيل بيكمّل لوحده لما المكالمة تخلص. والمكالمة اللي
+ *  بتفتح شاشتها بيمسكها حارس الخلفية.
+ */
+describe("stopsRecording — أنهي سبب يقفل التسجيل", () => {
+  it("🔴 السكوت الرقمي ⇒ **لأ** (كاتم ضوضاء الموبايل بيعمل كده في كل سكتة)", () => {
+    expect(stopsRecording("silenced")).toBe(false);
+  });
+
+  it("الميك اتقفل/اتكتم فعلاً أو الآيفون علّق الصوت ⇒ أيوه", () => {
+    expect(stopsRecording("ended")).toBe(true);
+    expect(stopsRecording("muted")).toBe(true);
+    expect(stopsRecording("interrupted")).toBe(true);
+  });
+});
+
+describe("micLostNotice — السبب مكتوب عشان صورة الشاشة تشخّص", () => {
+  it("كل سبب ليه اسم مختلف في آخر الرسالة", () => {
+    const names = (["background", "ended", "muted", "interrupted"] as const).map((r) => micLostNotice(r));
+    expect(new Set(names).size).toBe(4);
+    for (const m of names) expect(m).toContain("السبب:");
   });
 });
