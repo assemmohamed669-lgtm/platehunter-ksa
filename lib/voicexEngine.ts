@@ -195,6 +195,8 @@ export interface VoicexEngineOpts {
    * للسوبر أدمن بس لحد ما المالك يجرّب. من غيره `fleetSplit` زي ما كان بالحرف.
    */
   fleetSequence?: boolean;
+  /** 🔒 «أول عربية في الأسطول» (`FleetMemory({ firstCar })`) — السوبر أدمن بس لحد ما المالك يجرّب. */
+  fleetFirstCar?: boolean;
   /**
    * 🎙️ نفس النافذة اللي اتبعتت للموديل — عشان العميل يسأل بيها **سيرفر النوع**
    * (كوهير) بالتوازي. ده أسلوب المعمل بالظبط: «الفوري مابينديش كوهير —
@@ -278,7 +280,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // إعدادات الإجماع **زي المعمل بالحرف**: نافذة ٢ث single-linkage (أكبر من خطوة
   // الزحلقة ١.٥ث وأصغر من إيقاع نطق اللوحة ~٣.٤ث فالأسطول يتفصل)، العنقود يفضل
   // مفتوح ٢.٥ث بعد آخر قراءة، نافذتين+ = 🟢 مؤكّدة.
-  const fleet = opts.fleetSplit ? new FleetMemory({ sequence: opts.fleetSequence === true }) : null;
+  const fleet = opts.fleetSplit ? new FleetMemory({ sequence: opts.fleetSequence === true, firstCar: opts.fleetFirstCar === true }) : null;
   const consensus = new LiveConsensus({
     windowMs: 2000, stableMs: 2500, greenMinMult: 2,
     distinct: fleet ? (a, b) => fleet.distinct(a, b) : undefined,
