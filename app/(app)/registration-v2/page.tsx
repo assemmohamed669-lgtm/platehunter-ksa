@@ -66,6 +66,8 @@ import {
 } from "@/lib/trialModelGate";
 import { heardNotShown, blockedNotShown } from "@/lib/trialTwin";
 import { placeLiveRow } from "@/lib/placeLiveRow";
+import { plateKey } from "@/lib/fieldCheck";
+import { assignDupColors, VOICE_PRO_DUP_PALETTE, type DupMark } from "@/lib/voiceProDupColors";
 import { FleetMemory } from "@/lib/fleetPairs";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
 import { detectChassisColumn } from "@/lib/chassis";
@@ -97,6 +99,9 @@ import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
+
+/** 🎨 مفيش مكرر (غير السوبر أدمن) — ثابت عشان مايتبنيش مع كل رسمة. */
+const NO_DUPS: ReadonlyMap<string, DupMark> = new Map();
 
 /** صف لوحة ظهرت. */
 interface LiveRow {
@@ -373,6 +378,24 @@ export default function RegistrationV2Page() {
     () => resolveCheckColumns(checkSources.flatMap((t) => t.headers)),
     [checkSources],
   );
+
+  /**
+   * 🎨 **تلوين المكرر** — المالك (٢٦ سبتمبر ٢٠٢٦): «لو اللوحة اتكررت مرتين أو
+   * أكتر… يتلوّن اللاين بتاع اللوحتين أو التلاتة… ولو فيه لوحة درن1452 وليها
+   * متشابه يتلوّن بلون تاني». نفس اللوحة بالحرف بس (زي «صوتي»)، واللون ثابت
+   * مايتنططش (`lib/voiceProDupColors.ts`). 🔒 السوبر أدمن الأول.
+   * عرض بس — مابيلمسش الموديل ولا الصفوف ولا وقت الظهور.
+   */
+  const dupPrevRef = useRef<Map<string, number>>(new Map());
+  const dupMarks = useMemo<ReadonlyMap<string, DupMark>>(() => {
+    if (!isSuper) return NO_DUPS;
+    // الصفوف الأحدث فوق ⇒ نقلبها عشان ترتيب أول ظهور يبقى من الأقدم
+    const keys: string[] = [];
+    for (let i = rows.length - 1; i >= 0; i--) keys.push(plateKey(rows[i].plate));
+    const m = assignDupColors(keys, dupPrevRef.current, VOICE_PRO_DUP_PALETTE.length);
+    dupPrevRef.current = new Map([...m].map(([k, v]) => [k, v.color]));
+    return m;
+  }, [rows, isSuper]);
 
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
   /**
@@ -2047,13 +2070,24 @@ export default function RegistrationV2Page() {
                 </tr>
               </thead>
               <tbody>
-                {rows.flatMap((r, i) => [
+                {rows.flatMap((r, i) => {
+                  /*
+                   * 🎨 المكرر: لون المجموعة على الصف + شارة «مكررة ×N».
+                   * المطلوبة بتفضل حمرا (أهم) والشارة بتقول إنها مكررة.
+                   * غير السوبر أدمن: الخريطة فاضية ⇒ الصف زي ما هو بالحرف.
+                   */
+                  const dm = dupMarks.size ? dupMarks.get(plateKey(r.plate)) : undefined;
+                  const dp = dm ? VOICE_PRO_DUP_PALETTE[dm.color] : undefined;
+                  const dupBg = dp && !r.match ? dp.row : "";
+                  return [
                   <tr key={r.id}
+                    title={dm ? "لوحة مكررة — اتقالت " + (dm.count === 2 ? "مرتين" : dm.count + " مرات") : undefined}
                     className={"divide-x border-b "
                       /* ⑭ الشكل الفخم بيغيّر **خروج اللوحات** كمان — صفوف
                          أوسع وحدود أهدى وخلفية غامقة، زي ما المالك طلب. */
                       + (fancy ? "divide-slate-800 border-slate-700/70 [&>td]:py-2.5 " : "divide-slate-100 border-slate-200 ")
                       + (r.match ? (fancy ? "bg-rose-950/40 " : "bg-rose-50 ") : "")
+                      + (dupBg ? dupBg + " " : "")
                       /**
                        * 🔴 كان `opacity-60` — والمالك قال «بتظهر مطفية
                        * وبتقعد فترة طويلة». اللوحة **موجودة وصحيحة**
@@ -2061,7 +2095,7 @@ export default function RegistrationV2Page() {
                        * بقت واضحة بخلفية صفرا خفيفة تقول «بتتأكّد» —
                        * بيبان فوراً وبرضه متميّز عن المؤكّد.
                        */
-                      + (r.provisional ? "bg-amber-50/70" : "")}>
+                      + (r.provisional && !dupBg ? "bg-amber-50/70" : "")}>
                     {/*
                       * ⑥ 🗑️ **مسح اللوحة الواحدة** — بطلب المالك: «عمود صغير
                       * على قد علامة مسح لكل لوحة يقدر المندوب يمسح بيها
@@ -2098,6 +2132,12 @@ export default function RegistrationV2Page() {
                               : (r.match ? "text-rose-700" : r.provisional ? "text-amber-700" : "text-indigo-700"))}>{r.plate}</span>
                           <Pencil size={9} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />
                         </button>
+                      )}
+                      {dp && dm && (
+                        /* `block w-fit`: تحت اللوحة دايماً — حتى وهي بتتعدّل (المربّع inline فكانت بتتنطّ جنبه) */
+                        <span className={"mt-0.5 block w-fit rounded-full px-1.5 py-0.5 text-[9px] font-black text-white " + dp.chip}>
+                          مكررة ×{dm.count}
+                        </span>
                       )}
                     </Td>
                     {/*
@@ -2162,7 +2202,8 @@ export default function RegistrationV2Page() {
                       </td>
                     </tr>
                   ) : null,
-                ])}
+                  ];
+                })}
               </tbody>
             </table>
           </div>
