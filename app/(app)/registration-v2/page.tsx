@@ -81,7 +81,7 @@ import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } from "@/lib/checkSheetSync";
-import { backfillMissingGps } from "@/lib/gpsBackfill";
+import { backfillMissingGps, stampRowGps } from "@/lib/gpsBackfill";
 import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chassisCache";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows, modelBoxDetail } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
@@ -1201,6 +1201,20 @@ export default function RegistrationV2Page() {
             return placeLiveRow(prev, fresh, fleetDistinct);
           });
           if (hit) alertWanted(plate, hit);
+          /**
+           * 📍 **كل لوحة تاخد مكانها وقت ما اتاخدت** (المالك ٢٦ سبتمبر ٢٠٢٦).
+           * الختم فوق بياخد `gpsRef.current` المشترك — واللي بيتجمّد على فيكس
+           * واحد لثواني (pickBetterFix)، فكل اللوحات المتتالية كانت بتاخد نفس
+           * الموقع. هنا بنطلب قراءة موقع **طازة خاصة باللوحة دي** ونختم صفّها
+           * بالـid لما ترجع. مقفول لو المندوب قافل الموقع. لو الصف اتلمّ/اتبدّل
+           * (id اتغيّر) الختم بيتجاهَل بأمان — الصف الباقي جابه ختمه بنفسه.
+           */
+          if (!noGpsRef.current) {
+            const rowId = fresh.id;
+            void gpsService.getFreshReading({ timeoutMs: 8000 }).then((fx) => {
+              if (fx) setRows((prev) => stampRowGps(prev, rowId, fx) as LiveRow[]);
+            }).catch(() => { /* الموقع فشل — الصف بيفضل بختمه المبدئي */ });
+          }
         },
         onRead: (r) => {
           setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400));

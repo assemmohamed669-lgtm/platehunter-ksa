@@ -222,6 +222,59 @@ class GpsService {
   }
 
   /**
+   * قراءة موقع **حالية خام** لكل لوحة — بترجّع الفيكس الجديد نفسه، **مش** نتيجة
+   * `pickBetterFix` المدموجة. ليه: `getFreshFix` بيدمج القراءة الجديدة مع
+   * المخزّن ويرجّع «الأفضل»، واللي بيمسك الفيكس القديم الدقيق لحد ما يبقى بايت
+   * (١٠ث) — فكل اللوحات المتتالية بتاخد **نفس الموقع المجمّد**. هنا بنرجّع
+   * القراءة الجديدة نفسها عشان كل لوحة تاخد مكانها وقت ما اتاخدت.
+   *
+   * • بيغذّي المخزّن/الواجهة بالأفضل (عبر pickBetterFix) زي المعتاد.
+   * • coalescing: القراءات المتلاحقة (< maxAgeMs) بترجّع نفس القراءة الأخيرة —
+   *   جهاز الموبايل بيحدّث الـGPS ~مرة/ثانية، فاللوحات في نفس الثانية موقعها
+   *   فعلاً واحد؛ وده بيمنع طوفان طلبات لو المندوب نطق بسرعة.
+   * • طلب واحد طاير في المرة (in-flight) — مايفتحش أكتر من قراءة مع بعض.
+   * • بيرجّع للمخزّن لو الطلب فشل (مبيرميش أبداً).
+   */
+  private lastRaw: GpsCoords | null = null;
+  private freshInFlight: Promise<GpsCoords | null> | null = null;
+
+  async getFreshReading(opts: { maxAgeMs?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
+    const maxAge = opts.maxAgeMs ?? 900;
+    const timeout = opts.timeoutMs ?? 8000;
+    if (this.lastRaw && Date.now() - this.lastRaw.timestamp <= maxAge) return this.lastRaw;
+    if (this.freshInFlight) return this.freshInFlight;
+
+    const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
+      const raw: GpsCoords = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
+      this.lastRaw = raw;
+      // نغذّي المخزّن/الواجهة بالأفضل، بس نرجّع القراءة الجديدة نفسها.
+      this.lastCoords = pickBetterFix(this.lastCoords, raw);
+      this.notifyListeners(this.lastCoords);
+      return raw;
+    };
+
+    this.freshInFlight = (async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        if (Capacitor.isNativePlatform()) {
+          const { Geolocation } = await import("@capacitor/geolocation");
+          return applyRaw(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout, maximumAge: 0 }));
+        }
+      } catch { /* مش native/فشل — نجرّب web وإلا نرجّع المخزّن */ }
+      try {
+        if (navigator.geolocation) {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, maximumAge: 0, timeout }));
+          return applyRaw(pos);
+        }
+      } catch { /* فشل — نرجّع المخزّن */ }
+      return this.lastRaw ?? this.lastCoords;
+    })();
+    try { return await this.freshInFlight; }
+    finally { this.freshInFlight = null; }
+  }
+
+  /**
    * «تحديث» — يحاول يجيب فيكس جديد على مرحلتين.
    *
    * الأصل كان بيطلب `enableHighAccuracy: true` **بس**، يعني أقمار صناعية فقط.

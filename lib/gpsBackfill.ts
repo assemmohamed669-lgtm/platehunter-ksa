@@ -52,3 +52,31 @@ export function backfillMissingGps<T extends GpsStampable>(
   if (!rows.some(needs)) return rows;
   return rows.map((r) => (needs(r) ? { ...r, lat: fix.lat, lng: fix.lng } : r));
 }
+
+/**
+ * يختم **صف واحد بعينه** (بالـid) بموقعه — عشان كل لوحة تاخد مكانها وقت ما
+ * اتاخدت، مش فيكس واحد مشترك مجمّد.
+ *
+ * ليه بالـid مش بالموقع الفاضي: هنا بنستبدل الفيكس المبدئي (المشترك من المتتبّع)
+ * بقراءة موقع **طازة خاصة باللوحة دي**، حتى لو الصف كان ماخد موقع بالفعل. بيرجّع
+ * **نفس المصفوفة** لو الـid مش موجود (اتلمّ/اتبدّل) أو الفيكس غير صالح — فمفيش
+ * إعادة رسم بلا داعي.
+ */
+export interface GpsRowById {
+  id: string;
+  lat: number | null;
+  lng: number | null;
+  gpsAccuracy?: number | null;
+}
+
+export function stampRowGps<T extends GpsRowById>(
+  rows: readonly T[],
+  id: string,
+  fix: Fix | null | undefined,
+): T[] | readonly T[] {
+  if (!fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lng)) return rows;
+  if (!rows.some((r) => r.id === id)) return rows;
+  return rows.map((r) =>
+    r.id === id ? { ...r, lat: fix.lat, lng: fix.lng, gpsAccuracy: fix.accuracy ?? r.gpsAccuracy ?? null } : r,
+  );
+}
