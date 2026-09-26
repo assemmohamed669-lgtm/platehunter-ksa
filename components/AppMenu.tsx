@@ -313,6 +313,13 @@ export default function AppMenu({
               <FileUp size={16} className="text-primary" /> فرز على سجلات المجموعة
             </Link>
             ) : null}
+            {/* نشاط المجموعة اليومي — الصفحة نفسها بتتقفل على غير المسئول/الأدمن. */}
+            {canOpen("/group-activity") ? (
+            <Link href="/group-activity" onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
+              <Users size={16} className="text-primary" /> نشاط المجموعة اليومي
+            </Link>
+            ) : null}
             {canOpen("/backup") ? (
             <Link href="/backup" onClick={() => onOpenChange(false)}
               className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-ink hover:bg-surface-2 transition">
