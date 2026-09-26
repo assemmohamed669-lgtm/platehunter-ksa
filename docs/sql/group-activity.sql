@@ -35,12 +35,12 @@ as $$
   with lead as (select g.leader_id from public.group_settings g where g.team = public.my_team())
   select
     fc.agent_id,
-    coalesce(p.username, '؟'),
-    (fc.checked_at at time zone 'Asia/Riyadh')::date,
-    count(*),
-    count(*) filter (where fc.extra is not null and jsonb_typeof(fc.extra::jsonb) = 'object' and fc.extra::jsonb <> '{}'::jsonb),
-    min(fc.checked_at),
-    max(fc.checked_at)
+    coalesce(p.username, '؟') as username,
+    (fc.checked_at at time zone 'Asia/Riyadh')::date as day,
+    count(*) as cars,
+    count(*) filter (where fc.extra is not null and jsonb_typeof(fc.extra::jsonb) = 'object' and fc.extra::jsonb <> '{}'::jsonb) as wanted,
+    min(fc.checked_at) as first_at,
+    max(fc.checked_at) as last_at
   from public.field_checks fc
   join public.profiles p on p.id = fc.agent_id
   where ( (select leader_id from lead) = (select auth.uid()) or public.is_group_admin() )
