@@ -100,9 +100,6 @@ import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes
 import { showProvisional, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
 
-/** 🎨 مفيش مكرر (غير السوبر أدمن) — ثابت عشان مايتبنيش مع كل رسمة. */
-const NO_DUPS: ReadonlyMap<string, DupMark> = new Map();
-
 /** صف لوحة ظهرت. */
 interface LiveRow {
   id: string;
@@ -383,19 +380,18 @@ export default function RegistrationV2Page() {
    * 🎨 **تلوين المكرر** — المالك (٢٦ سبتمبر ٢٠٢٦): «لو اللوحة اتكررت مرتين أو
    * أكتر… يتلوّن اللاين بتاع اللوحتين أو التلاتة… ولو فيه لوحة درن1452 وليها
    * متشابه يتلوّن بلون تاني». نفس اللوحة بالحرف بس (زي «صوتي»)، واللون ثابت
-   * مايتنططش (`lib/voiceProDupColors.ts`). 🔒 السوبر أدمن الأول.
+   * مايتنططش (`lib/voiceProDupColors.ts`). للكل (المالك جرّبه كسوبر أدمن: «ارفعه للكل»).
    * عرض بس — مابيلمسش الموديل ولا الصفوف ولا وقت الظهور.
    */
   const dupPrevRef = useRef<Map<string, number>>(new Map());
   const dupMarks = useMemo<ReadonlyMap<string, DupMark>>(() => {
-    if (!isSuper) return NO_DUPS;
     // الصفوف الأحدث فوق ⇒ نقلبها عشان ترتيب أول ظهور يبقى من الأقدم
     const keys: string[] = [];
     for (let i = rows.length - 1; i >= 0; i--) keys.push(plateKey(rows[i].plate));
     const m = assignDupColors(keys, dupPrevRef.current, VOICE_PRO_DUP_PALETTE.length);
     dupPrevRef.current = new Map([...m].map(([k, v]) => [k, v.color]));
     return m;
-  }, [rows, isSuper]);
+  }, [rows]);
 
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
   /**
@@ -2074,7 +2070,7 @@ export default function RegistrationV2Page() {
                   /*
                    * 🎨 المكرر: لون المجموعة على الصف + شارة «مكررة ×N».
                    * المطلوبة بتفضل حمرا (أهم) والشارة بتقول إنها مكررة.
-                   * غير السوبر أدمن: الخريطة فاضية ⇒ الصف زي ما هو بالحرف.
+                   * مفيش مكرر ⇒ الخريطة فاضية والصف زي ما هو بالحرف.
                    */
                   const dm = dupMarks.size ? dupMarks.get(plateKey(r.plate)) : undefined;
                   const dp = dm ? VOICE_PRO_DUP_PALETTE[dm.color] : undefined;
