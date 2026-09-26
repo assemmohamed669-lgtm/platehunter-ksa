@@ -23,6 +23,11 @@ alter table public.profiles
   add column if not exists last_lng    double precision,
   add column if not exists last_loc_at timestamptz;
 
+-- مفتاح «تقرير النشاط» — **مقفول افتراضياً**. السوبر أدمن بيفتحه لمجموعة بعينها،
+-- وساعتها بس مسئولها يقدر يشوف التقرير. (الأدمن بيشوف أي مجموعة زي المعتاد.)
+alter table public.group_settings
+  add column if not exists activity_report_enabled boolean not null default false;
+
 -- ── ① التفاصيل اليومية (فيها عمود «مطلوبة» الجديد) ─────────────────────────
 drop function if exists public.my_team_daily_activity(int);
 create function public.my_team_daily_activity(p_days int default 14)
@@ -32,7 +37,7 @@ returns table (
 )
 language sql stable security definer set search_path = public
 as $$
-  with lead as (select g.leader_id from public.group_settings g where g.team = public.my_team())
+  with lead as (select g.leader_id, g.activity_report_enabled from public.group_settings g where g.team = public.my_team())
   select
     fc.agent_id,
     coalesce(p.username, '؟') as username,
@@ -43,7 +48,7 @@ as $$
     max(fc.checked_at) as last_at
   from public.field_checks fc
   join public.profiles p on p.id = fc.agent_id
-  where ( (select leader_id from lead) = (select auth.uid()) or public.is_group_admin() )
+  where ( ( (select leader_id from lead) = (select auth.uid()) and coalesce((select activity_report_enabled from lead), false) ) or public.is_group_admin() )
     and fc.agent_id in (select public.my_team_member_ids())
     and fc.checked_at >= (now() - make_interval(days => greatest(p_days, 1)))
   group by fc.agent_id, p.username, (fc.checked_at at time zone 'Asia/Riyadh')::date
@@ -62,8 +67,8 @@ returns table (
 )
 language sql stable security definer set search_path = public
 as $$
-  with lead as (select g.leader_id from public.group_settings g where g.team = public.my_team()),
-  allowed as (select ((select leader_id from lead) = (select auth.uid()) or public.is_group_admin()) as ok),
+  with lead as (select g.leader_id, g.activity_report_enabled from public.group_settings g where g.team = public.my_team()),
+  allowed as (select ( ( (select leader_id from lead) = (select auth.uid()) and coalesce((select activity_report_enabled from lead), false) ) or public.is_group_admin()) as ok),
   members as (
     select p.id, p.username, p.last_seen, p.last_lat, p.last_lng, p.last_loc_at
     from public.profiles p
@@ -95,11 +100,11 @@ create function public.my_team_wanted_found(p_days int default 30)
 returns table (agent_id uuid, username text, plate text, checked_at timestamptz, maps_link text)
 language sql stable security definer set search_path = public
 as $$
-  with lead as (select g.leader_id from public.group_settings g where g.team = public.my_team())
+  with lead as (select g.leader_id, g.activity_report_enabled from public.group_settings g where g.team = public.my_team())
   select fc.agent_id, coalesce(p.username, '؟'), fc.plate, fc.checked_at, fc.maps_link
   from public.field_checks fc
   join public.profiles p on p.id = fc.agent_id
-  where ( (select leader_id from lead) = (select auth.uid()) or public.is_group_admin() )
+  where ( ( (select leader_id from lead) = (select auth.uid()) and coalesce((select activity_report_enabled from lead), false) ) or public.is_group_admin() )
     and fc.agent_id in (select public.my_team_member_ids())
     and fc.extra is not null and jsonb_typeof(fc.extra::jsonb) = 'object' and fc.extra::jsonb <> '{}'::jsonb
     and fc.checked_at >= (now() - make_interval(days => greatest(p_days, 1)))

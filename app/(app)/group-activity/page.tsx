@@ -61,7 +61,7 @@ function todayRiyadh(): string {
 
 export default function GroupActivityPage() {
   const router = useRouter();
-  const [state, setState] = useState<"loading" | "ok" | "no-team" | "not-leader">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "no-team" | "not-leader" | "not-enabled">("loading");
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [status, setStatus] = useState<StatusRow[]>([]);
   const [wanted, setWanted] = useState<WantedRow[]>([]);
@@ -75,9 +75,16 @@ export default function GroupActivityPage() {
       const prof = me as { team?: string | null; role?: string | null } | null;
       const team = prof?.team ?? null;
       if (!team) { setState("no-team"); return; }
-      const { data: gs } = await supabase.from("group_settings").select("leader_id").eq("team", team).maybeSingle();
-      const leaderId = (gs as { leader_id?: string | null } | null)?.leader_id ?? null;
-      if (!(leaderId === userId || prof?.role === "admin")) { setState("not-leader"); return; }
+      const { data: gs } = await supabase.from("group_settings").select("leader_id, activity_report_enabled").eq("team", team).maybeSingle();
+      const g = gs as { leader_id?: string | null; activity_report_enabled?: boolean } | null;
+      const isLeader = g?.leader_id === userId;
+      const isAdmin = prof?.role === "admin";
+      // مسئول المجموعة يشوفها بس لو السوبر أدمن فاتح «تقرير النشاط» لمجموعته.
+      // الأدمن بيشوف أي مجموعة زي المعتاد.
+      if (!isAdmin) {
+        if (!isLeader) { setState("not-leader"); return; }
+        if (!g?.activity_report_enabled) { setState("not-enabled"); return; }
+      }
 
       const [act, st, wf] = await Promise.all([
         supabase.rpc("my_team_daily_activity", { p_days: 14 }),
@@ -115,6 +122,12 @@ export default function GroupActivityPage() {
         <div className="flex items-start gap-2 rounded-xl border border-border bg-surface p-4">
           <AlertCircle size={18} className="mt-0.5 shrink-0 text-alert" />
           <p className="flex-1 text-sm text-ink">الصفحة دي لمسئول المجموعة بس — بيشوف فيها نشاط أعضاء مجموعته.</p>
+        </div>
+      )}
+      {state === "not-enabled" && (
+        <div className="flex items-start gap-2 rounded-xl border border-border bg-surface p-4">
+          <AlertCircle size={18} className="mt-0.5 shrink-0 text-alert" />
+          <p className="flex-1 text-sm text-ink">تقرير النشاط لسه مش مفعّل لمجموعتك — كلّم الإدارة عشان يفتحوه ليك.</p>
         </div>
       )}
 

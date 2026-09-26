@@ -28,6 +28,7 @@ interface GroupSet {
   leader: string | null;
   sharedData: boolean;
   sharedCheck: boolean;
+  activityReport: boolean;
 }
 
 /** أي انتظار مالوش نهاية = شاشة واقفة عند المندوب. بنحط سقف زمني ونقول السبب. */
@@ -95,11 +96,13 @@ export default function GroupsPage() {
         for (const r of (j.settings ?? []) as Array<{
           team: string; notify_enabled: boolean; share_records_enabled: boolean;
           leader_id: string | null; shared_data_enabled: boolean; shared_check_enabled?: boolean;
+          activity_report_enabled?: boolean;
         }>) {
           m[r.team] = {
             notify: r.notify_enabled, share: r.share_records_enabled,
             leader: r.leader_id ?? null, sharedData: !!r.shared_data_enabled,
             sharedCheck: !!r.shared_check_enabled,
+            activityReport: !!r.activity_report_enabled,
           };
         }
         setSettings(m);
@@ -125,7 +128,7 @@ export default function GroupsPage() {
   // الافتراضي: الإشعارات والمشاركة مفتوحين (زي ما كانوا)، و«داتا المجموعة»
   // **مقفولة** ومن غير مسئول — فمافيش مجموعة بتتأثر من غير قرار المالك.
   const groupSet = (t: string): GroupSet =>
-    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false, sharedCheck: false };
+    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false, sharedCheck: false, activityReport: false };
 
   /** بيحفظ أي تغيير في مفاتيح المجموعة (تفاؤلي — بيرجع لو فشل). */
   async function saveGroupSet(team: string, next: GroupSet) {
@@ -138,6 +141,7 @@ export default function GroupsPage() {
         body: JSON.stringify({
           team, notifyEnabled: next.notify, shareRecordsEnabled: next.share,
           leaderId: next.leader, sharedDataEnabled: next.sharedData, sharedCheckEnabled: next.sharedCheck,
+          activityReportEnabled: next.activityReport,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "فشل الحفظ");
@@ -337,6 +341,7 @@ export default function GroupsPage() {
                             ...groupSet(t), leader,
                             sharedData: leader ? groupSet(t).sharedData : false,
                             sharedCheck: leader ? groupSet(t).sharedCheck : false,
+                            activityReport: leader ? groupSet(t).activityReport : false,
                           });
                         }}
                         className="mb-2 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink">
@@ -369,6 +374,20 @@ export default function GroupsPage() {
                           groupSet(t).sharedCheck ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
                         }`}>
                         {groupSet(t).sharedCheck ? "تشييك المجموعة مفتوح ✓" : "تشييك المجموعة مقفول"}
+                      </button>
+
+                      {/* تقرير النشاط اليومي — لمسئول المجموعة اللي السوبر أدمن يفتحها بس. */}
+                      <p className="mb-1 mt-2.5 text-[10px] leading-relaxed text-muted">
+                        تقرير النشاط: المسئول يشوف مين نزل كل يوم، الساعة كام، كام سيارة ومطلوبة، وموقع كل مندوب.
+                      </p>
+                      <button
+                        disabled={togglingTeam === t || !groupSet(t).leader}
+                        onClick={() => void saveGroupSet(t, { ...groupSet(t), activityReport: !groupSet(t).activityReport })}
+                        title={groupSet(t).leader ? "" : "حدّد المسئول الأول"}
+                        className={`w-full rounded-full px-3 py-1.5 text-[11px] font-bold transition disabled:opacity-40 ${
+                          groupSet(t).activityReport ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
+                        }`}>
+                        {groupSet(t).activityReport ? "تقرير النشاط مفتوح ✓" : "تقرير النشاط مقفول"}
                       </button>
                     </div>
                   </div>
