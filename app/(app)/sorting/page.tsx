@@ -10,8 +10,8 @@ import {
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
 import { parseExcelFile,
-  type ExcelTable, buildSpreadsheetBlob, buildCsvBlob,
-  openExcelBlob, shareExcelBlob, buildRowSummaryText, buildColoredSortExcel, readAllSheetsRaw, readSheetNames,
+  type ExcelTable, buildSpreadsheetBlob, buildSortBlobBestEffort,
+  openExcelBlob, shareExcelBlob, buildRowSummaryText, readAllSheetsRaw, readSheetNames,
 } from "@/lib/excel";
 import {
   detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
@@ -2707,12 +2707,10 @@ export default function SortingPage() {
     // **المشاركة = العرض بالظبط** — نفس مصدر الصورة (buildDisplayShareObjects) عشان
     // كل عمود قدام المندوب يطلع في الإكسيل بنفس الترتيب.
     const { rowObjects } = buildDisplayShareObjects(src, tash);
-    try {
-      const rowColors = shareRowColors(src, tash);
-      return { blob: await buildColoredSortExcel(rowObjects, "نتائج الفرز", rowColors), ext: "xlsx" };
-    } catch {
-      return { blob: buildCsvBlob(rowObjects), ext: "csv" };
-    }
+    let rowColors: (string | null)[] = [];
+    try { rowColors = shareRowColors(src, tash); } catch { /* لو حساب الألوان فشل نكمّل بلا ألوان */ }
+    // يطلع Excel دايماً عملياً: ملوّن (ExcelJS) → عادي (SheetJS) → CSV آخر حل بس.
+    return buildSortBlobBestEffort(rowObjects, "نتائج الفرز", rowColors);
   }
 
   // ── مسح نتايج نافذة واحدة (بتأكيد) — كل زر يمسح نتايج نافذته فقط ──

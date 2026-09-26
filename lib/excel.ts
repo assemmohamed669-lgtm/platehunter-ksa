@@ -1397,6 +1397,38 @@ export async function buildColoredSortExcel(
   return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 
+/**
+ * تصدير نتيجة الفرز — **يطلع Excel دايماً** عملياً، والـCSV آخر شبكة أمان فقط.
+ *
+ * تدرّج بثلاث مراحل، كل مرحلة بمكتبة/مسار مختلف عن اللي قبلها عشان فشل واحدة
+ * مايجرّش الكل لـCSV زي ما كان بيحصل:
+ *   ١) إكسل **ملوّن** (ExcelJS) — الأفضل، بيحافظ على ألوان الصفوف.
+ *   ٢) إكسل **عادي بدون ألوان** (SheetJS) — مكتبة تانية خالص، فلو ExcelJS وقع
+ *      (ذاكرة/جهاز) دي غالباً بتنجح والملف يفضل xlsx.
+ *   ٣) **CSV** — آخر حل لو الاتنين وقعوا (كراش «null.indexOf» في XLSX.write على
+ *      Webb معيّن)، عشان الداتا ماتضيعش أبداً؛ بيفتح في Excel برضه.
+ *
+ * قبل كده كان: ملوّن → CSV على طول، فأي فشل في ExcelJS كان بينزّل المندوب على
+ * CSV رغم إن SheetJS كان هيطلّع xlsx عادي.
+ *
+ * الـbuilders قابلة للحقن (اختبار) — الافتراضي هو الدوال الحقيقية.
+ */
+export async function buildSortBlobBestEffort(
+  rows: Record<string, unknown>[],
+  sheetName: string,
+  rowHexColors: (string | null)[],
+  coloredBuilder: typeof buildColoredSortExcel = buildColoredSortExcel,
+  plainBuilder: (rows: Record<string, unknown>[], sheetName: string) => Blob = (r, s) => buildExcelBlob(r, s),
+): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
+  try {
+    return { blob: await coloredBuilder(rows, sheetName, rowHexColors), ext: "xlsx" };
+  } catch { /* الملوّن فشل (ذاكرة/جهاز) — نجرّب إكسل عادي بمكتبة تانية */ }
+  try {
+    return { blob: plainBuilder(rows, sheetName), ext: "xlsx" };
+  } catch { /* حتى SheetJS وقع — ننزل على CSV عشان الداتا ماتضيعش */ }
+  return { blob: buildCsvBlob(rows), ext: "csv" };
+}
+
 export function buildRowSummaryText(row: Record<string, unknown>): string {
   return Object.entries(row)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
