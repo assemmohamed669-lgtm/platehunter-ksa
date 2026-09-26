@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   const admin = await verifyAdminContext(req.headers.get("authorization"));
   if (!admin) return NextResponse.json({ error: "مفيش صلاحية." }, { status: 403 });
   const { data, error } = await supabaseAdmin
-    .from("group_settings").select("team, notify_enabled, share_records_enabled, leader_id, shared_data_enabled");
+    .from("group_settings").select("team, notify_enabled, share_records_enabled, leader_id, shared_data_enabled, shared_check_enabled");
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json({ settings: data ?? [] });
 }
@@ -33,11 +33,11 @@ export async function POST(req: NextRequest) {
   // الصف ممكن ما يكونش موجود (الافتراضي مفتوح) — فبنعمل upsert بالقيم الحالية.
   const { data: cur } = await supabaseAdmin
     .from("group_settings")
-    .select("notify_enabled, share_records_enabled, leader_id, shared_data_enabled")
+    .select("notify_enabled, share_records_enabled, leader_id, shared_data_enabled, shared_check_enabled")
     .eq("team", team).maybeSingle();
   const prev = cur as {
     notify_enabled?: boolean; share_records_enabled?: boolean;
-    leader_id?: string | null; shared_data_enabled?: boolean;
+    leader_id?: string | null; shared_data_enabled?: boolean; shared_check_enabled?: boolean;
   } | null;
   const row = {
     team,
@@ -54,6 +54,14 @@ export async function POST(req: NextRequest) {
       const want = typeof b.sharedDataEnabled === "boolean"
         ? b.sharedDataEnabled
         : (prev?.shared_data_enabled ?? false);
+      const leader = b.leaderId === undefined ? (prev?.leader_id ?? null) : (b.leaderId || null);
+      return want && !!leader;
+    })(),
+    // تشييك المجموعة — **مقفول افتراضياً**، ومن غير مسئول مافيش معنى لفتحه.
+    shared_check_enabled: (() => {
+      const want = typeof b.sharedCheckEnabled === "boolean"
+        ? b.sharedCheckEnabled
+        : (prev?.shared_check_enabled ?? false);
       const leader = b.leaderId === undefined ? (prev?.leader_id ?? null) : (b.leaderId || null);
       return want && !!leader;
     })(),

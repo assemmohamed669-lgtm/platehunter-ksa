@@ -27,6 +27,7 @@ interface GroupSet {
   share: boolean;
   leader: string | null;
   sharedData: boolean;
+  sharedCheck: boolean;
 }
 
 /** أي انتظار مالوش نهاية = شاشة واقفة عند المندوب. بنحط سقف زمني ونقول السبب. */
@@ -93,11 +94,12 @@ export default function GroupsPage() {
         const m: Record<string, GroupSet> = {};
         for (const r of (j.settings ?? []) as Array<{
           team: string; notify_enabled: boolean; share_records_enabled: boolean;
-          leader_id: string | null; shared_data_enabled: boolean;
+          leader_id: string | null; shared_data_enabled: boolean; shared_check_enabled?: boolean;
         }>) {
           m[r.team] = {
             notify: r.notify_enabled, share: r.share_records_enabled,
             leader: r.leader_id ?? null, sharedData: !!r.shared_data_enabled,
+            sharedCheck: !!r.shared_check_enabled,
           };
         }
         setSettings(m);
@@ -123,7 +125,7 @@ export default function GroupsPage() {
   // الافتراضي: الإشعارات والمشاركة مفتوحين (زي ما كانوا)، و«داتا المجموعة»
   // **مقفولة** ومن غير مسئول — فمافيش مجموعة بتتأثر من غير قرار المالك.
   const groupSet = (t: string): GroupSet =>
-    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false };
+    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false, sharedCheck: false };
 
   /** بيحفظ أي تغيير في مفاتيح المجموعة (تفاؤلي — بيرجع لو فشل). */
   async function saveGroupSet(team: string, next: GroupSet) {
@@ -135,7 +137,7 @@ export default function GroupsPage() {
         method: "POST", headers: await authHeaders(),
         body: JSON.stringify({
           team, notifyEnabled: next.notify, shareRecordsEnabled: next.share,
-          leaderId: next.leader, sharedDataEnabled: next.sharedData,
+          leaderId: next.leader, sharedDataEnabled: next.sharedData, sharedCheckEnabled: next.sharedCheck,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "فشل الحفظ");
@@ -330,8 +332,12 @@ export default function GroupsPage() {
                         disabled={togglingTeam === t}
                         onChange={(e) => {
                           const leader = e.target.value || null;
-                          // من غير مسئول مافيش معنى للميزة — بتتقفل تلقائي.
-                          void saveGroupSet(t, { ...groupSet(t), leader, sharedData: leader ? groupSet(t).sharedData : false });
+                          // من غير مسئول مافيش معنى للميزتين — بتتقفلوا تلقائي.
+                          void saveGroupSet(t, {
+                            ...groupSet(t), leader,
+                            sharedData: leader ? groupSet(t).sharedData : false,
+                            sharedCheck: leader ? groupSet(t).sharedCheck : false,
+                          });
                         }}
                         className="mb-2 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink">
                         <option value="">— مفيش مسئول —</option>
@@ -347,7 +353,22 @@ export default function GroupsPage() {
                         className={`w-full rounded-full px-3 py-1.5 text-[11px] font-bold transition disabled:opacity-40 ${
                           groupSet(t).sharedData ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
                         }`}>
-                        {groupSet(t).sharedData ? "الميزة مفتوحة ✓" : "الميزة مقفولة"}
+                        {groupSet(t).sharedData ? "داتا المجموعة مفتوحة ✓" : "داتا المجموعة مقفولة"}
+                      </button>
+
+                      {/* تشييك المجموعة — نفس المسئول، مفتاح مستقل. المسئول يرفع
+                          شيت التشييك و**يستبدل** شيت باقي الأعضاء (سجلاتهم مابتتمسّش). */}
+                      <p className="mb-1 mt-2.5 text-[10px] leading-relaxed text-muted">
+                        تشييك المجموعة: المسئول يرفع شيت التشييك ويستبدل شيت باقي الأعضاء — واللوحات اللي شيّكوها مابتروحش.
+                      </p>
+                      <button
+                        disabled={togglingTeam === t || !groupSet(t).leader}
+                        onClick={() => void saveGroupSet(t, { ...groupSet(t), sharedCheck: !groupSet(t).sharedCheck })}
+                        title={groupSet(t).leader ? "" : "حدّد المسئول الأول"}
+                        className={`w-full rounded-full px-3 py-1.5 text-[11px] font-bold transition disabled:opacity-40 ${
+                          groupSet(t).sharedCheck ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
+                        }`}>
+                        {groupSet(t).sharedCheck ? "تشييك المجموعة مفتوح ✓" : "تشييك المجموعة مقفول"}
                       </button>
                     </div>
                   </div>

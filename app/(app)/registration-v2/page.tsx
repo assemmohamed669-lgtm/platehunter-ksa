@@ -81,6 +81,7 @@ import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } from "@/lib/checkSheetSync";
+import { fetchTeamCheckState, uploadTeamCheck, syncTeamCheckToLocal } from "@/lib/teamCheck";
 import { backfillMissingGps, stampRowGps } from "@/lib/gpsBackfill";
 import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chassisCache";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows, modelBoxDetail } from "@/lib/trialToggles";
@@ -845,6 +846,15 @@ export default function RegistrationV2Page() {
     };
   }, [loadCheck]);
 
+  // تشييك المجموعة: العضو بيستقبل شيت المسئول تلقائي (بيستبدل شيته المحلي —
+  // وسجلاته اللي شيّكها مابتتمسّش)؛ والمسئول بنعرف دوره عشان لو رفع شيت من هنا
+  // نرفعه للمجموعة (onCheckParsed). مقفولة افتراضياً ⇒ off ⇒ مافيش أثر.
+  const teamCheckRef = useRef<{ role: string; team: string | null }>({ role: "off", team: null });
+  useEffect(() => {
+    void syncTeamCheckToLocal();
+    void fetchTeamCheckState().then((s) => { teamCheckRef.current = { role: s.role, team: s.team }; });
+  }, []);
+
   /**
    * رفع/تغيير ملف التشييك **من الصفحة دي** — نفس سلوت «التشييك» بالظبط
    * (`local:check`)، فاللي يترفع هنا بيشتغل هناك والعكس.
@@ -860,6 +870,15 @@ export default function RegistrationV2Page() {
     };
     await saveUploadedFile(record);
     notifyCheckSheetChanged();
+    // المسئول: يوصل شيت التشييك لباقي المجموعة (لو الخدمة مفتوحة). العضو يستقبل بس.
+    const tc = teamCheckRef.current;
+    if (tc.role === "leader" && tc.team) {
+      const pcol = detectPlateColumn(table.headers, table.rows);
+      const plateCount = pcol
+        ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[pcol] ?? "")))).filter(Boolean)).size
+        : 0;
+      void uploadTeamCheck(tc.team, file, table.rows.length, plateCount);
+    }
     loadCheck();
   }, [loadCheck]);
 
