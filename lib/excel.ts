@@ -292,11 +292,14 @@ function _parseExcelSync(data: Uint8Array, password?: string): ExcelTable {
       if (hasExact) { headerRowIdx = ri; break; }
     }
 
-    // Pass 2: keyword scoring in short cells
+    // Pass 2: keyword scoring + dense fallback — both limited to first 50 rows.
+    // Scanning beyond the first section risks picking a late embedded table's
+    // header (e.g. row 339) and discarding all earlier data rows.
     if (headerRowIdx < 0) {
       let bestKwRow = -1, bestKwScore = 0, bestKwNonEmpty = -1;
       let bestDenseRow = 0, bestDenseCount = 0;
-      for (let ri = 0; ri < SCAN; ri++) {
+      const DENSE_SCAN = Math.min(raw2d.length, 50);
+      for (let ri = 0; ri < DENSE_SCAN; ri++) {
         const cells = raw2d[ri] as unknown[];
         const nonEmpty = cells.filter((c) => String(c ?? "").trim()).length;
         if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }

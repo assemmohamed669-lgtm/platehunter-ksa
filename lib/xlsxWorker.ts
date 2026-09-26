@@ -9,7 +9,7 @@ import * as XLSX from "xlsx";
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
 function cellLooksLikePlate(raw: string): boolean {
-  const cleaned = raw.replace(/[\s\-_./]/g, "");
+  const cleaned = raw.replace(/[\s\-_.ـ/]/g, ""); // strip tatweel too
   if (cleaned.length < 2 || cleaned.length > 10) return false;
 
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
@@ -145,8 +145,10 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
 
     let headerRowIdx = -1;
 
-    // Pass 1: exact match
-    for (let ri = 0; ri < SCAN; ri++) {
+    // Pass 1: exact match — limited to first 50 rows so a late embedded section
+    // (e.g. a second table at row 339) doesn't override the real data start.
+    const HDR_SCAN = Math.min(raw2d.length, 50);
+    for (let ri = 0; ri < HDR_SCAN; ri++) {
       const cells = raw2d[ri] as any[];
       const hasExact = cells.some((c: any) =>
         EXACT_PLATE_COLS.includes(String(c ?? "").trim().toLowerCase())
@@ -154,11 +156,14 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
       if (hasExact) { headerRowIdx = ri; break; }
     }
 
-    // Pass 2: keyword scoring in short cells
+    // Pass 2: keyword scoring + dense fallback — both limited to first 50 rows.
+    // Scanning beyond the first section risks picking a late embedded table's
+    // header (e.g. row 339) and discarding all earlier data rows.
     if (headerRowIdx < 0) {
       let bestKwRow = -1, bestKwScore = 0, bestKwNonEmpty = -1;
       let bestDenseRow = 0, bestDenseCount = 0;
-      for (let ri = 0; ri < SCAN; ri++) {
+      const DENSE_SCAN = Math.min(raw2d.length, 50);
+      for (let ri = 0; ri < DENSE_SCAN; ri++) {
         const cells = raw2d[ri] as any[];
         const nonEmpty = cells.filter((c: any) => String(c ?? "").trim()).length;
         if (nonEmpty > bestDenseCount) { bestDenseCount = nonEmpty; bestDenseRow = ri; }
@@ -189,7 +194,20 @@ onmessage = function (e: MessageEvent<{ buffer: ArrayBuffer; password?: string }
     }
 
     // Build objects from the 2-D array using actual column positions
+    // If the "header" row itself looks like plate data (headerless file), include
+    // it as the first data row so the first plate isn't silently dropped.
+    const nonEmptyHdr = headers.filter((h) => h);
+    const headerIsData =
+      nonEmptyHdr.length > 0 &&
+      nonEmptyHdr.filter((h) => cellLooksLikePlate(h)).length / nonEmptyHdr.length >= 0.5;
+
     const rows: Record<string, string>[] = [];
+    if (headerIsData) {
+      const firstRow: Record<string, string> = {};
+      const hdrCells = raw2d[headerRowIdx] as any[];
+      for (const { name, col } of headerCols) firstRow[name] = String(hdrCells[col] ?? "");
+      rows.push(firstRow);
+    }
     for (let i = headerRowIdx + 1; i < raw2d.length; i++) {
       const r = raw2d[i] as any[];
       const obj: Record<string, string> = {};
