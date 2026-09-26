@@ -1,0 +1,86 @@
+/**
+ * 🎨 تلوين اللوحات المكررة في Voice PRO — منطق خالص عشان يتغطّى باختبارات.
+ *
+ * المالك (٢٦ سبتمبر ٢٠٢٦): «لو اللوحة اتكررت مرتين أو أكتر… يتلوّن اللاين بتاع
+ * اللوحتين أو التلاتة اللي شبه بعض بلون علشان المندوب يعرف إنها مكررة، ولو فيه
+ * لوحة درن1452 وليها متشابه يتلوّن بلون تاني وهكذا».
+ *
+ * - **المكرر = نفس اللوحة بالحرف** بعد التطبيع (`plateKey`: المسافات وأ/ا والإنجليزي
+ *   مابيفرّقوش) — زي «صوتي» بالظبط. لوحات الأسطول (حبل1211/حبل1212) عربيات
+ *   مختلفة فمابتتلوّنش.
+ * - **اللون ثابت**: المجموعة اللي خدت لون بتفضل بيه طول ما هي مكررة، حتى لو ظهرت
+ *   مجموعة جديدة أو اتمسحت مجموعة تانية — عشان الألوان ماتتنططش قدام المندوب.
+ */
+
+/** لون مجموعة مكررة: خلفية الصف + شارة «مكررة ×N». */
+export interface DupPaletteEntry { row: string; chip: string }
+
+/**
+ * ٨ ألوان واضحة على الشكلين (العادي والفخم). **مفيش أحمر** (ده لون المطلوبة)
+ * **ولا أصفر** (ده لون المبدئية) عشان المندوب مايتلخبطش.
+ * (الكلاسات مكتوبة كاملة عشان Tailwind يلاقيها.)
+ */
+export const VOICE_PRO_DUP_PALETTE: readonly DupPaletteEntry[] = [
+  { row: "bg-sky-500/20", chip: "bg-sky-600" },
+  { row: "bg-orange-500/20", chip: "bg-orange-600" },
+  { row: "bg-violet-500/20", chip: "bg-violet-600" },
+  { row: "bg-lime-500/25", chip: "bg-lime-600" },
+  { row: "bg-fuchsia-500/20", chip: "bg-fuchsia-600" },
+  { row: "bg-teal-500/20", chip: "bg-teal-600" },
+  { row: "bg-indigo-500/20", chip: "bg-indigo-600" },
+  { row: "bg-emerald-500/20", chip: "bg-emerald-600" },
+];
+
+/** علامة المجموعة: رقم اللون + عدد مرات التكرار. */
+export interface DupMark { color: number; count: number }
+
+/**
+ * @param keys مفاتيح اللوحات (`plateKey`) **من الأقدم للأحدث** — ترتيب أول ظهور
+ *   بيحدّد لون المجموعات الجديدة.
+ * @param prev ألوان المرة اللي فاتت (مفتاح → لون) — المجموعة اللي لسه مكررة
+ *   بتحتفظ بلونها.
+ * @returns مفتاح → علامة، **للمكرر بس** (اللي ظهر مرتين أو أكتر).
+ */
+export function assignDupColors(
+  keys: readonly string[],
+  prev: ReadonlyMap<string, number>,
+  paletteSize: number,
+): Map<string, DupMark> {
+  const out = new Map<string, DupMark>();
+  if (paletteSize <= 0) return out;
+
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const raw of keys) {
+    const k = String(raw ?? "").trim();
+    if (!k) continue;
+    if (!counts.has(k)) order.push(k);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const dups = order.filter((k) => (counts.get(k) ?? 0) > 1);
+
+  // ① اللي كان ليه لون وماحدش تاني خده — بيحتفظ بيه
+  const uses = new Array<number>(paletteSize).fill(0);
+  const fresh: string[] = [];
+  for (const k of dups) {
+    const c = prev.get(k);
+    if (c !== undefined && Number.isInteger(c) && c >= 0 && c < paletteSize && uses[c] === 0) {
+      out.set(k, { color: c, count: counts.get(k) as number });
+      uses[c]++;
+    } else {
+      fresh.push(k);
+    }
+  }
+  // ② الجديد ياخد أقل لون مستخدم (الفاضي الأول) — ولو الألوان خلصت بيلفّ
+  for (const k of fresh) {
+    let best = 0;
+    for (let c = 1; c < paletteSize; c++) if (uses[c] < uses[best]) best = c;
+    out.set(k, { color: best, count: counts.get(k) as number });
+    uses[best]++;
+  }
+
+  // الترتيب بترتيب أول ظهور (مش مهم للعرض، بس بيسهّل القراءة)
+  const sorted = new Map<string, DupMark>();
+  for (const k of dups) sorted.set(k, out.get(k) as DupMark);
+  return sorted;
+}
