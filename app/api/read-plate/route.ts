@@ -62,6 +62,31 @@ function extractPlate(text: string): string | null {
   return null;
 }
 
+/**
+ * 🔴 **موديلات الرؤية على Groq بتتشال من غير إنذار — حصلت مرتين.**
+ *
+ *   ٢٠٢٦/٦/١٧  `meta-llama/llama-4-scout-17b-16e-instruct` اتشال
+ *   ٢٠٢٦/٩/٢٦  `qwen/qwen3.6-27b` اتشال (Groq رفّعه لـ3.8)
+ *
+ * وفي المرتين الكاميرا والشاص وقفوا **عند كل المناديب** والرسالة اللي وصلتهم
+ * كانت JSON خام. عشان كده الموديل بقى:
+ *   · في **قايمة** بترتيب الأفضلية — لو الأول اتشال بنجرّب اللي بعده فوراً
+ *   · قابل للتغيير من **متغيّر بيئة** (`GROQ_VISION_MODEL`، مفصول بفواصل) —
+ *     يعني المرة الجاية بتتصلّح من إعدادات Vercel في دقيقة، بلا نشر ولا كود
+ *
+ * الحالي (متحقَّق من `console.groq.com/docs/vision` يوم ٢٦ سبتمبر ٢٠٢٦):
+ * `qwen/qwen3.8-27b` هو **الوحيد** اللي بياخد صور على Groq دلوقتي.
+ */
+const VISION_MODELS: string[] = (process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b")
+  .split(",").map((m) => m.trim()).filter(Boolean);
+
+/** رد Groq بيقول إن الموديل نفسه مش موجود/مش متاح؟ (مش أي خطأ تاني) */
+function isModelGone(status: number, body: string): boolean {
+  if (status !== 400 && status !== 404) return false;
+  const b = body.toLowerCase();
+  return b.includes("does not exist") || b.includes("model_not_found") || b.includes("decommissioned");
+}
+
 export async function POST(req: NextRequest) {
   try {
     // Auth: only signed-in agents may call — blocks anonymous abuse of the
@@ -88,36 +113,55 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ plate: null, error: "missing_api_key" }, { status: 200 });
     }
 
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        // موديل الرؤية الحالي على Groq. (llama-4-scout القديم اتوقف من Groq في
-        // ٢٠٢٦/٦/١٧ فكان بيرجّع "model does not exist"). qwen3.6-27b متعدد الوسائط
-        // بياخد صور بنفس شكل image_url. reasoning_effort:"none" بيطفّي وضع التفكير
-        // فيطلع اللوحة مباشرة (من غير ما التوكنز تتاكل في التفكير).
-        model: "qwen/qwen3.6-27b",
-        reasoning_effort: "none",
-        max_tokens: 40,
-        temperature: 0,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: `data:${mediaType};base64,${image}` } },
-            { type: "text", text: isChassis ? CHASSIS_PROMPT : PROMPT },
-          ],
-        }],
-      }),
-    });
+    // نجرّب الموديلات بالترتيب — الموديل المشال بيتخطّى فوراً للّي بعده.
+    let res: Response | null = null;
+    let lastStatus = 0;
+    let lastBody = "";
+    let allGone = true;
+    for (const model of VISION_MODELS) {
+      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          // reasoning_effort:"none" بيطفّي وضع التفكير فتطلع اللوحة مباشرة
+          // (من غير ما التوكنز تتاكل في التفكير).
+          model,
+          reasoning_effort: "none",
+          max_tokens: 40,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: `data:${mediaType};base64,${image}` } },
+              { type: "text", text: isChassis ? CHASSIS_PROMPT : PROMPT },
+            ],
+          }],
+        }),
+      });
+      if (r.ok) { res = r; allGone = false; break; }
+      lastStatus = r.status;
+      lastBody = await r.text().catch(() => "");
+      if (!isModelGone(r.status, lastBody)) { allGone = false; break; }   // خطأ تاني — مانكمّلش
+      console.error("Groq vision model gone:", model, lastBody.slice(0, 200));
+    }
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error("Groq error:", res.status, body.slice(0, 300));
+    if (!res) {
+      // 🔴 كل الموديلات اتشالت = العطل عندنا مش عند المندوب. الرسالة لازم تقول
+      //    كده بالعربي بدل ما نرمي JSON خام في وشه (ده اللي حصل ٢٦ سبتمبر).
+      if (allGone) {
+        console.error("Groq: كل موديلات الرؤية في القايمة اتشالت:", VISION_MODELS.join(","));
+        return NextResponse.json(
+          { plate: null, chassis: null, error: "vision_model_gone",
+            hint: "خدمة قراءة الصور اتغيّرت عند المزوّد — بلّغ الإدارة. اكتب الرقم يدوياً دلوقتي." },
+          { status: 503 }
+        );
+      }
+      console.error("Groq error:", lastStatus, lastBody.slice(0, 300));
       return NextResponse.json(
-        { plate: null, error: "groq_error", detail: res.status, hint: body.slice(0, 200) },
+        { plate: null, error: "groq_error", detail: lastStatus, hint: lastBody.slice(0, 200) },
         { status: 500 }
       );
     }
