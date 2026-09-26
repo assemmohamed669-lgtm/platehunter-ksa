@@ -18,17 +18,23 @@ export interface DupPaletteEntry { row: string; chip: string }
 /**
  * ٨ ألوان واضحة على الشكلين (العادي والفخم). **مفيش أحمر** (ده لون المطلوبة)
  * **ولا أصفر** (ده لون المبدئية) عشان المندوب مايتلخبطش.
+ *
+ * 📏 **متختارة بالقياس مش بالعين**: أحسن ٨ من ألوان Tailwind بشفافية ٢٥٪ على
+ * الأبيض وعلى الغامق (ΔE — مسافة اللون زي ما العين بتشوفها). أقرب لونين في
+ * الطقم ΔE ≈ ١٢.٨. الطقم الأول (بنفسجي/نيلي وفيروزي/زمردي) كان ٤.٧ — يعني
+ * مجموعتين مختلفتين كانوا بيبانوا نفس اللون. والترتيب بيخلّي أول المجموعات
+ * (الأكتر ظهوراً) هي الأبعد عن بعض.
  * (الكلاسات مكتوبة كاملة عشان Tailwind يلاقيها.)
  */
 export const VOICE_PRO_DUP_PALETTE: readonly DupPaletteEntry[] = [
-  { row: "bg-sky-500/20", chip: "bg-sky-600" },
-  { row: "bg-orange-500/20", chip: "bg-orange-600" },
-  { row: "bg-violet-500/20", chip: "bg-violet-600" },
+  { row: "bg-orange-500/25", chip: "bg-orange-600" },
+  { row: "bg-purple-500/25", chip: "bg-purple-600" },
+  { row: "bg-cyan-500/25", chip: "bg-cyan-600" },
   { row: "bg-lime-500/25", chip: "bg-lime-600" },
-  { row: "bg-fuchsia-500/20", chip: "bg-fuchsia-600" },
-  { row: "bg-teal-500/20", chip: "bg-teal-600" },
-  { row: "bg-indigo-500/20", chip: "bg-indigo-600" },
-  { row: "bg-emerald-500/20", chip: "bg-emerald-600" },
+  { row: "bg-blue-500/25", chip: "bg-blue-600" },
+  { row: "bg-stone-500/25", chip: "bg-stone-600" },
+  { row: "bg-pink-500/25", chip: "bg-pink-600" },
+  { row: "bg-green-500/25", chip: "bg-green-600" },
 ];
 
 /** علامة المجموعة: رقم اللون + عدد مرات التكرار. */
@@ -59,12 +65,14 @@ export function assignDupColors(
   }
   const dups = order.filter((k) => (counts.get(k) ?? 0) > 1);
 
-  // ① اللي كان ليه لون وماحدش تاني خده — بيحتفظ بيه
+  // ① اللي كان ليه لون بيحتفظ بيه — **حتى لو مجموعة تانية شاركته** (الألوان لفّت
+  //    بعد ٨ مجموعات). لو اشترطنا إن اللون مايتشاركش، مجموعة من الاتنين كانت
+  //    بتتنقل لون تاني مع أي إعادة رسم (المراجعة لقت تبديل ×٢ بين مجموعتين قديمتين).
   const uses = new Array<number>(paletteSize).fill(0);
   const fresh: string[] = [];
   for (const k of dups) {
     const c = prev.get(k);
-    if (c !== undefined && Number.isInteger(c) && c >= 0 && c < paletteSize && uses[c] === 0) {
+    if (c !== undefined && Number.isInteger(c) && c >= 0 && c < paletteSize) {
       out.set(k, { color: c, count: counts.get(k) as number });
       uses[c]++;
     } else {

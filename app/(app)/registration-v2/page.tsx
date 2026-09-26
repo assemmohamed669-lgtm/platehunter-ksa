@@ -2134,7 +2134,8 @@ export default function RegistrationV2Page() {
                         </button>
                       )}
                       {dp && dm && (
-                        <span className={"mt-0.5 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-black text-white " + dp.chip}>
+                        /* `block w-fit`: تحت اللوحة دايماً — حتى وهي بتتعدّل (المربّع inline فكانت بتتنطّ جنبه) */
+                        <span className={"mt-0.5 block w-fit rounded-full px-1.5 py-0.5 text-[9px] font-black text-white " + dp.chip}>
                           مكررة ×{dm.count}
                         </span>
                       )}

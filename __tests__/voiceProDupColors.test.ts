@@ -84,6 +84,36 @@ describe("assignDupColors — اللون ثابت مايتنططش", () => {
     for (const c of colors) expect(c >= 0 && c < 8).toBe(true);
   });
 
+  it("🔁 إعادة الحساب على نفس الصفوف مابتغيّرش ولا لون — حتى لما الألوان تلفّ (١٠ مجموعات)", () => {
+    // الحالة اللي المراجع لقاها: ٨ مجموعات قديمة + مجموعتين جداد أول ظهورهم أقدم
+    const olds = Array.from({ length: 8 }, (_, i) => "كحب" + (1000 + i));
+    const news = ["دهس2000", "دهس2001"];
+    let prev = new Map<string, number>();
+    const first = assignDupColors(keys(...olds.flatMap((p) => [p, p])), prev, 8);
+    prev = new Map([...first].map(([k, v]) => [k, v.color]));
+    const order = keys(...news, ...olds.slice(1), olds[0], ...news, ...olds.slice(1), olds[0]);
+    const p1 = assignDupColors(order, prev, 8);
+    const p2 = assignDupColors(order, new Map([...p1].map(([k, v]) => [k, v.color])), 8);
+    const p3 = assignDupColors(order, new Map([...p2].map(([k, v]) => [k, v.color])), 8);
+    expect([...p2]).toEqual([...p1]);
+    expect([...p3]).toEqual([...p1]);
+    // والقديمة كلها محتفظة بلونها من الأول
+    for (const p of olds) expect(p1.get(plateKey(p))?.color).toBe(first.get(plateKey(p))?.color);
+  });
+
+  it("الألوان لافّة ومجموعة اتمسحت ⇒ الباقي كله محتفظ بلونه (مفيش حد يتنقل)", () => {
+    const plates = Array.from({ length: 9 }, (_, i) => "حبك" + (1000 + i));
+    const first = assignDupColors(keys(...plates.flatMap((p) => [p, p])), new Map(), 8);
+    const prev = new Map([...first].map(([k, v]) => [k, v.color]));
+    // المندوب مسح نسخة من التالتة
+    const after = plates.flatMap((p, i) => (i === 2 ? [p] : [p, p]));
+    const m = assignDupColors(keys(...after), prev, 8);
+    expect(m.has(plateKey(plates[2]))).toBe(false);
+    for (const [i, p] of plates.entries()) {
+      if (i !== 2) expect(m.get(plateKey(p))?.color).toBe(first.get(plateKey(p))?.color);
+    }
+  });
+
   it("لون قديم برّه النطاق بيتجاهل", () => {
     const prev = new Map([[plateKey("حبك1234"), 42]]);
     const m = assignDupColors(keys("حبك1234", "حبك1234"), prev, 8);
