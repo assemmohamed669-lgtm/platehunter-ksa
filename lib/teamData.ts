@@ -44,6 +44,15 @@ export function teamDataPath(team: string): string {
   return `${team}/data.xlsx`;
 }
 
+/**
+ * داتا المجموعة كبيرة ولا صغيرة؟ الكبيرة بتتقري بالـstreaming على الجهاز (زي ملف
+ * الداتا الكبير العادي) عشان مايحصلش كراش ذاكرة على الآيفون؛ الصغيرة بتتفتح عادي.
+ * القرار بالحجم زي مربع الرفع بالظبط (نفس LARGE_DATA_THRESHOLD_BYTES).
+ */
+export function teamIngestMode(sizeBytes: number, thresholdBytes: number): "small" | "large" {
+  return sizeBytes > thresholdBytes ? "large" : "small";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // الجزء اللي بيكلّم السيرفر والتخزين المحلي
 // ─────────────────────────────────────────────────────────────────────────────

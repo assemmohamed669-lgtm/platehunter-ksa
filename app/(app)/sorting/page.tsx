@@ -52,7 +52,7 @@ import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
 import {
   fetchTeamDataState, uploadTeamData, deleteTeamData, downloadTeamData,
-  needsTeamDataRefresh, TEAM_DATA_SLOT, type TeamDataState,
+  needsTeamDataRefresh, teamIngestMode, TEAM_DATA_SLOT, type TeamDataState,
 } from "@/lib/teamData";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import ShareSortButton from "@/components/ShareSortButton";
@@ -644,6 +644,12 @@ export default function SortingPage() {
    */
   const teamDataRef = useRef<TeamDataState>({ role: "off", team: null, file: null });
   const [teamTable, setTeamTable] = useState<ExcelTable | null>(null);
+  // العضو بيشوف داتا المجموعة **زي المسئول بالظبط**: كارت ملف باسمه يفتحه ويعاين
+  // ويفرز عليه (بس مايمسحش/مايستبدلش — ده للمسئول). الملف الكبير بيتقري streaming
+  // في سلوت مخصّص (TEAM_DATA_SLOT) عشان مايعملش كراش ذاكرة على الآيفون.
+  const [teamFile, setTeamFile] = useState<File | null>(null);
+  const [teamStreamed, setTeamStreamed] = useState(false);
+  const [teamStreamMeta, setTeamStreamMeta] = useState<DataMeta | null>(null);
   const [teamBusy, setTeamBusy] = useState(false);
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
   useEffect(() => { setExtraLocks(loadExtraDataLocks()); }, []);
@@ -657,32 +663,72 @@ export default function SortingPage() {
     const state = await fetchTeamDataState();
     setTeamData(state);
     teamDataRef.current = state;
-    if (state.role === "off") { setTeamTable(null); return; }
+
+    // إلغاء كل حالة داتا المجموعة على الجهاز (لو الميزة اتقفلت أو الملف اتمسح).
+    const clearTeam = async () => {
+      setTeamTable(null); setTeamFile(null); setTeamStreamed(false); setTeamStreamMeta(null);
+      await deleteUploadedFile("local", TEAM_DATA_SLOT).catch(() => {});
+      await clearBigData(TEAM_DATA_SLOT).catch(() => {});
+    };
+    if (state.role === "off" || !state.file) { await clearTeam(); return; }
+    if (state.role === "leader") {
+      // المسئول بيشوف الملف في مربع الداتا العادي بتاعه (هو اللي رفعه) — مفيش
+      // كارت/سلوت مجموعة منفصل ليه، وماينفعش يعيد تنزيل ملفه الكبير.
+      setTeamTable(null); setTeamFile(null); setTeamStreamed(false); setTeamStreamMeta(null);
+      return;
+    }
 
     const local = await getUploadedFile("local", TEAM_DATA_SLOT).catch(() => null);
-    if (!state.file) {
-      // المسئول مسح الملف ⇒ يتشال من هنا كمان.
-      if (local) await deleteUploadedFile("local", TEAM_DATA_SLOT).catch(() => {});
-      setTeamTable(null);
+    // مفيش نسخة أحدث ⇒ نرجّع النسخة المحلية (من غير إعادة تنزيل — ممكن تكون ضخمة).
+    if (local && !needsTeamDataRefresh(local.uploadedAt ?? null, state.file.updatedAt)) {
+      setTeamFile(new File([local.fileBlob ?? new Blob()], local.fileName, { type: local.fileBlob?.type }));
+      const bigMeta = await getDataMeta(TEAM_DATA_SLOT).catch(() => null);
+      if (bigMeta) {
+        setTeamStreamed(true); setTeamStreamMeta(bigMeta);
+        const sample = await getSampleRows(50, TEAM_DATA_SLOT).catch(() => []);
+        setTeamTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
+      } else {
+        setTeamStreamed(false); setTeamStreamMeta(null);
+        setTeamTable({ headers: local.headers, rows: local.rows });
+      }
       return;
     }
-    if (!needsTeamDataRefresh(local?.uploadedAt ?? null, state.file.updatedAt)) {
-      if (local) setTeamTable({ headers: local.headers, rows: local.rows });
-      return;
-    }
+
+    // فيه نسخة أحدث (أو مافيش نسخة محلية) ⇒ نزّل واقرا.
     setTeamBusy(true);
     try {
       const blob = await downloadTeamData(state.file.path);
       if (!blob) { setTeamMsg("تعذّر تنزيل داتا المجموعة — جرّب تاني."); return; }
       const file = new File([blob], state.file.fileName, { type: blob.type });
-      const table = await parseExcelFile(file);
-      await saveUploadedFile({
-        key: `local:${TEAM_DATA_SLOT}`, agentId: "local", slot: TEAM_DATA_SLOT,
-        fileName: state.file.fileName, headers: table.headers, rows: table.rows,
-        uploadedAt: state.file.updatedAt,   // تاريخ **النسخة** مش وقت التنزيل
-        fileBlob: file,
-      });
-      setTeamTable({ headers: table.headers, rows: table.rows });
+      setTeamFile(file);
+      if (teamIngestMode(file.size, LARGE_DATA_THRESHOLD_BYTES) === "large") {
+        // كبيرة → streaming في سلوت مخصّص (زي الداتا الكبيرة العادية) — بلا كراش ذاكرة.
+        const names = await readSheetNames(file).catch(() => [] as string[]);
+        const meta = names.length > 1
+          ? await importMultiSheetData(file, { slot: TEAM_DATA_SLOT })
+          : await importLargeDataFile(file, { slot: TEAM_DATA_SLOT });
+        const sample = await getSampleRows(50, TEAM_DATA_SLOT).catch(() => []);
+        setTeamStreamed(true); setTeamStreamMeta(meta);
+        setTeamTable({ headers: meta.headers, rows: sample, sheetName: meta.sheetName });
+        // نحفظ البلوب + الميتا (بلا صفوف) عشان الكارت والفتح بعد إعادة الفتح بلا تنزيل تاني.
+        await saveUploadedFile({
+          key: `local:${TEAM_DATA_SLOT}`, agentId: "local", slot: TEAM_DATA_SLOT,
+          fileName: state.file.fileName, headers: meta.headers, rows: [],
+          uploadedAt: state.file.updatedAt, fileBlob: file,
+        });
+      } else {
+        // صغيرة → تفتح عادي في الذاكرة.
+        await clearBigData(TEAM_DATA_SLOT).catch(() => {});
+        const table = await parseExcelFile(file);
+        setTeamStreamed(false); setTeamStreamMeta(null);
+        setTeamTable({ headers: table.headers, rows: table.rows });
+        await saveUploadedFile({
+          key: `local:${TEAM_DATA_SLOT}`, agentId: "local", slot: TEAM_DATA_SLOT,
+          fileName: state.file.fileName, headers: table.headers, rows: table.rows,
+          uploadedAt: state.file.updatedAt,   // تاريخ **النسخة** مش وقت التنزيل
+          fileBlob: file,
+        });
+      }
       setTeamMsg(null);
     } catch {
       setTeamMsg("تعذّر قراءة داتا المجموعة.");
@@ -690,6 +736,19 @@ export default function SortingPage() {
   }, []);
 
   useEffect(() => { void syncTeamData(); }, [syncTeamData]);
+
+  // المسئول رفع داتا (صغيرة/كبيرة/متعددة الورقات) → ترفعها للمجموعة عشان توصل
+  // الأعضاء. للمسئول بس؛ باقي المناديب بيرفعوا لجهازهم عادي.
+  const shareDataToTeamIfLeader = useCallback(async (file: File, rowCount: number) => {
+    const td = teamDataRef.current;
+    if (td.role !== "leader" || !td.team) return;
+    setTeamBusy(true); setTeamMsg(null);
+    const res = await uploadTeamData(td.team, file, rowCount, 0);
+    setTeamBusy(false);
+    if (!res.ok) setTeamMsg(`تعذّر رفع الداتا للمجموعة: ${res.error}`);
+    else await syncTeamData();
+  }, [syncTeamData]);
+
   const toggleExtraLock = (i: number) => {
     setExtraLocks((prev) => { const next = toggleLockAt(prev, i); saveExtraDataLocks(next); return next; });
   };
@@ -1549,9 +1608,12 @@ export default function SortingPage() {
    * «نتيجة فرز السجلات» بقى تكرار لنفس السيارات — بنوقفه لما السجلات موجودة.
    */
   const recordsInData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
+  // العضو بيفرز على **داتا المجموعة** (مش ملف داتا بتاعه) — فوجودها بيكفي لتفعيل
+  // الفرز زي ما ملف الداتا العادي بيكفّي. عمود اللوحة بييجي من مصدر المجموعة.
+  const teamDataReady = teamData.role === "member" && ((teamStreamed && !!teamStreamMeta) || !!teamTable);
   const canSort = sortMode === "new"
-    ? !!dataTable && referralReady && !!checkTable && !!effectiveDataPlateCol && !!effectiveCheckPlateCol && dataSheetsReady
-    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || recordsAsDataReady);
+    ? (!!dataTable || teamDataReady) && referralReady && !!checkTable && (!!effectiveDataPlateCol || teamDataReady) && !!effectiveCheckPlateCol && dataSheetsReady
+    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || teamDataReady || recordsAsDataReady);
 
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
@@ -1606,7 +1668,8 @@ export default function SortingPage() {
     setOutputCols(new Set(guessDefaultColumns(meta.headers, meta.plateCol)));
     setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
     applyDataSheetSelection(meta, file.name);
-  }, [applyDataSheetSelection]);
+    await shareDataToTeamIfLeader(file, meta.rowCount);
+  }, [applyDataSheetSelection, shareDataToTeamIfLeader]);
 
   // استيراد ملف داتا كبير: يقراه على دفعات ويخزّنه على الجهاز، ويحط عيّنة صغيرة
   // كـ dataTable عشان كشف الأعمدة/المعاينة/الجاهزية يشتغلوا زي ما هم. لو الملف
@@ -1625,7 +1688,8 @@ export default function SortingPage() {
     setOutputCols(new Set(guessDefaultColumns(meta.headers, meta.plateCol)));
     setDataColsOpen(false); setResults(null); setSorted(false); wipeSortResults();
     setDataSheetSel(new Set()); // ملف بورقة واحدة → مفيش اختيار ورقات
-  }, [handleMultiSheetData]);
+    await shareDataToTeamIfLeader(file, meta.rowCount);
+  }, [handleMultiSheetData, shareDataToTeamIfLeader]);
 
   async function clearSlot(slot: "data" | "referral") {
     const td = teamDataRef.current;
@@ -1833,9 +1897,16 @@ export default function SortingPage() {
     // يحمّلوها، بس الفرز عليها شغّال (ده كل الهدف منها).
     // المسئول عنده **نفس الملف** في مربع الداتا بتاعه (هو اللي رفعه)، فإضافته
     // تاني هنا كانت هتفرز عليه مرتين وتطلّع كل لوحة مكررة.
-    if (teamTable && teamData.role !== "leader") {
-      const pc = resolveDataPlateCol(teamTable.headers, teamTable.rows, effectiveDataPlateCol);
-      if (pc) srcs.push({ rows: teamTable.rows, plateCol: pc });
+    if (teamData.role !== "leader") {
+      if (teamStreamed && teamStreamMeta) {
+        // داتا مجموعة كبيرة → تتقري من الجهاز على دفعات (نفس مسار الداتا الكبيرة).
+        const pc = teamStreamMeta.plateCol
+          || (teamTable ? resolveDataPlateCol(teamTable.headers, teamTable.rows, effectiveDataPlateCol) : null);
+        if (pc) srcs.push({ rows: [], plateCol: pc, slot: TEAM_DATA_SLOT, rowCount: teamStreamMeta.rowCount, sheets: null });
+      } else if (teamTable) {
+        const pc = resolveDataPlateCol(teamTable.headers, teamTable.rows, effectiveDataPlateCol);
+        if (pc) srcs.push({ rows: teamTable.rows, plateCol: pc });
+      }
     }
     for (const ed of extraData) {
       if (!ed.table) continue;
@@ -3136,19 +3207,34 @@ export default function SortingPage() {
         </p>
       )}
 
+      {/* العضو بيشوف داتا المجموعة **زي المسئول بالظبط**: كارت ملف باسمه، يفتحه
+          ويعاين ويفرز عليه — بس المسح والاستبدال للمسئول (fixed = فتح/تنزيل بس). */}
       {teamData.role === "member" && teamData.file && (
-        <div className="rounded-2xl border border-primary/40 bg-primary/5 px-3 py-2.5">
-          <div className="flex items-center gap-2">
-            <Lock size={15} className="shrink-0 text-primary" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-bold text-ink">داتا المجموعة · للفرز فقط</p>
-              <p className="text-[11px] text-muted">
-                {teamData.file.plateCount != null ? `${teamData.file.plateCount.toLocaleString("en-US")} لوحة` : teamData.file.fileName}
-                {teamBusy ? " · جارٍ التنزيل…" : ""}
-              </p>
-            </div>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <span className="text-xs font-bold text-muted">داتا المجموعة</span>
+            <span className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary">
+              <Lock size={11} /> بيديرها المسئول
+            </span>
           </div>
-          {teamMsg && <p className="mt-1.5 text-[11px] font-bold text-danger">{teamMsg}</p>}
+          {teamFile ? (
+            <FileUploadBox
+              title="داتا المجموعة"
+              loadedAccent="data"
+              hint="من مسئول المجموعة — افتحها وافرز عليها (المسح والاستبدال للمسئول)"
+              parsedFile={teamFile}
+              parsedRowCount={teamStreamed && teamStreamMeta ? teamStreamMeta.rowCount : (teamTable?.rows.length ?? teamData.file.rowCount ?? null)}
+              plateCount={teamData.file.plateCount}
+              onParsed={() => { /* العضو مايغيّرش — عرض بس */ }}
+              onClear={() => { /* المسح للمسئول بس */ }}
+              fixed
+            />
+          ) : (
+            <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-[11px] text-muted">
+              {teamData.file.fileName}{teamBusy ? " · جارٍ التنزيل…" : ""}
+            </div>
+          )}
+          {teamMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{teamMsg}</p>}
         </div>
       )}
 
