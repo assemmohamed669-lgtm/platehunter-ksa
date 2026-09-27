@@ -2000,6 +2000,13 @@ export default function RegistrationV2Page() {
           : "border border-slate-200 bg-white")}>
         <div className="mb-2 flex items-center gap-2">
           <h2 className={"text-sm font-black " + (fancy ? "tracking-widest" : "")}>اللوحات</h2>
+          {/* 🔢 عدد اللوحات واضح جنب العنوان (`lib/voiceProTable.ts`) — للكل */}
+          {proTable.plateCount === "labeled" && (
+            <span className={"rounded-full px-2.5 py-0.5 text-xs font-black tabular-nums "
+              + (fancy ? "bg-amber-400/20 text-amber-100" : "bg-indigo-600 text-white")}>
+              عدد اللوحات: {rows.length}
+            </span>
+          )}
           {/*
             * ⑭ 🎨 **زرّ الشكل** — جنب كلمة «اللوحات» بطلب المالك:
             * «ضيف في المربّع من فوق شكل تاني مختلف تماماً وعصري وبخط مختلف،
@@ -2013,8 +2020,6 @@ export default function RegistrationV2Page() {
                 : "border-slate-200 bg-white text-slate-500")}>
             ✨ الشكل
           </button>
-          <span className={"rounded-full px-2 py-0.5 text-[11px] font-bold "
-            + (fancy ? "bg-amber-400/15 text-amber-200" : "bg-slate-100 text-slate-600")}>{rows.length}</span>
           {hits > 0 && (
             <span className="flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-700">
               <BellRing size={11} /> مطلوبة {hits}
