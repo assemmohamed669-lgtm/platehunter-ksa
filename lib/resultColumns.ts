@@ -157,6 +157,20 @@ export const RESULT_TARGETS: TargetColumn[] = [
   },
 ];
 
+/**
+ * الاسم **بالحرف** = مرادف من مرادفات الهدف (بعد التطبيع العربي).
+ *
+ * 🔴 بتتجرّب **قبل** المطابقة بالاحتواء لكل الأهداف. من غير كده عمود اسمه فيه
+ * كلمة المرادف بيسرق الخانة من العمود اللي اسمه هو المرادف نفسه: شيت سجلات
+ * فيه «تاريخ الإحالة» (فاضي) و«التاريخ» (تاريخ التشييك) كان بيدّي خانة
+ * «تاريخ التسجيل» للفاضي — فالمندوب يشوف النتيجة بلا تاريخ.
+ */
+function nameMatchesExact(header: string, aliases: string[]): boolean {
+  const h = normalizeArabicKey(header);
+  if (!h) return false;
+  return aliases.some((a) => h === normalizeArabicKey(a));
+}
+
 function nameMatches(header: string, aliases: string[]): boolean {
   // تطبيع عربي (ة↔ه، أ/ا، ى/ي...) عشان «نوع السياره» يطابق «نوع السيارة» —
   // عناوين المستخدمين بتتكتب بصيغ مختلفة، وبدون التطبيع العمود بيختفي من النتيجة.
@@ -332,8 +346,14 @@ export function resolveResultColumns(
 
   // مرحلتين عشان الاسم الصريح يكسب دايماً على تخمين المحتوى: مثلاً «صانع المركبة»
   // (اسم صريح للماركة) مايتسرقش لهدف «الطراز» بالمحتوى قبل ما الماركة تاخده.
-  // (١) كل الأهداف بالاسم الأول
+  // (١أ) الاسم **بالحرف** الأول — العمود اللي اسمه هو المرادف نفسه يكسب دايماً
   for (const target of RESULT_TARGETS) {
+    const src = available.find((h) => !used.has(h) && nameMatchesExact(h, target.aliases));
+    if (src) { used.add(src); resolved.set(target.key, src); }
+  }
+  // (١ب) وبعدين الباقي بالاحتواء
+  for (const target of RESULT_TARGETS) {
+    if (resolved.has(target.key)) continue;
     const src = available.find((h) => !used.has(h) && nameMatches(h, target.aliases));
     if (src) { used.add(src); resolved.set(target.key, src); }
   }
@@ -393,4 +413,37 @@ export function isHiddenTashyeekCol(label: string): boolean {
   const s = String(label ?? "").trim();
   if (!s) return false;
   return HIDDEN_TASHYEEK_COL.test(s);
+}
+
+/** اسم عمود تاريخ تسجيل السجل في نتيجة الفرز ومشاركتها. */
+export const RECORD_DATE_LABEL = "تاريخ التسجيل";
+
+/** أي عمود اسمه بيدلّ على تاريخ. */
+const DATE_HEADER_RE = /تاريخ|date/i;
+
+/**
+ * 📅 **تاريخ السجل مهما كان اسم عموده.**
+ *
+ * شيت السجلات بيتبني من سجلات المندوب وفيه عمود «التاريخ» = وقت التشييك، لكن
+ * الشيت بيحمل كمان أعمدة ملف التشييك الأصلي — وفيها ممكن يكون عمود تاريخ تاني.
+ * الترتيب هنا مقصود: الاسم الصريح الأول، وبعدين أي عمود تاريخ فيه قيمة، عشان
+ * التاريخ مايضيعش لمجرد إن الشيت سمّى عموده باسم تاني.
+ */
+export function recordDateOf(row: Record<string, string> | undefined | null): string {
+  if (!row) return "";
+  for (const k of [RECORD_DATE_LABEL, "التاريخ", "تاريخ"]) {
+    const v = String(row[k] ?? "").trim();
+    if (v) return v;
+  }
+  for (const [k, v] of Object.entries(row)) {
+    if (!DATE_HEADER_RE.test(k)) continue;
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+/** فيه عمود تاريخ في قايمة الأعمدة دي؟ (بالهدف أو بالاسم). */
+export function hasDateColumn(cols: { key: string; label: string }[]): boolean {
+  return cols.some((c) => c.key === "date" || DATE_HEADER_RE.test(c.label));
 }
