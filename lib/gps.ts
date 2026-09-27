@@ -304,8 +304,32 @@ class GpsService {
   async getFreshReading(opts: { maxAgeMs?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
     const maxAge = opts.maxAgeMs ?? 900;
     const timeout = opts.timeoutMs ?? 8000;
-    if (this.lastRaw && Date.now() - this.lastRaw.timestamp <= maxAge) return this.lastRaw;
-    if (this.freshInFlight) return this.freshInFlight;
+    /**
+     * 🔴 **المراقب الحي مصدر شرعي — مش بس `lastRaw`.**
+     *
+     * كان الفحص على `this.lastRaw` وحده، و`lastRaw` بيتحدّث من الدالة دي **بس**.
+     * فالفيكس اللي المراقب (`watchPosition`) بيحدّثه **كل ثانية** كان بيتجاهَل
+     * تماماً، والدالة بتروح تطلب قراءة جديدة مستقلة في كل مرة.
+     *
+     * وعلى الآيفون `requestLocation` بياخد ثواني ⇒ اللوحات المتتالية (إيقاع
+     * ~٣ث) بتقع في نفس القراءة وبتاخد **نفس النقطة بالحرف**. بلاغ مندوب آيفون
+     * ٢٧ سبتمبر على Voice PRO.
+     *
+     * الصح: ناخد **أحدث** المتاح (المراقب أو آخر قراءة)، ولو عمره أقل من
+     * `maxAge` (٩٠٠ مللي) نرجّعه. المراقب بيتحرك مع المندوب فكل لوحة بتاخد
+     * لحظتها هي — وبلا انتظار ولا طلب زيادة.
+     */
+    const warm = freshestOf(this.lastRaw, this.lastCoords);
+    if (warm && Date.now() - warm.timestamp <= maxAge) return warm;
+    /**
+     * 🔴 **طلب طاير؟ مانستناهوش.**
+     *
+     * كان `return this.freshInFlight` — يعني كل اللوحات اللي بتيجي أثناء قراءة
+     * واحدة بتستنى **نفس الوعد** وبتاخد **نفس الإحداثيات**. نرجّع أحدث موجود
+     * دلوقتي، والقراءة الطايرة بتفضل ماشية وبتغذّي اللي بعدها. ولو مفيش أي
+     * قراءة لسه (بداية الجلسة) ساعتها بس نستنى — أحسن من بلا موقع.
+     */
+    if (this.freshInFlight) return warm ?? this.freshInFlight;
 
     const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
       const raw: GpsCoords = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
