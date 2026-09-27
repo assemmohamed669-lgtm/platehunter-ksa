@@ -352,10 +352,33 @@ class GpsService {
 
     const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
       const raw: GpsCoords = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
-      this.lastRaw = raw;
+      /**
+       * 🔴 **الأحدث، مش آخر واحد وصل.** المشاركة بقت محدودة بـ`maxAge`، يعني
+       * ممكن تبقى فيه قراءتان طايرتان. والأبطأ ممكن تخلص **آخر** وهي شايلة
+       * موقع **أقدم** — فكانت بتكتب فوق الأحدث وترجّع الموقع المجمّد تاني.
+       * (مقيس: قراءتان متداخلتان ⇒ `lastRaw` بقت ٢٤.١ بدل ٢٤.٩.)
+       * على `main` ده كان مستحيل لأن القراءة الطايرة واحدة — **أنا اللي فتحته**.
+       */
+      this.lastRaw = freshestOf(this.lastRaw, raw);
       // نغذّي المخزّن/الواجهة بالأفضل، بس نرجّع القراءة الجديدة نفسها.
       this.lastCoords = pickBetterFix(this.lastCoords, raw);
       this.notifyListeners(this.lastCoords);
+      /**
+       * 🔴 **وحاجز الدقة كان من ناحية واحدة بس.**
+       *
+       * الحاجز فوق بيرفض الفيكس الدافي لو دقته أوحش من `maxAcc` — وبعدين
+       * كنا بنرجّع القراءة الجديدة **بلا أي فحص**. فالنتيجة كانت **عكس**
+       * المطلوب: المندوب في جراج، المراقب ماسك قفلة أقمار ٨م عمرها ١.٢ث،
+       * والقراءة الجديدة بتقع على الشبكة وترجع ١٢٠م ⇒ اللوحة تتختم على ١٢٠م.
+       * (مقيس: `getFreshReading` رجّعت ١٢٠م والقديمة كانت بترجّع ٨م.)
+       *
+       * قاعدة المالك «ويكون دقيق» بتتكسر هنا بالحرف. فالقراءة الخشنة
+       * مابتغلبش فيكس أدق ولسه مش بايت.
+       */
+      if (raw.accuracy > maxAcc && warm && warm.accuracy <= maxAcc
+          && Date.now() - warm.timestamp <= GPS_STALE_MS) {
+        return warm;
+      }
       return raw;
     };
 

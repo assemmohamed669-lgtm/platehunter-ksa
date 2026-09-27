@@ -43,6 +43,24 @@ describe("ختم الموقع لكل لوحة — الصفحتين", () => {
     expect(check).toContain("getPlateGps");
   });
 
+  /**
+   * 🔴 **دي اللي بتختم صفوف الصوت والكاميرا — وفاتت في أول إصلاح.**
+   *
+   * `getPlateGps` اتوصّلت في `attachGpsToDraft` و`exportToFieldCheck` بس،
+   * وصفوف الصوت بتتختم من مسار تاني (`fetchGpsForPttRow` → `stampGpsFreshest`)
+   * فضل على `getFreshFix` المدموجة ⇒ ٣ لوحات متتالية نفس النقطة.
+   *
+   * الفحص النصّي العام فوق كان **بينجح** وهي مكسورة، لأن الكلمة موجودة في
+   * مكان تاني في نفس الملف. الفحص ده بيقطع **جسم الدالة** نفسها.
+   */
+  it("🔴 ختم الصوت والكاميرا (`stampGpsFreshest`) على القراءة الطازة مش المدموجة", () => {
+    const i = check.indexOf("async function stampGpsFreshest");
+    expect(i).toBeGreaterThan(-1);
+    const body = check.slice(i, i + 1400);
+    expect(body).toContain("getFreshReading");
+    expect(body).not.toContain("getFreshFix");
+  });
+
   it("🔴 ختم مسوّدة اللوحة بياخد `getPlateGps` مش المخزّن", () => {
     // `attachGpsToDraft` هي اللي بتختم كل صف تشييك بموقعه.
     const i = check.indexOf("async function attachGpsToDraft");

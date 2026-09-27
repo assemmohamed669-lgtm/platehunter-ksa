@@ -1909,9 +1909,22 @@ export default function InstantCheckPage() {
     if (gpsOffRef.current) return;
     const warm = gpsService.getLastCoords();
     if (warm) apply(warm.lat, warm.lng, "");            // لحظي (الحي يتملّي بعد التحسين)
-    // حسّن لأدق قراءة: getFreshFix بيرجّع المخزّن فوراً لو ممتاز (≤١.٥ث و≤١٥م)،
-    // وإلا يطلب قراءة عالية الدقة جديدة (maximumAge:0).
-    const fresh = await gpsService.getFreshFix({ maxAgeMs: 1500, maxAccuracyM: 15 });
+    /**
+     * 🔴 **دي اللي بتختم صفوف الصوت والكاميرا — وكانت لسه على المسار القديم.**
+     *
+     * كانت `getFreshFix({ maxAgeMs: 1500, maxAccuracyM: 15 })` — وهي بترجّع
+     * `pickBetterFix` **المدموجة**، اللي بتمسك الفيكس الدقيق القديم لحد ما
+     * يبقى بايت (١٠ث). وبإيقاع النطق المقيس ٢.٩٨ث ⇒ **٣ لوحات متتالية بتاخد
+     * نفس الإحداثيات بالحرف** (مقيس بتشغيل فعلي: قفلة ٦م + مندوب ماشي ⇒
+     * `new Set(out).size === 1`).
+     *
+     * يعني بلاغ المالك «الصوت بياخد نفس الموقع لكل اللوحات» كان **لسه حي**
+     * هنا بعد ما اتصلّح في المسار اليدوي — لأن `getPlateGps` اتوصّلت في
+     * `attachGpsToDraft` و`exportToFieldCheck` بس، ودي مسارات تانية.
+     *
+     * `getFreshReading` بترجّع القراءة نفسها مش المدموجة ⇒ كل لوحة مكانها هي.
+     */
+    const fresh = await gpsService.getFreshReading({ timeoutMs: 8000 });
     const best: GpsCoords | null =
       fresh && (!warm || fresh.accuracy <= warm.accuracy || fresh.timestamp > warm.timestamp) ? fresh : warm;
     if (best) {
@@ -5713,7 +5726,18 @@ export default function InstantCheckPage() {
                     result={{ plate: pttAlert.plate, normalized: "", found: pttAlert.found, matchType: pttAlert.matchType, similarity: pttAlert.similarity, row: pttAlert.row }}
                     plateCol={checkPlateCol}
                     selectedCols={selectedCheckCols}
-                    onExport={async (r) => { await exportToFieldCheck(r, "ptt"); setPttExportedIds((s) => new Set(s).add(pttAlert.id)); markJudgeExportedIfArmed([pttAlert.id]); }}
+                    /* 📍 الموقع اللي المندوب شايفه على الكارت هو اللي يتصدّر.
+                       من غير تمريره كان بيتجاب موقع **جديد** وقت الضغط —
+                       يعني نقطة غير اللي اللوحة اتاخدت فيها. (مقيس: الكارت
+                       ٢٤.٠ والمصدَّر ٢٥.٥٥٥.) نفس اللي `exportPttRowToField`
+                       عاملاه. */
+                    onExport={async (r) => {
+                      const seen = pttAlert.lat != null && pttAlert.lng != null
+                        ? { lat: pttAlert.lat, lng: pttAlert.lng } : undefined;
+                      await exportToFieldCheck(r, "ptt", seen);
+                      setPttExportedIds((s) => new Set(s).add(pttAlert.id));
+                      markJudgeExportedIfArmed([pttAlert.id]);
+                    }}
                     priorCheck={findDuplicateEntry(fieldEntries, pttAlert.plate)}
                   />
                 </div>
