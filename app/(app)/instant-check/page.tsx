@@ -1829,6 +1829,26 @@ export default function InstantCheckPage() {
     return fix ? { lat: fix.lat, lng: fix.lng } : null;
   }
 
+  /**
+   * 📍 موقع **لكل لوحة على حدة** — مش المخزّن.
+   *
+   * 🔴 `getCurrentGps` فوق بتستعمل `getFreshFix`، وهي بتصميمها بترجّع الفيكس
+   * المخزّن لو عمره أقل من **٤ ثواني**. وإيقاع نطق اللوحات المقيس ~٣ ثواني
+   * ⇒ **كل اللوحات المتتالية كانت بتاخد نفس النقطة بالحرف**.
+   *
+   * ده بالظبط بلاغ المندوب اللي اتصلّح في Voice PRO يوم ٢٦ سبتمبر
+   * (`ca0f3b9`) — بس الإصلاح اتحط هناك بس، وصفحة التشييك فضلت على القديم.
+   * فلما مندوب آيفون اشتكى ٢٧ سبتمبر كانت نفس الشكوى **في صفحة تانية**.
+   *
+   * `getFreshReading` بترجّع القراءة الجديدة نفسها (مش المدموجة)، وبتلمّ
+   * الطلبات اللي في نفس الـ٩٠٠ مللي بس — فاللوحات في نفس الثانية موقعها فعلاً
+   * واحد، واللي بعدها بتاخد مكانها هي.
+   */
+  async function getPlateGps(): Promise<{ lat: number; lng: number } | null> {
+    const fix = await gpsService.getFreshReading({ timeoutMs: 8000 });
+    return fix ? { lat: fix.lat, lng: fix.lng } : null;
+  }
+
   // «الأقرب»: يجيب موقع المندوب الحالي ويفعّل ترتيب القوائم بالمسافة. لو مفعّل
   // بالفعل، الضغطة بتطفّيه (toggle) فترجع القوائم لترتيبها الأصلي.
   async function handleNearestIC() {
@@ -1889,9 +1909,22 @@ export default function InstantCheckPage() {
     if (gpsOffRef.current) return;
     const warm = gpsService.getLastCoords();
     if (warm) apply(warm.lat, warm.lng, "");            // لحظي (الحي يتملّي بعد التحسين)
-    // حسّن لأدق قراءة: getFreshFix بيرجّع المخزّن فوراً لو ممتاز (≤١.٥ث و≤١٥م)،
-    // وإلا يطلب قراءة عالية الدقة جديدة (maximumAge:0).
-    const fresh = await gpsService.getFreshFix({ maxAgeMs: 1500, maxAccuracyM: 15 });
+    /**
+     * 🔴 **دي اللي بتختم صفوف الصوت والكاميرا — وكانت لسه على المسار القديم.**
+     *
+     * كانت `getFreshFix({ maxAgeMs: 1500, maxAccuracyM: 15 })` — وهي بترجّع
+     * `pickBetterFix` **المدموجة**، اللي بتمسك الفيكس الدقيق القديم لحد ما
+     * يبقى بايت (١٠ث). وبإيقاع النطق المقيس ٢.٩٨ث ⇒ **٣ لوحات متتالية بتاخد
+     * نفس الإحداثيات بالحرف** (مقيس بتشغيل فعلي: قفلة ٦م + مندوب ماشي ⇒
+     * `new Set(out).size === 1`).
+     *
+     * يعني بلاغ المالك «الصوت بياخد نفس الموقع لكل اللوحات» كان **لسه حي**
+     * هنا بعد ما اتصلّح في المسار اليدوي — لأن `getPlateGps` اتوصّلت في
+     * `attachGpsToDraft` و`exportToFieldCheck` بس، ودي مسارات تانية.
+     *
+     * `getFreshReading` بترجّع القراءة نفسها مش المدموجة ⇒ كل لوحة مكانها هي.
+     */
+    const fresh = await gpsService.getFreshReading({ timeoutMs: 8000 });
     const best: GpsCoords | null =
       fresh && (!warm || fresh.accuracy <= warm.accuracy || fresh.timestamp > warm.timestamp) ? fresh : warm;
     if (best) {
@@ -2002,7 +2035,9 @@ export default function InstantCheckPage() {
     if (gpsOffRef.current) return;   // الموقع مقفول — مافيش داعي لخمس محاولات
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        const gps = await getCurrentGps();
+        // 📍 قراءة **خاصة باللوحة دي** — `getCurrentGps` بترجّع المخزّن لو
+        //    عمره < ٤ث، وإيقاع اللوحات ~٣ث ⇒ كلهم بياخدوا نفس النقطة.
+        const gps = await getPlateGps();
         if (gps) {
           const region = await regionTextFor(gps.lat, gps.lng);
           const withGps: FieldCheckEntry = {
@@ -2352,7 +2387,7 @@ export default function InstantCheckPage() {
     // الموقع مقفول ⇒ الصف بيتحفظ من غير lat/lng/رابط خريطة خالص.
     const gpsPromise = gpsOffRef.current
       ? Promise.resolve(null)
-      : (prefetchedGps ? Promise.resolve(prefetchedGps) : getCurrentGps());
+      : (prefetchedGps ? Promise.resolve(prefetchedGps) : getPlateGps());
 
     const id = `${Date.now()}-${Math.floor(performance.now() * 1000) % 100000}`;
     const base: FieldCheckEntry = {
@@ -5691,7 +5726,18 @@ export default function InstantCheckPage() {
                     result={{ plate: pttAlert.plate, normalized: "", found: pttAlert.found, matchType: pttAlert.matchType, similarity: pttAlert.similarity, row: pttAlert.row }}
                     plateCol={checkPlateCol}
                     selectedCols={selectedCheckCols}
-                    onExport={async (r) => { await exportToFieldCheck(r, "ptt"); setPttExportedIds((s) => new Set(s).add(pttAlert.id)); markJudgeExportedIfArmed([pttAlert.id]); }}
+                    /* 📍 الموقع اللي المندوب شايفه على الكارت هو اللي يتصدّر.
+                       من غير تمريره كان بيتجاب موقع **جديد** وقت الضغط —
+                       يعني نقطة غير اللي اللوحة اتاخدت فيها. (مقيس: الكارت
+                       ٢٤.٠ والمصدَّر ٢٥.٥٥٥.) نفس اللي `exportPttRowToField`
+                       عاملاه. */
+                    onExport={async (r) => {
+                      const seen = pttAlert.lat != null && pttAlert.lng != null
+                        ? { lat: pttAlert.lat, lng: pttAlert.lng } : undefined;
+                      await exportToFieldCheck(r, "ptt", seen);
+                      setPttExportedIds((s) => new Set(s).add(pttAlert.id));
+                      markJudgeExportedIfArmed([pttAlert.id]);
+                    }}
                     priorCheck={findDuplicateEntry(fieldEntries, pttAlert.plate)}
                   />
                 </div>

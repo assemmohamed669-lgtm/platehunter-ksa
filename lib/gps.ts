@@ -84,6 +84,27 @@ export async function isNativeApp(): Promise<boolean> {
 /** للاختبارات بس — يصفّر الكاش. */
 export function __resetNativeCache(): void { nativeCache = null; }
 
+/**
+ * 🔴 **الأحدث بالوقت — مش الأول في الترتيب.**
+ *
+ * لما القراءة الطازة تفشل بنرجع لأحسن موجود. والكود كان بيكتب
+ * `lastRaw ?? lastCoords` — يعني بيفضّل `lastRaw` **حتى لو قديم**.
+ * و`lastRaw` بيتحدّث من `getFreshReading` بس، بينما `lastCoords` بيتحدّث من
+ * المراقب (`watchPosition`) **كل ثانية**.
+ *
+ * فلو النداء الأصلي نجح مرة وبعدها فشل، كل اللوحات اللي بعدها كانت بتاخد
+ * **نفس النقطة المجمّدة** — بلاغ مندوب آيفون ٢٧ سبتمبر: «الصوت بياخد نفس
+ * الموقع لكل اللوحات».
+ */
+export function freshestOf(
+  a: GpsCoords | null | undefined,
+  b: GpsCoords | null | undefined,
+): GpsCoords | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return b.timestamp > a.timestamp ? b : a;   // التعادل ⇒ الأول (سلوك ثابت)
+}
+
 class GpsService {
   private watchId: number | null = null;
   private capWatchId: string | null = null;
@@ -280,28 +301,98 @@ class GpsService {
   private lastRaw: GpsCoords | null = null;
   private freshInFlight: Promise<GpsCoords | null> | null = null;
 
-  async getFreshReading(opts: { maxAgeMs?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
+  async getFreshReading(opts: { maxAgeMs?: number; maxAccuracyM?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
     const maxAge = opts.maxAgeMs ?? 900;
+    /**
+     * 📏 **الدقة شرط، مش بس الحداثة.**
+     *
+     * قاعدة المالك (٢٧ سبتمبر ٢٠٢٦): «كل سيارة يبقى ليها موقع **دقيق** خاص
+     * بيها». الحداثة وحدها مابتكفّيش — فيكس عمره نص ثانية بدقة ٢٠٠ متر
+     * (شبكة/واي-فاي جوّه مبنى) بيدّي كل لوحة نقطة «مختلفة» بس كلها غلط.
+     *
+     * ٢٥ متر = جوّه نطاق `good`→`ok` في `gpsAccuracyLevel`، وكفاية تحدّد
+     * العربية في الشارع. أوحش من كده ⇒ نطلب قراءة أقمار جديدة.
+     */
+    const maxAcc = opts.maxAccuracyM ?? 25;
     const timeout = opts.timeoutMs ?? 8000;
-    if (this.lastRaw && Date.now() - this.lastRaw.timestamp <= maxAge) return this.lastRaw;
+    /**
+     * 🔴 **المراقب الحي مصدر شرعي — مش بس `lastRaw`.**
+     *
+     * كان الفحص على `this.lastRaw` وحده، و`lastRaw` بيتحدّث من الدالة دي **بس**.
+     * فالفيكس اللي المراقب (`watchPosition`) بيحدّثه **كل ثانية** كان بيتجاهَل
+     * تماماً، والدالة بتروح تطلب قراءة جديدة مستقلة في كل مرة.
+     *
+     * وعلى الآيفون `requestLocation` بياخد ثواني ⇒ اللوحات المتتالية (إيقاع
+     * ~٣ث) بتقع في نفس القراءة وبتاخد **نفس النقطة بالحرف**. بلاغ مندوب آيفون
+     * ٢٧ سبتمبر على Voice PRO.
+     *
+     * الصح: ناخد **أحدث** المتاح (المراقب أو آخر قراءة)، ولو عمره أقل من
+     * `maxAge` (٩٠٠ مللي) نرجّعه. المراقب بيتحرك مع المندوب فكل لوحة بتاخد
+     * لحظتها هي — وبلا انتظار ولا طلب زيادة.
+     */
+    const warm = freshestOf(this.lastRaw, this.lastCoords);
+    // حديث **ودقيق** — الشرطين مع بعض. لو واحد ناقص نطلب قراءة جديدة.
+    if (warm && Date.now() - warm.timestamp <= maxAge && warm.accuracy <= maxAcc) return warm;
+    /**
+     * قراءة واحدة طايرة في المرة — زي `main` بالظبط.
+     *
+     * ⚠️ **جُرِّب تضييقها لنافذة ٩٠٠ مللي (عشان كل لوحة تاخد قراءتها) واتشال.**
+     * سببان، الاتنين مقيسين في مراجعة ٢٧ سبتمبر ٢٠٢٦:
+     *   ① **صفر عائد على الآيفون** — سورس `@capacitor/geolocation` متحقَّق:
+     *      `createPluginResult` بيوزّع **نفس** الـposition على كل النداءات
+     *      المعلّقة. فالنداءات المتوازية بترجّع نفس النقطة بالحرف برضه.
+     *   ② **وفتح ضرر حقيقي** — قراءتان طايرتان، والأبطأ بتخلص آخر وهي شايلة
+     *      موقع أقدم ⇒ بتكتب فوق الأحدث ويتجمّد الموقع تاني.
+     *
+     * ⇒ مصدر تمييز كل لوحة هو **المراقب الحي** (الفحص الدافي فوق)، مش نداءات
+     *   متوازية. والمشاركة هنا بتمنع طوفان الطلبات لما المندوب ينطق بسرعة.
+     */
     if (this.freshInFlight) return this.freshInFlight;
 
     const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
       const raw: GpsCoords = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
-      this.lastRaw = raw;
+      /**
+       * 🔴 **الأحدث، مش آخر واحد وصل.** المشاركة بقت محدودة بـ`maxAge`، يعني
+       * ممكن تبقى فيه قراءتان طايرتان. والأبطأ ممكن تخلص **آخر** وهي شايلة
+       * موقع **أقدم** — فكانت بتكتب فوق الأحدث وترجّع الموقع المجمّد تاني.
+       * (مقيس: قراءتان متداخلتان ⇒ `lastRaw` بقت ٢٤.١ بدل ٢٤.٩.)
+       * على `main` ده كان مستحيل لأن القراءة الطايرة واحدة — **أنا اللي فتحته**.
+       */
+      this.lastRaw = freshestOf(this.lastRaw, raw);
       // نغذّي المخزّن/الواجهة بالأفضل، بس نرجّع القراءة الجديدة نفسها.
       this.lastCoords = pickBetterFix(this.lastCoords, raw);
       this.notifyListeners(this.lastCoords);
+      /**
+       * 🔴 **وحاجز الدقة كان من ناحية واحدة بس.**
+       *
+       * الحاجز فوق بيرفض الفيكس الدافي لو دقته أوحش من `maxAcc` — وبعدين
+       * كنا بنرجّع القراءة الجديدة **بلا أي فحص**. فالنتيجة كانت **عكس**
+       * المطلوب: المندوب في جراج، المراقب ماسك قفلة أقمار ٨م عمرها ١.٢ث،
+       * والقراءة الجديدة بتقع على الشبكة وترجع ١٢٠م ⇒ اللوحة تتختم على ١٢٠م.
+       * (مقيس: `getFreshReading` رجّعت ١٢٠م والقديمة كانت بترجّع ٨م.)
+       *
+       * قاعدة المالك «ويكون دقيق» بتتكسر هنا بالحرف. فالقراءة الخشنة
+       * مابتغلبش فيكس أدق ولسه مش بايت.
+       */
+      if (raw.accuracy > maxAcc && warm && warm.accuracy <= maxAcc
+          && Date.now() - warm.timestamp <= GPS_STALE_MS) {
+        return warm;
+      }
       return raw;
     };
 
-    this.freshInFlight = (async () => {
+    const call = (async () => {
       if (await isNativeApp()) {
         try {
           const { Geolocation } = await import("@capacitor/geolocation");
           return applyRaw(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout, maximumAge: 0 }));
         } catch { /* فشل على الجهاز — المخزّن، **مش** الويب (رسالة الإذن) */ }
-        return this.lastRaw ?? this.lastCoords;
+        // 🔴 **كان `this.lastRaw ?? this.lastCoords`** — وده بيفضّل قراءة
+        //    **قديمة** على الفيكس الحي. `lastRaw` بيتحدّث من هنا بس، فلو النداء
+        //    الأصلي فشل مرة واحدة بعد نجاح، كل اللوحات اللي بعدها كانت بتاخد
+        //    **نفس النقطة المجمّدة** — بينما المراقب (`watchPosition`) بيحدّث
+        //    `lastCoords` كل ثانية. بلاغ مندوب آيفون ٢٧ سبتمبر.
+        return freshestOf(this.lastRaw, this.lastCoords);
       }
       try {
         if (navigator.geolocation) {
@@ -309,10 +400,11 @@ class GpsService {
             navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, maximumAge: 0, timeout }));
           return applyRaw(pos);
         }
-      } catch { /* فشل — نرجّع المخزّن */ }
-      return this.lastRaw ?? this.lastCoords;
+      } catch { /* فشل — نرجّع الأحدث المتاح */ }
+      return freshestOf(this.lastRaw, this.lastCoords);
     })();
-    try { return await this.freshInFlight; }
+    this.freshInFlight = call;
+    try { return await call; }
     finally { this.freshInFlight = null; }
   }
 
