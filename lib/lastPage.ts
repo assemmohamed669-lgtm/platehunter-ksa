@@ -43,13 +43,47 @@ function isAppPage(path: string): boolean {
  */
 export function rememberPage(path: string): void {
   if (!isAppPage(path)) return;
-  try { localStorage.setItem(LAST_PAGE_KEY, path); } catch { /* تخزين مقفول */ }
+  try {
+    localStorage.setItem(LAST_PAGE_KEY, JSON.stringify({ p: path, t: Date.now() }));
+  } catch { /* تخزين مقفول */ }
+}
+
+/** يقرا المحفوظ بالشكلين: الجديد `{p,t}` والقديم (نص خام). */
+function readSaved(): { p: string; t: number } | null {
+  let v: string | null = null;
+  try { v = localStorage.getItem(LAST_PAGE_KEY); } catch { return null; }
+  if (!v) return null;
+  // ⚠️ نسخ قديمة كانت بتحفظ المسار **نص خام** — لازم تفضل شغّالة وإلا المندوب
+  //    اللي مافتحش التطبيق من قبل التحديث يفقد صفحته مرة واحدة بلا داعي.
+  if (!v.startsWith("{")) return isAppPage(v) ? { p: v, t: 0 } : null;
+  try {
+    const o = JSON.parse(v) as { p?: unknown; t?: unknown };
+    const p = typeof o.p === "string" ? o.p : "";
+    if (!isAppPage(p)) return null;
+    return { p, t: typeof o.t === "number" ? o.t : 0 };
+  } catch { return null; }
 }
 
 /** آخر صفحة محفوظة، أو `null` لو مافيش/مش صالحة. */
 export function lastPage(): string | null {
-  let v: string | null = null;
-  try { v = localStorage.getItem(LAST_PAGE_KEY); } catch { return null; }
-  if (!v || !isAppPage(v)) return null;
-  return v;
+  return readSaved()?.p ?? null;
+}
+
+/**
+ * ⏱️ **رجوع من الخلفية ولا فتح جديد؟**
+ *
+ * إعادة تحميل الـWebView نفسها قرار نظام التليفون ومانقدرش نمنعها من الكود.
+ * اللي بيخلّي المندوب حاسس إنه «فتح من أول وجديد» هو **شاشة البداية
+ * (ثانيتين)**. فبنفرّق:
+ *   · آخر تنقّل من دقايق  ⇒ رجوع من الخلفية ⇒ نعدّي الشاشة ونفتح على صفحته
+ *   · آخر تنقّل من ساعات ⇒ فتح حقيقي ⇒ الشاشة تفضل زي ما هي
+ *
+ * الافتراضي **٣٠ دقيقة** — أطول من أي تنقّل بين تطبيقات، وأقصر من فترة راحة
+ * أو يوم عمل جديد.
+ */
+export function isWarmResume(maxIdleMs = 30 * 60_000): boolean {
+  const s = readSaved();
+  if (!s || !s.t) return false;          // مافيش وقت (قيمة قديمة) = فتح جديد
+  const age = Date.now() - s.t;
+  return age >= 0 && age < maxIdleMs;
 }

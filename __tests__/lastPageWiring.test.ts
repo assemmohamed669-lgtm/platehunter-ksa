@@ -40,6 +40,12 @@ describe("توصيل «آخر صفحة»", () => {
     // الشكل القديم: `dest = data.session ? "/sorting" : "/login"`
     expect(splash).not.toMatch(/data\.session\s*\?\s*"\/sorting"/);
   });
+
+  it("🔴 الرجوع من الخلفية بيعدّي شاشة البداية", () => {
+    expect(splash).toContain("isWarmResume()");
+    // والانتظار بقى مشروط — مش ٢٠٠٠ ثابتة
+    expect(splash).not.toMatch(/setTimeout\(r,\s*2000\)/);
+  });
 });
 
 /**

@@ -68,3 +68,53 @@ describe("lastPage — آخر صفحة", () => {
     expect(() => lastPage()).not.toThrow();
   });
 });
+
+/**
+ * 🔴 **الرجوع من الخلفية مالوش لازمة يبان كأنه فتح جديد.**
+ *
+ * سؤال المالك (٢٧ سبتمبر ٢٠٢٦): «المشترك لما يتنقل بين البرامج مش هيرجع
+ * يفتحلو البرنامج من جديد؟» — إعادة تحميل الـWebView نفسها قرار نظام
+ * التليفون ومانقدرش نمنعها من الكود، بس **شاشة البداية (ثانيتين)** هي اللي
+ * بتخلّيه حاسس إنه «فتح من أول وجديد».
+ *
+ * فبنفرّق: رجوع من الخلفية من دقايق = نعدّيها؛ فتح حقيقي بعد فترة = تفضل.
+ */
+describe("isWarmResume — رجوع من الخلفية ولا فتح جديد", () => {
+  beforeEach(() => {
+    try { localStorage.clear(); } catch { /* تخزين مقفول */ }
+  });
+
+  it("مافيش حاجة محفوظة = فتح جديد", async () => {
+    const { isWarmResume } = await import("@/lib/lastPage");
+    expect(isWarmResume()).toBe(false);
+  });
+
+  it("🔴 اتحفظت من ثواني = رجوع من الخلفية", async () => {
+    const { rememberPage, isWarmResume } = await import("@/lib/lastPage");
+    rememberPage("/instant-check");
+    expect(isWarmResume()).toBe(true);
+  });
+
+  it("🔴 اتحفظت من زمان = فتح جديد (شاشة البداية تفضل)", async () => {
+    // بنكتب وقت قديم صراحةً — الاعتماد على حد صغير مش قاطع لأن عمر الحفظ
+    // لحظة الاختبار = صفر، و`0 < 1` بترجّع true فالاختبار كان بيفشل بالغلط.
+    const { isWarmResume, LAST_PAGE_KEY } = await import("@/lib/lastPage");
+    localStorage.setItem(LAST_PAGE_KEY, JSON.stringify({
+      p: "/instant-check", t: Date.now() - 3 * 60 * 60_000,   // ٣ ساعات
+    }));
+    expect(isWarmResume()).toBe(false);
+  });
+
+  it("القيمة القديمة (نص بلا وقت) = فتح جديد، والصفحة لسه بترجع", async () => {
+    // نسخ قديمة كانت بتحفظ المسار نص خام — مايتعاملش كرجوع، بس مايضيعش.
+    const { lastPage, isWarmResume, LAST_PAGE_KEY } = await import("@/lib/lastPage");
+    localStorage.setItem(LAST_PAGE_KEY, "/wanted");
+    expect(lastPage()).toBe("/wanted");
+    expect(isWarmResume()).toBe(false);
+  });
+
+  it("مابترميش لو التخزين مقفول", async () => {
+    const { isWarmResume } = await import("@/lib/lastPage");
+    expect(() => isWarmResume()).not.toThrow();
+  });
+});

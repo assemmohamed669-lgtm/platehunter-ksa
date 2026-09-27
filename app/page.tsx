@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Orbitron } from "next/font/google";
 import { supabase } from "@/lib/supabaseClient";
-import { lastPage } from "@/lib/lastPage";
+import { lastPage, isWarmResume } from "@/lib/lastPage";
 
 // خط تقني للاسم — يتحمّل ذاتياً مع البناء فيشتغل حتى بدون نت.
 const brandFont = Orbitron({ subsets: ["latin"], weight: ["700", "900"] });
@@ -30,7 +30,16 @@ export default function HomePage() {
         dest = data.session ? (lastPage() ?? "/sorting") : "/login";
       })
       .catch(() => {});
-    const delay = new Promise<void>((r) => setTimeout(r, 2000));
+    /**
+     * ⏱️ **رجوع من الخلفية بيعدّي شاشة البداية.**
+     *
+     * إعادة تحميل الـWebView قرار نظام التليفون ومانقدرش نمنعها من الكود —
+     * اللي بيخلّي المندوب حاسس إنه «فتح من أول وجديد» هو الثانيتين دول.
+     * فلو آخر تنقّل من دقايق (رجوع من تطبيق تاني) بنفتح على صفحته **على
+     * طول**؛ ولو من ساعات (فتح حقيقي) الشاشة بتفضل زي ما هي.
+     */
+    const splashMs = isWarmResume() ? 0 : 2000;
+    const delay = new Promise<void>((r) => setTimeout(r, splashMs));
     Promise.all([session, delay]).then(() => router.replace(dest));
   }, [router]);
 
