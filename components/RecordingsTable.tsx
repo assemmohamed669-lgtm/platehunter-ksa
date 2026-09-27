@@ -93,14 +93,12 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
     try {
       const warm = gpsService.getLastCoords();
       let loc = warm ? { lat: warm.lat, lng: warm.lng } : null;
-      if (!loc && navigator.geolocation) {
-        loc = await new Promise<{ lat: number; lng: number } | null>((resolve) =>
-          navigator.geolocation.getCurrentPosition(
-            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-            () => resolve(null),
-            { timeout: 10000, maximumAge: 60000 }
-          )
-        );
+      if (!loc) {
+        // 🔴 كان بينده `navigator.geolocation` مباشرةً ⇒ رسالة إذن الموقع
+        //    للموقع الإلكتروني على آيفون. `gpsService` بيفرّق بين الجهاز
+        //    والمتصفّح فمابيلمسش واجهة الويب جوّه التطبيق.
+        const fx = await gpsService.getFreshFix({ timeoutMs: 10000 }).catch(() => null);
+        loc = fx ? { lat: fx.lat, lng: fx.lng } : null;
       }
       if (!loc) { alert("تعذّر الوصول للموقع. تأكد من إذن الـ GPS."); return; }
       setUserLoc(loc);

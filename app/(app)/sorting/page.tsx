@@ -26,7 +26,7 @@ import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortin
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
-import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin } from "@/lib/gps";
+import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
 import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
@@ -2539,10 +2539,12 @@ export default function SortingPage() {
   async function handleNearest() {
     setLocating(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8000 })
-      );
-      setUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      // 🔴 كان بينده `navigator.geolocation` **مباشرةً** — وده على آيفون بيطلّع
+      //    رسالة إذن الموقع **للموقع الإلكتروني** جوّه التطبيق، رغم إن التطبيق
+      //    نفسه واخد الإذن. `gpsService` بيستعمل الواجهة الأصلية على الجهاز
+      //    وبيرجع للويب في المتصفّح بس.
+      const fx = await gpsService.pinCurrentLocation();
+      setUserLoc({ lat: fx.lat, lng: fx.lng });
       setNearestActive(true);
     } catch { alert("تعذّر الوصول للموقع. تحقق من إذن الـ GPS."); }
     finally { setLocating(false); }

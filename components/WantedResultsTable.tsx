@@ -142,10 +142,11 @@ export default function WantedResultsTable({
     try {
       const warm = gpsService.getLastCoords();
       let loc: { lat: number; lng: number } | null = warm ? { lat: warm.lat, lng: warm.lng } : null;
-      if (!loc && navigator.geolocation) {
-        loc = await new Promise((res) => navigator.geolocation.getCurrentPosition(
-          (p) => res({ lat: p.coords.latitude, lng: p.coords.longitude }),
-          () => res(null), { timeout: 10000, maximumAge: 60000 }));
+      if (!loc) {
+        // 🔴 نفس سبب `RecordingsTable`: النداء المباشر بيطلّع رسالة إذن الموقع
+        //    للموقع الإلكتروني جوّه التطبيق.
+        const fx = await gpsService.getFreshFix({ timeoutMs: 10000 }).catch(() => null);
+        loc = fx ? { lat: fx.lat, lng: fx.lng } : null;
       }
       if (!loc) { alert("تعذّر تحديد موقعك — تأكد من إذن الـ GPS."); return; }
       setUserLoc(loc); setNearest(true);

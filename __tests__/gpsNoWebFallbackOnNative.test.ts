@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -33,7 +33,6 @@ describe("الموقع — مافيش سقوط على الويب جوّه الت
     // دلوقتي الفحص مركزي، فأي نداء تاني معناه إن النمط القديم رجع في مكان ما.
     const hits = code.split("Capacitor.isNativePlatform()").length - 1;
     expect(hits).toBe(1);
-    // والنداء الوحيد ده لازم يكون جوّه الدالة المركزية.
     const fnStart = code.indexOf("export async function isNativeApp");
     const fnEnd = code.indexOf("export function __resetNativeCache");
     const call = code.indexOf("Capacitor.isNativePlatform()");
@@ -45,6 +44,48 @@ describe("الموقع — مافيش سقوط على الويب جوّه الت
   it("🔴 كل فرع أصلي بيتحدّد بـ`await isNativeApp()` بره الـtry", () => {
     const n = code.split("await isNativeApp()").length - 1;
     expect(n).toBeGreaterThanOrEqual(4);   // startTracking · getFreshFix · getFreshReading · pinCurrentLocation
+  });
+});
+
+/**
+ * 🔴 **`navigator.geolocation` ليها مكان واحد بس: `lib/gps.ts`.**
+ *
+ * أي صفحة أو مكوّن بينده الواجهة دي **مباشرةً** بيتخطّى فحص المنصّة — فعلى
+ * آيفون بتطلع رسالة إذن الموقع للموقع الإلكتروني جوّه التطبيق.
+ *
+ * ⚠️ ده كان حاصل في **٣ أماكن** («الأقرب» في الفرز، وجدولَي السجلات والمطلوب)
+ *    بعد ما `lib/gps.ts` اتصلّحت — يعني الإصلاح كان **ناقص** من غير الحارس ده.
+ */
+describe("نداء الموقع مركزي — مافيش نداء مباشر بره lib/gps.ts", () => {
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === ".next") continue;
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (full.endsWith(".ts") || full.endsWith(".tsx")) out.push(full);
+    }
+    return out;
+  }
+
+  it("🔴 الوحيد اللي بينده navigator.geolocation هو lib/gps.ts", () => {
+    const offenders: string[] = [];
+    let scanned = 0;
+    for (const root of ["app", "components", "lib"]) {
+      for (const f of walk(join(process.cwd(), root))) {
+        scanned++;
+        const rel = f.replace(process.cwd(), "").split("\\").join("/");
+        if (rel.endsWith("/lib/gps.ts")) continue;            // المكان المسموح الوحيد
+        // ⚠️ الكود بلا تعليقات — التعليقات بتذكر الاسم عشان توثّق الحادثة،
+        //    فالبحث الخام بيمسك نفسه ويفشل بالغلط (حصل فعلاً وإحنا بنكتبه).
+        const body = readFileSync(f, "utf8")
+          .split(/\r?\n/)
+          .filter((l) => { const t = l.trim(); return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*"); })
+          .join("\n");
+        if (body.includes("navigator.geolocation")) offenders.push(rel);
+      }
+    }
+    expect(scanned).toBeGreaterThan(50);                       // الحارس فحص فعلاً
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -69,9 +110,8 @@ describe("تشغيل فعلي — الأصلي بيفشل، الويب مايت�
       },
     });
     vi.stubGlobal("window", globalThis);
-    // على الجهاز
     vi.doMock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true } }));
-    // والنداء الأصلي بيرمي — نفس حالة المهلة/القفلة الباردة
+    // النداء الأصلي بيرمي — نفس حالة المهلة/القفلة الباردة
     vi.doMock("@capacitor/geolocation", () => ({
       Geolocation: {
         requestPermissions: async () => ({ location: "granted" }),
@@ -82,7 +122,11 @@ describe("تشغيل فعلي — الأصلي بيفشل، الويب مايت�
     }));
   });
 
-  afterEach(() => { vi.unstubAllGlobals(); vi.doUnmock("@capacitor/core"); vi.doUnmock("@capacitor/geolocation"); });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("@capacitor/core");
+    vi.doUnmock("@capacitor/geolocation");
+  });
 
   it("🔴 getFreshReading: الأصلي رمى ⇒ صفر نداء للويب", async () => {
     const m = await import("@/lib/gps");
