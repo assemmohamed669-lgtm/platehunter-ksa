@@ -84,6 +84,27 @@ export async function isNativeApp(): Promise<boolean> {
 /** للاختبارات بس — يصفّر الكاش. */
 export function __resetNativeCache(): void { nativeCache = null; }
 
+/**
+ * 🔴 **الأحدث بالوقت — مش الأول في الترتيب.**
+ *
+ * لما القراءة الطازة تفشل بنرجع لأحسن موجود. والكود كان بيكتب
+ * `lastRaw ?? lastCoords` — يعني بيفضّل `lastRaw` **حتى لو قديم**.
+ * و`lastRaw` بيتحدّث من `getFreshReading` بس، بينما `lastCoords` بيتحدّث من
+ * المراقب (`watchPosition`) **كل ثانية**.
+ *
+ * فلو النداء الأصلي نجح مرة وبعدها فشل، كل اللوحات اللي بعدها كانت بتاخد
+ * **نفس النقطة المجمّدة** — بلاغ مندوب آيفون ٢٧ سبتمبر: «الصوت بياخد نفس
+ * الموقع لكل اللوحات».
+ */
+export function freshestOf(
+  a: GpsCoords | null | undefined,
+  b: GpsCoords | null | undefined,
+): GpsCoords | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return b.timestamp > a.timestamp ? b : a;   // التعادل ⇒ الأول (سلوك ثابت)
+}
+
 class GpsService {
   private watchId: number | null = null;
   private capWatchId: string | null = null;
@@ -301,7 +322,12 @@ class GpsService {
           const { Geolocation } = await import("@capacitor/geolocation");
           return applyRaw(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout, maximumAge: 0 }));
         } catch { /* فشل على الجهاز — المخزّن، **مش** الويب (رسالة الإذن) */ }
-        return this.lastRaw ?? this.lastCoords;
+        // 🔴 **كان `this.lastRaw ?? this.lastCoords`** — وده بيفضّل قراءة
+        //    **قديمة** على الفيكس الحي. `lastRaw` بيتحدّث من هنا بس، فلو النداء
+        //    الأصلي فشل مرة واحدة بعد نجاح، كل اللوحات اللي بعدها كانت بتاخد
+        //    **نفس النقطة المجمّدة** — بينما المراقب (`watchPosition`) بيحدّث
+        //    `lastCoords` كل ثانية. بلاغ مندوب آيفون ٢٧ سبتمبر.
+        return freshestOf(this.lastRaw, this.lastCoords);
       }
       try {
         if (navigator.geolocation) {
@@ -309,8 +335,8 @@ class GpsService {
             navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, maximumAge: 0, timeout }));
           return applyRaw(pos);
         }
-      } catch { /* فشل — نرجّع المخزّن */ }
-      return this.lastRaw ?? this.lastCoords;
+      } catch { /* فشل — نرجّع الأحدث المتاح */ }
+      return freshestOf(this.lastRaw, this.lastCoords);
     })();
     try { return await this.freshInFlight; }
     finally { this.freshInFlight = null; }
