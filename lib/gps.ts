@@ -44,6 +44,46 @@ export function gpsAccuracyLevel(accuracy: number): "good" | "ok" | "poor" {
   return "poor";
 }
 
+/**
+ * 🔴 **هل احنا جوّه التطبيق (Capacitor) ولا متصفّح عادي؟**
+ *
+ * بلاغ المالك (٢٧ سبتمبر ٢٠٢٦، صورة شاشة): وسط شغل المندوب بتطلع رسالة
+ * «platehunter-ksa.vercel.app would like to use your current location».
+ * والرسالة نفسها بتقول إن **«قناص اللوحات» واخد الإذن خلاص** — يعني الإذن
+ * الأصلي موجود، واللي بيتطلب هو إذن **الموقع للموقع الإلكتروني** جوّه
+ * الـWebView، وهو إذن منفصل تماماً على آيفون.
+ *
+ * السبب: كل دوال الموقع كانت مكتوبة كده —
+ *
+ *     try {
+ *       if (Capacitor.isNativePlatform()) { ...الأصلي...; return; }
+ *     } catch { }
+ *     ...الويب...                       ← ⚠️ بيتنفّذ لو **الأصلي رمى**
+ *
+ * فلو نداء الموقع الأصلي فشل (مهلة · قفلة باردة · الأقمار مش لاقية) الـcatch
+ * بيبلع الغلط و**يقع على `navigator.geolocation`** — وده اللي بيطلّع رسالة
+ * الإذن. عشان كده بتظهر «أوقات» بس: كل ما القراءة الأصلية تفشل.
+ *
+ * ⇒ الفحص اتنقل **بره** الـtry: على الجهاز بنستعمل الأصلي **بس**، ولو فشل
+ *   نرجّع آخر موقع مخزّن. الويب مابقاش يتنفّذ إلا لو إحنا فعلاً في متصفّح.
+ *
+ * والنتيجة بتتخزّن — المنصّة مابتتغيّرش وسط الجلسة.
+ */
+let nativeCache: boolean | null = null;
+export async function isNativeApp(): Promise<boolean> {
+  if (nativeCache !== null) return nativeCache;
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    nativeCache = Capacitor.isNativePlatform() === true;
+  } catch {
+    nativeCache = false;   // المكتبة مش موجودة = متصفّح
+  }
+  return nativeCache;
+}
+
+/** للاختبارات بس — يصفّر الكاش. */
+export function __resetNativeCache(): void { nativeCache = null; }
+
 class GpsService {
   private watchId: number | null = null;
   private capWatchId: string | null = null;
@@ -61,10 +101,9 @@ class GpsService {
     this.startCount++;
     if (this.startCount > 1) return;
 
-    // Native Android: use Capacitor Geolocation plugin
-    try {
-      const { Capacitor } = await import("@capacitor/core");
-      if (Capacitor.isNativePlatform()) {
+    // على الجهاز: الأصلي **بس**. لو فشل مانقعش على الويب (شوف `isNativeApp`).
+    if (await isNativeApp()) {
+      try {
         const { Geolocation } = await import("@capacitor/geolocation");
         await Geolocation.requestPermissions();
 
@@ -100,13 +139,16 @@ class GpsService {
           }
         );
         this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 1000);
-        return;
+      } catch (e) {
+        // ⚠️ **بلا سقوط على الويب** — ده كان بيطلّع رسالة إذن الموقع للموقع
+        //    الإلكتروني وسط شغل المندوب. التتبّع بيفضل على آخر موقع مخزّن.
+        console.warn("Capacitor geolocation failed (native):", e);
+        this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 1000);
       }
-    } catch (e) {
-      console.warn("Capacitor geolocation failed, falling back to web API:", e);
+      return;
     }
 
-    // Web fallback (browser)
+    // متصفّح عادي بس
     if (!navigator.geolocation) {
       console.warn("Geolocation not supported");
       return;
@@ -202,13 +244,13 @@ class GpsService {
       return this.lastCoords;
     };
 
-    try {
-      const { Capacitor } = await import("@capacitor/core");
-      if (Capacitor.isNativePlatform()) {
+    if (await isNativeApp()) {
+      try {
         const { Geolocation } = await import("@capacitor/geolocation");
         return apply(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout, maximumAge: 0 }));
-      }
-    } catch { /* أقمار فشلت/مش native — نجرّب web تحت وإلا نرجّع المخزّن */ }
+      } catch { /* فشل على الجهاز — المخزّن، **مش** الويب (رسالة الإذن) */ }
+      return warm;
+    }
 
     try {
       if (navigator.geolocation) {
@@ -254,13 +296,13 @@ class GpsService {
     };
 
     this.freshInFlight = (async () => {
-      try {
-        const { Capacitor } = await import("@capacitor/core");
-        if (Capacitor.isNativePlatform()) {
+      if (await isNativeApp()) {
+        try {
           const { Geolocation } = await import("@capacitor/geolocation");
           return applyRaw(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout, maximumAge: 0 }));
-        }
-      } catch { /* مش native/فشل — نجرّب web وإلا نرجّع المخزّن */ }
+        } catch { /* فشل على الجهاز — المخزّن، **مش** الويب (رسالة الإذن) */ }
+        return this.lastRaw ?? this.lastCoords;
+      }
       try {
         if (navigator.geolocation) {
           const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -300,10 +342,9 @@ class GpsService {
     });
     let lastErr: unknown = null;
 
-    // Native Android — أقمار ثم شبكة.
-    try {
-      const { Capacitor } = await import("@capacitor/core");
-      if (Capacitor.isNativePlatform()) {
+    // على الجهاز — أقمار ثم شبكة، وبلا أي سقوط على الويب.
+    if (await isNativeApp()) {
+      try {
         const { Geolocation } = await import("@capacitor/geolocation");
         for (const opts of [
           { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
@@ -315,16 +356,14 @@ class GpsService {
             return coords;
           } catch (e) { lastErr = e; }
         }
-        // الاتنين فشلوا — الفيكس القديم أحسن من لا شيء، بس **معلَّم**.
-        if (this.lastCoords) return { ...this.lastCoords, stale: true };
-        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "GPS unavailable"));
-      }
-    } catch (e) {
+      } catch (e) { lastErr = e; }
+      // الاتنين فشلوا — الفيكس القديم أحسن من لا شيء، بس **معلَّم**.
+      // ⚠️ **مانكمّلش للويب** — ده اللي كان بيطلّع رسالة إذن الموقع.
       if (this.lastCoords) return { ...this.lastCoords, stale: true };
-      lastErr = e;
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "GPS unavailable"));
     }
 
-    // Web — نفس المرحلتين.
+    // متصفّح عادي — نفس المرحلتين.
     if (!navigator.geolocation) {
       if (this.lastCoords) return { ...this.lastCoords, stale: true };
       throw new Error("Geolocation not supported");
