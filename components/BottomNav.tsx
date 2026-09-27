@@ -113,21 +113,37 @@ export default function BottomNav() {
   // صلاحية المستخدم — بتحدد ظهور تبويب التسجيل (سوبر) و«رفع داتا» (أدمن) +
   // هل باقي الصفحات مقفولة (المشترك «صوت VoiceX فقط»).
   useEffect(() => {
-    (async () => {
+    let alive = true;
+    const loadPerms = async (): Promise<void> => {
       try {
         const { data } = await supabase.auth.getUser();
-        if (!data.user) return;
+        if (!data.user) return;   // الجلسة لسه بتترجّع — المستمعين تحت هيعيدوا لما تجهز
         const { data: prof } = await supabase.from("profiles")
           .select("is_super, role, rest_pages_enabled, rest_until, voicex_enabled, voicex_until").eq("id", data.user.id).single();
-        setIsSuper(!!prof?.is_super);
-        setIsAdmin(prof?.role === "admin");
+        if (!alive || !prof) return;
+        setIsSuper(!!prof.is_super);
+        setIsAdmin(prof.role === "admin");
         // ✨ «الجديد» بتظهر مع «صوتي» وبتختفي معاها — زرّ «فتح الصوت» الواحد.
         setHasVoice(canOpenTrialPage(prof as Parameters<typeof canOpenTrialPage>[0]));
         // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه سارية) — أو سوبر أدمن.
-        const rp = prof as { is_super?: boolean; rest_pages_enabled?: boolean; rest_until?: string | null } | null;
-        setRestPages(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));
-      } catch { /* غير متاح — يفضل مخفي */ }
-    })();
+        const rp = prof as { is_super?: boolean; rest_pages_enabled?: boolean; rest_until?: string | null };
+        setRestPages(rp.is_super === true || (rp.rest_pages_enabled !== false && serviceActive(rp.rest_until)));
+      } catch { /* غير متاح — المستمعين هيعيدوا المحاولة */ }
+    };
+    // 🔴 إصلاح «الصفحتين (التشييك/الجديد) مش بيظهروا إلا لما أقفل وأفتح»:
+    //    كان بيتحمّل **مرة واحدة** وبيخرج لو الجلسة لسه بتترجّع (شائع في البداية
+    //    الباردة/iOS) — فالتبويبات المربوطة بالخدمة تفضل مخفية للجلسة كلها.
+    //    دلوقتي بنعيد الجلب لما الجلسة تجهز (onAuthStateChange) أو البرنامج يرجع
+    //    للواجهة (visibilitychange) — بلا ما المندوب يقفل ويفتح.
+    void loadPerms();
+    const { data: sub } = supabase.auth.onAuthStateChange(() => { void loadPerms(); });
+    const onVis = () => { if (document.visibilityState === "visible") void loadPerms(); };
+    try { document.addEventListener("visibilitychange", onVis); } catch { /* ignore */ }
+    return () => {
+      alive = false;
+      try { sub.subscription.unsubscribe(); } catch { /* ignore */ }
+      try { document.removeEventListener("visibilitychange", onVis); } catch { /* ignore */ }
+    };
   }, []);
 
   // باقي الصفحات مقفولة (+ VoiceX مفتوح) = «صوت فقط» → تبويب التشييك بس.
