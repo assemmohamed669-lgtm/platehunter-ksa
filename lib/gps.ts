@@ -300,9 +300,22 @@ class GpsService {
    */
   private lastRaw: GpsCoords | null = null;
   private freshInFlight: Promise<GpsCoords | null> | null = null;
+  /** وقت بدء القراءة الطايرة — المشاركة محدودة بنفس اللحظة بس (شوف تحت). */
+  private freshInFlightAt = 0;
 
-  async getFreshReading(opts: { maxAgeMs?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
+  async getFreshReading(opts: { maxAgeMs?: number; maxAccuracyM?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
     const maxAge = opts.maxAgeMs ?? 900;
+    /**
+     * 📏 **الدقة شرط، مش بس الحداثة.**
+     *
+     * قاعدة المالك (٢٧ سبتمبر ٢٠٢٦): «كل سيارة يبقى ليها موقع **دقيق** خاص
+     * بيها». الحداثة وحدها مابتكفّيش — فيكس عمره نص ثانية بدقة ٢٠٠ متر
+     * (شبكة/واي-فاي جوّه مبنى) بيدّي كل لوحة نقطة «مختلفة» بس كلها غلط.
+     *
+     * ٢٥ متر = جوّه نطاق `good`→`ok` في `gpsAccuracyLevel`، وكفاية تحدّد
+     * العربية في الشارع. أوحش من كده ⇒ نطلب قراءة أقمار جديدة.
+     */
+    const maxAcc = opts.maxAccuracyM ?? 25;
     const timeout = opts.timeoutMs ?? 8000;
     /**
      * 🔴 **المراقب الحي مصدر شرعي — مش بس `lastRaw`.**
@@ -320,16 +333,22 @@ class GpsService {
      * لحظتها هي — وبلا انتظار ولا طلب زيادة.
      */
     const warm = freshestOf(this.lastRaw, this.lastCoords);
-    if (warm && Date.now() - warm.timestamp <= maxAge) return warm;
+    // حديث **ودقيق** — الشرطين مع بعض. لو واحد ناقص نطلب قراءة جديدة.
+    if (warm && Date.now() - warm.timestamp <= maxAge && warm.accuracy <= maxAcc) return warm;
     /**
-     * 🔴 **طلب طاير؟ مانستناهوش.**
+     * 🔴 **مشاركة الطلب الطاير كانت بتدّي لوحات كتير نفس النقطة.**
      *
-     * كان `return this.freshInFlight` — يعني كل اللوحات اللي بتيجي أثناء قراءة
-     * واحدة بتستنى **نفس الوعد** وبتاخد **نفس الإحداثيات**. نرجّع أحدث موجود
-     * دلوقتي، والقراءة الطايرة بتفضل ماشية وبتغذّي اللي بعدها. ولو مفيش أي
-     * قراءة لسه (بداية الجلسة) ساعتها بس نستنى — أحسن من بلا موقع.
+     * كان `return this.freshInFlight` بلا أي حد زمني — فطول ما فيه قراءة
+     * طايرة، **كل** اللوحات بتستنّاها وبتاخد **نفس الإحداثيات بالحرف**. وعلى
+     * الآيفون القراءة بتاخد ثواني وإيقاع النطق ~٣ث ⇒ ٢-٣ لوحات في كل قراءة.
+     *
+     * المشاركة نفسها مطلوبة — من غيرها المندوب اللي بينطق بسرعة بيفتح عشرات
+     * طلبات الموقع مع بعض. بس لازم تبقى **محدودة بنفس اللحظة**: اللوحات في
+     * نفس الـ٩٠٠ مللي موقعها فعلاً واحد؛ أبعد من كده لوحة جديدة = قراءة جديدة.
+     *
+     * قاعدة المالك: «كل سيارة ليها موقعها الخاص بيها ويكون دقيق».
      */
-    if (this.freshInFlight) return warm ?? this.freshInFlight;
+    if (this.freshInFlight && Date.now() - this.freshInFlightAt <= maxAge) return this.freshInFlight;
 
     const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
       const raw: GpsCoords = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
@@ -340,7 +359,8 @@ class GpsService {
       return raw;
     };
 
-    this.freshInFlight = (async () => {
+    const started = Date.now();
+    const call = (async () => {
       if (await isNativeApp()) {
         try {
           const { Geolocation } = await import("@capacitor/geolocation");
@@ -362,8 +382,15 @@ class GpsService {
       } catch { /* فشل — نرجّع الأحدث المتاح */ }
       return freshestOf(this.lastRaw, this.lastCoords);
     })();
-    try { return await this.freshInFlight; }
-    finally { this.freshInFlight = null; }
+    this.freshInFlight = call;
+    this.freshInFlightAt = started;
+    try { return await call; }
+    finally {
+      // ⚠️ **مانمسحش وعد غيرنا.** المشاركة بقت محدودة بنفس اللحظة، يعني ممكن
+      //    تبقى فيه قراءتان طايرتان لِلوحتين بعيدتين عن بعض. لو مسحنا على
+      //    طول، القراءة الأحدث بتتشال من تحت اللي بعدها ويحصل طوفان طلبات.
+      if (this.freshInFlight === call) { this.freshInFlight = null; this.freshInFlightAt = 0; }
+    }
   }
 
   /**
