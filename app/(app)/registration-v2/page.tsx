@@ -52,6 +52,7 @@ import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
+import { voiceProTable } from "@/lib/voiceProTable";
 import { rowCheckCols } from "@/lib/wantedColumns";
 import { splitByAgent, isMine } from "@/lib/draftByAgent";
 
@@ -1729,6 +1730,8 @@ export default function RegistrationV2Page() {
    */
   const showArea = rows.some((r) => !!r.area);
   const showRecorder = rows.some((r) => !!r.recorder);
+  /** 🗑️ بلا ترقيم + سلة بدل × — السوبر أدمن الأول (`lib/voiceProTable.ts`) */
+  const proTable = voiceProTable(isSuper);
   const gpsLevel = gps ? gpsAccuracyLevel(gps.accuracy) : null;
 
   /* ── حسابات التقرير ── */
@@ -2072,7 +2075,7 @@ export default function RegistrationV2Page() {
                     : "divide-slate-200 border-slate-300 bg-slate-50 text-slate-500")}>
                   {/* ⑥ عمود صغير للمسح — على قد العلامة بالظبط */}
                   <Th className="w-7">{""}</Th>
-                  <Th className="w-8">#</Th>
+                  {proTable.rowNumbers && <Th className="w-8">#</Th>}
                   <Th className="w-32">رقم اللوحة</Th>
                   {/*
                     * المالك: «العمود بتاعهم صغير». كانوا w-20/w-24 (٨٠/٩٦px)
@@ -2135,10 +2138,10 @@ export default function RegistrationV2Page() {
                       <button type="button" title="امسح اللوحة دي"
                         onClick={() => setRows((prev) => prev.filter((x) => x.id !== r.id))}
                         className="rounded-md p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600">
-                        <X size={12} />
+                        {proTable.deleteIcon === "trash" ? <Trash2 size={12} /> : <X size={12} />}
                       </button>
                     </td>
-                    <Td className="text-slate-400">{rows.length - i}</Td>
+                    {proTable.rowNumbers && <Td className="text-slate-400">{rows.length - i}</Td>}
                     <Td>
                       {/* ✏️ اللوحة نفسها قابلة للتعديل — لو الموديل غلط المندوب يصحّحها.
                           طلب المالك ٢٣ سبتمبر: «قلم عند اللوحة علشان لو غلط المندوب يعدلها بإيده». */}
@@ -2225,7 +2228,7 @@ export default function RegistrationV2Page() {
                   /* 🚨 تفاصيل المطلوبة تحت الصف — نوع/شركة/شاص/شهادة */
                   r.match ? (
                     <tr key={r.id + "-d"} className="border-b border-rose-100 bg-rose-50">
-                      <td colSpan={8 + (showArea ? 1 : 0) + (showRecorder ? 1 : 0) + (isSuper ? 3 : 0)} className="px-2 pb-2">
+                      <td colSpan={(proTable.rowNumbers ? 8 : 7) + (showArea ? 1 : 0) + (showRecorder ? 1 : 0) + (isSuper ? 3 : 0)} className="px-2 pb-2">
                         <MatchDetails row={r} cols={rowCheckCols(r.match, checkCols)}
                           vin={plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)))} />
                       </td>
