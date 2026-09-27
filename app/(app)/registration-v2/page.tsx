@@ -1730,7 +1730,7 @@ export default function RegistrationV2Page() {
    */
   const showArea = rows.some((r) => !!r.area);
   const showRecorder = rows.some((r) => !!r.recorder);
-  /** 🗑️ بلا ترقيم + سلة بدل × — السوبر أدمن الأول (`lib/voiceProTable.ts`) */
+  /** 🗑️ بلا ترقيم + سلة بدل × — للكل (`lib/voiceProTable.ts`) */
   const proTable = voiceProTable(isSuper);
   const gpsLevel = gps ? gpsAccuracyLevel(gps.accuracy) : null;
 
