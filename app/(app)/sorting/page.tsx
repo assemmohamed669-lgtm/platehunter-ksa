@@ -23,7 +23,7 @@ import { combinedDupColorMap } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
-import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
+import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, recordDateOf, hasDateColumn, RECORD_DATE_LABEL, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
@@ -1166,7 +1166,18 @@ export default function SortingPage() {
     // أعمدة مالهاش لازمة في نتيجة السجلات (بطلب المندوب): الملاحظات/البنك/
     // الشاص/الهيكل، وأعمدة اللوحة المكررة اللي بتتلحق آخر النافذة. «رقم اللوحة»
     // الأساسي مش منها — بيتحط لوحده في أول الصف قبل الأعمدة دي.
-    return [...fixed, ...leftovers].filter((c) => !isHiddenTashyeekCol(c.label));
+    const cols = [...fixed, ...leftovers].filter((c) => !isHiddenTashyeekCol(c.label));
+    // 📅 **تاريخ التسجيل مضمون** (بلاغ المالك ٢٧ سبتمبر ٢٠٢٦): نتيجة الداتا كان
+    // فيها تاريخ ونتيجة السجلات لأ. السجل جاي من التطبيق ووقت تشييكه متسجّل
+    // معاه دايماً، فلو مافيش عمود تاريخ اتحلّ من الشيت بنضيفه إحنا — العمود
+    // بيقرا بـ`recordDateOf` فبيشتغل مهما كان اسم عمود التاريخ في الشيت.
+    if (!hasDateColumn(cols)) {
+      cols.push({
+        id: "tash-date", key: "date", label: RECORD_DATE_LABEL,
+        source: "data", sourceCol: RECORD_DATE_LABEL, sourceCols: [RECORD_DATE_LABEL],
+      });
+    }
+    return cols;
   }, [tashyeekTable, tashyeekPlateCol, referralTable, effectiveReferralPlateCol, extraReferrals]);
 
   // كل أعمدة النتيجة = الثابتة + داتا إضافية مختارة + إحالة إضافية مختارة
@@ -2569,6 +2580,22 @@ export default function SortingPage() {
     return col.dupCols?.length ? joinDupValues(row, { sourceCol: col.sourceCol, dupCols: col.dupCols }) : "";
   }
 
+  /**
+   * 📅 **خلية صف السجلات** — مصدر واحد للعرض والمشاركة والواتساب والصورة.
+   *
+   * العمود بيتقرا من مصدره الأساسي وبعدين من التاني. وعمود **التاريخ** له
+   * احتياطي زيادة: `recordDateOf` بتلاقي وقت التشييك في الصف مهما كان اسم
+   * العمود — لأن شيت السجلات بيحمل أعمدة ملف التشييك الأصلي كمان، فممكن يكون
+   * فيه عمود تاريخ تاني **فاضي** ياخد الخانة ويطلّع النتيجة بلا تاريخ.
+   */
+  function tashCellValue(r: TashyeekResultRow, c: MergedResultColumn): string {
+    const v = c.source === "referral"
+      ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
+      : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
+    if (v) return v;
+    return c.key === "date" ? recordDateOf(r.tashyeekRow) : "";
+  }
+
   function plateForRow(r: MatchResult): string {
     const ref = bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? ""));
     const data = bankPlateToArabic(String(r.dataRow?.[effectiveDataPlateCol ?? ""] ?? ""));
@@ -2699,10 +2726,12 @@ export default function SortingPage() {
     const obj: Record<string, unknown> = { "رقم اللوحة": plate };
     // نفس أعمدة العرض وبنفس الترتيب — عشان الواتساب والإكسيل والصورة يطلعوا
     // زي اللي المندوب شايفه في النافذة بالظبط.
-    for (const c of orderedTashyeekCols) {
-      obj[c.label] = c.source === "referral"
-        ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
-        : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
+    for (const c of orderedTashyeekCols) obj[c.label] = tashCellValue(r, c);
+    // 📅 تاريخ التسجيل بيتحط دايماً لو موجود — حتى لو المندوب مخفي العمود من
+    //    الترتيب المخصّص، المشاركة لازم تبان فيها متى اتشيّكت العربية.
+    if (!String(obj[RECORD_DATE_LABEL] ?? "").trim()) {
+      const d = recordDateOf(r.tashyeekRow);
+      if (d) obj[RECORD_DATE_LABEL] = d;
     }
     if (nearestActive && dist != null && Number.isFinite(dist)) obj["المسافة"] = formatDistanceKm(dist);
     return obj;
@@ -3965,9 +3994,7 @@ export default function SortingPage() {
                         {orderedTashyeekCols.map((c) => {
                           // عمود من شيت السجلات → يتقرا من صف السجل؛ من المحفظة →
                           // من صف الإحالة. وبنسيب الاحتياطي على المصدر التاني.
-                          const val = c.source === "referral"
-                            ? (cellValue(r.referralRow, c) || cellValue(r.tashyeekRow, c))
-                            : (cellValue(r.tashyeekRow, c) || cellValue(r.referralRow, c));
+                          const val = tashCellValue(r, c);
                           return (
                             <td key={c.id} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
                               {(() => {
