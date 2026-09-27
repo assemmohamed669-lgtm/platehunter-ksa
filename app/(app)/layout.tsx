@@ -26,6 +26,7 @@ import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, typ
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 import { getDevicePlatform } from "@/lib/devicePlatform";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
+import { rememberPage } from "@/lib/lastPage";
 
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -36,6 +37,16 @@ export default function AppShellLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+
+  /**
+   * 📄 نفتكر آخر صفحة عشان الرجوع للتطبيق يفتح عليها.
+   *
+   * 🔴 نظام التليفون بيعيد تحميل الـWebView لما التطبيق يفضل في الخلفية (ضغط
+   * ذاكرة، والآيفون بيعملها كتير). التحميل بيبدأ من `/`، وشاشة البداية كانت
+   * بتودّيه `/sorting` **ثابتة** — فالمندوب اللي كان بيشيّك يلاقي نفسه في
+   * الفرز ولازم يرجع بنفسه كل مرة. (بلاغ المالك ٢٧ سبتمبر ٢٠٢٦.)
+   */
+  useEffect(() => { if (pathname) rememberPage(pathname); }, [pathname]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cutOff, setCutOff] = useState(false);

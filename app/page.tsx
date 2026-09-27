@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Orbitron } from "next/font/google";
 import { supabase } from "@/lib/supabaseClient";
+import { lastPage } from "@/lib/lastPage";
 
 // خط تقني للاسم — يتحمّل ذاتياً مع البناء فيشتغل حتى بدون نت.
 const brandFont = Orbitron({ subsets: ["latin"], weight: ["700", "900"] });
@@ -23,7 +24,11 @@ export default function HomePage() {
     let dest = "/login";
     const session = supabase.auth
       .getSession()
-      .then(({ data }) => { dest = data.session ? "/sorting" : "/login"; })
+      .then(({ data }) => {
+        // 📄 آخر صفحة كان واقف عليها — مش الفرز دايماً. لو مافيش (أول دخول،
+        //    أو التخزين اتمسح) بنرجع للفرز زي الأول بالظبط.
+        dest = data.session ? (lastPage() ?? "/sorting") : "/login";
+      })
       .catch(() => {});
     const delay = new Promise<void>((r) => setTimeout(r, 2000));
     Promise.all([session, delay]).then(() => router.replace(dest));
