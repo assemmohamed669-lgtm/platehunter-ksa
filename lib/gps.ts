@@ -300,8 +300,6 @@ class GpsService {
    */
   private lastRaw: GpsCoords | null = null;
   private freshInFlight: Promise<GpsCoords | null> | null = null;
-  /** وقت بدء القراءة الطايرة — المشاركة محدودة بنفس اللحظة بس (شوف تحت). */
-  private freshInFlightAt = 0;
 
   async getFreshReading(opts: { maxAgeMs?: number; maxAccuracyM?: number; timeoutMs?: number } = {}): Promise<GpsCoords | null> {
     const maxAge = opts.maxAgeMs ?? 900;
@@ -336,19 +334,20 @@ class GpsService {
     // حديث **ودقيق** — الشرطين مع بعض. لو واحد ناقص نطلب قراءة جديدة.
     if (warm && Date.now() - warm.timestamp <= maxAge && warm.accuracy <= maxAcc) return warm;
     /**
-     * 🔴 **مشاركة الطلب الطاير كانت بتدّي لوحات كتير نفس النقطة.**
+     * قراءة واحدة طايرة في المرة — زي `main` بالظبط.
      *
-     * كان `return this.freshInFlight` بلا أي حد زمني — فطول ما فيه قراءة
-     * طايرة، **كل** اللوحات بتستنّاها وبتاخد **نفس الإحداثيات بالحرف**. وعلى
-     * الآيفون القراءة بتاخد ثواني وإيقاع النطق ~٣ث ⇒ ٢-٣ لوحات في كل قراءة.
+     * ⚠️ **جُرِّب تضييقها لنافذة ٩٠٠ مللي (عشان كل لوحة تاخد قراءتها) واتشال.**
+     * سببان، الاتنين مقيسين في مراجعة ٢٧ سبتمبر ٢٠٢٦:
+     *   ① **صفر عائد على الآيفون** — سورس `@capacitor/geolocation` متحقَّق:
+     *      `createPluginResult` بيوزّع **نفس** الـposition على كل النداءات
+     *      المعلّقة. فالنداءات المتوازية بترجّع نفس النقطة بالحرف برضه.
+     *   ② **وفتح ضرر حقيقي** — قراءتان طايرتان، والأبطأ بتخلص آخر وهي شايلة
+     *      موقع أقدم ⇒ بتكتب فوق الأحدث ويتجمّد الموقع تاني.
      *
-     * المشاركة نفسها مطلوبة — من غيرها المندوب اللي بينطق بسرعة بيفتح عشرات
-     * طلبات الموقع مع بعض. بس لازم تبقى **محدودة بنفس اللحظة**: اللوحات في
-     * نفس الـ٩٠٠ مللي موقعها فعلاً واحد؛ أبعد من كده لوحة جديدة = قراءة جديدة.
-     *
-     * قاعدة المالك: «كل سيارة ليها موقعها الخاص بيها ويكون دقيق».
+     * ⇒ مصدر تمييز كل لوحة هو **المراقب الحي** (الفحص الدافي فوق)، مش نداءات
+     *   متوازية. والمشاركة هنا بتمنع طوفان الطلبات لما المندوب ينطق بسرعة.
      */
-    if (this.freshInFlight && Date.now() - this.freshInFlightAt <= maxAge) return this.freshInFlight;
+    if (this.freshInFlight) return this.freshInFlight;
 
     const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
       const raw: GpsCoords = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
@@ -382,7 +381,6 @@ class GpsService {
       return raw;
     };
 
-    const started = Date.now();
     const call = (async () => {
       if (await isNativeApp()) {
         try {
@@ -406,14 +404,8 @@ class GpsService {
       return freshestOf(this.lastRaw, this.lastCoords);
     })();
     this.freshInFlight = call;
-    this.freshInFlightAt = started;
     try { return await call; }
-    finally {
-      // ⚠️ **مانمسحش وعد غيرنا.** المشاركة بقت محدودة بنفس اللحظة، يعني ممكن
-      //    تبقى فيه قراءتان طايرتان لِلوحتين بعيدتين عن بعض. لو مسحنا على
-      //    طول، القراءة الأحدث بتتشال من تحت اللي بعدها ويحصل طوفان طلبات.
-      if (this.freshInFlight === call) { this.freshInFlight = null; this.freshInFlightAt = 0; }
-    }
+    finally { this.freshInFlight = null; }
   }
 
   /**

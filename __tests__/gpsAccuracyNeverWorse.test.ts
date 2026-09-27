@@ -85,28 +85,34 @@ describe("الدقة ماتقلّش عن المتاح", () => {
     expect(fx?.accuracy).toBe(120);
   });
 
-  it("🔴 قراءة أقدم بتخلص متأخّرة مابتكتبش فوق الأحدث", async () => {
-    // قراءتان طايرتان: البطيئة شايلة موقع أقدم وبتخلص آخر.
-    let n = 0;
-    const m = await svcWith(async () => {
-      n++;
-      if (n === 1) {
-        await new Promise((r) => setTimeout(r, 40));
-        return { coords: { latitude: 24.100, longitude: 46.1, accuracy: 10 }, timestamp: Date.now() - 3000 };
-      }
-      return { coords: { latitude: 24.900, longitude: 46.9, accuracy: 10 }, timestamp: Date.now() };
-    });
+  /**
+   * 🔴 **قراءة راجعة بوقت أقدم مابتحرّكش المخزّن لورا.**
+   *
+   * الجهاز ممكن يرجّع موقعاً مخزّناً عنده بوقت قديم (iOS بيعمل كده مع
+   * `requestLocation` أحياناً). من غير الحارس، القراءة دي بتكتب فوق `lastRaw`
+   * الأحدث ⇒ الموقع بيرجع لورا ويتجمّد — نفس أعراض البلاغ.
+   *
+   * ⚠️ الحالة الأصلية اللي كشفت ده كانت **قراءتين طايرتين** من نافذة مشاركة
+   *    ٩٠٠ مللي. النافذة دي **اتشالت** (صفر عائد على iOS + بتفتح الضرر ده)،
+   *    فالقراءة الطايرة بقت واحدة زي `main`. الحارس فاضل كتأمين رخيص على
+   *    الحالة اللي **لسه** ممكنة: قراءة واحدة بوقت أقدم.
+   */
+  it("🔴 قراءة راجعة بوقت أقدم مابتكتبش فوق الأحدث", async () => {
+    const m = await svcWith(async () => ({
+      coords: { latitude: 24.100, longitude: 46.1, accuracy: 10 },
+      timestamp: Date.now() - 30_000,          // الجهاز رجّع موقع قديم
+    }));
     const svc = m.gpsService as unknown as { lastCoords: Fix | null; lastRaw: Fix | null };
-    svc.lastRaw = null; svc.lastCoords = null;
+    svc.lastCoords = null;
+    // ⚠️ لازم الدافي يبقى **بايت** (> maxAge) وإلا الفحص الدافي بيرجّعه فوراً
+    //    والنداء الأصلي مايحصلش أصلاً — والاختبار يبقى أعمى (حصل فعلاً).
+    svc.lastRaw = { lat: 24.900, lng: 46.9, accuracy: 10, timestamp: Date.now() - 2000 };
 
-    const slow = m.gpsService.getFreshReading({ timeoutMs: 300, maxAgeMs: 0 });
-    await new Promise((r) => setTimeout(r, 5));
-    await m.gpsService.getFreshReading({ timeoutMs: 300, maxAgeMs: 0 });   // الأحدث
-    await slow;                                                            // الأقدم بتخلص بعدها
+    await m.gpsService.getFreshReading({ timeoutMs: 200 });
 
-    // قراءة بصبّة جديدة — الإسناد فوق ضيّق نوع `svc.lastRaw` لـ`null`.
-    // ⚠️ بنفحص `lastRaw` تحديداً: `getLastCoords()` بتمرّ على `pickBetterFix`
-    //    وهي قاعدة تانية (وسلوكها القديم على `main` مش جزء من الدفعة دي).
+    // بصبّة جديدة — الإسناد فوق ضيّق النوع.
+    // بنفحص `lastRaw` تحديداً: `getLastCoords()` بتمرّ على `pickBetterFix`
+    // وهي قاعدة تانية وسلوكها القديم على `main` مش جزء من الدفعة دي.
     const after = (m.gpsService as unknown as { lastRaw: Fix | null }).lastRaw;
     expect(after?.lat).toBe(24.900);     // الأحدث صمد، والأقدم مكتبش فوقه
   });
