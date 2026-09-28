@@ -6506,15 +6506,13 @@ export default function InstantCheckPage() {
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowFieldShareChooser(false)}>
                 <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-4 text-right shadow-xl" onClick={(e) => e.stopPropagation()}>
                   <h3 className="mb-3 text-sm font-bold text-ink">مشاركة شيت التسجيلات</h3>
-                  {/* 📍 للسوبر أدمن الأول — يتفتح للكل بعد ما المالك يجرّب. */}
-                  {isSuper && (
-                    <label className="mb-3 flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-bold text-ink">
-                      <input type="checkbox" checked={shareNoLocation}
-                        onChange={(e) => setShareNoLocation(e.target.checked)}
-                        className="h-4 w-4 accent-primary" />
-                      بدون مواقع (من غير لينكات GPS)
-                    </label>
-                  )}
+                  {/* 📍 للكل — المالك جرّبه وقال «انشر للكل» (٢٨ سبتمبر ٢٠٢٦). */}
+                  <label className="mb-3 flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-bold text-ink">
+                    <input type="checkbox" checked={shareNoLocation}
+                      onChange={(e) => setShareNoLocation(e.target.checked)}
+                      className="h-4 w-4 accent-primary" />
+                    بدون مواقع (من غير لينكات GPS)
+                  </label>
                   <div className="flex flex-col gap-2">
                     <button onClick={() => { setShowFieldShareChooser(false); void shareFieldExcel(); }}
                       className="flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">

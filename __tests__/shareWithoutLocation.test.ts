@@ -70,11 +70,12 @@ describe("توصيل «بدون مواقع» في مشاركة السجلات", 
     expect(code).toMatch(/shareNoLocation \? withoutLocation\(buildFieldRows\(\)\) : buildFieldRows\(\)/);
   });
 
-  it("🔴 الخيار ظاهر في نافذة «مشاركة شيت التسجيلات» — للسوبر أدمن الأول", () => {
+  it("🔴 الخيار ظاهر في نافذة «مشاركة شيت التسجيلات» — للكل", () => {
+    // المالك جرّبه وقال «انشر للكل» (٢٨ سبتمبر ٢٠٢٦) ⇒ مافيش شرط isSuper.
     const i = code.indexOf("مشاركة شيت التسجيلات");
     expect(i).toBeGreaterThan(0);
-    const dialog = code.slice(i, i + 3000);
+    const dialog = code.slice(i, code.indexOf("بدون مواقع", i) + 20);
     expect(dialog).toContain("بدون مواقع");
-    expect(dialog).toMatch(/isSuper && \(/);
+    expect(dialog).not.toMatch(/isSuper/);
   });
 });
