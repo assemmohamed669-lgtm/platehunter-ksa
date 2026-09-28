@@ -101,7 +101,7 @@ export function parseWorkbookViaXlsx(
     let bestCount = 0, bestName: string | undefined;
     for (const name of allSheetNames) {
       try {
-        const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+        const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true, sheets: [name] };
         (scanOpts as Record<string, unknown>).dense = true;
         if (password) (scanOpts as Record<string, unknown>).password = password;
         const wbScan = XLSX.read(data, scanOpts);
@@ -118,7 +118,7 @@ export function parseWorkbookViaXlsx(
     if (!sheetName) {
       for (const name of allSheetNames) {
         try {
-          const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+          const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true, sheets: [name] };
           (scanOpts as Record<string, unknown>).dense = true;
           if (password) (scanOpts as Record<string, unknown>).password = password;
           const wbScan = XLSX.read(data, scanOpts);
@@ -141,7 +141,7 @@ export function parseWorkbookViaXlsx(
 
   // Pass 2: parse only the target sheet.
   const parseOpts: XLSX.ParsingOptions = {
-    type: "array", raw: true, cellDates: true, cellStyles: false, sheetStubs: false,
+    type: "array", raw: true, cellDates: true, cellStyles: true, sheetStubs: false,
   };
   (parseOpts as Record<string, unknown>).dense = true;
   if (password) (parseOpts as Record<string, unknown>).password = password;

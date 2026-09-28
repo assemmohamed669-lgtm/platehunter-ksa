@@ -8,8 +8,8 @@ import * as XLSX from "xlsx";
 import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { makeHeadersUnique } from "./uniqueHeaders";
 import { resolveHyperlinkCells } from "./hyperlink";
-import { trimSheetToData } from "./xlsxRange";
-import { readAllSheetsRawStream } from "./xlsxStream";
+import { trimSheetToData, markHiddenRows } from "./xlsxRange";
+import { readAllSheetsRawStream, scanHiddenRows } from "./xlsxStream";
 
 // ─── فحص خفيف: هل الخلية شكلها لوحة سعودية بعد التطبيع؟ ─────────────────
 // (نسخة خفيفة مستقلة — الـ worker معزول ومايقدرش يستورد من plateParser.ts)
@@ -96,7 +96,7 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
           }
         } catch { /* مش xlsx أو بنية غريبة — نكمل على القارئ العادي */ }
       }
-      const rawOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false };
+      const rawOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true };
       (rawOpts as Record<string, unknown>).dense = true;
       if (password) (rawOpts as Record<string, unknown>).password = password;
       const rawWb = XLSX.read(data, rawOpts);
@@ -186,7 +186,7 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
       let bestName: string | undefined;
       for (const name of allSheetNames) {
         try {
-          const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+          const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true, sheets: [name] };
           (scanOpts as Record<string, unknown>).dense = true;
           if (password) (scanOpts as Record<string, unknown>).password = password;
           const wbScan = XLSX.read(data, scanOpts);
@@ -207,7 +207,7 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
       if (!sheetName) {
         for (const name of allSheetNames) {
           try {
-            const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [name] };
+            const scanOpts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true, sheets: [name] };
             (scanOpts as Record<string, unknown>).dense = true;
             if (password) (scanOpts as Record<string, unknown>).password = password;
             const wbScan = XLSX.read(data, scanOpts);
@@ -229,12 +229,21 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
     }
     sheetName = sheetName ?? allSheetNames[0];
 
+    // 🙈 الصفوف المخفية («انا مش عايز يقرأ المخفي ابدا» — المالك ٢٩ سبتمبر ٢٠٢٦).
+    //    المسار ده بيقرا ملف الداتا متعدد الورقات ورقة-بورقة (مليون صف للورقة)،
+    //    فبنجيب أرقام المخفي بمسح خفيف بدل cellStyles (+٢٠٪ ذاكرة). مش xlsx
+    //    (xlsb/xls/ods/محمي) ⇒ null ⇒ cellStyles عشان العلامة توصل من SheetJS.
+    const hiddenScan = await scanHiddenRows(data, sheetName).catch(() => null);
+    // دورة واحدة للمحرّك قبل القراءة التقيلة — بتدّي فرصة لتنضيف بقايا المسح.
+    // مقيس على ٢٥٠ ألف صف: الذروة +١٥ ميجا (٦٪) معاها و+٣٠ من غيرها.
+    await new Promise<void>((r) => setTimeout(r, 0));
+
     // Pass 2: parse only the target sheet with performance-optimised options
     const opts: XLSX.ParsingOptions = {
       type: "array",
       raw: true,          // skip cell formatting (~30-50% faster)
       cellDates: true,    // خلايا التاريخ تيجي Date (مش رقم تسلسلي) — نفرمتها في cellToStr
-      cellStyles: false,  // skip style parsing
+      cellStyles: hiddenScan === null,   // بس لو المسح ماينفعش (شوف فوق)
       sheetStubs: false,  // no stubs for empty cells
     };
     // dense mode: array-backed worksheet — much faster & far lower memory on
@@ -247,6 +256,7 @@ onmessage = async function (e: MessageEvent<{ buffer: ArrayBuffer; password?: st
     const wb = XLSX.read(data, opts);
     const finalSheet = sheetName ?? wb.SheetNames[0];
     const ws = wb.Sheets[finalSheet];
+    if (hiddenScan) markHiddenRows(ws, hiddenScan);   // trimSheetToData تحت بتشيلهم
 
     // قصّ المدى الوهمي قبل التحويل لصفوف (شوف lib/xlsxRange.ts)
     trimSheetToData(ws);

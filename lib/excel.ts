@@ -525,7 +525,7 @@ export async function readAllSheetsRaw(
  * ٩٩٨ ألف وفيها ١٥٠٠ صف بس — من غير ده الصفحة بتتجمّد والتطبيق بيقفل.
  */
 function readAllSheetsRawSync(data: Uint8Array): { name: string; aoa: unknown[][]; hidden?: boolean }[] {
-  const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false };
+  const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true };
   (opts as Record<string, unknown>).dense = true;
   const wb = XLSX.read(data, opts);
   const hidden = hiddenFlags(wb);
@@ -565,7 +565,7 @@ export async function readAllSheets(
   file: File
 ): Promise<{ sheetName: string; headers: string[]; rows: Record<string, string>[] }[]> {
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: false, cellStyles: false });
+  const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: false, cellStyles: true });
   const out: { sheetName: string; headers: string[]; rows: Record<string, string>[] }[] = [];
   // نفس القاعدة: الورقات المخفية مابتدخلش (وصمام الأمان لو كلها مخفية).
   const hidden = hiddenFlags(wb);
@@ -597,7 +597,7 @@ function _cellLooksLikePlate(raw: string): boolean {
 // عدد لوحات تكسب، عشان ملف بورقات كتير يشتغل على أكبر داتا فيها.
 function _sheetPlateCount(data: Uint8Array, sheetName: string, password?: string): number {
   try {
-    const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true, sheets: [sheetName] };
     (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
@@ -708,7 +708,7 @@ export async function parseExcelStream(data: Uint8Array): Promise<ExcelTable> {
 // يبقى احتياطي قديم لو فشل اكتشاف المحتوى تماماً (ملفات غريبة الشكل)
 function _sheetHasPlateCol(data: Uint8Array, sheetName: string, password?: string): boolean {
   try {
-    const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: false, sheets: [sheetName] };
+    const opts: XLSX.ParsingOptions = { type: "array", raw: false, cellStyles: true, sheets: [sheetName] };
     (opts as Record<string, unknown>).dense = true;
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
@@ -756,7 +756,7 @@ function _visibleSheetNames(data: Uint8Array, all: string[], password?: string):
  */
 function visibleNamesOf(data: Uint8Array, password?: string): string[] | null {
   try {
-    const opts: XLSX.ParsingOptions = { type: "array", sheetRows: 1, cellStyles: false };
+    const opts: XLSX.ParsingOptions = { type: "array", sheetRows: 1, cellStyles: true };
     if (password) (opts as Record<string, unknown>).password = password;
     const wb = XLSX.read(data, opts);
     if (!wb.Workbook?.Sheets) return null;
@@ -812,7 +812,7 @@ function _parseExcelSync(data: Uint8Array, password?: string, forcedSheet?: stri
     type: "array",
     raw: true,
     cellDates: true, // خلايا التاريخ تيجي Date (مش رقم تسلسلي) — نفرمتها في cellToStr
-    cellStyles: false,
+    cellStyles: true,
     sheetStubs: false,
   };
   // dense mode — faster & far lower memory on huge sheets (see xlsxWorker.ts).

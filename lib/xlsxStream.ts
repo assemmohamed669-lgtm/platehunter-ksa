@@ -99,6 +99,18 @@ function internalStreamOf(zip: ZipLike, path: string): JSZipStreamHelper {
 }
 
 // حرف عمود → رقم (A→0 … AA→26)
+/**
+ * 🙈 الصف ده مخفي في إكسيل (فلتر أو «إخفاء» يدوي)؟
+ *
+ * المالك (٢٩ سبتمبر ٢٠٢٦): «انا مش عايز يقرأ المخفي ابدا». ملف «Initiate Repo D»
+ * كان فيه فلتر مخبّي ١٩٣٧ عقد منتهي/مقفول، والبرنامج كان بيقراهم كأنهم ظاهرين
+ * فبيطلعوا للمندوب مطلوبين. البرنامج دلوقتي بيقرا الملف زي ما صاحبه شايفه.
+ */
+function isHiddenRowTag(attrs: Record<string, unknown>): boolean {
+  const h = attrByLocal(attrs, "hidden").trim().toLowerCase();
+  return h === "1" || h === "true";
+}
+
 function colToIdx(ref: string): number {
   const m = /^([A-Z]+)/.exec(ref);
   if (!m) return -1;
@@ -362,6 +374,85 @@ export async function readAllSheetsRawStream(
 }
 
 /**
+ * 🙈 **أرقام الصفوف المخفية** في ورقة xlsx (من صفر) — مسح خفيف على وسوم `<row>`
+ * بس، من غير ما نقرا ولا خلية.
+ *
+ * ليه مش `cellStyles: true` في SheetJS: بيزوّد ذروة ذاكرة القراءة ~٢٠٪ (مقيس على
+ * ٢٥٠ ألف صف)، وملف الداتا متعدد الورقات (٢ مليون صف) قريب من حد الآيفون أصلاً.
+ * المسح ده ذاكرته دفعة نص واحدة.
+ *
+ * `null` = مش xlsx من جوّه (xlsb/xls/ods/محمي) ⇒ المستدعي يرجع لـ`cellStyles`.
+ */
+export async function scanHiddenRows(
+  input: Blob | ArrayBuffer | Uint8Array,
+  sheetName?: string,
+): Promise<Set<number> | null> {
+  let zip: ZipLike;
+  try { zip = await JSZip.loadAsync(input as ArrayBuffer); } catch { return null; }
+  const sheets = await listSheetPaths(zip);
+  const s = sheetName != null ? sheets.find((x) => x.name === sheetName) : sheets[0];
+  if (!s || !s.path || !zip.file(s.path)) return null;
+
+  // بايتات مش نص: فكّ الـUTF-8 لكل الورقة كان بيعمل نصوص بحجم الـXML كله (مئات
+  // الميجات على مليون صف) بتفضل في الذاكرة لحد ما SheetJS يبدأ — فذروة القراءة
+  // كانت بتعلى ~٢٠٪ حتى على ملف مافيهوش ولا صف مخفي. البايتات مابتدخلش الـheap.
+  const f = zip.file(s.path)!;
+  type U8Stream = { on(ev: "data", cb: (c: Uint8Array) => void): U8Stream; on(ev: "end" | "error", cb: () => void): U8Stream; resume(): void };
+  const stream = (f as unknown as { internalStream(type: string): U8Stream }).internalStream("uint8array");
+  return new Promise<Set<number> | null>((resolve) => {
+    const hidden = new Set<number>();
+    const R = /\br="(\d+)"/;
+    const HID = /\b(?:\w+:)?hidden="(?:1|true)"/i;
+    const dec = new TextDecoder();
+    let carry: Uint8Array | null = null;
+    let seen = 0;   // عدد وسوم الصفوف — موضع الصف لو مالوش r (نادر: إكسيل بيكتبه دايماً)
+    // «hidden» جوّه الوسم؟ بندوّر في البايتات — فكّ النص بيتعمل للصف المخفي بس،
+    // مش لكل الصفوف (٢٥٠ ألف نص صغير كانوا بيعلّوا الذروة ~٣٥ ميجا).
+    const HIDDEN = [0x68, 0x69, 0x64, 0x64, 0x65, 0x6e];
+    const hasHidden = (b: Uint8Array, from: number, to: number) => {
+      for (let p = b.indexOf(0x68, from); p >= 0 && p <= to - 6; p = b.indexOf(0x68, p + 1)) {
+        let ok = true;
+        for (let q = 1; q < 6; q++) if (b[p + q] !== HIDDEN[q]) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    };
+    const isEnd = (b: number) => b === 0x20 || b === 0x3e || b === 0x2f || b === 0x09 || b === 0x0a || b === 0x0d;
+    const scan = (chunk: Uint8Array) => {
+      let buf = chunk;
+      if (carry) { buf = new Uint8Array(carry.length + chunk.length); buf.set(carry); buf.set(chunk, carry.length); carry = null; }
+      let i = 0;
+      for (;;) {
+        const lt = buf.indexOf(0x3c, i);           // '<'
+        if (lt < 0) return;
+        let k = lt + 1;
+        while (k < buf.length && !isEnd(buf[k])) k++;
+        if (k >= buf.length) { carry = buf.slice(lt); return; }   // اسم الوسم متقطّع
+        // «row» أو «x:row» (بادئة namespace)
+        const isRow = k - lt >= 4 && buf[k - 3] === 0x72 && buf[k - 2] === 0x6f && buf[k - 1] === 0x77
+          && (k - lt === 4 || buf[k - 4] === 0x3a);
+        if (!isRow) { i = k; continue; }
+        const gt = buf.indexOf(0x3e, k);          // '>'
+        if (gt < 0) { carry = buf.slice(lt); return; }            // الوسم متقطّع
+        const fallback = seen++;
+        if (hasHidden(buf, k, gt)) {
+          const attrs = dec.decode(buf.subarray(k, gt));
+          if (HID.test(attrs)) {
+            const r = R.exec(attrs);
+            hidden.add(r ? parseInt(r[1], 10) - 1 : fallback);
+          }
+        }
+        i = gt + 1;
+      }
+    };
+    stream.on("data", (chunk: Uint8Array) => scan(chunk));
+    stream.on("error", () => resolve(null));
+    stream.on("end", () => resolve(hidden));
+    stream.resume();
+  });
+}
+
+/**
  * بعد الكمّ ده من الصفوف الفاضية **ورا بعض** بنوقف القراءة ونعتبر الورقة خلصت.
  *
  * ليه: محافظ البنوك بتيجي بمدى وهمي — «البنك العربي» ورقتها ١٠٦ ميجا XML فيها
@@ -384,6 +475,7 @@ function streamSheetAoa(
     const aoa: unknown[][] = [];
     const parser = new SaxesParser();
     let row: unknown[] | null = null;
+    let rowHidden = false;
     let curCol = -1, curType: string | null = null, curStyle: number | null = null;
     let inV = false, inT = false, inF = false, valBuf = "", fBuf = "";
     // المعادلات المشتركة: كل ورقة ليها جدول si خاص بيها.
@@ -401,7 +493,7 @@ function streamSheetAoa(
     parser.on("opentag", (t) => {
       if (done) return;
       const n = localName(t.name);
-      if (n === "row") row = [];
+      if (n === "row") { row = []; rowHidden = isHiddenRowTag(t.attributes); }
       else if (n === "c") {
         curCol = colToIdx((t.attributes.r as string) || "");
         curType = (t.attributes.t as string) || null;
@@ -432,6 +524,12 @@ function streamSheetAoa(
       } else if (n === "row") {
         const arr = row || [];
         row = null;
+        // 🙈 الصف المخفي مابيتقراش — إلا أول صف فيه بيانات (العناوين)، عشان
+        //    الملف مايبوظش لو حد خبّى صف العناوين. ومابيتعدّش «فاضي» كمان،
+        //    وإلا فلتر مخبّي ٢٠ ألف صف ورا بعض يوقّف القراءة قبل الظاهر اللي بعده.
+        const hiddenRow = rowHidden;
+        rowHidden = false;
+        if (hiddenRow && aoa.length > 0) return;
         // الصف الفاضي بيتشال هنا — ده اللي بيمنع بناء مليون صف فاضي في الذاكرة.
         if (arr.some((v) => v != null && String(v).trim() !== "")) {
           aoa.push(arr);
@@ -563,6 +661,7 @@ export async function streamXlsxToBatches(
   return new Promise<XlsxStreamMeta>((resolve, reject) => {
     const parser = new SaxesParser();
     let row: string[] | null = null;
+    let rowHidden = false;
     let curCol = -1, curType: string | null = null, curStyle: number | null = null;
     let inV = false, inT = false, valBuf = "";
     // خلية الموقع في ملفات الداتا بتتكتب `=HYPERLINK("https://…","خريطة")` —
@@ -607,7 +706,7 @@ export async function streamXlsxToBatches(
 
     parser.on("opentag", (t) => {
       const n = localName(t.name);
-      if (n === "row") row = [];
+      if (n === "row") { row = []; rowHidden = isHiddenRowTag(t.attributes); }
       else if (n === "c") {
         curCol = colToIdx((t.attributes.r as string) || "");
         curType = (t.attributes.t as string) || null;
@@ -638,6 +737,10 @@ export async function streamXlsxToBatches(
       } else if (n === "row") {
         const arr = row || [];
         row = null;
+        // 🙈 الصف المخفي مابيتقراش (إلا لو هو صف العناوين).
+        const hiddenRow = rowHidden;
+        rowHidden = false;
+        if (hiddenRow && headerKeys) return;
         const hasData = arr.some((v) => v != null && String(v).trim() !== "");
         if (!headerKeys) {
           if (hasData) headerKeys = buildHeaderKeys(arr); // أول صف غير فاضي = الهيدر

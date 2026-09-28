@@ -22,6 +22,8 @@ import * as XLSX from "xlsx";
  */
 export function trimSheetToData(ws: XLSX.WorkSheet | undefined | null): void {
   if (!ws || typeof ws !== "object") return;
+  // 🙈 الصفوف المخفية الأول — كل مسارات SheetJS بتعدّي من هنا قبل التحويل.
+  dropHiddenRows(ws);
   const ref = ws["!ref"];
   if (!ref) return;
 
@@ -98,4 +100,145 @@ export function trimSheetToData(ws: XLSX.WorkSheet | undefined | null): void {
     s: { r: range.s.r, c: range.s.c },
     e: { r: endR, c: endC },
   });
+}
+
+/**
+ * 🙈 **يشيل الصفوف المخفية من الورقة** (فلتر إكسيل أو «إخفاء» يدوي) ويطلّع اللي
+ * بعدها مكانها — فأي قراءة بعدها تشوف الورقة زي ما صاحبها شايفها في إكسيل.
+ *
+ * المالك (٢٩ سبتمبر ٢٠٢٦): «انا مش عايز يقرأ المخفي ابدا». ملف «Initiate Repo D»
+ * كان فيه فلتر مخبّي ١٩٣٧ عقد منتهي/مقفول، والبرنامج كان بيقراهم كأنهم ظاهرين
+ * فبيطلعوا للمندوب مطلوبين.
+ *
+ * ⚠️ علامة الإخفاء بتوصل من SheetJS بس لو الملف اتقرا بـ`cellStyles: true`.
+ * ⚠️ أول صف فيه بيانات (العناوين) مابيتشالش حتى لو مخفي — وإلا الملف كله يبوظ.
+ * الروابط بتتنقل مع خلاياها، والدمج اللي بيعدّي على صف مخفي بيتشال.
+ *
+ * بترجّع عدد الصفوف اللي اتشالت (٠ = الورقة ماتلمستش خالص).
+ */
+export function dropHiddenRows(ws: XLSX.WorkSheet | undefined | null): number {
+  if (!ws || typeof ws !== "object") return 0;
+  const info = ws["!rows"];
+  if (!Array.isArray(info) || !info.some((r) => r?.hidden)) return 0;
+  const W = ws as Record<string, unknown>;
+
+  const hasValue = (cell: unknown): boolean => {
+    const c = cell as { v?: unknown; f?: unknown; l?: unknown } | undefined;
+    if (!c || typeof c !== "object") return false;
+    if (c.f != null || c.l != null) return true;
+    return c.v != null && String(c.v).trim() !== "";
+  };
+  const rowHasValue = (row: unknown) => Array.isArray(row) && row.some(hasValue);
+
+  // المدى المعلن — الأشكال الـdense بتتلف عليه بدل ما نجمّع كل المفاتيح
+  let range: XLSX.Range | null = null;
+  try { range = ws["!ref"] ? XLSX.utils.decode_range(ws["!ref"]) : null; } catch { range = null; }
+
+  // الخلايا بالأشكال التلاتة: sparse ("A1") · dense 0.18 (ws[r]) · dense أحدث (!data)
+  const data = W["!data"];
+  const denseNew = Array.isArray(data);
+  let dense018 = false;
+  if (!denseNew && range) {
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      if (W[r] !== undefined) { dense018 = Array.isArray(W[r]); break; }
+    }
+  }
+  const lastRow = range ? range.e.r : -1;
+  const cells: [string, unknown, number, number][] = [];   // sparse بس
+  let firstDataRow = Infinity;
+  if (denseNew) {
+    const rows = data as unknown[];
+    for (let r = 0; r < rows.length; r++) if (rowHasValue(rows[r])) { firstDataRow = r; break; }
+  } else if (dense018) {
+    for (let r = range!.s.r; r <= lastRow; r++) if (rowHasValue(W[r])) { firstDataRow = r; break; }
+  } else {
+    for (const key in W) {
+      if (key.charCodeAt(0) === 33 /* '!' */) continue;
+      let a: XLSX.CellAddress;
+      try { a = XLSX.utils.decode_cell(key); } catch { continue; }
+      const val = W[key];
+      cells.push([key, val, a.r, a.c]);
+      if (a.r < firstDataRow && hasValue(val)) firstDataRow = a.r;
+    }
+  }
+
+  // الموضع الجديد لكل صف (-1 = اتشال)
+  const dropped = (r: number) => info[r]?.hidden === true && r !== firstDataRow;
+  const newIdx: number[] = [];
+  let removed = 0;
+  for (let r = 0; r < info.length; r++) {
+    if (dropped(r)) { newIdx[r] = -1; removed++; } else newIdx[r] = r - removed;
+  }
+  if (removed === 0) return 0;
+  const idxOf = (r: number) => (r < newIdx.length ? newIdx[r] : r - removed);
+
+  if (denseNew) {
+    const rows = data as unknown[];
+    const next: unknown[] = [];
+    for (let r = 0; r < rows.length; r++) {
+      const nr = idxOf(r);
+      if (nr >= 0 && rows[r] !== undefined) next[nr] = rows[r];
+    }
+    W["!data"] = next;
+  } else if (dense018) {
+    // في مكانها: كل صف بينزل لموضعه الجديد (دايماً أصغر أو زيه)، فالمكان اللي
+    // بيتكتب فيه اتقرا خلاص. وبعدين الذيل بيتشال. مفيش نسخة تانية من الورقة —
+    // ده اللي بيخلّي الذاكرة زي من غير المخفي (ملف الداتا مليون صف على الآيفون).
+    let lastKept = -1;
+    for (let r = 0; r <= lastRow; r++) {
+      const nr = idxOf(r);
+      if (nr < 0) continue;
+      lastKept = nr;
+      if (nr === r) continue;
+      if (W[r] !== undefined) W[nr] = W[r]; else delete W[nr];
+    }
+    for (let r = lastKept + 1; r <= lastRow; r++) delete W[r];
+  } else {
+    for (const [key] of cells) delete W[key];
+    for (const [, val, r, c] of cells) {
+      const nr = idxOf(r);
+      if (nr >= 0) W[XLSX.utils.encode_cell({ r: nr, c })] = val;
+    }
+  }
+
+  // المدى
+  const ref = ws["!ref"];
+  if (ref) {
+    try {
+      const range = XLSX.utils.decode_range(ref);
+      let endR = range.e.r;
+      while (endR > range.s.r && idxOf(endR) < 0) endR--;
+      range.e.r = Math.max(range.s.r, idxOf(endR));
+      ws["!ref"] = XLSX.utils.encode_range(range);
+    } catch { /* مدى مش مفهوم — نسيبه */ }
+  }
+
+  // معلومات الصفوف: الظاهر بس، من غير علامة الإخفاء
+  const nextInfo: XLSX.RowInfo[] = [];
+  for (let r = 0; r < info.length; r++) {
+    const ri = info[r];
+    const nr = idxOf(r);
+    if (!ri || nr < 0) continue;
+    const { hidden: _h, ...rest } = ri;
+    void _h;
+    nextInfo[nr] = rest;
+  }
+  ws["!rows"] = nextInfo;
+
+  // الدمج: اللي بيعدّي على صف اتشال بيتشال، والباقي بيتزحزح
+  const merges = ws["!merges"];
+  if (Array.isArray(merges)) {
+    ws["!merges"] = merges
+      .filter((m) => { for (let r = m.s.r; r <= m.e.r; r++) if (idxOf(r) < 0) return false; return true; })
+      .map((m) => ({ s: { r: idxOf(m.s.r), c: m.s.c }, e: { r: idxOf(m.e.r), c: m.e.c } }));
+  }
+  return removed;
+}
+
+/** بيعلّم الصفوف دي مخفية في الورقة (نتيجة `scanHiddenRows`) — `dropHiddenRows` بتشيلها بعد كده. */
+export function markHiddenRows(ws: XLSX.WorkSheet | undefined | null, rows: Iterable<number>): void {
+  if (!ws || typeof ws !== "object") return;
+  const info = (ws["!rows"] ?? []) as XLSX.RowInfo[];
+  for (const r of rows) info[r] = { ...(info[r] ?? {}), hidden: true };
+  ws["!rows"] = info;
 }
