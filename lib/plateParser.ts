@@ -2286,6 +2286,11 @@ export interface MatchResult {
    * نتيجة كل ملف تطلع في نافذة لوحدها. غايب = ملف واحد (السلوك القديم).
    */
   srcIdx?: number;
+  /**
+   * 📑 اسم الورقة اللي الصف جه منها (ملف داتا متعدد الورقات). بيرتّب النتيجة
+   * بترتيب ورقات المندوب (orderRunsBySheet). غايب = ورقة واحدة/نتيجة قديمة.
+   */
+  sheet?: string;
 }
 
 // ─── دمج شيتات إحالة متعددة (صفحة الفرز) ────────────────────────────────
@@ -2522,6 +2527,9 @@ export interface TokenMatch {
   converted: string;
   row: Record<string, string>;
   dataIdx: number;
+  /** 📑 الورقة والملف اللي الصف جه منهم — لترتيب نتيجة اللصق بترتيب ورقات المندوب. */
+  sheet?: string;
+  srcIdx?: number;
   status: "exact" | "fuzzy";
   similarity?: number;
 }

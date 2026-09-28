@@ -31,6 +31,7 @@ import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from 
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
+import { orderRunsBySheet } from "@/lib/sheetOrder";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
@@ -2283,9 +2284,9 @@ export default function SortingPage() {
       //    يتحرك لعربية غلط. الضرر أكبر من النفع، فاتشالت بأمر المالك
       //    (٢٠٢٦-٠٩-١٣). `lib/fuzzyPlateIndex.ts` متسابة لو اتعملت يوم كقسم
       //    منفصل «للمراجعة» مش كنتيجة مطلوبة.
-      const pushMatch = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number, srcLabel?: string) => {
+      const pushMatch = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number, srcLabel?: string, sheet?: string) => {
         const hit = refIndex.get(n);
-        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx, srcLabel });
+        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", refPlateNorm: hit.norm, dataIdx, srcIdx, srcLabel, ...(sheet ? { sheet } : {}) });
       };
       // ⛔ **تطابق تام بس.** كان بيتحقن هنا مفتاح إضافي بالحروف معكوسة لكل
       //    إحالة إنجليزية — تخمين تاني بعد التحويل الأساسي. والنتيجة كانت
@@ -2297,6 +2298,11 @@ export default function SortingPage() {
       }
       const matches: MatchResult[] = [];
       const CHUNK = 16000;
+      // 📑 ترتيب ورقات كل ملف داتا زي ما المندوب رتّبها في المنتقي (الأول فوق).
+      const sheetOrderBySrc = new Map<number, string[]>();
+      if (dataStreamed && selectedDataSheetFilter && selectedDataSheetFilter.size > 1) {
+        sheetOrderBySrc.set(0, [...selectedDataSheetFilter]);
+      }
       // نلف على كل ملفات الداتا (الأساسي + الإضافية) — كل واحد بعمود لوحته.
       // dataBase = بداية الفهرس العام للملف الحالي (نفس ترتيب collectDataSources)
       // عشان dataIdx يطابق الترتيب المستخدم في نافذة «موقعها».
@@ -2311,7 +2317,7 @@ export default function SortingPage() {
             const idx = gj++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            pushMatch(dataRow, n, idx, 0);
+            pushMatch(dataRow, n, idx, 0, undefined, sheet);
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data", sheets: selectedDataSheetFilter });
@@ -2328,12 +2334,13 @@ export default function SortingPage() {
         // ملف داتا إضافي كبير (streamed): اقرا من الجهاز على دفعات — نفس المطابقة.
         if (src.slot) {
           let gj = 0;
-          await iterateRows(async (batch) => {
+          if (src.sheets && src.sheets.size > 1) sheetOrderBySrc.set(srcBase + si, [...src.sheets]);
+          await iterateRows(async (batch, _b, sheet) => {
             for (const dataRow of batch) {
               const idx = dataBase + gj; gj++;
               const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
               if (!n) continue;
-              pushMatch(dataRow, n, idx, srcBase + si);
+              pushMatch(dataRow, n, idx, srcBase + si, undefined, sheet);
             }
             await new Promise<void>((r) => setTimeout(r, 0));
           }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2352,6 +2359,10 @@ export default function SortingPage() {
           if (end < rows.length) await new Promise<void>((r) => setTimeout(r, 0));
         }
         dataBase += rows.length;
+      }
+      {
+        const byOrder = orderRunsBySheet(matches, (m) => m.srcIdx ?? 0, (g) => sheetOrderBySrc.get(g));
+        for (let k = 0; k < byOrder.length; k++) matches[k] = byOrder[k];
       }
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // لو السجلات مربوطة كخانة داتا، بتظهر في نتيجة الداتا فوق — فمانعملش قسم
@@ -2419,13 +2430,18 @@ export default function SortingPage() {
         }
       }
       // ⛔ تطابق تام بس — نفس سبب الفرز الكلي فوق.
-      const pushNew = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number, srcLabel?: string) => {
+      const pushNew = (dataRow: Record<string, string>, n: string, dataIdx: number, srcIdx: number, srcLabel?: string, sheet?: string) => {
         const hit = newIndex.get(n);
-        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx, srcLabel });
+        if (hit) matches.push({ referralRow: hit.row, dataRow, status: "exact", dataIdx, refPlateNorm: hit.norm, srcIdx, srcLabel, ...(sheet ? { sheet } : {}) });
       };
       // gIdx = فهرس عام متتابع عبر كل مصادر الداتا (أساسي + إضافي) بالترتيب — عشان
       // dataIdx يفضل مطابق لترتيب الملفات بعد الفرز النهائي.
       let gIdx = 0;
+      // 📑 ترتيب ورقات كل ملف داتا زي ما المندوب رتّبها في المنتقي (الأول فوق).
+      const sheetOrderBySrc = new Map<number, string[]>();
+      if (dataStreamed && selectedDataSheetFilter && selectedDataSheetFilter.size > 1) {
+        sheetOrderBySrc.set(0, [...selectedDataSheetFilter]);
+      }
       // (أ) الداتا الأساسية الكبيرة (streamed): مرور واحد على الدفعات من القرص.
       if (dataStreamed && dataStreamMeta) {
         await iterateRows(async (batch, _base, sheet) => {
@@ -2434,7 +2450,7 @@ export default function SortingPage() {
             const idx = gIdx++;
             const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
             if (!n) continue;
-            pushNew(dataRow, n, idx, 0);
+            pushNew(dataRow, n, idx, 0, undefined, sheet);
           }
           await new Promise<void>((r) => setTimeout(r, 0));
         }, { slot: "data", sheets: selectedDataSheetFilter });
@@ -2447,12 +2463,13 @@ export default function SortingPage() {
           const src = memSources[si];
           const pc = src.plateCol;
           if (src.slot) {
-            await iterateRows(async (batch) => {
+            if (src.sheets && src.sheets.size > 1) sheetOrderBySrc.set(srcBase + si, [...src.sheets]);
+            await iterateRows(async (batch, _b, sheet) => {
               for (const dataRow of batch) {
                 const idx = gIdx++;
                 const n = normalizePlate(bankPlateToArabic(String(dataRow[pc] ?? "")));
                 if (!n) continue;
-                pushNew(dataRow, n, idx, srcBase + si);
+                pushNew(dataRow, n, idx, srcBase + si, undefined, sheet);
               }
               await new Promise<void>((r) => setTimeout(r, 0));
             }, { slot: src.slot, sheets: src.sheets ?? undefined });
@@ -2478,6 +2495,10 @@ export default function SortingPage() {
         }
       }
       matches.sort((a, b) => a.dataIdx - b.dataIdx);
+      {
+        const byOrder = orderRunsBySheet(matches, (m) => m.srcIdx ?? 0, (g) => sheetOrderBySrc.get(g));
+        for (let k = 0; k < byOrder.length; k++) matches[k] = byOrder[k];
+      }
       // شيت السجلات (الميداني): طابق اللوحات الجديدة عليه كمان.
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // مربوطة كداتا → بتظهر فوق في نتيجة الداتا، فمافيش قسم سجلات منفصل (منع التكرار).
@@ -2855,6 +2876,7 @@ export default function SortingPage() {
     // إزاحة dataIdx عشان الترتيب يفضل ملف ورا ملف.
     const matches: TokenMatch[] = [];
     let base = 0;
+    const pasteSheetOrder = new Map<number, string[]>();
     setPasteBusy(true);
     try {
       // الداتا الكبيرة (streamed): لفّ على الدفعات من القرص وطابق كل دفعة — بدل
@@ -2869,7 +2891,7 @@ export default function SortingPage() {
           // تام فقط (enableFuzzy=false): الداتا الكبيرة بتتطابق دفعة-بدفعة، والمرور
           // التقريبي كان بيتكرر على كل دفعة عبر الملايين فيبطّئ الفرز جداً.
           for (const m of matchTokensAgainstRows(tokens, batch, pc, 88, false)) {
-            matches.push({ ...m, dataIdx: m.dataIdx + base });
+            matches.push({ ...m, dataIdx: m.dataIdx + base, srcIdx: 0, ...(sheet ? { sheet } : {}) });
           }
           base += batch.length;
           if (Date.now() - lastYield >= 50) {
@@ -2882,14 +2904,20 @@ export default function SortingPage() {
       // السجلات ليها ويندو لوحدها تحت — فمابتدخلش لفّة الداتا هنا.
       const allMem = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
       const memSources = allMem.filter((x) => !x.isRecords);
-      for (const src of memSources) {
+      // 📑 ترتيب ورقات كل ملف داتا زي ما المندوب رتّبها في المنتقي (الأول فوق).
+      if (dataStreamed && selectedDataSheetFilter && selectedDataSheetFilter.size > 1) {
+        pasteSheetOrder.set(0, [...selectedDataSheetFilter]);
+      }
+      for (const [si, src] of memSources.entries()) {
+        const srcIdx = si + 1;
         // ملف إضافي كبير (streamed): لفّ على دفعاته من القرص وطابق كل دفعة (تام
         // فقط زي الأساسي — التقريبي على الملايين بطيء)، مع إزاحة dataIdx.
         if (src.slot) {
           let lastYield = Date.now();
-          await iterateRows(async (batch) => {
+          if (src.sheets && src.sheets.size > 1) pasteSheetOrder.set(srcIdx, [...src.sheets]);
+          await iterateRows(async (batch, _b, sheet) => {
             for (const m of matchTokensAgainstRows(tokens, batch, src.plateCol, 88, false)) {
-              matches.push({ ...m, dataIdx: m.dataIdx + base });
+              matches.push({ ...m, dataIdx: m.dataIdx + base, srcIdx, ...(sheet ? { sheet } : {}) });
             }
             base += batch.length;
             if (Date.now() - lastYield >= 50) { await new Promise<void>((r) => setTimeout(r, 0)); lastYield = Date.now(); }
@@ -2900,7 +2928,7 @@ export default function SortingPage() {
         // الفرع ده كان بياخد الافتراضي (تقريبي ٨٨٪) فاللصق كان بيطلّع لوحات
         // متشابهة موسومة «مطلوبة» على أي ملف داتا صغير.
         for (const m of matchTokensAgainstRows(tokens, src.rows, src.plateCol, 88, false)) {
-          matches.push({ ...m, dataIdx: m.dataIdx + base });
+          matches.push({ ...m, dataIdx: m.dataIdx + base, srcIdx });
         }
         base += src.rows.length;
       }
@@ -2908,6 +2936,10 @@ export default function SortingPage() {
       setPasteBusy(false);
     }
     matches.sort((a, b) => a.dataIdx - b.dataIdx);
+    {
+      const byOrder = orderRunsBySheet(matches, (m) => m.srcIdx ?? 0, (g) => pasteSheetOrder.get(g));
+      for (let k = 0; k < byOrder.length; k++) matches[k] = byOrder[k];
+    }
 
     // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
     // لو السجلات مربوطة كداتا، بتتطابق فوق مع الداتا فمانعملش قسم منفصل (منع التكرار).
@@ -3188,6 +3220,7 @@ export default function SortingPage() {
       />
       {/* ملف داتا فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه */}
       <ReferralSheetPicker
+        ordered
         sheets={dataSheetInfos}
         selected={dataSheetSel}
         onChange={setDataSheetSelection}
@@ -3317,6 +3350,7 @@ export default function SortingPage() {
           {/* ملف إضافي فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه (زي الأساسي) */}
           {(ed.streamMeta?.sheets?.length ?? 0) > 1 && (
             <ReferralSheetPicker
+              ordered
               sheets={extraSheetInfos(ed)}
               selected={extraSheetSel[ed.id] ?? new Set()}
               onChange={(next) => setExtraSheetSelection(ed.id, next)}

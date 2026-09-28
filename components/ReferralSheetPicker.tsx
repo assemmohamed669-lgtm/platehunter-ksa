@@ -9,8 +9,9 @@
  * بيتحدّث فوراً قدامه قبل ما يفرز.
  */
 import { useState } from "react";
-import { CheckSquare, Square, Layers, ChevronDown } from "lucide-react";
+import { CheckSquare, Square, Layers, ChevronDown, ChevronUp } from "lucide-react";
 import type { SheetInfo } from "@/lib/referralSheets";
+import { moveInOrder } from "@/lib/sheetOrder";
 
 interface Props {
   sheets: SheetInfo[];
@@ -21,9 +22,15 @@ interface Props {
   total: number;
   /** وحدة العدّ المعروضة: «لوحة» للإحالة (لوحات فريدة)، «صف» للداتا (كل الصفوف). */
   unit?: string;
+  /**
+   * 📑 **ترتيب الورقات بإيد المندوب** (للداتا بس — طلب المالك ٢٨ سبتمبر ٢٠٢٦).
+   * الورقات المختارة بتظهر فوق بترتيبها ومرقّمة، ولكل واحدة سهمين تطلع/تنزل —
+   * والترتيب ده هو ترتيب نتيجة الفرز. من غيره (الإحالة) المنتقي زي ما كان بالظبط.
+   */
+  ordered?: boolean;
 }
 
-export default function ReferralSheetPicker({ sheets, selected, onChange, total, unit = "لوحة" }: Props) {
+export default function ReferralSheetPicker({ sheets, selected, onChange, total, unit = "لوحة", ordered = false }: Props) {
   const [open, setOpen] = useState(false);   // مطويّة افتراضياً — القايمة بتملى الشاشة
   const withPlates = sheets.filter((s) => s.plateCount > 0);
   if (withPlates.length <= 1) return null;   // ورقة واحدة → مفيش داعي للاختيار
@@ -35,6 +42,16 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total,
     if (next.has(name)) next.delete(name); else next.add(name);
     onChange(next);
   };
+  // ترتيب المختار = ترتيب الإدخال في الـSet (أول ما علّم عليه = الأول).
+  const selectedOrder = [...selected].filter((n) => withPlates.some((s) => s.name === n));
+  const move = (name: string, dir: -1 | 1) => onChange(new Set(moveInOrder(selectedOrder, name, dir)));
+  // العرض: في وضع الترتيب المختار فوق بترتيبه وبعده الباقي بترتيب الملف.
+  const shown = ordered
+    ? [
+        ...selectedOrder.map((n) => withPlates.find((s) => s.name === n)!),
+        ...withPlates.filter((s) => !selected.has(s.name)),
+      ]
+    : withPlates;
 
   return (
     <div className="rounded-xl border border-border bg-surface" dir="rtl">
@@ -63,9 +80,14 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total,
 
       {open && (<div className="border-t border-border p-3">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-[11px] text-muted">علّم اللي عايز تفرز عليها</p>
+        <p className="text-[11px] text-muted">
+          {ordered ? "علّم اللي عايز تفرز عليها — الأول نتيجته تطلع فوق" : "علّم اللي عايز تفرز عليها"}
+        </p>
         <button
-          onClick={() => onChange(allOn ? new Set() : new Set(withPlates.map((s) => s.name)))}
+          onClick={() => onChange(allOn ? new Set() : new Set(
+            // في وضع الترتيب: اللي المندوب رتّبه يفضل أول، والباقي يتضاف بعده.
+            ordered ? [...selectedOrder, ...withPlates.map((s) => s.name)] : withPlates.map((s) => s.name),
+          ))}
           className="text-[11px] text-primary underline"
         >
           {allOn ? "إلغاء الكل" : "تحديد الكل"}
@@ -73,16 +95,27 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total,
       </div>
 
       <div className="flex flex-col gap-1">
-        {withPlates.map((s) => {
+        {shown.map((s) => {
           const on = selected.has(s.name);
-          return (
+          const rank = ordered && on ? selectedOrder.indexOf(s.name) : -1;
+          const row = (
             <button
               key={s.name}
+              data-testid="sheet-row"
+              data-sheet={s.name}
               onClick={() => toggle(s.name)}
               className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-right transition ${
                 on ? "border-primary/50 bg-primary/10" : "border-border bg-surface-2"
-              }`}
+              } ${ordered ? "min-w-0 flex-1" : ""}`}
             >
+              {rank >= 0 && (
+                <span
+                  data-testid={`sheet-rank-${s.name}`}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-black text-night"
+                >
+                  {rank + 1}
+                </span>
+              )}
               {on
                 ? <CheckSquare size={15} className="shrink-0 text-primary" />
                 : <Square size={15} className="shrink-0 text-muted" />}
@@ -98,6 +131,33 @@ export default function ReferralSheetPicker({ sheets, selected, onChange, total,
                 {(s.rowCount || s.plateCount).toLocaleString("en-US")}
               </span>
             </button>
+          );
+          if (!ordered) return row;
+          // السهمين برّه زرار التعليم (زرار جوّه زرار مش مسموح في HTML).
+          return (
+            <div key={s.name} className="flex items-stretch gap-1">
+              {row}
+              {rank >= 0 && selectedOrder.length > 1 && (
+                <div className="flex shrink-0 flex-col gap-1">
+                  <button
+                    aria-label={`طلّع «${s.name.trim()}» لفوق`}
+                    disabled={rank === 0}
+                    onClick={() => move(s.name, -1)}
+                    className="flex flex-1 items-center justify-center rounded-md border border-border px-1.5 text-primary disabled:opacity-30"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    aria-label={`نزّل «${s.name.trim()}» لتحت`}
+                    disabled={rank === selectedOrder.length - 1}
+                    onClick={() => move(s.name, 1)}
+                    className="flex flex-1 items-center justify-center rounded-md border border-border px-1.5 text-primary disabled:opacity-30"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
