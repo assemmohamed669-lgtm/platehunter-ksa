@@ -76,6 +76,7 @@ import {
 } from "@/lib/autoExport";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
 import { firstFailureReason, saveFailureMessage } from "@/lib/saveFailure";
+import { withoutLocation } from "@/lib/exportColumns";
 
 const INVALID_AR_LETTERS_SET = new Set(["ت","ث","ج","خ","ذ","ز","ش","ض","ظ","غ","ف"]);
 const HIT_ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
@@ -723,6 +724,10 @@ export default function InstantCheckPage() {
   }
   // مشاركة شيت التسجيلات: زر واحد يفتح خيار (واتساب / صورة).
   const [showFieldShareChooser, setShowFieldShareChooser] = useState(false);
+  // 📍 «بدون مواقع» في مشاركة شيت التسجيلات (طلب المالك ٢٨ سبتمبر ٢٠٢٦).
+  //    مش محفوظ عن قصد: كل مشاركة بتبدأ بالمواقع زي الأول، فمحدّش يبعت شيت
+  //    من غير مواقع وهو ناسي إن العلامة متعلّمة من مرة فاتت.
+  const [shareNoLocation, setShareNoLocation] = useState(false);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chassisCamInputRef = useRef<HTMLInputElement>(null);
   const chassisGalInputRef = useRef<HTMLInputElement>(null);
@@ -2576,7 +2581,7 @@ export default function InstantCheckPage() {
 
   async function shareFieldExcel() {
     await runShare("field", async () => {
-      const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+      const blob = buildExcelBlob(shareNoLocation ? withoutLocation(buildFieldRows()) : buildFieldRows(), "التشييك الميداني");
       await shareExcelBlob(blob, "التشييك-الميداني.xlsx", "التشييك الميداني");
     });
   }
@@ -3406,15 +3411,17 @@ export default function InstantCheckPage() {
   }
 
   // ── صفوف الصورة (بند 2) — تحويل قوائم اللوحات لـ PlateImageRow ──────────────
-  function fieldEntryImgRows(list: FieldCheckEntry[]): PlateImageRow[] {
+  function fieldEntryImgRows(list: FieldCheckEntry[], noLocation = false): PlateImageRow[] {
     const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
-    return list.map((e) => {
+    const objs = list.map((e) => {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
       obj["التاريخ"] = formatDate(e.checkedAt);   // التاريخ يفضل مع اللوحة في الصورة كمان
-      return objToPlateRow(obj);
+      return obj;
     });
+    // الصورة مافيهاش عمود GPS أصلاً — بس شيت التشييك ممكن يكون فيه عمود موقع.
+    return (noLocation ? withoutLocation(objs) : objs).map((o) => objToPlateRow(o));
   }
   function pttImgRows(list: PttRow[]): PlateImageRow[] {
     const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
@@ -6499,13 +6506,22 @@ export default function InstantCheckPage() {
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowFieldShareChooser(false)}>
                 <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-4 text-right shadow-xl" onClick={(e) => e.stopPropagation()}>
                   <h3 className="mb-3 text-sm font-bold text-ink">مشاركة شيت التسجيلات</h3>
+                  {/* 📍 للسوبر أدمن الأول — يتفتح للكل بعد ما المالك يجرّب. */}
+                  {isSuper && (
+                    <label className="mb-3 flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-bold text-ink">
+                      <input type="checkbox" checked={shareNoLocation}
+                        onChange={(e) => setShareNoLocation(e.target.checked)}
+                        className="h-4 w-4 accent-primary" />
+                      بدون مواقع (من غير لينكات GPS)
+                    </label>
+                  )}
                   <div className="flex flex-col gap-2">
                     <button onClick={() => { setShowFieldShareChooser(false); void shareFieldExcel(); }}
                       className="flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition">
                       <Share2 size={15} /> واتساب (إكسيل)
                     </button>
                     <PlateImagesButton title="شيت التسجيلات"
-                      build={() => fieldEntryImgRows(sortNear(visible))}
+                      build={() => fieldEntryImgRows(sortNear(visible), shareNoLocation)}
                       label="صورة"
                       className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10" />
                   </div>

@@ -1,3 +1,5 @@
+import { looksLikeGps } from "./headerlessColumns";
+
 /**
  * ترتيب أعمدة التصدير/المشاركة — **ثابت ومتّفق عليه مع المالك**.
  *
@@ -151,4 +153,32 @@ export function buildDisplayRows(
     return out;
   });
   return { columns: kept, rows };
+}
+
+/** اسم عمود بيدلّ على موقع/لينك خريطة. */
+const LOCATION_HEADER = /^\s*gps\s*$|موقع|خريطة|خريطه|location|maps|إحداثي|احداثي/i;
+
+/**
+ * 📍 **صفوف المشاركة من غير مواقع** — بطلب المالك (٢٨ سبتمبر ٢٠٢٦): «اقدر ابعت
+ * السجلات بدون مواقع».
+ *
+ * بيشيل أي عمود اسمه موقع/GPS/خريطة، وكمان أي عمود اسمه عادي بس **كل** قيمه
+ * لينكات خرائط أو إحداثيات (زي عمود «رابط» جاي من شيت التشييك) — عشان مايفضلش
+ * لينك موقع مستخبّي في عمود تاني.
+ *
+ * «الحي-الشارع» مابيتشالش: ده عنوان مكتوب مش لينك موقع.
+ */
+export function withoutLocation<T extends Record<string, unknown>>(rows: T[]): Record<string, unknown>[] {
+  const keys: string[] = [];
+  for (const r of rows) for (const k of Object.keys(r)) if (!keys.includes(k)) keys.push(k);
+  const drop = new Set(keys.filter((k) => {
+    if (LOCATION_HEADER.test(k)) return true;
+    const vals = rows.map((r) => text(r[k])).filter(Boolean);
+    return vals.length > 0 && vals.every((v) => looksLikeGps(v));
+  }));
+  return rows.map((r) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(r)) if (!drop.has(k)) out[k] = v;
+    return out;
+  });
 }
