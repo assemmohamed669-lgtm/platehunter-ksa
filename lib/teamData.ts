@@ -39,9 +39,24 @@ export function needsTeamDataRefresh(localUpdatedAt: string | null, remoteUpdate
   return remote > local;
 }
 
-/** مسار الملف في التخزين — أول جزء هو المجموعة، وكل السياسات مبنية عليه. */
+/**
+ * 🔴 **كود المجموعة في مسار التخزين** — «t-» + UTF-8 hex لاسمها.
+ *
+ * تخزين Supabase بيرفض أي حرف برّه ASCII في مسار الملف (`400 InvalidKey`)،
+ * والمسار كان اسم المجموعة نفسه («مجموعه بوحه/data.xlsx») — فملفات المجموعة
+ * **عمرها ما اترفعت** لأي مجموعة اسمها عربي (بلاغ المالك ٢٩ سبتمبر ٢٠٢٦، اتقاس
+ * على السيرفر). نفس الكود بيتحسب في الـSQL (`my_team_key()` في
+ * docs/sql/team-files-ascii-path.sql) عشان سياسات التخزين تفضل تتحقق من المجموعة.
+ */
+export function teamStorageKey(team: string): string {
+  let hex = "";
+  for (const b of new TextEncoder().encode(team)) hex += b.toString(16).padStart(2, "0");
+  return `t-${hex}`;
+}
+
+/** مسار الملف في التخزين — أول جزء هو كود المجموعة، وكل السياسات مبنية عليه. */
 export function teamDataPath(team: string): string {
-  return `${team}/data.xlsx`;
+  return `${teamStorageKey(team)}/data.xlsx`;
 }
 
 /**
