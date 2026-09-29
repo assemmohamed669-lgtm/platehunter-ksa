@@ -10,7 +10,7 @@
  * ⚠️ الميزة **مقفولة افتراضياً** لكل المجموعات. بتتفتح بإيد السوبر أدمن لكل
  * مجموعة بعد ما يحدّد مسئولها. أي شك هنا بيروح ناحية **القفل** (off).
  */
-import { teamDataRole, type TeamDataRole } from "./teamData";
+import { teamDataRole, teamStorageKey, type TeamDataRole } from "./teamData";
 
 const BUCKET = "team-check";
 
@@ -25,9 +25,9 @@ export function needsTeamCheckRefresh(localUpdatedAt: string | null, remoteUpdat
   return remote > local;
 }
 
-/** مسار الملف في التخزين — أول جزء هو المجموعة، وكل السياسات مبنية عليه. */
+/** مسار الملف في التخزين — أول جزء هو كود المجموعة (مش اسمها العربي — شوف teamStorageKey). */
 export function teamCheckPath(team: string): string {
-  return `${team}/check.xlsx`;
+  return `${teamStorageKey(team)}/check.xlsx`;
 }
 
 export interface TeamCheckFile {

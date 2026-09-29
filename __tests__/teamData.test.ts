@@ -69,7 +69,7 @@ describe("needsTeamDataRefresh", () => {
 
 describe("teamDataPath", () => {
   it("أول جزء في المسار = اسم المجموعة (كل السياسات مبنية عليه)", () => {
-    expect(teamDataPath("شرف")).toBe("شرف/data.xlsx");
+    expect(teamDataPath("شرف")).toBe("t-d8b4d8b1d981/data.xlsx");   // مسار إنجليزي — التخزين بيرفض العربي
   });
 
   it("سلوت التخزين المحلي ثابت", () => {

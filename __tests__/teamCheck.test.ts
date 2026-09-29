@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { needsTeamCheckRefresh, teamCheckPath } from "@/lib/teamCheck";
 
 describe("teamCheck — دوال نقية", () => {
-  it("teamCheckPath = <المجموعة>/check.xlsx", () => {
-    expect(teamCheckPath("فريق-الرياض")).toBe("فريق-الرياض/check.xlsx");
+  it("teamCheckPath = <كود المجموعة>/check.xlsx (مسار إنجليزي — التخزين بيرفض العربي)", () => {
+    expect(teamCheckPath("فريق-الرياض")).toBe("t-d981d8b1d98ad9822dd8a7d984d8b1d98ad8a7d8b6/check.xlsx");
   });
 
   it("needsTeamCheckRefresh: مافيش نسخة بعيدة → لأ (المسئول مسح)", () => {
