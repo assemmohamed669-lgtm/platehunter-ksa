@@ -131,11 +131,31 @@ export interface VoiceSessionRecord {
 
 let _db: IDBDatabase | null = null;
 
+/**
+ * مهلة الفتح. الآيفون ساعات بيسيب `indexedDB.open` معلّق خالص (اتصال قديم لسه
+ * ماسك، أو خدمة التخزين ماتت) — مافيش نجاح ولا خطأ ولا حاجة. من غير مهلة، كل
+ * نداء بعده بيستنى وعد **عمره** ما هيرجع، والصفحة تفضل على «جاري التحميل...».
+ * الفتح العادي بياخد مللي ثواني، فالمهلة دي مابتلمسش المسار السليم أبداً.
+ */
+const OPEN_TIMEOUT_MS = 10_000;
+
 function openDB(): Promise<IDBDatabase> {
   if (_db) return Promise.resolve(_db);
 
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new DOMException("فتح التخزين ماردّش", "TimeoutError"));
+    }, OPEN_TIMEOUT_MS);
+    const finish = (run: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      run();
+    };
 
     req.onupgradeneeded = (e) => {
       const db = (e.target as IDBOpenDBRequest).result;
@@ -170,7 +190,7 @@ function openDB(): Promise<IDBDatabase> {
       };
       // 🔴 الاتصال اتقفل غصب (الآيفون قتله) ⇒ ننساه، والنداء الجاي يفتح جديد
       _db.onclose = () => { _db = null; };
-      resolve(_db);
+      finish(() => resolve(_db as IDBDatabase));
     };
 
     // تبويب قديم ماسك الداتابيز بإصدار أقدم — الترقية مستنية لحد ما يقفل.
@@ -178,251 +198,10 @@ function openDB(): Promise<IDBDatabase> {
       console.warn("IDB upgrade blocked — قفل باقي تبويبات التطبيق عشان الترقية تكمل.");
     };
 
-    req.onerror = () => reject(req.error);
+    req.onerror = () => finish(() => reject(req.error));
   });
 }
 
-export async function saveRecording(entry: RecordingEntry): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(entry);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-/** يحفظ/يحدّث جلسة تسجيل صوتي (upsert بالـ id) — بيتنادى مع كل chunk. */
-export async function saveVoiceSession(session: VoiceSessionRecord): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(SESSIONS_STORE, "readwrite");
-    tx.objectStore(SESSIONS_STORE).put(session);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function getAllRecordings(agentId: string): Promise<RecordingEntry[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const req = tx.objectStore(STORE).index("agentId").getAll(agentId);
-    req.onsuccess = () =>
-      resolve(
-        (req.result as RecordingEntry[]).sort(
-          (a, b) =>
-            new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
-        )
-      );
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/**
- * زي getAllRecordings بس **من غير الصوت** (audioBlobBase64/audioMimeType) —
- * للصفحات اللي محتاجة الميتاداتا والموقع بس (زي الخرائط). بيلفّ بـcursor فمابيحملش
- * كل الأصوات في الذاكرة مرة واحدة (تسجيل واحد فيه صوت ممكن يكون مئات الكيلوبايت،
- * ومئات التسجيلات = عشرات الميجا كانت بتتحمّل وتتجمّد الصفحة).
- */
-export async function getAllRecordingsLite(agentId: string): Promise<RecordingEntry[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const out: RecordingEntry[] = [];
-    const req = tx.objectStore(STORE).index("agentId").openCursor(agentId);
-    req.onsuccess = () => {
-      const cur = req.result;
-      if (cur) {
-        const v = { ...(cur.value as RecordingEntry) };
-        delete v.audioBlobBase64;   // مانحتفظش بالصوت (مش محتاجينه للخريطة)
-        delete v.audioMimeType;
-        out.push(v);
-        cur.continue();
-      } else {
-        out.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
-        resolve(out);
-      }
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-export async function getPendingSync(agentId: string): Promise<RecordingEntry[]> {
-  const all = await getAllRecordings(agentId);
-  return all.filter((r) => !r.synced);
-}
-
-export async function markSynced(localId: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    const req = store.get(localId);
-    req.onsuccess = () => {
-      const entry = req.result as RecordingEntry;
-      if (entry) {
-        entry.synced = true;
-        store.put(entry);
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function deleteRecording(localId: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).delete(localId);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function updateNotes(localId: string, notes: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    const req = store.get(localId);
-    req.onsuccess = () => {
-      const entry = req.result as RecordingEntry;
-      if (entry) {
-        entry.notes = notes;
-        store.put(entry);
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function updatePlate(localId: string, plate: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    const req = store.get(localId);
-    req.onsuccess = () => {
-      const entry = req.result as RecordingEntry;
-      if (entry) {
-        entry.plate = plate;
-        entry.uncertain = false; // a human looked at and confirmed this plate
-        store.put(entry);
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function updateRecordingField(
-  localId: string,
-  field: "vehicleType" | "notes",
-  value: string
-): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    const req = store.get(localId);
-    req.onsuccess = () => {
-      const entry = req.result as RecordingEntry;
-      if (entry) {
-        entry[field] = value;
-        store.put(entry);
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function updateGeodata(
-  localId: string,
-  street: string,
-  district: string
-): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    const req = store.get(localId);
-    req.onsuccess = () => {
-      const entry = req.result as RecordingEntry;
-      if (entry) {
-        entry.street = street;
-        entry.district = district;
-        store.put(entry);
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-// =====================================================================
-// Uploaded Sorting files (data/referral) — persisted until the agent
-// explicitly deletes them via the trash icon.
-// =====================================================================
-
-// كاش في الذاكرة لملفات الفرز المرفوعة — بيخلّي الملف الكبير (داتا ٤٦٤ ألف صف)
-// يتقري من IndexedDB مرة واحدة في الجلسة ويتشارك (بالمرجع) بين كل الصفحات
-// (الفرز/المطلوب/التشييك) بدل ما كل صفحة تعيد قراءته وتحتفظ بنسخة منفصلة. ده:
-//   • بيشيل تجميد الرجوع لصفحة الفرز (مكانش بيعيد تحميل الـ٤٦٤ ألف صف كل مرة)
-//   • بيخفّف ضغط الذاكرة (نسخة واحدة مشتركة بدل نسختين أو أكتر)
-// كل رفع/تغيير/مسح بيمر على save/deleteUploadedFile فبيحدّث الكاش تلقائياً —
-// فمفيش خطر إن البيانات تبقى قديمة، والمندوب يقدر يغيّر الملف عادي.
-const uploadedFileCache = new Map<string, UploadedFileRecord | null>();
-
-export async function saveUploadedFile(record: UploadedFileRecord): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, "readwrite");
-    tx.objectStore(FILES_STORE).put(record);
-    tx.oncomplete = () => { uploadedFileCache.set(record.key, record); resolve(); };
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function getUploadedFile(
-  agentId: string,
-  slot: UploadedSlot
-): Promise<UploadedFileRecord | null> {
-  const cacheKey = `${agentId}:${slot}`;
-  if (uploadedFileCache.has(cacheKey)) return uploadedFileCache.get(cacheKey) ?? null;
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, "readonly");
-    const req = tx.objectStore(FILES_STORE).get(cacheKey);
-    req.onsuccess = () => {
-      const rec = (req.result as UploadedFileRecord) ?? null;
-      uploadedFileCache.set(cacheKey, rec);
-      resolve(rec);
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, "readwrite");
-    tx.objectStore(FILES_STORE).delete(`${agentId}:${slot}`);
-    tx.oncomplete = () => { uploadedFileCache.set(`${agentId}:${slot}`, null); resolve(); };
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-// =====================================================================
-// Field-check sheet (شيت التشييك الميداني) — the protected, persistent
-// record of cars confirmed in the field. Never auto-cleared; deletion is
-// gated behind the password in lib/fieldCheckLock.ts at the UI layer.
-// =====================================================================
-
-/** Add or overwrite one field-check entry (put by id). */
 /**
  * ══════════════════════════════════════════════════════════════════════
  *  🔴 «مانفعش يتحفظ ولا سجل» — الاتصال مات والبرنامج كان ماسك فيه
@@ -452,6 +231,286 @@ async function withFreshRetry<T>(op: () => Promise<T>): Promise<T> {
   }
 }
 
+export async function saveRecording(entry: RecordingEntry): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+/** يحفظ/يحدّث جلسة تسجيل صوتي (upsert بالـ id) — بيتنادى مع كل chunk. */
+export async function saveVoiceSession(session: VoiceSessionRecord): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(SESSIONS_STORE, "readwrite");
+      tx.objectStore(SESSIONS_STORE).put(session);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function getAllRecordings(agentId: string): Promise<RecordingEntry[]> {
+  return withFreshRetry<RecordingEntry[]>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).index("agentId").getAll(agentId);
+      req.onsuccess = () =>
+        resolve(
+          (req.result as RecordingEntry[]).sort(
+            (a, b) =>
+              new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
+          )
+        );
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+/**
+ * زي getAllRecordings بس **من غير الصوت** (audioBlobBase64/audioMimeType) —
+ * للصفحات اللي محتاجة الميتاداتا والموقع بس (زي الخرائط). بيلفّ بـcursor فمابيحملش
+ * كل الأصوات في الذاكرة مرة واحدة (تسجيل واحد فيه صوت ممكن يكون مئات الكيلوبايت،
+ * ومئات التسجيلات = عشرات الميجا كانت بتتحمّل وتتجمّد الصفحة).
+ */
+export async function getAllRecordingsLite(agentId: string): Promise<RecordingEntry[]> {
+  return withFreshRetry<RecordingEntry[]>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const out: RecordingEntry[] = [];
+      const req = tx.objectStore(STORE).index("agentId").openCursor(agentId);
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (cur) {
+          const v = { ...(cur.value as RecordingEntry) };
+          delete v.audioBlobBase64;   // مانحتفظش بالصوت (مش محتاجينه للخريطة)
+          delete v.audioMimeType;
+          out.push(v);
+          cur.continue();
+        } else {
+          out.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+          resolve(out);
+        }
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function getPendingSync(agentId: string): Promise<RecordingEntry[]> {
+  const all = await getAllRecordings(agentId);
+  return all.filter((r) => !r.synced);
+}
+
+export async function markSynced(localId: string): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const req = store.get(localId);
+      req.onsuccess = () => {
+        const entry = req.result as RecordingEntry;
+        if (entry) {
+          entry.synced = true;
+          store.put(entry);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function deleteRecording(localId: string): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).delete(localId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function updateNotes(localId: string, notes: string): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const req = store.get(localId);
+      req.onsuccess = () => {
+        const entry = req.result as RecordingEntry;
+        if (entry) {
+          entry.notes = notes;
+          store.put(entry);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function updatePlate(localId: string, plate: string): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const req = store.get(localId);
+      req.onsuccess = () => {
+        const entry = req.result as RecordingEntry;
+        if (entry) {
+          entry.plate = plate;
+          entry.uncertain = false; // a human looked at and confirmed this plate
+          store.put(entry);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function updateRecordingField(
+  localId: string,
+  field: "vehicleType" | "notes",
+  value: string
+): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const req = store.get(localId);
+      req.onsuccess = () => {
+        const entry = req.result as RecordingEntry;
+        if (entry) {
+          entry[field] = value;
+          store.put(entry);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function updateGeodata(
+  localId: string,
+  street: string,
+  district: string
+): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const req = store.get(localId);
+      req.onsuccess = () => {
+        const entry = req.result as RecordingEntry;
+        if (entry) {
+          entry.street = street;
+          entry.district = district;
+          store.put(entry);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+// =====================================================================
+// Uploaded Sorting files (data/referral) — persisted until the agent
+// explicitly deletes them via the trash icon.
+// =====================================================================
+
+// كاش في الذاكرة لملفات الفرز المرفوعة — بيخلّي الملف الكبير (داتا ٤٦٤ ألف صف)
+// يتقري من IndexedDB مرة واحدة في الجلسة ويتشارك (بالمرجع) بين كل الصفحات
+// (الفرز/المطلوب/التشييك) بدل ما كل صفحة تعيد قراءته وتحتفظ بنسخة منفصلة. ده:
+//   • بيشيل تجميد الرجوع لصفحة الفرز (مكانش بيعيد تحميل الـ٤٦٤ ألف صف كل مرة)
+//   • بيخفّف ضغط الذاكرة (نسخة واحدة مشتركة بدل نسختين أو أكتر)
+// كل رفع/تغيير/مسح بيمر على save/deleteUploadedFile فبيحدّث الكاش تلقائياً —
+// فمفيش خطر إن البيانات تبقى قديمة، والمندوب يقدر يغيّر الملف عادي.
+const uploadedFileCache = new Map<string, UploadedFileRecord | null>();
+
+export async function saveUploadedFile(record: UploadedFileRecord): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FILES_STORE, "readwrite");
+      tx.objectStore(FILES_STORE).put(record);
+      tx.oncomplete = () => { uploadedFileCache.set(record.key, record); resolve(); };
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function getUploadedFile(
+  agentId: string,
+  slot: UploadedSlot
+): Promise<UploadedFileRecord | null> {
+  const cacheKey = `${agentId}:${slot}`;
+  if (uploadedFileCache.has(cacheKey)) return uploadedFileCache.get(cacheKey) ?? null;
+  return withFreshRetry<UploadedFileRecord | null>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FILES_STORE, "readonly");
+      const req = tx.objectStore(FILES_STORE).get(cacheKey);
+      req.onsuccess = () => {
+        const rec = (req.result as UploadedFileRecord) ?? null;
+        uploadedFileCache.set(cacheKey, rec);
+        resolve(rec);
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): Promise<void> {
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FILES_STORE, "readwrite");
+      tx.objectStore(FILES_STORE).delete(`${agentId}:${slot}`);
+      tx.oncomplete = () => { uploadedFileCache.set(`${agentId}:${slot}`, null); resolve(); };
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+// =====================================================================
+// Field-check sheet (شيت التشييك الميداني) — the protected, persistent
+// record of cars confirmed in the field. Never auto-cleared; deletion is
+// gated behind the password in lib/fieldCheckLock.ts at the UI layer.
+// =====================================================================
+
+/** Add or overwrite one field-check entry (put by id). */
 async function putFieldChecksOnce(entries: FieldCheckEntry[]): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -490,16 +549,19 @@ export async function saveFieldCheckEntries(entries: FieldCheckEntry[]): Promise
  * agents sharing one device don't see/upload each other's sheet.
  */
 export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCheckEntry[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
-    const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
-    req.onsuccess = () => {
-      let rows = req.result as FieldCheckEntry[];
-      if (agentId) rows = rows.filter((e) => !e.agentId || e.agentId === agentId);
-      resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
-    };
-    req.onerror = () => reject(req.error);
+  return withFreshRetry<FieldCheckEntry[]>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
+      const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
+      req.onsuccess = () => {
+        let rows = req.result as FieldCheckEntry[];
+        if (agentId) rows = rows.filter((e) => !e.agentId || e.agentId === agentId);
+        resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
   });
 }
 
@@ -512,19 +574,22 @@ export async function getPendingFieldChecks(agentId?: string): Promise<FieldChec
 /** يعلّم مجموعة field-check entries إنها اترفعت (synced=true). */
 export async function markFieldChecksSynced(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const db = await openDB();
-  const idSet = new Set(ids);
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
-    const store = tx.objectStore(FIELD_CHECK_STORE);
-    const req = store.getAll();
-    req.onsuccess = () => {
-      for (const e of req.result as FieldCheckEntry[]) {
-        if (idSet.has(e.id) && !e.synced) store.put({ ...e, synced: true });
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    const idSet = new Set(ids);
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+      const store = tx.objectStore(FIELD_CHECK_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        for (const e of req.result as FieldCheckEntry[]) {
+          if (idSet.has(e.id) && !e.synced) store.put({ ...e, synced: true });
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
   });
 }
 
@@ -544,25 +609,27 @@ export async function deleteFieldCheckEntry(id: string): Promise<void> {
  */
 export async function deleteFieldCheckEntries(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const db = await openDB();
-  const deletedAt = new Date().toISOString();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([FIELD_CHECK_STORE, FIELD_CHECK_DELETES_STORE], "readwrite");
-    const store = tx.objectStore(FIELD_CHECK_STORE);
-    const tombs = tx.objectStore(FIELD_CHECK_DELETES_STORE);
-    for (const id of ids) {
-      // نقرا الصف الأول عشان الشاهدة تتسجّل بهوية صاحبه — جهاز فيه مندوبين
-      // مايبقاش مسح واحد فيهم بيمسح من حساب التاني.
-      const get = store.get(id);
-      get.onsuccess = () => {
-        const e = get.result as FieldCheckEntry | undefined;
-        tombs.put({ id, agentId: e?.agentId, deletedAt } as FieldCheckDeletion);
-      };
-      store.delete(id);
-    }
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    const deletedAt = new Date().toISOString();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([FIELD_CHECK_STORE, FIELD_CHECK_DELETES_STORE], "readwrite");
+      const store = tx.objectStore(FIELD_CHECK_STORE);
+      const tombs = tx.objectStore(FIELD_CHECK_DELETES_STORE);
+      for (const id of ids) {
+        // نقرا الصف الأول عشان الشاهدة تتسجّل بهوية صاحبه — جهاز فيه مندوبين
+        // مايبقاش مسح واحد فيهم بيمسح من حساب التاني.
+        const get = store.get(id);
+        get.onsuccess = () => {
+          const e = get.result as FieldCheckEntry | undefined;
+          tombs.put({ id, agentId: e?.agentId, deletedAt } as FieldCheckDeletion);
+        };
+        store.delete(id);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
   });
 }
 
@@ -571,40 +638,49 @@ export async function deleteFieldCheckEntries(ids: string[]): Promise<void> {
  * (+ الشواهد القديمة اللي مالهاش هوية).
  */
 export async function getFieldCheckDeletes(agentId?: string): Promise<FieldCheckDeletion[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_DELETES_STORE, "readonly");
-    const req = tx.objectStore(FIELD_CHECK_DELETES_STORE).getAll();
-    req.onsuccess = () => {
-      let rows = req.result as FieldCheckDeletion[];
-      if (agentId) rows = rows.filter((d) => !d.agentId || d.agentId === agentId);
-      resolve(rows);
-    };
-    req.onerror = () => reject(req.error);
+  return withFreshRetry<FieldCheckDeletion[]>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_DELETES_STORE, "readonly");
+      const req = tx.objectStore(FIELD_CHECK_DELETES_STORE).getAll();
+      req.onsuccess = () => {
+        let rows = req.result as FieldCheckDeletion[];
+        if (agentId) rows = rows.filter((d) => !d.agentId || d.agentId === agentId);
+        resolve(rows);
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
   });
 }
 
 /** يشيل شواهد المسح اللي اتنفّذت على السيرفر بنجاح. */
 export async function clearFieldCheckDeletes(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_DELETES_STORE, "readwrite");
-    const store = tx.objectStore(FIELD_CHECK_DELETES_STORE);
-    for (const id of ids) store.delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_DELETES_STORE, "readwrite");
+      const store = tx.objectStore(FIELD_CHECK_DELETES_STORE);
+      for (const id of ids) store.delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
   });
 }
 
 /** Wipe the entire field-check sheet. */
 export async function clearFieldCheck(): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
-    tx.objectStore(FIELD_CHECK_STORE).clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+      tx.objectStore(FIELD_CHECK_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
   });
 }
 
