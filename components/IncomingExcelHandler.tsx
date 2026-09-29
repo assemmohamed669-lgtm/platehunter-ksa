@@ -20,6 +20,9 @@ import { supabase } from "@/lib/supabaseClient";
 import { serviceActive } from "@/lib/subscription";
 import { setCheckTab } from "@/lib/checkTab";
 import { incomingExcelOptions, VOICE_REFERRAL_SLOT, type IncomingOption } from "@/lib/incomingExcel";
+import { shareDataFileToTeamIfLeader, teamDataShareMessage } from "@/lib/teamData";
+import { shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
+import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 
 interface PendingFile {
   name: string;
@@ -33,6 +36,34 @@ type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${numbe
 export default function IncomingExcelHandler() {
   const router = useRouter();
   const [pending, setPending] = useState<PendingFile | null>(null);
+  // 👥 نتيجة رفع الملف للمجموعة (للمسئول) — بتبان بعد ما النافذة تتقفل.
+  const [teamNote, setTeamNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!teamNote) return;
+    const t = setTimeout(() => setTeamNote(null), 10_000);
+    return () => clearTimeout(t);
+  }, [teamNote]);
+
+  /**
+   * 👥 المسئول فتح الملف من واتساب ⇒ يوصل للمجموعة زي زرار «تغيير» بالظبط
+   * (طلب المالك ٢٩ سبتمبر ٢٠٢٦ — كان بيتحفظ على جهازه بس ومن غير رسالة).
+   * في الخلفية: التنقّل للصفحة مايستناش الرفع.
+   */
+  function notifyTeamShare(slot: Slot, file: File, rowCount: number, table?: { headers: string[]; rows: Record<string, string>[] }) {
+    let job: Promise<string | null> | null = null;
+    if (slot === "data") {
+      job = shareDataFileToTeamIfLeader(file, rowCount).then(teamDataShareMessage);
+    } else if (slot === "check") {
+      job = shareCheckToTeamIfLeader(file, rowCount, () => {
+        if (!table) return 0;
+        const pcol = detectPlateColumn(table.headers, table.rows);
+        return pcol
+          ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[pcol] ?? "")))).filter(Boolean)).size
+          : 0;
+      }).then(teamCheckShareMessage);
+    }
+    if (job) void job.then((m) => { if (m) setTeamNote(m); }).catch(() => {});
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -146,7 +177,8 @@ export default function IncomingExcelHandler() {
       if (slot === "data") {
         const names = await readSheetNames(file);
         if (names.length > 1) {
-          await importMultiSheetData(file, { slot: "data" });
+          const meta = await importMultiSheetData(file, { slot: "data" });
+          notifyTeamShare("data", file, meta.rowCount);
           // شيل أي ملف صغير قديم في نفس الـslot — صفحة الفرز بتفضّل local:data لو موجود،
           // فلازم يتشال عشان تقرا النسخة المتدفّقة (متعددة الورقات) اللي لسه اتخزّنت.
           await deleteUploadedFile("local", "data");
@@ -173,6 +205,7 @@ export default function IncomingExcelHandler() {
         fileBlob:   blob,
       };
       await saveUploadedFile(record);
+      notifyTeamShare(slot, file, table.rows.length, table);
 
       // Notify any already-open page that IDB was updated (handles same-page navigation)
       window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: { slot } }));
@@ -214,7 +247,15 @@ export default function IncomingExcelHandler() {
     runParse(pendingSlot, password.trim());
   }
 
-  if (!pending) return null;
+  // الرسالة فوق شريط التنقّل — بتتعرض حتى من غير ملف مفتوح (بعد ما النافذة تتقفل).
+  const teamToast = teamNote && (
+    <div className="fixed inset-x-3 z-[70] flex items-start gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 shadow-xl"
+      style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 84px)" }} dir="rtl">
+      <p className={`flex-1 text-xs font-bold ${teamNote.startsWith("✅") ? "text-primary" : "text-danger"}`}>{teamNote}</p>
+      <button onClick={() => setTeamNote(null)} className="shrink-0 text-muted" aria-label="إغلاق"><X size={14} /></button>
+    </div>
+  );
+  if (!pending) return teamToast || null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end pb-[env(safe-area-inset-bottom)] justify-center bg-black/50">
