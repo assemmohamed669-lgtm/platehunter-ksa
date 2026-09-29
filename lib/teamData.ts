@@ -191,3 +191,23 @@ export function describeTeamFile(
   const rows = f.row_count != null ? ` · ${f.row_count.toLocaleString("en-US")} صف` : "";
   return `${f.file_name}${rows}${when}`;
 }
+
+/**
+ * 👥 المسئول حط ملف داتا (من واتساب مثلاً) ⇒ يوصل لباقي المجموعة. الدور بيتسأل
+ * **وقت الرفع**. `null` = مش مسئول أو الميزة مقفولة ⇒ مفيش حاجة تتقال.
+ */
+export async function shareDataFileToTeamIfLeader(
+  file: File, rowCount: number,
+): Promise<null | { ok: true } | { ok: false; error: string }> {
+  const s = await fetchTeamDataState();
+  if (s.role !== "leader" || !s.team) return null;
+  return uploadTeamData(s.team, file, rowCount, 0);
+}
+
+/** نص الرسالة للمسئول بعد رفع الداتا للمجموعة. */
+export function teamDataShareMessage(r: null | { ok: true } | { ok: false; error: string }): string | null {
+  if (!r) return null;
+  return r.ok
+    ? "✅ الداتا اترفعت للمجموعة — هتوصل لكل الأعضاء"
+    : `❌ تعذّر رفع الداتا للمجموعة: ${r.error}`;
+}
