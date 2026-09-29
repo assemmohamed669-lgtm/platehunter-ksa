@@ -31,6 +31,7 @@ import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from 
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
+import { syncTeamCheckToLocal } from "@/lib/teamCheck";
 import { orderRunsBySheet } from "@/lib/sheetOrder";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
@@ -653,6 +654,8 @@ export default function SortingPage() {
   const [teamStreamMeta, setTeamStreamMeta] = useState<DataMeta | null>(null);
   const [teamBusy, setTeamBusy] = useState(false);
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
+  // رفع الداتا للمجموعة نجح — المسئول لازم يعرف إنها وصلت (بلاغ ٢٩ سبتمبر).
+  const [teamOkMsg, setTeamOkMsg] = useState<string | null>(null);
   useEffect(() => { setExtraLocks(loadExtraDataLocks()); }, []);
 
   /**
@@ -737,17 +740,22 @@ export default function SortingPage() {
   }, []);
 
   useEffect(() => { void syncTeamData(); }, [syncTeamData]);
+  // 👥 شيت تشييك المجموعة كمان — العضو اللي بيفتح على الفرز على طول كان بيفرز
+  //    على شيته القديم لحد ما يفتح صفحة التشييك (بلاغ ٢٩ سبتمبر). المزامنة
+  //    بتبعت idbFileUpdated لو نزل شيت أحدث، والمستمع تحت بيعيد قراءته.
+  useEffect(() => { void syncTeamCheckToLocal(); }, []);
 
   // المسئول رفع داتا (صغيرة/كبيرة/متعددة الورقات) → ترفعها للمجموعة عشان توصل
   // الأعضاء. للمسئول بس؛ باقي المناديب بيرفعوا لجهازهم عادي.
   const shareDataToTeamIfLeader = useCallback(async (file: File, rowCount: number) => {
-    const td = teamDataRef.current;
+    // الحالة ممكن لسه ماوصلتش لو المسئول رفع في أول ثواني — نسأل السيرفر ساعتها.
+    const td = teamDataRef.current.role === "off" ? await fetchTeamDataState() : teamDataRef.current;
     if (td.role !== "leader" || !td.team) return;
-    setTeamBusy(true); setTeamMsg(null);
+    setTeamBusy(true); setTeamMsg(null); setTeamOkMsg(null);
     const res = await uploadTeamData(td.team, file, rowCount, 0);
     setTeamBusy(false);
     if (!res.ok) setTeamMsg(`تعذّر رفع الداتا للمجموعة: ${res.error}`);
-    else await syncTeamData();
+    else { setTeamOkMsg("✅ الداتا اترفعت للمجموعة — هتوصل لكل الأعضاء"); await syncTeamData(); }
   }, [syncTeamData]);
 
   const toggleExtraLock = (i: number) => {
@@ -780,6 +788,13 @@ export default function SortingPage() {
           // على ورقات الملف القديم أو يختفي.
           if (rec.fileBlob) void analyzeReferralFile(rf);
         });
+      } else if (slot === "check") {
+        // شيت التشييك اتغيّر من برّه (مزامنة المجموعة) — الفرز الجديد لازم يشوفه.
+        getUploadedFile("local", "check").then((rec) => {
+          if (!rec) return;
+          setCheckTable({ headers: rec.headers, rows: rec.rows });
+          setResults(null); setSorted(false);
+        }).catch(() => {});
       } else if (slot === "data") {
         (async () => {
           const rec = await getUploadedFile("local", "data");
@@ -1644,9 +1659,10 @@ export default function SortingPage() {
       // **المسئول**: مربع الداتا بتاعه هو نفسه داتا المجموعة — بيرفع في مكانه
       // الطبيعي والملف بينزل عند مناديبه تلقائي. من غير كده كان بيفرز على ملف
       // زيادة مش عندهم، فنتيجته تطلع أكبر من نتيجتهم من غير ما حد يفهم ليه.
-      const td = teamDataRef.current;
+      // الحالة ممكن لسه ماوصلتش لو المسئول رفع في أول ثواني — نسأل السيرفر ساعتها.
+      const td = teamDataRef.current.role === "off" ? await fetchTeamDataState() : teamDataRef.current;
       if (td.role === "leader" && td.team) {
-        setTeamBusy(true); setTeamMsg(null);
+        setTeamBusy(true); setTeamMsg(null); setTeamOkMsg(null);
         const col = resolveDataPlateCol(table.headers, table.rows, null);
         const plates = col
           ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[col] ?? "")))).filter(Boolean)).size
@@ -1654,7 +1670,7 @@ export default function SortingPage() {
         const res = await uploadTeamData(td.team, file, table.rows.length, plates);
         setTeamBusy(false);
         if (!res.ok) setTeamMsg(`تعذّر رفع الداتا للمجموعة: ${res.error}`);
-        else await syncTeamData();
+        else { setTeamOkMsg("✅ الداتا اترفعت للمجموعة — هتوصل لكل الأعضاء"); await syncTeamData(); }
       }
     } else {
       setReferralTable(table); setReferralFile(file); setReferralPlateColOverride(null);
@@ -3265,9 +3281,9 @@ export default function SortingPage() {
           المسئول: مربع رفع عادي. العضو: مربع **مقفول** — اسم الملف وعدد
           اللوحات بس، من غير فتح ولا تحميل ولا تغيير ولا مسح. */}
       {/* حالة رفع داتا المجموعة (للمسئول) — بتظهر تحت مربع الداتا مباشرة. */}
-      {teamData.role === "leader" && (teamBusy || teamMsg) && (
+      {teamData.role === "leader" && (teamBusy || teamMsg || teamOkMsg) && (
         <p className={`px-0.5 text-[11px] font-bold ${teamMsg ? "text-danger" : "text-primary"}`}>
-          {teamMsg ?? "جارٍ رفع الداتا لمجموعتك…"}
+          {teamMsg ?? (teamBusy ? "جارٍ رفع الداتا لمجموعتك…" : teamOkMsg)}
         </p>
       )}
 

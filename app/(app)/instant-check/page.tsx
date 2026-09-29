@@ -7,7 +7,7 @@ import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import { summarizeSkips } from "@/lib/skipLabels";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged } from "@/lib/checkSheetSync";
-import { fetchTeamCheckState, uploadTeamCheck, syncTeamCheckToLocal } from "@/lib/teamCheck";
+import { syncTeamCheckToLocal, shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, deleteFieldCheckEntries } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
@@ -1579,10 +1579,10 @@ export default function InstantCheckPage() {
   // تشييك المجموعة: العضو بيستقبل شيت المسئول تلقائي (بيستبدل شيته المحلي، وسجلاته
   // اللي شيّكها **مابتتمسّش**). والمسئول بنعرف دوره هنا عشان لما يرفع شيت في
   // handleParsed نرفعه للمجموعة. مقفولة افتراضياً ⇒ off ⇒ مافيش أي أثر.
-  const teamCheckRef = useRef<{ role: string; team: string | null }>({ role: "off", team: null });
+  // رسالة رفع الشيت للمجموعة (للمسئول) — كان بيفشل في صمت (بلاغ ٢٩ سبتمبر).
+  const [teamCheckMsg, setTeamCheckMsg] = useState<string | null>(null);
   useEffect(() => {
     void syncTeamCheckToLocal();   // عضو: ينزّل شيت المجموعة لو أحدث ويبعت idbFileUpdated
-    void fetchTeamCheckState().then((s) => { teamCheckRef.current = { role: s.role, team: s.team }; });
   }, []);
 
   // Pass the rows so detection works by CONTENT (robust to unusual column
@@ -4596,14 +4596,14 @@ export default function InstantCheckPage() {
     notifyCheckSheetChanged();
     // المسئول: شيت التشييك ده لازم يوصل باقي المجموعة (لو خدمة «تشييك المجموعة»
     // مفتوحة). العضو مايرفعش من هنا للمجموعة — بيستقبل بس.
-    const tc = teamCheckRef.current;
-    if (tc.role === "leader" && tc.team) {
+    // الدور بيتسأل وقت الرفع، والنتيجة بتبان للمسئول (نجح/فشل).
+    setTeamCheckMsg(null);
+    void shareCheckToTeamIfLeader(file, table.rows.length, () => {
       const pcol = detectPlateColumn(table.headers, table.rows);
-      const plateCount = pcol
+      return pcol
         ? new Set(table.rows.map((r) => normalizePlate(bankPlateToArabic(String(r[pcol] ?? "")))).filter(Boolean)).size
         : 0;
-      void uploadTeamCheck(tc.team, file, table.rows.length, plateCount);
-    }
+    }).then((r) => setTeamCheckMsg(teamCheckShareMessage(r))).catch(() => {});
     setCheckTable(table);
     setCheckFile(file);
     const plate = detectPlateColumn(table.headers);
@@ -4731,6 +4731,11 @@ export default function InstantCheckPage() {
         showReplaceButtons
         sky
       />
+      {teamCheckMsg && (
+        <p className={`px-0.5 text-[11px] font-bold ${teamCheckMsg.startsWith("✅") ? "text-primary" : "text-danger"}`}>
+          {teamCheckMsg}
+        </p>
+      )}
 
       {/* ── ملفات تشييك إضافية ───────────────────────────────────────────────
           بتشتغل مع الأساسي **كأنهم شيت واحد**: يدوي · صوتي · كاميرا · شاص.

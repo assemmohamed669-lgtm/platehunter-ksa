@@ -166,3 +166,30 @@ export async function syncTeamCheckToLocal(): Promise<boolean> {
     return false;   // أوفلاين/مش متاح — شيت المندوب الحالي بيفضل زي ما هو
   }
 }
+
+export type TeamShareResult = null | { ok: true } | { ok: false; error: string };
+
+/**
+ * 👥 المسئول رفع شيت تشييك ⇒ يوصل لباقي المجموعة.
+ *
+ * بيسأل السيرفر عن الدور **وقت الرفع** — مش من حالة اتحفظت أول ما الصفحة فتحت.
+ * قبل كده لو المسئول رفع في أول ثواني (قبل ما الحالة توصل) الشيت مايتبعتش خالص،
+ * ومن غير أي رسالة. `countPlates` بيتنده للمسئول بس (عدّ اللوحات لفّة على الصفوف).
+ *
+ * `null` = مش مسئول أو الميزة مقفولة ⇒ مفيش حاجة تتقال.
+ */
+export async function shareCheckToTeamIfLeader(
+  file: File, rowCount: number, countPlates: () => number,
+): Promise<TeamShareResult> {
+  const s = await fetchTeamCheckState();
+  if (s.role !== "leader" || !s.team) return null;
+  return uploadTeamCheck(s.team, file, rowCount, countPlates());
+}
+
+/** نص الرسالة للمسئول — بلاغ ٢٩ سبتمبر: الرفع كان بيفشل في صمت. */
+export function teamCheckShareMessage(r: TeamShareResult): string | null {
+  if (!r) return null;
+  return r.ok
+    ? "✅ شيت التشييك اترفع للمجموعة — هيوصل لكل الأعضاء"
+    : `❌ تعذّر رفع شيت التشييك للمجموعة: ${r.error}`;
+}
