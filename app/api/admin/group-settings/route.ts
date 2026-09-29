@@ -19,7 +19,14 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from("group_settings").select("team, notify_enabled, share_records_enabled, leader_id, shared_data_enabled, shared_check_enabled, activity_report_enabled");
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.json({ settings: data ?? [] });
+  // 👥 الملفات اللي المسئولين رفعوها — عشان الأدمن يعرف الملف وصل السيرفر ولا لأ
+  //    (بلاغ ٢٩ سبتمبر). فشلها مايوقّفش الإعدادات.
+  const cols = "team, file_name, row_count, plate_count, updated_at";
+  const [df, cf] = await Promise.all([
+    supabaseAdmin.from("team_data_files").select(cols),
+    supabaseAdmin.from("team_check_files").select(cols),
+  ]);
+  return NextResponse.json({ settings: data ?? [], dataFiles: df.data ?? [], checkFiles: cf.data ?? [] });
 }
 
 export async function POST(req: NextRequest) {

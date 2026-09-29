@@ -160,3 +160,19 @@ export async function downloadTeamData(path: string): Promise<Blob | null> {
     return error ? null : (data ?? null);
   } catch { return null; }
 }
+
+/**
+ * 👥 سطر حالة ملف المجموعة في صفحة الأدمن — عشان المالك يعرف من عنده الملف
+ * **وصل السيرفر** ولا لأ (بلاغ ٢٩ سبتمبر: المسئول «رافع» والعضو مش شايف حاجة).
+ */
+export function describeTeamFile(
+  f: { file_name: string; row_count: number | null; plate_count: number | null; updated_at: string } | null | undefined,
+): string {
+  if (!f) return "لسه مفيش ملف مرفوع للمجموعة";
+  const d = new Date(f.updated_at);
+  const when = Number.isNaN(d.getTime())
+    ? ""
+    : ` · ${d.toLocaleDateString("en-GB")} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+  const rows = f.row_count != null ? ` · ${f.row_count.toLocaleString("en-US")} صف` : "";
+  return `${f.file_name}${rows}${when}`;
+}

@@ -14,6 +14,7 @@ import { ChevronLeft, Users, Plus, X, Search, Trash2, UserPlus, ChevronDown, Sav
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { GROUP_ELIGIBLE_ROLES, memberBadge, membersLabel } from "@/lib/groupMembers";
+import { describeTeamFile } from "@/lib/teamData";
 
 interface Agent { id: string; username: string; team: string | null; role: string | null; }
 
@@ -22,6 +23,11 @@ interface Agent { id: string; username: string; team: string | null; role: strin
  * يرفع ملف داتا والأعضاء يفرزوا عليه بس (مايفتحوهش ولا يحمّلوه ولا يمسحوه).
  * **مقفولة افتراضياً** — بتتفتح بإيد المالك لكل مجموعة بعد تحديد المسئول.
  */
+/** ملف مجموعة وصل السيرفر (من /api/admin/group-settings). */
+interface TeamFileRow {
+  team: string; file_name: string; row_count: number | null; plate_count: number | null; updated_at: string;
+}
+
 interface GroupSet {
   notify: boolean;
   share: boolean;
@@ -54,6 +60,8 @@ export default function GroupsPage() {
   // مفاتيح كل مجموعة: الإشعارات + مشاركة السجلات. الافتراضي الاتنين مفتوحين،
   // فمجموعة مالهاش صف في group_settings بتشتغل زي ما هي.
   const [settings, setSettings] = useState<Record<string, GroupSet>>({});
+  // 👥 ملفات المجموعة اللي وصلت السيرفر فعلاً (داتا/تشييك) — لكل مجموعة.
+  const [teamFiles, setTeamFiles] = useState<Record<string, { data?: TeamFileRow; check?: TeamFileRow }>>({});
   const [togglingTeam, setTogglingTeam] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -106,6 +114,10 @@ export default function GroupsPage() {
           };
         }
         setSettings(m);
+        const files: Record<string, { data?: TeamFileRow; check?: TeamFileRow }> = {};
+        for (const f of (j.dataFiles ?? []) as TeamFileRow[]) (files[f.team] ??= {}).data = f;
+        for (const f of (j.checkFiles ?? []) as TeamFileRow[]) (files[f.team] ??= {}).check = f;
+        setTeamFiles(files);
       }
     } catch { /* الافتراضي مفتوح */ }
   }, []);
@@ -360,6 +372,9 @@ export default function GroupsPage() {
                         }`}>
                         {groupSet(t).sharedData ? "داتا المجموعة مفتوحة ✓" : "داتا المجموعة مقفولة"}
                       </button>
+                      {groupSet(t).sharedData && (
+                        <p className="mt-1 text-[10px] text-muted">📦 {describeTeamFile(teamFiles[t]?.data)}</p>
+                      )}
 
                       {/* تشييك المجموعة — نفس المسئول، مفتاح مستقل. المسئول يرفع
                           شيت التشييك و**يستبدل** شيت باقي الأعضاء (سجلاتهم مابتتمسّش). */}
@@ -375,6 +390,9 @@ export default function GroupsPage() {
                         }`}>
                         {groupSet(t).sharedCheck ? "تشييك المجموعة مفتوح ✓" : "تشييك المجموعة مقفول"}
                       </button>
+                      {groupSet(t).sharedCheck && (
+                        <p className="mt-1 text-[10px] text-muted">📋 {describeTeamFile(teamFiles[t]?.check)}</p>
+                      )}
 
                       {/* تقرير النشاط اليومي — لمسئول المجموعة اللي السوبر أدمن يفتحها بس. */}
                       <p className="mb-1 mt-2.5 text-[10px] leading-relaxed text-muted">
