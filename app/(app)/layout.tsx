@@ -22,6 +22,8 @@ import { applyServiceKeys } from "@/lib/voiceKeys";
 import { fetchSharedDeepgramKey } from "@/lib/sharedVoiceKey";
 import { getDeepgramKey, setDeepgramKey } from "@/lib/deepgramKey";
 import { supabase } from "@/lib/supabaseClient";
+import { currentSession } from "@/lib/authSession";
+import { readCachedRole, saveCachedRole } from "@/lib/roleCache";
 import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, type SubInfo } from "@/lib/subscription";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 import { getDevicePlatform } from "@/lib/devicePlatform";
@@ -77,14 +79,26 @@ export default function AppShellLayout({
   }, []);
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data.user) return;
+    void (async () => {
+      // الهوية من تخزين الجهاز مش من الشبكة — `getUser` كان بيروح للسيرفر في كل
+      // فتحة، فالشريط العلوي كله (زرار الأدمن + عدّاد الأيام) كان مستني نداء
+      // شبكة زيادة بلا لزوم. صفحات الأدمن مستعملة `currentSession` أصلاً.
+      const { userId } = await currentSession();
+      if (!userId) return;
+      // 👤 زرار «الأدمن» يظهر **فوراً** من آخر مرة، والسيرفر يأكّد بعدها بلحظة.
+      //    (بلاغ المالك ٢٩ سبتمبر: «فيه لاج في ظهور كلمة أدمن».)
+      const remembered = readCachedRole(userId);
+      if (remembered) setIsAdmin(remembered === "admin");
       const { data: profile } = await supabase
         .from("profiles")
         .select("role, is_active, subscription_end, is_trial, service_keys, rest_pages_enabled, rest_until, is_super")
-        .eq("id", data.user.id)
+        .eq("id", userId)
         .single();
-      setIsAdmin(profile?.role === "admin");
+      // الشبكة فشلت ⇒ نسيب اللي فاكرينه زي ما هو بدل ما الزرار يظهر ويختفي.
+      if (profile) {
+        setIsAdmin(profile.role === "admin");
+        if (typeof profile.role === "string") saveCachedRole(userId, profile.role);
+      }
       // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه لسه سارية) — أو سوبر أدمن.
       // false فقط (يدوي) أو انتهاء الأيام = «صوت VoiceX فقط». undefined → مفتوح.
       const rp = profile as { rest_pages_enabled?: boolean; rest_until?: string | null; is_super?: boolean } | null;
@@ -119,7 +133,7 @@ export default function AppShellLayout({
             );
           }
         );
-    });
+    })();
   }, []);
 
   // حارس «صوت VoiceX فقط»: لو المالك قفل باقي الصفحات للمشترك، أي مسار غير
