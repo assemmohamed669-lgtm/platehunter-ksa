@@ -35,7 +35,7 @@ import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey, looksLikePlateQuery, collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
-import { fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type FieldFilter } from "@/lib/fieldCheckView";
+import { areaOf, fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type FieldFilter } from "@/lib/fieldCheckView";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -2549,7 +2549,7 @@ export default function InstantCheckPage() {
       obj["النوع"] = typeToCode(entryType(e)) || entryType(e);
       // ملاحظات المندوب — لازم تطلع في التصدير والمشاركة زي ما هي قدام السيارة
       obj[NOTES_KEY] = entryNotes(e);
-      obj["الحي-الشارع"] = e.row["الحي-الشارع"] ?? "";
+      obj["الحي-الشارع"] = areaOf(e.row);
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
       obj["GPS"] = e.mapsLink ?? "";
@@ -3399,7 +3399,7 @@ export default function InstantCheckPage() {
       const obj: Record<string, unknown> = {
         "الحالة": r.found ? (r.matchType === "fuzzy" ? `مطلوبة؟ ${r.similarity}%` : "مطلوبة") : "غير مطلوبة",
         "رقم اللوحة": r.plate,
-        "الحي-الشارع": r.row?.["الحي-الشارع"] ?? "",
+        "الحي-الشارع": areaOf(r.row),
         "النوع": typeToCode(r.vehicleType ?? "") || (r.vehicleType ?? ""),
         "مراجعة": r.needsReview ? "راجع" : "",
       };
@@ -5073,7 +5073,7 @@ export default function InstantCheckPage() {
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={e.row["النوع"] ?? ""} onChange={(code) => setManualDraftType(e.id, code)} /></td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[STREET_KEY] ?? ""}</td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] ?? ""}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(e.row)}</td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{draftCell(e, "ملاحظات")}</td>
                               <td className="border-l border-border px-3 py-2">
                                 {e.mapsLink ? (
@@ -5857,7 +5857,7 @@ export default function InstantCheckPage() {
                                   <VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} />
                                 </td>
                                 <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[STREET_KEY] || "—"}</td>
-                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
+                                <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(r.row) || "—"}</td>
                                 <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
                                 {dynCols.map((h) => (
                                   <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
@@ -5962,7 +5962,7 @@ export default function InstantCheckPage() {
                               </td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={r.vehicleType ?? ""} onChange={(code) => setPttType(r.id, code)} /></td>
                               <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[STREET_KEY] || "—"}</td>
-                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{r.row?.["الحي-الشارع"] || "—"}</td>
+                              <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(r.row) || "—"}</td>
                               <td className="min-w-[90px] border-l border-border px-3 py-2 whitespace-nowrap text-ink"><EditableCell value={r.notes ?? r.row?.["ملاحظات"] ?? ""} placeholder="ملاحظة…" onSave={(v) => setPttNote(r.id, v)} /></td>
                               {dynCols.map((h) => (
                                 <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{r.row?.[h] || "—"}</td>
@@ -6122,7 +6122,7 @@ export default function InstantCheckPage() {
                               )}
                             </td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink"><VehicleTypeSelect value={hit.row["النوع"] ?? ""} onChange={(code) => setHitType(hit.id, code)} /></td>
-                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{hit.row["الحي-الشارع"] || "—"}</td>
+                            <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(hit.row) || "—"}</td>
                             <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{hit.row["ملاحظات"] || "—"}</td>
                             {dynCols.map((h) => (
                               <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
@@ -6456,7 +6456,7 @@ export default function InstantCheckPage() {
                         <td className="border-l border-border px-3 py-2 min-w-[120px] text-ink">
                           <EditableCell value={entryNotes(e)} placeholder="ملاحظة…" onSave={(v) => void editFieldEntry(e.id, { notes: v })} />
                         </td>
-                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] || "—"}</td>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(e.row) || "—"}</td>
                         {dynCols.map((h) => (
                           <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>
                         ))}
@@ -6653,7 +6653,7 @@ export default function InstantCheckPage() {
                               placeholder="ملاحظة…"
                               className="w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink placeholder:text-muted hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
                           </td>
-                          <td className="border-l border-border p-1 whitespace-nowrap text-muted">{e.row["الحي-الشارع"] || "—"}</td>
+                          <td className="border-l border-border p-1 whitespace-nowrap text-muted">{areaOf(e.row) || "—"}</td>
                           {shownCols.map((h) => (
                             <td key={h} className="border-l border-border p-1 whitespace-nowrap">
                               <input dir="rtl" value={e.row[h] ?? ""} onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}

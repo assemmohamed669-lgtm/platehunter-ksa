@@ -23,6 +23,7 @@ import { wantedExtraColumns, wantedExtraValues } from "@/lib/wantedRowDetails";
 import { supabase } from "@/lib/supabaseClient";
 import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
 import { collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
+import { areaOf } from "@/lib/fieldCheckView";
 
 type ListType = "records" | "wanted" | "voice";
 
@@ -39,7 +40,7 @@ function fieldToRec(e: FieldCheckEntry): RecordingEntry {
     plate: e.plate,
     vehicleType: e.row?.["النوع"] || e.row?.["نوع السيارة"] || undefined,
     street: e.row?.["الشارع"] || undefined,
-    district: e.row?.["الحي"] || e.row?.["اسم الموقع"] || undefined,
+    district: e.row?.["الحي"] || e.row?.["اسم الموقع"] || areaOf(e.row) || undefined,
     notes: e.method || e.row?.["ملاحظات"] || undefined,
     lat: e.lat,
     lng: e.lng,

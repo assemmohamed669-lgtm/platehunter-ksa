@@ -16,6 +16,7 @@ import { ChevronLeft, Users, Search, MapPin, AlertCircle, Pencil, Check, X, Zoom
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import EditableTextCell from "@/components/EditableTextCell";
 import { NOTES_KEY, TYPE_KEY } from "@/lib/fieldCheckEdit";
+import { areaOf } from "@/lib/fieldCheckView";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { dedupeDuplicateRows } from "@/lib/fieldCheck";
@@ -299,7 +300,7 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
                             <EditableTextCell disabled={!mine} value={r.extra[NOTES_KEY] ?? ""} placeholder="ملاحظة…"
                               onSave={(v) => void saveRow(r, { notes: v })} />
                           </td>
-                          <td className="whitespace-nowrap border-l border-border px-3 py-2 text-muted">{r.extra["الحي-الشارع"] || "—"}</td>
+                          <td className="whitespace-nowrap border-l border-border px-3 py-2 text-muted">{areaOf(r.extra) || "—"}</td>
                           <td className="whitespace-nowrap border-l border-border px-3 py-2 text-ink">
                             {names[r.agent_id] ?? "—"}
                             {mine && <span className="mr-1 rounded-full bg-primary/15 px-1.5 py-0.5 text-[0.75em] font-bold text-primary">أنا</span>}
