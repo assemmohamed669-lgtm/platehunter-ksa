@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from "react";
 import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download, ExternalLink } from "lucide-react";
 import { parseExcelFile, decryptExcelFile, openExcelBlob, type ExcelTable } from "@/lib/excel";
+import { isPasswordErrorMessage } from "@/lib/passwordError";
 
 interface Props {
   title: string;
@@ -78,10 +79,13 @@ export default function FileUploadBox({
   // تقدّم استيراد الملف الكبير (عدد الصفوف المقروءة على دفعات) — null = مفيش استيراد.
   const [importRows, setImportRows] = useState<number | null>(null);
 
+  const isLarge = (file: File) =>
+    !!onLargeFile && largeFileThresholdBytes != null && file.size > largeFileThresholdBytes;
+
   async function handleFile(file: File, forcedSheet?: string) {
     setError(null);
     // ملف داتا كبير → قراءة على دفعات وتخزين على الجهاز (بدل فتحه في الذاكرة).
-    if (onLargeFile && largeFileThresholdBytes != null && file.size > largeFileThresholdBytes && !forcedSheet) {
+    if (onLargeFile && isLarge(file) && !forcedSheet) {
       setLoading(true);
       setImportRows(0);
       try {
@@ -90,7 +94,17 @@ export default function FileUploadBox({
         setPendingFile(null);
         setNeedsPassword(false);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "تعذّر استيراد الملف الكبير.");
+        const msg = err instanceof Error ? err.message : "تعذّر استيراد الملف الكبير.";
+        // 🔒 ملف كبير محمي بكلمة مرور ⇒ نفتح خانة كلمة المرور زي الملف الصغير بالظبط.
+        //    قبل كده الغلط كان بيتعرض زي ما هو ومافيش مكان يكتب فيه المندوب كلمة
+        //    المرور (بلاغ المالك ٣٠ سبتمبر ٢٠٢٦).
+        if (isPasswordErrorMessage(msg)) {
+          setPendingFile(file);
+          setNeedsPassword(true);
+          setError(null);
+        } else {
+          setError(msg);
+        }
       } finally {
         setLoading(false);
         setImportRows(null);
@@ -112,9 +126,7 @@ export default function FileUploadBox({
       // ملف بكلمة مرور: القارئ ممكن يرمي رسالة عربية (محمياً/كلمة مرور) أو رسالة
       // SheetJS الإنجليزية «File is password-protected». لازم نمسك الاتنين وإلا
       // بتظهر رسالة خطأ بدل ما تفتح خانة إدخال كلمة المرور.
-      const isPasswordError = msg.includes("محمياً") || msg.includes("كلمة مرور")
-        || /password|passphrase|protected|encrypt/i.test(msg);
-      if (isPasswordError) {
+      if (isPasswordErrorMessage(msg)) {
         setPendingFile(file);
         setNeedsPassword(true);
         setError(null);
@@ -134,6 +146,15 @@ export default function FileUploadBox({
       // بنفك التشفير **مرة واحدة** ونكمّل بالنسخة المفكوكة: التخزين وتبديل
       // الورقات و«فتح الشيت» كلهم بيشتغلوا بعدها فوراً من غير رحلة للسيرفر.
       const plain = await decryptExcelFile(pendingFile, password);
+      // الملف المفكوك كبير ⇒ يكمّل في مسار الدفعات (مش يتفتح كله في الذاكرة —
+      // ده اللي بيقفل البرنامج على الآيفون مع ملفات الداتا الكبيرة).
+      if (isLarge(plain)) {
+        setNeedsPassword(false);
+        setPassword("");
+        setPendingFile(null);
+        await handleFile(plain);
+        return;
+      }
       const table = await parseExcelFile(plain);
       setLastFile(plain);
       setFilePassword(undefined);
