@@ -25,8 +25,10 @@ interface Profile {
   subscription_end: string | null; subscription_amount: number | null; created_at: string;
   team: string | null;   // مجموعة المندوب — اللي نفسها بيوصلهم لقطات بعض
   voicex_until: string | null; rest_until: string | null;   // اشتراك منفصل لكل خدمة
+  wheel_spin_at?: string | null;   // 🎡 لفّة عجلة حظ مفعّلة مستنية
   service_keys: ServiceKeys | null;
 }
+interface WheelSpin { days_won: number; applied_to: string; spun_at: string; }
 interface SubEvent { id: string; new_end: string | null; months: number | null; amount: number | null; note: string | null; created_at: string; created_by: string | null; }
 
 async function authHeaders() {
@@ -81,6 +83,8 @@ export default function AgentDetail() {
   const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
   // مين الأدمن اللي ضاف المندوب — من أقدم حدث اشتراك («إنشاء الحساب») بتاع المندوب.
   const [creator, setCreator] = useState<string | null>(null);
+  // 🎡 آخر لفّة عجلة حظ للمندوب — للعرض جنب الزرار.
+  const [lastSpin, setLastSpin] = useState<WheelSpin | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,6 +98,10 @@ export default function AgentDetail() {
       setNoticeDraft((d) => (noticeLoadedRef.current ? d : (prof.agent_notice ?? "")));
       noticeLoadedRef.current = true;
     }
+    const { data: spin } = await supabase.from("wheel_spins")
+      .select("days_won, applied_to, spun_at").eq("agent_id", id)
+      .order("spun_at", { ascending: false }).limit(1).maybeSingle();
+    setLastSpin((spin as WheelSpin | null) ?? null);
     const { data: ev } = await supabase.from("subscription_events").select("*").eq("agent_id", id).order("created_at", { ascending: false });
     if (ev) setEvents(ev as SubEvent[]);
     // مين ضاف المندوب: حدث «إنشاء الحساب» (أو التجربة)، وإلا أقدم حدث. created_by
@@ -143,6 +151,14 @@ export default function AgentDetail() {
   async function saveRestSub() {
     if (!restEnd) { setMsg("اختار تاريخ نهاية باقي البرنامج."); return; }
     if (await call("extendRest", { until: restEnd })) { setMsg(`✅ اشتراك باقي البرنامج لـ${p?.username ?? "المندوب"} حتى ${restEnd}.`); load(); }
+  }
+
+  // 🎡 تفعيل لفّة عجلة حظ — مرة واحدة لكل تجديد اشتراك (السيرفر بيتأكد).
+  async function grantWheel() {
+    if (await call("grantWheelSpin")) {
+      setMsg(`✅ اتفعّلت عجلة الحظ لـ${p?.username ?? "المندوب"} — هتظهرله أول ما يفتح البرنامج.`);
+      load();
+    }
   }
 
   // حفظ مجموعة المندوب — اللي نفس المجموعة بيوصلهم لقطات بعض لحظيًا.
@@ -545,6 +561,43 @@ export default function AgentDetail() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* ── 🎡 عجلة الحظ — لفّة واحدة لكل تجديد ──
+            طلب المالك (٣٠ سبتمبر ٢٠٢٦): لما المندوب يدفع ويتمدّدله الاشتراك،
+            الأدمن يدوس هنا فتظهرله العجلة مرة واحدة. الضغط تاني على **نفس**
+            التجديد مابيعملش لفّة زيادة — السيرفر هو اللي بيتأكد. */}
+        {p.role === "agent" && (
+          <div className="rounded-2xl border border-border bg-surface p-4 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-bold text-ink">🎡 عجلة الحظ</span>
+              {p.wheel_spin_at && (
+                <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold text-brand">
+                  مفعّلة — مستنية يلفّها
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted">
+              بعد ما تمدّد اشتراكه، دوس هنا فتظهرله العجلة <b>مرة واحدة</b> ويكسب من يوم لـ٤ أيام
+              تتضاف لاشتراكه. الضغط تاني على نفس التجديد مش هيديله لفّة زيادة.
+            </p>
+            <button
+              onClick={grantWheel}
+              disabled={busy || !!p.wheel_spin_at}
+              className="rounded-lg border border-brand/40 bg-brand/10 py-2.5 text-xs font-bold text-brand transition hover:bg-brand/20 disabled:opacity-50">
+              {p.wheel_spin_at ? "مفعّلة بالفعل" : "فعّل عجلة الحظ"}
+            </button>
+            {lastSpin && (
+              <p className="text-[11px] text-muted">
+                آخر لفّة: <b className="text-ink">{lastSpin.days_won}</b>{" "}
+                {lastSpin.days_won === 1 ? "يوم" : lastSpin.days_won === 2 ? "يومين" : "أيام"} —{" "}
+                {new Date(lastSpin.spun_at).toLocaleDateString("ar-EG")}
+                {lastSpin.applied_to === "both" ? " (الصوت + البرنامج)"
+                  : lastSpin.applied_to === "voice" ? " (الصوت)"
+                  : lastSpin.applied_to === "rest" ? " (البرنامج)" : ""}
+              </p>
+            )}
           </div>
         )}
 

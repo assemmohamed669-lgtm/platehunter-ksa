@@ -10,6 +10,7 @@
  *  - setVoicexEnabled { enabled }   (VoiceX voice engine on/off for this agent)
  *  - setRestPages     { enabled }   (rest-of-app pages on/off for this agent)
  *  - setAgentNotice   { notice }    (رسالة خاصة تظهر لهذا المندوب وحده)
+ *  - grantWheelSpin                (🎡 يفعّل لفّة عجلة حظ — مرة لكل تجديد)
  *  - delete
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -19,6 +20,7 @@ import { buildActionDetail } from "@/lib/securityDescribe";
 import { resetDevicePatch } from "@/lib/deviceBinding";
 import { normalizeAgentNotice } from "@/lib/agentNotice";
 import { maxDate } from "@/lib/subscription";
+import { canGrantSpin } from "@/lib/wheel";
 import { randomUUID } from "node:crypto";
 
 // Actions only a SUPER admin may perform (destructive / privilege-changing).
@@ -277,6 +279,34 @@ export async function POST(req: NextRequest) {
         };
         const { error } = await supabaseAdmin.from("profiles")
           .update({ service_keys: clean }).eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      case "grantWheelSpin": {
+        // 🎡 يفعّل لفّة عجلة حظ للمندوب. القفل مربوط بـ**التجديد** مش بضغطة
+        // الزرار: بنقرا آخر تجديد من subscription_events ونخزّنه؛ ضغطة تانية
+        // على نفس التجديد مابتعملش لفّة زيادة. (طلب المالك ٣٠ سبتمبر ٢٠٢٦.)
+        const { data: lastEv } = await supabaseAdmin
+          .from("subscription_events").select("created_at")
+          .eq("agent_id", agentId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const { data: cur } = await supabaseAdmin
+          .from("profiles").select("wheel_grant_key, wheel_spin_at").eq("id", agentId).single();
+        const lastRenewal = (lastEv as { created_at?: string } | null)?.created_at ?? null;
+        const c = (cur ?? {}) as { wheel_grant_key?: string | null; wheel_spin_at?: string | null };
+        const check = canGrantSpin(lastRenewal, c.wheel_grant_key ?? null);
+        if (!check.ok) {
+          return NextResponse.json({
+            error: check.reason === "no-renewal"
+              ? "مافيش تجديد مسجّل للمندوب ده — مدّد اشتراكه الأول وبعدين فعّل العجلة."
+              : (c.wheel_spin_at
+                  ? "العجلة مفعّلة بالفعل على التجديد ده ولسه مالفّهاش."
+                  : "المندوب خد لفّته على التجديد ده خلاص — مدّد اشتراكه الجديد وبعدين فعّل تاني."),
+          }, { status: 400 });
+        }
+        const { error } = await supabaseAdmin.from("profiles")
+          .update({ wheel_spin_at: new Date().toISOString(), wheel_grant_key: lastRenewal })
+          .eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         return NextResponse.json({ ok: true });
       }

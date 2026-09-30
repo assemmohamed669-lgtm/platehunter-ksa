@@ -8,6 +8,7 @@ import BottomNav from "@/components/BottomNav";
 import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import WantedAlertOverlay from "@/components/WantedAlertOverlay";
+import WheelPopup from "@/components/WheelPopup";
 import GroupFindNotifier from "@/components/GroupFindNotifier";
 import PushRegistrar from "@/components/PushRegistrar";
 import AppMenu from "@/components/AppMenu";
@@ -50,6 +51,8 @@ export default function AppShellLayout({
    */
   useEffect(() => { if (pathname) rememberPage(pathname); }, [pathname]);
   const [isAdmin, setIsAdmin] = useState(false);
+  // 🎡 الأدمن فعّل لفّة عجلة حظ؟ بنقراها مع باقي بيانات المندوب — مافيش نداء زيادة.
+  const [wheelGranted, setWheelGranted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cutOff, setCutOff] = useState(false);
   const [isTrial, setIsTrial] = useState(false);
@@ -89,23 +92,35 @@ export default function AppShellLayout({
       //    (بلاغ المالك ٢٩ سبتمبر: «فيه لاج في ظهور كلمة أدمن».)
       const remembered = readCachedRole(userId);
       if (remembered) setIsAdmin(remembered === "admin");
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role, is_active, subscription_end, is_trial, service_keys, rest_pages_enabled, rest_until, is_super")
-        .eq("id", userId)
-        .single();
+      // ⚠️ لو عمود `wheel_spin_at` لسه ماتضافش (الـSQL ماتشغّلش)، الاستعلام كله
+      //    بيفشل والشريط العلوي كله بيقع — فبنرجع للأعمدة القديمة بدل ما نكسر
+      //    البرنامج على كل المناديب لمجرد ترتيب النشر.
+      const BASE_COLS = "role, is_active, subscription_end, is_trial, service_keys, rest_pages_enabled, rest_until, is_super";
+      type ProfileRow = {
+        role?: string | null; is_active?: boolean | null; subscription_end?: string | null;
+        is_trial?: boolean | null; service_keys?: unknown; rest_pages_enabled?: boolean | null;
+        rest_until?: string | null; is_super?: boolean | null; wheel_spin_at?: string | null;
+      };
+      let profile = (await supabase.from("profiles")
+        .select(`${BASE_COLS}, wheel_spin_at`).eq("id", userId).single()).data as ProfileRow | null;
+      if (!profile) {
+        profile = (await supabase.from("profiles")
+          .select(BASE_COLS).eq("id", userId).single()).data as ProfileRow | null;
+      }
       // الشبكة فشلت ⇒ نسيب اللي فاكرينه زي ما هو بدل ما الزرار يظهر ويختفي.
       if (profile) {
         setIsAdmin(profile.role === "admin");
         if (typeof profile.role === "string") saveCachedRole(userId, profile.role);
       }
+      // 🎡 لو فيه لفّة مفعّلة، العجلة بتظهر. السيرفر بيصفّرها أول ما يلفّ.
+      setWheelGranted(!!profile?.wheel_spin_at);
       // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه لسه سارية) — أو سوبر أدمن.
       // false فقط (يدوي) أو انتهاء الأيام = «صوت VoiceX فقط». undefined → مفتوح.
-      const rp = profile as { rest_pages_enabled?: boolean; rest_until?: string | null; is_super?: boolean } | null;
+      const rp = profile;
       setRestPagesEnabled(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).
-      if (profile && (profile as { service_keys?: unknown }).service_keys != null) {
-        applyServiceKeys((profile as { service_keys?: unknown }).service_keys);
+      if (profile && profile.service_keys != null) {
+        applyServiceKeys(profile.service_keys);
       }
       // مفتاح Deepgram المشترك (اللي حطّه السوبر أدمن مرة واحدة) — يُطبَّق لو الجهاز
       // مفيهوش مفتاح خاص، فكل المناديب ياخدوه تلقائياً بدون ما كل واحد يدخّله.
@@ -117,7 +132,7 @@ export default function AppShellLayout({
         const grace = profile.is_trial ? 0 : GRACE_DAYS;
         setIsTrial(!!profile.is_trial);
         setSub(subStatus(profile.subscription_end, grace));
-        setCutOff(isCutOff(profile.subscription_end, profile.is_active, grace));
+        setCutOff(isCutOff(profile.subscription_end, !!profile.is_active, grace));
       }
       // heartbeat — «آخر ظهور» + نسخة البرنامج + نظام الجهاز (آيفون/أندرويد) للأدمن.
       // لو نسخة الـ RPC اللي بتاخد النظام لسه ماتّشغّلتش (SQL)، بنرجع للنداء
@@ -271,6 +286,7 @@ export default function AppShellLayout({
 
         <BottomNav />
         <WantedAlertOverlay />
+        <WheelPopup granted={wheelGranted} />
         <GroupFindNotifier />
         <PushRegistrar />
         <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} voiceOnly={!restPagesEnabled} />
