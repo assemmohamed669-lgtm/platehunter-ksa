@@ -26,6 +26,7 @@ import { resolveResultColumns } from "@/lib/resultColumns";
 import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNeighbors";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import CertificateSearch from "@/components/CertificateSearch";
+import { shareFileName } from "@/lib/shareNames";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
@@ -364,6 +365,7 @@ export default function WantedPage() {
                 الإكسيل ملوّن باللوحات المكررة (dupeHexColors) و RTL بمحاذاة يمين (buildColoredSortExcel). */}
             <ShareSortButton
               title={title}
+              fileName={shareFileName("wanted")}
               label="مشاركة النتيجة"
               rows={() => toExportRows(rows, colOrder, orderMode)}
               excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows, colOrder, orderMode), title, dupeHexColors(rows)), ext: "xlsx" })}
