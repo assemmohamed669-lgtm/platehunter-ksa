@@ -33,6 +33,7 @@ import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibl
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { syncTeamCheckToLocal } from "@/lib/teamCheck";
 import { orderRunsBySheet } from "@/lib/sheetOrder";
+import { pasteColumnsOf } from "@/lib/pasteColumns";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
@@ -1610,7 +1611,15 @@ export default function SortingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pasteResults]);
 
-  const pasteAllCols = dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [];
+  // 📋 أعمدة نتيجة اللصق من الصفوف اللي اتطابقت فعلاً (أي مصدر: الأساسي، داتا
+  //    المجموعة، مربع إضافي) — مش هيدرز الملف الأساسي بس (بلاغ ٣٠ سبتمبر: اللوحات
+  //    كانت بتطلع بأعمدة محفظة فاضية). مفيش نتيجة ⇒ هيدرز الأساسي زي الأول.
+  const pasteAllCols = useMemo(
+    () => (pasteResults.length
+      ? pasteColumnsOf(pasteResults.map((p) => p.row))
+      : (dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [])),
+    [pasteResults, dataTable, effectiveDataPlateCol],
+  );
   const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
 
   const selectedRefPlateCount = useMemo(() => totalPlates(selectedRefSheets), [selectedRefSheets]);
