@@ -20,6 +20,11 @@ import { pushBackHandler } from "@/lib/backStack";
 interface Props {
   /** اسم الشيت + عنوان الصورة + أساس اسم الملف. */
   title: string;
+  /**
+   * 📁 اسم الملف (إكسيل وصورة) — نوع الفرز + تاريخ يوم الفرز (lib/shareNames).
+   * مش موجود ⇒ العنوان زي الأول.
+   */
+  fileName?: string;
   /** يُستدعى وقت الضغط فقط — يرجّع صفوف النتائج (فيها «رقم اللوحة» + الأعمدة). */
   rows: () => Record<string, unknown>[];
   /** بنّاء ملف إكسيل مخصّص (اختياري) — عشان نحافظ على تلوين المكرّرات في نتائج
@@ -40,7 +45,11 @@ function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, rows, excelBlob, imageRows, imageTable, className, label }: Props) {
+export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label }: Props) {
+  // اسم الملف: المسافات بتفضل (المتصفّح بيعرضها)، والموبايل بيحوّله لاسم آمن لوحده.
+  const fileBase = fileNameProp
+    ? fileNameProp.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
+    : safeName(title);
   const btnLabel = label ?? "مشاركة الفرز";
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -66,7 +75,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
     setMenuOpen(false); setBusy(true);
     try {
       const res = await buildBlob(); if (!res) return;
-      await openExcelBlob(res.blob, `${safeName(title)}.${res.ext}`);
+      await openExcelBlob(res.blob, `${fileBase}.${res.ext}`);
     } catch { alert("تعذّر فتح الملف."); } finally { setBusy(false); }
   }
 
@@ -74,7 +83,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
     setMenuOpen(false); setBusy(true);
     try {
       const res = await buildBlob(); if (!res) return;
-      await shareExcelBlob(res.blob, `${safeName(title)}.${res.ext}`, title);
+      await shareExcelBlob(res.blob, `${fileBase}.${res.ext}`, title);
     } catch { alert("تعذّرت المشاركة على واتساب."); } finally { setBusy(false); }
   }
 
@@ -99,7 +108,7 @@ export default function ShareSortButton({ title, rows, excelBlob, imageRows, ima
   }
 
   function fileName(i: number, total: number): string {
-    return total > 1 ? `${safeName(title)}-${i + 1}.png` : `${safeName(title)}.png`;
+    return total > 1 ? `${fileBase}-${i + 1}.png` : `${fileBase}.png`;
   }
   async function shareImg(src: string, i: number, total: number) {
     const caption = total > 1 ? `${title} — صورة ${i + 1}/${total}` : title;

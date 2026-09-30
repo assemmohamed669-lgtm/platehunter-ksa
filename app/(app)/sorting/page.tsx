@@ -34,6 +34,7 @@ import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { syncTeamCheckToLocal } from "@/lib/teamCheck";
 import { orderRunsBySheet } from "@/lib/sheetOrder";
 import { pasteColumnsOf } from "@/lib/pasteColumns";
+import { shareFileName } from "@/lib/shareNames";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
@@ -107,8 +108,9 @@ function dedupeTashyeek(rows: TashyeekResultRow[] | null): TashyeekResultRow[] |
 // العادي. مسار الدفعات كامل الوظائف للفرز (بحث/لصق/تام) فمفيش خسارة مميّزات.
 const LARGE_DATA_THRESHOLD_BYTES = 3 * 1024 * 1024; // ~3MB (كان 12MB — عالي جداً على iOS)
 
-type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number };
-type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string };
+// sortedAt = اليوم اللي الفرز اتعمل فيه — اسم الملف المشارك بيتسمّى بيه (مش بيوم المشاركة).
+type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number; sortedAt?: string };
+type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string; sortedAt?: string };
 // نتايج الفرز محفوظة لكل وضع لوحده (جديد/كلي) — عشان التبديل بين الوضعين
 // مايمسحش نتايج الوضع التاني؛ كل وضع بيفضّل نتايجه لحد ما تعمل فرز جديد فيه
 // أو تمسحه. sortActiveMode = آخر وضع اشتغلت عليه (للاسترجاع بعد التنقّل/الفتح).
@@ -160,8 +162,11 @@ function persistSortResults(
   tashyeekResults: TashyeekResultRow[] | null,
   sortMode: "new" | "full",
   newPlatesCount: number,
+  sortedAtNow?: string,
 ) {
-  sortCacheByMode[sortMode] = { results, tashyeekResults, sortMode, newPlatesCount };
+  // مسح صف/تعديل بعد الفرز مابيغيّرش يوم الفرز — فرز جديد بيبعت وقته صراحةً.
+  const sortedAt = sortedAtNow ?? sortCacheByMode[sortMode]?.sortedAt ?? new Date().toISOString();
+  sortCacheByMode[sortMode] = { results, tashyeekResults, sortMode, newPlatesCount, sortedAt };
   sortActiveMode = sortMode;
   persistSortCache();
 }
@@ -177,10 +182,12 @@ function persistPasteResults(
   results: TokenMatch[],
   recordResults: TokenMatch[],
   text: string,
+  sortedAtNow?: string,
 ) {
-  pasteResultsCache = { results, recordResults, text };
+  const sortedAt = sortedAtNow ?? pasteResultsCache?.sortedAt ?? new Date().toISOString();
+  pasteResultsCache = { results, recordResults, text, sortedAt };
   try {
-    localStorage.setItem(PASTE_RESULTS_KEY, JSON.stringify({ results, recordResults, text }));
+    localStorage.setItem(PASTE_RESULTS_KEY, JSON.stringify({ results, recordResults, text, sortedAt }));
   } catch { /* storage full — الكاش في الذاكرة بيغطّي */ }
 }
 
@@ -2408,7 +2415,7 @@ export default function SortingPage() {
       finalTashyeek = dedupeTashyeek(finalTashyeek);
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
-      persistSortResults(matches, finalTashyeek, "full", 0);
+      persistSortResults(matches, finalTashyeek, "full", 0, new Date().toISOString());
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
@@ -2551,7 +2558,7 @@ export default function SortingPage() {
       finalTashyeek = dedupeTashyeek(finalTashyeek);
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
-      persistSortResults(matches, finalTashyeek, "new", newEntries.length);
+      persistSortResults(matches, finalTashyeek, "new", newEntries.length, new Date().toISOString());
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
@@ -3026,7 +3033,7 @@ export default function SortingPage() {
     );
     setPasteRecordResults(recordRows);
     setPasteRan(true);
-    persistPasteResults(matches, recordRows, pasteText);
+    persistPasteResults(matches, recordRows, pasteText, new Date().toISOString());
   }
 
   // ── WhatsApp ──
@@ -3887,6 +3894,7 @@ export default function SortingPage() {
               النافذة دي **+ سيارات السجلات** معلّم قدامها «سجلات» (بطلب المندوب)
               عشان تطلع مشاركة واحدة فيها الاتنين. excelBlob = النسخة الملوّنة. */}
           <ShareSortButton title={g.title ?? "نتائج الفرز"}
+            fileName={shareFileName(sortMode === "new" ? "new" : "full", sortCacheByMode[sortMode]?.sortedAt, g.title ?? undefined)}
             rows={() => [
               ...gRows.map(buildRowObject),
               ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...tashyeekRowForShare(r) })),
@@ -3902,6 +3910,7 @@ export default function SortingPage() {
               متتكررش مع مشاركة النافذة الواحدة (اللي أصلاً بتضم السجلات). */}
           {resultGroups.length > 1 && (
             <ShareSortButton title="كل نتايج الفرز" label="مشاركة الكل"
+              fileName={shareFileName(sortMode === "new" ? "newAll" : "fullAll", sortCacheByMode[sortMode]?.sortedAt)}
               rows={() => [
                 ...displayResults.map(buildRowObject),
                 ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...tashyeekRowForShare(r) })),
@@ -4124,6 +4133,7 @@ export default function SortingPage() {
 
             {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
             <ShareSortButton title="سيارات مطلوبة من ملف التشييك (السجلات)"
+              fileName={shareFileName(sortMode === "new" ? "newRecords" : "fullRecords", sortCacheByMode[sortMode]?.sortedAt)}
               rows={() => displayTashyeek.map(({ r, _dist }) => tashyeekRowForShare(r, _dist))} />
             <button onClick={clearTashyeekResults}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
@@ -4518,6 +4528,7 @@ export default function SortingPage() {
                 {/* مشاركة الفرز + مسح — لوحات سبق تشييكها */}
                 <div className="flex flex-col gap-2 border-t border-brand/20 p-3">
                   <ShareSortButton title="لوحات سبق تشييكها"
+                    fileName={shareFileName("pasteRecords", pasteResultsCache?.sortedAt)}
                     rows={() => pasteRecordResults.map((p) => buildPasteRecordRowObject(p))} />
                   <button onClick={clearPasteRecordResults}
                     className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
@@ -4530,7 +4541,8 @@ export default function SortingPage() {
         {pasteRan && pasteResults.length > 0 && (
           /* مشاركة الفرز + مسح — نتائج اللصق النصي */
           <>
-            <ShareSortButton title="نتائج اللصق" rows={() => displayPaste.map((p) => buildPasteRowObject(p))} />
+            <ShareSortButton title="نتائج اللصق" fileName={shareFileName("paste", pasteResultsCache?.sortedAt)}
+              rows={() => displayPaste.map((p) => buildPasteRowObject(p))} />
             <button onClick={clearPasteResults}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
               <Trash2 size={15} /> مسح نتايج الفرز
