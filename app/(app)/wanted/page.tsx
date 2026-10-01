@@ -27,6 +27,7 @@ import { detectLocationColumn, neighborsInSameLocation } from "@/lib/locationNei
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import CertificateSearch from "@/components/CertificateSearch";
 import { shareFileName } from "@/lib/shareNames";
+import { buildDisplayRows } from "@/lib/exportColumns";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
@@ -367,8 +368,8 @@ export default function WantedPage() {
               title={title}
               fileName={shareFileName("wanted")}
               label="مشاركة النتيجة"
-              rows={() => toExportRows(rows, colOrder, orderMode)}
-              excelBlob={async () => ({ blob: await buildColoredSortExcel(toExportRows(rows, colOrder, orderMode), title, dupeHexColors(rows)), ext: "xlsx" })}
+              rows={() => buildDisplayRows(toExportRows(rows, colOrder, orderMode)).rows}
+              excelBlob={async () => ({ blob: await buildColoredSortExcel(buildDisplayRows(toExportRows(rows, colOrder, orderMode)).rows, title, dupeHexColors(rows)), ext: "xlsx" })}
               imageTable={() => toImageTable(rows, colOrder, orderMode)}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />

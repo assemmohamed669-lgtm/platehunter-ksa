@@ -51,9 +51,13 @@ describe("نتيجة الفرز — عمود الموقع", () => {
   it("🔴 كل أزرار مشاركة السجلات بتستخدم نسخة المشاركة مش الخام", () => {
     // أي `...buildTashyeekRowObj(` جوّه نشر كائن مشاركة = صف بلا موقع.
     expect(code).not.toContain('"المصدر": "سجلات", ...buildTashyeekRowObj(');
-    expect(code).toContain('"المصدر": "سجلات", ...tashyeekRowForShare(');
-    // زرار نافذة السجلات نفسها
-    expect(code).toContain("displayTashyeek.map(({ r, _dist }) => tashyeekRowForShare(r, _dist))");
+    // الأزرار التحتانية (طلب المالك ١ أكتوبر ٢٠٢٦: الداتا والسجلات · الداتا · السجلات)
+    // بتمشّي السجلات على buildDisplayShareObjects — وهي اللي بتحط رابط الموقع لكل صف.
+    expect(code).toContain("buildDisplayShareObjects([], recs)");
+    expect(code).toContain("buildDisplayShareObjects(displayResults, recs)");
+    const fn = code.slice(code.indexOf("function buildDisplayShareObjects"), code.indexOf("const all = [...dataObjs, ...tashObjs]"));
+    expect(fn).toContain("rawGpsOfTashyeek(r)");
+    expect(fn).toContain('o["GPS"] = g');
   });
 
   it("🔴 وعمود «الموقع» ظاهر على الشاشة في نافذة السجلات", () => {

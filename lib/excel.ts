@@ -1322,6 +1322,19 @@ export async function shareExcelBlob(blob: Blob, filename: string, title: string
  * Build a styled, RTL Excel blob for sort results.
  * Requires exceljs (supports cell fill colors + rightToLeft sheet view).
  */
+/**
+ * 🎨 ألوان المكرر في الإكسيل **واضحة** — درجات الشاشة (‎-100) باهتة جداً في إكسيل
+ * («خلي الالوان ظاهره» — المالك ١ أكتوبر ٢٠٢٦). كل لون بيتحوّل لنفس اللون أغمق
+ * (‎-300)؛ أي لون تاني بيعدّي زي ما هو.
+ */
+const VIVID_DUP: Record<string, string> = {
+  "#FEF9C3": "#FDE047", "#DBEAFE": "#93C5FD", "#DCFCE7": "#86EFAC", "#F3E8FF": "#D8B4FE",
+  "#FFEDD5": "#FDBA74", "#FCE7F3": "#F9A8D4", "#CCFBF1": "#5EEAD4", "#FEE2E2": "#FCA5A5",
+};
+export function vividDupColor(hex: string): string {
+  return VIVID_DUP[hex.toUpperCase()] ?? hex;
+}
+
 export async function buildColoredSortExcel(
   rows: Record<string, unknown>[],
   sheetName: string,
@@ -1329,7 +1342,8 @@ export async function buildColoredSortExcel(
 ): Promise<Blob> {
   const { default: ExcelJS } = await import("exceljs");
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet(sheetName, { views: [{ rightToLeft: true }] });
+  // العناوين ثابتة فوق وهو بيقلّب في الشيت (طلب المالك ١ أكتوبر ٢٠٢٦: «منسّق ومرتّب»).
+  const ws = wb.addWorksheet(sheetName, { views: [{ rightToLeft: true, state: "frozen", ySplit: 1 }] });
 
   if (rows.length === 0) {
     const buf = await wb.xlsx.writeBuffer();
@@ -1338,11 +1352,17 @@ export async function buildColoredSortExcel(
 
   const headers = Object.keys(rows[0]);
 
+  // 📋 خط أكبر وبولد في كل إكسيل نتيجة فرز + حدود رفيعة (طلب المالك ١ أكتوبر ٢٠٢٦).
+  const BORDER = { style: "thin" as const, color: { argb: "FF94A3B8" } };
+  const borders = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+
   // Header row
   const headerRow = ws.addRow(headers);
-  headerRow.font = { bold: true };
+  headerRow.height = 24;
   headerRow.eachCell((cell) => {
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+    cell.font = { bold: true, size: 14 };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFCBD5E1" } };
+    cell.border = borders;
   });
 
   // Data rows
@@ -1352,12 +1372,19 @@ export async function buildColoredSortExcel(
       return v !== null && v !== undefined ? String(v) : "";
     });
     const excelRow = ws.addRow(values);
+    excelRow.height = 21;
+    // كل الخلايا (حتى الفاضية) — عشان الحدود والخط يبقوا موحّدين في الصف كله
+    for (let ci = 1; ci <= headers.length; ci++) {
+      const cell = excelRow.getCell(ci);
+      cell.font = { bold: true, size: 13 };
+      cell.border = borders;
+    }
     const hex = rowHexColors[i];
     if (hex) {
-      const argb = "FF" + hex.replace("#", "");
-      excelRow.eachCell((cell) => {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
-      });
+      const argb = "FF" + vividDupColor(hex).replace("#", "");
+      for (let ci = 1; ci <= headers.length; ci++) {
+        excelRow.getCell(ci).fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
+      }
     }
     // Hyperlinks for URL cells — روابط الخرائط تظهر ككلمة «خريطة»
     headers.forEach((h, ci) => {
@@ -1370,7 +1397,7 @@ export async function buildColoredSortExcel(
         // النص = الرابط نفسه مش كلمة «خريطة» — عشان لما المندوب ينسخ الصف
         // ويبعته على واتساب يوصل رابط قابل للدوس (الـhyperlink مابيتنسخش).
         cell.value = { text: link, hyperlink: link } as ExcelJS.CellHyperlinkValue;
-        cell.font = { color: { argb: "FF0563C1" }, underline: true };
+        cell.font = { color: { argb: "FF0563C1" }, underline: true, bold: true, size: 13 };
       }
     });
   });
@@ -1381,7 +1408,8 @@ export async function buildColoredSortExcel(
     if (isLinkColumn(h, rows)) { ws.getColumn(ci + 1).width = LINK_COL_WIDTH; return; }
     let maxLen = h.length;
     rows.forEach((row) => { const v = String(row[h] ?? ""); if (v.length > maxLen) maxLen = v.length; });
-    ws.getColumn(ci + 1).width = Math.min(Math.max(maxLen + 2, 10), 55);
+    // الخط بقى أكبر وبولد ⇒ العمود محتاج عرض أكتر شوية عشان النص مايتقصّش
+    ws.getColumn(ci + 1).width = Math.min(Math.max(Math.ceil(maxLen * 1.25) + 3, 12), 60);
   });
 
   // محاذاة كل الخلايا لليمين + ترتيب قراءة عربي (RTL) — المحتوى عربي فالنص لازم
