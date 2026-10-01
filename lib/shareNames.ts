@@ -12,7 +12,7 @@
  */
 export type ShareKind =
   | "new" | "full" | "newAll" | "fullAll" | "newRecords" | "fullRecords"
-  | "paste" | "pasteRecords" | "wanted";
+  | "paste" | "pasteRecords" | "pasteAll" | "wanted";
 
 const NAMES: Record<ShareKind, [ar: string, en: string]> = {
   new: ["نتيجة فرز جديد", "new-sort"],
@@ -23,6 +23,7 @@ const NAMES: Record<ShareKind, [ar: string, en: string]> = {
   fullRecords: ["كلي السجلات", "full-sort-records"],
   paste: ["لصق نصي", "paste"],
   pasteRecords: ["نصي سجلات", "paste-records"],
+  pasteAll: ["كل نتايج لصق نصي", "all-paste"],
   wanted: ["فرز الداتا على التشييك", "data-vs-check"],
 };
 
