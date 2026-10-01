@@ -1640,6 +1640,13 @@ export default function SortingPage() {
     [pasteAllCols, pasteResults],
   );
   const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
+  // 📋 ويندو السجلات بتاع اللصق: من غير «الحالة»، والعمود الفاضي في كل الصفوف بيختفي
+  //    — زي نافذة الداتا (طلب المالك ١ أكتوبر ٢٠٢٦).
+  const pasteRecordShownCols = useMemo(
+    () => pasteRecordCols.filter((c) => !/^\s*الحالة\s*$/.test(c)
+      && pasteRecordResults.some((p) => String(p.row[c] ?? "").trim() !== "")),
+    [pasteRecordCols, pasteRecordResults],
+  );
 
   const selectedRefPlateCount = useMemo(() => totalPlates(selectedRefSheets), [selectedRefSheets]);
   // إجمالي **الصفوف** في الورقات المختارة — للعرض في مربع الإحالة زي مربع الداتا
@@ -2805,10 +2812,29 @@ export default function SortingPage() {
     };
   }
   const pasteKeyOf = (converted: string) => normalizePlate(bankPlateToArabic(converted));
+  /**
+   * 📤 مشاركة اللصق المجمّعة (الداتا + السجلات): **أعمدة موحّدة بالمعنى** — النوع/الحي
+   * والشارع/… كل معنى في عمود واحد، فاللوحات تحت بعض وكل عمود تحته بيانات الاتنين
+   * حتى لو اسم العمود مختلف في الداتا والسجلات. والمكرر ملوّن عبر الاتنين.
+   */
+  function pasteAllShareOf() {
+    const dataKeys = displayPaste.map((p) => pasteKeyOf(p.converted));
+    const recKeys = pasteRecordResults.map((p) => pasteKeyOf(p.converted));
+    const { columns, rows } = buildExportRows([
+      ...displayPaste.map((p) => buildPasteRowObject(p)),
+      ...pasteRecordResults.map((p) => buildPasteRecordRowObject(p)),
+    ]);
+    const map = combinedDupColorMap([dataKeys, recKeys], DUPE_COLORS.length);
+    const rowColors = [...dataKeys, ...recKeys].map((k) => {
+      const i = map.get(k);
+      return i !== undefined ? DUPE_COLORS[i].hex : null;
+    });
+    return { columns, rows, rowColors };
+  }
 
   function buildPasteRecordRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
     const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
-    for (const col of pasteRecordCols) obj[col] = p.row[col] ?? "";
+    for (const col of pasteRecordShownCols) obj[col] = p.row[col] ?? "";
     return obj;
   }
 
@@ -2931,6 +2957,13 @@ export default function SortingPage() {
     if (!confirm("متأكد تمسح نتايج اللصق النصي؟")) return;
     setPasteResults([]); setPasteSelected(new Set());
     persistPasteResults([], pasteRecordResults, pasteText);
+  }
+  // «مسح كل الفرز» في اللصق — داتا اللصق وسجلاته مع بعض.
+  function clearAllPasteResults() {
+    if (!confirm("متأكد تمسح كل نتايج اللصق (الداتا + السجلات)؟")) return;
+    setPasteResults([]); setPasteSelected(new Set());
+    setPasteRecordResults([]);
+    wipePasteResults();
   }
   function clearPasteRecordResults() {
     if (!confirm("متأكد تمسح لوحات سبق تشييكها؟")) return;
@@ -4521,7 +4554,7 @@ export default function SortingPage() {
                       <tr className="bg-surface-2 text-muted">
                         <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">إجراءات</th>
                         <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                        {pasteRecordCols.map((col) => (
+                        {pasteRecordShownCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
                             {col}
                           </th>
@@ -4553,7 +4586,7 @@ export default function SortingPage() {
                               )}
                             </div>
                           </td>
-                          {pasteRecordCols.map((col) => {
+                          {pasteRecordShownCols.map((col) => {
                             const v = String(p.row[col] ?? "");
                             const link = gpsCellToLink(v); // ينظّف روابط الاتجاهات/&amp; ويحوّل الإحداثيات
                             return (
@@ -4573,40 +4606,59 @@ export default function SortingPage() {
                     </tbody>
                   </table>
                 </div>
-                {/* مشاركة الفرز + مسح — لوحات سبق تشييكها */}
-                <div className="flex flex-col gap-2 border-t border-brand/20 p-3">
-                  <ShareSortButton title="لوحات سبق تشييكها"
-                    fileName={shareFileName("pasteRecords", pasteResultsCache?.sortedAt)}
-                    rows={() => pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted))).rows}
-                    excelBlob={() => {
-                      const sh = pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted)));
-                      return buildSortBlobBestEffort(sh.rows, "لوحات سبق تشييكها", sh.rowColors);
-                    }}
-                    imageTable={() => pasteShareImage(pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted))))} />
-                  <button onClick={clearPasteRecordResults}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
-                    <Trash2 size={15} /> مسح نتايج الفرز
-                  </button>
-                </div>
               </div>
             )}
 
-        {pasteRan && pasteResults.length > 0 && (
-          /* مشاركة الفرز + مسح — نتائج اللصق النصي */
-          <>
-            <ShareSortButton title="نتائج اللصق" fileName={shareFileName("paste", pasteResultsCache?.sortedAt)}
-              rows={() => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted))).rows}
-              excelBlob={() => {
-                const sh = pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
-                return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors);
-              }}
-              imageTable={() => pasteShareImage(pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted))))} />
-            <button onClick={clearPasteResults}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
-              <Trash2 size={15} /> مسح نتايج الفرز
-            </button>
-          </>
-        )}
+        {/* 📤 مشاركة ومسح اللصق — ٣ أزرار وتحت كل واحد مسحه، زي نتيجة «فرز» بالظبط
+            (المالك ١ أكتوبر ٢٠٢٦ — المندوب اللي بيفرز باللصق كان لسه شايف الزرارين القدام). */}
+        {pasteRan && (pasteResults.length > 0 || pasteRecordResults.length > 0) && (() => {
+          const hasData = pasteResults.length > 0;
+          const hasRecs = pasteRecordResults.length > 0;
+          const when = pasteResultsCache?.sortedAt;
+          const dataShare = () => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
+          const recShare = () => pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted)));
+          const clearCls = "flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10";
+          return (
+            <div className="flex flex-col gap-2">
+              {hasData && hasRecs && (
+                <>
+                  <ShareSortButton title="نتائج اللصق" label="مشاركة الداتا والسجلات"
+                    fileName={shareFileName("pasteAll", when)}
+                    rows={() => pasteAllShareOf().rows}
+                    excelBlob={() => { const sh = pasteAllShareOf(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
+                    imageTable={() => pasteShareImage(pasteAllShareOf())} />
+                  <button onClick={clearAllPasteResults} className={clearCls}>
+                    <Trash2 size={15} /> مسح كل الفرز
+                  </button>
+                </>
+              )}
+              {hasData && (
+                <>
+                  <ShareSortButton title="نتائج اللصق" label="مشاركة نتيجة الداتا"
+                    fileName={shareFileName("paste", when)}
+                    rows={() => dataShare().rows}
+                    excelBlob={() => { const sh = dataShare(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
+                    imageTable={() => pasteShareImage(dataShare())} />
+                  <button onClick={clearPasteResults} className={clearCls}>
+                    <Trash2 size={15} /> مسح فرز الداتا
+                  </button>
+                </>
+              )}
+              {hasRecs && (
+                <>
+                  <ShareSortButton title="لوحات سبق تشييكها" label="مشاركة نتيجة فرز السجلات"
+                    fileName={shareFileName("pasteRecords", when)}
+                    rows={() => recShare().rows}
+                    excelBlob={() => { const sh = recShare(); return buildSortBlobBestEffort(sh.rows, "لوحات سبق تشييكها", sh.rowColors); }}
+                    imageTable={() => pasteShareImage(recShare())} />
+                  <button onClick={clearPasteRecordResults} className={clearCls}>
+                    <Trash2 size={15} /> مسح فرز السجلات
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         <LocationNeighborsModal view={neighborView} onClose={() => setNeighborView(null)} />
 
