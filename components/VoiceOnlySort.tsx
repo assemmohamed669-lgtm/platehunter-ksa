@@ -17,7 +17,7 @@
  * + مربع لصق نصّي: لوحات مكتوبة → تتطابق على السجلات.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
   CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown, Lock} from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -41,7 +41,7 @@ import {
   getAllFieldCheckEntries,
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
-import { recordsToRows, fetchGroupRecordRows, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
+import { recordsToRows, fetchGroupRecordRows, createGroupRowsCache, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
 import { supabase } from "@/lib/supabaseClient";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import {
@@ -169,6 +169,16 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       me.id, me.names,
     );
   }, [me]);
+  // ⚡ كاش سجلات المجموعة — التحميل المسبق بيخلّي الفرز مايستناش السيرفر.
+  const groupCache = useMemo(() => createGroupRowsCache(groupRowsFor), [groupRowsFor]);
+  const [groupPending, setGroupPending] = useState(false);
+  // رقم آخر فرز/لصق — نتيجة سجلات المجموعة لفرز قديم ماتتحطّش على نتيجة أحدث.
+  const sortRunRef = useRef(0);
+  const pasteRunRef = useRef(0);
+  // الصفوف اللي المندوب حذفها قبل ما سجلات المجموعة توصل — ماترجعش لما تتضاف.
+  const sortRemovedRef = useRef<Set<object>>(new Set());
+  const pasteRemovedRef = useRef<Set<object>>(new Set());
+
   /** سجلاتي — وعليها اسمي لو أنا في مجموعة (عشان تتفرّق عن سجلات زمايلي في النتيجة). */
   const myRows = useCallback((entries: Parameters<typeof recordsToRows>[0]) => {
     const rows = recordsToRows(entries);
@@ -240,9 +250,18 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   }
 
   // ── الفرز ─────────────────────────────────────────────────────────────────
+  // ⚡ أول ما الإحالة تجهز: نبدأ نجيب سجلات المجموعة لكل لوحاتها في الخلفية
+  //    («جديد» جزء منها) — فلما المندوب يدوس «ابدأ الفرز» تكون غالباً وصلت.
+  useEffect(() => {
+    if (!me.inTeam || !refTable || !refPlateCol) return;
+    groupCache.prefetch(refTable.rows.map((row) => normalizePlate(bankPlateToArabic(String(row[refPlateCol] ?? "")))));
+  }, [me.inTeam, refTable, refPlateCol, groupCache]);
+
   const runSort = useCallback(async () => {
     if (!refTable || !refPlateCol || busy) return;
     setBusy(true);
+    const run = ++sortRunRef.current;
+    sortRemovedRef.current = new Set();
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
@@ -254,57 +273,72 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
             return n ? !checkSet.has(n) : false;
           })
         : refTable.rows;
+      setScanned(pool.length);
+      const index = buildReferralIndex(pool, refPlateCol);
 
       // الفرز على **سجلاته + سجلات زمايل المجموعة + داتا المجموعة** (لو المسئول
       // رافع). كله بيتحوّل لنفس شكل الصفوف عشان يعدّي على نفس محرّك المطابقة.
-      // سجلات الزمايل: المطابق للوحات الإحالة دي بس (match_group_plates).
-      const groupRows = await groupRowsFor(
-        pool.map((row) => normalizePlate(bankPlateToArabic(String(row[refPlateCol] ?? "")))).filter(Boolean));
-      const recRows = [
-        ...myRows(entries),
-        ...groupRows,
-        ...(teamRows && teamPlateCol
-          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
-          : []),
-      ];
-
-      setScanned(pool.length);
-      const index = buildReferralIndex(pool, refPlateCol);
-      const matches = matchChunkAgainstIndex(recRows, REC_PLATE_COL, index);
-      setResults(matches);
+      const mine = myRows(entries);
+      const teamDataRows = teamRows && teamPlateCol
+        ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+        : [];
+      // ⚡ نتيجة سجلاتي (وداتا المجموعة) **على طول** — من غير ما نستنى السيرفر.
+      setResults(matchChunkAgainstIndex([...mine, ...teamDataRows], REC_PLATE_COL, index));
       setRan(true);
-    } finally {
       setBusy(false);
+      if (!me.inTeam) return;
+
+      // 👥 سجلات زمايلي تتضاف أول ما توصل — غالباً جاهزة من التحميل المسبق.
+      setGroupPending(true);
+      const groupRows = await groupCache.get(
+        pool.map((row) => normalizePlate(bankPlateToArabic(String(row[refPlateCol] ?? "")))));
+      if (run !== sortRunRef.current) return;   // فرز أحدث بدأ أو النتيجة اتمسحت
+      if (groupRows.length) {
+        const removed = sortRemovedRef.current;
+        setResults(matchChunkAgainstIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL, index)
+          .filter((m) => !(m.dataRow && removed.has(m.dataRow))));
+      }
+    } finally {
+      if (run === sortRunRef.current) { setBusy(false); setGroupPending(false); }
     }
-  }, [refTable, refPlateCol, sortMode, checkSet, busy, groupRowsFor, myRows, teamRows, teamPlateCol]);
+  }, [refTable, refPlateCol, sortMode, checkSet, busy, groupCache, myRows, teamRows, teamPlateCol, me.inTeam]);
 
   // ── اللصق النصّي: لوحات مكتوبة → تتطابق على السجلات ────────────────────────
   const runPaste = useCallback(async () => {
     const tokens = tokenizePastedPlates(pasteText);
     if (tokens.length === 0) { setPasteResults([]); setPasteRan(true); return; }
     setBusy(true);
+    const run = ++pasteRunRef.current;
+    pasteRemovedRef.current = new Set();
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
-      // + سجلات زمايل المجموعة اللي طابقت اللوحات الملصوقة (match_group_plates)
-      const groupRows = await groupRowsFor(
-        tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean));
-      const recRows = [
-        ...myRows(entries),
-        ...groupRows,
-        ...(teamRows && teamPlateCol
-          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
-          : []),
-      ];
-      // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
-      const index = buildReferralIndex(recRows, REC_PLATE_COL);
+      const mine = myRows(entries);
+      const teamDataRows = teamRows && teamPlateCol
+        ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+        : [];
       const pastedRows = tokens.map((t) => ({ [REC_PLATE_COL]: t }));
-      setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, index));
+      // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
+      // ⚡ نتيجة سجلاتي على طول — من غير ما نستنى السيرفر.
+      setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, buildReferralIndex([...mine, ...teamDataRows], REC_PLATE_COL)));
       setPasteRan(true);
-    } finally {
       setBusy(false);
+      if (!me.inTeam) return;
+
+      // 👥 + سجلات زمايل المجموعة اللي طابقت اللوحات الملصوقة — أول ما توصل.
+      setGroupPending(true);
+      const groupRows = await groupCache.get(tokens.map((t) => normalizePlate(bankPlateToArabic(t))));
+      if (run !== pasteRunRef.current) return;
+      if (groupRows.length) {
+        const removed = pasteRemovedRef.current;
+        const index = buildReferralIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL);
+        setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, index)
+          .filter((m) => !removed.has(m.referralRow)));
+      }
+    } finally {
+      if (run === pasteRunRef.current) { setBusy(false); setGroupPending(false); }
     }
-  }, [pasteText, groupRowsFor, myRows, teamRows, teamPlateCol]);
+  }, [pasteText, groupCache, myRows, teamRows, teamPlateCol, me.inTeam]);
 
   // ── المشاركة ──────────────────────────────────────────────────────────────
   /** يدمج صف الإحالة + صف السجل في صف واحد للعرض/التصدير (كل البيانات). */
@@ -733,10 +767,19 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
               ? `يوجد ${scanned ?? 0} ${sortMode === "new" ? "سيارة جديدة" : "سيارة في الإحالة"} · تم العثور على ${results.length} مطلوبة`
               : `يوجد ${scanned ?? 0} ${sortMode === "new" ? "سيارة جديدة" : "سيارة في الإحالة"} · لا يوجد تطابق بينها وبين السجلات`}
           </div>
+          {groupPending && (
+            <p className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-muted">
+              <Loader2 size={12} className="animate-spin" /> بيضيف سجلات المجموعة…
+            </p>
+          )}
           <ResultsBlock
             rows={results}
-            onClear={() => { setResults([]); setRan(false); setScanned(null); }}
-            onRemoveRow={(i) => setResults((rs) => rs.filter((_, j) => j !== i))}
+            onClear={() => { sortRunRef.current++; setGroupPending(false); setResults([]); setRan(false); setScanned(null); }}
+            onRemoveRow={(i) => setResults((rs) => {
+              const gone = rs[i];
+              if (gone?.dataRow) sortRemovedRef.current.add(gone.dataRow);
+              return rs.filter((_, j) => j !== i);
+            })}
             emptyHint="مفيش سيارات مطابقة."
           />
         </div>
@@ -771,8 +814,12 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         {pasteRan && (
           <ResultsBlock
             rows={pasteResults}
-            onClear={() => { setPasteResults([]); setPasteRan(false); }}
-            onRemoveRow={(i) => setPasteResults((rs) => rs.filter((_, j) => j !== i))}
+            onClear={() => { pasteRunRef.current++; setGroupPending(false); setPasteResults([]); setPasteRan(false); }}
+            onRemoveRow={(i) => setPasteResults((rs) => {
+              const gone = rs[i];
+              if (gone) pasteRemovedRef.current.add(gone.referralRow);
+              return rs.filter((_, j) => j !== i);
+            })}
             emptyHint="مفيش لوحة من اللي لصقتها موجودة في سجلاتك."
           />
         )}

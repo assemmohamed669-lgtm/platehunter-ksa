@@ -59,10 +59,13 @@ describe("توصيل فرز «صوت فقط»", () => {
   const block = (name: string) => code.slice(code.indexOf(`const ${name} = useCallback`), code.indexOf("}, [", code.indexOf(`const ${name} = useCallback`)));
 
   it("🔴 الفرز (جديد/كلي) واللصق الاتنين بيدخّلوا سجلات المجموعة", () => {
+    // الفرز بياخد سجلات المجموعة من الكاش (التحميل المسبق — ١ أكتوبر ٢٠٢٦: «بطئ جدا»)،
+    // والكاش متبني على groupRowsFor نفسها.
     for (const b of [block("runSort"), block("runPaste")]) {
-      expect(b).toMatch(/groupRowsFor\(/);
+      expect(b).toMatch(/groupCache\.get\(/);
       expect(b).toMatch(/\.\.\.groupRows,/);
     }
+    expect(code).toMatch(/createGroupRowsCache\(groupRowsFor\)/);
     const helper = block("groupRowsFor");
     expect(helper).toMatch(/fetchGroupRecordRows\(/);
     expect(helper).toMatch(/match_group_plates/);
