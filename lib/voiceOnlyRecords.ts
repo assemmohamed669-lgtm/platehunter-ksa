@@ -74,3 +74,41 @@ export async function fetchGroupRecordRows(
     }
   } catch { return out; }
 }
+
+/**
+ * ⚡ **كاش سجلات المجموعة للفرز** — عشان الفرز مايستناش السيرفر.
+ *
+ * المالك (١ أكتوبر ٢٠٢٦): «بطئ جدا على ما يطلعلهم نتيجه الفرز». الفرز كان بيستنى
+ * `match_group_plates` بكل لوحات الإحالة قبل ما يعرض أي حاجة. دلوقتي الصفحة بتعمل
+ * `prefetch` بكل لوحات الإحالة أول ما تجهز (في الخلفية)، و`get` وقت الفرز بيرجّع
+ * نفس الجلب لو اللوحات المطلوبة جوّاه («جديد» جزء من الإحالة) — من غير نداء تاني.
+ * لوحات برّه الجلب (اللصق) بتتجاب لوحدها. بعد `ttlMs` بيجيب من جديد عشان سجلات
+ * الزمايل الجديدة تدخل. أي غلط ⇒ فاضي (الفرز على سجلات المندوب بيكمّل).
+ */
+export function createGroupRowsCache(
+  fetchRows: (norms: string[]) => Promise<Record<string, string>[]>,
+  opts: { ttlMs?: number; now?: () => number } = {},
+) {
+  const ttl = opts.ttlMs ?? 120_000;
+  const now = opts.now ?? (() => Date.now());
+  let cached: { set: Set<string>; at: number; promise: Promise<Record<string, string>[]> } | null = null;
+  const uniq = (norms: string[]) => [...new Set(norms.filter(Boolean))];
+  const covers = (u: string[]) => !!cached && now() - cached.at < ttl && u.every((n) => cached!.set.has(n));
+  const safe = (u: string[]) => {
+    try { return fetchRows(u).catch(() => [] as Record<string, string>[]); }
+    catch { return Promise.resolve([] as Record<string, string>[]); }
+  };
+  return {
+    prefetch(norms: string[]): void {
+      const u = uniq(norms);
+      if (u.length === 0 || covers(u)) return;
+      cached = { set: new Set(u), at: now(), promise: safe(u) };
+    },
+    get(norms: string[]): Promise<Record<string, string>[]> {
+      const u = uniq(norms);
+      if (u.length === 0) return Promise.resolve([]);
+      if (covers(u)) return cached!.promise;
+      return safe(u);
+    },
+  };
+}
