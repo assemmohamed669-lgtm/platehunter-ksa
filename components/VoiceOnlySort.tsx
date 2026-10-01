@@ -41,7 +41,8 @@ import {
   getAllFieldCheckEntries,
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
-import { recordsToRows, REC_PLATE_COL } from "@/lib/voiceOnlyRecords";
+import { recordsToRows, fetchGroupRecordRows, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
+import { supabase } from "@/lib/supabaseClient";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import {
   fetchTeamDataState, downloadTeamData, uploadTeamData, deleteTeamData,
@@ -133,6 +134,46 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [teamBusy, setTeamBusy] = useState(false);
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
   const [teamTick, setTeamTick] = useState(0);
+  // 👥 أنا مين ومجموعتي مين — عشان الفرز يدخّل سجلات زمايلي (طلب المالك ١ أكتوبر ٢٠٢٦).
+  const [me, setMe] = useState<{ id: string; name: string; names: Record<string, string>; inTeam: boolean }>(
+    { id: "", name: "", names: {}, inTeam: false });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: au } = await supabase.auth.getUser();
+        const uid = au.user?.id;
+        if (!uid) return;
+        const { data: prof } = await supabase.from("profiles").select("username, team").eq("id", uid).single();
+        const pr = prof as { username?: string; team?: string | null } | null;
+        if (!pr?.team) { if (!cancelled) setMe({ id: uid, name: pr?.username ?? "", names: {}, inTeam: false }); return; }
+        const { data: mem } = await supabase.rpc("my_team_members");
+        const names = Object.fromEntries(
+          ((mem ?? []) as Array<{ id: string; username: string }>).map((m) => [m.id, m.username]));
+        if (!cancelled) setMe({ id: uid, name: pr.username ?? "", names, inTeam: true });
+      } catch { /* أوفلاين — الفرز على سجلاتي بيكمّل عادي */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * 👥 سجلات زمايل المجموعة المطابقة للوحات دي — من السيرفر (match_group_plates،
+   * مربوطة بزرار «مشاركة السجلات») زي صفحة الفرز العادية. مش في مجموعة ⇒ ولا حاجة.
+   */
+  const groupRowsFor = useCallback(async (norms: string[]): Promise<Record<string, string>[]> => {
+    if (!me.inTeam || !me.id || norms.length === 0) return [];
+    const uniq = [...new Set(norms)];
+    return fetchGroupRecordRows(
+      (from, to) => supabase.rpc("match_group_plates", { p_norms: uniq }).range(from, to) as unknown as
+        PromiseLike<{ data: GroupPlateRow[] | null; error: unknown }>,
+      me.id, me.names,
+    );
+  }, [me]);
+  /** سجلاتي — وعليها اسمي لو أنا في مجموعة (عشان تتفرّق عن سجلات زمايلي في النتيجة). */
+  const myRows = useCallback((entries: Parameters<typeof recordsToRows>[0]) => {
+    const rows = recordsToRows(entries);
+    return me.inTeam ? rows.map((r) => ({ ...r, "المندوب": me.name })) : rows;
+  }, [me]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -205,14 +246,6 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
-      // الفرز على **سجلاته + داتا المجموعة** (لو المسئول رافع). الاتنين
-      // بيتحوّلوا لنفس شكل الصفوف عشان يعدّوا على نفس محرّك المطابقة.
-      const recRows = [
-        ...recordsToRows(entries),
-        ...(teamRows && teamPlateCol
-          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
-          : []),
-      ];
 
       // وضع «جديد»: نشيل من الإحالة أي لوحة موجودة أصلاً في ملف التشييك.
       const pool = sortMode === "new"
@@ -222,6 +255,19 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
           })
         : refTable.rows;
 
+      // الفرز على **سجلاته + سجلات زمايل المجموعة + داتا المجموعة** (لو المسئول
+      // رافع). كله بيتحوّل لنفس شكل الصفوف عشان يعدّي على نفس محرّك المطابقة.
+      // سجلات الزمايل: المطابق للوحات الإحالة دي بس (match_group_plates).
+      const groupRows = await groupRowsFor(
+        pool.map((row) => normalizePlate(bankPlateToArabic(String(row[refPlateCol] ?? "")))).filter(Boolean));
+      const recRows = [
+        ...myRows(entries),
+        ...groupRows,
+        ...(teamRows && teamPlateCol
+          ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
+          : []),
+      ];
+
       setScanned(pool.length);
       const index = buildReferralIndex(pool, refPlateCol);
       const matches = matchChunkAgainstIndex(recRows, REC_PLATE_COL, index);
@@ -230,7 +276,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     } finally {
       setBusy(false);
     }
-  }, [refTable, refPlateCol, sortMode, checkSet, busy]);
+  }, [refTable, refPlateCol, sortMode, checkSet, busy, groupRowsFor, myRows, teamRows, teamPlateCol]);
 
   // ── اللصق النصّي: لوحات مكتوبة → تتطابق على السجلات ────────────────────────
   const runPaste = useCallback(async () => {
@@ -240,8 +286,12 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     try {
       // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
       const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
+      // + سجلات زمايل المجموعة اللي طابقت اللوحات الملصوقة (match_group_plates)
+      const groupRows = await groupRowsFor(
+        tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean));
       const recRows = [
-        ...recordsToRows(entries),
+        ...myRows(entries),
+        ...groupRows,
         ...(teamRows && teamPlateCol
           ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
           : []),
@@ -254,7 +304,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     } finally {
       setBusy(false);
     }
-  }, [pasteText]);
+  }, [pasteText, groupRowsFor, myRows, teamRows, teamPlateCol]);
 
   // ── المشاركة ──────────────────────────────────────────────────────────────
   /** يدمج صف الإحالة + صف السجل في صف واحد للعرض/التصدير (كل البيانات). */
