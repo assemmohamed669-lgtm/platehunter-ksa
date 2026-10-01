@@ -63,6 +63,7 @@ export default function GroupSortPage() {
   const [warn, setWarn] = useState<string | null>(null);
   const [results, setResults] = useState<Match[] | null>(null);
   const [chassisResults, setChassisResults] = useState<ChassisSortMatch[] | null>(null);
+  const [chassisBusy, setChassisBusy] = useState(false);
   const [refCount, setRefCount] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const chassisAgentRef = useRef<Map<string, string>>(new Map()); // recordId → agent_id
@@ -115,22 +116,27 @@ export default function GroupSortPage() {
       const matches: Match[] = rows
         .map((r) => ({ ...r, refRow: normMap.get(normalizePlate(bankPlateToArabic(r.plate))) ?? null }))
         .sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1));
+      // ✅ نتيجة اللوحات تظهر **فوراً** — مانقفلش «جارٍ الفرز» ولا نستنى الشاص.
       setResults(matches);
+      setBusy(false);
 
-      // الشاص: نجيب سجلات شاص المجموعة ونطابق أرقام الشاص على الإحالة (نفس منطق
-      // الفرز الحالي — تام/تقريبي/بآخر الأرقام). الشاص أقل بكتير فبنجيبه كله.
+      // الشاص **في الخلفية**: نجيب سجلات شاص المجموعة ونطابقها على الإحالة. بطيء
+      // لأنه بيجيب كل الشاص، فمابيوقّفش ظهور نتيجة اللوحات فوق — بيتحمّل جنبها.
       const memberIds = Object.keys(names);
       chassisAgentRef.current.clear();
-      try {
-        const chassisRecs = await fetchGroupChassis(memberIds, chassisAgentRef.current);
-        setChassisResults(chassisRecs.length
-          ? matchChassisRecordsAgainstReferrals(chassisRecs, [{ headers: table.headers, rows: table.rows }])
-          : []);
-      } catch {
-        // فشل الشاص مايضيّعش نتيجة اللوحات — بنكمّل ونحذّر.
-        setChassisResults([]);
-        setWarn("تعذّر جلب سجلات الشاص — نتيجة اللوحات فوق كاملة.");
-      }
+      setChassisBusy(true);
+      void (async () => {
+        try {
+          const chassisRecs = await fetchGroupChassis(memberIds, chassisAgentRef.current);
+          setChassisResults(chassisRecs.length
+            ? matchChassisRecordsAgainstReferrals(chassisRecs, [{ headers: table.headers, rows: table.rows }])
+            : []);
+        } catch {
+          // فشل الشاص مايضيّعش نتيجة اللوحات — بنكمّل ونحذّر.
+          setChassisResults([]);
+          setWarn("تعذّر جلب سجلات الشاص — نتيجة اللوحات فوق كاملة.");
+        } finally { setChassisBusy(false); }
+      })();
     } catch (e) {
       const msg = (e as Error)?.message ?? "";
       setError(/password|protected|محمي|كلمة/i.test(msg) ? "الملف محمي بكلمة مرور — افتحه واحفظه بدون حماية." : "تعذّر قراءة الملف: " + msg);
@@ -223,6 +229,13 @@ export default function GroupSortPage() {
                   {results.length === 0 && (!chassisResults || chassisResults.length === 0) &&
                     <p className="py-8 text-center text-sm text-muted">مفيش أي سيارة من الإحالة اتلاقت في سجلات المجموعة.</p>}
                 </div>
+
+                {/* الشاص بيتحمّل في الخلفية بعد ما نتيجة اللوحات ظهرت */}
+                {chassisBusy && (
+                  <p className="mt-1 flex items-center justify-center gap-1.5 text-[11px] text-muted">
+                    <Barcode size={13} className="animate-pulse text-brand" /> جارٍ فحص الشاص…
+                  </p>
+                )}
 
                 {/* مطابقات الشاص */}
                 {chassisResults && chassisResults.length > 0 && (
