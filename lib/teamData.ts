@@ -14,7 +14,16 @@ export const TEAM_DATA_SLOT = "team-data";
 
 export interface TeamDataSettings {
   leaderId: string | null;
+  /** مفتاح المالك لكل مجموعة — الميزة متاحة للمجموعة دي أصلاً ولا لأ. */
   enabled: boolean;
+  /**
+   * 🔑 مفتاح **المسئول** نفسه (طلب المالك ١ أكتوبر ٢٠٢٦): «زر عند مسئول
+   * المجموعة — لو فتحه الداتا توصل لباقي الأعضاء، ولو قفله تظهر للمسئول فقط».
+   *
+   * **الافتراضي مقفول** بقرار المالك: المسئول يرفع، وبعدين يفتح بإيده وقت ما
+   * يحب. فالقيمة الناقصة = مقفول.
+   */
+  open?: boolean;
 }
 
 /** دور المستخدم الحالي في داتا المجموعة. */
@@ -23,6 +32,28 @@ export type TeamDataRole = "off" | "leader" | "member";
 export function teamDataRole(settings: TeamDataSettings | null, myId: string | null): TeamDataRole {
   if (!settings || !settings.enabled || !settings.leaderId || !myId) return "off";
   return settings.leaderId === myId ? "leader" : "member";
+}
+
+/**
+ * الأعضاء يشوفوا داتا المجموعة دلوقتي؟ لازم **المفتاحين** يكونوا مفتوحين:
+ * مفتاح المالك للمجموعة، ومفتاح المسئول.
+ *
+ * ⚠️ ده للواجهة بس. المنع الحقيقي على السيرفر في سياسات القراءة
+ * (`docs/sql/team-data-open.sql`) — إخفاء الزرار لوحده مش حماية.
+ */
+export function teamDataOpenForMembers(settings: TeamDataSettings | null): boolean {
+  if (!settings || !settings.enabled || !settings.leaderId) return false;
+  return settings.open === true;
+}
+
+/**
+ * يقدر يستعمل ملف المجموعة؟ **المسئول شايف ملفه دايماً** — القفل بيمنع
+ * الأعضاء بس، والملف مايتمسحش فبيرجع يوصلهم بنفس الضغطة.
+ */
+export function canUseTeamFile(role: TeamDataRole, open: boolean): boolean {
+  if (role === "leader") return true;
+  if (role === "member") return open;
+  return false;
 }
 
 /**
@@ -86,6 +117,8 @@ export interface TeamDataState {
   role: TeamDataRole;
   team: string | null;
   file: TeamDataFile | null;
+  /** مفتاح المسئول: الداتا مفتوحة للأعضاء ولا لأ. الافتراضي **مقفول**. */
+  open: boolean;
 }
 
 /**
@@ -96,7 +129,7 @@ export interface TeamDataState {
  * لو حاجة ناقصة.
  */
 export async function fetchTeamDataState(): Promise<TeamDataState> {
-  const off: TeamDataState = { role: "off", team: null, file: null };
+  const off: TeamDataState = { role: "off", team: null, file: null, open: false };
   try {
     const { supabase } = await import("./supabaseClient");
     const { data: auth } = await supabase.auth.getUser();
@@ -108,13 +141,16 @@ export async function fetchTeamDataState(): Promise<TeamDataState> {
     if (!team) return off;
 
     const { data: gs } = await supabase
-      .from("group_settings").select("leader_id, shared_data_enabled").eq("team", team).maybeSingle();
-    const g = gs as { leader_id?: string | null; shared_data_enabled?: boolean } | null;
-    const role = teamDataRole(
-      g ? { leaderId: g.leader_id ?? null, enabled: !!g.shared_data_enabled } : null,
-      myId,
-    );
+      .from("group_settings").select("leader_id, shared_data_enabled, shared_data_open").eq("team", team).maybeSingle();
+    const g = gs as {
+      leader_id?: string | null; shared_data_enabled?: boolean; shared_data_open?: boolean;
+    } | null;
+    const settings = g
+      ? { leaderId: g.leader_id ?? null, enabled: !!g.shared_data_enabled, open: g.shared_data_open === true }
+      : null;
+    const role = teamDataRole(settings, myId);
     if (role === "off") return off;
+    const open = teamDataOpenForMembers(settings);
 
     const { data: fr } = await supabase
       .from("team_data_files").select("path, file_name, row_count, plate_count, updated_at")
@@ -125,7 +161,7 @@ export async function fetchTeamDataState(): Promise<TeamDataState> {
     } | null;
 
     return {
-      role, team,
+      role, team, open,
       file: f ? {
         path: f.path, fileName: f.file_name, rowCount: f.row_count,
         plateCount: f.plate_count, updatedAt: f.updated_at,
@@ -133,6 +169,23 @@ export async function fetchTeamDataState(): Promise<TeamDataState> {
     };
   } catch {
     return off;   // مافيش نت أو السكريبت ماتشغّلش — الصفحة تشتغل زي ما هي
+  }
+}
+
+/**
+ * يفتح/يقفل مشاركة داتا المجموعة — **المسئول بس**.
+ *
+ * بيمرّ على دالة على السيرفر عشان الصلاحية تتحقّق هناك مش هنا؛ إخفاء الزرار
+ * في الواجهة مش حماية. الملف **مايتمسحش** لما يقفل — بيرجع يوصلهم بنفس الضغطة.
+ */
+export async function setTeamDataOpen(open: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { supabase } = await import("./supabaseClient");
+    const { error } = await supabase.rpc("set_team_data_open", { p_open: open });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? "تعذّر الحفظ" };
   }
 }
 

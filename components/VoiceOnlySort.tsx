@@ -129,7 +129,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [teamRows, setTeamRows] = useState<Record<string, string>[] | null>(null);
   const [teamPlateCol, setTeamPlateCol] = useState<string | null>(null);
   const [teamPlateCount, setTeamPlateCount] = useState<number | null>(null);
-  const [teamState, setTeamState] = useState<TeamDataState>({ role: "off", team: null, file: null });
+  const [teamState, setTeamState] = useState<TeamDataState>({ role: "off", team: null, file: null, open: false });
   const [teamBusy, setTeamBusy] = useState(false);
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
   const [teamTick, setTeamTick] = useState(0);

@@ -56,7 +56,7 @@ import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
 import {
   fetchTeamDataState, uploadTeamData, deleteTeamData, downloadTeamData,
-  needsTeamDataRefresh, teamIngestMode, TEAM_DATA_SLOT, type TeamDataState,
+  needsTeamDataRefresh, teamIngestMode, setTeamDataOpen, TEAM_DATA_SLOT, type TeamDataState,
 } from "@/lib/teamData";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import ShareSortButton from "@/components/ShareSortButton";
@@ -647,12 +647,12 @@ export default function SortingPage() {
   // ── داتا المجموعة ────────────────────────────────────────────────────────
   // المسئول بيرفع، والأعضاء **بيفرزوا عليها بس**. الحالة «off» معناها الميزة
   // مقفولة للمجموعة دي ⇒ مافيش أي مربع بيظهر والصفحة زي ما هي بالظبط.
-  const [teamData, setTeamData] = useState<TeamDataState>({ role: "off", team: null, file: null });
+  const [teamData, setTeamData] = useState<TeamDataState>({ role: "off", team: null, file: null, open: false });
   /**
    * دور المندوب في داتا المجموعة — في `ref` كمان عشان دوال الرفع/المسح تقراه
    * وقت التنفيذ مش وقت ما اتعرّفت (نفس فخ التوقيت بتاع سجلات المجموعة).
    */
-  const teamDataRef = useRef<TeamDataState>({ role: "off", team: null, file: null });
+  const teamDataRef = useRef<TeamDataState>({ role: "off", team: null, file: null, open: false });
   const [teamTable, setTeamTable] = useState<ExcelTable | null>(null);
   // العضو بيشوف داتا المجموعة **زي المسئول بالظبط**: كارت ملف باسمه يفتحه ويعاين
   // ويفرز عليه (بس مايمسحش/مايستبدلش — ده للمسئول). الملف الكبير بيتقري streaming
@@ -664,6 +664,8 @@ export default function SortingPage() {
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
   // رفع الداتا للمجموعة نجح — المسئول لازم يعرف إنها وصلت (بلاغ ٢٩ سبتمبر).
   const [teamOkMsg, setTeamOkMsg] = useState<string | null>(null);
+  // 🔑 مفتاح المسئول: مشاركة الداتا مع المجموعة (طلب المالك ١ أكتوبر ٢٠٢٦).
+  const [teamOpenBusy, setTeamOpenBusy] = useState(false);
   useEffect(() => { setExtraLocks(loadExtraDataLocks()); }, []);
 
   /**
@@ -746,6 +748,25 @@ export default function SortingPage() {
       setTeamMsg("تعذّر قراءة داتا المجموعة.");
     } finally { setTeamBusy(false); }
   }, []);
+
+  /**
+   * 🔑 يفتح/يقفل مشاركة داتا المجموعة — **المسئول بس**.
+   *
+   * مقفول = الداتا تفضل عنده هو؛ مفتوح = كل الأعضاء يفرزوا عليها. الملف
+   * **مايتمسحش** لما يقفل، فبيرجع يوصلهم بنفس الضغطة. والصلاحية بتتحقّق على
+   * السيرفر كمان (`set_team_data_open`) — إخفاء الزرار مش حماية.
+   */
+  const toggleTeamShare = useCallback(async () => {
+    if (teamOpenBusy) return;
+    setTeamOpenBusy(true);
+    setTeamMsg(null); setTeamOkMsg(null);
+    const next = !teamDataRef.current.open;
+    const res = await setTeamDataOpen(next);
+    if (!res.ok) setTeamMsg(`❌ ${res.error}`);
+    else setTeamOkMsg(next ? "✅ الداتا بقت مفتوحة لكل أفراد المجموعة" : "✅ الداتا بقت ظاهرة ليك انت بس");
+    await syncTeamData();
+    setTeamOpenBusy(false);
+  }, [teamOpenBusy, syncTeamData]);
 
   useEffect(() => { void syncTeamData(); }, [syncTeamData]);
   // 👥 شيت تشييك المجموعة كمان — العضو اللي بيفتح على الفرز على طول كان بيفرز
@@ -3373,6 +3394,37 @@ export default function SortingPage() {
         <p className={`px-0.5 text-[11px] font-bold ${teamMsg ? "text-danger" : "text-primary"}`}>
           {teamMsg ?? (teamBusy ? "جارٍ رفع الداتا لمجموعتك…" : teamOkMsg)}
         </p>
+      )}
+
+      {/* 🔑 مفتاح المسئول — مايظهرش لحد غيره. مقفول افتراضياً بقرار المالك. */}
+      {teamData.role === "leader" && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-ink">مشاركة الداتا مع المجموعة</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-muted">
+              {teamData.open
+                ? "مفتوحة — كل أفراد المجموعة بيفرزوا على الداتا اللي رفعتها"
+                : "مقفولة — الداتا ظاهرة ليك انت بس"}
+            </p>
+          </div>
+          <button
+            onClick={() => void toggleTeamShare()}
+            disabled={teamOpenBusy}
+            role="switch"
+            aria-checked={teamData.open}
+            aria-label="مشاركة الداتا مع المجموعة"
+            title={teamData.open ? "اقفل المشاركة" : "افتح المشاركة"}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${
+              teamData.open ? "bg-brand" : "border border-border bg-surface-2"
+            }`}
+          >
+            <span
+              className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                teamData.open ? "right-1" : "right-6"
+              }`}
+            />
+          </button>
+        </div>
       )}
 
       {/* العضو بيشوف داتا المجموعة **زي المسئول بالظبط**: كارت ملف باسمه، يفتحه
