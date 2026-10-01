@@ -44,6 +44,18 @@ export const HIDDEN_EXPORT_COLUMNS: RegExp[] = [/^\s*الحالة\s*$/];
 
 const isHidden = (header: string) => HIDDEN_EXPORT_COLUMNS.some((re) => re.test(header));
 
+/**
+ * 📋 **«نوع السيارة» و«الملاحظات» بيظهروا في كل شيت نتيجة فرز — حتى لو فاضيين.**
+ * باقي الأعمدة اللي مافيهاش بيانات خالص بتتشال (طلب المالك ١ أكتوبر ٢٠٢٦: البنك
+ * والشاص والهيكل وأعمدة كتير فاضية كانت بتكبّر الشيت من غير لازمة).
+ */
+const TYPE_COL = "نوع السيارة";
+const NOTES_COL = "ملاحظة";
+const isTypeLike = (h: string) => /نوع|طراز/.test(h) && !SOURCE_SUFFIX_RE.test(h);
+const isNotesLike = (h: string) => /ملاحظ|note/i.test(h) && !SOURCE_SUFFIX_RE.test(h);
+// (لاحقة المصدر «(المحفظة)/(الداتا)» — العمود الأخ مش هو العمود الأساسي)
+const SOURCE_SUFFIX_RE = /\((?:المحفظة|الداتا)\)\s*$/;
+
 const text = (v: unknown) => String(v ?? "").trim();
 
 /**
@@ -116,7 +128,7 @@ export function buildExportRows(
   const mapped = sources.map((o) => toExportRow(o, specs));
   const columns: string[] = [];
   for (const r of mapped) for (const k of Object.keys(r)) if (!columns.includes(k)) columns.push(k);
-  const kept = columns.filter((c) => mapped.some((r) => text(r[c])));
+  const kept = columns.filter((c) => c === TYPE_COL || c === NOTES_COL || mapped.some((r) => text(r[c])));
   const rows = mapped.map((r) => {
     const out: Record<string, unknown> = {};
     for (const c of kept) out[c] = r[c] ?? "";
@@ -146,7 +158,11 @@ export function buildDisplayRows(
       columns.push(k);
     }
   }
-  const kept = columns.filter((c) => sources.some((r) => text(r[c])));
+  const kept = columns.filter((c) => isTypeLike(c) || isNotesLike(c) || sources.some((r) => text(r[c])));
+  // النوع والملاحظات لازم يظهروا حتى لو المصدر مافيهوش العمود أصلاً:
+  // النوع بعد رقم اللوحة على طول، والملاحظات في الآخر.
+  if (sources.length && !kept.some(isTypeLike)) kept.splice(kept.length ? 1 : 0, 0, TYPE_COL);
+  if (sources.length && !kept.some(isNotesLike)) kept.push(NOTES_COL);
   const rows = sources.map((src) => {
     const out: Record<string, unknown> = {};
     for (const c of kept) out[c] = src[c] ?? "";

@@ -1587,6 +1587,11 @@ export default function SortingPage() {
       })
       .sort((a, b) => a._dist - b._dist);
   }, [tashyeekResults, nearestActive, userLoc, coordsOfTashyeek]);
+  // مسافة كل صف سجلات (لما «الأقرب» شغّال) — للمشاركة من الأزرار التحتانية.
+  const tashDistByRow = useMemo(
+    () => new Map(displayTashyeek.map((x) => [x.r, x._dist] as const)),
+    [displayTashyeek],
+  );
 
   // نتائج اللصق مرتّبة بالأقرب (لو مفعّل) — عمود GPS بتاع الداتا الأول، وإلا
   // أي عمود فيه إحداثيات. لو مش مفعّل → نفس الترتيب الأصلي.
@@ -1626,6 +1631,13 @@ export default function SortingPage() {
       ? pasteColumnsOf(pasteResults.map((p) => p.row))
       : (dataTable ? dataTable.headers.filter((h) => h !== effectiveDataPlateCol) : [])),
     [pasteResults, dataTable, effectiveDataPlateCol],
+  );
+  // 📋 اللي ظاهر في نافذة اللصق (ومشاركتها): الأعمدة اللي فيها بيانات بس — البنك
+  //    والشاص والهيكل الفاضيين كانوا مكبّرين النتيجة (طلب المالك ١ أكتوبر ٢٠٢٦).
+  //    «رقم الهيكل» بيظهر بس لو فيه لوحة ليها رقم هيكل.
+  const pasteShownCols = useMemo(
+    () => pasteAllCols.filter((c) => pasteResults.some((p) => String(p.row[c] ?? "").trim() !== "")),
+    [pasteAllCols, pasteResults],
   );
   const pasteRecordCols = tashyeekTable ? tashyeekTable.headers.filter((h) => h !== tashyeekPlateCol) : [];
 
@@ -2709,7 +2721,8 @@ export default function SortingPage() {
       return o;
     });
     const tashObjs = tash.map((r) => {
-      const o = buildTashyeekRowObj(r);
+      // «المسافة» لصفوف السجلات لما «الأقرب» شغّال — زي مشاركة نافذة السجلات القديمة
+      const o = buildTashyeekRowObj(r, nearestActive ? tashDistByRow.get(r) : undefined);
       const g = rawGpsOfTashyeek(r);
       // 🔴 كان `if ("GPS" in o && g)` — يعني الموقع مايتحطّش إلا لو العمود موجود
       //    أصلاً في أعمدة العرض. وشيت التشييك غالباً مافيهوش عمود موقع، فصفوف
@@ -2762,10 +2775,36 @@ export default function SortingPage() {
 
   function buildPasteRowObject(p: { converted: string; row: Record<string, string>; _dist?: number }): Record<string, unknown> {
     const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
-    for (const col of pasteAllCols) obj[col] = p.row[col] ?? "";
+    for (const col of pasteShownCols) obj[col] = p.row[col] ?? "";
     if (nearestActive && p._dist != null && Number.isFinite(p._dist)) obj["المسافة"] = formatDistanceKm(p._dist);
     return obj;
   }
+
+  /**
+   * 📋 مشاركة نتيجة اللصق (إكسيل/صورة): نفس أعمدة النافذة الظاهرة + «نوع السيارة»
+   * و«الملاحظات» دايماً، والعمود الفاضي بيتشال، و**كل لوحة مكررة بلون** زي الفرز
+   * الكلي والجديد (طلب المالك ١ أكتوبر ٢٠٢٦ — كانت بتطلع من غير ألوان خالص).
+   */
+  function pasteShareOf(objs: Record<string, unknown>[], plates: string[]) {
+    const { columns, rows } = buildDisplayRows(objs);
+    const map = combinedDupColorMap([plates], DUPE_COLORS.length);
+    const rowColors = plates.map((k) => {
+      const i = map.get(k);
+      return i !== undefined ? DUPE_COLORS[i].hex : null;
+    });
+    return { columns, rows, rowColors };
+  }
+  function pasteShareImage(sh: ReturnType<typeof pasteShareOf>) {
+    // الصورة من غير أعمدة الروابط — زي صورة الفرز (الرابط مالوش لازمة في صورة)
+    const imgCols = sh.columns.filter((c) => !sh.rows.some((o) => gpsCellToLink(String(o[c] ?? ""))));
+    return {
+      columns: imgCols,
+      rows: sh.rows.map((o) => imgCols.map((c) => String(o[c] ?? ""))),
+      subtitle: shareSubtitle(),
+      rowColors: sh.rowColors,
+    };
+  }
+  const pasteKeyOf = (converted: string) => normalizePlate(bankPlateToArabic(converted));
 
   function buildPasteRecordRowObject(p: { converted: string; row: Record<string, string> }): Record<string, unknown> {
     const obj: Record<string, unknown> = { "رقم اللوحة": p.converted };
@@ -3890,39 +3929,10 @@ export default function SortingPage() {
             </div>
           )}
 
-          {/* ⑥ مشاركة الفرز — زر موحّد (فتح / واتساب / صورة). بيشارك صفوف
-              النافذة دي **+ سيارات السجلات** معلّم قدامها «سجلات» (بطلب المندوب)
-              عشان تطلع مشاركة واحدة فيها الاتنين. excelBlob = النسخة الملوّنة. */}
-          <ShareSortButton title={g.title ?? "نتائج الفرز"}
-            fileName={shareFileName(sortMode === "new" ? "new" : "full", sortCacheByMode[sortMode]?.sortedAt, g.title ?? undefined)}
-            rows={() => [
-              ...gRows.map(buildRowObject),
-              ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...tashyeekRowForShare(r) })),
-            ]}
-            imageTable={() => buildSortImageTable(gRows, tashyeekResults ?? [])}
-            excelBlob={() => buildSortExcelBlob(gRows, tashyeekResults ?? [])} />
           </div>
           );
           })}
 
-          {/* مشاركة الكل — نتايج كل نوافذ الداتا (الأساسية + الإضافية) + السجلات
-              في مشاركة واحدة (فتح/واتساب/صورة). بتظهر لما فيه أكتر من نافذة عشان
-              متتكررش مع مشاركة النافذة الواحدة (اللي أصلاً بتضم السجلات). */}
-          {resultGroups.length > 1 && (
-            <ShareSortButton title="كل نتايج الفرز" label="مشاركة الكل"
-              fileName={shareFileName(sortMode === "new" ? "newAll" : "fullAll", sortCacheByMode[sortMode]?.sortedAt)}
-              rows={() => [
-                ...displayResults.map(buildRowObject),
-                ...(tashyeekResults ?? []).map((r) => ({ "المصدر": "سجلات", ...tashyeekRowForShare(r) })),
-              ]}
-              imageTable={() => buildSortImageTable(displayResults, tashyeekResults ?? [])}
-              excelBlob={() => buildSortExcelBlob(displayResults, tashyeekResults ?? [])} />
-          )}
-
-          <button onClick={clearAllResults}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
-            <Trash2 size={15} /> مسح الكل
-          </button>
         </div>
       )}
 
@@ -4131,14 +4141,6 @@ export default function SortingPage() {
               </div>
             )}
 
-            {/* مشاركة الفرز — زر موحّد (فتح / واتساب / صورة) */}
-            <ShareSortButton title="سيارات مطلوبة من ملف التشييك (السجلات)"
-              fileName={shareFileName(sortMode === "new" ? "newRecords" : "fullRecords", sortCacheByMode[sortMode]?.sortedAt)}
-              rows={() => displayTashyeek.map(({ r, _dist }) => tashyeekRowForShare(r, _dist))} />
-            <button onClick={clearTashyeekResults}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
-              <Trash2 size={15} /> مسح نتايج الفرز
-            </button>
           </div>
         ) : (
           <div className="rounded-xl border border-primary/30 bg-surface p-3 text-center">
@@ -4146,6 +4148,57 @@ export default function SortingPage() {
           </div>
         )
       )}
+
+      {/* 📤 المشاركة والمسح — ٣ أزرار وتحت كل واحد مسحه (طلب المالك ١ أكتوبر ٢٠٢٦):
+          الداتا والسجلات مع بعض · الداتا بس · السجلات بس. المشاركة المجمّعة بأعمدة
+          موحّدة بالمعنى (النوع/الحي/…) فاللوحات تحت بعض وكل عمود تحته بيانات الاتنين. */}
+      {(displayResults.length > 0 || (tashyeekResults?.length ?? 0) > 0) && (() => {
+        const recs = displayTashyeek.map((x) => x.r);
+        const hasData = displayResults.length > 0;
+        const hasRecs = recs.length > 0;
+        const when = sortCacheByMode[sortMode]?.sortedAt;
+        const clearCls = "flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10";
+        return (
+          <div className="flex flex-col gap-2" dir="rtl">
+            {hasData && hasRecs && (
+              <>
+                <ShareSortButton title="نتائج الفرز" label="مشاركة الداتا والسجلات"
+                  fileName={shareFileName(sortMode === "new" ? "newAll" : "fullAll", when)}
+                  rows={() => buildDisplayShareObjects(displayResults, recs).rowObjects}
+                  imageTable={() => buildSortImageTable(displayResults, recs)}
+                  excelBlob={() => buildSortExcelBlob(displayResults, recs)} />
+                <button onClick={clearAllResults} className={clearCls}>
+                  <Trash2 size={15} /> مسح كل الفرز
+                </button>
+              </>
+            )}
+            {hasData && (
+              <>
+                <ShareSortButton title="نتائج الفرز" label="مشاركة نتيجة الداتا"
+                  fileName={shareFileName(sortMode === "new" ? "new" : "full", when)}
+                  rows={() => buildDisplayShareObjects(displayResults, []).rowObjects}
+                  imageTable={() => buildSortImageTable(displayResults, [])}
+                  excelBlob={() => buildSortExcelBlob(displayResults, [])} />
+                <button onClick={clearMainResults} className={clearCls}>
+                  <Trash2 size={15} /> مسح فرز الداتا
+                </button>
+              </>
+            )}
+            {hasRecs && (
+              <>
+                <ShareSortButton title="نتائج فرز السجلات" label="مشاركة نتيجة فرز السجلات"
+                  fileName={shareFileName(sortMode === "new" ? "newRecords" : "fullRecords", when)}
+                  rows={() => buildDisplayShareObjects([], recs).rowObjects}
+                  imageTable={() => buildSortImageTable([], recs)}
+                  excelBlob={() => buildSortExcelBlob([], recs)} />
+                <button onClick={clearTashyeekResults} className={clearCls}>
+                  <Trash2 size={15} /> مسح فرز السجلات
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ⑥.٥ مطلوب من أرقام الشاص — فرز شيت الشاص على عمود الشاص في الإحالة */}
       {chassisResults && chassisResults.length > 0 && (
@@ -4335,13 +4388,12 @@ export default function SortingPage() {
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">إجراءات</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                       {nearestActive && <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">المسافة</th>}
-                      {pasteAllCols.map((col) => (
+                      {pasteShownCols.map((col) => (
                         <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
                           {col}
                         </th>
                       ))}
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
-                      <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">الحالة</th>
                       <th className="border-b border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">السجل</th>
                     </tr>
                   </thead>
@@ -4382,9 +4434,6 @@ export default function SortingPage() {
                         <td className="border-l border-border px-3 py-1.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-ink">{p.converted}</span>
-                            <span className="rounded-full bg-brand/20 px-1 py-0.5 font-bold text-brand leading-none" style={{ fontSize: "0.75em" }}>
-                              مطلوبة
-                            </span>
                             {p.status === "fuzzy" && (
                               <span className="rounded-full bg-alert/20 px-1 py-0.5 font-bold text-alert leading-none" style={{ fontSize: "0.75em" }} title="تطابق تقريبي — راجع اللوحة">
                                 تقريبية {p.similarity}%
@@ -4397,7 +4446,7 @@ export default function SortingPage() {
                             {pasteDist != null && pasteDist !== Infinity ? formatDistanceKm(pasteDist) : "—"}
                           </td>
                         )}
-                        {pasteAllCols.map((col) => {
+                        {pasteShownCols.map((col) => {
                           const v = String(p.row[col] ?? "");
                           const link = gpsCellToLink(v);
                           return (
@@ -4420,7 +4469,6 @@ export default function SortingPage() {
                             <MapPin size={12} /> {neighborsLoading ? "..." : "موقعها"}
                           </button>
                         </td>
-                        <td className="border-l border-border px-2 py-1.5 text-center whitespace-nowrap">{renderStatusCell(pasteKey)}</td>
                         <td className="px-2 py-1.5 text-center whitespace-nowrap">{renderLogCell(pasteKey)}</td>
                       </tr>
                       );
@@ -4529,7 +4577,12 @@ export default function SortingPage() {
                 <div className="flex flex-col gap-2 border-t border-brand/20 p-3">
                   <ShareSortButton title="لوحات سبق تشييكها"
                     fileName={shareFileName("pasteRecords", pasteResultsCache?.sortedAt)}
-                    rows={() => pasteRecordResults.map((p) => buildPasteRecordRowObject(p))} />
+                    rows={() => pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted))).rows}
+                    excelBlob={() => {
+                      const sh = pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted)));
+                      return buildSortBlobBestEffort(sh.rows, "لوحات سبق تشييكها", sh.rowColors);
+                    }}
+                    imageTable={() => pasteShareImage(pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted))))} />
                   <button onClick={clearPasteRecordResults}
                     className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
                     <Trash2 size={15} /> مسح نتايج الفرز
@@ -4542,7 +4595,12 @@ export default function SortingPage() {
           /* مشاركة الفرز + مسح — نتائج اللصق النصي */
           <>
             <ShareSortButton title="نتائج اللصق" fileName={shareFileName("paste", pasteResultsCache?.sortedAt)}
-              rows={() => displayPaste.map((p) => buildPasteRowObject(p))} />
+              rows={() => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted))).rows}
+              excelBlob={() => {
+                const sh = pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
+                return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors);
+              }}
+              imageTable={() => pasteShareImage(pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted))))} />
             <button onClick={clearPasteResults}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10">
               <Trash2 size={15} /> مسح نتايج الفرز
