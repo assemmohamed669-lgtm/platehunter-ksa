@@ -25,10 +25,11 @@ describe("توصيل أزرار اللصق", () => {
   const paste = code.slice(code.indexOf("ويندو الداتا —"), code.indexOf("<LocationNeighborsModal"));
 
   it("🔴 التلات أزرار وتحت كل واحد مسحه — بالترتيب", () => {
+    // أسامي أزرار اللصق (طلب المالك ١ أكتوبر ٢٠٢٦): «لصق نصي للكل/داتا/سجلات»
     const order = [
-      "مشاركة الداتا والسجلات", "مسح كل الفرز",
-      "مشاركة نتيجة الداتا", "مسح فرز الداتا",
-      "مشاركة نتيجة فرز السجلات", "مسح فرز السجلات",
+      "مشاركة لصق نصي للكل", "مسح كل الفرز",
+      "مشاركة لصق نصي داتا", "مسح فرز الداتا",
+      "مشاركة لصق نصي سجلات", "مسح فرز السجلات",
     ].map((s) => paste.indexOf(s));
     for (const i of order) expect(i).toBeGreaterThan(-1);
     for (let k = 1; k < order.length; k++) expect(order[k]).toBeGreaterThan(order[k - 1]);
@@ -39,7 +40,7 @@ describe("توصيل أزرار اللصق", () => {
     // زرار مشاركة سجلات اللصق واحد بس — الجديد اللي اسمه «مشاركة نتيجة فرز السجلات»
     const recBtns = paste.match(/<ShareSortButton title="لوحات سبق تشييكها"[^>]*?label="([^"]*)"/g) ?? [];
     expect(recBtns).toHaveLength(1);
-    expect(recBtns[0]).toContain('label="مشاركة نتيجة فرز السجلات"');
+    expect(recBtns[0]).toContain('label="مشاركة لصق نصي سجلات"');
     expect(paste.match(/<ShareSortButton title="لوحات سبق تشييكها"/g)).toHaveLength(1);
   });
 

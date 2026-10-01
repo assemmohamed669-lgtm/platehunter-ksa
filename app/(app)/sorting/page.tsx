@@ -4622,7 +4622,7 @@ export default function SortingPage() {
             <div className="flex flex-col gap-2">
               {hasData && hasRecs && (
                 <>
-                  <ShareSortButton title="نتائج اللصق" label="مشاركة الداتا والسجلات"
+                  <ShareSortButton title="نتائج اللصق" label="مشاركة لصق نصي للكل"
                     fileName={shareFileName("pasteAll", when)}
                     rows={() => pasteAllShareOf().rows}
                     excelBlob={() => { const sh = pasteAllShareOf(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
@@ -4634,7 +4634,7 @@ export default function SortingPage() {
               )}
               {hasData && (
                 <>
-                  <ShareSortButton title="نتائج اللصق" label="مشاركة نتيجة الداتا"
+                  <ShareSortButton title="نتائج اللصق" label="مشاركة لصق نصي داتا"
                     fileName={shareFileName("paste", when)}
                     rows={() => dataShare().rows}
                     excelBlob={() => { const sh = dataShare(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
@@ -4646,7 +4646,7 @@ export default function SortingPage() {
               )}
               {hasRecs && (
                 <>
-                  <ShareSortButton title="لوحات سبق تشييكها" label="مشاركة نتيجة فرز السجلات"
+                  <ShareSortButton title="لوحات سبق تشييكها" label="مشاركة لصق نصي سجلات"
                     fileName={shareFileName("pasteRecords", when)}
                     rows={() => recShare().rows}
                     excelBlob={() => { const sh = recShare(); return buildSortBlobBestEffort(sh.rows, "لوحات سبق تشييكها", sh.rowColors); }}
