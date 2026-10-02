@@ -131,7 +131,90 @@ export async function copyShareText(text: string): Promise<boolean> {
   }
 }
 
+// ── 📤 حد رسالة واتساب نفسها ─────────────────────────────────────────────────
+/**
+ * 🔴 **واتساب بيقص أي رسالة فوق ٤٠٩٦ بايت** — مقاس (المالك، ٢ أكتوبر ٢٠٢٦، أندرويد):
+ * ٨٨ لوحة اتبعتت «واتساب» واتبعتت «نسخ الكل» ولزق، والاتنين وصلوا **٤٠٩٥ بايت + نص
+ * حرف «ع»** (٢٤ لوحة، آخرها «العنوان: 61ك�») ومن غير «اقرأ المزيد». البرنامج كان
+ * بيسلّم النص كامل؛ القص في واتساب. ده غير حد **النقل** (`ANDROID_SHARE_MAX_BYTES`
+ * ~١ ميجا) — فالنقل بيوصّل كله وواتساب بيرمي الباقي.
+ */
+export const WHATSAPP_MESSAGE_MAX_BYTES = 4096;
+/** حجم الرسالة الواحدة من القايمة الطويلة — تحت حد واتساب بهامش (~٨٥٪). */
+export const SHARE_PART_BYTES = 3_500;
+/** حزام أمان تاني بوحدة مختلفة: أقصى عدد لوحات في الرسالة الواحدة. */
+export const SHARE_PART_RECORDS = 20;
+/**
+ * 🔑 الأجزاء للكل؟ ‏false = السوبر أدمن بس لحد ما المالك يجرّب ويقول «ارفعه للكل»
+ * (قاعدته: أي تعديل يتجرّب عنده الأول). غير المفعّل عنده = المشاركة زي الحي بالحرف.
+ */
+export const SHARE_PARTS_FOR_ALL = false;
+
+export type SharePartsMode = "share" | "copy";
+export interface SharePartsRequest {
+  parts: string[];
+  title: string;
+  /** «share» = زرار واتساب، «copy» = زرار «نسخ الكل» (الأساسي في الشاشة يختلف). */
+  mode: SharePartsMode;
+  /** بيتنادى لما الشاشة تتقفل: «shared» لو جزء واحد على الأقل اتبعت/اتنسخ. */
+  done: (outcome: ShareOutcome) => void;
+}
+
+let partsSheet: ((req: SharePartsRequest) => void) | null = null;
+
+/** شاشة الأجزاء (`SharePartsSheet`) بتسجّل نفسها هنا — بيرجّع دالة الإلغاء. */
+export function registerSharePartsSheet(open: (req: SharePartsRequest) => void): () => void {
+  partsSheet = open;
+  return () => { if (partsSheet === open) partsSheet = null; };
+}
+
+/** الشاشة متركّبة ومفعّلة للمستخدم ده؟ */
+export function hasSharePartsSheet(): boolean {
+  return partsSheet !== null;
+}
+
+/** أجزاء رسالة واتساب — كل جزء تحت الحد ومنتهي بلوحة كاملة. */
+export function whatsappParts(text: string): string[] {
+  return splitShareText(text, SHARE_PART_BYTES, SHARE_PART_RECORDS);
+}
+
+/** أول وآخر رقم لوحة في الجزء («12. 🚗 …») — بيتعرض في الشاشة «اللوحات ١–١٥». */
+export function partPlateRange(part: string): { from: number; to: number } | null {
+  const nums = [...part.matchAll(/(?:^|\n)(\d+)\. /g)].map((m) => Number(m[1]));
+  return nums.length ? { from: nums[0], to: nums[nums.length - 1] } : null;
+}
+
+/** يفتح شاشة الأجزاء لو النص أطول من رسالة واتساب — وإلا null (يمشي زي الأول). */
+function openShareParts(text: string, title: string, mode: SharePartsMode): Promise<ShareOutcome> | null {
+  const open = partsSheet;
+  if (!open) return null;
+  const parts = whatsappParts(text);
+  if (parts.length <= 1) return null;
+  return new Promise<ShareOutcome>((resolve) => open({ parts, title, mode, done: resolve }));
+}
+
+/**
+ * «نسخ الكل» عشان يتلزق في واتساب: النص الطويل بيتقص في واتساب برضه وهو بيتلزق —
+ * فبيفتح الأجزاء (انسخ جزء ← الزقه ← اللي بعده). القصير بيتنسخ كامل زي الأول.
+ * بيرجّع «parts» لو فتح الأجزاء، وإلا نتيجة النسخ.
+ */
+export async function copyForWhatsApp(text: string, title = "نسخ الكل"): Promise<boolean | "parts"> {
+  if (openShareParts(text, title, "copy")) return "parts";
+  return copyShareText(text);
+}
+
 export async function shareTextViaChooser(
+  rawText: string,
+  dialogTitle = "مشاركة عبر",
+): Promise<ShareOutcome> {
+  // 🔴 الرسالة الطويلة ⇐ أجزاء تحت حد واتساب (كل أزرار المشاركة النصية بتعدّي من هنا).
+  const viaParts = openShareParts(rawText, dialogTitle, "share");
+  if (viaParts) return viaParts;
+  return shareOneText(rawText, dialogTitle);
+}
+
+/** رسالة واحدة عبر قائمة النظام — من غير تقسيم (الأجزاء نفسها بتتبعت بيه). */
+export async function shareOneText(
   rawText: string,
   dialogTitle = "مشاركة عبر",
 ): Promise<ShareOutcome> {
@@ -249,7 +332,7 @@ export async function shareImageWithText(
 }
 
 /** أرقام عربية-هندية (١٢٣) — عشان عنوان الجزء يبان بلغة الرسالة. */
-function arabicDigits(n: number): string {
+export function arabicDigits(n: number): string {
   return String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
 }
 
@@ -273,24 +356,34 @@ export function splitShareText(
   const LABEL_ROOM = 60;                                  // مساحة «— جزء ن من م —»
   const room = Math.max(1, maxBytes - LABEL_ROOM);
 
-  // (١) أي سجل أكبر من المساحة لوحده — نقطّعه (عند حدود حروف كاملة).
-  const pieces: string[] = [];
+  // (١) أي سجل أكبر من المساحة لوحده — نقطّعه **عند آخر سطر** جوّه المساحة: القايمة
+  //     اللي سطر لكل لوحة (زي مشاركة الصوت المختصرة) مالهاش فواصل سجلات، فكانت
+  //     بتتقطع في نص لوحة. سطر واحد أطول من الحد ⇒ عند حدود حروف كاملة زي الأول.
+  //     القطع دي `cont` — كل واحدة رسالة لوحدها (مانحشرش بينها فاصل سجلات).
+  const pieces: Array<{ text: string; cont: boolean }> = [];
   for (const block of text.split(RECORD_SEPARATOR)) {
-    if (utf8ByteLength(block) <= room) { pieces.push(block); continue; }
+    if (utf8ByteLength(block) <= room) { pieces.push({ text: block, cont: false }); continue; }
     let rest = block;
     while (utf8ByteLength(rest) > room) {
       const n = Math.max(1, charsWithinBytes(rest, room));
-      pieces.push(rest.slice(0, n));
-      rest = rest.slice(n);
+      const nl = rest.lastIndexOf("\n", n - 1);
+      const cut = nl >= n * 0.5 ? nl : n;
+      pieces.push({ text: rest.slice(0, cut), cont: true });
+      rest = rest.slice(cut).replace(/^\n+/, "");
     }
-    if (rest) pieces.push(rest);
+    if (rest) pieces.push({ text: rest, cont: true });
   }
 
   // (٢) نلمّ السجلات في أجزاء — كل جزء بيمتلي لحد الحد وبعدين يبدأ جزء جديد.
   const parts: string[] = [];
   let cur = "";
   let curRecords = 0;
-  for (const piece of pieces) {
+  for (const { text: piece, cont } of pieces) {
+    if (cont) {
+      if (cur) { parts.push(cur); cur = ""; curRecords = 0; }
+      parts.push(piece);
+      continue;
+    }
     const merged = cur ? cur + RECORD_SEPARATOR + piece : piece;
     // الجزء بيقفل لو عدّى **أي** من الحدّين — البايت أو عدد السجلات.
     const full = utf8ByteLength(merged) > room || curRecords + 1 > maxRecords;

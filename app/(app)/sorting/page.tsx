@@ -27,7 +27,7 @@ import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, default
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
-import { shareTextViaChooser, copyShareText, splitShareText, isIosDevice } from "@/lib/share";
+import { shareTextViaChooser, copyForWhatsApp, hasSharePartsSheet, splitShareText, isIosDevice } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
 import ReferralSheetPicker from "@/components/ReferralSheetPicker";
@@ -363,7 +363,8 @@ export default function SortingPage() {
   // قائمة كبيرة كاملة (زرار المشاركة بيتقص عند ١٦ كيلوبايت على الآيفون).
   const [bulkCopied, setBulkCopied] = useState<"" | "results" | "tashyeek">("");
   async function copyBulk(text: string, which: "results" | "tashyeek") {
-    if (await copyShareText(text)) {
+    // 📤 القايمة الطويلة بتتقص في واتساب وهي بتتلزق كمان (٤٠٩٦ بايت) ⇒ أجزاء.
+    if ((await copyForWhatsApp(text)) === true) {
       setBulkCopied(which);
       setTimeout(() => setBulkCopied(""), 1500);
     }
@@ -378,6 +379,9 @@ export default function SortingPage() {
     setShareParts(next >= parts.length ? null : { parts, idx: next, which });
   }
   async function shareBulk(text: string, which: "results" | "tashyeek") {
+    // 📤 شاشة الأجزاء مفعّلة ⇒ هي اللي بتقسّم تحت حد رسالة واتساب (٤٠٩٦ بايت) على
+    //    كل الأجهزة — المالك (٢ أكتوبر): ٨٨ لوحة على أندرويد وصل منهم ٢٤ مقصوصين.
+    if (hasSharePartsSheet()) { await shareTextViaChooser(text); return; }
     const parts = isIosDevice() ? splitShareText(text) : [text];
     if (parts.length <= 1) { await shareTextViaChooser(text); return; }
     await sendSharePart(parts, 0, which);

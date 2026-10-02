@@ -297,6 +297,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       if (run !== sortRunRef.current) return;   // فرز أحدث بدأ أو النتيجة اتمسحت
       if (groupRows.length) {
         const removed = sortRemovedRef.current;
+        // القايمة اتغيّرت (زادت سجلات الزمايل) — تحديد اتعمل قبلها كان بيبعت جزء منها بس.
+        setSel(new Set());
         setResults(matchChunkAgainstIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL, index, 88, false)
           .filter((m) => !(m.dataRow && removed.has(m.dataRow))));
       }
@@ -333,6 +335,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       if (run !== pasteRunRef.current) return;
       if (groupRows.length) {
         const removed = pasteRemovedRef.current;
+        setSel(new Set());   // نفس السبب — التحديد القديم بيشاور على قايمة اتغيّرت
         const index = buildReferralIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL);
         setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, index, 88, false)
           .filter((m) => !removed.has(m.referralRow)));
