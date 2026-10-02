@@ -42,7 +42,7 @@ import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } fro
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
-import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyShareText } from "@/lib/share";
+import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyForWhatsApp } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { readDeepgramWords, type DgWord, type DgFinal } from "@/lib/deepgramWords";
 import { fetchLearningEnabled } from "@/lib/learningSettings";
@@ -3513,7 +3513,9 @@ export default function InstantCheckPage() {
     if (!rows.length) return;
     const text = `*لوحات متشيّكة بالصوت (${rows.length})*\n\n` +
       rows.map((r, i) => `${i + 1}. ${pttRowText(r)}`).join("\n\n──────────\n\n");
-    const ok = await copyShareText(text);
+    // 📤 القايمة الطويلة بتتقص في واتساب وهي بتتلزق (٤٠٩٦ بايت) ⇒ شاشة الأجزاء بتكمّل.
+    const ok = await copyForWhatsApp(text);
+    if (ok === "parts") return;
     alert(ok ? `✅ اتنسخت ${rows.length} لوحة بالتفاصيل الكاملة — الزقها في واتساب.` : "المتصفح رفض النسخ — جرّب المشاركة.");
   }
   /** نفس المسح بس بتحذير الأول لو الصف لسه ما اتصدّرش (زرار السلة في الجدول). */

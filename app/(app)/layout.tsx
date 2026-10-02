@@ -8,6 +8,7 @@ import BottomNav from "@/components/BottomNav";
 import PlateIcon from "@/components/PlateIcon";
 import BackButton from "@/components/BackButton";
 import WantedAlertOverlay from "@/components/WantedAlertOverlay";
+import SharePartsSheet from "@/components/SharePartsSheet";
 import WheelPopup from "@/components/WheelPopup";
 import GroupFindNotifier from "@/components/GroupFindNotifier";
 import PushRegistrar from "@/components/PushRegistrar";
@@ -286,6 +287,8 @@ export default function AppShellLayout({
 
         <BottomNav />
         <WantedAlertOverlay />
+        {/* 📤 القايمة الطويلة على واتساب ⇐ أجزاء (واتساب بيقص الرسالة عند ٤٠٩٦ بايت) */}
+        <SharePartsSheet />
         <WheelPopup granted={wheelGranted} />
         <GroupFindNotifier />
         <PushRegistrar />
