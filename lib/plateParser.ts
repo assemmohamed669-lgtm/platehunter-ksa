@@ -2445,6 +2445,10 @@ export function matchChunkAgainstIndex(
   dataPlateCol: string,
   index: ReferralIndex,
   fuzzyThreshold = 88,
+  // enableFuzzy=false → تطابق **تام فقط** (قرار المالك: المطلوب بتطابق تام بس).
+  // التقريبي levenshtein لكل صف ماطابقش × كل لوحات الإحالة بنفس الحرف — على
+  // سجلات + داتا مجموعة كبيرة كان بياخد ١٩ ثانية على الموبايل بدل أقل من ثانية.
+  enableFuzzy = true,
 ): MatchResult[] {
   const results: MatchResult[] = [];
   for (const dataRow of dataChunk) {
@@ -2452,7 +2456,7 @@ export function matchChunkAgainstIndex(
     if (!norm) continue;
     const exact = index.exact.get(norm);
     if (exact) { results.push({ referralRow: exact, dataRow, status: "exact" }); continue; }
-    if (index.exact.size <= 50_000) {
+    if (enableFuzzy && index.exact.size <= 50_000) {
       let best: { row: Record<string, string>; sim: number } | null = null;
       // First-char bucketing: at >=88% on 7-char plates, first-char edits score 85.7% < threshold
       const candidates = index.byFirstChar.get(norm[0]) ?? [];
