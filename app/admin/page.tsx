@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet, HardDriveDownload } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet, HardDriveDownload, Activity } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -520,6 +520,14 @@ export default function AdminDashboard() {
           <button onClick={() => router.push("/admin/security")}
             className="flex items-center justify-center gap-2 rounded-xl border border-danger/40 bg-danger/5 py-3 text-sm font-bold text-danger transition hover:bg-danger/10 active:scale-[0.99]">
             <ShieldAlert size={16} /> سجل الأمان — مين حاول يدخل
+          </button>
+        )}
+
+        {/* 🩺 مراقبة الصوت (السيرفر + جلسات Voice PRO) — سوبر أدمن فقط */}
+        {isSuper && (
+          <button onClick={() => router.push("/admin/voice-monitor")}
+            className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
+            <Activity size={16} /> مراقبة الصوت — إيه اللي حصل وليه
           </button>
         )}
 

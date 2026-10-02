@@ -101,6 +101,25 @@ import { typeToCode } from "@/lib/vehicleType";
 import { VEHICLE_CONDITION_KINDS, VEHICLE_PLACE_KINDS } from "@/lib/vehicleTypes";
 import { showProvisional, PROVISIONAL_TTL_MS } from "@/lib/provisionalRow";
 import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine";
+import { startTelemetrySession, sharedTelemetryQueue, type TelBatch } from "@/lib/voiceTelemetry";
+import { getDevicePlatform } from "@/lib/devicePlatform";
+import { BUILD_ID } from "@/lib/appVersion";
+
+/**
+ * 🩺 **مراقبة الصوت** (٣ أكتوبر ٢٠٢٦) — ملخّص كل دقيقتين لـ`voice_telemetry`
+ * (شوف `lib/voiceTelemetry.ts`). فشل الرفع ⇒ الدفعة بتفضل في الطابور وخلاص —
+ * مابيوقفش الصوت ولا بيطلّع رسالة. الجدول في `docs/sql/voice-monitoring.sql`.
+ */
+async function sendVoiceTelemetry(rows: TelBatch[]): Promise<boolean> {
+  const { error } = await supabase.from("voice_telemetry").insert(rows);
+  return !error;
+}
+function telemetryStorage(): Storage | null {
+  try { return typeof window !== "undefined" ? window.localStorage : null; } catch { return null; }
+}
+function hostOf(url: string): string {
+  try { return new URL(url.trim()).host; } catch { return ""; }
+}
 
 /** صف لوحة ظهرت. */
 interface LiveRow {
@@ -292,6 +311,8 @@ export default function RegistrationV2Page() {
   const typeProbeRef = useRef<{ ok: boolean; msg: string } | null>(null);
 
   const engineRef = useRef<VoicexEngineController | null>(null);
+  /** 🩺 جلسة المراقبة للتسجيل الحالي — null لو مقفولة (مش سوبر أدمن). */
+  const telRef = useRef<ReturnType<typeof startTelemetrySession>>(null);
   /**
    * 🔄 **التحديث التلقائي مايقطعش التسجيل** — المالك (٢٣ سبتمبر ٢٠٢٦): «لما
    * بنزّل تحديث بيتعمل تحديث تلقائي معايا وأنا مشغّل المايك وبقول لوحات،
@@ -497,6 +518,7 @@ export default function RegistrationV2Page() {
       alive = false;
       if (timerRef.current) clearInterval(timerRef.current);
       try { engineRef.current?.stop(); } catch { /* ignore */ }
+      try { telRef.current?.end("unmount"); telRef.current = null; } catch { /* ignore */ }
       try { stopAlertSiren(); } catch { /* ignore */ }
     };
   }, []);
@@ -1090,6 +1112,29 @@ export default function RegistrationV2Page() {
     const pressedAt = Date.now();
     const marks: Mark[] = [];
     startedAtRef.current = pressedAt;
+    /**
+     * 🩺 **مراقبة الصوت — سوبر أدمن الأول** (المالك: «متنشرش غير للسوبر
+     * أدمن»). كل نداء عليها جوّه try ومابيرميش، ومش في طريق اللوحة: بتلمّ في
+     * الذاكرة وترفع ملخّص كل دقيقتين. مقفولة ⇒ `tel = null` ومافيش أي حاجة.
+     */
+    try { telRef.current?.end("restart"); } catch { /* ignore */ }
+    // ⚠️ متغيّر منفصل عن قصد: `voiceProAttribution.test` بيعدّ ختم الصفوف بالحرف
+    const telAgentId = agentRef.current;
+    try {
+      telRef.current = !isSuper ? null : startTelemetrySession({
+        enabled: true,
+        agentId: telAgentId,
+        server: hostOf(modelUrl),
+        platform: getDevicePlatform(),
+        build: BUILD_ID,
+        send: sendVoiceTelemetry,
+        queue: sharedTelemetryQueue(sendVoiceTelemetry, telemetryStorage()),
+        win: typeof window !== "undefined" ? window : null,
+        online: () => navigator.onLine,
+        connection: () => (navigator as unknown as { connection?: { effectiveType?: string } }).connection?.effectiveType ?? null,
+      });
+    } catch { telRef.current = null; }
+    const tel = telRef.current?.tel ?? null;
     try {
       const { startVoicexEngine } = await import("@/lib/voicexEngine");
       marks.push({ label: "المحرّك", at: Date.now() });
@@ -1106,6 +1151,7 @@ export default function RegistrationV2Page() {
         // 🚚 «أول عربية في الأسطول» للكل — المالك جرّبه كسوبر أدمن وقال «انشر للكل»
         fleetFirstCar: true,
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
+          tel?.shown(plate, meta);
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
            * 🔔 **مطلوبة بعد التأكد بس** — الإجماع شافها في نافذتين أو أكتر، أو
@@ -1237,6 +1283,7 @@ export default function RegistrationV2Page() {
           }
         },
         onRead: (r) => {
+          tel?.read(r);
           setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400));
           /**
            * 🚚 **دليل الأسطول قبل أي صف** — النافذة دي سمعت `حبل1234 حبل1235`
@@ -1320,15 +1367,16 @@ export default function RegistrationV2Page() {
         },
         onSpeech: (active: boolean) => setSpeaking(active),
         onLevel: (lvl: number) => setLevel(lvl),
-        onSkip: (reason: string) => setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })),
-        onReplay: () => setReplays((n) => n + 1),
+        onSkip: (reason: string) => { tel?.skip(reason); setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })); },
+        onReplay: () => { tel?.replay(); setReplays((n) => n + 1); },
         /**
          * 📞 **الميك اتاخد** — مكالمة (تليفون/واتساب) أو تطبيق تاني. المالك:
          * «المكالمة يبقى ليها الأولوية، وتلقائي المسجّل يفصل لو جه مكالمة».
          * اللوحات **كلها بتفضل** — الإيقاف مابيمسحش حاجة.
          */
-        onMicLost: (reason) => stopRef.current(reason),
+        onMicLost: (reason) => { tel?.event("mic_lost", { reason }); stopRef.current(reason); },
         onFatal: (reason: string) => {
+          tel?.event("fatal", { reason });
           stopRef.current("fatal");
           setError(reason === "mic_denied"
             ? "الميكروفون مرفوض — اسمح للمتصفّح بالتسجيل وجرّب تاني."
@@ -1337,6 +1385,7 @@ export default function RegistrationV2Page() {
       });
       if (!ctrl) {
         recReleaseRef.current?.(); recReleaseRef.current = null;
+        try { telRef.current?.end("mic_failed"); telRef.current = null; } catch { /* ignore */ }
         setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني.");
         return;
       }
@@ -1353,7 +1402,10 @@ export default function RegistrationV2Page() {
       // بالظبط بدل ما نخمّن. شوف `lib/startupMarks.ts`.
       setStartMs(startupBreakdown(marks, pressedAt).text);
     } catch {
-      if (!engineRef.current) { recReleaseRef.current?.(); recReleaseRef.current = null; }
+      if (!engineRef.current) {
+        recReleaseRef.current?.(); recReleaseRef.current = null;
+        try { telRef.current?.end("engine_failed"); telRef.current = null; } catch { /* ignore */ }
+      }
       setError("مش قادر يشغّل المحرك — جرّب تاني.");
     }
     finally { setStarting(false); }
@@ -1374,6 +1426,9 @@ export default function RegistrationV2Page() {
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
     const release = recReleaseRef.current;
     recReleaseRef.current = null;
+    // 🩺 الجلسة دي بتتقفل بعد ما آخر اللوحات توصل — عشان قراياتها تدخل في آخر دفعة
+    const telSession = telRef.current;
+    telRef.current = null;
     let done: Promise<void> = Promise.resolve();
     try { if (ctrl) done = ctrl.stop() ?? Promise.resolve(); } catch { /* ignore */ }
     if (why !== "manual" && why !== "fatal") setNotice(micLostNotice(why));
@@ -1381,6 +1436,7 @@ export default function RegistrationV2Page() {
       try {
         // ⏳ آخر اللوحات توصل الأول (بحد أقصى — عطل مايأجّلش التحديث للأبد)
         await Promise.race([done.catch(() => {}), new Promise((r) => setTimeout(r, STOP_SETTLE_MAX_MS))]);
+        try { telSession?.end(why); } catch { /* المراقبة ماتوقّفش حاجة */ }
         /**
          * ⑩ب 📤 **التصدير التلقائي** — بطلب المالك: «لما تتفعّل، يحصل بعد ما
          * المندوب يقفل التسجيل: تيجيله رسالة سيتم تصدير عدد كذا ويظهر
