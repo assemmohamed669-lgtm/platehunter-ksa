@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import {
   splitShareText, utf8ByteLength, shareTextViaChooser, copyForWhatsApp, registerSharePartsSheet,
-  partPlateRange, arabicDigits, WHATSAPP_MESSAGE_MAX_BYTES, SHARE_PART_BYTES, SHARE_PART_RECORDS,
+  partPlateRange, arabicDigits, hasSharePartsSheet, SHARE_PARTS_FOR_ALL,
+  WHATSAPP_MESSAGE_MAX_BYTES, SHARE_PART_BYTES, SHARE_PART_RECORDS,
   type SharePartsRequest,
 } from "@/lib/share";
 import SharePartsSheet from "@/components/SharePartsSheet";
@@ -152,6 +153,14 @@ describe("🔴 شاشة الأجزاء", () => {
     fireEvent.click(screen.getByRole("button", { name: "قفل" }));
     await expect(outcome).resolves.toBe("shared");
     expect(screen.queryAllByText(/^الجزء /)).toHaveLength(0);
+  });
+
+  it("🔴 مفتوحة للكل — المالك قال «ارفعه للكل» (٢ أكتوبر ٢٠٢٦)", async () => {
+    expect(SHARE_PARTS_FOR_ALL).toBe(true);
+    // من غير `enabled` ومن غير مستخدم سوبر: الشاشة بتسجّل نفسها لأي مندوب.
+    render(<SharePartsSheet />);
+    await act(async () => {});
+    expect(hasSharePartsSheet()).toBe(true);
   });
 
   it("مش مفعّلة ⇒ مابتسجّلش، والمشاركة زي الحي", async () => {
