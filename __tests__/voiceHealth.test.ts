@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { probeVoiceHealth, isCleanupMinute, cronAuthorized } from "@/lib/voiceHealth";
+import { probeVoiceHealth, isCleanupMinute, cronAuthorized, retentionCutoff, RETENTION_DAYS } from "@/lib/voiceHealth";
 
 /** المراقب من بره: /health بس، بمهلة — مابيلمسش الموديل ولا بيبعت صوت. */
 describe("probeVoiceHealth", () => {
@@ -47,6 +47,13 @@ describe("isCleanupMinute", () => {
   it("التنضيف مرة في الساعة بس", () => {
     expect(isCleanupMinute(new Date("2026-10-03T10:07:30Z"))).toBe(true);
     expect(isCleanupMinute(new Date("2026-10-03T10:08:00Z"))).toBe(false);
+  });
+});
+
+describe("retentionCutoff", () => {
+  it("المالك (٣ أكتوبر): «خليها كل ٧ أيام» — أي حاجة أقدم من ٧ أيام بتتمسح", () => {
+    expect(RETENTION_DAYS).toBe(7);
+    expect(retentionCutoff(new Date("2026-10-10T05:00:00.000Z"))).toBe("2026-10-03T05:00:00.000Z");
   });
 });
 

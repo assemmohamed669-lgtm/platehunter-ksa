@@ -2,8 +2,8 @@
  * GET /api/cron/voice-health — 🩺 نبض سيرفر الصوت كل دقيقة (Vercel cron).
  *
  * بيسأل `/health` بتاع سيرفر ماليزيا بس ويكتب صف في `voice_health`.
- * مابيبعتش صوت ولا بيلمس الموديل. مرة في الساعة بيمسح الأقدم من ٣٠ يوم من
- * الجدولين (`voice_health` و`voice_telemetry`).
+ * مابيبعتش صوت ولا بيلمس الموديل. مرة في الساعة بيمسح الأقدم من ٧ أيام من
+ * الجدولين (`voice_health` و`voice_telemetry`) — `RETENTION_DAYS`.
  *
  * الحماية: لو `CRON_SECRET` متضبط في Vercel لازم الهيدر يطابق. ومن غيره حارس
  * الدقيقة بيمنع إن حد يكرّر النداء ويملا الجدول (نبضة واحدة كل ٤٥ ثانية بالكتير).
@@ -11,11 +11,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TRIAL_MODEL_BASE } from "@/lib/trialModelGate";
-import { probeVoiceHealth, isCleanupMinute, cronAuthorized } from "@/lib/voiceHealth";
+import { probeVoiceHealth, isCleanupMinute, cronAuthorized, retentionCutoff } from "@/lib/voiceHealth";
 
 export const dynamic = "force-dynamic";
 
-const RETENTION_DAYS = 30;
 const MIN_GAP_MS = 45_000;
 
 export async function GET(req: Request) {
@@ -38,7 +37,7 @@ export async function GET(req: Request) {
   const { error } = await supabaseAdmin.from("voice_health").insert(row);
 
   if (isCleanupMinute(new Date())) {
-    const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000).toISOString();
+    const cutoff = retentionCutoff(new Date());
     await supabaseAdmin.from("voice_health").delete().lt("checked_at", cutoff);
     await supabaseAdmin.from("voice_telemetry").delete().lt("started_at", cutoff);
   }

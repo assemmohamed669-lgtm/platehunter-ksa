@@ -53,7 +53,18 @@ export async function probeVoiceHealth(opts: {
   }
 }
 
-/** تنضيف الأقدم من ٣٠ يوم مرة في الساعة (الدقيقة ٧) — مش مع كل نبضة. */
+/**
+ * مدة الاحتفاظ — المالك (٣ أكتوبر ٢٠٢٦): «خليها كل ٧ أيام». الشكوى بتيجي في
+ * نفس اليوم أو اللي بعده؛ اللي محدش اشتكى منه بيتمسح لوحده فالجدول مابيكبرش.
+ */
+export const RETENTION_DAYS = 7;
+
+/** أي صف قبل الوقت ده بيتمسح. */
+export function retentionCutoff(now: Date): string {
+  return new Date(now.getTime() - RETENTION_DAYS * 86_400_000).toISOString();
+}
+
+/** التنضيف مرة في الساعة (الدقيقة ٧) — مش مع كل نبضة. */
 export function isCleanupMinute(d: Date): boolean {
   return d.getUTCMinutes() === 7;
 }
