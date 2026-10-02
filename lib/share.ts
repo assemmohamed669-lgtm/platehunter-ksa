@@ -145,10 +145,10 @@ export const SHARE_PART_BYTES = 3_500;
 /** حزام أمان تاني بوحدة مختلفة: أقصى عدد لوحات في الرسالة الواحدة. */
 export const SHARE_PART_RECORDS = 20;
 /**
- * 🔑 الأجزاء للكل؟ ‏false = السوبر أدمن بس لحد ما المالك يجرّب ويقول «ارفعه للكل»
- * (قاعدته: أي تعديل يتجرّب عنده الأول). غير المفعّل عنده = المشاركة زي الحي بالحرف.
+ * 🔑 الأجزاء للكل؟ اتجرّبت عند السوبر أدمن الأول، والمالك قال «ارفعه للكل»
+ * (٢ أكتوبر ٢٠٢٦) ⇒ مفتوحة لكل المناديب. false = السوبر أدمن بس.
  */
-export const SHARE_PARTS_FOR_ALL = false;
+export const SHARE_PARTS_FOR_ALL = true;
 
 export type SharePartsMode = "share" | "copy";
 export interface SharePartsRequest {
