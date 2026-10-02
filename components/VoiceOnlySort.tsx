@@ -10,6 +10,7 @@
  * ⚠️ محرّك المطابقة **هو هو** بتاع صفحة الفرز الأساسية بالحرف
  * (`buildReferralIndex` + `matchChunkAgainstIndex` من `lib/plateParser`) — عشان
  * النتيجة تطلع مطابقة تماماً، ومنعملش محرّك تاني يفترق عنه مع الوقت.
+ * و**تام بس** (`88, false`) زي الأساسية — التقريبي هنا كان بياخد ١٩ ثانية.
  *
  * وضعان زي صفحة الفرز:
  *  • **جديد** = لوحات الإحالة اللي **مش** في ملف التشييك → تتفرز على السجلات.
@@ -283,7 +284,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
         : [];
       // ⚡ نتيجة سجلاتي (وداتا المجموعة) **على طول** — من غير ما نستنى السيرفر.
-      setResults(matchChunkAgainstIndex([...mine, ...teamDataRows], REC_PLATE_COL, index));
+      //    **تام بس** (88, false) زي صفحة الفرز الأساسية — التقريبي كان ١٩ ثانية.
+      setResults(matchChunkAgainstIndex([...mine, ...teamDataRows], REC_PLATE_COL, index, 88, false));
       setRan(true);
       setBusy(false);
       if (!me.inTeam) return;
@@ -295,7 +297,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       if (run !== sortRunRef.current) return;   // فرز أحدث بدأ أو النتيجة اتمسحت
       if (groupRows.length) {
         const removed = sortRemovedRef.current;
-        setResults(matchChunkAgainstIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL, index)
+        setResults(matchChunkAgainstIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL, index, 88, false)
           .filter((m) => !(m.dataRow && removed.has(m.dataRow))));
       }
     } finally {
@@ -320,7 +322,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       const pastedRows = tokens.map((t) => ({ [REC_PLATE_COL]: t }));
       // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
       // ⚡ نتيجة سجلاتي على طول — من غير ما نستنى السيرفر.
-      setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, buildReferralIndex([...mine, ...teamDataRows], REC_PLATE_COL)));
+      setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, buildReferralIndex([...mine, ...teamDataRows], REC_PLATE_COL), 88, false));
       setPasteRan(true);
       setBusy(false);
       if (!me.inTeam) return;
@@ -332,7 +334,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       if (groupRows.length) {
         const removed = pasteRemovedRef.current;
         const index = buildReferralIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL);
-        setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, index)
+        setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, index, 88, false)
           .filter((m) => !removed.has(m.referralRow)));
       }
     } finally {

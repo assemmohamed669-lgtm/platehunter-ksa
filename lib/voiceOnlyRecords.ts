@@ -11,13 +11,28 @@ import type { FieldCheckEntry } from "./idb";
 /** اسم عمود اللوحة اللي محرّك المطابقة بيقرا منه. */
 export const REC_PLATE_COL = "رقم اللوحة";
 
+/**
+ * ⚡ تاريخ السجل بنفس شكل `toLocaleString("ar-EG")` بالظبط — بس بمنسّق **واحد**
+ * بيتعاد استخدامه. toLocaleString بلغة صريحة ممكن يبني منسّق جديد لكل سجل
+ * (الآيفون بالذات)، والفرز بيحوّل كل السجلات مع كل ضغطة.
+ */
+let arDateFmt: Intl.DateTimeFormat | null = null;
+function arDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return d.toLocaleString("ar-EG");   // نفس «Invalid Date» القديمة بدل ما يرمي
+  arDateFmt ??= new Intl.DateTimeFormat("ar-EG", {
+    year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+  });
+  return arDateFmt.format(d);
+}
+
 /** يحوّل سجلات المندوب لصفوف جدول عشان تعدّي على نفس محرّك المطابقة. */
 export function recordsToRows(entries: FieldCheckEntry[]): Record<string, string>[] {
   return entries.map((e) => ({
     ...e.row,                                   // الأعمدة المرجعية اللي اتحفظت مع السجل
     [REC_PLATE_COL]: e.plate,                   // لوحة السجل بتكسب أي عمود لوحة قديم جوه row
     "الطريقة": e.method ?? "",
-    "التاريخ": e.checkedAt ? new Date(e.checkedAt).toLocaleString("ar-EG") : "",
+    "التاريخ": e.checkedAt ? arDate(e.checkedAt) : "",
     "الموقع": e.mapsLink ?? "",
   }));
 }
@@ -43,7 +58,7 @@ export function groupRecordsToRows(
     ...(r.extra ?? {}),
     [REC_PLATE_COL]: String(r.plate ?? ""),
     "الطريقة": r.method ?? "",
-    "التاريخ": r.checked_at ? new Date(r.checked_at).toLocaleString("ar-EG") : "",
+    "التاريخ": r.checked_at ? arDate(r.checked_at) : "",
     "الموقع": r.maps_link ?? "",
     "المندوب": names[r.agent_id] ?? "",
   }));
