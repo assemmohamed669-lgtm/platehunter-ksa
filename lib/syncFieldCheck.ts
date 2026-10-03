@@ -6,26 +6,43 @@
  * no audio.
  */
 import { supabase } from "./supabaseClient";
-import { clearFieldCheckDeletes, getAllFieldCheckEntries, getFieldCheckDeletes, getPendingFieldChecks, markFieldChecksSynced, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
+import { clearFieldCheckDeletes, getAllFieldCheckEntries, getFieldCheckDeletes, getPendingFieldChecks, markFieldChecksSynced, markFieldChecksSyncedByIds, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
 
-async function upsertFieldCheck(uid: string, e: FieldCheckEntry): Promise<string | null> {
-  const { error } = await supabase.from("field_checks").upsert(
-    {
-      local_id: e.id,
-      agent_id: uid,
-      plate: e.plate,
-      method: e.method,
-      lat: e.lat ?? null,
-      lng: e.lng ?? null,
-      maps_link: e.mapsLink ?? null,
-      extra: e.row ?? {},
-      checked_at: e.checkedAt,
-    },
+/** شكل الصف على السيرفر — مكان واحد للرفع صف صف وللرفع على دفعات، فمايختلفوش. */
+function serverRowOf(uid: string, e: FieldCheckEntry) {
+  return {
+    local_id: e.id,
+    agent_id: uid,
+    plate: e.plate,
+    method: e.method,
+    lat: e.lat ?? null,
+    lng: e.lng ?? null,
+    maps_link: e.mapsLink ?? null,
+    extra: e.row ?? {},
+    checked_at: e.checkedAt,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const errorText = (error: any) => [error.message, error.code].filter(Boolean).join(" · ");
+
+/** رفع صف واحد — ومعاه `status` عشان الرفع على دفعات يعرف «النت وقع» من «اترفض». */
+async function upsertOneWithStatus(uid: string, e: FieldCheckEntry): Promise<{ err: string | null; status: number }> {
+  const { error, status } = await supabase.from("field_checks").upsert(
+    serverRowOf(uid, e),
     { onConflict: "local_id" }
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return error ? [error.message, (error as any).code].filter(Boolean).join(" · ") : null;
+  return { err: error ? errorText(error) : null, status };
 }
+
+async function upsertFieldCheck(uid: string, e: FieldCheckEntry): Promise<string | null> {
+  return (await upsertOneWithStatus(uid, e)).err;
+}
+
+/** `status 0` = الطلب ماوصلش السيرفر أصلاً (النت). */
+const netDown = (status: number) => status === 0;
+/** 401/403 = الجلسة/الصلاحية مرفوضة ⇒ أي طلب بعده هيترفض برضه. */
+const authRejected = (status: number) => status === 401 || status === 403;
 
 async function requireSession(agentId: string): Promise<string | null> {
   // **مهم:** getSession() بيقرا الجلسة **محلياً** بلا نداء شبكة. getUser() بيعمل
@@ -86,6 +103,124 @@ export async function pushPendingFieldChecks(
   }
   await markFieldChecksSynced(doneIds);
   return { synced, pending: pending.length, error: firstError };
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  ☁️ نفس `pushPendingFieldChecks` — بس **على دفعات** (اختيارية)
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * المالك (٣ أكتوبر ٢٠٢٦) عايز تصدير ١٠٠٠+ لوحة يبقى سلس. القديمة بترفع كل سجل
+ * في **طلب لوحده واحد ورا التاني** ⇒ ١٠٠٠ لوحة = ١٠٠٠ طلب نت في الخلفية
+ * (دقايق على شبكة الموبايل) بيزاحموا صوت «الجديد» اللي رايح للسيرفر — والنت
+ * الضعيف بالذات هو اللي المالك قلقان منه. وعلامة «اترفع» مابتتكتبش غير في
+ * **الآخر**: لو التطبيق اتقفل في النص، كله بيترفع تاني من الأول.
+ *
+ * هنا:
+ *   · طلب واحد لكل `batchSize` سجل (١٠٠ افتراضي — صغيرة كفاية للنت الضعيف)،
+ *     **بنفس شكل الصف بالحرف** (`serverRowOf`) ونفس `onConflict`.
+ *   · العلامة بتتكتب بعد كل دفعة (`markFieldChecksSyncedByIds` — بالمعرّف، مش
+ *     قراية الشيت كله كل مرة).
+ *   · السيرفر رفض الدفعة ⇒ تتجرّب صف صف زي القديمة، فصف بايظ مايوقّفش الباقي.
+ *   · **النت وقع** (`status 0` = الطلب ماوصلش أصلاً) ⇒ الدفعة **تتنصّف**
+ *     (١٠٠ ⇐ ٥٠ ⇐ ٢٥ ⇐ … ⇐ ١) وتتجرّب تاني: النت الضعيف بيوقّع الطلب الكبير
+ *     والصغير بيعدّي، فالرفع بيمشي بدل ما يقف خالص.
+ *     ولو **حتى صف واحد** ماعدّاش ⇒ النت واقع بجد: نقف ونسيب الباقي للمرة
+ *     الجاية (بالكتير ٧ طلبات فاشلة ورا بعض، مش مئات).
+ *   · دفعة صغيرة **عدّت** ⇒ الدفعة **تكبر تاني** (ضعف — لحد `batchSize`).
+ *     مراجعة ٣ أكتوبر: من غير كده وقعة قصيرة (٦ طلبات) كانت بتنزّل الدفعة لصف
+ *     واحد **لآخر الرفع** ⇒ ١٠٠٠ لوحة = ٩٠٧ طلب بدل ~٢٠.
+ *     ⚠️ ومحاولة كبر **فشلت** (النت مابيشيلش الحجم ده) ⇒ اللي بعدها محتاجة
+ *        **ضعف** النجاحات (١ ⇐ ٢ ⇐ ٤ …) — من غير كده نت بيشيل ٦ بس كان هيجرّب
+ *        ١٢ بعد كل دفعة ويفشل (طلب فاشل لكل طلب ناجح).
+ *   · `error` = سبب اللي **فضل** مترفعش بس (صف اترفض، أو الوقفة: النت/الجلسة).
+ *     وقعة نت اتعالجت بالتنصيف والكل اترفع في الآخر ⇒ **مفيش خطأ** — المندوب
+ *     مايتقالوش «فيه مشكلة» واللوحات كلها على السيرفر.
+ *   · **الجلسة مرفوضة** (401/403 — توكن منتهي) ⇒ نقف فوراً: كل طلب بعده
+ *     هيترفض برضه، فمافيش لازمة لـ١٠٠٠ طلب مرفوض. نفس الكلام لو حصل وإحنا
+ *     بنجرّب صف صف.
+ *
+ * نفس شكل الرد ونفس ردود الأوفلاين/الجلسة بالحرف (حتى `error: undefined` في
+ * النجاح). القديمة زي ما هي للكل.
+ */
+export async function pushPendingFieldChecksBatched(
+  agentId: string,
+  opts: { batchSize?: number } = {},
+): Promise<{ synced: number; pending: number; error?: string }> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return { synced: 0, pending: 0, error: "الجهاز أوفلاين" };
+  }
+  const uid = await requireSession(agentId);
+  if (!uid) return { synced: 0, pending: 0, error: "مفيش جلسة صالحة" };
+
+  const size = Number.isFinite(opts.batchSize) && (opts.batchSize as number) >= 1
+    ? Math.floor(opts.batchSize as number) : 100;
+  const pending = await getPendingFieldChecks(uid);
+  let synced = 0;
+  /** سبب اللي **فضل** مترفعش (أول واحد) — مش أي وقعة اتعالجت في السكة. */
+  let leftError: string | undefined;
+  /** حجم الدفعة دلوقتي — بيتنصّف مع وقعة النت وبيكبر تاني مع النجاح. */
+  let cur = size;
+  /** نجاحات ورا بعض على الحجم الحالي. */
+  let okStreak = 0;
+  /** كام نجاح لازم قبل ما الدفعة تكبر — بيتضاعف مع كل محاولة كبر فشلت. */
+  let regrowAfter = 1;
+  /** الحجم الحالي جه من «كبرنا» ولسه ماعدّاش؟ (فشله = النت مابيشيلهوش) */
+  let growing = false;
+
+  for (let i = 0; i < pending.length; ) {
+    const chunk = pending.slice(i, i + cur);
+    const { error, status } = await supabase.from("field_checks").upsert(
+      chunk.map((e) => serverRowOf(uid, e)),
+      { onConflict: "local_id" }
+    );
+    if (!error) {
+      const ids = chunk.map((e) => e.id);
+      synced += ids.length;
+      await markFieldChecksSyncedByIds(ids);
+      i += chunk.length;
+      growing = false;
+      // 📶 عدّت ⇒ نكبر تاني (ضعف لحد `size`) بعد `regrowAfter` نجاح
+      if (cur < size && ++okStreak >= regrowAfter) {
+        cur = Math.min(size, cur * 2);
+        okStreak = 0;
+        growing = true;
+      }
+      continue;
+    }
+    okStreak = 0;
+    if (authRejected(status)) {                         // الجلسة مرفوضة — الباقي هيترفض برضه
+      leftError ??= errorText(error);
+      break;
+    }
+    if (netDown(status)) {
+      if (chunk.length <= 1) {                          // ولا صف واحد عدّى ⇒ النت واقع: الباقي للمرة الجاية
+        leftError ??= errorText(error);
+        break;
+      }
+      // الحجم ده جه من «كبرنا» ووقع ⇒ المحاولة الجاية تستنى نجاحات أكتر
+      if (growing) regrowAfter *= 2;
+      growing = false;
+      cur = Math.max(1, Math.floor(chunk.length / 2));  // نت ضعيف ⇒ دفعة أصغر ونجرّب تاني نفس المكان
+      continue;
+    }
+    growing = false;
+    // السيرفر رفض الدفعة ⇒ صف صف (صف بايظ مايوقّفش الباقي)
+    const doneIds: string[] = [];
+    let halt = false;
+    for (const e of chunk) {
+      const r = await upsertOneWithStatus(uid, e);
+      if (!r.err) { doneIds.push(e.id); continue; }
+      leftError ??= r.err;                              // الصف ده فضل مترفعش
+      if (netDown(r.status) || authRejected(r.status)) { halt = true; break; }
+    }
+    synced += doneIds.length;
+    await markFieldChecksSyncedByIds(doneIds);
+    if (halt) break;
+    i += chunk.length;
+  }
+  // اترفع كله ⇒ مفيش خطأ، حتى لو النت وقع في السكة واتعالج
+  return { synced, pending: pending.length, error: synced >= pending.length ? undefined : leftError };
 }
 
 /**

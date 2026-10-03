@@ -542,6 +542,66 @@ export async function saveFieldCheckEntries(entries: FieldCheckEntry[]): Promise
   return withFreshRetry(() => putFieldChecksOnce(entries));
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  📤 تصدير ١٠٠٠+ لوحة مايهنّجش — دفعة ورا دفعة، ونتيجة لكل لوحة
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * المالك (٣ أكتوبر ٢٠٢٦): «لو عنده أكتر من ألف لوحة مش متصدّرة ويدوس تصدير
+ * مش عايزه يقفل ولا يهنّج معاه مهما كان عدد اللوحات».
+ *
+ * التصدير كان `Promise.allSettled(entries.map(saveFieldCheckEntry))` = ١٠٠٠
+ * معاملة بتتفتح **في نفس اللحظة**. والأسوأ: لو الآيفون كان قاتل الاتصال (#306)
+ * كل واحدة منهم بتفشل وتفتح القاعدة **لوحدها** ⇒ ١٠٠٠ فتح مع بعض (القياس في
+ * `__tests__/fieldCheckChunkedPerf.test.ts`).
+ *
+ * هنا: معاملة واحدة لكل دفعة (١٠٠ افتراضي)، والصفحة بتتنفّس بين الدفعات
+ * (`setTimeout 0`) فشريط التقدّم يترسم والزراير تفضل شغّالة.
+ *
+ * 🔴 **نفس عقد الطريقة القديمة بالظبط** عشان الصفحة تبدّلها وبس:
+ *   · بترجّع نتيجة لكل لوحة **بنفس ترتيب المدخل وبشكل `Promise.allSettled`**
+ *     ⇒ `savedIds` و`firstFailureReason` شغّالين عليها زي ما هم.
+ *   · السجل بيتخزّن زي ما هو (`put` بالمعرّف) — نفس اللي `saveFieldCheckEntry`
+ *     بتعمله، ونفس حماية الاتصال الميت (`withFreshRetry`).
+ *   · دفعة وقعت ⇒ **تتجرّب لوحة لوحة بـ`saveFieldCheckEntry` نفسها**، فلوحة
+ *     بايظة مابتضيّعش الـ٩٩ اللي معاها (وده بالظبط سلوك الطريقة القديمة).
+ *
+ * اختيارية — مفيش حاجة قديمة اتغيّرت؛ اللي عايزها يناديها.
+ */
+export async function saveFieldCheckEntriesChunked(
+  entries: readonly FieldCheckEntry[],
+  opts: { chunkSize?: number; onProgress?: (done: number, total: number) => void } = {},
+): Promise<PromiseSettledResult<void>[]> {
+  const total = entries.length;
+  const out: PromiseSettledResult<void>[] = [];
+  if (total === 0) return out;
+  const size = Number.isFinite(opts.chunkSize) && (opts.chunkSize as number) >= 1
+    ? Math.floor(opts.chunkSize as number) : 100;
+
+  for (let i = 0; i < total; i += size) {
+    // 🫁 نسيب الصفحة تتنفّس بين الدفعات (مش قبل الأولى — المندوب مستني)
+    if (i > 0) await new Promise<void>((r) => setTimeout(r, 0));
+    const chunk = entries.slice(i, i + size);
+    try {
+      await withFreshRetry(() => putFieldChecksOnce(chunk));
+      for (let k = 0; k < chunk.length; k++) out.push({ status: "fulfilled", value: undefined });
+    } catch {
+      // الدفعة كلها وقعت — لوحة لوحة زي الطريقة القديمة، فاللي ينفع يتحفظ يتحفظ
+      for (const e of chunk) {
+        try {
+          await saveFieldCheckEntry(e);
+          out.push({ status: "fulfilled", value: undefined });
+        } catch (reason) {
+          out.push({ status: "rejected", reason });
+        }
+      }
+    }
+    // غلط في شاشة التقدّم مايوقّفش حفظ شغل المندوب
+    try { opts.onProgress?.(out.length, total); } catch { /* UI بس */ }
+  }
+  return out;
+}
+
 /** All field-check entries, newest first. */
 /**
  * All field-check entries, newest first. Pass `agentId` to get only the
@@ -586,6 +646,34 @@ export async function markFieldChecksSynced(ids: string[]): Promise<void> {
           if (idSet.has(e.id) && !e.synced) store.put({ ...e, synced: true });
         }
       };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
+/**
+ * زي `markFieldChecksSynced` بالحرف في النتيجة — بس **بالمعرّف** بدل ما تقرا
+ * الشيت كله (`getAll`). القديمة بتنسخ كل سجلات الجهاز للذاكرة عشان تعلّم كام
+ * واحد؛ مندوب بـ١٠ آلاف سجل والرفع على دفعات بيعلّم بعد كل دفعة ⇒ كانت هتبقى
+ * ١٠ نسخ للشيت كله وهو بيسجّل. معاملة واحدة، و`get` لكل معرّف بس.
+ * اختيارية — القديمة زي ما هي لكل اللي بيناديها.
+ */
+export async function markFieldChecksSyncedByIds(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  return withFreshRetry<void>(async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
+      const store = tx.objectStore(FIELD_CHECK_STORE);
+      for (const id of new Set(ids)) {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          const e = req.result as FieldCheckEntry | undefined;
+          if (e && !e.synced) store.put({ ...e, synced: true });
+        };
+      }
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
