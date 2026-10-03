@@ -143,18 +143,30 @@ describe("③ 🔧 الهيكل في الخلفية — للكل (المالك �
   });
 });
 
-describe("④ 🎚️ المؤشّر مايعيدش رسم الصفحة كلها ٦٠ مرة/ث — للسوبر أدمن", () => {
-  it("المناديب: نفس setLevel ونفس VuMeter", () => {
-    expect(startFn).toMatch(/onLevel: sup \? levelThrottle\(\(v\) => levelStoreRef\.current!\.set\(v\)\) : \(lvl: number\) => setLevel\(lvl\),/);
-    expect(src).toMatch(/<VuMeter level=\{level\} speaking=\{speaking\} \/>/);
-  });
-  it("السوبر أدمن: المؤشّر بيقرا من مخزن لوحده (الصفحة مابتترسمش)", () => {
-    expect(src).toMatch(/isSuper\s*\?\s*<LiveVuMeter store=\{levelStoreRef\.current!\} speaking=\{speaking\} \/>/);
+/**
+ * ④ اتفتح **للكل** — المالك (٤ أكتوبر ٢٠٢٦): المناديب «بيقول لوحة مطلوبة ويقول بعدها
+ * ٣ لوحات، بتظهر المطلوبة بعد ما يقول الـ٣ لوحات» ⇒ «يلا ارفعها للمناديب». السبب:
+ * المؤشّر بيعيد رسم الصفحة كلها ~٦٠ مرة/ث، ومع كل رسمة التقرير المستخبّي (لحد ٤٠٠
+ * قراية) + كل الصفوف + مقارنة القرايات بالصفوف ⇒ الخيط الرئيسي بيتشبّع والصفوف بتتأخر.
+ */
+describe("④ 🎚️ المؤشّر مايعيدش رسم الصفحة كلها ٦٠ مرة/ث — للكل (المناديب كمان)", () => {
+  it("المؤشّر بيقرا من مخزن لوحده للكل — مافيش setLevel لكل فريم", () => {
+    expect(startFn).toMatch(/onLevel: levelThrottle\(\(v\) => levelStoreRef\.current!\.set\(v\)\),/);
+    expect(startFn).not.toMatch(/\(lvl: number\) => setLevel\(lvl\)/);
+    expect(src).toMatch(/<LiveVuMeter store=\{levelStoreRef\.current!\} speaking=\{speaking\} \/>/);
+    // الصفحة مابترسمش `VuMeter` بحالة الصفحة — المرة الوحيدة جوّه `LiveVuMeter` (بمخزنه)
+    expect(src.match(/<VuMeter level=\{level\} speaking=\{speaking\} \/>/g)?.length).toBe(1);
+    expect(src).toMatch(/return <VuMeter level=\{level\} speaking=\{speaking\} \/>;/);
     expect(src).toMatch(/useSyncExternalStore\(store\.subscribe, store\.get, store\.get\)/);
   });
-  it("وقت الصف بمنسّق واحد، والتقرير التقيل محسوب مرة لكل تغيير", () => {
-    expect(src).toMatch(/isSuper \? formatRowTime\(r\.shownAt\)/);
-    expect(src).toMatch(/useMemo\(\s*\(\) => \(isSuper \? \{ missed: heardNotShown\(reads, rows\), lost: blockedNotShown\(reads, rows\) \} : null\),\s*\[isSuper, reads, rows\]/);
+  it("وقت الصف بمنسّق واحد للكل، والمقارنات التقيلة محسوبة مرة لكل تغيير للكل", () => {
+    expect(src).toMatch(/\{formatRowTime\(r\.shownAt\)\}/);
+    expect(src).not.toMatch(/isSuper \? formatRowTime\(r\.shownAt\)/);
+    expect(src).toMatch(/useMemo\(\s*\(\) => \(\{ missed: heardNotShown\(reads, rows\), lost: blockedNotShown\(reads, rows\) \}\),\s*\[reads, rows\]/);
+  });
+  it("التقرير الشامل (لحد ٤٠٠ قراية) مابيترسمش خالص عند المناديب — كان مستخبّي بالـCSS بس", () => {
+    expect(src).toMatch(/\{isSuper && showReport && \(/);
+    expect(src).not.toMatch(/\n\s*\{showReport && \(/);
   });
 });
 
