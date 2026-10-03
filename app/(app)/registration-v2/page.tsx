@@ -25,7 +25,7 @@
  * ⚠️ **التقرير مؤقّت** — بطلب المالك، بيتشال بعد ما التجربة تخلص.
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import {
   Mic, Square, Loader2, AlertTriangle, Cpu, Trash2, Copy, Check, RefreshCw,
   FileSpreadsheet, BellRing, BellOff, MapPin, Download, ChevronDown, ChevronUp,
@@ -76,7 +76,7 @@ import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
   stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp, firstFailureReason,
 } from "@/lib/trialRecords";
-import { saveFieldCheckEntry, type FieldCheckEntry } from "@/lib/idb";
+import { saveFieldCheckEntry, saveFieldCheckEntriesChunked, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
@@ -85,6 +85,19 @@ import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } fro
 import { syncTeamCheckToLocal, shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
 import { backfillMissingGps, stampRowGps } from "@/lib/gpsBackfill";
 import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chassisCache";
+import { loadChassisMap, quickChassisMap, type LoadChassisOptions } from "@/lib/chassisLoad";
+/**
+ * 🧈 **«سلاسة» Voice PRO — السوبر أدمن الأول** (المالك ٣ أكتوبر ٢٠٢٦: «أنا عايز
+ * سلاسة في كل حاجة في البرنامج»). كل حاجة من هنا ورا `isSuper` (`sup` جوّه
+ * `start`)، والمناديب على القديم بالحرف لحد ما المالك يجرّب. شوف
+ * `lib/voiceProSmooth.ts` و`__tests__/voiceProSmoothWiring.test.ts`.
+ */
+import {
+  weakNetBanner, createOutageClock, isRequestFailSkip, fatalText, createSessionGate, reachabilityCheck, levelThrottle, createLevelStore, createThrottle,
+  exportProgressText, EXPORT_PROGRESS_GAP_MS, formatRowTime, createLatestJobs,
+  mapInChunks, withinMs, CHASSIS_EXPORT_WAIT_MS, CHASSIS_WAIT_TEXT, CHASSIS_MISSING_NOTE,
+  type LevelStore, type LatestJobs,
+} from "@/lib/voiceProSmooth";
 import { noGpsWarning, autoExportPrompt, autoExportStopPrompt, trialExcelRows, modelBoxDetail } from "@/lib/trialToggles";
 import { clampZoom, stepZoom, zoomedMinWidth, ZOOM_MIN, ZOOM_MAX } from "@/lib/tableZoom";
 import { startupBreakdown, type Mark } from "@/lib/startupMarks";
@@ -311,6 +324,65 @@ export default function RegistrationV2Page() {
   const typeProbeRef = useRef<{ ok: boolean; msg: string } | null>(null);
 
   const engineRef = useRef<VoicexEngineController | null>(null);
+  /**
+   * 🔒 **رقم جلسة التسجيل** — المالك (٣ أكتوبر ٢٠٢٦، «ماشي اعمل كده»): جلسة قديمة
+   * ماينفعش توقّف جلسة أحدث. المحرّك القديم بيكمّل آخر نوافذه بعد الإيقاف، وأي
+   * نداء منه بيوقّف التسجيل (`onFatal`/`onMicLost`) كان بيقفل **التسجيل الجديد**.
+   * السوبر أدمن الأول (`live()` جوّه `start`). شوف `lib/voiceProSmooth.ts`.
+   */
+  const sessionRef = useRef(createSessionGate());
+  /** المايك بيتفتح دلوقتي (`starting`) — كمرجع عشان «مافيش قراية ملف وقت التسجيل». */
+  const startingRef = useRef(false);
+  /**
+   * 🎚️ مستوى الصوت للسوبر أدمن — **المؤشّر بس** بيشترك فيه (`LiveVuMeter`)،
+   * فتحديثه مابيعيدش رسم الصفحة كلها (جدول ١٠٠٠ لوحة) ٦٠ مرة في الثانية.
+   * المالك (٣ أكتوبر ٢٠٢٦): «ماشي اعمل كده طالما مش هتأثر على حاجة».
+   */
+  const levelStoreRef = useRef<LevelStore | null>(null);
+  if (!levelStoreRef.current) levelStoreRef.current = createLevelStore();
+  /**
+   * 🔧 **رقم الهيكل في الخلفية — السوبر أدمن الأول.** المالك (٣ أكتوبر ٢٠٢٦) وافق
+   * إن خريطة لوحة ← هيكل تتحمّل في الخلفية بحيث الصفحة ماتهنّجش، والميزة نفسها
+   * زي ما هي (تحت اللوحة المطلوبة + في السجلات المصدّرة). `lib/chassisLoad.ts`:
+   * محفوظة على الموبايل + الملف بيتقرا في الـworker + قراية واحدة لكل ملف.
+   *   · أحدث تحميل بس يتطبّق (ملف قديم خلص متأخّر مايكتبش فوق الأحدث).
+   *   · **مافيش قراية للملف وقت التسجيل** — بتستنى لحد ما المندوب يقفل. بس
+   *     الكاش (الذاكرة ثم الجهاز) مسموح (`quick`) — عشان الهيكل يفضل يظهر تحت
+   *     اللوحة المطلوبة وهو بيسجّل.
+   *   · التصدير بيستنى الخريطة (`ensure`) — حتى لو التحميل كان مستني الإيقاف.
+   */
+  const chassisJobsRef = useRef<LatestJobs<LoadChassisOptions, Map<string, string>> | null>(null);
+  if (!chassisJobsRef.current) {
+    chassisJobsRef.current = createLatestJobs<LoadChassisOptions, Map<string, string>>({
+      busy: () => !!engineRef.current || startingRef.current,
+      run: (job) => loadChassisMap(job),
+      quick: (job) => quickChassisMap(job),
+      apply: (map) => setPlateChassis(map),
+    });
+  }
+  /**
+   * 🔧 **سوبر أدمن ولا لأ — لطريق الهيكل في `loadCheck`، متزامن من غير انتظار.**
+   * `null` = لسه مش معروف ⇒ الطريق القديم بالحرف (زي origin/main، ومن غير ما
+   * يستنى الصلاحية — المناديب توقيتهم زي النهارده بالظبط). بيتملى في `openWith`:
+   * من الصلاحية المتفتكرة (`cachedTrialGate`) أول ما الجلسة تبان، أو من تأكيد
+   * السيرفر — ولما الصلاحية تتقفل بيرجع `false`.
+   */
+  const superDecRef = useRef<boolean | null>(null);
+  /**
+   * 🔒 **قفل تعديل/مسح الصفوف وقت تصدير السوبر أدمن.** التصدير بقى سلس (الشاشة
+   * مش متجمّدة) فالمندوب يقدر يعدّل وهو بيصدّر — والتعديل كان بيتحفظ بالقيم
+   * القديمة والصف يتشال، والمسح كان بيتكتب في السجلات برضه. عدّاد مش true/false
+   * (التصدير التلقائي والعادي ممكن يتقابلوا). المناديب: عمره ما بيتقفل.
+   */
+  const rowLockRef = useRef(0);
+  const [rowsLockedState, setRowsLockedState] = useState(false);
+  const lockRows = (on: boolean) => {
+    rowLockRef.current = Math.max(0, rowLockRef.current + (on ? 1 : -1));
+    setRowsLockedState(rowLockRef.current > 0);
+  };
+  /** آخر قيمة لـ`isSuper` — لكولباك «النت رجع» اللي بيتربط مرة واحدة. */
+  const isSuperRef = useRef(isSuper);
+  isSuperRef.current = isSuper;
   /** 🩺 جلسة المراقبة للتسجيل الحالي — null لو مقفولة (مش سوبر أدمن). */
   const telRef = useRef<ReturnType<typeof startTelemetrySession>>(null);
   /**
@@ -328,6 +400,12 @@ export default function RegistrationV2Page() {
   const recReleaseRef = useRef<(() => void) | null>(null);
   /** 📞 رسالة «التسجيل وقف لوحده» — مكالمة أو تطبيق تاني أخد المايك. */
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * 📶 النت ضعيف من إمتى (`onWeakNet`) — **بداية الانقطاع** (أول طلب فشل بعد آخر
+   * رد ناجح)، ولو مش معروفة لحظة ما المحرّك قال «ضعيف». `null` = النت تمام. للسوبر
+   * أدمن بس (المحرّك مابيندهش `onWeakNet` من غير `netResilience`).
+   */
+  const [weakSince, setWeakSince] = useState<number | null>(null);
   /** ساعة الصوت للتأخير — بتفضل بعد الإيقاف عشان آخر اللوحات تتحسب صح. */
   const clockRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -416,6 +494,16 @@ export default function RegistrationV2Page() {
     return m;
   }, [rows]);
 
+  /**
+   * 🧈 «اتسمعت وماظهرتش» و«اتحجبت وماظهرتش» — كل قراية × كل صف (٤٠٠ × ١٠٠٠).
+   * كانت بتتحسب مع **كل** رسمة للصفحة (عدّاد الثواني، المؤشّر…) والنتيجة نفسها.
+   * للسوبر أدمن: مرة لكل تغيير في القرايات أو الصفوف — نفس الأرقام بالظبط.
+   */
+  const superLost = useMemo(
+    () => (isSuper ? { missed: heardNotShown(reads, rows), lost: blockedNotShown(reads, rows) } : null),
+    [isSuper, reads, rows],
+  );
+
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
   /**
    * ⚡ **الرجوع للصفحة فوري** — المالك (٢٣ سبتمبر ٢٠٢٦): «صفحة الجديد لما
@@ -444,6 +532,8 @@ export default function RegistrationV2Page() {
        * واضحة. **الفشل بيقفل** — مافيش رجوع لتوكن مكتوب.
        */
       const ep = resolveTrialEndpoint(readJudgeEndpoint(), dbToken);
+      // 🔧 طريق الهيكل بيقرا ده متزامن (من غير ما يستنى) — شوف `superDecRef`
+      superDecRef.current = sup;
       setIsSuper(sup);
       setModelUrl(ep.base); setModelToken(ep.token); setAllowed(true);
       if (!ep.token) setError(NO_TRIAL_TOKEN_MSG);
@@ -493,6 +583,7 @@ export default function RegistrationV2Page() {
        * ولو الصوت اتقفل وهو فاتح من الذاكرة ⇒ الصفحة بتتقفل في التأكيد.
        */
       if (!canOpenTrialPage(prof)) {
+        superDecRef.current = false;
         forgetTrialGate();
         try { engineRef.current?.stop(); } catch { /* ignore */ }
         setListening(false); setAllowed(false);
@@ -510,8 +601,12 @@ export default function RegistrationV2Page() {
        * والنت فاصل كانت بتفضل على الموبايل لحد تصدير جاي أو فتح التشييك (و«صوتي» هتستخبى).
        * لوحات المندوب ده بس (`requireSession` + فلتر الحساب). للكل (المالك: «يلا ارفع»).
        */
+      /**
+       * 🧈 السوبر أدمن: على دفعات (١٠٠ في الطلب) بدل طلب لكل لوحة — ١٠٠٠ لوحة كانت
+       * ١٠٠٠ طلب بيزاحموا صوت التسجيل. المناديب زي ما هم.
+       */
       void import("@/lib/syncFieldCheck")
-        .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(userId as string))
+        .then((m) => (sup ? m.pushPendingFieldChecksBatched(userId as string) : m.pushPendingFieldChecks(userId as string)))
         .catch(() => { /* هتتزامن بعدين */ });
     })();
     return () => {
@@ -564,8 +659,9 @@ export default function RegistrationV2Page() {
     const onOnline = () => {
       const uid = agentRef.current;
       if (!uid) return;
+      // 🧈 السوبر أدمن: على دفعات (زي فتح الصفحة والتصدير)
       void import("@/lib/syncFieldCheck")
-        .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(uid))
+        .then((m) => (isSuperRef.current ? m.pushPendingFieldChecksBatched(uid) : m.pushPendingFieldChecks(uid)))
         .catch(() => { /* هتتزامن بعدين */ });
     };
     window.addEventListener("online", onOnline);
@@ -748,6 +844,8 @@ export default function RegistrationV2Page() {
    */
   const loadCheck = useCallback(() => {
     void (async () => {
+      // 🔧 تذكرة التحميل ده — أي تحميل هيكل أقدم (شغّال أو مستني) بيبطل (السوبر أدمن)
+      const ticket = chassisJobsRef.current!.begin();
       try {
         const rec = await getUploadedFile("local", "check").catch(() => null);
         loadedStampRef.current = lastCheckSheetStamp();
@@ -764,6 +862,16 @@ export default function RegistrationV2Page() {
           }
           setCheckTable(null); setCheckSources(extrasOnly); setCheckFile(null);
           setCheckName(extrasOnly.length ? "ملفات تشييك إضافية" : "");
+          /**
+           * 🔧 السوبر أدمن: نفس الخريطة بالحرف (`buildChassisMap` = اللوب اللي تحت)
+           * بس عبر طابور «أحدث تحميل بس» — تحميل أقدم خلص متأخّر مايكتبش فوق الأحدث،
+           * والتصدير بيستناها (`ensure`). مافيش ملف يتقري ⇒ بتشتغل حتى وقت التسجيل.
+           * المناديب: اللوب القديم زي origin/main بالحرف.
+           */
+          if (superDecRef.current === true) {
+            chassisJobsRef.current!.request(ticket, { fingerprint: null, sources: extrasOnly, blob: null, fileName: null });
+            return;
+          }
           const chassisOnly = new Map<string, string>();
           for (const t of extrasOnly) {
             const pCol = detectPlateColumn(t.headers, t.rows);
@@ -804,6 +912,26 @@ export default function RegistrationV2Page() {
          */
         const extraKey = sources.slice(1).map((t) => t.rows.length).join(",");
         const fp = (checkFingerprint(rec) ?? "") + "#" + extraKey;
+        /**
+         * 🔒 **السوبر أدمن الأول: الهيكل في الخلفية** (المالك ٣ أكتوبر ٢٠٢٦). نفس
+         * الخريطة بالحرف (`lib/chassisLoad.ts` متقارن بنسخة حرفية من الكود اللي تحت)،
+         * بس: محفوظة على الموبايل (الفتحة الباردة مابتحلّلش الملف) + الملف بيتقرا في
+         * الـworker + قراية واحدة لكل ملف (الرفع كان بيحلّله مرتين) + **وقت التسجيل
+         * الكاش بس** والملف بيستنى الإيقاف. الشيت والصفّارة اتملوا فوق — مالهمش دعوة بده.
+         *
+         * القرار **متزامن** (`superDecRef`) — مابيستناش الصلاحية: المعروف لحد دلوقتي
+         * (الصلاحية المتفتكرة أو تأكيد السيرفر) ولو مش معروف ⇒ الطريق القديم.
+         * المناديب: الطريق القديم تحت زي origin/main بالحرف (وبنفس التوقيت).
+         */
+        if (superDecRef.current === true) {
+          chassisJobsRef.current!.request(ticket, {
+            fingerprint: fp, sources, blob: rec.fileBlob ?? null, fileName: rec.fileName,
+            fileStamp: rec.uploadedAt ?? null,
+          });
+          return;
+        }
+        // 🔧 الطريق القديم: مافيش طلب هيكل جاي من التحميل ده ⇒ تصدير السوبر أدمن مايستناهوش
+        chassisJobsRef.current!.release(ticket);
         const cached = getCachedChassis(fp);
         if (cached) { setPlateChassis(cached); return; }
 
@@ -835,6 +963,8 @@ export default function RegistrationV2Page() {
         setCachedChassis(fp, map);
         setPlateChassis(map);
       } catch { /* مفيش شيت */ }
+      // مافيش ملف / رمية ⇒ مافيش طلب هيكل جاي (لو اتطلب قبل كده مابيتلغيش)
+      finally { chassisJobsRef.current!.release(ticket); }
     })();
   }, []);
 
@@ -1087,6 +1217,7 @@ export default function RegistrationV2Page() {
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
+    setWeakSince(null);
     wantedSeenRef.current = new Map();
     // 🚚 التسلسل الفوري للكل — المالك جرّبه (٢٤ سبتمبر): «شغّال زي الفل، ارفعوه للكل»
     fleetRef.current = new FleetMemory({ sequence: true, firstCar: true });   // 🚚 أول عربية: للكل (المالك جرّبه ٢٤ سبتمبر)
@@ -1106,6 +1237,20 @@ export default function RegistrationV2Page() {
      * يرجع للصفحة (`visibilitychange`).
      */
     setStarting(true);
+    /**
+     * 🔒 **السوبر أدمن الأول** — كل الجديد في الجلسة دي بيتقرّر هنا مرة واحدة
+     * (`sup`)، و`live()` بيقول لو النداء جاي من **الجلسة الحالية**. المناديب:
+     * `live()` دايماً `true` ⇒ زي النهارده بالحرف.
+     */
+    const sup = isSuper;
+    const sid = sessionRef.current.begin();
+    const live = () => !sup || sessionRef.current.isCurrent(sid);
+    /**
+     * 📶 (السوبر أدمن) **بداية الانقطاع الفعلية** لشريط النت الضعيف — أول طلب
+     * فشل بعد آخر رد ناجح. «ضعيف» بييجي بعدها بـ~٣٠ث (الفشل الـ٨)، والصوت
+     * الفايت بيعيش ٧٥ث من لحظة ما اتقال — فالشريط بيتحسب من هنا. المناديب: `null`.
+     */
+    const outage = sup ? createOutageClock() : null;
     // 🔄 من اللحظة دي التحديث التلقائي بيستنى — لحد آخر خطوة في الإيقاف
     recReleaseRef.current?.();
     recReleaseRef.current = holdRef.current!.hold();
@@ -1136,6 +1281,8 @@ export default function RegistrationV2Page() {
     } catch { telRef.current = null; }
     const tel = telRef.current?.tel ?? null;
     try {
+      // 🔧 جوّه الـtry عن قصد: الـfinally هو اللي بيرجّعه — رمية قبله كانت هتأجّل الهيكل للأبد
+      startingRef.current = true;
       const { startVoicexEngine } = await import("@/lib/voicexEngine");
       marks.push({ label: "المحرّك", at: Date.now() });
       const ctrl = await startVoicexEngine({
@@ -1150,6 +1297,28 @@ export default function RegistrationV2Page() {
         fleetSequence: true,
         // 🚚 «أول عربية في الأسطول» للكل — المالك جرّبه كسوبر أدمن وقال «انشر للكل»
         fleetFirstCar: true,
+        /**
+         * 📶 **وضع النت الضعيف — السوبر أدمن بس** (المالك ٣ أكتوبر ٢٠٢٦: «خلي ده
+         * مايحصلش غير في حالة النت الضعيف أوي فقط… فدي تبقى في الضرورة القصوى
+         * فقط»). المحرّك بيدخله **بس** في اللحظة اللي كان بيستسلم فيها (٨ فشل ورا
+         * بعض) وبيهدّي الشغل بدل ما يقفل التسجيل. شوف `netResilience`.
+         * المناديب: الخيارات من غيره بالحرف.
+         */
+        ...(sup ? {
+          netResilience: true,
+          onWeakNet: (weak: boolean) => {
+            if (!live()) return;
+            tel?.event("weak_net", { weak });
+            setWeakSince(weak ? (outage?.since() ?? Date.now()) : null);
+          },
+          /**
+           * 🔌 نفق واقع ولا نت الموبايل؟ — نفق ميت بيرجّع ٥٣٠ من غير CORS فطلب
+           * الصوت بيبان `network` زي الموبايل الأوفلاين بالظبط. `/health` بتاع
+           * **نفس** سيرفر الصوت بـno-cors: أي رد خلال ٤ث = النت واصل والعطل عند
+           * السيرفر ⇒ «السيرفر مش واصل (النفق واقع)» بدل «النت ضعيف» ٣ دقايق.
+           */
+          checkReachable: reachabilityCheck(modelUrl.trim().replace(/\/+$/, "") + "/health"),
+        } : {}),
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           tel?.shown(plate, meta);
           const key = normalizePlate(bankPlateToArabic(plate));
@@ -1283,6 +1452,7 @@ export default function RegistrationV2Page() {
           }
         },
         onRead: (r) => {
+          outage?.ok();   // 📶 رد ناجح = الانقطاع خلص (السوبر أدمن؛ المناديب null)
           tel?.read(r);
           setReads((prev) => [{ ...r, t: Date.now() }, ...prev].slice(0, 400));
           /**
@@ -1366,21 +1536,34 @@ export default function RegistrationV2Page() {
           winBufRef.current = pruneWindows([...winBufRef.current, { tMs, wav }], tMs);
         },
         onSpeech: (active: boolean) => setSpeaking(active),
-        onLevel: (lvl: number) => setLevel(lvl),
-        onSkip: (reason: string) => { tel?.skip(reason); setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })); },
+        /**
+         * 🎚️ السوبر أدمن: ~١٢ تحديث/ث (نفس خنق «صوتي») وفي مخزن المؤشّر بس —
+         * الصفحة مابتترسمش مع كل تحديث. المناديب زي ما هم.
+         */
+        onLevel: sup ? levelThrottle((v) => levelStoreRef.current!.set(v)) : (lvl: number) => setLevel(lvl),
+        onSkip: (reason: string) => { if (outage && isRequestFailSkip(reason)) outage.fail(Date.now()); tel?.skip(reason); setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })); },
         onReplay: () => { tel?.replay(); setReplays((n) => n + 1); },
         /**
          * 📞 **الميك اتاخد** — مكالمة (تليفون/واتساب) أو تطبيق تاني. المالك:
          * «المكالمة يبقى ليها الأولوية، وتلقائي المسجّل يفصل لو جه مكالمة».
          * اللوحات **كلها بتفضل** — الإيقاف مابيمسحش حاجة.
          */
-        onMicLost: (reason) => { tel?.event("mic_lost", { reason }); stopRef.current(reason); },
-        onFatal: (reason: string) => {
-          tel?.event("fatal", { reason });
+        onMicLost: (reason) => {
+          if (!live()) return;   // 🔒 جلسة قديمة ماتوقّفش جلسة أحدث (السوبر أدمن)
+          tel?.event("mic_lost", { reason }); stopRef.current(reason);
+        },
+        onFatal: (reason: string, code?: string) => {
+          if (!live()) return;   // 🔒 جلسة قديمة ماتوقّفش جلسة أحدث (السوبر أدمن)
+          // 🩺 الكود (`http_503` …) بييجي بـ`netResilience` بس (السوبر أدمن) — من غيره نفس الحدث القديم
+          tel?.event("fatal", code === undefined ? { reason } : { reason, code });
           stopRef.current("fatal");
-          setError(reason === "mic_denied"
-            ? "الميكروفون مرفوض — اسمح للمتصفّح بالتسجيل وجرّب تاني."
-            : "السيرفر فصل وسط التسجيل. دوس «أعِد الفحص» واتأكد إنه واصل.");
+          /**
+           * المناديب: نفس النص القديم بالحرف (لأي سبب وأي كود) لحد ما المالك يوافق.
+           * السوبر أدمن: **السبب الحقيقي** من غير «أعِد الفحص» — النت مقطوع ٣ دقايق،
+           * السيرفر مش بيرد (بالكود)، الدخول اترفض، رد مش مفهوم، وأي سبب تاني
+           * بكوده (`fatalText` في `lib/voiceProSmooth.ts`).
+           */
+          setError(fatalText(reason, sup, code));
         },
       });
       if (!ctrl) {
@@ -1408,7 +1591,12 @@ export default function RegistrationV2Page() {
       }
       setError("مش قادر يشغّل المحرك — جرّب تاني.");
     }
-    finally { setStarting(false); }
+    finally {
+      setStarting(false);
+      startingRef.current = false;
+      // 🔧 المايك مافتحش ⇒ تحميل هيكل اتأجّل وهو بيجهّز يكمّل (التسجيل شغّال ⇒ بيفضل مستني)
+      chassisJobsRef.current?.flush();
+    }
   }
 
   function stopTimer() { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } }
@@ -1424,6 +1612,10 @@ export default function RegistrationV2Page() {
   function stop(why: "manual" | "fatal" | AutoStopReason = "manual") {
     const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
+    levelStoreRef.current!.set(0);
+    // 🔒 الجلسة دي خلصت — أي نداء متأخّر منها بيتجاهل (السوبر أدمن)، والشريط يتشال
+    sessionRef.current.end();
+    setWeakSince(null);
     const release = recReleaseRef.current;
     recReleaseRef.current = null;
     // 🩺 الجلسة دي بتتقفل بعد ما آخر اللوحات توصل — عشان قراياتها تدخل في آخر دفعة
@@ -1437,6 +1629,12 @@ export default function RegistrationV2Page() {
         // ⏳ آخر اللوحات توصل الأول (بحد أقصى — عطل مايأجّلش التحديث للأبد)
         await Promise.race([done.catch(() => {}), new Promise((r) => setTimeout(r, STOP_SETTLE_MAX_MS))]);
         try { telSession?.end(why); } catch { /* المراقبة ماتوقّفش حاجة */ }
+        /**
+         * 🔧 تحميل هيكل اتأجّل وقت التسجيل (السوبر أدمن) ⇒ دلوقتي، **بعد** ما آخر
+         * اللوحات وصلت — قبل سؤال التصدير التلقائي عشان التصدير يلاقيه. لو المندوب
+         * بدأ تسجيل جديد في النص ⇒ بيفضل مستني للإيقاف الجاي.
+         */
+        chassisJobsRef.current?.flush();
         /**
          * ⑩ب 📤 **التصدير التلقائي** — بطلب المالك: «لما تتفعّل، يحصل بعد ما
          * المندوب يقفل التسجيل: تيجيله رسالة سيتم تصدير عدد كذا ويظهر
@@ -1554,6 +1752,8 @@ export default function RegistrationV2Page() {
   }, []);
 
   const saveCell = useCallback((id: string, field: "type" | "note", value: string) => {
+    // 🔒 تصدير السوبر أدمن شغّال ⇒ مقفول (المناديب: العدّاد دايماً صفر)
+    if (rowLockRef.current > 0) return;
     const v = value.trim() || null;
     // ✋ علامة «المندوب عدّلها بإيده» — بتخلّي أي تأكيد جاي من الإجماع
     // مايكتبش فوق اختياره. شوف `lib/trialRowMerge.ts`.
@@ -1588,13 +1788,16 @@ export default function RegistrationV2Page() {
     try { await exportRowsInner(); } finally { releaseExport(); }
   }
   async function exportRowsInner() {
-    const ready = exportableTrialRows(rows);
-    const waiting = rows.length - ready.length;
+    // `let`: السوبر أدمن بياخد اللقطة تاني **بعد** انتظار الهيكل (تحت)
+    let ready = exportableTrialRows(rows);
+    let waiting = rows.length - ready.length;
     if (!ready.length) {
       setError("مفيش لوحة معاها موقع لسه — التصدير بيستنى الموقع (" + waiting + " مستنية).");
       return;
     }
     setBusy("ببعت للسجلات…");
+    // 🔒 السوبر أدمن: تعديل ومسح الصفوف مقفولين لحد ما التصدير يخلص (`lockRows`)
+    if (isSuper) lockRows(true);
     try {
       // 🪪 وسم السجل باسم المندوب — نفس اللي بتستعمله صفحة التشييك
       /**
@@ -1616,10 +1819,42 @@ export default function RegistrationV2Page() {
       const agentId = uid;
       // 🔒 المعرّف الفريد (حساب + وقت الظهور) للسوبر أدمن الأول — `trialEntryId`
       const entryId = (r: LiveRow) => trialEntryId(r, uid);
+      /**
+       * 🔧 **السوبر أدمن: رقم الهيكل لازم يتكتب في السجلات زي القديم.** القديم كان
+       * بيحلّل الملف على الخيط الرئيسي فالصفحة **كانت متجمّدة** لحد ما الخريطة
+       * تخلص — يعني التصدير عمره ما سبقها. دلوقتي بتتحمّل في الخلفية، فالتصدير:
+       *   · لو الشيت لسه بيتقري، أو التحميل مستني الإيقاف (بيسجّل)، أو شغّال ⇒
+       *     **بيشغّله ويستناه** (القراية في الـworker مابتجمّدش الشاشة) والزرار
+       *     بيقول «بجهّز أرقام الهيكل…».
+       *   · حد سخي (٩٠ث) عشان عطل مايوقّفش التصدير للأبد — ولو حصل بيصدّر باللي
+       *     موجود **وبيقول كده** في رسالة النتيجة (مش في صمت).
+       * المناديب: اللي في الصفحة زي ما هو.
+       */
+      let chassisMap = plateChassis;
+      let chassisNote = "";
+      if (isSuper) {
+        const jobs = chassisJobsRef.current!;
+        const waitChassis = !jobs.idle;
+        if (waitChassis) setBusy(CHASSIS_WAIT_TEXT);
+        const m = await withinMs(jobs.ensure(), CHASSIS_EXPORT_WAIT_MS);
+        if (m) chassisMap = m;
+        else if (waitChassis) chassisNote = CHASSIS_MISSING_NOTE;
+        /**
+         * 📸 **اللقطة بعد الانتظار** — مش من لحظة الضغطة: اللي اتأكّد أو خد موقع
+         * وإحنا مستنيين يدخل بقيمه الجديدة (التعديل والمسح مقفولين أصلاً).
+         */
+        const snapRows = rowsRef.current;
+        ready = exportableTrialRows(snapRows);
+        waiting = snapRows.length - ready.length;
+        if (!ready.length) {
+          setError("مفيش لوحة معاها موقع لسه — التصدير بيستنى الموقع (" + waiting + " مستنية).");
+          return;
+        }
+      }
       // 🔴 حارس زيادة: لوحة مختومة بحساب تاني ماتتصدّرش بالحساب ده (السوبر أدمن الأول)
       const mineReady = ready.filter((r) => isMine(r, uid));
-      const entries: FieldCheckEntry[] = mineReady.map((r) => {
-        const vin = plateChassis.get(normalizePlate(bankPlateToArabic(r.plate)));
+      const toEntry = (r: LiveRow): FieldCheckEntry => {
+        const vin = chassisMap.get(normalizePlate(bankPlateToArabic(r.plate)));
         // 📥 بيانات العربية من أعمدة ملفها هي (ملف تشييك إضافي بأسامي تانية) — للكل
         const d = carDetails(r.match, rowCheckCols(r.match, checkCols), vin);
         return {
@@ -1647,8 +1882,24 @@ export default function RegistrationV2Page() {
           mapsLink: r.lat != null && r.lng != null ? toMapsLink(r.lat, r.lng) : undefined,
           checkedAt: new Date(r.shownAt).toISOString(),
         };
-      });
-      const settled = await Promise.allSettled(entries.map((e) => saveFieldCheckEntry(e)));
+      };
+      /**
+       * 📤 **السوبر أدمن: ١٠٠٠+ لوحة مايهنّجش** — المالك (٣ أكتوبر ٢٠٢٦): «لو عنده أكتر
+       * من ألف لوحة مش متصدّرة ويدوس تصدير مش عايزه يقفل ولا يهنّج معاه مهما كان عدد
+       * اللوحات». الصفوف بتتجهّز على دفعات، والحفظ معاملة لكل ١٠٠ لوحة بدل ١٠٠٠
+       * معاملة في نفس اللحظة (ولو الآيفون قاتل الاتصال كانت ١٠٠٠ فتح للقاعدة مع بعض)،
+       * والزرار بيقول «بصدّر ٣٠٠ من ١٢٠٠…». نفس النتيجة لكل لوحة (`savedIds` /
+       * `firstFailureReason` زي ما هم). المناديب: الطريق القديم بالحرف.
+       */
+      const entries: FieldCheckEntry[] = isSuper ? await mapInChunks(mineReady, toEntry) : mineReady.map(toEntry);
+      const progress = createThrottle<[number, number]>(
+        ([d, t]) => setBusy(exportProgressText(d, t)),
+        { gapMs: EXPORT_PROGRESS_GAP_MS, always: ([d, t]) => d === 0 || d >= t },
+      );
+      if (isSuper) progress([0, entries.length]);
+      const settled = isSuper
+        ? await saveFieldCheckEntriesChunked(entries, { onProgress: (d, t) => progress([d, t]) })
+        : await Promise.allSettled(entries.map((e) => saveFieldCheckEntry(e)));
       const okIds = savedIds(entries.map((e) => e.id), settled);
       if (!okIds.length) {
         // 🔎 السبب في آخر الرسالة — من غيره صورة الشاشة ماكانتش بتقول حاجة
@@ -1658,8 +1909,20 @@ export default function RegistrationV2Page() {
       }
 
       // 🧹 اللي اتكتب بس يتشال — الباقي يفضل قدام المندوب
-      const savedRowIds = new Set(mineReady.filter((r) => okIds.includes(entryId(r))).map((r) => r.id));
-      setRows((prev) => prev.filter((r) => !savedRowIds.has(r.id)));
+      // ⚡ السوبر أدمن: Set — `includes` على كل صف = ١٠٠٠ × ١٠٠٠ مقارنة (نفس النتيجة)
+      const okSet = new Set(isSuper ? okIds : []);
+      const savedRows = isSuper
+        ? mineReady.filter((r) => okSet.has(entryId(r)))
+        : mineReady.filter((r) => okIds.includes(entryId(r)));
+      const savedRowIds = new Set(savedRows.map((r) => r.id));
+      /**
+       * 🔒 السوبر أدمن: بيتشال بس الصف اللي لسه **نفس الكائن** اللي اتصدّر. لو اتغيّر
+       * وإحنا بنحفظ (الإجماع أكّده، موقع أدق، نوع وصل) ⇒ بيفضل قدام المندوب بقيمه
+       * الجديدة، والتصدير الجاي بيكتب فوق نفس السجل (نفس المعرّف — مش بيتكرر).
+       * المناديب: بالـid زي ما هو.
+       */
+      const savedSame = new Set<LiveRow>(isSuper ? savedRows : []);
+      setRows((prev) => prev.filter(isSuper ? (r) => !savedSame.has(r) : (r) => !savedRowIds.has(r.id)));
 
       // ☁️ نحاول نوصّلها السيرفر فوراً — فشلها مايأثرش، هتتزامن بعدين
       /**
@@ -1668,8 +1931,9 @@ export default function RegistrationV2Page() {
        * الرسالة فمابيتأخرش. ولو فشل: هتتزامن بعدين زي ما هي.
        */
       if (uid) {
+        // 🧈 السوبر أدمن: على دفعات (١٠٠ في الطلب) بدل ١٠٠٠ طلب بيزاحموا صوت التسجيل
         void import("@/lib/syncFieldCheck")
-          .then(({ pushPendingFieldChecks }) => pushPendingFieldChecks(uid))
+          .then((m) => (isSuper ? m.pushPendingFieldChecksBatched(uid) : m.pushPendingFieldChecks(uid)))
           .catch(() => { /* المزامنة بتتم بعدين */ });
       }
 
@@ -1678,10 +1942,12 @@ export default function RegistrationV2Page() {
         "✅ تم التصدير للسجلات: " + okIds.length + " لوحة."
         + (waiting ? "\n⏳ " + waiting + " مستنية الموقع (ماتصدّرتش)." : "")
         + (failed ? "\n⚠️ " + failed + " مانفعتش تتحفظ وفضلت مكانها." : "")
+        // 🔧 السوبر أدمن: الهيكل ماجهزش في الوقت ⇒ يتقال (المناديب: دايماً "")
+        + chassisNote
       );
     } catch {
       setError("تعذّر التصدير — جرّب تاني.");
-    } finally { setBusy(null); }
+    } finally { setBusy(null); if (isSuper) lockRows(false); }
   }
 
   /**
@@ -1789,6 +2055,14 @@ export default function RegistrationV2Page() {
   /** 🗑️ بلا ترقيم + سلة بدل × — للكل (`lib/voiceProTable.ts`) */
   const proTable = voiceProTable(isSuper);
   const gpsLevel = gps ? gpsAccuracyLevel(gps.accuracy) : null;
+  /**
+   * 📶 شريط النت الضعيف — السوبر أدمن بس. عدّاد الثواني بيعيد الرسم كل ثانية،
+   * فسطر «عيدها لما النت يرجع» بيظهر لوحده لما الانقطاع يعدّي ٧٥ث (عمر الصوت الفايت
+   * في الذاكرة — `REPLAY_MAX_AGE_SEC` في `lib/voicexReplay.ts`).
+   */
+  const weakBanner = isSuper ? weakNetBanner(weakSince, Date.now()) : null;
+  /** 🔒 تصدير السوبر أدمن شغّال ⇒ التعديل والمسح مقفولين (المناديب: دايماً false). */
+  const rowsLocked = isSuper && rowsLockedState;
 
   /* ── حسابات التقرير ── */
   const blocked = reads.filter((r) => r.blocked).length;
@@ -1799,13 +2073,13 @@ export default function RegistrationV2Page() {
    * 🔴 بيستبعد **توائم** اللوحات المعروضة: القراءة المسخّمة بخانة واحدة
    * لـلوحة ظهرت فعلاً مش ضياع. شوف `heardNotShown` في `lib/trialTwin.ts`.
    */
-  const missed = heardNotShown(reads, rows);
+  const missed = superLost ? superLost.missed : heardNotShown(reads, rows);
   /**
    * 🔴 **الضياع اللي `missed` مابيشوفوش** — لوحة كل قرايتها اتحجبت.
    * جلسة المالك (٢٣ سبتمبر · ١٠٠ لوحة): `اوه1552` ضاعت والتقرير قال «صفر».
    * شوف `blockedNotShown` في `lib/trialTwin.ts`.
    */
-  const lostToGuard = blockedNotShown(reads, rows);
+  const lostToGuard = superLost ? superLost.lost : blockedNotShown(reads, rows);
   /** نص فيه أرقام بس اللوحة مالهاش الشكل الصح = رقم/حرف ضاع في الكتابة */
   const malformed = reads.filter((r) => /\d/.test(r.rawText || "") && !(r.plate || "").split(/\s+/).some((p) => WELL.test(p)));
   const lat = rows.map((r) => r.latencyMs).sort((a, b) => a - b);
@@ -1857,7 +2131,8 @@ export default function RegistrationV2Page() {
         if (!warn && !confirm("تمسح كل اللوحات؟")) return;
         setRows([]); setReads([]); setSkips({});
       }}
-        className="flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-bold text-rose-600">
+        disabled={rowsLocked}
+        className={"flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-bold text-rose-600" + (rowsLocked ? " opacity-40" : "")}>
         <Trash2 size={13} /> مسح
       </button>
     </div>
@@ -1996,7 +2271,23 @@ export default function RegistrationV2Page() {
               {speaking ? "● بيسمع صوتك" : "○ مستني…"}
             </span>
             {/* 🎚️ مؤشّر أعمدة زي المعمل — بيتحرك مع الصوت بوضوح أكتر من شريط واحد */}
-            <VuMeter level={level} speaking={speaking} />
+            {/* 🧈 السوبر أدمن: المؤشّر بيقرا من مخزنه لوحده — الصفحة مابتترسمش معاه */}
+            {isSuper
+              ? <LiveVuMeter store={levelStoreRef.current!} speaking={speaking} />
+              : <VuMeter level={level} speaking={speaking} />}
+          </div>
+        )}
+
+        {/*
+          * 📶 **النت ضعيف أوي** (السوبر أدمن) — مابيوقّفش حاجة: التسجيل شغّال والصوت
+          * بيتحفظ، واللوحات بتظهر أول ما النت يرجع. بيختفي لوحده مع الرجوع.
+          */}
+        {listening && weakBanner && (
+          <div role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-2.5">
+            <p className="text-[11px] font-black leading-relaxed text-amber-900">{weakBanner.text}</p>
+            {weakBanner.extra && (
+              <p className="mt-1 text-[11px] font-bold leading-relaxed text-amber-800">{weakBanner.extra}</p>
+            )}
           </div>
         )}
 
@@ -2102,6 +2393,13 @@ export default function RegistrationV2Page() {
 
         {renderActions(true)}
 
+        {/* 🔒 تصدير السوبر أدمن شغّال — المندوب يعرف ليه التعديل والمسح مقفولين */}
+        {rowsLocked && (
+          <p role="status" className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-center text-[11px] font-bold text-slate-600">
+            🔒 التعديل والمسح مقفولين لحد ما التصدير يخلص
+          </p>
+        )}
+
         {rows.length === 0 ? (
           <p className={"py-8 text-center text-xs " + (fancy ? "text-slate-400" : "text-slate-400")}>
             {listening ? "قول لوحة…" : "مافيش لوحات لسه — دوس ابدأ التسجيل."}
@@ -2203,7 +2501,8 @@ export default function RegistrationV2Page() {
                     <td className="px-0.5 py-1.5 align-top">
                       <button type="button" title="امسح اللوحة دي"
                         onClick={() => setRows((prev) => prev.filter((x) => x.id !== r.id))}
-                        className="rounded-md p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600">
+                        disabled={rowsLocked}
+                        className={"rounded-md p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600" + (rowsLocked ? " opacity-30" : "")}>
                         {proTable.deleteIcon === "trash" ? <Trash2 size={12} /> : <X size={12} />}
                       </button>
                     </td>
@@ -2221,6 +2520,7 @@ export default function RegistrationV2Page() {
                           className="w-28 rounded-md border border-indigo-400 bg-white px-1 py-0.5 text-center font-mono text-sm font-black tracking-wider outline-none" />
                       ) : (
                         <button type="button" onClick={() => setEditing({ id: r.id, field: "plate" })}
+                          disabled={rowsLocked}
                           className="group flex items-center gap-1">
                           <span dir="ltr" className={"font-mono font-black tabular-nums "
                             /* ⑭ في الشكل الفخم اللوحة أكبر وحروفها أوسع */
@@ -2248,7 +2548,8 @@ export default function RegistrationV2Page() {
                       * القلم بيقول للمندوب إنها بتتعدّل بإيده.
                       */}
                     <td className="min-w-[7.5rem] px-1 py-1.5 align-top">
-                      <div className="flex items-center gap-0.5">
+                      {/* 🔒 وقت تصدير السوبر أدمن: مقفولة (و`saveCell` بيرفض) — المناديب: نفس الكلاس */}
+                      <div className={"flex items-center gap-0.5" + (rowsLocked ? " pointer-events-none opacity-50" : "")}>
                         <VehicleTypeSelect value={r.type ?? ""}
                           onChange={(code) => saveCell(r.id, "type", code)}
                           className={"min-w-[6.25rem] w-full rounded-md border border-slate-200 bg-white px-1 py-1 text-[12px] outline-none "
@@ -2257,7 +2558,7 @@ export default function RegistrationV2Page() {
                       </div>
                     </td>
                     <td className="min-w-[8.5rem] px-1 py-1.5 align-top">
-                      <div className="flex items-center gap-0.5">
+                      <div className={"flex items-center gap-0.5" + (rowsLocked ? " pointer-events-none opacity-50" : "")}>
                         <NoteSelect value={r.note ?? ""} onChange={(v) => saveCell(r.id, "note", v)} />
                         <Pencil size={9} className="shrink-0 text-slate-300" />
                       </div>
@@ -2272,7 +2573,9 @@ export default function RegistrationV2Page() {
                         : <span className="text-slate-300">—</span>}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-600">
-                      {new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      {/* 🧈 السوبر أدمن: نفس النص بالحرف بمنسّق واحد (مش منسّق جديد لكل صف في كل رسمة) */}
+                      {isSuper ? formatRowTime(r.shownAt)
+                        : new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                     </Td>
                     <Td>
                       {r.lat != null && r.lng != null
@@ -2634,6 +2937,15 @@ function VuMeter({ level, speaking }: { level: number; speaking: boolean }) {
   );
 }
 
+/**
+ * 🧈 المؤشّر للسوبر أدمن — بيشترك في مخزن المستوى لوحده (`useSyncExternalStore`)،
+ * فالتحديث (~١٢/ث) بيرسم الـ١٦ عمود دول بس مش الصفحة كلها. نفس `VuMeter` بالحرف.
+ */
+function LiveVuMeter({ store, speaking }: { store: LevelStore; speaking: boolean }) {
+  const level = useSyncExternalStore(store.subscribe, store.get, store.get);
+  return <VuMeter level={level} speaking={speaking} />;
+}
+
 const SKIP_LABEL: Record<string, string> = {
   silence_gate: "بوابة السكوت رفضت — الصوت واطي أوي أو مافيش كلام واضح",
   slice_failed: "القصّ رجع فاضي — الميك مش بيملا الذاكرة",
@@ -2644,4 +2956,9 @@ const SKIP_LABEL: Record<string, string> = {
   utterance_queue_full: "الطابور اتملا — بتتكلّم أسرع من رد السيرفر",
   request_failed: "🔴 الطلب اتبعت وفشل (بيتسجّل ويتبعت تاني لما الشبكة ترجع)",
   replay_failed: "🔁 إعادة إرسال فشلت (الشبكة لسه مش مستقرّة — هتتعاد)",
+  // 📶 السوبر أدمن بس (`netResilience`) — المحرّك مابيبعتهاش من غيره
+  weak_net: "📶 النت ضعيف أوي — النافذة اتسجّلت وهتتبعت لما النت يرجع",
+  utterance_expired: "⏳ قراءة نطق استنت أكتر من ٧٥ث والنت ضعيف فاتشالت — صوتها طلع برّه ذاكرة الموبايل (عيد اللوحة)",
+  // بيتبعت بعد الاستسلام أياً كان سببه (نت مقطوع أو سيرفر مابيردّش) ⇒ النص مابيقولش مين
+  net_lost: "⛔ نطق جه بعد ما التسجيل استسلم (مافيش رد ٣ دقايق) — ماتبعتش (عيد اللوحة)",
 };
