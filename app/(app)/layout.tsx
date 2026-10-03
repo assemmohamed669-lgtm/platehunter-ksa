@@ -31,6 +31,7 @@ import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 import { getDevicePlatform } from "@/lib/devicePlatform";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 import { rememberPage } from "@/lib/lastPage";
+import { markBootStable, takeBootGuardHit, pageLabel, BOOT_STABLE_MS } from "@/lib/bootGuard";
 
 const ADMIN_WHATSAPP = "971542482545";
 
@@ -51,6 +52,17 @@ export default function AppShellLayout({
    * الفرز ولازم يرجع بنفسه كل مرة. (بلاغ المالك ٢٧ سبتمبر ٢٠٢٦.)
    */
   useEffect(() => { if (pathname) rememberPage(pathname); }, [pathname]);
+
+  /**
+   * 🔁 حارس اللفّة (`lib/bootGuard.ts` — السكربت في أول الـHTML): البرنامج عاش ٣٠ ثانية ⇒
+   * التحميل الجاي يبدأ عدّ جديد. ولو السكربت حوّلنا من صفحة كانت بتقع، نقول للمندوب.
+   */
+  const [guardHit, setGuardHit] = useState<string | null>(null);
+  useEffect(() => {
+    setGuardHit(takeBootGuardHit(localStorage));
+    const t = setTimeout(() => markBootStable(localStorage), BOOT_STABLE_MS);
+    return () => clearTimeout(t);
+  }, []);
   const [isAdmin, setIsAdmin] = useState(false);
   // 🎡 الأدمن فعّل لفّة عجلة حظ؟ بنقراها مع باقي بيانات المندوب — مافيش نداء زيادة.
   const [wheelGranted, setWheelGranted] = useState(false);
@@ -252,6 +264,15 @@ export default function AppShellLayout({
         </header>
 
         <UpdateBanner />
+        {guardHit && (
+          <div className="flex items-start gap-2 border-b border-alert/40 bg-alert/10 px-4 py-2 text-xs font-bold text-alert" dir="rtl">
+            <span className="flex-1">
+              ⚠️ صفحة «{pageLabel(guardHit)}» كانت بتقفل البرنامج على الموبايل ده وتفتح تاني، فرجّعناك هنا.
+              لو اتكررت كلّم الإدارة.
+            </span>
+            <button onClick={() => setGuardHit(null)} aria-label="إغلاق" className="shrink-0 text-alert/70">✕</button>
+          </div>
+        )}
         {/* رسالة الأدمن المؤقتة — بتظهر في كل صفحات المندوب */}
         <NoticeBanner />
         {/* رسالة خاصة بالمندوب ده وحده — تحت البانر العام. */}

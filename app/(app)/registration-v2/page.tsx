@@ -71,7 +71,6 @@ import { plateKey } from "@/lib/fieldCheck";
 import { assignDupColors, VOICE_PRO_DUP_PALETTE, type DupMark } from "@/lib/voiceProDupColors";
 import { FleetMemory } from "@/lib/fleetPairs";
 import { resolveCheckColumns } from "@/lib/wantedColumns";
-import { detectChassisColumn } from "@/lib/chassis";
 import {
   trialEntryId, carDetails, buildTrialFieldRow, exportableTrialRows, savedIds,
   stripForDraft, rehydrateMatch, restoreDraftRows, TRIAL_EXPORT_METHOD, sessionStamp, firstFailureReason,
@@ -84,7 +83,7 @@ import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } from "@/lib/checkSheetSync";
 import { syncTeamCheckToLocal, shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
 import { backfillMissingGps, stampRowGps } from "@/lib/gpsBackfill";
-import { checkFingerprint, getCachedChassis, setCachedChassis } from "@/lib/chassisCache";
+import { checkFingerprint } from "@/lib/chassisCache";
 import { loadChassisMap, quickChassisMap, type LoadChassisOptions } from "@/lib/chassisLoad";
 /**
  * 🧈 **«سلاسة» Voice PRO — السوبر أدمن الأول** (المالك ٣ أكتوبر ٢٠٢٦: «أنا عايز
@@ -361,14 +360,6 @@ export default function RegistrationV2Page() {
     });
   }
   /**
-   * 🔧 **سوبر أدمن ولا لأ — لطريق الهيكل في `loadCheck`، متزامن من غير انتظار.**
-   * `null` = لسه مش معروف ⇒ الطريق القديم بالحرف (زي origin/main، ومن غير ما
-   * يستنى الصلاحية — المناديب توقيتهم زي النهارده بالظبط). بيتملى في `openWith`:
-   * من الصلاحية المتفتكرة (`cachedTrialGate`) أول ما الجلسة تبان، أو من تأكيد
-   * السيرفر — ولما الصلاحية تتقفل بيرجع `false`.
-   */
-  const superDecRef = useRef<boolean | null>(null);
-  /**
    * 🔒 **قفل تعديل/مسح الصفوف وقت تصدير السوبر أدمن.** التصدير بقى سلس (الشاشة
    * مش متجمّدة) فالمندوب يقدر يعدّل وهو بيصدّر — والتعديل كان بيتحفظ بالقيم
    * القديمة والصف يتشال، والمسح كان بيتكتب في السجلات برضه. عدّاد مش true/false
@@ -532,8 +523,6 @@ export default function RegistrationV2Page() {
        * واضحة. **الفشل بيقفل** — مافيش رجوع لتوكن مكتوب.
        */
       const ep = resolveTrialEndpoint(readJudgeEndpoint(), dbToken);
-      // 🔧 طريق الهيكل بيقرا ده متزامن (من غير ما يستنى) — شوف `superDecRef`
-      superDecRef.current = sup;
       setIsSuper(sup);
       setModelUrl(ep.base); setModelToken(ep.token); setAllowed(true);
       if (!ep.token) setError(NO_TRIAL_TOKEN_MSG);
@@ -583,7 +572,6 @@ export default function RegistrationV2Page() {
        * ولو الصوت اتقفل وهو فاتح من الذاكرة ⇒ الصفحة بتتقفل في التأكيد.
        */
       if (!canOpenTrialPage(prof)) {
-        superDecRef.current = false;
         forgetTrialGate();
         try { engineRef.current?.stop(); } catch { /* ignore */ }
         setListening(false); setAllowed(false);
@@ -863,27 +851,11 @@ export default function RegistrationV2Page() {
           setCheckTable(null); setCheckSources(extrasOnly); setCheckFile(null);
           setCheckName(extrasOnly.length ? "ملفات تشييك إضافية" : "");
           /**
-           * 🔧 السوبر أدمن: نفس الخريطة بالحرف (`buildChassisMap` = اللوب اللي تحت)
-           * بس عبر طابور «أحدث تحميل بس» — تحميل أقدم خلص متأخّر مايكتبش فوق الأحدث،
-           * والتصدير بيستناها (`ensure`). مافيش ملف يتقري ⇒ بتشتغل حتى وقت التسجيل.
-           * المناديب: اللوب القديم زي origin/main بالحرف.
+           * 🔧 نفس الخريطة بالحرف (`buildChassisMap` = اللوب القديم) بس عبر طابور «أحدث
+           * تحميل بس» — تحميل أقدم خلص متأخّر مايكتبش فوق الأحدث، والتصدير بيستناها
+           * (`ensure`). مافيش ملف يتقري ⇒ بتشتغل حتى وقت التسجيل. للكل (المالك ٣ أكتوبر).
            */
-          if (superDecRef.current === true) {
-            chassisJobsRef.current!.request(ticket, { fingerprint: null, sources: extrasOnly, blob: null, fileName: null });
-            return;
-          }
-          const chassisOnly = new Map<string, string>();
-          for (const t of extrasOnly) {
-            const pCol = detectPlateColumn(t.headers, t.rows);
-            const cCol = detectChassisColumn(t.headers, t.rows);
-            if (!pCol || !cCol) continue;
-            for (const row of t.rows) {
-              const k = normalizePlate(bankPlateToArabic(String(row[pCol] ?? "")));
-              const v = String(row[cCol] ?? "").trim();
-              if (k && v && !chassisOnly.has(k)) chassisOnly.set(k, v);
-            }
-          }
-          setPlateChassis(chassisOnly);
+          chassisJobsRef.current!.request(ticket, { fingerprint: null, sources: extrasOnly, blob: null, fileName: null });
           return;
         }
         const main: ExcelTable = { headers: rec.headers, rows: rec.rows };
@@ -913,55 +885,23 @@ export default function RegistrationV2Page() {
         const extraKey = sources.slice(1).map((t) => t.rows.length).join(",");
         const fp = (checkFingerprint(rec) ?? "") + "#" + extraKey;
         /**
-         * 🔒 **السوبر أدمن الأول: الهيكل في الخلفية** (المالك ٣ أكتوبر ٢٠٢٦). نفس
-         * الخريطة بالحرف (`lib/chassisLoad.ts` متقارن بنسخة حرفية من الكود اللي تحت)،
-         * بس: محفوظة على الموبايل (الفتحة الباردة مابتحلّلش الملف) + الملف بيتقرا في
-         * الـworker + قراية واحدة لكل ملف (الرفع كان بيحلّله مرتين) + **وقت التسجيل
-         * الكاش بس** والملف بيستنى الإيقاف. الشيت والصفّارة اتملوا فوق — مالهمش دعوة بده.
+         * 🔧 **الهيكل في الخلفية — للكل.** اتجرّب عند السوبر أدمن الأول (٣ أكتوبر
+         * ٢٠٢٦)، والمالك قال «ابدأ واعملهم كلهم» بعد بلاغ آيفون ١١ لمندوب «صوت فقط»
+         * كان بيلفّ في «جارٍ التحقق» ويهنّج: الطريق القديم كان بيحلّل ملف التشييك
+         * كله (إكسيل كامل على الخيط الرئيسي) مع كل فتحة باردة — ٨–١٦ ثانية
+         * و١٢٠–٢٥٠ ميجا — فالآيفون بيقفل الصفحة وتتفتح تاني وتحلّل تاني.
          *
-         * القرار **متزامن** (`superDecRef`) — مابيستناش الصلاحية: المعروف لحد دلوقتي
-         * (الصلاحية المتفتكرة أو تأكيد السيرفر) ولو مش معروف ⇒ الطريق القديم.
-         * المناديب: الطريق القديم تحت زي origin/main بالحرف (وبنفس التوقيت).
+         * نفس الخريطة بالحرف (`lib/chassisLoad.ts` متقارن بنسخة حرفية من القديم)،
+         * بس: محفوظة على الموبايل (الفتحة الباردة مابتحلّلش الملف) + الملف بيتقرا في
+         * الـworker + قراية واحدة لكل ملف + **وقت التسجيل الكاش بس** والملف بيستنى
+         * الإيقاف + ملف وقّع الموبايل وهو بيتقري مايتقريش تاني عليه (🧯). الشيت
+         * والصفّارة اتملوا فوق — مالهمش دعوة بده.
          */
-        if (superDecRef.current === true) {
-          chassisJobsRef.current!.request(ticket, {
-            fingerprint: fp, sources, blob: rec.fileBlob ?? null, fileName: rec.fileName,
-            fileStamp: rec.uploadedAt ?? null,
-          });
-          return;
-        }
-        // 🔧 الطريق القديم: مافيش طلب هيكل جاي من التحميل ده ⇒ تصدير السوبر أدمن مايستناهوش
-        chassisJobsRef.current!.release(ticket);
-        const cached = getCachedChassis(fp);
-        if (cached) { setPlateChassis(cached); return; }
-
-        // ⏳ الحساب بعد ما الصفحة تترسم — مايعطّلش التنقل ولا أول لمسة.
-        await new Promise<void>((res) => {
-          const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
-          if (typeof ric === "function") ric(() => res(), { timeout: 1500 });
-          else setTimeout(res, 50);
+        chassisJobsRef.current!.request(ticket, {
+          fingerprint: fp, sources, blob: rec.fileBlob ?? null, fileName: rec.fileName,
+          fileStamp: rec.uploadedAt ?? null,
         });
-        const map = new Map<string, string>();
-        const addSheet = (headers: string[], rows: Record<string, string>[]) => {
-          const pCol = detectPlateColumn(headers, rows);
-          const cCol = detectChassisColumn(headers, rows);
-          if (!pCol || !cCol) return;
-          for (const row of rows) {
-            const key = normalizePlate(bankPlateToArabic(String(row[pCol] ?? "")));
-            const vin = String(row[cCol] ?? "").trim();
-            if (key && vin && !map.has(key)) map.set(key, vin);
-          }
-        };
-        for (const t of sources) addSheet(t.headers, t.rows);
-        if (rec.fileBlob) {
-          try {
-            const { readAllSheets } = await import("@/lib/excel");
-            const f = new File([rec.fileBlob], rec.fileName || "check.xlsx");
-            for (const sh of await readAllSheets(f)) addSheet(sh.headers, sh.rows);
-          } catch { /* blob مش مقروء — نكتفي بالورقة المحمّلة */ }
-        }
-        setCachedChassis(fp, map);
-        setPlateChassis(map);
+        return;
       } catch { /* مفيش شيت */ }
       // مافيش ملف / رمية ⇒ مافيش طلب هيكل جاي (لو اتطلب قبل كده مابيتلغيش)
       finally { chassisJobsRef.current!.release(ticket); }
@@ -1820,19 +1760,20 @@ export default function RegistrationV2Page() {
       // 🔒 المعرّف الفريد (حساب + وقت الظهور) للسوبر أدمن الأول — `trialEntryId`
       const entryId = (r: LiveRow) => trialEntryId(r, uid);
       /**
-       * 🔧 **السوبر أدمن: رقم الهيكل لازم يتكتب في السجلات زي القديم.** القديم كان
+       * 🔧 **رقم الهيكل لازم يتكتب في السجلات زي القديم — للكل.** القديم كان
        * بيحلّل الملف على الخيط الرئيسي فالصفحة **كانت متجمّدة** لحد ما الخريطة
-       * تخلص — يعني التصدير عمره ما سبقها. دلوقتي بتتحمّل في الخلفية، فالتصدير:
+       * تخلص — يعني التصدير عمره ما سبقها. دلوقتي بتتحمّل في الخلفية (للكل من ٣
+       * أكتوبر)، فالتصدير:
        *   · لو الشيت لسه بيتقري، أو التحميل مستني الإيقاف (بيسجّل)، أو شغّال ⇒
        *     **بيشغّله ويستناه** (القراية في الـworker مابتجمّدش الشاشة) والزرار
        *     بيقول «بجهّز أرقام الهيكل…».
        *   · حد سخي (٩٠ث) عشان عطل مايوقّفش التصدير للأبد — ولو حصل بيصدّر باللي
        *     موجود **وبيقول كده** في رسالة النتيجة (مش في صمت).
-       * المناديب: اللي في الصفحة زي ما هو.
+       * الخريطة جاهزة (أغلب الوقت — محفوظة على الموبايل) ⇒ مافيش انتظار ولا رسالة.
        */
       let chassisMap = plateChassis;
       let chassisNote = "";
-      if (isSuper) {
+      {
         const jobs = chassisJobsRef.current!;
         const waitChassis = !jobs.idle;
         if (waitChassis) setBusy(CHASSIS_WAIT_TEXT);
@@ -1841,7 +1782,7 @@ export default function RegistrationV2Page() {
         else if (waitChassis) chassisNote = CHASSIS_MISSING_NOTE;
         /**
          * 📸 **اللقطة بعد الانتظار** — مش من لحظة الضغطة: اللي اتأكّد أو خد موقع
-         * وإحنا مستنيين يدخل بقيمه الجديدة (التعديل والمسح مقفولين أصلاً).
+         * وإحنا مستنيين يدخل بقيمه الجديدة (عند السوبر أدمن التعديل والمسح مقفولين أصلاً).
          */
         const snapRows = rowsRef.current;
         ready = exportableTrialRows(snapRows);
