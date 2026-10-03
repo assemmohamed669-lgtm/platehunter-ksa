@@ -14,6 +14,13 @@ import { TRIAL_MODEL_BASE } from "@/lib/trialModelGate";
 import { probeVoiceHealth, isCleanupMinute, cronAuthorized, retentionCutoff } from "@/lib/voiceHealth";
 
 export const dynamic = "force-dynamic";
+/**
+ * 🔴 من غير الاتنين دول Next 14 بيخزّن `fetch` بتاع GET هنا: سؤال «آخر نبضة
+ * إمتى» كان بيرجع رد الجدول الفاضي دايماً، فالحارس مابيمنعش أي تكرار
+ * (اتقاس على Vercel ٣ أكتوبر — نداءين ورا بعض اتكتبوا الاتنين).
+ */
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 const MIN_GAP_MS = 45_000;
 
