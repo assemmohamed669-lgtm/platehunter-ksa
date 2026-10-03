@@ -488,11 +488,11 @@ export default function RegistrationV2Page() {
   /**
    * 🧈 «اتسمعت وماظهرتش» و«اتحجبت وماظهرتش» — كل قراية × كل صف (٤٠٠ × ١٠٠٠).
    * كانت بتتحسب مع **كل** رسمة للصفحة (عدّاد الثواني، المؤشّر…) والنتيجة نفسها.
-   * للسوبر أدمن: مرة لكل تغيير في القرايات أو الصفوف — نفس الأرقام بالظبط.
+   * للكل (المالك ٤ أكتوبر): مرة لكل تغيير في القرايات أو الصفوف — نفس الأرقام بالظبط.
    */
   const superLost = useMemo(
-    () => (isSuper ? { missed: heardNotShown(reads, rows), lost: blockedNotShown(reads, rows) } : null),
-    [isSuper, reads, rows],
+    () => ({ missed: heardNotShown(reads, rows), lost: blockedNotShown(reads, rows) }),
+    [reads, rows],
   );
 
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
@@ -1480,7 +1480,9 @@ export default function RegistrationV2Page() {
          * 🎚️ السوبر أدمن: ~١٢ تحديث/ث (نفس خنق «صوتي») وفي مخزن المؤشّر بس —
          * الصفحة مابتترسمش مع كل تحديث. المناديب زي ما هم.
          */
-        onLevel: sup ? levelThrottle((v) => levelStoreRef.current!.set(v)) : (lvl: number) => setLevel(lvl),
+        // 🧈 للكل (المالك ٤ أكتوبر: «يلا ارفعها للمناديب») — المؤشّر بيتحدّث من مخزنه
+        // ~١٠ مرات/ث من غير ما الصفحة كلها تتعاد (كانت ٦٠ رسمة/ث بتأخر ظهور اللوحات)
+        onLevel: levelThrottle((v) => levelStoreRef.current!.set(v)),
         onSkip: (reason: string) => { if (outage && isRequestFailSkip(reason)) outage.fail(Date.now()); tel?.skip(reason); setSkips((m) => ({ ...m, [reason]: (m[reason] ?? 0) + 1 })); },
         onReplay: () => { tel?.replay(); setReplays((n) => n + 1); },
         /**
@@ -2014,13 +2016,13 @@ export default function RegistrationV2Page() {
    * 🔴 بيستبعد **توائم** اللوحات المعروضة: القراءة المسخّمة بخانة واحدة
    * لـلوحة ظهرت فعلاً مش ضياع. شوف `heardNotShown` في `lib/trialTwin.ts`.
    */
-  const missed = superLost ? superLost.missed : heardNotShown(reads, rows);
+  const missed = superLost.missed;
   /**
    * 🔴 **الضياع اللي `missed` مابيشوفوش** — لوحة كل قرايتها اتحجبت.
    * جلسة المالك (٢٣ سبتمبر · ١٠٠ لوحة): `اوه1552` ضاعت والتقرير قال «صفر».
    * شوف `blockedNotShown` في `lib/trialTwin.ts`.
    */
-  const lostToGuard = superLost ? superLost.lost : blockedNotShown(reads, rows);
+  const lostToGuard = superLost.lost;
   /** نص فيه أرقام بس اللوحة مالهاش الشكل الصح = رقم/حرف ضاع في الكتابة */
   const malformed = reads.filter((r) => /\d/.test(r.rawText || "") && !(r.plate || "").split(/\s+/).some((p) => WELL.test(p)));
   const lat = rows.map((r) => r.latencyMs).sort((a, b) => a - b);
@@ -2212,10 +2214,8 @@ export default function RegistrationV2Page() {
               {speaking ? "● بيسمع صوتك" : "○ مستني…"}
             </span>
             {/* 🎚️ مؤشّر أعمدة زي المعمل — بيتحرك مع الصوت بوضوح أكتر من شريط واحد */}
-            {/* 🧈 السوبر أدمن: المؤشّر بيقرا من مخزنه لوحده — الصفحة مابتترسمش معاه */}
-            {isSuper
-              ? <LiveVuMeter store={levelStoreRef.current!} speaking={speaking} />
-              : <VuMeter level={level} speaking={speaking} />}
+            {/* 🧈 للكل: المؤشّر بيقرا من مخزنه لوحده — الصفحة مابتترسمش معاه */}
+            <LiveVuMeter store={levelStoreRef.current!} speaking={speaking} />
           </div>
         )}
 
@@ -2514,9 +2514,8 @@ export default function RegistrationV2Page() {
                         : <span className="text-slate-300">—</span>}
                     </Td>
                     <Td className="font-mono tabular-nums text-slate-600">
-                      {/* 🧈 السوبر أدمن: نفس النص بالحرف بمنسّق واحد (مش منسّق جديد لكل صف في كل رسمة) */}
-                      {isSuper ? formatRowTime(r.shownAt)
-                        : new Date(r.shownAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      {/* 🧈 للكل: نفس النص بالحرف بمنسّق واحد (مش منسّق جديد لكل صف في كل رسمة) */}
+                      {formatRowTime(r.shownAt)}
                     </Td>
                     <Td>
                       {r.lat != null && r.lng != null
@@ -2604,7 +2603,8 @@ export default function RegistrationV2Page() {
             : <><Copy size={15} /> انسخ التقرير كامل</>}
         </button>
 
-        {showReport && (
+        {/* 🧈 المناديب: السكشن مستخبّي بالـCSS — فمانرسمش جوّاه (لحد ٤٠٠ قراية) مع كل رسمة */}
+        {isSuper && showReport && (
           <div className="mt-2 flex flex-col gap-3">
             <Block title="الحصيلة">
               <Kv k="لوحات ظهرت" v={String(rows.length)} />
