@@ -392,22 +392,52 @@ async function readWorkbook(opts: LoadChassisOptions): Promise<RawSheet[]> {
   return read(file);
 }
 
-async function compute(opts: LoadChassisOptions): Promise<{ map: Map<string, string>; complete: boolean }> {
+/**
+ * 🧯 **الملف ده وقّع الموبايل وهو بيتقري؟** — المالك (٣ أكتوبر ٢٠٢٦): مندوب بآيفون ١١
+ * كان بيلفّ في «جارٍ التحقق» (الصفحة تفتح، تحلّل ملف التشييك كله، الآيفون يقفلها،
+ * تفتح تاني وتحلّل تاني…). قبل قراية الملف بنكتب علامة على الجهاز بمفتاح الكاش،
+ * وبنشيلها لما القراية تخلص (نجحت أو فشلت). لسه موجودة لنفس المفتاح في الفتحة
+ * الجاية ⇒ القراية ماخلصتش لأن الموبايل قفل الصفحة في النص ⇒ مانقراش الملف ده
+ * تاني على الموبايل ده: الخريطة من الورقات المحمّلة بس **وبتتحفظ** (فمافيش محاولة
+ * تانية). ملف تاني = مفتاح تاني ⇒ بيتقري عادي.
+ */
+export const READ_MARK_KEY = "ph:chassisReadInFlight";
+function readMarkIs(key: string): boolean {
+  try { return localStorage.getItem(READ_MARK_KEY) === key; } catch { return false; }
+}
+function setReadMark(key: string): void {
+  try { localStorage.setItem(READ_MARK_KEY, key); } catch { /* تخزين مقفول — بنقرا عادي */ }
+}
+function clearReadMark(key: string): void {
+  try { if (localStorage.getItem(READ_MARK_KEY) === key) localStorage.removeItem(READ_MARK_KEY); } catch { /* ignore */ }
+}
+
+async function compute(opts: LoadChassisOptions, key: string | null): Promise<{ map: Map<string, string>; complete: boolean }> {
   const map = new Map<string, string>();
-  // الملف بيتقرا في الـworker **بالتوازي** مع الورقات المحمّلة — بس الترتيب
-  // (المحمّلة الأول) محفوظ لأن الإضافة للخريطة بتستنى الاتنين بالترتيب.
-  const reading: Promise<RawSheet[] | null> = opts.blob
-    ? readWorkbook(opts).catch(() => null)
-    : Promise.resolve(null);
-  await addTablesChunked(map, opts.sources);
-  if (!opts.blob) return { map, complete: true };
-  const raw = await reading;
-  if (!raw) return { map, complete: false };   // blob مش مقروء — نكتفي بالورقة المحمّلة (زي القديم)
-  try {
-    await addRawSheetsChunked(map, raw);
+  // 🧯 القراية اللي فاتت لنفس الملف وقّعت الموبايل ⇒ المحمّلة بس، ومحفوظة (complete)
+  if (opts.blob && key && readMarkIs(key)) {
+    await addTablesChunked(map, opts.sources);
     return { map, complete: true };
-  } catch {
-    return { map, complete: false };
+  }
+  if (opts.blob && key) setReadMark(key);
+  try {
+    // الملف بيتقرا في الـworker **بالتوازي** مع الورقات المحمّلة — بس الترتيب
+    // (المحمّلة الأول) محفوظ لأن الإضافة للخريطة بتستنى الاتنين بالترتيب.
+    const reading: Promise<RawSheet[] | null> = opts.blob
+      ? readWorkbook(opts).catch(() => null)
+      : Promise.resolve(null);
+    await addTablesChunked(map, opts.sources);
+    if (!opts.blob) return { map, complete: true };
+    const raw = await reading;
+    if (!raw) return { map, complete: false };   // blob مش مقروء — نكتفي بالورقة المحمّلة (زي القديم)
+    try {
+      await addRawSheetsChunked(map, raw);
+      return { map, complete: true };
+    } catch {
+      return { map, complete: false };
+    }
+  } finally {
+    if (opts.blob && key) clearReadMark(key);
   }
 }
 
@@ -427,7 +457,7 @@ function loadWithKey(opts: LoadChassisOptions, key: string | null): Promise<Map<
         return saved;
       }
     }
-    const { map, complete } = await compute(opts);
+    const { map, complete } = await compute(opts, key);
     if (key) {
       setCachedChassis(key, map);
       if (complete) await setPersistedChassis(key, map);

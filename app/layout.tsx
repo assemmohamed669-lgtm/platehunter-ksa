@@ -3,6 +3,7 @@ import { ThemeProvider } from "@/lib/ThemeProvider";
 import BackButtonHandler from "@/components/BackButtonHandler";
 import IncomingExcelHandler from "@/components/IncomingExcelHandler";
 import PlatformClass from "@/components/PlatformClass";
+import { BOOT_GUARD_SCRIPT } from "@/lib/bootGuard";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -39,6 +40,9 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body>
+        {/* 🔁 قبل أي حاجة: صفحة بتقع وتتحمّل تاني ورا بعض ⇒ على «التشييك» بدل ما المندوب
+            يفضل محبوس فيها (آيفون ١١، ٣ أكتوبر ٢٠٢٦). شوف lib/bootGuard.ts */}
+        <script dangerouslySetInnerHTML={{ __html: BOOT_GUARD_SCRIPT }} />
         <PlatformClass />
         <BackButtonHandler />
         {/* Mounted here (not deep in the authenticated layout) so its listener

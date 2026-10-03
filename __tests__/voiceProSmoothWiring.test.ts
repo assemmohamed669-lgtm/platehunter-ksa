@@ -21,19 +21,6 @@ const stopFn = between("function stop(why", "const stopRef = useRef(stop);");
 const exportFn = between("async function exportRowsInner()", "function buildReportText()");
 const loadCheckFn = between("const loadCheck = useCallback(", "const onCheckParsed = useCallback(");
 
-/** origin/main (04433e5) — نسخة حرفية: طريق الهيكل القديم في loadCheck (المناديب). */
-const MAIN_OLD_CHASSIS_PATH = "        const cached = getCachedChassis(fp);\n        if (cached) { setPlateChassis(cached); return; }\n\n        // ⏳ الحساب بعد ما الصفحة تترسم — مايعطّلش التنقل ولا أول لمسة.\n        await new Promise<void>((res) => {\n          const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;\n          if (typeof ric === \"function\") ric(() => res(), { timeout: 1500 });\n          else setTimeout(res, 50);\n        });\n        const map = new Map<string, string>();\n        const addSheet = (headers: string[], rows: Record<string, string>[]) => {\n          const pCol = detectPlateColumn(headers, rows);\n          const cCol = detectChassisColumn(headers, rows);\n          if (!pCol || !cCol) return;\n          for (const row of rows) {\n            const key = normalizePlate(bankPlateToArabic(String(row[pCol] ?? \"\")));\n            const vin = String(row[cCol] ?? \"\").trim();\n            if (key && vin && !map.has(key)) map.set(key, vin);\n          }\n        };\n        for (const t of sources) addSheet(t.headers, t.rows);\n        if (rec.fileBlob) {\n          try {\n            const { readAllSheets } = await import(\"@/lib/excel\");\n            const f = new File([rec.fileBlob], rec.fileName || \"check.xlsx\");\n            for (const sh of await readAllSheets(f)) addSheet(sh.headers, sh.rows);\n          } catch { /* blob مش مقروء — نكتفي بالورقة المحمّلة */ }\n        }\n        setCachedChassis(fp, map);\n        setPlateChassis(map);\n      } catch { /* مفيش شيت */ }";
-/** origin/main — كل سطور `await` في loadCheck بالترتيب (المناديب مابيستنّوش أي حاجة زيادة). */
-const MAIN_LOADCHECK_AWAITS = [
-  "const rec = await getUploadedFile(\"local\", \"check\").catch(() => null);",
-  "const x = await getUploadedFile(\"local\", `check-${n}`).catch(() => null);",
-  "const x = await getUploadedFile(\"local\", `check-${n}`).catch(() => null);",
-  "await new Promise<void>((res) => {",
-  "const { readAllSheets } = await import(\"@/lib/excel\");",
-  "for (const sh of await readAllSheets(f)) addSheet(sh.headers, sh.rows);"
-];
-/** origin/main — خريطة الهيكل لما مافيش ملف أساسي (الإضافية بس). */
-const MAIN_NO_MAIN_CHASSIS = "          const chassisOnly = new Map<string, string>();\n          for (const t of extrasOnly) {\n            const pCol = detectPlateColumn(t.headers, t.rows);\n            const cCol = detectChassisColumn(t.headers, t.rows);\n            if (!pCol || !cCol) continue;\n            for (const row of t.rows) {\n              const k = normalizePlate(bankPlateToArabic(String(row[pCol] ?? \"\")));\n              const v = String(row[cCol] ?? \"\").trim();\n              if (k && v && !chassisOnly.has(k)) chassisOnly.set(k, v);\n            }\n          }";
 
 describe("الحارس بيقيس المكان الصح", () => {
   it("الدوال اتلقت", () => {
@@ -111,44 +98,39 @@ describe("② 🔒 جلسة قديمة ماتوقّفش جلسة أحدث — ل
   });
 });
 
-describe("③ 🔧 الهيكل في الخلفية — للسوبر أدمن، والمناديب على القديم بالحرف", () => {
-  it("🔴 طريق المناديب = origin/main حرفياً (من الكاش لحد setPlateChassis)", () => {
-    expect(loadCheckFn).toContain(MAIN_OLD_CHASSIS_PATH);
+describe("③ 🔧 الهيكل في الخلفية — للكل (المالك ٣ أكتوبر: «ابدأ واعملهم كلهم»)", () => {
+  /**
+   * 🔴 آيفون ١١ لمندوب «صوت فقط» كان بيلفّ في «جارٍ التحقق» ويهنّج: طريق المناديب
+   * القديم كان بيحلّل ملف التشييك كله (`readAllSheets` على الخيط الرئيسي) مع كل
+   * فتحة باردة — ٨–١٦ ثانية و١٢٠–٢٥٠ ميجا — والآيفون بيقفل الصفحة فتتفتح تاني
+   * وتحلّل تاني. المحمّل اللي في الخلفية (اتجرّب عند السوبر أدمن من الصبح) بقى للكل.
+   */
+  it("🔴 مافيش تحليل للملف كله على الخيط الرئيسي في loadCheck — ولا طريق قديم للمناديب", () => {
+    expect(loadCheckFn).not.toMatch(/readAllSheets/);
+    expect(loadCheckFn).not.toMatch(/requestIdleCallback/);
+    expect(loadCheckFn).not.toMatch(/getCachedChassis|setCachedChassis/);
+    expect(src).not.toMatch(/superDecRef/);
   });
-  it("🔴 المناديب مابيستنّوش أي حاجة زيادة: نفس سطور await اللي في origin/main بالظبط", () => {
-    const awaits = loadCheckFn.split("\n").filter((l) => /\bawait\b/.test(l)).map((l) => l.trim());
-    expect(awaits).toEqual(MAIN_LOADCHECK_AWAITS);
-  });
-  it("🔴 مافيش latch ولا انتظار للصلاحية — القرار متزامن من اللي متعرف (كاش الصلاحية أو التأكيد)", () => {
-    expect(src).not.toMatch(/superKnownRef/);
-    expect(src).not.toMatch(/createLatch/);
-    expect(loadCheckFn).not.toMatch(/\.wait\(\)/);
-    // القرار: ref بيتملى في openWith (من cachedTrialGate أو من السيرفر) ولما الصلاحية تتقفل
-    expect(src).toMatch(/const superDecRef = useRef<boolean \| null>\(null\);/);
-    expect(src).toMatch(/const openWith = \(sup: boolean, dbToken: string \| null\) => \{[\s\S]{0,1200}?superDecRef\.current = sup;/);
-    expect(src).toMatch(/if \(!canOpenTrialPage\(prof\)\) \{\s*superDecRef\.current = false;/);
-  });
-  it("السوبر أدمن بيروح للمحمّل الجديد قبل الكاش القديم، بتذكرة؛ والطريق القديم بيسيب التذكرة", () => {
+  it("🔴 الملف الأساسي: الكل بيطلب المحمّل الجديد بتذكرة (من غير شرط سوبر أدمن)", () => {
     expect(loadCheckFn).toMatch(/const ticket = chassisJobsRef\.current!\.begin\(\);/);
-    const sup = loadCheckFn.indexOf("if (superDecRef.current === true) {");
-    const old = loadCheckFn.indexOf("const cached = getCachedChassis(fp);");
-    expect(sup).toBeGreaterThan(0);
-    expect(sup).toBeLessThan(old);
     expect(loadCheckFn).toMatch(/chassisJobsRef\.current!\.request\(ticket, \{[\s\S]{0,300}?fileStamp: rec\.uploadedAt/);
-    // الطريق القديم: مفيش طلب هيكل جاي من التحميل ده ⇒ التصدير مايستناهوش
-    const rel = loadCheckFn.indexOf("chassisJobsRef.current!.release(ticket);");
-    expect(rel).toBeGreaterThan(sup);
-    expect(rel).toBeLessThan(old);
-    // وأي خروج تاني (مافيش ملف / رمية) بيسيبها كمان
+    // وأي خروج تاني (مافيش ملف / رمية) بيسيب التذكرة ⇒ التصدير مايستناش على الفاضي
     expect(loadCheckFn).toMatch(/finally \{\s*chassisJobsRef\.current!\.release\(ticket\);\s*\}/);
     expect(src).toMatch(/run: \(job\) => loadChassisMap\(job\)/);
   });
-  it("🔴 مافيش ملف أساسي: المناديب نفس الخريطة بالحرف؛ السوبر أدمن عبر «أحدث تحميل بس» (والتصدير يستناه)", () => {
-    expect(loadCheckFn).toContain(MAIN_NO_MAIN_CHASSIS + "\n          setPlateChassis(chassisOnly);\n          return;");
-    const sup = loadCheckFn.indexOf("chassisJobsRef.current!.request(ticket, { fingerprint: null, sources: extrasOnly, blob: null, fileName: null });");
-    expect(sup).toBeGreaterThan(0);
-    expect(sup).toBeLessThan(loadCheckFn.indexOf(MAIN_NO_MAIN_CHASSIS));
-    expect(loadCheckFn.slice(loadCheckFn.lastIndexOf("if (superDecRef.current === true) {", sup), sup)).not.toMatch(/await/);
+  it("🔴 مافيش ملف أساسي (الإضافية بس): الكل عبر «أحدث تحميل بس» — نفس الخريطة بالحرف", () => {
+    expect(loadCheckFn).toMatch(
+      /chassisJobsRef\.current!\.request\(ticket, \{ fingerprint: null, sources: extrasOnly, blob: null, fileName: null \}\);\s*return;/,
+    );
+    expect(loadCheckFn).not.toMatch(/const chassisOnly = new Map/);
+  });
+  it("المناديب مابيستنّوش حاجة زيادة: سطور await في loadCheck هي قراية الملفات بس", () => {
+    const awaits = loadCheckFn.split("\n").filter((l) => /\bawait\b/.test(l)).map((l) => l.trim());
+    expect(awaits).toEqual([
+      "const rec = await getUploadedFile(\"local\", \"check\").catch(() => null);",
+      "const x = await getUploadedFile(\"local\", `check-${n}`).catch(() => null);",
+      "const x = await getUploadedFile(\"local\", `check-${n}`).catch(() => null);",
+    ]);
   });
   it("مابيقراش الملف وقت التسجيل (ولا وهو بيجهّز المايك)، والكاش بس مسموح، والقراية بعد الإيقاف", () => {
     expect(src).toMatch(/busy: \(\) => !!engineRef\.current \|\| startingRef\.current/);
@@ -221,6 +203,11 @@ describe("⑤ 🔧 الهيكل في التصدير — لازم يتكتب (ا�
   it("🔴 لو ماخلصش في الوقت ⇒ بيصدّر باللي موجود وبيقول كده في رسالة النتيجة", () => {
     expect(exportFn).toMatch(/else if \(waitChassis\) chassisNote = CHASSIS_MISSING_NOTE;/);
     expect(exportFn).toMatch(/\+ chassisNote/);
+  });
+  it("🔴 للكل مش للسوبر أدمن بس — الهيكل بقى في الخلفية عند المناديب، فتصديرهم لازم يستناه برضه", () => {
+    const head = exportFn.slice(exportFn.indexOf("let chassisNote = \"\";"), exportFn.indexOf("const jobs = chassisJobsRef.current!;"));
+    expect(head.length).toBeGreaterThan(0);
+    expect(head).not.toMatch(/if \(isSuper\)/);
   });
 });
 
