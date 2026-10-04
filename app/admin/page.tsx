@@ -507,6 +507,14 @@ export default function AdminDashboard() {
           )}
         </div>
 
+        {/* 📊 إحصائيات الشهايد — إجمالي · كل شركة · كل يوم (سوبر أدمن، ٤ أكتوبر ٢٠٢٦) */}
+        {isSuper && (
+          <button onClick={() => router.push("/admin/certificates")}
+            className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
+            <BarChart3 size={16} /> إحصائيات الشهايد — كل شركة وكل يوم
+          </button>
+        )}
+
         {/* مواقع المناديب على الخريطة — سوبر أدمن فقط */}
         {isSuper && (
           <button onClick={() => router.push("/admin/locations")}

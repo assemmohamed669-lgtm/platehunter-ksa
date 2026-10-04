@@ -27,7 +27,14 @@ export async function getDriveAccessToken(): Promise<string | null> {
   return d.access_token;
 }
 
-export interface DriveFile { id: string; name: string; webViewLink?: string }
+export interface DriveFile {
+  id: string;
+  name: string;
+  webViewLink?: string;
+  /** بيرجع بس لو اتطلب في `fields` (إحصائيات الشهايد). */
+  createdTime?: string;
+  parents?: string[];
+}
 
 /**
  * أقصى عدد ملفات نلمّها في بحث واحد.
@@ -69,15 +76,18 @@ export async function driveSearch(
 export async function driveSearchWithStatus(
   q: string,
   token: string,
-  opts: { maxFiles?: number } = {},
+  // `fields`/`maxPages` لإحصائيات الشهايد (تاريخ الرفع والفولدر · كل الأرشيف). من غيرهم
+  // ⇒ نفس القديم بالظبط.
+  opts: { maxFiles?: number; fields?: string; maxPages?: number } = {},
 ): Promise<{ files: DriveFile[]; ok: boolean; truncated: boolean }> {
   const maxFiles = Math.max(1, opts.maxFiles ?? DRIVE_MAX_FILES);
+  const maxPages = Math.max(1, opts.maxPages ?? MAX_PAGES);
   const out: DriveFile[] = [];
   let pageToken = "";
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < maxPages; page++) {
     const params = new URLSearchParams({
-      q, fields: "nextPageToken,files(id,name,webViewLink)",
+      q, fields: opts.fields ?? "nextPageToken,files(id,name,webViewLink)",
       pageSize: String(Math.min(DRIVE_PAGE_SIZE, maxFiles - out.length)),
       includeItemsFromAllDrives: "true", supportsAllDrives: "true",
     });
@@ -97,4 +107,22 @@ export async function driveSearchWithStatus(
   }
 
   return { files: out.length > maxFiles ? out.slice(0, maxFiles) : out, ok: true, truncated: true };
+}
+
+/**
+ * اسم فولدر وأبوه — لإحصائيات الشهايد (الشركة = الفولدر اللي مشاركاه). مش متاح لينا
+ * (فولدر في درايف الشركة نفسها) أو أي فشل ⇒ `null`.
+ */
+export async function driveGetFolder(id: string, token: string): Promise<{ name: string; parents?: string[] } | null> {
+  try {
+    const params = new URLSearchParams({ fields: "id,name,parents", supportsAllDrives: "true" });
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (typeof d?.name !== "string") return null;
+    return Array.isArray(d.parents) && d.parents.length ? { name: d.name, parents: d.parents } : { name: d.name };
+  } catch {
+    return null;
+  }
 }
