@@ -117,8 +117,11 @@ export async function driveSearchWithStatus(
 export async function driveListPage(
   q: string,
   token: string,
-  opts: { fields: string; pageToken?: string; pageSize?: number; orderBy?: string },
+  opts: { fields: string; pageToken?: string; pageSize?: number; orderBy?: string; timeoutMs?: number },
 ): Promise<{ ok: boolean; files: DriveFile[]; next: string | null }> {
+  // سؤال معلّق مايوقفش دورة السيرفر كلها
+  const ctrl = opts.timeoutMs ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), opts.timeoutMs) : null;
   try {
     const params = new URLSearchParams({
       q, fields: opts.fields, pageSize: String(opts.pageSize ?? DRIVE_PAGE_SIZE),
@@ -127,7 +130,7 @@ export async function driveListPage(
     if (opts.orderBy) params.set("orderBy", opts.orderBy);
     if (opts.pageToken) params.set("pageToken", opts.pageToken);
     const res = await fetch("https://www.googleapis.com/drive/v3/files?" + params,
-      { headers: { Authorization: `Bearer ${token}` } });
+      { headers: { Authorization: `Bearer ${token}` }, ...(ctrl ? { signal: ctrl.signal } : {}) });
     if (!res.ok) return { ok: false, files: [], next: null };
     const d = await res.json();
     return {
@@ -137,5 +140,7 @@ export async function driveListPage(
     };
   } catch {
     return { ok: false, files: [], next: null };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
