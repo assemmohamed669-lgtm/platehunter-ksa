@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink, Info } from "lucide-react";
+import { Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle, Save, AudioLines, ExternalLink } from "lucide-react";
 import type { ServiceKeys, VoiceEngine } from "@/lib/voiceKeys";
 
 /**
@@ -10,6 +10,7 @@ import type { ServiceKeys, VoiceEngine } from "@/lib/voiceKeys";
  * (Speechmatics و ElevenLabs وبيانات حساب الخدمة اتشالوا بطلب المالك — بس القيم
  * المحفوظة القديمة بتتساب زي ما هي عند الحفظ، مش بتتمسح.)
  * ملاحظة: Groq بيستخدم مفتاح Groq اللي المندوب حاطه من صفحة المفاتيح (مش هنا).
+ * المربع من غير أي شرح (المالك ٤ أكتوبر ٢٠٢٦: «مربع مفاتيح الصوت الغي كل الشرح اللي فيه»).
  */
 type TestState = null | "ok" | "bad";
 
@@ -65,10 +66,6 @@ export default function AgentVoiceKeys({
     if (ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
   }
 
-  const ENGINE_LABEL: Record<string, string> = {
-    deepgram: "Deepgram", groq: "Groq Whisper",
-  };
-
   const engineBtn = (val: VoiceEngine, label: string) => (
     <button type="button" onClick={() => setEngine(val)}
       className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition ${
@@ -85,21 +82,14 @@ export default function AgentVoiceKeys({
       </div>
 
       {/* المحرك النشط — واحد بس (Deepgram / Groq) */}
-      <div>
-        <p className="mb-1.5 text-[11px] text-muted">المحرك النشط للمندوب (واحد بس):</p>
-        <div className="grid grid-cols-2 gap-2">
-          {engineBtn("deepgram", "Deepgram")}
-          {engineBtn("groq", "Groq Whisper")}
-        </div>
-        <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-brand">
-          <CheckCircle2 size={12} /> المندوب هيستخدم: {ENGINE_LABEL[engine] ?? "Deepgram"}
-          <span className="font-normal text-muted">— بعد ما تدوس حفظ</span>
-        </p>
+      <div className="grid grid-cols-2 gap-2">
+        {engineBtn("deepgram", "Deepgram")}
+        {engineBtn("groq", "Groq Whisper")}
       </div>
 
       {/* Deepgram */}
       <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "deepgram" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <span className="text-xs font-bold text-ink">مفتاح Deepgram <span className="font-normal text-muted">(لحظي — أدق للحروف)</span></span>
+        <span className="text-xs font-bold text-ink">مفتاح Deepgram</span>
         <div className="flex items-center gap-1.5">
           <input type={showDg ? "text" : "password"} value={deepgram}
             onChange={(e) => setDeepgram(e.target.value)} placeholder="مفتاح Deepgram" dir="ltr"
@@ -130,20 +120,10 @@ export default function AgentVoiceKeys({
         </div>
       </div>
 
-      {/* Groq Whisper — بيستخدم مفتاح Groq اللي المندوب حاطه من صفحة المفاتيح */}
-      <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${engine === "groq" ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-        <span className="text-xs font-bold text-ink">Groq Whisper <span className="font-normal text-muted">(تسجيل ثم تحليل)</span></span>
-        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
-          <Info size={13} className="mt-0.5 shrink-0 text-primary" />
-          مافيش مفتاح هنا — بيستخدم <b>مفتاح Groq</b> اللي المندوب حاطه من القائمة ← «مفتاح Groq». اختَر Groq Whisper واحفظ عشان التسجيل يفرّغ بيه (مش لحظي).
-        </p>
-      </div>
-
       <button onClick={save} disabled={busy}
         className="flex items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-50">
         <Save size={15} /> {busy ? "جارٍ الحفظ..." : saved ? "✓ اتحفظ للمندوب" : "حفظ مفاتيح المندوب"}
       </button>
-      <p className="text-[10px] text-muted text-center">المفتاح المحفوظ ينزل لجهاز المندوب تلقائياً ويستخدمه في تشييك صوت والتسجيل.</p>
     </div>
   );
 }

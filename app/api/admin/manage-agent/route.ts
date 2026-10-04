@@ -10,6 +10,7 @@
  *  - setVoicexEnabled { enabled }   (VoiceX voice engine on/off for this agent)
  *  - setRestPages     { enabled }   (rest-of-app pages on/off for this agent)
  *  - setAgentNotice   { notice }    (رسالة خاصة تظهر لهذا المندوب وحده)
+ *  - setAdminNote     { note }      (ملاحظة الأدمن على المندوب — بتظهر في مربعه في قايمة الأدمن بس)
  *  - grantWheelSpin                (🎡 يفعّل لفّة عجلة حظ — مرة لكل تجديد)
  *  - delete
  */
@@ -253,6 +254,15 @@ export async function POST(req: NextRequest) {
         const { error } = await supabaseAdmin.from("profiles")
           .update({ agent_notice: text, agent_notice_at: text ? new Date().toISOString() : null })
           .eq("id", agentId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      case "setAdminNote": {
+        // ملاحظة الأدمن على المندوب (قلم في قايمة المناديب — المالك ٤ أكتوبر: «عليه 50 ريال
+        // دفع 100 حق الاشتراك»). للأدمن بس — مش رسالة للمندوب. فاضي = مسح (NULL).
+        const note = normalizeAgentNotice(body.note as string | null | undefined);
+        const { error } = await supabaseAdmin.from("profiles").update({ admin_note: note }).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
         return NextResponse.json({ ok: true });
       }

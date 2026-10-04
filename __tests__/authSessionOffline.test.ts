@@ -54,7 +54,6 @@ const GATES = [
   "app/(app)/group-sort/page.tsx",
   "app/admin/layout.tsx",
   "app/admin/page.tsx",
-  "app/admin/accounts/page.tsx",
   "app/admin/groups/page.tsx",
   "app/admin/locations/page.tsx",
   "app/admin/[id]/page.tsx",

@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Wallet, HardDriveDownload, Activity } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Activity, Pencil } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -13,7 +13,6 @@ import { ADMIN_RETURN_KEY, packAdminReturn, unpackAdminReturn, type AdminReturn 
 import { APP_VERSION } from "@/lib/appVersion";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
-import { driveHealthMessage, type HealthMessage } from "@/lib/driveHealth";
 import { BarChart3, BellRing } from "lucide-react";
 
 interface AgentProfile {
@@ -32,7 +31,7 @@ interface AgentProfile {
   last_seen: string | null;
   subscription_end: string | null;
   subscription_amount: number | null;
-  owed_amount?: number | null;   // «عليه» — المتبقّي على المندوب (من صفحة الحسابات)
+  admin_note?: string | null;    // ملاحظة الأدمن على المندوب (القلم) — بالأحمر في مربعه
   app_version: string | null;
   platform: string | null;       // نظام الجهاز: ios / android / web-ios / web-android / web
   team?: string | null;          // المجموعة — لاستهداف الإشعار بمجموعة واحدة
@@ -50,11 +49,6 @@ function platformInfo(p: string | null): { label: string; title: string } | null
     default:            return null;
   }
 }
-
-// مفتاح شهر YYYY-MM + اسمه بالعربي — لشارة الدفع في القائمة.
-function curMonthKey(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-function curMonthLabel(): string { return new Date().toLocaleDateString("ar-EG", { month: "long" }); }
-const fmtSar = (n: number) => n.toLocaleString("ar-EG");
 
 // رابط واتساب من رقم المندوب — أرقام بس (بيشيل + والمسافات)، وبيشيل بادئة 00
 // الدولية. المفروض الرقم متسجّل بكود الدولة (مثلاً 9665… أو 20…).
@@ -102,15 +96,10 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [isSuper, setIsSuper] = useState(false);
-  // فتح/قفل صوت VoiceX لكل المناديب مرة واحدة (سوبر أدمن بس) — بتأكيد قبل التنفيذ
-  // عشان ضغطة غلط ماتقفلش الصوت على الأسطول كله.
-  // فحص اتصال درايف (الشهادات) — عشان نعرف إن الصلاحية ماتت قبل شكوى مندوب.
-  const [driveBusy, setDriveBusy] = useState(false);
-  const [driveMsg, setDriveMsg] = useState<HealthMessage | null>(null);
-
-  const [bulkConfirm, setBulkConfirm] = useState<"on" | "off" | null>(null);
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // ملاحظة الأدمن على مندوب (القلم في مربعه) — المندوب المفتوح للكتابة + المسودة.
+  const [noteFor, setNoteFor] = useState<AgentProfile | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteBusy, setNoteBusy] = useState(false);
   // رسالة الأدمن للمناديب — بتظهر في شريط البرنامج في كل الصفحات
   const [noticeActive, setNoticeActive] = useState<AppNotice | null>(null);
   const [noticeText, setNoticeText] = useState("");
@@ -138,8 +127,6 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
-  // مدفوع الشهر الحالي لكل مندوب (من صفحة الحسابات) — لشارة «دفع كامل / عليه».
-  const [paidByAgent, setPaidByAgent] = useState<Record<string, number>>({});
 
   // create form
   const [showCreate, setShowCreate] = useState(false);
@@ -180,18 +167,6 @@ export default function AdminDashboard() {
         setCreatorOf(first);
       }
     } catch { /* مش مشكلة — الاسم مايظهرش بس */ }
-    // مدفوع الشهر الحالي لكل مندوب — للشارة في القائمة. أي فشل = بلا شارة دفع.
-    try {
-      const res = await fetch(`/api/admin/payments?month=${curMonthKey()}`, { headers: await authHeaders() });
-      if (res.ok) {
-        const json = await res.json();
-        const m: Record<string, number> = {};
-        for (const p of (json.payments ?? []) as Array<{ agent_id: string; amount: number }>) {
-          m[p.agent_id] = (m[p.agent_id] ?? 0) + Number(p.amount || 0);
-        }
-        setPaidByAgent(m);
-      }
-    } catch { /* بلا شارة */ }
   }, []);
 
   // الاستطلاع الشغّال + نتايجه (مين اختار إيه).
@@ -312,51 +287,29 @@ export default function AdminDashboard() {
   }
 
   /**
-   * فتح/قفل صوت VoiceX لكل **المناديب** مرة واحدة. الفلترة على المناديب بتتم
-   * على السيرفر (`role = 'agent'`) — الأدمن والسوبر أدمن مايتأثروش نهائياً.
+   * حفظ/مسح ملاحظة الأدمن على المندوب. نص فاضي = مسح. بنحدّث المربع مكانه من غير إعادة
+   * تحميل القايمة (عشان مكانك في القايمة مايتغيّرش).
    */
-  /** فحص اتصال درايف — بينادي راوت الأدمن ويترجم الرد لرسالة مفهومة. */
-  async function runDriveHealth() {
-    setDriveBusy(true);
-    setDriveMsg(null);
+  async function saveNote(a: AgentProfile, note: string) {
+    setNoteBusy(true);
     try {
-      const { data } = await supabase.auth.getSession();
-      const res = await fetch("/api/admin/drive-health", {
-        headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
-      });
-      const j = await res.json().catch(() => ({}));
-      setDriveMsg(driveHealthMessage({ ok: !!j?.ok, files: j?.files, error: j?.error }));
-    } catch {
-      setDriveMsg(driveHealthMessage({ ok: false, error: "network" }));
-    } finally {
-      setDriveBusy(false);
-    }
-  }
-
-  async function runVoicexBulk(enabled: boolean) {
-    setBulkBusy(true);
-    setBulkMsg(null);
-    try {
-      const res = await fetch("/api/admin/voicex-bulk", {
+      const res = await fetch("/api/admin/manage-agent", {
         method: "POST", headers: await authHeaders(),
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ agentId: a.id, action: "setAdminNote", note }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setBulkMsg({ ok: false, text: json.error ?? "تعذّر تنفيذ العملية." });
+        const err = String(json.error ?? "");
+        alert(/admin_note/.test(err)
+          ? "الملاحظة محتاجة خطوة واحدة على Supabase الأول: شغّل docs/sql/admin-note.sql."
+          : err || "تعذّر حفظ الملاحظة.");
         return;
       }
-      setBulkMsg({
-        ok: true,
-        text: `تم ${enabled ? "فتح" : "قفل"} الصوت لـ${json.count ?? 0} مندوب.`,
-      });
-      setBulkConfirm(null);
-      loadAgents();
-    } catch {
-      setBulkMsg({ ok: false, text: "تعذّر الاتصال بالخادم." });
-    } finally {
-      setBulkBusy(false);
-    }
+      const saved = note.trim() ? note.trim().slice(0, 500) : null;
+      setAgents((list) => list.map((x) => (x.id === a.id ? { ...x, admin_note: saved } : x)));
+      setNoteFor(null);
+    } catch { alert("تعذّر الاتصال بالخادم."); }
+    finally { setNoteBusy(false); }
   }
 
   const enriched = useMemo(() => agents.map((a) => ({ a, sub: subStatus(a.subscription_end) })), [agents]);
@@ -469,43 +422,12 @@ export default function AdminDashboard() {
           ))}
         </div>
 
-        {/* حسابات المناديب — لكل الأدمنز (مش السوبر بس): دفعات + ملاحظات + دخل الشهر */}
-        <button onClick={() => router.push("/admin/accounts")}
-          className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-3 text-sm font-bold text-emerald-500 transition hover:bg-emerald-500/20 active:scale-[0.99]">
-          <Wallet size={16} /> حسابات المناديب — الدفعات والدخل
-        </button>
-
         {/* المجموعات — لكل الأدمنز (بطلب المالك): مين مع مين + مفاتيح
             الإشعارات ومشاركة السجلات. */}
         <button onClick={() => router.push("/admin/groups")}
           className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
           <Users size={16} /> المجموعات — مين مع مين
         </button>
-
-        {/* ── فحص اتصال درايف (الشهادات) — لكل الأدمنز ───────────────────────
-            الصلاحية ماتت مرة وفضل التطبيق يقول «مفيش شهادة» أسبوعين والمالك
-            عرف من شكوى مندوب. الزرار ده بيقول الحالة في ثانية. */}
-        <div className="rounded-xl border border-border bg-surface-2/40 p-3">
-          <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink">
-            <HardDriveDownload size={15} /> شهادات السحب — فحص الاتصال بدرايف
-          </div>
-          <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
-            لو الصلاحية انتهت، المندوب بيشوف «مفيش شهادة» من غير ما حد يعرف. اضغط تتأكد.
-          </p>
-          <button onClick={() => void runDriveHealth()} disabled={driveBusy}
-            className="w-full rounded-lg border border-primary/40 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
-            {driveBusy ? "بيفحص…" : "افحص الاتصال"}
-          </button>
-          {driveMsg && (
-            <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold leading-relaxed ${
-              driveMsg.level === "ok" ? "bg-emerald-600/10 text-emerald-600"
-                : driveMsg.level === "warn" ? "bg-alert/10 text-alert"
-                : "bg-danger/10 text-danger"
-            }`}>
-              {driveMsg.text}
-            </p>
-          )}
-        </div>
 
         {/* 📊 إحصائيات الشهايد — إجمالي · كل شركة · كل يوم (سوبر أدمن، ٤ أكتوبر ٢٠٢٦) */}
         {isSuper && (
@@ -537,60 +459,6 @@ export default function AdminDashboard() {
             className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
             <Activity size={16} /> مراقبة الصوت — إيه اللي حصل وليه
           </button>
-        )}
-
-        {/* ── صوت VoiceX لكل المناديب مرة واحدة — سوبر أدمن فقط ────────────── */}
-        {isSuper && (
-          <div className="rounded-xl border border-brand/40 bg-brand/5 p-3">
-            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink">
-              <Mic size={15} /> صوت VoiceX — كل المناديب مرة واحدة
-            </div>
-            <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
-              بيأثّر على <b>المناديب بس</b> — الأدمن والسوبر أدمن مايتأثروش.
-            </p>
-
-            {bulkConfirm ? (
-              <div className="flex flex-col gap-2">
-                <p className="text-[12px] font-bold leading-relaxed text-danger">
-                  متأكد إنك عايز {bulkConfirm === "on" ? "تفتح" : "تقفل"} الصوت لكل المناديب؟
-                </p>
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() => void runVoicexBulk(bulkConfirm === "on")}
-                    disabled={bulkBusy}
-                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold text-white transition disabled:opacity-50 ${
-                      bulkConfirm === "on" ? "bg-emerald-600" : "bg-danger"
-                    }`}
-                  >
-                    {bulkBusy ? "…" : `أيوه، ${bulkConfirm === "on" ? "افتح" : "اقفل"} للكل`}
-                  </button>
-                  <button onClick={() => setBulkConfirm(null)} disabled={bulkBusy}
-                    className="flex-1 rounded-lg border border-border py-2.5 text-xs font-bold text-muted disabled:opacity-50">
-                    إلغاء
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex gap-1.5">
-                <button onClick={() => { setBulkMsg(null); setBulkConfirm("on"); }}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-600/10 py-2.5 text-xs font-bold text-emerald-600 transition hover:bg-emerald-600/20">
-                  <LockOpen size={14} /> افتح للكل
-                </button>
-                <button onClick={() => { setBulkMsg(null); setBulkConfirm("off"); }}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 py-2.5 text-xs font-bold text-danger transition hover:bg-danger/20">
-                  <Lock size={14} /> اقفل للكل
-                </button>
-              </div>
-            )}
-
-            {bulkMsg && (
-              <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold ${
-                bulkMsg.ok ? "bg-emerald-600/10 text-emerald-600" : "bg-danger/10 text-danger"
-              }`}>
-                {bulkMsg.text}
-              </p>
-            )}
-          </div>
         )}
 
         {/* بث للمناديب — رسالة عادية أو استطلاع رأي. سوبر أدمن فقط. */}
@@ -896,14 +764,6 @@ export default function AdminDashboard() {
                     <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-brand/15 px-1.5 py-0.5 text-[9px] font-bold text-brand"><Clock size={9} /> تجربة</span>
                   )}
                   {!a.is_active && <span className="shrink-0 rounded-full bg-danger/10 px-1.5 py-0.5 text-[9px] font-bold text-danger">مقفول</span>}
-                  {/* شارة الدفع الشهر الحالي: «عليه مبلغ» (أحمر) أو «دفع اشتراك الشهر» (أخضر) */}
-                  {a.role === "agent" && (() => {
-                    const paid = paidByAgent[a.id] ?? 0;
-                    const owed = Number(a.owed_amount || 0);
-                    if (owed > 0) return <span className="shrink-0 rounded-full bg-danger/15 px-1.5 py-0.5 text-[9px] font-bold text-danger" title={`عليه ${fmtSar(owed)} ريال`}>عليه {fmtSar(owed)}</span>;
-                    if (paid > 0) return <span className="shrink-0 rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-600" title={`دفع اشتراك شهر ${curMonthLabel()} كامل`}>✓ دفع {curMonthLabel()}</span>;
-                    return null;
-                  })()}
                 </div>
                 {/* مين الأدمن اللي ضاف المندوب ده */}
                 {creatorOf[a.id] && (
@@ -941,9 +801,24 @@ export default function AdminDashboard() {
                 {/* التليفون + الإيميل — كاملين بلا قصّ */}
                 <p className="text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.phone || "بدون تليفون"}</p>
                 {a.email && <p className="break-all text-[11px] text-muted" dir="ltr" style={a.is_super ? { color: "#D4AF37AA" } : undefined}>{a.email}</p>}
+                {/* ملاحظة الأدمن على المندوب — بالأحمر (القلم على الشمال بيكتبها/يشيلها) */}
+                {isSuper && a.admin_note && (
+                  <p className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-danger/10 px-2 py-1 text-[11px] font-bold leading-relaxed text-danger">
+                    {a.admin_note}
+                  </p>
+                )}
               </div>
               {/* أزرار مدمجة عمودياً عشان ماتاخدش عرض من بيانات المندوب */}
               <div className="flex shrink-0 flex-col items-center gap-1.5">
+                {/* ✏️ ملاحظة على المندوب (سوبر أدمن الأول) */}
+                {isSuper && a.role === "agent" && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setNoteFor(a); setNoteDraft(a.admin_note ?? ""); }}
+                    title={a.admin_note ? "تعديل الملاحظة" : "اكتب ملاحظة على المندوب"}
+                    className={`flex h-7 w-7 items-center justify-center rounded-full transition ${a.admin_note ? "bg-danger/15 text-danger hover:bg-danger/30" : "bg-muted/15 text-muted hover:bg-primary/15 hover:text-primary"}`}>
+                    <Pencil size={14} />
+                  </button>
+                )}
                 {a.role === "agent" && (
                   <button
                     onClick={(e) => toggleActive(a, e)}
@@ -988,6 +863,43 @@ export default function AdminDashboard() {
           {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted">لا توجد نتائج.</p>}
         </div>
       </div>
+
+      {/* ✏️ ملاحظة على المندوب — حفظ / شيل */}
+      {noteFor && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 pb-[env(safe-area-inset-bottom)] sm:items-center"
+          onClick={() => { if (!noteBusy) setNoteFor(null); }}>
+          <div onClick={(e) => e.stopPropagation()} className="mb-4 w-full max-w-sm rounded-2xl border border-border bg-surface p-4" dir="rtl">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-bold text-ink">
+                <Pencil size={14} className="shrink-0 text-danger" /> <span className="truncate">ملاحظة على «{noteFor.username}»</span>
+              </h3>
+              <button onClick={() => setNoteFor(null)} disabled={noteBusy} className="text-muted hover:text-ink"><X size={18} /></button>
+            </div>
+            <textarea
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              rows={3}
+              maxLength={500}
+              autoFocus
+              placeholder="مثلاً: عليه 50 ريال — دفع 100 حق الاشتراك"
+              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-danger"
+            />
+            <div className="mt-2 flex gap-2">
+              <button onClick={() => void saveNote(noteFor, noteDraft)} disabled={noteBusy || !noteDraft.trim()}
+                className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-50">
+                {noteBusy ? "جارٍ..." : "حفظ"}
+              </button>
+              {noteFor.admin_note && (
+                <button onClick={() => { if (confirm(`تشيل الملاحظة من على «${noteFor.username}»؟`)) void saveNote(noteFor, ""); }}
+                  disabled={noteBusy}
+                  className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2.5 text-sm font-bold text-danger disabled:opacity-50">
+                  شيل الملاحظة
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create modal.
           النافذة كانت بتتقصّ لما لوحة المفاتيح تطلع: بقت تتمرّر جوّه نفسها،
