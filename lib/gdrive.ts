@@ -57,6 +57,20 @@ export async function driveSearch(
   token: string,
   opts: { maxFiles?: number } = {},
 ): Promise<DriveFile[]> {
+  return (await driveSearchWithStatus(q, token, opts)).files;
+}
+
+/**
+ * نفس `driveSearch` بالظبط — بس بيقول كمان **حصل إيه**، عشان شهايد عربيات الفرز
+ * (`lib/certBatch.ts`) ماتقولش «مفيش شهادة» وهي في الحقيقة «درايف ماردّش»:
+ *  · `ok`        — أول صفحة رجعت (لو false: درايف رفض/النت وقع ⇒ النتيجة مش معروفة).
+ *  · `truncated` — وقفنا قبل الآخر (وصلنا `maxFiles` أو صفحة في النص فشلت) ⇒ ممكن ناقصة.
+ */
+export async function driveSearchWithStatus(
+  q: string,
+  token: string,
+  opts: { maxFiles?: number } = {},
+): Promise<{ files: DriveFile[]; ok: boolean; truncated: boolean }> {
   const maxFiles = Math.max(1, opts.maxFiles ?? DRIVE_MAX_FILES);
   const out: DriveFile[] = [];
   let pageToken = "";
@@ -69,15 +83,18 @@ export async function driveSearch(
     });
     if (pageToken) params.set("pageToken", pageToken);
 
+    // رمية النت بتطلع زي الأول (البحث العادي بيقول السبب) — الدفعة بتمسكها لوحدها.
     const res = await fetch("https://www.googleapis.com/drive/v3/files?" + params,
       { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return out;                       // أول صفحة → فاضي، وإلا اللي لمّيناه
+    // أول صفحة → فاضي، وإلا اللي لمّيناه
+    if (!res.ok) return { files: out, ok: page > 0, truncated: page > 0 };
     const d = await res.json();
     if (Array.isArray(d?.files)) out.push(...d.files);
 
     pageToken = typeof d?.nextPageToken === "string" ? d.nextPageToken : "";
-    if (!pageToken || out.length >= maxFiles) break;
+    if (!pageToken) return { files: out.length > maxFiles ? out.slice(0, maxFiles) : out, ok: true, truncated: false };
+    if (out.length >= maxFiles) break;
   }
 
-  return out.length > maxFiles ? out.slice(0, maxFiles) : out;
+  return { files: out.length > maxFiles ? out.slice(0, maxFiles) : out, ok: true, truncated: true };
 }
