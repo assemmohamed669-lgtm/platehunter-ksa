@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   batchFindCertificates, clearCertBatchCache, digitsQuery,
-  CERT_BATCH_MAX_PLATES, CERT_DIGITS_PER_QUERY, CERT_CACHE_TTL_MS,
+  CERT_BATCH_MAX_PLATES, CERT_DIGITS_PER_QUERY, CERT_CACHE_TTL_MS, CERT_PARALLEL_QUERIES,
 } from "@/lib/certBatch";
 import type { DriveFile } from "@/lib/gdrive";
 
@@ -65,6 +65,40 @@ describe("🔴 دفعة واحدة بدل سؤال لكل عربية", () => {
     expect(d.calls).toHaveLength(1);
     expect(r.results["ابح1234"][0].id).toBe("a");
     expect(r.results["دهو1234"][0].id).toBe("b");
+  });
+});
+
+describe("🔴 السرعة — الأسئلة لدرايف مع بعض مش واحد ورا التاني", () => {
+  /**
+   * المالك (٤ أكتوبر ٢٠٢٦): «ليه بيأخر كتير علي ما بيدور علي الشهايد؟». كل سؤال لدرايف
+   * ثانية لتلاتة، والسيرفر كان بيستنى كل واحد يخلص قبل اللي بعده ⇒ ٨٨ عربية = ٤ أسئلة
+   * ورا بعض (لحد ~١٠ث). دلوقتي بيتبعتوا مع بعض ⇒ الوقت = أبطأ سؤال لوحده.
+   */
+  it("🔴 ٨٨ لوحة = ٤ أسئلة شغّالين في نفس الوقت", async () => {
+    let inFlight = 0, maxInFlight = 0;
+    const search = vi.fn(async () => {
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight--;
+      return { files: [] as DriveFile[], ok: true, truncated: false };
+    });
+    await batchFindCertificates(Array.from({ length: 88 }, (_, i) => plate(i)), search, 0);
+    expect(search).toHaveBeenCalledTimes(4);
+    expect(maxInFlight).toBe(4);
+  });
+
+  it("بس بحد أقصى (مانضربش درايف بعشرات الأسئلة في نفس اللحظة)", async () => {
+    let inFlight = 0, maxInFlight = 0;
+    const search = vi.fn(async () => {
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { files: [] as DriveFile[], ok: true, truncated: false };
+    });
+    await batchFindCertificates(Array.from({ length: 300 }, (_, i) => plate(i)), search, 0);
+    expect(search).toHaveBeenCalledTimes(12);
+    expect(maxInFlight).toBeLessThanOrEqual(CERT_PARALLEL_QUERIES);
+    expect(maxInFlight).toBeGreaterThan(1);
   });
 });
 
