@@ -22,7 +22,7 @@ vi.mock("@/lib/supabaseClient", () => ({
 
 import {
   requestCertificates, retryCertificate, getCertState, certKey, clearCertStates,
-  CERTS_IN_RESULTS_FOR_ALL, CERT_STATE_TTL_MS,
+  CERTS_IN_RESULTS_FOR_ALL, CERT_STATE_TTL_MS, useCertsEnabled,
 } from "@/lib/certificateBatch";
 import CertCell from "@/components/CertCell";
 
@@ -131,8 +131,13 @@ describe("🔴 الخانة نفسها", () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it("السوبر أدمن الأول (المالك يجرّب قبل الكل)", () => {
-    expect(CERTS_IN_RESULTS_FOR_ALL).toBe(false);
+  it("🔴 مفتوح لكل المناديب — المالك جرّبه وقال «انشرها بقي ل كل المناديب» (٤ أكتوبر ٢٠٢٦)", async () => {
+    expect(CERTS_IN_RESULTS_FOR_ALL).toBe(true);
+    // مندوب عادي (مش سوبر أدمن — supabase هنا مالوش مستخدم): العمود بيظهر برضه
+    function Probe() { return <span>{useCertsEnabled() ? "ظاهر" : "مخفي"}</span>; }
+    render(<Probe />);
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(screen.getByText("ظاهر")).toBeTruthy();
   });
 });
 
