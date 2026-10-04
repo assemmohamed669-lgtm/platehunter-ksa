@@ -148,19 +148,38 @@ describe("🔴 التوصيل في الصفحات", () => {
     expect(route).toMatch(/batchFindCertificates\(/);
   });
 
-  it("صفحة الفرز: العمود في ٤ جداول (الداتا · السجلات · لصق داتا · لصق سجلات) بعد «رقم اللوحة»", () => {
+  /**
+   * 🔴 المالك (٤ أكتوبر ٢٠٢٦): «عايزك تخلي عمود الشهايد يبقي اخر عمود في المربع».
+   * في كل جدول: عنوان «شهايد» آخر عنوان في الـthead، وخانة الشهادة آخر خانة في الصف.
+   */
+  function expectCertsLast(src: string, tables: number) {
+    const heads = src.split("<thead").slice(1).map((h) => h.slice(0, h.indexOf("</thead>")));
+    const withCerts = heads.filter((h) => h.includes(">شهايد</th>"));
+    expect(withCerts.length).toBe(tables);
+    for (const h of withCerts) {
+      expect(h.slice(h.indexOf(">شهايد</th>")), "عنوان بعد «شهايد»").not.toMatch(/<th[\s>]/);
+    }
+    const cells = src.split("<CertCell ").slice(1);
+    expect(cells.length).toBe(tables);
+    for (const c of cells) {
+      const row = c.slice(0, c.indexOf("</tr>"));
+      expect(row, "خانة بعد خانة الشهادة").not.toMatch(/<td[\s>]/);
+    }
+  }
+
+  it("🔴 صفحة الفرز: العمود في ٤ جداول (الداتا · السجلات · لصق داتا · لصق سجلات) — آخر عمود", () => {
     const s = read("app/(app)/sorting/page.tsx");
     expect(count(s, /\{certsOn && <th[^>]*>شهايد<\/th>\}/g)).toBe(4);
-    expect(count(s, /<CertCell /g)).toBe(4);
     expect(s).toMatch(/const certsOn = useCertsEnabled\(\);/);
+    expectCertsLast(s, 4);
   });
 
-  it("«فرز» بتاع «صوت فقط» والمطلوب", () => {
+  it("🔴 «فرز» بتاع «صوت فقط» والمطلوب — آخر عمود", () => {
     const v = read("components/VoiceOnlySort.tsx");
     expect(count(v, /\{certsOn && <th[^>]*>شهايد<\/th>\}/g)).toBe(1);
-    expect(count(v, /<CertCell /g)).toBe(1);
+    expectCertsLast(v, 1);
     const w = read("components/WantedResultsTable.tsx");
     expect(count(w, /\{certsOn && <th[^>]*>شهايد<\/th>\}/g)).toBe(1);
-    expect(count(w, /<CertCell /g)).toBe(1);
+    expectCertsLast(w, 1);
   });
 });
