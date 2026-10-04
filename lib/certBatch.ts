@@ -25,6 +25,12 @@ export const CERT_BATCH_MAX_PLATES = 300;
 export const CERT_DIGITS_PER_QUERY = 25;
 /** مدة ما السيرفر يفتكر نتيجة مجموعة أرقام. */
 export const CERT_CACHE_TTL_MS = 10 * 60_000;
+/**
+ * كام سؤال لدرايف شغّالين **في نفس الوقت** للطلب الواحد. المالك (٤ أكتوبر): «ليه بيأخر
+ * كتير؟» — كانوا ورا بعض (كل سؤال ثانية لتلاتة) ⇒ ٨٨ عربية = ٤ أسئلة متتالية. دلوقتي
+ * الوقت = أبطأ سؤال. الحد عشان مانضربش درايف بعشرات الأسئلة في لحظة واحدة.
+ */
+export const CERT_PARALLEL_QUERIES = 6;
 /** أقصى عدد مجموعات أرقام في الذاكرة (الأقدم بيتشال). */
 const CACHE_MAX = 5000;
 
@@ -92,10 +98,18 @@ export async function batchFindCertificates(
     return !!c && now - c.at >= 0 && now - c.at < CERT_CACHE_TTL_MS;
   };
   const need = [...byDigits.keys()].filter((d) => !fresh(d));
+  const chunks: string[][] = [];
+  for (let i = 0; i < need.length; i += CERT_DIGITS_PER_QUERY) chunks.push(need.slice(i, i + CERT_DIGITS_PER_QUERY));
   const failedDigits = new Set<string>();
-  for (let i = 0; i < need.length; i += CERT_DIGITS_PER_QUERY) {
-    for (const d of await fetchDigits(need.slice(i, i + CERT_DIGITS_PER_QUERY), search, now)) failedDigits.add(d);
-  }
+  // ⚡ مع بعض (بحد `CERT_PARALLEL_QUERIES`) — مش واحد ورا التاني
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      for (const d of await fetchDigits(chunk, search, now)) failedDigits.add(d);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CERT_PARALLEL_QUERIES, chunks.length) }, worker));
 
   const failed: string[] = [];
   for (const [d, list] of byDigits) {
