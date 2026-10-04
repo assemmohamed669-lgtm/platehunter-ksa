@@ -3848,7 +3848,6 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {certsOn && <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
                     {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
@@ -3858,6 +3857,7 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                     <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
+                    {certsOn && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -3901,11 +3901,6 @@ export default function SortingPage() {
                             </span>
                           )}
                         </td>
-                        {certsOn && (
-                          <td className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
-                            <CertCell state={certOf(plate)} onRetry={() => retryCertificate(plate)} />
-                          </td>
-                        )}
                         {allResultCols.map((rc) => {
                           const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
                           return (
@@ -4004,6 +3999,11 @@ export default function SortingPage() {
                             );
                           })()}
                         </td>
+                        {certsOn && (
+                          <td className="border-r border-border px-3 py-2 text-center whitespace-nowrap">
+                            <CertCell state={certOf(plate)} onRetry={() => retryCertificate(plate)} />
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -4144,7 +4144,6 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                    {certsOn && <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
                     {orderedTashyeekCols.map((c) => (
                       <th key={c.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c.label}</th>
                     ))}
@@ -4157,6 +4156,7 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الموقع</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">الحالة</th>
                     <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">السجل</th>
+                    {certsOn && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -4183,11 +4183,6 @@ export default function SortingPage() {
                           </div>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
-                        {certsOn && (
-                          <td className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
-                            <CertCell state={certOf(String(plate))} onRetry={() => retryCertificate(String(plate))} />
-                          </td>
-                        )}
                         {orderedTashyeekCols.map((c) => {
                           // عمود من شيت السجلات → يتقرا من صف السجل؛ من المحفظة →
                           // من صف الإحالة. وبنسيب الاحتياطي على المصدر التاني.
@@ -4227,6 +4222,11 @@ export default function SortingPage() {
                             <td className="px-2 py-2 text-center whitespace-nowrap">{renderLogCell(pk)}</td>
                           </>);
                         })()}
+                        {certsOn && (
+                          <td className="border-r border-border px-3 py-2 text-center whitespace-nowrap">
+                            <CertCell state={certOf(String(plate))} onRetry={() => retryCertificate(String(plate))} />
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -4506,7 +4506,6 @@ export default function SortingPage() {
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">☐</th>
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">إجراءات</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                      {certsOn && <th className="border-b border-l border-border px-3 py-1.5 text-center font-bold whitespace-nowrap">شهايد</th>}
                       {nearestActive && <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">المسافة</th>}
                       {pasteShownCols.map((col) => (
                         <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
@@ -4515,6 +4514,7 @@ export default function SortingPage() {
                       ))}
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>
                       <th className="border-b border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">السجل</th>
+                      {certsOn && <th className="border-b border-r border-border px-3 py-1.5 text-center font-bold whitespace-nowrap">شهايد</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -4561,11 +4561,6 @@ export default function SortingPage() {
                             )}
                           </div>
                         </td>
-                        {certsOn && (
-                          <td className="border-l border-border px-3 py-1.5 text-center whitespace-nowrap">
-                            <CertCell state={certOf(p.converted)} onRetry={() => retryCertificate(p.converted)} />
-                          </td>
-                        )}
                         {nearestActive && (
                           <td className="border-l border-border px-3 py-1.5 font-bold text-primary whitespace-nowrap">
                             {pasteDist != null && pasteDist !== Infinity ? formatDistanceKm(pasteDist) : "—"}
@@ -4595,6 +4590,11 @@ export default function SortingPage() {
                           </button>
                         </td>
                         <td className="px-2 py-1.5 text-center whitespace-nowrap">{renderLogCell(pasteKey)}</td>
+                        {certsOn && (
+                          <td className="border-r border-border px-3 py-1.5 text-center whitespace-nowrap">
+                            <CertCell state={certOf(p.converted)} onRetry={() => retryCertificate(p.converted)} />
+                          </td>
+                        )}
                       </tr>
                       );
                     })}
@@ -4646,12 +4646,12 @@ export default function SortingPage() {
                       <tr className="bg-surface-2 text-muted">
                         <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">إجراءات</th>
                         <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
-                        {certsOn && <th className="border-b border-l border-border px-3 py-1.5 text-center font-bold whitespace-nowrap">شهايد</th>}
                         {pasteRecordShownCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
                             {col}
                           </th>
                         ))}
+                        {certsOn && <th className="border-b border-r border-border px-3 py-1.5 text-center font-bold whitespace-nowrap">شهايد</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -4679,11 +4679,6 @@ export default function SortingPage() {
                               )}
                             </div>
                           </td>
-                          {certsOn && (
-                            <td className="border-l border-border px-3 py-1.5 text-center whitespace-nowrap">
-                              <CertCell state={certOf(p.converted)} onRetry={() => retryCertificate(p.converted)} />
-                            </td>
-                          )}
                           {pasteRecordShownCols.map((col) => {
                             const v = String(p.row[col] ?? "");
                             const link = gpsCellToLink(v); // ينظّف روابط الاتجاهات/&amp; ويحوّل الإحداثيات
@@ -4699,6 +4694,11 @@ export default function SortingPage() {
                               </td>
                             );
                           })}
+                          {certsOn && (
+                            <td className="border-r border-border px-3 py-1.5 text-center whitespace-nowrap">
+                              <CertCell state={certOf(p.converted)} onRetry={() => retryCertificate(p.converted)} />
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>

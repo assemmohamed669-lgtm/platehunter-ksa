@@ -203,12 +203,12 @@ export default function WantedResultsTable({
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
-              {certsOn && <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
               {dataCols.map((label) => <th key={label} className={TH}>{label}</th>)}
               {/* عمود «المسافة» يظهر بس لما «الأقرب» مفعّل */}
               {showDist && <th className={TH}>المسافة</th>}
               {/* آخر الويندو بعد التاريخ بطلب المستخدم */}
               {showLocate && <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>}
+              {certsOn && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
             </tr>
           </thead>
           <tbody>
@@ -236,11 +236,6 @@ export default function WantedResultsTable({
                     </div>
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
-                  {certsOn && (
-                    <td className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
-                      <CertCell state={certOf(r.plate)} onRetry={() => retryCertificate(r.plate)} />
-                    </td>
-                  )}
                   {dataCols.map((label) =>
                     label === "GPS" ? (
                       <td key={label} className="border-l border-border px-3 py-2">
@@ -264,6 +259,11 @@ export default function WantedResultsTable({
                           <MapPin size={12} /> موقعها
                         </button>
                       ) : "—"}
+                    </td>
+                  )}
+                  {certsOn && (
+                    <td className="border-r border-border px-3 py-2 text-center whitespace-nowrap">
+                      <CertCell state={certOf(r.plate)} onRetry={() => retryCertificate(r.plate)} />
                     </td>
                   )}
                 </tr>

@@ -572,11 +572,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                   </th>
                   <th className="whitespace-nowrap border-b border-l border-border px-2 py-2 text-center font-bold">إجراءات</th>
                   <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">رقم اللوحة</th>
-                  {certsOn && <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-center font-bold">شهايد</th>}
                   {nearest && <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">المسافة</th>}
                   {cols.map((c) => (
                     <th key={c} className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">{c}</th>
                   ))}
+                  {certsOn && <th className="whitespace-nowrap border-b border-r border-border px-3 py-2 text-center font-bold">شهايد</th>}
                 </tr>
               </thead>
               <tbody>
@@ -620,11 +620,6 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                           )}
                         </span>
                       </td>
-                      {certsOn && (
-                        <td className="whitespace-nowrap border-l border-border px-3 py-2 text-center">
-                          <CertCell state={certOf(plateOf(m))} onRetry={() => retryCertificate(plateOf(m))} />
-                        </td>
-                      )}
                       {nearest && (
                         <td className="whitespace-nowrap border-l border-border px-3 py-2 font-bold text-primary">
                           {d != null && Number.isFinite(d) ? formatDistanceKm(d) : "—"}
@@ -641,6 +636,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                           </td>
                         );
                       })}
+                      {certsOn && (
+                        <td className="whitespace-nowrap border-r border-border px-3 py-2 text-center">
+                          <CertCell state={certOf(plateOf(m))} onRetry={() => retryCertificate(plateOf(m))} />
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
