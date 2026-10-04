@@ -104,6 +104,13 @@ export function failCodeText(code: string): string {
   if (code === "utterance_queue_full") return "طابور النطق اتملى — نطقة اترمت";
   if (code === "utterance_dropped_legacy") return "نطقة اترمت (السلوك القديم)";
   if (code === "slice_failed" || code.startsWith("empty_slice")) return "مقدرش يقصّ الصوت";
+  // 🎙️ الفحص الحقيقي (٤ أكتوبر): مقطع اختبار بلوحة معروفة كل دقيقة
+  if (code === "cpu") return "السيرفر شغّال على المعالج مش الكارت — بطيء جداً على المناديب";
+  if (code === "wrong_plate") return "بيفرّغ غلط — مقطع الاختبار طلّع لوحة غير اللي فيه";
+  if (code === "no_plate") return "مابيطلّعش لوحات — مقطع الاختبار رجع فاضي";
+  if (code === "slow") return "بطيء — مقطع الاختبار خد أكتر من ٣ ثواني";
+  if (code === "no_token") return "مافيش توكن الصوت في الإعدادات";
+  if (code === "bad_body") return "السيرفر رد بحاجة مش مفهومة";
   return code;
 }
 

@@ -1,8 +1,10 @@
 /**
  * GET /api/cron/voice-health — 🩺 نبض سيرفر الصوت كل دقيقة (Vercel cron).
  *
- * بيسأل `/health` بتاع سيرفر ماليزيا بس ويكتب صف في `voice_health`.
- * مابيبعتش صوت ولا بيلمس الموديل. مرة في الساعة بيمسح الأقدم من ٧ أيام من
+ * بيسأل `/health` بتاع سيرفر الصوت، وبعدها (لو صاحي) **مقطع اختبار حقيقي** على `/transcribe`
+ * (🎙️ ٤ أكتوبر — `probeVoiceTranscribe`)، ويكتب صف واحد في `voice_health`.
+ * 🔴 ليه التفريغ؟ ٤ أكتوبر كارت ماليزيا باظ و`/health` فضل ok — كل تفريغ بيفشل والمراقبة خضرا.
+ *   طلب واحد كل دقيقة (~٠.٢٥ث كارت) بمهلة ومن غير إعادة ⇒ مالوش أثر على المناديب ولا السيرفر. مرة في الساعة بيمسح الأقدم من ٧ أيام من
  * الجدولين (`voice_health` و`voice_telemetry`) — `RETENTION_DAYS`.
  *
  * الحماية: لو `CRON_SECRET` متضبط في Vercel لازم الهيدر يطابق. ومن غيره حارس
@@ -11,7 +13,8 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TRIAL_MODEL_BASE } from "@/lib/trialModelGate";
-import { probeVoiceHealth, isCleanupMinute, cronAuthorized, retentionCutoff } from "@/lib/voiceHealth";
+import { probeVoiceHealth, probeVoiceTranscribe, mergeHealth, isCleanupMinute, cronAuthorized, retentionCutoff } from "@/lib/voiceHealth";
+import { voiceProbeClip, VOICE_PROBE_PLATE } from "@/lib/voiceProbeClip";
 
 export const dynamic = "force-dynamic";
 /**
@@ -21,6 +24,8 @@ export const dynamic = "force-dynamic";
  */
 export const fetchCache = "force-no-store";
 export const revalidate = 0;
+/** الفحصين ورا بعض (٥ث + ١٠ث بالكتير) — Vercel Pro. */
+export const maxDuration = 30;
 
 const MIN_GAP_MS = 45_000;
 
@@ -40,7 +45,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ skipped: "too_soon" });
   }
 
-  const row = await probeVoiceHealth({ url: TRIAL_MODEL_BASE + "/health" });
+  const health = await probeVoiceHealth({ url: TRIAL_MODEL_BASE + "/health", timeoutMs: 5000 });
+  // 🎙️ التفريغ الحقيقي — بس لو السيرفر صاحي. التوكن = نفس توكن المناديب (app_settings بصلاحية
+  //   الخدمة)، عمره ما يتكتب في الرد ولا في الصف.
+  let deep = null;
+  if (health.ok) {
+    const { data: s } = await supabaseAdmin.from("app_settings").select("trial_token").eq("id", true).maybeSingle();
+    deep = await probeVoiceTranscribe({
+      url: TRIAL_MODEL_BASE + "/transcribe",
+      token: String((s as { trial_token?: string } | null)?.trial_token ?? "").trim(),
+      clip: voiceProbeClip(),
+      expectPlate: VOICE_PROBE_PLATE,
+      timeoutMs: 10000,
+    });
+  }
+  const row = mergeHealth(health, deep, VOICE_PROBE_PLATE);
   const { error } = await supabaseAdmin.from("voice_health").insert(row);
 
   if (isCleanupMinute(new Date())) {
@@ -50,7 +69,7 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json(
-    { ok: row.ok, ms: row.ms, error: row.error, saved: !error },
+    { ok: row.ok, ms: row.ms, error: row.error, deep_ms: deep?.ms ?? null, plate: deep?.plate ?? null, saved: !error },
     { headers: { "Cache-Control": "no-store, max-age=0" } },
   );
 }
