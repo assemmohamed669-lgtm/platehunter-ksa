@@ -39,6 +39,37 @@ export function maxDate(a: string | null | undefined, b: string | null | undefin
   return a >= b ? a : b;   // مقارنة نصية آمنة لصيغة YYYY-MM-DD
 }
 
+/** النهارده «YYYY-MM-DD» بتوقيت الجهاز (زي `subStatus`). */
+export function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * كام يوم هيتمدد الاشتراك لو التاريخ ده اتحفظ — بيظهر للأدمن **قبل** ما يدوس حفظ (المالك،
+ * ٤ أكتوبر ٢٠٢٦: «يظهرلي تلقائي عدد الايام اللي هتتمدد قدامي قبل ما ادوس حفظ»).
+ * الأساس = نهاية الاشتراك الحالية لو لسه شغّال، وإلا النهارده (المنتهي بيتمدد من النهارده).
+ * `null` = التاريخ فاضي/بايظ.
+ */
+export function extensionDays(
+  currentEnd: string | null | undefined,
+  newEnd: string,
+  today: string = todayYmd(),
+): { days: number; fromToday: boolean } | null {
+  const ms = (ymd: string) => Date.parse(ymd + "T00:00:00Z");
+  if (!newEnd || !Number.isFinite(ms(newEnd))) return null;
+  const fromToday = !currentEnd || !Number.isFinite(ms(currentEnd)) || currentEnd < today;
+  return { days: Math.round((ms(newEnd) - ms(fromToday ? today : currentEnd!)) / 86_400_000), fromToday };
+}
+
+/** «هيتمدد ٣١ يوم» · «هيتمدد ١٠ أيام (من النهارده)» · «هيقلّ ٩ أيام». */
+export function extensionLabel(x: { days: number; fromToday: boolean }): string {
+  const n = Math.abs(x.days);
+  const amount = n === 1 ? "يوم" : n === 2 ? "يومين" : n >= 3 && n <= 10 ? `${n} أيام` : `${n} يوم`;
+  if (x.days === 0) return "نفس التاريخ — مفيش أيام زيادة";
+  return `${x.days > 0 ? "هيتمدد" : "هيقلّ"} ${amount}${x.fromToday ? " (من النهارده)" : ""}`;
+}
+
 export function subStatus(end: string | null | undefined, graceDays = GRACE_DAYS): SubInfo {
   if (!end) return { status: "none", daysLeft: 0, label: "بدون اشتراك", color: "#9ca3af" };
   const endMs = new Date(end + "T00:00:00").getTime();

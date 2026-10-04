@@ -57,6 +57,7 @@ const PLAIN: Record<string, string> = {
   updateContact: "تعديل بيانات التواصل (اسم/تليفون)",
   resetDevice: "تصفير الجهاز المربوط (يقدر يدخل من موبايل جديد)",
   setKeys: "تعديل مفاتيح الصوت للمندوب",
+  setAdminNote: "تعديل ملاحظة الأدمن على المندوب",
   delete: "حذف الحساب",
   setVoicexEnabled: "تغيير صوت VoiceX للمندوب",
   setRestPages: "تغيير صفحات البرنامج للمندوب",

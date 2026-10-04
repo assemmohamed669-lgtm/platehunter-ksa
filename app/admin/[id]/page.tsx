@@ -6,11 +6,11 @@ import { useRouter, useParams } from "next/navigation";
 import {
   ChevronLeft, KeyRound, Smartphone, ShieldOff, ShieldCheck, Trash2,
   MessageCircle, CalendarClock, Save, Clock, Mail, Phone, AlertCircle, Gem,
-  Eye, EyeOff, Pencil, UserRound, UserPlus, Users, X, Mic, LayoutGrid, Lock, AlertTriangle,
+  Eye, EyeOff, Pencil, UserRound, UserPlus, X, Mic, LayoutGrid, Lock, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
-import { subStatus } from "@/lib/subscription";
+import { subStatus, extensionDays, extensionLabel } from "@/lib/subscription";
 import AgentVoiceKeys from "@/components/AgentVoiceKeys";
 import { normalizeServiceKeys, type ServiceKeys } from "@/lib/voiceKeys";
 
@@ -64,7 +64,6 @@ export default function AgentDetail() {
   const [busy, setBusy] = useState(false);
   const [end, setEnd] = useState("");
   const [amount, setAmount] = useState("");
-  const [teamVal, setTeamVal] = useState("");   // مجموعة المندوب
   const [voiceEnd, setVoiceEnd] = useState("");   // اشتراك الصوت حتى
   const [restEnd, setRestEnd] = useState("");      // اشتراك باقي البرنامج حتى
   const [newPass, setNewPass] = useState("");
@@ -94,7 +93,6 @@ export default function AgentDetail() {
       setP(prof); setEnd(prof.subscription_end ?? ""); setPhone(prof.phone ?? ""); setName(prof.username ?? ""); setEmail(prof.email ?? "");
       setVoiceEnd(prof.voicex_until ?? ""); setRestEnd(prof.rest_until ?? "");
       setAmount(prof.subscription_amount != null ? String(prof.subscription_amount) : "");
-      setTeamVal(prof.team ?? "");
       setNoticeDraft((d) => (noticeLoadedRef.current ? d : (prof.agent_notice ?? "")));
       noticeLoadedRef.current = true;
     }
@@ -158,13 +156,6 @@ export default function AgentDetail() {
     if (await call("grantWheelSpin")) {
       setMsg(`✅ اتفعّلت عجلة الحظ لـ${p?.username ?? "المندوب"} — هتظهرله أول ما يفتح البرنامج.`);
       load();
-    }
-  }
-
-  // حفظ مجموعة المندوب — اللي نفس المجموعة بيوصلهم لقطات بعض لحظيًا.
-  async function saveTeam() {
-    if (await call("setTeam", { team: teamVal })) {
-      setMsg(teamVal.trim() ? `✅ ${p?.username ?? "المندوب"} في مجموعة «${teamVal.trim()}».` : "✅ اتشال من المجموعة."); load();
     }
   }
 
@@ -381,10 +372,6 @@ export default function AgentDetail() {
             <AlertTriangle size={15} className="text-danger" />
             <h3 className="text-sm font-bold text-ink">رسالة خاصة للمندوب</h3>
           </div>
-          <p className="mb-2 text-[11px] leading-relaxed text-muted">
-            بتظهر عنده <b className="text-danger">هو لوحده</b> بالأحمر في كل صفحات البرنامج،
-            وتفضل لحد ما تشيلها من هنا.
-          </p>
           <textarea
             value={noticeDraft}
             onChange={(e) => setNoticeDraft(e.target.value)}
@@ -486,22 +473,6 @@ export default function AgentDetail() {
           );
         })()}
 
-        {/* المجموعة — اللي نفس المجموعة بيوصلهم لقطات بعض لحظيًا */}
-        {isAgent && (
-          <div className="rounded-2xl border border-border bg-surface p-4">
-            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink"><Users size={16} className="text-primary" /> المجموعة</div>
-            <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
-              المناديب اللي في نفس المجموعة، لما واحد يلاقي سيارة مطلوبة، الباقي يوصلهم إشعار لحظي باللوحة وبياناتها وموقعها. سيبها فاضية = بلا مجموعة.
-            </p>
-            <div className="flex items-center gap-1.5">
-              <input value={teamVal} onChange={(e) => setTeamVal(e.target.value)} placeholder="اسم/رقم المجموعة (مثلاً: فريق ١)" dir="rtl"
-                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
-              <button onClick={saveTeam} disabled={busy}
-                className="shrink-0 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-night disabled:opacity-50">حفظ</button>
-            </div>
-          </div>
-        )}
-
         {/* Subscription */}
         {isAgent && (
           <div className="rounded-2xl border border-border bg-surface p-4">
@@ -516,6 +487,15 @@ export default function AgentDetail() {
               <button onClick={() => setEnd(addMonthsTo(end || null, 1))}
                 className="flex-1 rounded-lg border border-border py-1.5 text-xs text-muted hover:text-primary hover:border-primary transition">+ شهر</button>
             </div>
+            {/* كام يوم هيتمدد — قبل الحفظ (المالك ٤ أكتوبر) */}
+            {(() => {
+              const x = end && end !== (p.subscription_end ?? "") ? extensionDays(p.subscription_end, end) : null;
+              return x && (
+                <p className={`mb-2 rounded-lg px-2.5 py-1.5 text-xs font-bold ${x.days > 0 ? "bg-brand/10 text-brand" : x.days < 0 ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"}`}>
+                  {extensionLabel(x)}
+                </p>
+              );
+            })()}
             <label className="mb-2 flex items-center justify-between gap-2 text-xs text-muted">
               مبلغ الاشتراك (اختياري):
               <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="numeric" placeholder="0"
@@ -532,11 +512,7 @@ export default function AgentDetail() {
         {/* اشتراك كل خدمة على حدة — الصوت / باقي البرنامج */}
         {isAgent && (
           <div className="rounded-2xl border border-border bg-surface p-4">
-            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink"><CalendarClock size={16} className="text-primary" /> اشتراك كل خدمة على حدة</div>
-            <p className="mb-3 text-[11px] leading-relaxed text-muted">
-              كل خدمة أيامها لوحدها — لما تخلص تتقفل الخدمة دي بس تلقائيًا (مع زر الفتح/القفل اليدوي فوق).
-              تاريخ الحساب العام بيبقى = الأبعد فيهم.
-            </p>
+            <div className="mb-2.5 flex items-center gap-1.5 text-sm font-bold text-ink"><CalendarClock size={16} className="text-primary" /> اشتراك كل خدمة على حدة</div>
             {([
               { label: "الصوت (VoiceX)", icon: <Mic size={14} />, until: p.voicex_until, value: voiceEnd, setValue: setVoiceEnd, save: saveVoiceSub },
               { label: "باقي البرنامج", icon: <LayoutGrid size={14} />, until: p.rest_until, value: restEnd, setValue: setRestEnd, save: saveRestSub },
@@ -558,6 +534,15 @@ export default function AgentDetail() {
                     <button onClick={svc.save} disabled={busy}
                       className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-night disabled:opacity-50">حفظ</button>
                   </div>
+                  {/* كام يوم هتتمدد الخدمة دي — قبل الحفظ */}
+                  {(() => {
+                    const x = svc.value && svc.value !== (svc.until ?? "") ? extensionDays(svc.until, svc.value) : null;
+                    return x && (
+                      <p className={`mt-1.5 text-[11px] font-bold ${x.days > 0 ? "text-brand" : x.days < 0 ? "text-danger" : "text-muted"}`}>
+                        {extensionLabel(x)}
+                      </p>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -578,10 +563,6 @@ export default function AgentDetail() {
                 </span>
               )}
             </div>
-            <p className="text-[11px] leading-relaxed text-muted">
-              بعد ما تمدّد اشتراكه، دوس هنا فتظهرله العجلة <b>مرة واحدة</b> ويكسب من يوم لـ٤ أيام
-              تتضاف لاشتراكه. الضغط تاني على نفس التجديد مش هيديله لفّة زيادة.
-            </p>
             <button
               onClick={grantWheel}
               disabled={busy || !!p.wheel_spin_at}

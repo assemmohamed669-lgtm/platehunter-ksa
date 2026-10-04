@@ -10,13 +10,16 @@
  *    في الخلفية — فترات بتاريخ الرفع **مع بعض** (`countAll`) — وتبدّل الأرقام لما العدّ
  *    **يخلص كله**. مافيش رقم نص-نص: يا عدّ كامل جديد يا اللي قبله بتاريخه.
  *  · كل PDF على درايف بيتعدّ، والشركة = **الحساب اللي رفع** (اسمه وإيميله).
+ *  · «شهادات السحب — فحص الاتصال بدرايف» اتنقل هنا من الصفحة الرئيسية (المالك ٤ أكتوبر:
+ *    «زر شهادات السحب فحص الاتصال ب درايف خليه جوة صفحه احصائيات الشهايد»).
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, RefreshCw, FileText, Loader2 } from "lucide-react";
+import { ChevronLeft, RefreshCw, FileText, Loader2, HardDriveDownload } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { countAll, statsFromCounts, type CertStatsCache, type CountTask, type StepResult } from "@/lib/certStats";
+import { driveHealthMessage, type HealthMessage } from "@/lib/driveHealth";
 
 const CACHE_KEY = "ph:certStatsCache:v2";
 /** خطوات في نفس الوقت. */
@@ -52,6 +55,27 @@ export default function CertStatsPage() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const running = useRef(false);
+  // فحص اتصال درايف (الشهادات) — عشان نعرف إن الصلاحية ماتت قبل شكوى مندوب.
+  const [driveBusy, setDriveBusy] = useState(false);
+  const [driveMsg, setDriveMsg] = useState<HealthMessage | null>(null);
+
+  /** فحص اتصال درايف — بينادي راوت الأدمن ويترجم الرد لرسالة مفهومة. */
+  async function runDriveHealth() {
+    setDriveBusy(true);
+    setDriveMsg(null);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/drive-health", {
+        headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+      });
+      const j = await res.json().catch(() => ({}));
+      setDriveMsg(driveHealthMessage({ ok: !!j?.ok, files: j?.files, error: j?.error }));
+    } catch {
+      setDriveMsg(driveHealthMessage({ ok: false, error: "network" }));
+    } finally {
+      setDriveBusy(false);
+    }
+  }
 
   /** خطوة = صفحة من درايف لفترة — بتتعاد لوحدها (٤ مرات) لو النت/درايف فشل. */
   const stepApi = useCallback(async (t: CountTask, cut: boolean): Promise<StepResult> => {
@@ -134,6 +158,31 @@ export default function CertStatsPage() {
             className="flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-xs font-bold text-primary hover:bg-primary/20 transition disabled:opacity-50">
             <RefreshCw size={14} /> تحديث
           </button>
+        </div>
+
+        {/* ── شهادات السحب — فحص الاتصال بدرايف ───────────────────────
+            الصلاحية ماتت مرة وفضل التطبيق يقول «مفيش شهادة» أسبوعين والمالك
+            عرف من شكوى مندوب. الزرار ده بيقول الحالة في ثانية. */}
+        <div className="rounded-xl border border-border bg-surface-2/40 p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink">
+            <HardDriveDownload size={15} /> شهادات السحب — فحص الاتصال بدرايف
+          </div>
+          <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
+            لو الصلاحية انتهت، المندوب بيشوف «مفيش شهادة» من غير ما حد يعرف. اضغط تتأكد.
+          </p>
+          <button onClick={() => void runDriveHealth()} disabled={driveBusy}
+            className="w-full rounded-lg border border-primary/40 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
+            {driveBusy ? "بيفحص…" : "افحص الاتصال"}
+          </button>
+          {driveMsg && (
+            <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold leading-relaxed ${
+              driveMsg.level === "ok" ? "bg-emerald-600/10 text-emerald-600"
+                : driveMsg.level === "warn" ? "bg-alert/10 text-alert"
+                : "bg-danger/10 text-danger"
+            }`}>
+              {driveMsg.text}
+            </p>
+          )}
         </div>
 
         {busy && (
