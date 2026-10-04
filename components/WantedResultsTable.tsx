@@ -13,6 +13,8 @@ import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm, formatDistanceKm } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { orderedLabels, type OrderMode } from "@/lib/columnOrder";
+import CertCell from "@/components/CertCell";
+import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
 
 // أعمدة بيانات المطلوب: label → قيمة الصف. الترتيب الأساسي لو المندوب ماختارش
 // ترتيب. رقم اللوحة (ثابت أول عمود) وموقعها (عمود إجراء آخر) مش هنا.
@@ -94,6 +96,11 @@ export default function WantedResultsTable({
   // أعمدة البيانات المعروضة (حسب الوضع). رقم اللوحة ثابت أول عمود وموقعها عمود
   // إجراء آخر — الاتنين برّه الترتيب.
   const dataCols = useMemo(() => wantedDataCols(rows, colOrder, orderMode), [rows, colOrder, orderMode]);
+  // 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦) — كل لوحات الجدول بتتسأل مرة واحدة في درايف
+  // (`lib/certificateBatch.ts`). السوبر أدمن الأول.
+  const certsOn = useCertsEnabled();
+  const certPlates = useMemo(() => (certsOn ? rows.map((r) => r.plate) : []), [certsOn, rows]);
+  const certOf = useCertStates(certPlates, certsOn);
   const [zoom, setZoom] = useState(3);
   const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -196,6 +203,7 @@ export default function WantedResultsTable({
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
+              {certsOn && <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
               {dataCols.map((label) => <th key={label} className={TH}>{label}</th>)}
               {/* عمود «المسافة» يظهر بس لما «الأقرب» مفعّل */}
               {showDist && <th className={TH}>المسافة</th>}
@@ -228,6 +236,11 @@ export default function WantedResultsTable({
                     </div>
                   </td>
                   <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
+                  {certsOn && (
+                    <td className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
+                      <CertCell state={certOf(r.plate)} onRetry={() => retryCertificate(r.plate)} />
+                    </td>
+                  )}
                   {dataCols.map((label) =>
                     label === "GPS" ? (
                       <td key={label} className="border-l border-border px-3 py-2">

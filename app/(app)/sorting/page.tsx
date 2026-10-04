@@ -60,6 +60,8 @@ import {
 } from "@/lib/teamData";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import ShareSortButton from "@/components/ShareSortButton";
+import CertCell from "@/components/CertCell";
+import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
 import { supabase } from "@/lib/supabaseClient";
 import { isRecordsLinked, recordsTarget, unlinkRecords, RECORDS_LINK_EVENT, type RecordsTarget } from "@/lib/recordsAsData";
 
@@ -1580,6 +1582,22 @@ export default function SortingPage() {
    * شكل النافذة القديمة بالظبط.
    */
   const resultGroups = useMemo(() => groupResultsBySource(displayResults), [displayResults]);
+
+  /**
+   * 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦): لوحات كل الجداول (الداتا · السجلات ·
+   * لصق داتا · لصق سجلات) بتتسأل **مرة واحدة** عن شهادتها في درايف بعد ما النتيجة
+   * تظهر (`lib/certificateBatch.ts`) — الفرز نفسه مابيستناش. السوبر أدمن الأول.
+   */
+  const certsOn = useCertsEnabled();
+  const certPlates = useMemo(() => (certsOn ? [
+    ...displayResults.map((r) => plateForRow(r)),
+    ...(tashyeekResults ?? []).map((r) => String(r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "")),
+    ...pasteResults.map((p) => p.converted),
+    ...pasteRecordResults.map((p) => p.converted),
+  ] : []),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [certsOn, displayResults, tashyeekResults, pasteResults, pasteRecordResults, tashyeekPlateCol, effectiveReferralPlateCol, effectiveDataPlateCol]);
+  const certOf = useCertStates(certPlates, certsOn);
 
   // عمود GPS في شيت التسجيلات — لترتيب «الأقرب» + حساب الوقت.
   const tashyeekGpsCol = useMemo(() => (tashyeekTable ? findGpsColumn(tashyeekTable.headers) : null), [tashyeekTable]);
@@ -3830,6 +3848,7 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                    {certsOn && <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
                     {allResultCols.map((rc) => (
                       <th key={rc.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{rc.label}</th>
                     ))}
@@ -3882,6 +3901,11 @@ export default function SortingPage() {
                             </span>
                           )}
                         </td>
+                        {certsOn && (
+                          <td className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
+                            <CertCell state={certOf(plate)} onRetry={() => retryCertificate(plate)} />
+                          </td>
+                        )}
                         {allResultCols.map((rc) => {
                           const val = cellValue(rc.source === "data" ? r.dataRow : r.referralRow, rc);
                           return (
@@ -4120,6 +4144,7 @@ export default function SortingPage() {
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">☐</th>
                     <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
                     <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                    {certsOn && <th className="border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
                     {orderedTashyeekCols.map((c) => (
                       <th key={c.id} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{c.label}</th>
                     ))}
@@ -4158,6 +4183,11 @@ export default function SortingPage() {
                           </div>
                         </td>
                         <td className="border-l border-border px-3 py-2 font-bold text-ink whitespace-nowrap">{plate}</td>
+                        {certsOn && (
+                          <td className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
+                            <CertCell state={certOf(String(plate))} onRetry={() => retryCertificate(String(plate))} />
+                          </td>
+                        )}
                         {orderedTashyeekCols.map((c) => {
                           // عمود من شيت السجلات → يتقرا من صف السجل؛ من المحفظة →
                           // من صف الإحالة. وبنسيب الاحتياطي على المصدر التاني.
@@ -4476,6 +4506,7 @@ export default function SortingPage() {
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">☐</th>
                       <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">إجراءات</th>
                       <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                      {certsOn && <th className="border-b border-l border-border px-3 py-1.5 text-center font-bold whitespace-nowrap">شهايد</th>}
                       {nearestActive && <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">المسافة</th>}
                       {pasteShownCols.map((col) => (
                         <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
@@ -4530,6 +4561,11 @@ export default function SortingPage() {
                             )}
                           </div>
                         </td>
+                        {certsOn && (
+                          <td className="border-l border-border px-3 py-1.5 text-center whitespace-nowrap">
+                            <CertCell state={certOf(p.converted)} onRetry={() => retryCertificate(p.converted)} />
+                          </td>
+                        )}
                         {nearestActive && (
                           <td className="border-l border-border px-3 py-1.5 font-bold text-primary whitespace-nowrap">
                             {pasteDist != null && pasteDist !== Infinity ? formatDistanceKm(pasteDist) : "—"}
@@ -4610,6 +4646,7 @@ export default function SortingPage() {
                       <tr className="bg-surface-2 text-muted">
                         <th className="border-b border-l border-border px-2 py-1.5 text-center font-bold whitespace-nowrap">إجراءات</th>
                         <th className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
+                        {certsOn && <th className="border-b border-l border-border px-3 py-1.5 text-center font-bold whitespace-nowrap">شهايد</th>}
                         {pasteRecordShownCols.map((col) => (
                           <th key={col} className="border-b border-l border-border px-3 py-1.5 text-right font-bold whitespace-nowrap">
                             {col}
@@ -4642,6 +4679,11 @@ export default function SortingPage() {
                               )}
                             </div>
                           </td>
+                          {certsOn && (
+                            <td className="border-l border-border px-3 py-1.5 text-center whitespace-nowrap">
+                              <CertCell state={certOf(p.converted)} onRetry={() => retryCertificate(p.converted)} />
+                            </td>
+                          )}
                           {pasteRecordShownCols.map((col) => {
                             const v = String(p.row[col] ?? "");
                             const link = gpsCellToLink(v); // ينظّف روابط الاتجاهات/&amp; ويحوّل الإحداثيات

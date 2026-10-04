@@ -22,6 +22,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
   CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown, Lock} from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
+import CertCell from "@/components/CertCell";
+import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
 import { detectArabicPlateColumn,
   buildReferralIndex,
   matchChunkAgainstIndex,
@@ -357,6 +359,16 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [colOrder, setColOrder] = useState<string[]>([]);
   const [rowCopied, setRowCopied] = useState<number | null>(null);
 
+  // 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦) — لوحات النتيجتين بتتسأل مرة واحدة في درايف
+  // بعد ما تظهر (`lib/certificateBatch.ts`). السوبر أدمن الأول.
+  const certsOn = useCertsEnabled();
+  const certPlates = useMemo(
+    () => (certsOn ? [...results, ...pasteResults].map((m) => plateOf(m)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [certsOn, results, pasteResults],
+  );
+  const certOf = useCertStates(certPlates, certsOn);
+
   // موقع المندوب — بيتشغّل بس لما يطلب «الأقرب أولاً» (مايستهلكش بطارية بلا داعي).
   useEffect(() => {
     if (!nearest) return;
@@ -560,6 +572,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                   </th>
                   <th className="whitespace-nowrap border-b border-l border-border px-2 py-2 text-center font-bold">إجراءات</th>
                   <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">رقم اللوحة</th>
+                  {certsOn && <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-center font-bold">شهايد</th>}
                   {nearest && <th className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">المسافة</th>}
                   {cols.map((c) => (
                     <th key={c} className="whitespace-nowrap border-b border-l border-border px-3 py-2 text-right font-bold">{c}</th>
@@ -607,6 +620,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                           )}
                         </span>
                       </td>
+                      {certsOn && (
+                        <td className="whitespace-nowrap border-l border-border px-3 py-2 text-center">
+                          <CertCell state={certOf(plateOf(m))} onRetry={() => retryCertificate(plateOf(m))} />
+                        </td>
+                      )}
                       {nearest && (
                         <td className="whitespace-nowrap border-l border-border px-3 py-2 font-bold text-primary">
                           {d != null && Number.isFinite(d) ? formatDistanceKm(d) : "—"}
