@@ -51,9 +51,10 @@ describe("🔴 التوصيل", () => {
     expect(c).toMatch(/\/api\/certificate\/daily/);
     expect(c).toMatch(/النهارده نزل \{n\(daily\.total\)\} شهادة جديدة — هيتم الفرز عليها/);
     expect(c).toMatch(/text-green/);
-    expect(c).toMatch(/افرز على شهايد النهارده/);
-    expect(c).toMatch(/windowBlock\("شهايد النهارده في الداتا", "dataRows", locate\)/);
-    expect(c).toMatch(/windowBlock\("شهايد النهارده في السجلات", "recordRows"\)/);
+    expect(c).toMatch(/`افرز على شهايد \$\{label\}`/);
+    expect(c).toMatch(/windowBlock\(`شهايد \$\{resultName\} في الداتا`, "dataRows", locate\)/);
+    expect(c).toMatch(/windowBlock\(`شهايد \$\{resultName\} في السجلات`, "recordRows"\)/);
+    expect(c).toMatch(/\/api\/certificate\/daily\?offset=\$\{offset\}/);
     expect(c).toMatch(/mode="certs" certCols=\{cols\}/);
     expect(c).toMatch(/getChassisRecords\(\)/);
     expect(c).toMatch(/combinedCheckPlates\(checkSources\)/);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within, act } from "@testing-library/react";
 
 /**
  * 📄 مربع «شهايد النهارده» شغّال فعلاً — المالك (٥ أكتوبر ٢٠٢٦) مالوش حساب «صوت فقط» يجرّب بيه:
@@ -61,17 +61,29 @@ const entries = [
     bank: "البنك الأهلي", make: "لكزس", model: "LX570", year: "2019", color: "اسود", status: "متعثر", certDate: "05/10/2026" },
 ];
 
+// السيرفر: النهارده ٦ أكتوبر — كل يوم (offset) بعدده وشهايده
+const yesterdayCert = { ...entries[0], fileId: "F3cccccccccc", name: "1111.pdf", plate: "ابح1111", plateText: "ا ب ح 1111", vin: "" };
+let days: Record<number, { total: number; parsed: number; entries: typeof entries }> = {};
+const fetchMock = vi.fn(async (url: string) => {
+  const u = new URL(String(url), "https://x.test");
+  const off = Number(u.searchParams.get("offset") ?? "0");
+  const day = ["2026-10-06", "2026-10-05", "2026-10-04", "2026-10-03", "2026-10-02", "2026-10-01", "2026-09-30", "2026-09-29"][off];
+  const d = days[off] ?? { total: 0, parsed: 0, entries: [] };
+  const body = u.searchParams.get("count") === "1"
+    ? { day, today: "2026-10-06", offset: off, total: d.total, parsed: d.parsed }
+    : { day, today: "2026-10-06", offset: off, total: d.total, parsed: d.parsed, entries: d.entries };
+  return { ok: true, json: async () => body } as Response;
+});
+
 beforeEach(() => {
   for (const k of Object.keys(files)) delete files[k];
   for (const k of Object.keys(stream)) delete stream[k];
   files[TEAM] = { headers: ["رقم اللوحة", "النوع", "العنوان"], rows: teamRows, uploadedAt: "2026-10-05T00:00:00Z" };
   localStorage.clear();
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
-    ok: true,
-    json: async () => (String(url).includes("count=1") ? { day: "2026-10-05", total: 2, parsed: 2 } : { day: "2026-10-05", total: 2, parsed: 2, entries }),
-  }) as Response));
+  days = { 0: { total: 2, parsed: 2, entries }, 1: { total: 1, parsed: 1, entries: [yesterdayCert] } };
+  vi.stubGlobal("fetch", fetchMock);
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); fetchMock.mockClear(); });
 
 const headersOf = (table: HTMLElement) => [...table.querySelectorAll("thead th")].map((th) => th.textContent?.trim());
 
@@ -146,3 +158,58 @@ describe("🔴 صفحة المطلوب — الداتا الإضافية الك�
     expect(await screen.findByText(/موقع:/)).toBeTruthy();
   });
 });
+
+/**
+ * المالك (٦ أكتوبر ٢٠٢٦): «يختار مثلا اليوم اللي نزل فيه شهايد ... ف يظهرلو كم شهاد نزلت اليوم دة ويقدر
+ * يفرز عليهم» و«شهايد اليوم الحالي ... عايزها تتحدث تلقائي لانها ممكن تنزل اي وقت من اليوم».
+ */
+describe("🔴 أي يوم لحد أسبوع ورا + النهارده بيتحدّث لوحده", () => {
+  it("🔴 يختار «امبارح» ⇒ عدد امبارح ⇒ يفرز عليه ⇒ نتيجة امبارح", async () => {
+    render(<DailyCertSort variant="team" />);
+    expect(await screen.findByText(/النهارده نزل 2 شهادة جديدة/)).toBeTruthy();
+    expect(screen.getAllByRole("button").filter((b) => /^(النهارده|امبارح|أول امبارح|قبل \d أيام)/.test(b.textContent ?? ""))).toHaveLength(8);
+
+    fireEvent.click(screen.getByRole("button", { name: /^امبارح/ }));
+    expect(await screen.findByText("امبارح (الإثنين 5/10) نزل 1 شهادة — هيتم الفرز عليها")).toBeTruthy();
+    fireEvent.click(screen.getByText("افرز على شهايد امبارح"));
+    const box = (await screen.findByText("شهايد امبارح في الداتا")).closest("div.rounded-2xl") as HTMLElement;
+    const rows = within(box).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("شارع ١");
+    expect(fetchMock.mock.calls.some(([u]) => /offset=1(?!&count)/.test(String(u)) && !String(u).includes("count=1"))).toBe(true);
+
+    // الرجوع للنهارده: نتيجة امبارح مابتختلطش بيه
+    fireEvent.click(screen.getByRole("button", { name: /^النهارده/ }));
+    expect(await screen.findByText(/النهارده نزل 2 شهادة جديدة/)).toBeTruthy();
+    expect(screen.queryByText("شهايد امبارح في الداتا")).toBeNull();
+  });
+
+  it("🔴 النهارده: شهايد جديدة اتقرت ⇒ النتيجة بتتعاد لوحدها · واللي المندوب مسحه مايرجعش", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // الصفحة قدام المندوب (جيسدوم بيعتبرها مستخبية)
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    files[TEAM].rows = [...teamRows, { "رقم اللوحة": "ل م ن 4444", "النوع": "دباب", "العنوان": "شارع ٤" }];
+    days[0].entries = [...entries, { ...entries[0], fileId: "F4dddddddddd", plate: "لمن4444", plateText: "ل م ن 4444", vin: "", name: "4444.pdf" }];
+    days[0].total = 3; days[0].parsed = 3;
+    render(<DailyCertSort variant="team" />);
+    fireEvent.click(await screen.findByText("افرز على شهايد النهارده"));
+    const box = (await screen.findByText("شهايد النهارده في الداتا")).closest("div.rounded-2xl") as HTMLElement;
+    expect(within(box).getAllByRole("row").slice(1)).toHaveLength(2);
+    expect(screen.getByText(/بيتحدّث لوحده لما تنزل شهايد جديدة/)).toBeTruthy();
+
+    // المندوب مسح عربية «ل م ن 4444»
+    const del = within(box).getAllByRole("row").slice(1).find((r) => r.textContent?.includes("دباب"))!;
+    fireEvent.click(within(del).getByTitle("حذف"));
+    expect(within(box).getAllByRole("row").slice(1)).toHaveLength(1);
+
+    // نزلت شهادة جديدة واتقرت (د ه و 2222 في داتا المجموعة)
+    days[0] = { total: 4, parsed: 4, entries: [...days[0].entries, { ...entries[0], fileId: "F5eeeeeeeeee", plate: "دهو2222", plateText: "د ه و 2222", vin: "", name: "2222.pdf" }] };
+    await act(async () => { await vi.advanceTimersByTimeAsync(130_000); });
+    await vi.waitFor(() => expect(within(box).getAllByRole("row").slice(1)).toHaveLength(2));
+    const texts = within(box).getAllByRole("row").slice(1).map((r) => r.textContent ?? "");
+    expect(texts.some((t) => t.includes("فان"))).toBe(true);      // الجديدة
+    expect(texts.some((t) => t.includes("دباب"))).toBe(false);    // اللي اتمسحت مارجعتش
+    expect(screen.getByText(/واتضاف 1 عربية/)).toBeTruthy();
+  });
+});
+

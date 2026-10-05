@@ -31,9 +31,11 @@ export async function GET(req: Request) {
   try {
     const out = await certDailyTick({
       now: () => new Date(),
-      listSince: async (sinceIso, pageToken) => {
-        // التاريخ محسوب هنا (أول النهارده بالثانية) — مافيش أي مدخل من بره
-        const r = await driveListPage(`mimeType='application/pdf' and trashed=false and createdTime >= '${sinceIso}'`, token, {
+      listRange: async (fromIso, toIso, pageToken) => {
+        // التواريخ محسوبة في الدورة (أول اليوم بالثانية) — مافيش أي مدخل من بره
+        const q = `mimeType='application/pdf' and trashed=false and createdTime >= '${fromIso}'`
+          + (toIso ? ` and createdTime < '${toIso}'` : "");
+        const r = await driveListPage(q, token, {
           fields: FIELDS, orderBy: "createdTime", pageToken, timeoutMs: 20_000,
         });
         if (!r.ok) throw new Error("drive_failed");
@@ -61,7 +63,7 @@ export async function GET(req: Request) {
       saveParsed: saveParsedCert,
       cleanup: cleanupCerts,
       budgetMs: 40_000,
-      concurrency: 6,
+      concurrency: 8,
     });
     return NextResponse.json(out, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (e) {

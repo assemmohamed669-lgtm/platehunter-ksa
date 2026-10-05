@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { riyadhDayStart, dayMinus, dedupeDailyCerts, type DailyCertEntry } from "@/lib/certDaily";
+import { riyadhDayStart, riyadhDayStartIso, dayMinus, dedupeDailyCerts, certDayLabel, certDayDate, CERT_DAYS_BACK, type DailyCertEntry } from "@/lib/certDaily";
+import { readFileSync } from "node:fs";
 import { certDailyTick, MAX_TRIES, type CertDailyDeps, type PendingCert, type CertDailyRow } from "@/lib/certDailyJob";
 import type { CertFields } from "@/lib/certParse";
 import type { StatFile } from "@/lib/certStats";
@@ -13,6 +14,22 @@ describe("النهارده بتوقيت السعودية", () => {
     expect(riyadhDayStart(new Date("2026-10-05T20:59:59Z"))).toEqual({ day: "2026-10-05", startIso: "2026-10-04T21:00:00.000Z" });
     expect(riyadhDayStart(new Date("2026-10-05T21:00:00Z"))).toEqual({ day: "2026-10-06", startIso: "2026-10-05T21:00:00.000Z" });
     expect(dayMinus("2026-10-05", 7)).toBe("2026-09-28");
+    expect(riyadhDayStartIso("2026-10-03")).toBe("2026-10-02T21:00:00.000Z");
+  });
+});
+
+/**
+ * المالك (٦ أكتوبر ٢٠٢٦): «عايز يبقي فيه خيار افرز علي شهايد من امبارح من اول امبارح من يومين لمدة
+ * اسبوع يعني المندوب يختار مثلا اليوم اللي نزل فيه شهايد مثلا قبل اسبوع».
+ */
+describe("🔴 أسبوع ورا", () => {
+  it("🔴 النهارده + ٧ أيام قبله", () => {
+    expect(CERT_DAYS_BACK).toBe(7);
+    expect([0, 1, 2, 3, 7].map(certDayLabel)).toEqual(["النهارده", "امبارح", "أول امبارح", "قبل 3 أيام", "قبل 7 أيام"]);
+  });
+  it("تاريخ اليوم باسمه", () => {
+    expect(certDayDate("2026-10-05")).toBe("الإثنين 5/10");
+    expect(certDayDate("2026-10-03")).toBe("السبت 3/10");
   });
 });
 
@@ -46,7 +63,8 @@ function fakes(over: Partial<CertDailyDeps> = {}) {
   }));
   const d: CertDailyDeps = {
     now: () => new Date("2026-10-05T09:00:00Z"),
-    listSince: vi.fn(async (since: string, token?: string) => (token ? { files: files.slice(2), next: null } : { files: files.slice(0, 2), next: "T2" })),
+    listRange: vi.fn(async (_from: string, to: string | null, token?: string) =>
+      (to ? { files: [], next: null } : token ? { files: files.slice(2), next: null } : { files: files.slice(0, 2), next: "T2" })),
     insertNew: vi.fn(async (rows: CertDailyRow[]) => { inserted.push(...rows); pendingList = [...pendingList, ...rows.map((r) => ({ file_id: r.file_id, name: r.name, tries: 0 }))]; }),
     pending: vi.fn(async () => pendingList),
     download: vi.fn(async () => new Uint8Array([1, 2, 3])),
@@ -64,8 +82,8 @@ describe("🔴 دورة السيرفر", () => {
   it("🔴 شهايد النهارده (من ١٢ بالليل) بتتضاف — كل الصفحات — باللي رفعها", async () => {
     const { d, inserted } = fakes();
     const r = await certDailyTick(d);
-    expect(d.listSince).toHaveBeenCalledWith("2026-10-04T21:00:00.000Z", undefined);
-    expect(d.listSince).toHaveBeenCalledWith("2026-10-04T21:00:00.000Z", "T2");
+    expect(d.listRange).toHaveBeenCalledWith("2026-10-04T21:00:00.000Z", null, undefined);
+    expect(d.listRange).toHaveBeenCalledWith("2026-10-04T21:00:00.000Z", null, "T2");
     expect(r.listed).toBe(3);
     expect(inserted[0]).toEqual({ file_id: "id0", day: "2026-10-05", created_at: "2026-10-05T00:00:00.000Z", name: "ر ل ي 8370.pdf", uploader: "m@mani.sa" });
   });
@@ -100,5 +118,31 @@ describe("🔴 دورة السيرفر", () => {
     const { d, cleaned } = fakes();
     await certDailyTick(d);
     expect(cleaned).toEqual(["2026-09-28"]);
+  });
+
+  it("🔴 كل دقيقة بيلمّ يوم من الأسبوع اللي فات بالدور — بتاريخ اليوم ده", async () => {
+    // ٩ الصبح جرينتش = الدقيقة رقم 29853180 من ١٩٧٠ ⇒ ٪ ٧ = 0 ⇒ امبارح (والدقيقة الجاية أول امبارح…)
+    const old: StatFile = { id: "old1", name: "ا ب ح 1111.pdf", createdTime: "2026-10-04T08:00:00.000Z", owners: [] };
+    const { d, inserted } = fakes({
+      listRange: vi.fn(async (_from: string, to: string | null) => (to ? { files: [old], next: null } : { files: [], next: null })),
+    });
+    const r = await certDailyTick(d);
+    expect(d.listRange).toHaveBeenCalledWith("2026-10-03T21:00:00.000Z", "2026-10-04T21:00:00.000Z", undefined);
+    expect(inserted).toEqual([{ file_id: "old1", day: "2026-10-04", created_at: old.createdTime, name: old.name, uploader: "" }]);
+    expect(r.older).toEqual({ day: "2026-10-04", listed: 1 });
+    // بعد ٣ دقايق ⇒ قبل ٤ أيام
+    const later = fakes({ now: () => new Date("2026-10-05T09:03:00Z") });
+    await certDailyTick(later.d);
+    expect(later.d.listRange).toHaveBeenCalledWith("2026-09-30T21:00:00.000Z", "2026-10-01T21:00:00.000Z", undefined);
+  });
+
+  it("🔴 اللي لسه ماتقراش من الأسبوع كله — النهارده الأول", async () => {
+    const { d } = fakes();
+    await certDailyTick(d);
+    expect(d.pending).toHaveBeenCalledWith("2026-09-28", 100);
+    const store = readFileSync("lib/certDailyStore.ts", "utf8");
+    const fn = store.slice(store.indexOf("export async function pendingCerts"), store.indexOf("export async function saveParsedCert"));
+    expect(fn).toMatch(/\.gte\("day", fromDay\)/);
+    expect(fn).toMatch(/\.order\("day", \{ ascending: false \}\)/);
   });
 });

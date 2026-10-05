@@ -13,11 +13,12 @@ export async function insertNewCerts(rows: CertDailyRow[]): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export async function pendingCerts(day: string, limit: number): Promise<PendingCert[]> {
+/** اللي لسه ماتقراش من `fromDay` لحد النهارده — الأحدث يوم الأول، فالنهارده دايماً قبل أي حاجة. */
+export async function pendingCerts(fromDay: string, limit: number): Promise<PendingCert[]> {
   const { data, error } = await supabaseAdmin
     .from("cert_daily").select("file_id, name, tries")
-    .eq("day", day).eq("parsed", false).lt("tries", 3)
-    .order("created_at", { ascending: true }).limit(limit);
+    .gte("day", fromDay).eq("parsed", false).lt("tries", 3)
+    .order("day", { ascending: false }).order("created_at", { ascending: true }).limit(limit);
   if (error) throw new Error(error.message);
   return (data ?? []) as PendingCert[];
 }
