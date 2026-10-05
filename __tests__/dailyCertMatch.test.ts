@@ -59,8 +59,8 @@ describe("🔴 التوصيل", () => {
     expect(c).toMatch(/getChassisRecords\(\)/);
     expect(c).toMatch(/combinedCheckPlates\(checkSources\)/);
   });
-  it("🔴 صفحة المطلوب: نفس المربع — السوبر أدمن الأول · فرز المطلوب العادي زي ما هو", () => {
-    expect(DAILY_CERTS_FOR_ALL).toBe(false);
+  it("🔴 صفحة المطلوب: نفس المربع — مفتوح للكل («انشر للكل» ٦ أكتوبر) · فرز المطلوب العادي زي ما هو", () => {
+    expect(DAILY_CERTS_FOR_ALL).toBe(true);
     const p = read("app/(app)/wanted/page.tsx");
     expect(p).toMatch(/DAILY_CERTS_FOR_ALL \|\| isSuper/);
     expect(p).toMatch(/\{certsAllowed && <DailyCertSort variant="sorting" \/>\}/);

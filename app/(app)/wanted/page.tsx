@@ -116,7 +116,7 @@ export default function WantedPage() {
   const [colPickerOpen, setColPickerOpen] = useState(false);
   useEffect(() => { setColOrder(loadColumnOrder()); setOrderModeState(loadOrderMode()); }, []);
 
-  // 📄 «شهايد النهارده» — السوبر أدمن الأول (`DAILY_CERTS_FOR_ALL`)
+  // 📄 «شهايد النهارده» — للكل من «انشر للكل» (`DAILY_CERTS_FOR_ALL` — false يرجّعها للسوبر أدمن بس)
   const [isSuper, setIsSuper] = useState(false);
   const certsAllowed = DAILY_CERTS_FOR_ALL || isSuper;
   useEffect(() => {
