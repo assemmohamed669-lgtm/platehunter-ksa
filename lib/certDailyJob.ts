@@ -5,11 +5,13 @@
  *  ٢) الشهايد اللي لسه ماتقرتش: بنجيب الملف ونقرا الكلام اللي جوّاه (`lib/pdfText.ts`) ونطلّع
  *     بياناته (`lib/certParse.ts`) — مرة واحدة لكل شهادة. فشل ⇒ بيتعاد لحد ٣ مرات، وبعدها
  *     بنكتفي باللي في اسم الملف.
- *  ٣) اللي أقدم من أسبوع بيتمسح (الفرز على النهارده بس).
+ *  ٣) كل دقيقة بيلمّ كمان يوم من الأسبوع اللي فات بالدور (المندوب بيقدر يفرز على أي يوم فيه —
+ *     المالك ٦ أكتوبر ٢٠٢٦)، والقراية بتبدأ بالنهارده دايماً وبعدين الأحدث فالأقدم.
+ *  ٤) اللي أقدم من أسبوع بيتمسح.
  * الدورة مابتمسحش ولا بتعدّل أي حاجة على درايف — قراية بس.
  */
 import { parseCertText, type CertFields } from "./certParse";
-import { riyadhDayStart, dayMinus } from "./certDaily";
+import { riyadhDayStart, riyadhDayStartIso, dayMinus, CERT_DAYS_BACK } from "./certDaily";
 import { uploaderOf, type StatFile } from "./certStats";
 
 export interface CertDailyRow {
@@ -24,11 +26,12 @@ export interface PendingCert { file_id: string; name: string; tries: number }
 
 export interface CertDailyDeps {
   now(): Date;
-  /** صفحة من شهايد النهارده (بي دي إف، من غير المحذوف، من `sinceIso`). */
-  listSince(sinceIso: string, pageToken?: string): Promise<{ files: StatFile[]; next: string | null }>;
+  /** صفحة من الشهايد (بي دي إف، من غير المحذوف) اللي اترفعت من `fromIso` لحد `toIso` (null = لحد دلوقتي). */
+  listRange(fromIso: string, toIso: string | null, pageToken?: string): Promise<{ files: StatFile[]; next: string | null }>;
   /** بيضيف الجديد بس (الموجود مابيتلمسش). */
   insertNew(rows: CertDailyRow[]): Promise<void>;
-  pending(day: string, limit: number): Promise<PendingCert[]>;
+  /** اللي لسه ماتقراش من `fromDay` لحد النهارده — الأحدث يوم الأول (النهارده قبل أي حاجة). */
+  pending(fromDay: string, limit: number): Promise<PendingCert[]>;
   download(fileId: string): Promise<Uint8Array | null>;
   extractText(bytes: Uint8Array): Promise<string>;
   /** `fields` = null ⇒ فشل (tries بيزيد ومش متقري لسه). */
@@ -40,32 +43,51 @@ export interface CertDailyDeps {
 
 /** بعد كده بنكتفي باللي في اسم الملف. */
 export const MAX_TRIES = 3;
-/** بنحتفظ بأسبوع (عشان لو حاجة حصلت نعرف). */
-export const KEEP_DAYS = 7;
+/** بنحتفظ بالنهارده + أسبوع قبله — اللي المندوب يقدر يفرز عليه. */
+export const KEEP_DAYS = CERT_DAYS_BACK;
+/** أقصى شهايد بتتقري في الدورة الواحدة (الباقي الدورة الجاية). */
+export const PENDING_PER_TICK = 100;
 
-export async function certDailyTick(d: CertDailyDeps): Promise<{ day: string; listed: number; parsed: number; failed: number }> {
+export async function certDailyTick(d: CertDailyDeps): Promise<{
+  day: string; listed: number; older: { day: string; listed: number }; parsed: number; failed: number;
+}> {
   const t0 = Date.now();
   const timeLeft = () => d.budgetMs - (Date.now() - t0);
-  const { day, startIso } = riyadhDayStart(d.now());
+  const now = d.now();
+  const { day, startIso } = riyadhDayStart(now);
 
-  // ١) قايمة النهارده
-  let listed = 0;
-  let token: string | undefined;
-  do {
-    const page = await d.listSince(startIso, token);
-    const rows: CertDailyRow[] = [];
-    for (const f of page.files) {
-      if (!f.id || !f.createdTime) continue;
-      rows.push({ file_id: f.id, day, created_at: f.createdTime, name: f.name ?? "", uploader: uploaderOf(f).key });
-    }
-    if (rows.length) await d.insertNew(rows);
-    listed += rows.length;
-    token = page.next ?? undefined;
-  } while (token && timeLeft() > 5_000);
+  /** شهايد يوم كامل (كل الصفحات) ⇒ الجديد بيتضاف بتاريخ اليوم ده. */
+  const listDay = async (forDay: string, fromIso: string, toIso: string | null): Promise<number> => {
+    let n = 0;
+    let token: string | undefined;
+    do {
+      const page = await d.listRange(fromIso, toIso, token);
+      const rows: CertDailyRow[] = [];
+      for (const f of page.files) {
+        if (!f.id || !f.createdTime) continue;
+        rows.push({ file_id: f.id, day: forDay, created_at: f.createdTime, name: f.name ?? "", uploader: uploaderOf(f).key });
+      }
+      if (rows.length) await d.insertNew(rows);
+      n += rows.length;
+      token = page.next ?? undefined;
+    } while (token && timeLeft() > 5_000);
+    return n;
+  };
 
-  // ٢) قراية اللي لسه ماتقراش
+  // ١) النهارده
+  const listed = await listDay(day, startIso, null);
+
+  // ٢) يوم من الأسبوع اللي فات بالدور (كل ٧ دقايق الأسبوع كله بيتراجع)
+  const back = (Math.floor(now.getTime() / 60_000) % CERT_DAYS_BACK) + 1;
+  const olderDay = dayMinus(day, back);
+  const older = {
+    day: olderDay,
+    listed: timeLeft() > 15_000 ? await listDay(olderDay, riyadhDayStartIso(olderDay), riyadhDayStartIso(dayMinus(olderDay, -1))) : 0,
+  };
+
+  // ٣) قراية اللي لسه ماتقراش — النهارده الأول
   let parsed = 0, failed = 0;
-  const queue = timeLeft() > 5_000 ? await d.pending(day, 60) : [];
+  const queue = timeLeft() > 5_000 ? await d.pending(dayMinus(day, KEEP_DAYS), PENDING_PER_TICK) : [];
   const worker = async () => {
     while (queue.length && timeLeft() > 3_000) {
       const p = queue.shift()!;
@@ -88,7 +110,7 @@ export async function certDailyTick(d: CertDailyDeps): Promise<{ day: string; li
   };
   await Promise.all(Array.from({ length: Math.max(1, d.concurrency) }, worker));
 
-  // ٣) القديم
+  // ٤) القديم
   await d.cleanup(dayMinus(day, KEEP_DAYS)).catch(() => {});
-  return { day, listed, parsed, failed };
+  return { day, listed, older, parsed, failed };
 }

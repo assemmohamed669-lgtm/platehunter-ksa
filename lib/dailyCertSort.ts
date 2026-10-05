@@ -9,6 +9,8 @@
  *  ٣) سجلات الشاص — برقم الشاص اللي في الشهادة.
  * «الحالة»: مطلوبة لو اللوحة **أو** الشاص في أي ملف تشييك، غير كده تثبيت.
  * كل صف داتا معاه مصدره وموضعه والصف نفسه — «موقعها» بتتحقّق إنها على نفس العربية.
+ * معرّف كل صف ثابت من فرز للتاني (الموضع في الملف / رقم السجل) — فاللي المندوب مسحه مايرجعش
+ * لما النتيجة تتحدّث لوحدها.
  */
 import type { WantedRow } from "@/components/WantedResultsTable";
 import type { FieldCheckEntry } from "./idb";
@@ -76,7 +78,6 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
   // (١) الداتا
   const dataRows: WantedRow[] = [];
   const plateCols: (string | null)[] = [];
-  let di = 0;
   // عمود أول ملف احتياطي للباقي (زي فرز المطلوب) — من غيره الملف اللي مالقيناش فيه دليل كان
   // بيتفرز على أول عمود فمايطلّعش حاجة.
   let baseDataCol: string | null = null;
@@ -106,7 +107,7 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
         if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
       }
       const place: PlaceRow = {
-        id: `cd${di++}`, plate: bankPlateToArabic(raw).trim() || norm, norm,
+        id: `d:${si}:${idx}`, plate: bankPlateToArabic(raw).trim() || norm, norm,
         type: val(typeSrc), brand: val(brandSrc), address: val(addrSrc), district: val(distSrc),
         color: val(colorSrc), year: val(yearSrc), date: val(dateSrc), mapsLink, lat: coords?.lat, lng: coords?.lng,
         srcIdx: si, dataIdx: idx, dataRow: row,
@@ -126,7 +127,6 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
 
   // (٢) السجلات اللي اتصدّرت — يدوي/صوتي/صورة
   const recordRows: WantedRow[] = [];
-  let j = 0;
   for (const e of input.fieldEntries) {
     const norm = normalizePlate(bankPlateToArabic(e.plate));
     const asVin = normalizeChassis(e.plate);
@@ -135,7 +135,7 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
     // مكتوب فيه رقم شاص ⇒ اللوحة من الشهادة (بنفس شكل باقي الصفوف)
     const plate = c.plate && norm === c.plate ? bankPlateToArabic(e.plate).trim() || e.plate : certPlate(c) || e.plate;
     const place: PlaceRow = {
-      id: `cr${j++}`, plate, norm: c.plate || asVin,
+      id: `r:${e.id}`, plate, norm: c.plate || asVin,
       type: (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim(),
       address: (e.row?.["الشارع"] || e.row?.["العنوان"] || "").trim(),
       district: (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim(),
@@ -152,7 +152,7 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
     if (!c) continue;
     const mapsLink = rec.mapsLink || (rec.lat != null && rec.lng != null ? toMapsLink(rec.lat, rec.lng) : "");
     const place: PlaceRow = {
-      id: `cc${j++}`, plate: certPlate(c) || rec.chassis, norm: c.plate || vin,
+      id: `c:${rec.id}`, plate: certPlate(c) || rec.chassis, norm: c.plate || vin,
       type: (rec.vehicleType ?? "").trim(), address: (rec.region ?? "").trim(),
       date: input.fmtDate(rec.checkedAt), mapsLink, lat: rec.lat, lng: rec.lng,
     };

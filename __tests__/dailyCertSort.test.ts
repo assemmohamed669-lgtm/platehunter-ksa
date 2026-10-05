@@ -49,6 +49,14 @@ describe("🔴 الداتا اللي على الجهاز بتتقري كلها",
     expect(out.plateCols).toEqual(["رقم اللوحة"]);
   });
 
+  it("🔴 معرّف الصف ثابت بين فرز والتاني (عشان اللي اتمسح مايرجعش مع التحديث التلقائي)", async () => {
+    const src: CertDataSource = { kind: "mem", headers: Object.keys(dataRow("x")), rows: [dataRow("د ه و 1"), dataRow("ر ق ح 8377")] };
+    const one = await runDailyCertSort(input({ sources: [src] }));
+    const two = await runDailyCertSort(input({ sources: [src], certs: [cert({ fileId: "F9", plate: "دهو0001" }), cert({})] }));
+    expect(one.dataRows.map((r) => r.id)).toEqual(["d:0:1"]);
+    expect(two.dataRows.map((r) => r.id)).toEqual(["d:0:0", "d:0:1"]);
+  });
+
   it("🔴 الأساسي + الإضافي مع بعض (ذاكرة وجهاز) — كل واحد بمصدره", async () => {
     const mem: CertDataSource = { kind: "mem", headers: Object.keys(dataRow("x")), rows: [dataRow("د ه و 1"), dataRow("ر ق ح 8377")] };
     const big: CertDataSource = { kind: "stream", slot: "xdata-3", headers: ["اللوحه", "الشارع"], sample: [], plateCol: null };

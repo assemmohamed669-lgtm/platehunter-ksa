@@ -24,6 +24,34 @@ export function dayMinus(day: string, n: number): string {
   return new Date(Date.parse(day + "T00:00:00Z") - n * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** أول لحظة في اليوم ده بتوقيت السعودية (بالـUTC). */
+export function riyadhDayStartIso(day: string): string {
+  return new Date(Date.parse(day + "T00:00:00Z") - RIYADH_OFFSET_MS).toISOString();
+}
+
+/**
+ * المالك (٦ أكتوبر ٢٠٢٦): «عايز يبقي فيه خيار افرز علي شهايد من امبارح من اول امبارح من يومين لمدة
+ * اسبوع» ⇒ النهارده + ٧ أيام قبله. السيرفر بيحتفظ بيهم (وبيمسح اللي أقدم).
+ */
+export const CERT_DAYS_BACK = 7;
+
+/** اسم اليوم بالنسبة للنهارده: «النهارده» / «امبارح» / «أول امبارح» / «قبل N أيام». */
+export function certDayLabel(offset: number): string {
+  if (offset <= 0) return "النهارده";
+  if (offset === 1) return "امبارح";
+  if (offset === 2) return "أول امبارح";
+  return `قبل ${offset} أيام`;
+}
+
+const WEEKDAYS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+
+/** «الإثنين 5/10». */
+export function certDayDate(day: string): string {
+  const d = new Date(day + "T12:00:00Z");
+  if (Number.isNaN(d.getTime())) return "";
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
+}
+
 /** شهادة من شهايد النهارده (اللي الموبايل بياخدها). */
 export interface DailyCertEntry extends Omit<CertFields, "issuer"> {
   fileId: string;
