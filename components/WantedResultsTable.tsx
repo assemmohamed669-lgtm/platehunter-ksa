@@ -7,7 +7,7 @@
  * لكل لوحة + حذف جماعي.
  */
 import { useMemo, useState } from "react";
-import { Copy, Check, Share2, Trash2, MapPin, Navigation, CheckSquare, Square } from "lucide-react";
+import { Copy, Check, Share2, Trash2, MapPin, Navigation, CheckSquare, Square, FileText, Loader2 } from "lucide-react";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm, formatDistanceKm } from "@/lib/gps";
@@ -30,6 +30,36 @@ const WANTED_FIELD_GET: Record<string, (r: WantedRow) => string> = {
   "تاريخ التسجيل": (r) => r.date,
 };
 const WANTED_FIELD_ORDER = ["نوع السيارة", "العنوان", "الحي", "الماركة", "البنك", "GPS", "اللون", "سنة الصنع", "تاريخ التسجيل"];
+
+// 📄 «شهايد النهارده» (المالك ٥ أكتوبر ٢٠٢٦): بيانات الشهادة الأول، وبعدها مكان العربية من الداتا/
+// السجلات، وفي الآخر زرار «شهادة» وعمود «الحالة» (مطلوبة/تثبيت). ترتيب ثابت.
+const CERT_FIELD_GET: Record<string, (r: WantedRow) => string> = {
+  "البنك": (r) => r.bank ?? "",
+  "الشاص": (r) => r.vin ?? "",
+  "الماركة": (r) => r.brand,
+  "سنة الصنع": (r) => r.year,
+  "اللون": (r) => r.color,
+  "حالة العقد": (r) => r.contract ?? "",
+  "تاريخ الشهادة": (r) => r.certDate ?? "",
+  "العنوان": (r) => r.address,
+  "الحي": (r) => r.district ?? "",
+  "GPS": (r) => r.mapsLink,
+  "تاريخ التسجيل": (r) => r.date,
+};
+const CERT_FIELD_ORDER = Object.keys(CERT_FIELD_GET);
+
+/** أعمدة جدول «شهايد النهارده» (اللي فيه بيانات بس). */
+export function certDataCols(rows: WantedRow[]): string[] {
+  return CERT_FIELD_ORDER.filter((l) => rows.some((r) => String(CERT_FIELD_GET[l](r) ?? "").trim()));
+}
+
+/** صف «شهايد النهارده» بالاسم (للتصدير) — والحالة في الآخر. */
+export function certFullRow(r: WantedRow): Record<string, string> {
+  const o: Record<string, string> = { "رقم اللوحة": r.plate };
+  for (const l of CERT_FIELD_ORDER) o[l] = CERT_FIELD_GET[l](r) ?? "";
+  o["الحالة"] = r.wantedStatus ?? "";
+  return o;
+}
 
 /** أعمدة بيانات المطلوب المعروضة: أساسي = كلها زي البرنامج؛ مخصّص = الثابت +
  *  اختيار المندوب. المتاح (اللي فيه بيانات) بس. */
@@ -56,6 +86,12 @@ export interface WantedRow {
   lat?: number;
   lng?: number;
   dataIdx?: number;  // موضع الصف في ملف الداتا المرتّب — لعرض «موقعها» (الجيران)
+  // 📄 «شهايد النهارده» بس:
+  vin?: string;            // الشاص (من الشهادة)
+  contract?: string;       // حالة العقد (متعثر/نشط …)
+  certDate?: string;       // تاريخ الشهادة
+  certFile?: { id: string; name: string };
+  wantedStatus?: "مطلوبة" | "تثبيت";   // في شيت التشييك ولا لأ
 }
 
 // ألوان تمييز اللوحات المكررة — كل مجموعة لون مختلف، تشتغل على الفاتح والغامق.
@@ -65,7 +101,19 @@ const DUP_COLORS = [
   "rgba(20,184,166,0.16)", "rgba(249,115,22,0.17)",
 ];
 
+function certRowText(r: WantedRow): string {
+  const lines = [`🚗 ${r.plate}${r.wantedStatus ? ` — ${r.wantedStatus}` : ""}`];
+  for (const l of CERT_FIELD_ORDER) {
+    if (l === "GPS") continue;
+    const v = CERT_FIELD_GET[l](r);
+    if (v) lines.push(`${l}: ${v}`);
+  }
+  if (r.mapsLink) lines.push(`📍 ${r.mapsLink}`);
+  return lines.join("\n");
+}
+
 function rowText(r: WantedRow): string {
+  if (r.certFile || r.wantedStatus) return certRowText(r);
   const lines = [`🚗 ${r.plate}`];
   // الترتيب: اللوحة › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
   if (r.type) lines.push(`نوع السيارة: ${r.type}`);
@@ -80,25 +128,59 @@ function rowText(r: WantedRow): string {
   return lines.join("\n");
 }
 
+/** «شهادة» بالأزرق لشهادة معروفة (شهايد النهارده) — الدوس بيحمّل الملف ويفتحه زي خانة «شهايد». */
+function CertOpen({ file }: { file: { id: string; name: string } }) {
+  const [busy, setBusy] = useState(false);
+  async function open() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { fetchCertBlob, openCertBlob } = await import("@/lib/certificate");
+      const blob = await fetchCertBlob(file.id);
+      if (blob) await openCertBlob(blob, file.name);
+      else alert("تعذّر تحميل الشهادة.");
+    } catch {
+      alert("تعذّر فتح الشهادة.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button onClick={() => void open()} disabled={busy} title={file.name}
+      className="inline-flex items-center gap-1 whitespace-nowrap font-bold text-primary underline disabled:opacity-50">
+      {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+      شهادة
+    </button>
+  );
+}
+
 export default function WantedResultsTable({
   rows,
   onDelete,
   onLocate,
   colOrder = [],
   orderMode = "custom",
+  mode = "wanted",
 }: {
   rows: WantedRow[];
   onDelete: (ids: string[]) => void;
   onLocate?: (r: WantedRow) => void;
   colOrder?: string[];
   orderMode?: OrderMode;
+  /** «certs» = جدول «شهايد النهارده» (بيانات الشهادة + زرار الشهادة + الحالة). */
+  mode?: "wanted" | "certs";
 }) {
+  const certMode = mode === "certs";
   // أعمدة البيانات المعروضة (حسب الوضع). رقم اللوحة ثابت أول عمود وموقعها عمود
   // إجراء آخر — الاتنين برّه الترتيب.
-  const dataCols = useMemo(() => wantedDataCols(rows, colOrder, orderMode), [rows, colOrder, orderMode]);
+  const dataCols = useMemo(
+    () => (certMode ? certDataCols(rows) : wantedDataCols(rows, colOrder, orderMode)),
+    [rows, colOrder, orderMode, certMode],
+  );
+  const fieldGet = certMode ? CERT_FIELD_GET : WANTED_FIELD_GET;
   // 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦) — كل لوحات الجدول بتتسأل مرة واحدة في درايف
-  // (`lib/certificateBatch.ts`). السوبر أدمن الأول.
-  const certsOn = useCertsEnabled();
+  // (`lib/certificateBatch.ts`). السوبر أدمن الأول. (جدول «شهايد النهارده» الشهادة معروفة أصلاً.)
+  const certsOn = useCertsEnabled() && !certMode;
   const certPlates = useMemo(() => (certsOn ? rows.map((r) => r.plate) : []), [certsOn, rows]);
   const certOf = useCertStates(certPlates, certsOn);
   const [zoom, setZoom] = useState(3);
@@ -208,6 +290,9 @@ export default function WantedResultsTable({
               {showDist && <th className={TH}>المسافة</th>}
               {/* آخر الويندو بعد التاريخ بطلب المستخدم */}
               {showLocate && <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>}
+              {/* «شهايد النهارده»: زرار الشهادة ثم «الحالة» آخر الويندو (مع «شهايد» مابيظهروش أبداً) */}
+              {certMode && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهادة</th>}
+              {certMode && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>}
               {certsOn && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
             </tr>
           </thead>
@@ -244,7 +329,7 @@ export default function WantedResultsTable({
                           : "—"}
                       </td>
                     ) : (
-                      <td key={label} className={TD}>{WANTED_FIELD_GET[label](r) || "—"}</td>
+                      <td key={label} className={TD}>{fieldGet[label](r) || "—"}</td>
                     )
                   )}
                   {showDist && (
@@ -259,6 +344,17 @@ export default function WantedResultsTable({
                           <MapPin size={12} /> موقعها
                         </button>
                       ) : "—"}
+                    </td>
+                  )}
+                  {certMode && (
+                    <td className="border-r border-border px-3 py-2 text-center whitespace-nowrap">
+                      {r.certFile ? <CertOpen file={r.certFile} /> : "—"}
+                    </td>
+                  )}
+                  {/* آخر الويندو: مطلوبة (في شيت التشييك) / تثبيت */}
+                  {certMode && (
+                    <td className={`border-r border-border px-3 py-2 text-center whitespace-nowrap font-bold ${r.wantedStatus === "مطلوبة" ? "text-danger" : "text-muted"}`}>
+                      {r.wantedStatus ?? "—"}
                     </td>
                   )}
                   {certsOn && (
