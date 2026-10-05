@@ -11,6 +11,9 @@ import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { viewFromSnapshot, type CertSnapshot } from "@/lib/certStats";
 
 export const dynamic = "force-dynamic";
+// من غيرهم نكست ١٤.٢ بيخزّن قرايات سوبابيز للأبد في راوت GET (أول نتيجة بتفضل ترجع) — زي دورات السيرفر
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 interface Row {
   snapshot: CertSnapshot | null;

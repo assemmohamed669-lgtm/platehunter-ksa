@@ -12,6 +12,9 @@ import { riyadhDayStart } from "@/lib/certDaily";
 import { readDayCerts, countDayCerts } from "@/lib/certDailyStore";
 
 export const dynamic = "force-dynamic";
+// من غيرهم نكست ١٤.٢ بيخزّن قرايات سوبابيز للأبد في راوت GET (أول نتيجة بتفضل ترجع) — زي دورات السيرفر
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   const userId = await verifySession(req.headers.get("authorization"), req);
