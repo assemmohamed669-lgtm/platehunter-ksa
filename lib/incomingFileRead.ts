@@ -11,8 +11,8 @@
  * القديمة بالظبط، فالملف دايماً بيتقرا كامل.
  */
 
-/** القراية السريعة (والداتا الأساسية على دفعات) — السوبر أدمن الأول لحد ما المالك يقول «انشر للكل». */
-export const FAST_SHARE_FOR_ALL = false;
+/** القراية السريعة (والداتا الأساسية على دفعات) — اتفتحت لكل المناديب (المالك ٥ أكتوبر: «انشر للكل»). */
+export const FAST_SHARE_FOR_ALL = true;
 
 /** base64 ⇒ Blob: فكّ المتصفح نفسه (`fetch` لرابط data:)، ولو مش متاح ⇒ الفكّ اليدوي. */
 export async function base64ToBlob(b64: string, type: string): Promise<Blob> {

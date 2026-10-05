@@ -33,8 +33,8 @@ export interface IncomingOption {
 const ORDINAL_FEM = ["", "الأولى", "ثانية", "ثالثة", "رابعة", "خامسة", "سادسة", "سابعة", "ثامنة", "تاسعة", "عاشرة"];
 const ordinalFem = (n: number): string => ORDINAL_FEM[n] ?? `رقم ${n}`;
 
-/** «ملف داتا إضافي» من نافذة «افتح الملف في» — السوبر أدمن الأول لحد ما المالك يقول «انشر للكل». */
-export const EXTRA_DATA_FROM_SHARE_FOR_ALL = false;
+/** «ملف داتا إضافي» من نافذة «افتح الملف في» — اتفتح لكل المناديب (المالك ٥ أكتوبر: «انشر للكل»). */
+export const EXTRA_DATA_FROM_SHARE_FOR_ALL = true;
 
 export function incomingExcelOptions(
   opts: { voiceOnly: boolean; nextReferralNum: number | null; nextDataNum?: number | null },
