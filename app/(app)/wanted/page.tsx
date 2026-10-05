@@ -8,15 +8,15 @@
  * النتيجة بتتخزّن في الذاكرة فبتفضل ثابتة لو خرجت من الصفحة ورجعت.
  *
  * 📄 «شهايد النهارده» (المالك ٥ أكتوبر ٢٠٢٦ — السوبر أدمن الأول): جملة خضرا بعدد الشهايد اللي
- * نزلت النهارده + زرار بيفرزها على نفس الداتا والسجلات (`runCertSort`). النتيجة ببيانات الشهادة
- * ومكان العربية، وفي الآخر «الحالة»: مطلوبة (في شيت التشييك) / تثبيت. فرز المطلوب العادي زي ما هو.
+ * نزلت النهارده + زرار بيفرزها على نفس داتا صفحة الفرز والسجلات (`components/DailyCertSort.tsx` —
+ * نفس المربع في تبويب «شهايد» لمشتركين الصوت فقط). فرز المطلوب العادي زي ما هو.
  */
 import { useEffect, useState } from "react";
-import { Crosshair, Trash2, RefreshCw, FileText } from "lucide-react";
-import WantedResultsTable, { wantedDataCols, certDataCols, certFullRow, type WantedRow } from "@/components/WantedResultsTable";
+import { Crosshair, Trash2, RefreshCw } from "lucide-react";
+import WantedResultsTable, { wantedDataCols, type WantedRow } from "@/components/WantedResultsTable";
 import { supabase } from "@/lib/supabaseClient";
-import { DAILY_CERTS_FOR_ALL, type DailyCertEntry } from "@/lib/certDaily";
-import { indexDailyCerts, certResultRow, type PlaceRow } from "@/lib/dailyCertMatch";
+import { DAILY_CERTS_FOR_ALL } from "@/lib/certDaily";
+import DailyCertSort from "@/components/DailyCertSort";
 import { loadColumnOrder, saveColumnOrder, optionalAvailable, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { ChevronDown } from "lucide-react";
 import ShareSortButton from "@/components/ShareSortButton";
@@ -38,29 +38,6 @@ import { buildDisplayRows } from "@/lib/exportColumns";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
-// ونفس الكلام لنتيجة «شهايد النهارده».
-let certCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
-const n = (x: number) => x.toLocaleString("en-US");
-
-interface DailyResponse { total?: number; parsed?: number; setup?: boolean; entries?: DailyCertEntry[] }
-
-async function fetchDailyCerts(countOnly: boolean): Promise<DailyResponse | null> {
-  const { data: s } = await supabase.auth.getSession();
-  const res = await fetch(`/api/certificate/daily${countOnly ? "?count=1" : ""}`, {
-    headers: { Authorization: `Bearer ${s.session?.access_token ?? ""}` },
-  });
-  if (!res.ok) return null;
-  return (await res.json().catch(() => null)) as DailyResponse | null;
-}
-
-// صفوف تصدير / صورة نافذة «شهايد النهارده» — بيانات الشهادة ثم المكان، و«الحالة» آخر عمود.
-function toCertExportRows(rows: WantedRow[]): Record<string, unknown>[] {
-  return rows.map((r) => certFullRow(r));
-}
-function toCertImageTable(rows: WantedRow[]): { columns: string[]; rows: string[][]; rowColors?: (string | null)[] } {
-  const columns = ["رقم اللوحة", ...certDataCols(rows).filter((c) => c !== "GPS"), "الحالة"];
-  return { columns, rows: rows.map((r) => { const f = certFullRow(r); return columns.map((c) => f[c] ?? ""); }), rowColors: dupeHexColors(rows) };
-}
 // الداتا المرتّبة الكاملة + عمود الموقع/اللوحة — لميزة «موقعها» (جيران نفس الشارع).
 let wantedNeighborData: { orderedData: Record<string, string>[]; locCol: string | null; plateCol: string; detailCols: string[] } | null = null;
 
@@ -142,12 +119,6 @@ export default function WantedPage() {
   // 📄 «شهايد النهارده» — السوبر أدمن الأول (`DAILY_CERTS_FOR_ALL`)
   const [isSuper, setIsSuper] = useState(false);
   const certsAllowed = DAILY_CERTS_FOR_ALL || isSuper;
-  const [daily, setDaily] = useState<{ total: number; parsed: number; setup?: boolean } | null>(null);
-  const [certSorting, setCertSorting] = useState(false);
-  const [certSorted, setCertSorted] = useState(false);
-  const [certError, setCertError] = useState<string | null>(null);
-  const [certDataRows, setCertDataRows] = useState<WantedRow[]>([]);
-  const [certRecordRows, setCertRecordRows] = useState<WantedRow[]>([]);
   useEffect(() => {
     (async () => {
       try {
@@ -157,21 +128,6 @@ export default function WantedPage() {
         setIsSuper((prof as { is_super?: boolean } | null)?.is_super === true);
       } catch { /* مش عارفين — من غير الميزة */ }
     })();
-  }, []);
-  // العدد بيتحدّث كل دقيقة والصفحة مفتوحة (الشهايد بتترفع طول اليوم)
-  useEffect(() => {
-    if (!certsAllowed) return;
-    let stop = false;
-    const load = async () => {
-      const d = await fetchDailyCerts(true).catch(() => null);
-      if (!stop && d) setDaily({ total: d.total ?? 0, parsed: d.parsed ?? 0, setup: d.setup });
-    };
-    void load();
-    const t = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
-    return () => { stop = true; clearInterval(t); };
-  }, [certsAllowed]);
-  useEffect(() => {
-    if (certCache) { setCertDataRows(certCache.dataRows); setCertRecordRows(certCache.recordRows); setCertSorted(certCache.sorted); }
   }, []);
   function setOrderMode(m: OrderMode) { setOrderModeState(m); saveOrderMode(m); }
   function toggleOrderCol(label: string) { setColOrder((prev) => { const next = toggleColumn(prev, label); saveColumnOrder(next); return next; }); }
@@ -284,7 +240,7 @@ export default function WantedPage() {
       }
       // بيرجّع صف نتيجة من صف داتا لو اللوحة مطلوبة (وإلا null). مشترك بين المسار
       // العادي (ذاكرة) والمسار المتدفّق (dataStore).
-      function buildFromRow(row: Record<string, string>, dataCol: string, srcs: Srcs, gIdx: number): WantedRow | null {
+      function buildFromRow(row: Record<string, string>, dataCol: string, srcs: Srcs, gIdx?: number): WantedRow | null {
         const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
         if (!norm || !wanted.has(norm)) return null;
         const val = (s: string | null) => (s ? String(row[s] ?? "").trim() : "");
@@ -349,8 +305,30 @@ export default function WantedPage() {
         }
       }
 
-      // (١-ج) ملفات الداتا الإضافية (data-2, data-3...) — صغيرة، من getUploadedFile.
+      // (١-ج) ملفات الداتا الإضافية (data-2, data-3...). الكبير/متعدد الورقات سجله فيه عيّنة ٥٠ صف
+      // بس والصفوف كلها على الجهاز (streamSlot) — كان بيتفرز على العيّنة فكأنه مش موجود (المالك ٥
+      // أكتوبر ٢٠٢٦: «لما بضيف داتا اضافيه مش بيرفرز عليها»). بيتقري من الجهاز زي الأساسي الكبير.
       for (const rec of extraDataRecs) {
+        if (rec.streamed && rec.streamSlot) {
+          const slot = rec.streamSlot;
+          const meta = await getDataMeta(slot).catch(() => null);
+          if (!meta) continue;   // قاعدته اتمسحت — نتخطّاه زي صفحة الفرز
+          const sample = await getSampleRows(50, slot).catch(() => rec.rows);
+          const dataCol = resolveDataPlateCol(meta.headers, sample, baseDataCol) || meta.plateCol;
+          if (!dataCol) continue;
+          baseDataCol ??= dataCol;
+          setupNeighbors(meta.headers, dataCol);
+          const srcs = srcsOf(meta.headers, sample, dataCol);
+          await iterateRows(async (batch) => {
+            // من غير موضع: الصفوف دي مش في orderedData («موقعها» هنا للذاكرة بس)
+            for (const row of batch) {
+              const wr = buildFromRow(row, dataCol, srcs);
+              if (wr) dRows.push(wr);
+            }
+            await new Promise<void>((r) => setTimeout(r, 0)); // yield — مايجمّدش الواجهة
+          }, { slot });
+          continue;
+        }
         const dataCol = resolveDataPlateCol(rec.headers, rec.rows, baseDataCol);
         if (!dataCol) continue;
         baseDataCol ??= dataCol;
@@ -408,168 +386,6 @@ export default function WantedPage() {
     }
   }
 
-  /**
-   * 📄 فرز «شهايد النهارده»: نفس الداتا (الأساسي الكبير/الصغير + الإضافية) ونفس السجلات اللي فرز
-   * المطلوب بيستخدمها، بس الأهداف = لوحات شهايد النهارده. «الحالة» من شيت التشييك.
-   */
-  async function runCertSort() {
-    if (certSorting) return;
-    playSortBeep();
-    setCertSorting(true); setCertError(null);
-    try {
-      const d = await fetchDailyCerts(false);
-      if (!d) { setCertError("تعذّر جلب شهايد النهارده — جرّب تاني."); return; }
-      if (d.setup) { setCertError("شهايد النهارده لسه محتاجة خطوة على سوبابيز."); return; }
-      setDaily({ total: d.total ?? 0, parsed: d.parsed ?? 0 });
-      const certs = indexDailyCerts(d.entries ?? []);
-      if (certs.size === 0) {
-        setCertError((d.total ?? 0) > 0 ? "لسه بنقرا شهايد النهارده — جرّب كمان دقيقة." : "لسه مانزلش شهايد النهارده.");
-        return;
-      }
-
-      const [checkRec, dataRec, fieldEntries] = await Promise.all([
-        getUploadedFile("local", "check"),
-        getUploadedFile("local", "data"),
-        getAllFieldCheckEntries().catch(() => [] as FieldCheckEntry[]).then(collapseDuplicateChecks),
-      ]);
-      const extraDataRecs: NonNullable<typeof dataRec>[] = [];
-      for (let k = 2; k < 100; k++) {
-        const rec = await getUploadedFile("local", `data-${k}`);
-        if (!rec) break;
-        extraDataRecs.push(rec);
-      }
-
-      // شيت التشييك ⇒ «مطلوبة» (نفس مطابقة البرنامج: اللوحة بالظبط)
-      const inCheck = new Set<string>();
-      if (checkRec) {
-        const cc = detectPlateColumn(checkRec.headers, checkRec.rows);
-        if (cc) for (const r of checkRec.rows) {
-          const norm = normalizePlate(bankPlateToArabic(String(r[cc] ?? "")));
-          if (norm) inCheck.add(norm);
-        }
-      }
-
-      const dRows: WantedRow[] = [];
-      let di = 0;
-      const orderedData: Record<string, string>[] = [];
-      let neighborLocCol: string | null = null;
-      let neighborPlateCol = "";
-      let neighborDetailCols: string[] = [];
-      let baseDataCol: string | null = null;
-      const setupNeighbors = (headers: string[], dataCol: string) => {
-        if (neighborPlateCol) return;
-        neighborPlateCol = dataCol;
-        neighborLocCol = detectLocationColumn(headers);
-        const t = headers.find((h) => /نوع|طراز/i.test(h)) ?? headers.find((h) => /ماركة|صانع|vehicle|model|make/i.test(h));
-        const addr = headers.find((h) => /العنوان|عنوان|الشارع|شارع|address|street/i.test(h)) ?? neighborLocCol ?? undefined;
-        neighborDetailCols = [...new Set([t, addr].filter((h): h is string => !!h && h !== dataCol))];
-      };
-      type Srcs = { typeSrc: string | null; addrSrc: string | null; distSrc: string | null; gpsSrc: string | null; colorSrc: string | null; yearSrc: string | null; dateSrc: string | null };
-      const srcsOf = (headers: string[], sample: Record<string, string>[], dataCol: string): Srcs => {
-        const resolved = resolveResultColumns(headers, sample, dataCol);
-        const src = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
-        return { typeSrc: src("type"), addrSrc: src("address"), distSrc: src("district"), gpsSrc: src("gps"), colorSrc: src("color"), yearSrc: src("year"), dateSrc: src("date") };
-      };
-      const fromRow = (row: Record<string, string>, dataCol: string, srcs: Srcs, gIdx: number): WantedRow | null => {
-        const norm = normalizePlate(bankPlateToArabic(String(row[dataCol] ?? "")));
-        const cert = norm ? certs.get(norm) : undefined;
-        if (!cert) return null;
-        const val = (k: string | null) => (k ? String(row[k] ?? "").trim() : "");
-        const rawGps = val(srcs.gpsSrc);
-        let mapsLink = gpsCellToLink(rawGps);
-        let coords = gpsCellCoords(rawGps);
-        if (!mapsLink) {
-          const g = findGps(row);
-          if (g) { coords = g; mapsLink = toMapsLink(g.lat, g.lng); }
-        }
-        const place: PlaceRow = {
-          id: `cd${di++}`, plate: bankPlateToArabic(String(row[dataCol] ?? "")).trim() || norm, norm,
-          type: val(srcs.typeSrc), address: val(srcs.addrSrc), district: val(srcs.distSrc), color: val(srcs.colorSrc),
-          year: val(srcs.yearSrc), date: val(srcs.dateSrc), mapsLink, lat: coords?.lat, lng: coords?.lng, dataIdx: gIdx,
-        };
-        return certResultRow(place, cert, inCheck.has(norm));
-      };
-
-      // (١) الداتا: الأساسي الكبير متدفّق، أو الصغير، + الإضافية
-      const bigMeta = await getDataMeta("data");
-      if (bigMeta) {
-        const sample = await getSampleRows(50);
-        const dataCol = resolveDataPlateCol(bigMeta.headers, sample, baseDataCol) || bigMeta.plateCol;
-        if (dataCol) {
-          baseDataCol ??= dataCol;
-          setupNeighbors(bigMeta.headers, dataCol);
-          const srcs = srcsOf(bigMeta.headers, sample, dataCol);
-          let gj = 0;
-          await iterateRows(async (batch) => {
-            for (const row of batch) { const wr = fromRow(row, dataCol, srcs, gj++); if (wr) dRows.push(wr); }
-            await new Promise<void>((r) => setTimeout(r, 0));
-          }, { slot: "data" });
-        }
-      } else if (dataRec) {
-        const dataCol = resolveDataPlateCol(dataRec.headers, dataRec.rows, baseDataCol);
-        if (dataCol) {
-          baseDataCol ??= dataCol;
-          setupNeighbors(dataRec.headers, dataCol);
-          const srcs = srcsOf(dataRec.headers, dataRec.rows, dataCol);
-          for (const row of dataRec.rows) {
-            const gIdx = orderedData.length;
-            orderedData.push(row);
-            const wr = fromRow(row, dataCol, srcs, gIdx);
-            if (wr) dRows.push(wr);
-          }
-        }
-      }
-      for (const rec of extraDataRecs) {
-        const dataCol = resolveDataPlateCol(rec.headers, rec.rows, baseDataCol);
-        if (!dataCol) continue;
-        baseDataCol ??= dataCol;
-        setupNeighbors(rec.headers, dataCol);
-        const srcs = srcsOf(rec.headers, rec.rows, dataCol);
-        for (const row of rec.rows) {
-          const gIdx = orderedData.length;
-          orderedData.push(row);
-          const wr = fromRow(row, dataCol, srcs, gIdx);
-          if (wr) dRows.push(wr);
-        }
-      }
-      wantedNeighborData = { orderedData, locCol: neighborLocCol, plateCol: neighborPlateCol, detailCols: neighborDetailCols };
-
-      // (٢) السجلات
-      const rRows: WantedRow[] = [];
-      let j = 0;
-      for (const e of fieldEntries) {
-        const norm = normalizePlate(bankPlateToArabic(e.plate));
-        const cert = norm ? certs.get(norm) : undefined;
-        if (!cert) continue;
-        const place: PlaceRow = {
-          id: `cr${j++}`, plate: bankPlateToArabic(e.plate).trim() || e.plate, norm,
-          type: (e.row?.["النوع"] || e.row?.["نوع السيارة"] || "").trim(),
-          address: (e.row?.["الشارع"] || e.row?.["العنوان"] || "").trim(),
-          district: (e.row?.["الحي"] || e.row?.["اسم الموقع"] || "").trim(),
-          date: e.checkedAt ? fmtCheckDate(e.checkedAt) : (e.row?.["التاريخ"] || e.row?.["تاريخ التسجيل"] || "").trim(),
-          mapsLink: e.mapsLink || "", lat: e.lat, lng: e.lng,
-        };
-        rRows.push(certResultRow(place, cert, inCheck.has(norm)));
-      }
-
-      setCertDataRows(dRows); setCertRecordRows(rRows); setCertSorted(true);
-      certCache = { dataRows: dRows, recordRows: rRows, sorted: true };
-    } catch (err) {
-      setCertError(`تعذّر الفرز: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setCertSorting(false);
-    }
-  }
-
-  function deleteFromCertData(ids: string[]) {
-    const del = new Set(ids);
-    setCertDataRows((prev) => { const next = prev.filter((r) => !del.has(r.id)); certCache = { dataRows: next, recordRows: certRecordRows, sorted: true }; return next; });
-  }
-  function deleteFromCertRecords(ids: string[]) {
-    const del = new Set(ids);
-    setCertRecordRows((prev) => { const next = prev.filter((r) => !del.has(r.id)); certCache = { dataRows: certDataRows, recordRows: next, sorted: true }; return next; });
-  }
-
   function deleteFromData(ids: string[]) {
     const s = new Set(ids);
     setDataRows((prev) => { const next = prev.filter((r) => !s.has(r.id)); persist(next, recordRows, true); return next; });
@@ -579,16 +395,16 @@ export default function WantedPage() {
     setRecordRows((prev) => { const next = prev.filter((r) => !s.has(r.id)); persist(dataRows, next, true); return next; });
   }
 
-  function windowBlock(title: string, rows: WantedRow[], onDelete: (ids: string[]) => void, clearAll: () => void, onLocate?: (r: WantedRow) => void, certs = false) {
-    // صفوف التصدير من غير الأعمدة الفاضية (buildDisplayRows) — بترتيب المندوب، أو بترتيب الشهايد
-    const exportRows = () => (certs ? buildDisplayRows(toCertExportRows(rows)).rows : buildDisplayRows(toExportRows(rows, colOrder, orderMode)).rows);
+  function windowBlock(title: string, rows: WantedRow[], onDelete: (ids: string[]) => void, clearAll: () => void, onLocate?: (r: WantedRow) => void) {
+    // صفوف التصدير من غير الأعمدة الفاضية (buildDisplayRows) — بترتيب المندوب
+    const exportRows = () => buildDisplayRows(toExportRows(rows, colOrder, orderMode)).rows;
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-3" dir="rtl">
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold text-ink">{title}</span>
           <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-bold text-brand">{rows.length} لوحة</span>
         </div>
-        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} colOrder={colOrder} orderMode={orderMode} mode={certs ? "certs" : "wanted"} />
+        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} colOrder={colOrder} orderMode={orderMode} />
         {rows.length > 0 && (
           <div className="flex flex-col gap-2 pt-1">
             {/* زرّين تحت بعض: مشاركة النتيجة (قائمة: فتح إكسيل / واتساب / صورة) + مسح.
@@ -599,7 +415,7 @@ export default function WantedPage() {
               label="مشاركة النتيجة"
               rows={exportRows}
               excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(rows)), ext: "xlsx" })}
-              imageTable={() => (certs ? toCertImageTable(rows) : toImageTable(rows, colOrder, orderMode))}
+              imageTable={() => toImageTable(rows, colOrder, orderMode)}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
             <button onClick={clearAll} className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-3 text-sm font-bold text-danger transition hover:bg-danger/20"><Trash2 size={15} /> مسح نتايج الفرز</button>
@@ -627,42 +443,8 @@ export default function WantedPage() {
 
       {error && <p className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-center text-sm text-danger" dir="rtl">{error}</p>}
 
-      {/* 📄 «شهايد النهارده» — جملة خضرا بالعدد (بتتحدّث كل دقيقة) + زرار الفرز عليها */}
-      {certsAllowed && (
-        <div className="flex flex-col gap-2 rounded-2xl border border-green-600/40 bg-green-600/5 p-3" dir="rtl">
-          {daily?.setup ? (
-            <p className="text-xs font-bold text-alert">شهايد النهارده محتاجة خطوة واحدة على سوبابيز الأول.</p>
-          ) : (
-            <p className="flex items-center gap-1.5 text-sm font-bold text-green-600">
-              <FileText size={15} className="shrink-0" />
-              {daily
-                ? (daily.total > 0 ? <>النهارده نزل {n(daily.total)} شهادة جديدة — هيتم الفرز عليها</> : "لسه مانزلش شهايد النهارده")
-                : "بنجيب شهايد النهارده…"}
-            </p>
-          )}
-          {daily && !daily.setup && daily.total > daily.parsed && (
-            <p className="text-[11px] text-muted">بيتقرا منهم {n(daily.total - daily.parsed)} دلوقتي — اللي بيخلص بيدخل الفرز.</p>
-          )}
-          <button onClick={runCertSort} disabled={certSorting}
-            className="flex items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-50 active:scale-[0.99]">
-            {certSorting ? <RefreshCw size={16} className="animate-spin" /> : <FileText size={16} />}
-            {certSorting ? "جاري الفرز..." : "افرز على شهايد النهارده"}
-          </button>
-          {certError && <p className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-center text-xs text-danger">{certError}</p>}
-        </div>
-      )}
-      {certsAllowed && certSorted && (
-        <>
-          {windowBlock("شهايد النهارده في الداتا", certDataRows, deleteFromCertData, () => {
-            if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${certDataRows.length} لوحة من النافذة دي؟`)) return;
-            setCertDataRows([]); certCache = { dataRows: [], recordRows: certRecordRows, sorted: true };
-          }, showNeighbors, true)}
-          {windowBlock("شهايد النهارده في السجلات", certRecordRows, deleteFromCertRecords, () => {
-            if (!window.confirm(`متأكد إنك عايز تمسح كل الـ ${certRecordRows.length} لوحة من النافذة دي؟`)) return;
-            setCertRecordRows([]); certCache = { dataRows: certDataRows, recordRows: [], sorted: true };
-          }, undefined, true)}
-        </>
-      )}
+      {/* 📄 «شهايد النهارده» — جملة خضرا بالعدد (بتتحدّث كل دقيقة) + زرار الفرز + نافذتين */}
+      {certsAllowed && <DailyCertSort variant="sorting" />}
 
       {/* بحث عن شهادة السحب — برقم اللوحة أو الهيكل، من Google Drive */}
       <CertificateSearch />

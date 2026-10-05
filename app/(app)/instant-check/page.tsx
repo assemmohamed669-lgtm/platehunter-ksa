@@ -18,6 +18,8 @@ import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, t
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import CertificateBadge from "@/components/CertificateBadge";
 import CertificateSearch from "@/components/CertificateSearch";
+import DailyCertSort from "@/components/DailyCertSort";
+import { DAILY_CERTS_FOR_ALL } from "@/lib/certDaily";
 import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
 import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
 import { loadGpsOff, saveGpsOff } from "@/lib/gpsCapture";
@@ -4863,6 +4865,13 @@ export default function InstantCheckPage() {
           لازم يوصلوه حتى لو لسه مارفعش ملف تشييك. */}
       {voiceOnly && mode === "sort" && (
         <VoiceOnlySort checkTable={checkTable} />
+      )}
+
+      {/* ── تبويب «شهايد» لمشتركين الصوت فقط: «شهايد النهارده» فوق البحث (المالك ٥ أكتوبر ٢٠٢٦: «نضيف
+          كمان الميزة دي ل مشتركين الصوت فقط في الصفحه اللي فيها بحث علي الشهايد») — على داتا المجموعة
+          وسجلاتهم. مش مشروط بملف التشييك (عمود «الحالة» بس اللي بيحتاجه). مع «انشر للكل». ── */}
+      {voiceOnly && mode === "cert" && DAILY_CERTS_FOR_ALL && (
+        <DailyCertSort variant="team" />
       )}
 
       {/* ── تبويب «شهايد» — نفس البحث عن الشهادة اللي في صفحة المطلوب ── */}
