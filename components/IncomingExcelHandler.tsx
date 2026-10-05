@@ -23,9 +23,10 @@ import { supabase } from "@/lib/supabaseClient";
 import { serviceActive } from "@/lib/subscription";
 import { setCheckTab } from "@/lib/checkTab";
 import {
-  incomingExcelOptions, firstFreeSlotNum, saveIncomingExtraData, EXTRA_DATA_FROM_SHARE_FOR_ALL,
+  incomingExcelOptions, firstFreeSlotNum, saveIncomingExtraData, saveIncomingMainData, EXTRA_DATA_FROM_SHARE_FOR_ALL,
   VOICE_REFERRAL_SLOT, type IncomingOption,
 } from "@/lib/incomingExcel";
+import { readCacheFileBlob, base64ToBlob, FAST_SHARE_FOR_ALL } from "@/lib/incomingFileRead";
 import { shareDataFileToTeamIfLeader, teamDataShareMessage } from "@/lib/teamData";
 import { shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
@@ -38,6 +39,8 @@ interface PendingFile {
 
 // referral-${number} = ملف إحالة إضافي (٢، ٣، ...) تحت الإحالة الأساسية.
 // data-${number} = ملف داتا إضافي (٢، ٣، ...) تحت الداتا الأساسية.
+const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const n = (x: number) => x.toLocaleString("en-US");
 type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${number}` | `data-${number}`;
 
 export default function IncomingExcelHandler() {
@@ -72,6 +75,8 @@ export default function IncomingExcelHandler() {
     if (job) void job.then((m) => { if (m) setTeamNote(m); }).catch(() => {});
   }
   const [loading, setLoading] = useState(false);
+  // عدد الصفوف اللي اتقرت (الملفات الكبيرة اللي بتتقرا على دفعات) — عشان المندوب يشوف إنه شغّال.
+  const [progressRows, setProgressRows] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [password, setPassword] = useState("");
@@ -163,37 +168,69 @@ export default function IncomingExcelHandler() {
     return () => remove?.();
   }, []);
 
-  async function buildFile(p: PendingFile): Promise<{ file: File; blob: Blob }> {
-    let b64 = p.base64 ?? "";
-    // النسخة الجديدة من الـAPK بتبعت اسم ملف في الكاش بدل الـbase64 المباشر —
-    // نقراه عبر Capacitor Filesystem (قناة بتتحمّل أي حجم، بلا حد سطر JS اللي كان
-    // بيقصّ الملفات الكبيرة). القديم (base64) لسه مدعوم للتوافق.
-    if (!b64 && p.cacheFile) {
-      const { Filesystem, Directory } = await import("@capacitor/filesystem");
-      const res = await Filesystem.readFile({ path: p.cacheFile, directory: Directory.Cache });
-      b64 = typeof res.data === "string" ? res.data : "";
+  async function buildFile(p: PendingFile, fast: boolean): Promise<{ file: File; blob: Blob }> {
+    if (!fast) {
+      // الطريقة القديمة بالظبط (باقي المناديب لحد ما المالك يجرّب السريعة)
+      let b64 = p.base64 ?? "";
+      // النسخة الجديدة من الـAPK بتبعت اسم ملف في الكاش بدل الـbase64 المباشر —
+      // نقراه عبر Capacitor Filesystem (قناة بتتحمّل أي حجم، بلا حد سطر JS اللي كان
+      // بيقصّ الملفات الكبيرة). القديم (base64) لسه مدعوم للتوافق.
+      if (!b64 && p.cacheFile) {
+        const { Filesystem, Directory } = await import("@capacitor/filesystem");
+        const res = await Filesystem.readFile({ path: p.cacheFile, directory: Directory.Cache });
+        b64 = typeof res.data === "string" ? res.data : "";
+      }
+      const binary = atob(b64);
+      const bytes  = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const old = new Blob([bytes], { type: XLSX_TYPE });
+      return { file: new File([old], p.name, { type: old.type }), blob: old };
     }
-    const binary = atob(b64);
-    const bytes  = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    return { file: new File([blob], p.name, { type: blob.type }), blob };
+    let raw: Blob;
+    if (p.base64) {
+      // القديم (نسخ APK قديمة / الآيفون): base64 مباشر — بيتفكّ بالمتصفح نفسه
+      raw = await base64ToBlob(p.base64, XLSX_TYPE);
+    } else if (p.cacheFile) {
+      // أندرويد بيكتب الملف في الكاش. بنجيبه **بايتات على طول** (convertFileSrc + fetch) بدل
+      // ما يعدّي جسر Capacitor كنص base64 كله؛ ولو أي حاجة مش مظبوطة ⇒ القديم (readFile).
+      const { Filesystem, Directory } = await import("@capacitor/filesystem");
+      const { Capacitor } = await import("@capacitor/core");
+      raw = await readCacheFileBlob(p.cacheFile, {
+        getUri: async (f) => (await Filesystem.getUri({ path: f, directory: Directory.Cache })).uri,
+        stat: async (f) => Number((await Filesystem.stat({ path: f, directory: Directory.Cache })).size),
+        convertFileSrc: (u) => Capacitor.convertFileSrc(u),
+        fetchBlob: async (url) => {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(String(r.status));
+          return r.blob();
+        },
+        readBase64: async (f) => {
+          const res = await Filesystem.readFile({ path: f, directory: Directory.Cache });
+          return typeof res.data === "string" ? res.data : "";
+        },
+      }, XLSX_TYPE);
+    } else {
+      raw = new Blob([], { type: XLSX_TYPE });
+    }
+    const blob = raw.type === XLSX_TYPE ? raw : new Blob([raw], { type: XLSX_TYPE });
+    return { file: new File([blob], p.name, { type: XLSX_TYPE }), blob };
   }
 
   async function runParse(slot: Slot, pwd?: string) {
     if (!pending) return;
+    // القراية السريعة + الداتا الأساسية على دفعات: السوبر أدمن الأول (`FAST_SHARE_FOR_ALL`)
+    const fast = FAST_SHARE_FOR_ALL || isSuper;
     setLoading(true);
+    setProgressRows(0);
     setError(null);
     try {
-      const { file, blob } = await buildFile(pending);
+      const { file, blob } = await buildFile(pending, fast);
 
       // ملف داتا فيه أكتر من ورقة → نستورده بنفس مسار صفحة الفرز (ورقة-ورقة، في
       // الـworker) عشان صندوق اختيار الورقات يظهر زي ما بيظهر لما ترفع من الجهاز.
       // (readSheetNames بيرجّع [] للملف المحمي بكلمة مرور فبيعدّي للمسار العادي
       // اللي بيتعامل مع الباسوورد.)
-      if (slot === "data") {
+      if (slot === "data" && !fast) {
         const names = await readSheetNames(file);
         if (names.length > 1) {
           const meta = await importMultiSheetData(file, { slot: "data" });
@@ -211,11 +248,27 @@ export default function IncomingExcelHandler() {
         }
       }
 
+      // ملف الداتا الأساسي (السريع) ⇒ بنفس طريقة مربع صفحة الفرز: أكتر من ورقة أو كبير ⇒ على
+      // دفعات (في الـworker، من غير ما الصفوف كلها تتحمّل وتتحفظ مرة واحدة)؛ صغير ⇒ زي ما كان.
+      if (slot === "data" && fast) {
+        const r = await saveIncomingMainData(file, blob, pwd, {
+          readSheetNames, importMultiSheetData, importLargeDataFile, parseExcelFile, saveUploadedFile, deleteUploadedFile,
+        }, { onProgress: setProgressRows });
+        notifyTeamShare("data", file, r.rowCount);
+        window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: { slot } }));
+        setPending(null);
+        setNeedsPassword(false);
+        setPassword("");
+        setPendingSlot(null);
+        router.push("/sorting");
+        return;
+      }
+
       // ملف داتا إضافي ⇒ مربعه تحت الداتا الأساسية، بنفس شكل صفحة الفرز
       if (slot.startsWith("data-")) {
         await saveIncomingExtraData(slot, file, blob, pwd, {
           readSheetNames, importMultiSheetData, importLargeDataFile, getSampleRows,
-          parseExcelFile, saveUploadedFile, nextStreamSlot,
+          parseExcelFile, saveUploadedFile, nextStreamSlot, onProgress: setProgressRows,
         });
         window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: { slot } }));
         setPending(null);
@@ -385,7 +438,9 @@ export default function IncomingExcelHandler() {
             </div>
 
             {loading && (
-              <p className="mt-3 text-center text-xs text-muted">جارٍ قراءة الملف…</p>
+              <p className="mt-3 text-center text-xs text-muted">
+                جارٍ قراءة الملف…{progressRows > 0 && <> اتقرا {n(progressRows)} صف</>}
+              </p>
             )}
           </>
         )}

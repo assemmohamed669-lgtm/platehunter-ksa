@@ -78,17 +78,19 @@ export async function firstFreeSlotNum(exists: (n: number) => Promise<boolean>, 
   return n;
 }
 
-/** أكبر من كده ⇒ بيتقرا على دفعات (نفس حد مربع الداتا في صفحة الفرز). */
+/** أكبر من كده ⇒ بيتقرا على دفعات (نفس حد مربع الداتا في صفحة الفرز) — للأساسي والإضافي. */
 export const EXTRA_DATA_STREAM_BYTES = 3 * 1024 * 1024;
 
 export interface ExtraDataDeps {
   readSheetNames(file: File): Promise<string[]>;
-  importMultiSheetData(file: File, o: { slot: string }): Promise<DataMeta>;
-  importLargeDataFile(file: File, o: { slot: string }): Promise<DataMeta>;
+  importMultiSheetData(file: File, o: { slot: string; onProgress?: (rows: number) => void }): Promise<DataMeta>;
+  importLargeDataFile(file: File, o: { slot: string; onProgress?: (rows: number) => void }): Promise<DataMeta>;
   getSampleRows(n: number, slot: string): Promise<DataRow[]>;
   parseExcelFile(file: File, password?: string): Promise<ExcelTable>;
   saveUploadedFile(rec: UploadedFileRecord): Promise<void>;
   nextStreamSlot(): string;
+  /** عدد الصفوف اللي اتقرت (للعدّاد في النافذة). */
+  onProgress?: (rows: number) => void;
 }
 
 /**
@@ -109,8 +111,8 @@ export async function saveIncomingExtraData(
       const streamSlot = d.nextStreamSlot();
       try {
         const meta = names.length > 1
-          ? await d.importMultiSheetData(file, { slot: streamSlot })
-          : await d.importLargeDataFile(file, { slot: streamSlot });
+          ? await d.importMultiSheetData(file, { slot: streamSlot, onProgress: d.onProgress })
+          : await d.importLargeDataFile(file, { slot: streamSlot, onProgress: d.onProgress });
         const sample = await d.getSampleRows(50, streamSlot);
         await d.saveUploadedFile({ ...base, headers: meta.headers, rows: sample, streamed: true, streamSlot });
         return;
@@ -122,4 +124,49 @@ export async function saveIncomingExtraData(
   }
   const table = await d.parseExcelFile(file, password);
   await d.saveUploadedFile({ ...base, headers: table.headers, rows: table.rows, fileBlob: blob });
+}
+
+export interface MainDataDeps {
+  readSheetNames(file: File): Promise<string[]>;
+  importMultiSheetData(file: File, o: { slot: string; onProgress?: (rows: number) => void }): Promise<DataMeta>;
+  importLargeDataFile(file: File, o: { slot: string; onProgress?: (rows: number) => void }): Promise<DataMeta>;
+  parseExcelFile(file: File, password?: string): Promise<ExcelTable>;
+  saveUploadedFile(rec: UploadedFileRecord): Promise<void>;
+  deleteUploadedFile(agentId: string, slot: string): Promise<void>;
+}
+
+/**
+ * ملف جاي من «افتح الملف في» ⇒ **مربع الداتا الأساسي** — بنفس طريقة مربع صفحة الفرز
+ * (المالك ٥ أكتوبر: «بيأخر وياخد وقت علي مايحمل الملف»):
+ *  · أكتر من ورقة ⇒ كل الورقات على دفعات (زي ما كان).
+ *  · ورقة واحدة وأكبر من الحد ⇒ على دفعات (`importLargeDataFile`) — كان بيتقرا كله مرة واحدة
+ *    ويتحفظ كله، وصفحة الفرز بتحمّله كله تاني لما تفتح.
+ *  · غير كده (أو معاه كلمة مرور، أو الدفعات مانفعتش) ⇒ صفوفه + الملف (زي ما كان بالظبط).
+ * الصفحة بتفضّل الملف الصغير لو موجود ⇒ بعد الدفعات بنشيله.
+ */
+export async function saveIncomingMainData(
+  file: File, blob: Blob, password: string | undefined, d: MainDataDeps,
+  opts: { onProgress?: (rows: number) => void } = {}, now = new Date(),
+): Promise<{ rowCount: number; streamed: boolean }> {
+  if (!password) {
+    const names = await d.readSheetNames(file).catch(() => [] as string[]);
+    if (names.length > 1) {
+      const meta = await d.importMultiSheetData(file, { slot: "data", onProgress: opts.onProgress });
+      await d.deleteUploadedFile("local", "data");
+      return { rowCount: meta.rowCount, streamed: true };
+    }
+    if (file.size > EXTRA_DATA_STREAM_BYTES) {
+      try {
+        const meta = await d.importLargeDataFile(file, { slot: "data", onProgress: opts.onProgress });
+        await d.deleteUploadedFile("local", "data");
+        return { rowCount: meta.rowCount, streamed: true };
+      } catch { /* القارئ العادي تحت (محمي بكلمة مرور مثلاً) */ }
+    }
+  }
+  const table = await d.parseExcelFile(file, password);
+  await d.saveUploadedFile({
+    key: "local:data", agentId: "local", slot: "data", fileName: file.name,
+    headers: table.headers, rows: table.rows, uploadedAt: now.toISOString(), fileBlob: blob,
+  });
+  return { rowCount: table.rows.length, streamed: false };
 }
