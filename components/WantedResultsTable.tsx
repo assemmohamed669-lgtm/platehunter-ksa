@@ -13,6 +13,7 @@ import { usePinchZoom } from "@/components/usePinchZoom";
 import { gpsService, haversineKm, formatDistanceKm } from "@/lib/gps";
 import { shareTextViaChooser } from "@/lib/share";
 import { orderedLabels, type OrderMode } from "@/lib/columnOrder";
+import { CERT_DEFAULT_COLS, certCellValue, certShareText } from "@/lib/certColumns";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
 
@@ -30,36 +31,6 @@ const WANTED_FIELD_GET: Record<string, (r: WantedRow) => string> = {
   "تاريخ التسجيل": (r) => r.date,
 };
 const WANTED_FIELD_ORDER = ["نوع السيارة", "العنوان", "الحي", "الماركة", "البنك", "GPS", "اللون", "سنة الصنع", "تاريخ التسجيل"];
-
-// 📄 «شهايد النهارده» (المالك ٥ أكتوبر ٢٠٢٦): بيانات الشهادة الأول، وبعدها مكان العربية من الداتا/
-// السجلات، وفي الآخر زرار «شهادة» وعمود «الحالة» (مطلوبة/تثبيت). ترتيب ثابت.
-const CERT_FIELD_GET: Record<string, (r: WantedRow) => string> = {
-  "البنك": (r) => r.bank ?? "",
-  "الشاص": (r) => r.vin ?? "",
-  "الماركة": (r) => r.brand,
-  "سنة الصنع": (r) => r.year,
-  "اللون": (r) => r.color,
-  "حالة العقد": (r) => r.contract ?? "",
-  "تاريخ الشهادة": (r) => r.certDate ?? "",
-  "العنوان": (r) => r.address,
-  "الحي": (r) => r.district ?? "",
-  "GPS": (r) => r.mapsLink,
-  "تاريخ التسجيل": (r) => r.date,
-};
-const CERT_FIELD_ORDER = Object.keys(CERT_FIELD_GET);
-
-/** أعمدة جدول «شهايد النهارده» (اللي فيه بيانات بس). */
-export function certDataCols(rows: WantedRow[]): string[] {
-  return CERT_FIELD_ORDER.filter((l) => rows.some((r) => String(CERT_FIELD_GET[l](r) ?? "").trim()));
-}
-
-/** صف «شهايد النهارده» بالاسم (للتصدير) — والحالة في الآخر. */
-export function certFullRow(r: WantedRow): Record<string, string> {
-  const o: Record<string, string> = { "رقم اللوحة": r.plate };
-  for (const l of CERT_FIELD_ORDER) o[l] = CERT_FIELD_GET[l](r) ?? "";
-  o["الحالة"] = r.wantedStatus ?? "";
-  return o;
-}
 
 /** أعمدة بيانات المطلوب المعروضة: أساسي = كلها زي البرنامج؛ مخصّص = الثابت +
  *  اختيار المندوب. المتاح (اللي فيه بيانات) بس. */
@@ -87,6 +58,9 @@ export interface WantedRow {
   lng?: number;
   dataIdx?: number;  // موضع الصف في ملف الداتا المرتّب — لعرض «موقعها» (الجيران)
   // 📄 «شهايد النهارده» بس:
+  vehicleModel?: string;   // نوع المركبة (راف فور/توسان…) — من الشهادة
+  srcIdx?: number;         // أنهي ملف داتا (لـ«موقعها» — الموضع جوّه الملف ده)
+  dataRow?: Record<string, string>;   // الصف نفسه — «موقعها» بتتأكد إنها على نفس العربية
   vin?: string;            // الشاص (من الشهادة)
   contract?: string;       // حالة العقد (متعثر/نشط …)
   certDate?: string;       // تاريخ الشهادة
@@ -101,19 +75,7 @@ const DUP_COLORS = [
   "rgba(20,184,166,0.16)", "rgba(249,115,22,0.17)",
 ];
 
-function certRowText(r: WantedRow): string {
-  const lines = [`🚗 ${r.plate}${r.wantedStatus ? ` — ${r.wantedStatus}` : ""}`];
-  for (const l of CERT_FIELD_ORDER) {
-    if (l === "GPS") continue;
-    const v = CERT_FIELD_GET[l](r);
-    if (v) lines.push(`${l}: ${v}`);
-  }
-  if (r.mapsLink) lines.push(`📍 ${r.mapsLink}`);
-  return lines.join("\n");
-}
-
 function rowText(r: WantedRow): string {
-  if (r.certFile || r.wantedStatus) return certRowText(r);
   const lines = [`🚗 ${r.plate}`];
   // الترتيب: اللوحة › نوع السيارة › اسم الموقع (عنوان/حي) › باقي البيانات
   if (r.type) lines.push(`نوع السيارة: ${r.type}`);
@@ -127,6 +89,9 @@ function rowText(r: WantedRow): string {
   if (r.mapsLink) lines.push(`📍 ${r.mapsLink}`);
   return lines.join("\n");
 }
+
+// أعمدة الشهايد اللي محتواها في النص (أزرار/حالة)
+const CERT_CENTER: ReadonlySet<string> = new Set(["موقعها في الداتا", "الشهادة", "الحالة"]);
 
 /** «شهادة» بالأزرق لشهادة معروفة (شهايد النهارده) — الدوس بيحمّل الملف ويفتحه زي خانة «شهايد». */
 function CertOpen({ file }: { file: { id: string; name: string } }) {
@@ -161,6 +126,7 @@ export default function WantedResultsTable({
   colOrder = [],
   orderMode = "custom",
   mode = "wanted",
+  certCols = [...CERT_DEFAULT_COLS],
 }: {
   rows: WantedRow[];
   onDelete: (ids: string[]) => void;
@@ -169,15 +135,16 @@ export default function WantedResultsTable({
   orderMode?: OrderMode;
   /** «certs» = جدول «شهايد النهارده» (بيانات الشهادة + زرار الشهادة + الحالة). */
   mode?: "wanted" | "certs";
+  /** أعمدة جدول الشهايد بالترتيب (`lib/certColumns.ts`) — رقم اللوحة ثابت قبلهم. */
+  certCols?: string[];
 }) {
   const certMode = mode === "certs";
   // أعمدة البيانات المعروضة (حسب الوضع). رقم اللوحة ثابت أول عمود وموقعها عمود
   // إجراء آخر — الاتنين برّه الترتيب.
   const dataCols = useMemo(
-    () => (certMode ? certDataCols(rows) : wantedDataCols(rows, colOrder, orderMode)),
+    () => (certMode ? [] : wantedDataCols(rows, colOrder, orderMode)),
     [rows, colOrder, orderMode, certMode],
   );
-  const fieldGet = certMode ? CERT_FIELD_GET : WANTED_FIELD_GET;
   // 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦) — كل لوحات الجدول بتتسأل مرة واحدة في درايف
   // (`lib/certificateBatch.ts`). السوبر أدمن الأول. (جدول «شهايد النهارده» الشهادة معروفة أصلاً.)
   const certsOn = useCertsEnabled() && !certMode;
@@ -221,7 +188,7 @@ export default function WantedResultsTable({
   };
   // نص المشاركة + سطر المسافة لو «الأقرب» مفعّل.
   const rowShareText = (r: WantedRow): string => {
-    const base = rowText(r);
+    const base = certMode ? certShareText(r, certCols) : rowText(r);
     return showDist && Number.isFinite(distOf(r)) ? `${base}\nالمسافة: ${distText(r)}` : base;
   };
 
@@ -256,7 +223,7 @@ export default function WantedResultsTable({
   if (rows.length === 0) return <p className="py-4 text-center text-xs text-muted">مفيش نتايج.</p>;
 
   const allSel = selected.size === rows.length;
-  const showLocate = !!onLocate; // عمود «موقعها» يظهر لنافذة الداتا بس (الجيران متاحين)
+  const showLocate = !!onLocate && !certMode; // عمود «موقعها» يظهر لنافذة الداتا بس (الجيران متاحين) — الشهايد ليها عمودها في ترتيبها
   const px = zoomFontPx(zoom);
   const TH = "border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap";
   const TD = "border-l border-border px-3 py-2 whitespace-nowrap text-ink";
@@ -286,13 +253,14 @@ export default function WantedResultsTable({
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
               {dataCols.map((label) => <th key={label} className={TH}>{label}</th>)}
+              {/* «شهايد النهارده»: ترتيب المالك (أو اللي المندوب ظهّره/خبّاه) */}
+              {certMode && certCols.map((label) => (
+                <th key={label} className={CERT_CENTER.has(label) ? "border-b border-l border-border px-3 py-2 text-center font-bold whitespace-nowrap" : TH}>{label}</th>
+              ))}
               {/* عمود «المسافة» يظهر بس لما «الأقرب» مفعّل */}
               {showDist && <th className={TH}>المسافة</th>}
               {/* آخر الويندو بعد التاريخ بطلب المستخدم */}
               {showLocate && <th className="border-b border-border px-2 py-2 text-center font-bold whitespace-nowrap">موقعها في الداتا</th>}
-              {/* «شهايد النهارده»: زرار الشهادة ثم «الحالة» آخر الويندو (مع «شهايد» مابيظهروش أبداً) */}
-              {certMode && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهادة</th>}
-              {certMode && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">الحالة</th>}
               {certsOn && <th className="border-b border-r border-border px-3 py-2 text-center font-bold whitespace-nowrap">شهايد</th>}
             </tr>
           </thead>
@@ -329,9 +297,48 @@ export default function WantedResultsTable({
                           : "—"}
                       </td>
                     ) : (
-                      <td key={label} className={TD}>{fieldGet[label](r) || "—"}</td>
+                      <td key={label} className={TD}>{WANTED_FIELD_GET[label](r) || "—"}</td>
                     )
                   )}
+                  {certMode && certCols.map((label) => {
+                    if (label === "GPS") {
+                      return (
+                        <td key={label} className="border-l border-border px-3 py-2">
+                          {r.mapsLink
+                            ? <a href={r.mapsLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary underline whitespace-nowrap"><MapPin size={10} /> خريطة</a>
+                            : "—"}
+                        </td>
+                      );
+                    }
+                    if (label === "موقعها في الداتا") {
+                      return (
+                        <td key={label} className="border-l border-border px-2 py-2 text-center">
+                          {onLocate && r.dataIdx != null ? (
+                            <button onClick={() => onLocate(r)} title="شوف موقعها بين الجيران في ملف الداتا"
+                              className="inline-flex items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 text-[11px] font-bold text-brand hover:bg-brand/25 transition">
+                              <MapPin size={12} /> موقعها
+                            </button>
+                          ) : "—"}
+                        </td>
+                      );
+                    }
+                    if (label === "الشهادة") {
+                      return (
+                        <td key={label} className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
+                          {r.certFile ? <CertOpen file={r.certFile} /> : "—"}
+                        </td>
+                      );
+                    }
+                    if (label === "الحالة") {
+                      // مطلوبة (في شيت التشييك) بالأحمر / تثبيت
+                      return (
+                        <td key={label} className={`border-l border-border px-3 py-2 text-center whitespace-nowrap font-bold ${r.wantedStatus === "مطلوبة" ? "text-danger" : "text-muted"}`}>
+                          {r.wantedStatus ?? "—"}
+                        </td>
+                      );
+                    }
+                    return <td key={label} className={TD}>{certCellValue(r, label) || "—"}</td>;
+                  })}
                   {showDist && (
                     <td className="border-l border-border px-3 py-2 font-bold text-primary whitespace-nowrap">{distText(r)}</td>
                   )}
@@ -344,17 +351,6 @@ export default function WantedResultsTable({
                           <MapPin size={12} /> موقعها
                         </button>
                       ) : "—"}
-                    </td>
-                  )}
-                  {certMode && (
-                    <td className="border-r border-border px-3 py-2 text-center whitespace-nowrap">
-                      {r.certFile ? <CertOpen file={r.certFile} /> : "—"}
-                    </td>
-                  )}
-                  {/* آخر الويندو: مطلوبة (في شيت التشييك) / تثبيت */}
-                  {certMode && (
-                    <td className={`border-r border-border px-3 py-2 text-center whitespace-nowrap font-bold ${r.wantedStatus === "مطلوبة" ? "text-danger" : "text-muted"}`}>
-                      {r.wantedStatus ?? "—"}
                     </td>
                   )}
                   {certsOn && (
