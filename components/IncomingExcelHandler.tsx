@@ -8,6 +8,8 @@
  *   • فرز — إحالة  → saved as local:referral, navigate to /sorting
  *   • فرز — داتا   → saved as local:data,     navigate to /sorting
  *   • تشييك         → saved as local:check,    navigate to /instant-check
+ *   • ملف داتا إضافي → أول مربع داتا إضافي فاضي (local:data-N) تحت الأساسي، /sorting
+ *     (المالك ٥ أكتوبر ٢٠٢٦ — السوبر أدمن الأول: `EXTRA_DATA_FROM_SHARE_FOR_ALL`)
  */
 
 import { useEffect, useState } from "react";
@@ -15,11 +17,15 @@ import { useRouter } from "next/navigation";
 import { X, FileSpreadsheet, ListFilter, CheckCircle2, Lock } from "lucide-react";
 import { parseExcelFile, readSheetNames } from "@/lib/excel";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
-import { importMultiSheetData } from "@/lib/dataStore";
+import { importMultiSheetData, importLargeDataFile, getSampleRows, getDataMeta } from "@/lib/dataStore";
+import { nextStreamSlot } from "@/lib/extraDataSlot";
 import { supabase } from "@/lib/supabaseClient";
 import { serviceActive } from "@/lib/subscription";
 import { setCheckTab } from "@/lib/checkTab";
-import { incomingExcelOptions, VOICE_REFERRAL_SLOT, type IncomingOption } from "@/lib/incomingExcel";
+import {
+  incomingExcelOptions, firstFreeSlotNum, saveIncomingExtraData, EXTRA_DATA_FROM_SHARE_FOR_ALL,
+  VOICE_REFERRAL_SLOT, type IncomingOption,
+} from "@/lib/incomingExcel";
 import { shareDataFileToTeamIfLeader, teamDataShareMessage } from "@/lib/teamData";
 import { shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
@@ -31,7 +37,8 @@ interface PendingFile {
 }
 
 // referral-${number} = ملف إحالة إضافي (٢، ٣، ...) تحت الإحالة الأساسية.
-type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${number}`;
+// data-${number} = ملف داتا إضافي (٢، ٣، ...) تحت الداتا الأساسية.
+type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${number}` | `data-${number}`;
 
 export default function IncomingExcelHandler() {
   const router = useRouter();
@@ -73,6 +80,9 @@ export default function IncomingExcelHandler() {
   // رقم ملف الإحالة الإضافي التالي (٢، ٣، ...) — null يعني مفيش إحالة أساسية بعد
   // فمانعرضش خيار «إضافة إحالة إضافية». بيتحسب أول ما ييجي ملف.
   const [nextReferralNum, setNextReferralNum] = useState<number | null>(null);
+  // رقم مربع الداتا الإضافي التالي (٢، ٣، ...) — null = مفيش داتا أساسية بعد.
+  const [nextDataNum, setNextDataNum] = useState<number | null>(null);
+  const [isSuper, setIsSuper] = useState(false);
   // المشترك صوت-فقط: صفحة الفرز مقفولة عنده، فخياراته وسلوتاته مختلفة.
   // نفس منطق حارس الصفحات في `app/(app)/layout.tsx` بالظبط.
   const [voiceOnly, setVoiceOnly] = useState(false);
@@ -87,6 +97,7 @@ export default function IncomingExcelHandler() {
         const p = prof as { rest_pages_enabled?: boolean; rest_until?: string | null; is_super?: boolean } | null;
         const restOpen = p?.is_super === true || (p?.rest_pages_enabled !== false && serviceActive(p?.rest_until));
         setVoiceOnly(!restOpen);
+        setIsSuper(p?.is_super === true);
       } catch { /* مش عارفين — نسيبها زي ما هي (خيارات كاملة) */ }
     })();
   }, []);
@@ -109,6 +120,14 @@ export default function IncomingExcelHandler() {
           while (await getUploadedFile("local", `referral-${n}`)) n++;
           setNextReferralNum(n);
         } catch { setNextReferralNum(null); }
+      })();
+      // مربع الداتا الإضافي التالي: بس لو فيه داتا أساسية (صغيرة أو كبيرة على دفعات).
+      (async () => {
+        try {
+          const base = (await getUploadedFile("local", "data")) || (await getDataMeta("data"));
+          if (!base) { setNextDataNum(null); return; }
+          setNextDataNum(await firstFreeSlotNum(async (n) => !!(await getUploadedFile("local", `data-${n}`))));
+        } catch { setNextDataNum(null); }
       })();
     };
     window.addEventListener("excelFileOpened", handler);
@@ -192,6 +211,21 @@ export default function IncomingExcelHandler() {
         }
       }
 
+      // ملف داتا إضافي ⇒ مربعه تحت الداتا الأساسية، بنفس شكل صفحة الفرز
+      if (slot.startsWith("data-")) {
+        await saveIncomingExtraData(slot, file, blob, pwd, {
+          readSheetNames, importMultiSheetData, importLargeDataFile, getSampleRows,
+          parseExcelFile, saveUploadedFile, nextStreamSlot,
+        });
+        window.dispatchEvent(new CustomEvent("idbFileUpdated", { detail: { slot } }));
+        setPending(null);
+        setNeedsPassword(false);
+        setPassword("");
+        setPendingSlot(null);
+        router.push("/sorting");
+        return;
+      }
+
       const table = await parseExcelFile(file, pwd);
 
       const record: UploadedFileRecord = {
@@ -236,7 +270,10 @@ export default function IncomingExcelHandler() {
     }
   }
 
-  const options: IncomingOption[] = incomingExcelOptions({ voiceOnly, nextReferralNum });
+  const options: IncomingOption[] = incomingExcelOptions({
+    voiceOnly, nextReferralNum,
+    nextDataNum: EXTRA_DATA_FROM_SHARE_FOR_ALL || isSuper ? nextDataNum : null,
+  });
 
   function openAs(slot: Slot) {
     runParse(slot);

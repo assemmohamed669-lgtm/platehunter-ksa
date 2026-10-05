@@ -8,8 +8,15 @@
  *
  * دلوقتي: صوت-فقط = **خيارين بس** (تشييك · إحالة)، والإحالة بتروح للسلوت الصح.
  * وباقي المشتركين زي ما هم بالظبط.
+ *
+ * و«ملف داتا إضافي» (المالك ٥ أكتوبر ٢٠٢٦: «لما يحب يرفع داتا اضافيه مفيش خيار ملف داتا
+ * اضافيه … يتحط الملف في مربع داتا اضافي تحت مربع الداتا الاساسي») — بيروح لأول مربع داتا
+ * إضافي فاضي (`data-N`) بنفس طريقة صفحة الفرز (`saveIncomingExtraData`).
  */
 import type { CheckTab } from "./checkTab";
+import type { UploadedFileRecord } from "./idb";
+import type { DataMeta, DataRow } from "./dataStore";
+import type { ExcelTable } from "./excel";
 
 /** سلوت إحالة المشترك صوت-فقط — نفس اللي تبويب «فرز» بتاعه بيقرا منه. */
 export const VOICE_REFERRAL_SLOT = "voice-referral";
@@ -26,8 +33,11 @@ export interface IncomingOption {
 const ORDINAL_FEM = ["", "الأولى", "ثانية", "ثالثة", "رابعة", "خامسة", "سادسة", "سابعة", "ثامنة", "تاسعة", "عاشرة"];
 const ordinalFem = (n: number): string => ORDINAL_FEM[n] ?? `رقم ${n}`;
 
+/** «ملف داتا إضافي» من نافذة «افتح الملف في» — السوبر أدمن الأول لحد ما المالك يقول «انشر للكل». */
+export const EXTRA_DATA_FROM_SHARE_FOR_ALL = false;
+
 export function incomingExcelOptions(
-  opts: { voiceOnly: boolean; nextReferralNum: number | null },
+  opts: { voiceOnly: boolean; nextReferralNum: number | null; nextDataNum?: number | null },
 ): IncomingOption[] {
   if (opts.voiceOnly) {
     // صفحة الفرز مقفولة عنده ⇒ مافيش «داتا» ولا إحالات إضافية، والوجهتين
@@ -41,6 +51,14 @@ export function incomingExcelOptions(
   }
   return [
     { slot: "data", label: "ملف الداتا", hint: "بيانات التفريغ الميداني" },
+    // مربع داتا إضافي تحت الأساسي (بس لو فيه داتا أساسية — زي الإحالة الإضافية)
+    ...(opts.nextDataNum != null
+      ? [{
+          slot: `data-${opts.nextDataNum}`,
+          label: "ملف داتا إضافي",
+          hint: `يتحط في مربع «ملف الداتا ${opts.nextDataNum}» تحت الداتا الأساسية ويتدمج معاها في الفرز`,
+        }]
+      : []),
     { slot: "referral", label: "ملف الإحالة", hint: "قائمة البنك/الشركة" },
     ...(opts.nextReferralNum !== null
       ? [{
@@ -51,4 +69,57 @@ export function incomingExcelOptions(
       : []),
     { slot: "check", label: "ملف التشييك", hint: "القائمة المرجعية للبحث" },
   ];
+}
+
+/** أول رقم مربع إضافي فاضي (من ٢) — المربعات متتالية (صفحة الفرز بترقّمها). */
+export async function firstFreeSlotNum(exists: (n: number) => Promise<boolean>, start = 2, max = 100): Promise<number> {
+  let n = start;
+  while (n < max && (await exists(n))) n++;
+  return n;
+}
+
+/** أكبر من كده ⇒ بيتقرا على دفعات (نفس حد مربع الداتا في صفحة الفرز). */
+export const EXTRA_DATA_STREAM_BYTES = 3 * 1024 * 1024;
+
+export interface ExtraDataDeps {
+  readSheetNames(file: File): Promise<string[]>;
+  importMultiSheetData(file: File, o: { slot: string }): Promise<DataMeta>;
+  importLargeDataFile(file: File, o: { slot: string }): Promise<DataMeta>;
+  getSampleRows(n: number, slot: string): Promise<DataRow[]>;
+  parseExcelFile(file: File, password?: string): Promise<ExcelTable>;
+  saveUploadedFile(rec: UploadedFileRecord): Promise<void>;
+  nextStreamSlot(): string;
+}
+
+/**
+ * ملف جاي من «افتح الملف في» ⇒ مربع الداتا الإضافي `slot` (data-N) — **بنفس شكل** اللي صفحة
+ * الفرز بتحفظه، فالمربع بيظهر لوحده تحت الداتا الأساسية:
+ *  · أكتر من ورقة، أو أكبر من الحد ⇒ بيتقرا على دفعات في مكان خاص بيه (`nextStreamSlot`)،
+ *    والمربع فيه مؤشّر + عيّنة صغيرة (مايتحملش في الذاكرة — الآيفون).
+ *  · غير كده (أو معاه كلمة مرور) ⇒ صفوفه + الملف نفسه. الملف المحمي بيرمي خطأ كلمة المرور زي
+ *    القارئ العادي، والنافذة بتطلبها.
+ */
+export async function saveIncomingExtraData(
+  slot: string, file: File, blob: Blob, password: string | undefined, d: ExtraDataDeps, now = new Date(),
+): Promise<void> {
+  const base = { key: `local:${slot}`, agentId: "local", slot, fileName: file.name, uploadedAt: now.toISOString() };
+  if (!password) {
+    const names = await d.readSheetNames(file).catch(() => [] as string[]);
+    if (names.length > 1 || file.size > EXTRA_DATA_STREAM_BYTES) {
+      const streamSlot = d.nextStreamSlot();
+      try {
+        const meta = names.length > 1
+          ? await d.importMultiSheetData(file, { slot: streamSlot })
+          : await d.importLargeDataFile(file, { slot: streamSlot });
+        const sample = await d.getSampleRows(50, streamSlot);
+        await d.saveUploadedFile({ ...base, headers: meta.headers, rows: sample, streamed: true, streamSlot });
+        return;
+      } catch (e) {
+        if (names.length > 1) throw e;
+        // ملف كبير مااتقراش على دفعات (محمي مثلاً) ⇒ القارئ العادي تحت
+      }
+    }
+  }
+  const table = await d.parseExcelFile(file, password);
+  await d.saveUploadedFile({ ...base, headers: table.headers, rows: table.rows, fileBlob: blob });
 }
