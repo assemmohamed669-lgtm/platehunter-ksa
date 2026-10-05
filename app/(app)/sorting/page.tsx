@@ -54,6 +54,7 @@ import { dedupeRecordsByPlate } from "@/lib/recordResultDedupe";
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
+import { nextStreamSlot } from "@/lib/extraDataSlot";
 import {
   fetchTeamDataState, uploadTeamData, deleteTeamData, downloadTeamData,
   needsTeamDataRefresh, teamIngestMode, setTeamDataOpen, TEAM_DATA_SLOT, type TeamDataState,
@@ -301,17 +302,8 @@ export default function SortingPage() {
   const extraDataIdRef = useRef(1);
   const extraDataHighWaterRef = useRef(1);
 
-  // slot فريد وثابت لكل ملف داتا إضافي كبير (streamed). عدّاد دائم في localStorage
-  // عشان مايتكررش عبر إعادة فتح التطبيق (لو استخدمنا معرّف المربع كان يتصادم لأن
-  // عدّاد المعرّفات بيتصفّر عند كل فتح) — فمافيش ملف بيمسح ملف تاني بالغلط.
-  function nextStreamSlot(): string {
-    let seq = 1;
-    try {
-      seq = (parseInt(localStorage.getItem("ph:sorting:xdataSeq") || "0", 10) || 0) + 1;
-      localStorage.setItem("ph:sorting:xdataSeq", String(seq));
-    } catch { seq = Math.floor(Math.random() * 1e9); }
-    return `xdata-${seq}`;
-  }
+  // slot فريد وثابت لكل ملف داتا إضافي كبير (streamed) — `nextStreamSlot` في
+  // lib/extraDataSlot.ts (نفس العدّاد لنافذة «افتح الملف في»).
 
   // اختيار أعمدة النتائج لكل مربع إضافي (داتا أو إحالة) — مفهرس بمعرّف المربع.
   // كل مربع إضافي بقى ليه قسم «الأعمدة» بتاعه زي المربعات الأساسية.
