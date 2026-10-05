@@ -31,8 +31,8 @@ describe("🔴 خيار «ملف داتا إضافي»", () => {
     expect(incomingExcelOptions({ voiceOnly: true, nextReferralNum: null, nextDataNum: 2 }).map((o) => o.slot))
       .toEqual(["check", "voice-referral"]);
   });
-  it("🔴 السوبر أدمن الأول (لحد ما المالك يجرّب ويقول «انشر للكل»)", () => {
-    expect(EXTRA_DATA_FROM_SHARE_FOR_ALL).toBe(false);
+  it("🔴 مفتوح لكل المناديب (المالك جرّب وقال «انشر للكل»)", () => {
+    expect(EXTRA_DATA_FROM_SHARE_FOR_ALL).toBe(true);
   });
 });
 
@@ -184,8 +184,8 @@ describe("🔴 التوصيل", () => {
     const h = read("components/IncomingExcelHandler.tsx");
     expect(h).toMatch(/readCacheFileBlob\(/);
     expect(h).toMatch(/base64ToBlob\(/);
-    // السوبر أدمن الأول — باقي المناديب على الطريقة القديمة بالظبط لحد «انشر للكل»
-    expect(FAST_SHARE_FOR_ALL).toBe(false);
+    // مفتوح لكل المناديب (المالك جرّب وقال «انشر للكل») — والقديم فاضل للرجوع لو احتجنا
+    expect(FAST_SHARE_FOR_ALL).toBe(true);
     expect(h).toMatch(/const fast = FAST_SHARE_FOR_ALL \|\| isSuper;/);
     expect(h).toMatch(/buildFile\(pending, fast\)/);
     expect(h).toMatch(/if \(slot === "data" && fast\)/);
