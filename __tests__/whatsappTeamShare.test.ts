@@ -32,6 +32,11 @@ describe("توصيل الفتح من واتساب", () => {
     // مسار الداتا متعدد الورقات بيرجع بدري — لازم يبعت هو كمان
     const multi = code.slice(code.indexOf("importMultiSheetData(file"), code.indexOf("router.push(\"/sorting\");"));
     expect(multi).toMatch(/notifyTeamShare\(/);
+    // والمسار السريع (ورقة واحدة أو أكتر، صغير أو على دفعات) كمان
+    const start = code.indexOf("saveIncomingMainData(");
+    expect(start).toBeGreaterThan(-1);
+    const dataPath = code.slice(start, code.indexOf("router.push(\"/sorting\");", start));
+    expect(dataPath).toMatch(/notifyTeamShare\("data"/);
   });
 
   it("🔴 الرسالة بتبان للمسئول بعد ما النافذة تتقفل", () => {
