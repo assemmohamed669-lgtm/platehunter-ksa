@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/voice-health", "schedule": "* * * * *" },
-    { "path": "/api/cron/cert-stats", "schedule": "* * * * *" }
+    { "path": "/api/cron/cert-stats", "schedule": "* * * * *" },
+    { "path": "/api/cron/cert-daily", "schedule": "* * * * *" }
   ]
 }
