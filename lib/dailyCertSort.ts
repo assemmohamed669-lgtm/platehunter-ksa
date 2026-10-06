@@ -49,6 +49,8 @@ export interface DailyCertSortOutput {
   recordRows: WantedRow[];
   /** عمود اللوحة اللي اتفرز عليه كل مصدر (null = اتخطّى) — لـ«موقعها». */
   plateCols: (string | null)[];
+  /** اتفرز على كام صف داتا من كام ملف وكام سجل — صفر نتايج مع صفر صفوف = الداتا ماتقرتش. */
+  scanned: { dataRows: number; dataFiles: number; records: number };
 }
 
 function findGps(row: Row): { lat: number; lng: number } | null {
@@ -81,6 +83,7 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
   // عمود أول ملف احتياطي للباقي (زي فرز المطلوب) — من غيره الملف اللي مالقيناش فيه دليل كان
   // بيتفرز على أول عمود فمايطلّعش حاجة.
   let baseDataCol: string | null = null;
+  let dataScanned = 0, dataFiles = 0;
   for (let si = 0; si < input.sources.length; si++) {
     const src = input.sources[si];
     const sample = src.kind === "mem" ? src.rows : src.sample;
@@ -88,12 +91,14 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
     plateCols.push(dataCol);
     if (!dataCol) continue;
     baseDataCol ??= dataCol;
+    dataFiles++;
     const resolved = resolveResultColumns(src.headers, sample, dataCol);
     const col = (key: string) => resolved.find((c) => c.key === key)?.sourceCol ?? null;
     const typeSrc = col("type"), brandSrc = col("brand"), addrSrc = col("address"), distSrc = col("district");
     const gpsSrc = col("gps"), colorSrc = col("color"), yearSrc = col("year"), dateSrc = col("date");
 
     const fromRow = (row: Row, idx: number) => {
+      dataScanned++;
       const raw = String(row[dataCol] ?? "");
       const norm = normalizePlate(bankPlateToArabic(raw));
       const c = norm ? byPlate.get(norm) : undefined;
@@ -159,5 +164,8 @@ export async function runDailyCertSort(input: DailyCertSortInput): Promise<Daily
     recordRows.push(certResultRow(place, c, inCheck(c)));
   }
 
-  return { dataRows, recordRows, plateCols };
+  return {
+    dataRows, recordRows, plateCols,
+    scanned: { dataRows: dataScanned, dataFiles, records: input.fieldEntries.length + input.chassisRecords.length },
+  };
 }

@@ -10,7 +10,8 @@ import { cronAuthorized } from "@/lib/voiceHealth";
 import { getDriveAccessToken, driveListPage } from "@/lib/gdrive";
 import { certDailyTick } from "@/lib/certDailyJob";
 import { extractPdfText } from "@/lib/pdfText";
-import { insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, readDayCerts } from "@/lib/certDailyStore";
+import { insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, readDayCerts, sampleNoPlateCerts } from "@/lib/certDailyStore";
+import { certTextShape } from "@/lib/certTextShape";
 import { riyadhDayStart, dayMinus, CERT_DAYS_BACK } from "@/lib/certDaily";
 import { certParseStats } from "@/lib/certParseStats";
 
@@ -22,6 +23,24 @@ export const maxDuration = 60;
 const FIELDS = "nextPageToken,files(id,name,createdTime,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress))";
 /** أكبر شهادة بنقراها (الشهايد صفحة واحدة — أي حاجة أكبر غلط). */
 const MAX_BYTES = 15 * 1024 * 1024;
+
+/** ملف الشهادة من درايف (قراية بس). */
+async function downloadPdf(fileId: string, token: string): Promise<Uint8Array | null> {
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(fileId)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal });
+    if (!r.ok) return null;
+    const buf = await r.arrayBuffer();
+    return buf.byteLength > 0 && buf.byteLength <= MAX_BYTES ? new Uint8Array(buf) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function GET(req: Request) {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) {
@@ -48,6 +67,27 @@ export async function GET(req: Request) {
   const token = await getDriveAccessToken();
   if (!token) return NextResponse.json({ error: "drive_unavailable" }, { status: 502 });
 
+  // 🩺 شكل نص ٣ شهايد مالقيناش فيها لوحة (`?diag=shape&offset=N`) — كل حرف ورقم مستخبي
+  // (`lib/certTextShape.ts`)، فبيبان مكان اللوحة وشكلها من غير أي اسم ولا رقم.
+  if (url.searchParams.get("diag") === "shape") {
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    if (!Number.isInteger(offset) || offset < 0 || offset > CERT_DAYS_BACK) {
+      return NextResponse.json({ error: "bad_offset" }, { status: 400 });
+    }
+    const day = dayMinus(riyadhDayStart(new Date()).day, offset);
+    try {
+      const ids = await sampleNoPlateCerts(day, 3);
+      const samples: string[][] = [];
+      for (const id of ids) {
+        const bytes = await downloadPdf(id, token);
+        samples.push(bytes ? certTextShape(await extractPdfText(bytes)) : ["(الملف مانزلش)"]);
+      }
+      return NextResponse.json({ day, samples }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error)?.message || "error" }, { status: 500 });
+    }
+  }
+
   try {
     const out = await certDailyTick({
       now: () => new Date(),
@@ -63,22 +103,7 @@ export async function GET(req: Request) {
       },
       insertNew: insertNewCerts,
       pending: pendingCerts,
-      download: async (fileId) => {
-        if (!/^[A-Za-z0-9_-]{10,}$/.test(fileId)) return null;
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 20_000);
-        try {
-          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-            { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal });
-          if (!r.ok) return null;
-          const buf = await r.arrayBuffer();
-          return buf.byteLength > 0 && buf.byteLength <= MAX_BYTES ? new Uint8Array(buf) : null;
-        } catch {
-          return null;
-        } finally {
-          clearTimeout(timer);
-        }
-      },
+      download: (fileId) => downloadPdf(fileId, token),
       extractText: extractPdfText,
       saveParsed: saveParsedCert,
       cleanup: cleanupCerts,

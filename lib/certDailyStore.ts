@@ -35,6 +35,15 @@ export async function saveParsedCert(fileId: string, f: CertFields | null, tries
   if (error) throw new Error(error.message);
 }
 
+/** عيّنة من شهايد يوم اتقرت ومالقيناش فيها لوحة (لمقياس الشكل). */
+export async function sampleNoPlateCerts(day: string, limit: number): Promise<string[]> {
+  const { data, error } = await supabaseAdmin
+    .from("cert_daily").select("file_id")
+    .eq("day", day).eq("parsed", true).eq("plate", "").order("created_at", { ascending: true }).limit(limit);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { file_id: string }[]).map((r) => r.file_id);
+}
+
 export async function cleanupCerts(beforeDay: string): Promise<void> {
   await supabaseAdmin.from("cert_daily").delete().lt("day", beforeDay);
 }
