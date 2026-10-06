@@ -187,3 +187,24 @@ describe("اسم الملف", () => {
     expect(parseCertText("", "scan.pdf").plate).toBe("");
   });
 });
+
+/**
+ * المالك (٦ أكتوبر ٢٠٢٦): «بدل كلمه شهادة عايز رقم كل شهادة … CRN-119-00133431 … اسمها رقم العقد المسجل».
+ * مقياس الشكل: «السجل» ⇒ «CRN-119-99999999» (وجنبه «REPO-119-…» — مش هو)، و«توثيق» ⇒ «CRN» + ١٣ رقم
+ * لازقين في سطر «رقم العقد …» (بالترتيب المرئي).
+ */
+describe("🔴 رقم العقد المسجل (رقم الشهادة)", () => {
+  it("🔴 «السجل»: CRN-119-… مش REPO-119-…", () => {
+    expect(parseCertText(SIJIL, "4321JGR.pdf").certNo).toBe("CRN-119-00000002");
+    expect(parseCertText(SIJIL_SPACED, "x.pdf").certNo).toBe("");
+  });
+  it("🔴 «توثيق»: CRN + الأرقام لازقين", () => {
+    expect(parseCertText("CRN1190013343100 :الموحد العقد رقم\nرقم اللوحة: ا ب ح 1234", "x.pdf").certNo).toBe("CRN1190013343100");
+  });
+  it("الأرقام قبل CRN (الترتيب المرئي القديم) ⇒ CRN الأول", () => {
+    expect(parseCertText(TAWTHEEQ_NEW, "1HGCM82633A004352.pdf").certNo).toBe("CRN0000110000000");
+  });
+  it("مفيش رقم عقد ⇒ فاضي", () => {
+    expect(parseCertText("رقم اللوحة: ا ب ح 1234", "x.pdf").certNo).toBe("");
+  });
+});

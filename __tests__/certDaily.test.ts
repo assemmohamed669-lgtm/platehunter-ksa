@@ -148,6 +148,22 @@ describe("🔴 دورة السيرفر", () => {
     expect(fn).toMatch(/\.lt\("updated_at", beforeIso\)/);
   });
 
+  it("🔴 اللي اتقرت قبل عمود «رقم العقد» بتتقري تاني مرة واحدة — والجدول من غير العمود مابيقعش", async () => {
+    const requeue = vi.fn(async () => {});
+    const { d } = fakes({ requeueMissingCertNo: requeue });
+    await certDailyTick(d);
+    expect(requeue).toHaveBeenCalledWith("2026-09-28");
+    const store = readFileSync("lib/certDailyStore.ts", "utf8");
+    const rq = store.slice(store.indexOf("export async function requeueMissingCertNoCerts"));
+    expect(rq).toMatch(/\.is\("cert_no", null\)/);
+    // الحفظ والقراية بيكمّلوا من غير العمود لو لسه ماتضافش
+    expect(store).toMatch(/const NO_CERT_NO = \/cert_no\//);
+    const save = store.slice(store.indexOf("export async function saveParsedCert"), store.indexOf("export async function requeueNoPlateCerts"));
+    expect(save).toMatch(/NO_CERT_NO\.test/);
+    const read = store.slice(store.indexOf("export async function readDayCerts"), store.indexOf("export async function countDayCerts"));
+    expect(read).toMatch(/NO_CERT_NO\.test/);
+  });
+
   it("🔴 اللي لسه ماتقراش من الأسبوع كله — النهارده الأول", async () => {
     const { d } = fakes();
     await certDailyTick(d);

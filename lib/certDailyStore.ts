@@ -23,15 +23,33 @@ export async function pendingCerts(fromDay: string, limit: number): Promise<Pend
   return (data ?? []) as PendingCert[];
 }
 
+/** عمود «رقم العقد» لسه ماتضافش (`docs/sql/cert-daily-certno.sql`) ⇒ نكمّل من غيره، مانقفش. */
+const NO_CERT_NO = /cert_no/;
+
 export async function saveParsedCert(fileId: string, f: CertFields | null, tries: number, done: boolean): Promise<void> {
   const patch: Record<string, unknown> = { tries, parsed: done, updated_at: new Date().toISOString() };
   if (f) {
     Object.assign(patch, {
       plate: f.plate, plate_text: f.plateText, vin: f.vin, bank: f.bank, make: f.make, model: f.model,
-      year: f.year, color: f.color, status: f.status, cert_date: f.certDate,
+      year: f.year, color: f.color, status: f.status, cert_date: f.certDate, cert_no: f.certNo,
     });
   }
-  const { error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId);
+  let { error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId);
+  if (error && "cert_no" in patch && NO_CERT_NO.test(error.message)) {
+    delete patch.cert_no;
+    ({ error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId));
+  }
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * اللي اتقرت قبل ما يبقى فيه عمود «رقم العقد» (قيمته لسه null) ⇒ ترجع تتقري مرة واحدة عشان الرقم
+ * يتملى. بعد القراية بيبقى "" أو الرقم ⇒ مابتتعادش. العمود لسه ماتضافش ⇒ بترمي ودورة السيرفر بتكمّل.
+ */
+export async function requeueMissingCertNoCerts(fromDay: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .gte("day", fromDay).eq("parsed", true).is("cert_no", null);
   if (error) throw new Error(error.message);
 }
 
@@ -59,19 +77,21 @@ export async function cleanupCerts(beforeDay: string): Promise<void> {
 interface Row {
   file_id: string; name: string; created_at: string; parsed: boolean;
   plate: string; plate_text: string; vin: string; bank: string; make: string; model: string;
-  year: string; color: string; status: string; cert_date: string;
+  year: string; color: string; status: string; cert_date: string; cert_no?: string | null;
 }
 
 /** كل شهايد اليوم (صفحات ١٠٠٠ — حد الـAPI). */
 export async function readDayCerts(day: string): Promise<{ total: number; parsed: number; entries: DailyCertEntry[] }> {
   const rows: Row[] = [];
+  const COLS = "file_id, name, created_at, parsed, plate, plate_text, vin, bank, make, model, year, color, status, cert_date";
+  let cols = `${COLS}, cert_no`;
   for (let from = 0; from < 50_000; from += 1000) {
-    const { data, error } = await supabaseAdmin
-      .from("cert_daily")
-      .select("file_id, name, created_at, parsed, plate, plate_text, vin, bank, make, model, year, color, status, cert_date")
+    const page = () => supabaseAdmin.from("cert_daily").select(cols)
       .eq("day", day).order("created_at", { ascending: true }).range(from, from + 999);
+    let { data, error } = await page();
+    if (error && cols !== COLS && NO_CERT_NO.test(error.message)) { cols = COLS; ({ data, error } = await page()); }
     if (error) throw Object.assign(new Error(error.message), { code: error.code });
-    rows.push(...((data ?? []) as Row[]));
+    rows.push(...((data ?? []) as unknown as Row[]));
     if (!data || data.length < 1000) break;
   }
   return {
@@ -80,6 +100,7 @@ export async function readDayCerts(day: string): Promise<{ total: number; parsed
     entries: rows.filter((r) => r.plate || r.vin).map((r) => ({
       fileId: r.file_id, name: r.name, createdAt: r.created_at, plate: r.plate, plateText: r.plate_text, vin: r.vin,
       bank: r.bank, make: r.make, model: r.model, year: r.year, color: r.color, status: r.status, certDate: r.cert_date,
+      certNo: r.cert_no ?? "",
     })),
   };
 }

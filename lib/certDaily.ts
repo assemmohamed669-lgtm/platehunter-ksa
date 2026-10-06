@@ -57,7 +57,9 @@ export function certDayDate(day: string): string {
 }
 
 /** شهادة من شهايد النهارده (اللي الموبايل بياخدها). */
-export interface DailyCertEntry extends Omit<CertFields, "issuer"> {
+export interface DailyCertEntry extends Omit<CertFields, "issuer" | "certNo"> {
+  /** رقم العقد المسجل (رقم الشهادة) — "" / مش موجود لو الشهادة مافيهاش أو لسه ماتقراش بالقارئ الجديد. */
+  certNo?: string;
   fileId: string;
   name: string;
   createdAt: string;

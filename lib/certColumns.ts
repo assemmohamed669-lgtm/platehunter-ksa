@@ -18,8 +18,8 @@ export const CERT_DEFAULT_COLS = [
   "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "موقعها في الداتا", "الشهادة", "الحالة", "المؤجر",
 ] as const;
 export const CERT_EXTRA_COLS = ["رقم الشاص", "الماركة", "سنة الصنع", "اللون", "حالة العقد", "تاريخ الشهادة", "الحي"] as const;
-/** أعمدة أزرار مش بيانات — مابتدخلش الإكسيل ولا الصورة ولا نص واتساب. */
-export const CERT_ACTION_COLS: ReadonlySet<string> = new Set(["موقعها في الداتا", "الشهادة"]);
+/** أعمدة أزرار مش بيانات — مابتدخلش الإكسيل ولا الصورة ولا نص واتساب. («الشهادة» بقى فيها رقم العقد ⇒ بتدخل.) */
+export const CERT_ACTION_COLS: ReadonlySet<string> = new Set(["موقعها في الداتا"]);
 
 export interface CertColPrefs {
   /** أعمدة من الأساسي المندوب خبّاها. */
@@ -86,6 +86,7 @@ export function certCellValue(r: WantedRow, label: string): string {
     case "GPS": return r.mapsLink;
     case "تاريخ التسجيل": return r.date;
     case "الحالة": return r.wantedStatus ?? "";
+    case "الشهادة": return r.certNo ?? "";
     case "المؤجر": return r.bank ?? "";
     case "رقم الشاص": return r.vin ?? "";
     case "الماركة": return r.brand;

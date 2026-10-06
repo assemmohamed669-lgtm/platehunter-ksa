@@ -48,6 +48,7 @@ export function certResultRow(place: PlaceRow, cert: DailyCertEntry, inCheck: bo
     contract: cert.status,
     certDate: cert.certDate,
     certFile: { id: cert.fileId, name: cert.name },
+    certNo: cert.certNo ?? "",
     wantedStatus: inCheck ? "مطلوبة" : "تثبيت",
   };
 }
