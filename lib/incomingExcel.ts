@@ -71,6 +71,17 @@ export function incomingExcelOptions(
   ];
 }
 
+/**
+ * 🎨 لون مربع الوجهة (المالك ٦ أكتوبر ٢٠٢٦): الداتا والداتا الإضافي **أخضر** («علشان يبان عند المندوب ان
+ * الاخضر ل ملفات الداتا»)، الإحالة والإحالة الإضافية **أحمر فاتح**، التشييك **تركوازي**.
+ */
+export type IncomingTone = "data" | "referral" | "check";
+export function incomingOptionTone(slot: string): IncomingTone {
+  if (slot === "check") return "check";
+  if (slot === "data" || slot.startsWith("data-")) return "data";
+  return "referral";   // referral / referral-N / خانة إحالة «صوت فقط»
+}
+
 /** أول رقم مربع إضافي فاضي (من ٢) — المربعات متتالية (صفحة الفرز بترقّمها). */
 export async function firstFreeSlotNum(exists: (n: number) => Promise<boolean>, start = 2, max = 100): Promise<number> {
   let n = start;
