@@ -24,6 +24,43 @@ export interface AgentNotice {
   at: string | null;
 }
 
+/**
+ * 📣 رسالة خاصة **لكل المناديب** (المالك ٦ أكتوبر ٢٠٢٦: «او يحطها ل كل المناديب») — نفس شكل الخاصة
+ * (بالأحمر، من غير زر إخفاء، لحد ما الأدمن يشيلها)، متخزّنة لوحدها فالرسايل الخاصة مابتتلمسش.
+ * محتاجة `docs/sql/all-agents-notice.sql`.
+ */
+export function resolveAllAgentsNotice(raw: unknown): AgentNotice | null {
+  const row = (Array.isArray(raw) ? raw[0] : raw) as { notice_text?: string | null; notice_at?: string | null } | null | undefined;
+  const text = normalizeAgentNotice(row?.notice_text);
+  return text ? { text, at: row?.notice_at ?? null } : null;
+}
+
+/** الرسالة اللي لكل المناديب (لو فيه). أي فشل/أوفلاين/لسه ماتعملتش = مافيش. */
+export async function fetchAllAgentsNotice(): Promise<AgentNotice | null> {
+  try {
+    const { supabase } = await import("./supabaseClient");
+    const { data, error } = await supabase.rpc("get_all_agents_notice");
+    if (error) return null;
+    return resolveAllAgentsNotice(data);
+  } catch {
+    return null;
+  }
+}
+
+/** ينشرها لكل المناديب أو يشيلها (نص فاضي). الأدمن بس — الدالة على السيرفر بتتحقق. */
+export async function setAllAgentsNotice(text: string): Promise<{ ok: boolean; error?: string; setup?: boolean }> {
+  try {
+    const { supabase } = await import("./supabaseClient");
+    const { error } = await supabase.rpc("set_all_agents_notice", { p_text: normalizeAgentNotice(text) ?? "" });
+    if (error) {
+      return { ok: false, error: error.message, setup: /set_all_agents_notice|PGRST202|42883/.test(`${error.code ?? ""} ${error.message ?? ""}`) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** رسالة المندوب الحالي (لو فيه). أي فشل/أوفلاين = مافيش رسالة. */
 export async function fetchAgentNotice(): Promise<AgentNotice | null> {
   try {

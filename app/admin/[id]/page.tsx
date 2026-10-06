@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { subStatus, extensionDays, extensionLabel } from "@/lib/subscription";
 import AgentVoiceKeys from "@/components/AgentVoiceKeys";
+import { fetchAllAgentsNotice, setAllAgentsNotice, type AgentNotice } from "@/lib/agentNotice";
 import { normalizeServiceKeys, type ServiceKeys } from "@/lib/voiceKeys";
 
 interface Profile {
@@ -73,6 +74,9 @@ export default function AgentDetail() {
   const [editingBio, setEditingBio] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // 📣 الرسالة الخاصة اللي لكل المناديب (لو فيه)
+  const [allNotice, setAllNotice] = useState<AgentNotice | null>(null);
+  useEffect(() => { void fetchAllAgentsNotice().then(setAllNotice); }, []);
   // الرسالة الخاصة بالمندوب — مسودة المربع (بتتملّى من صفّه عند التحميل).
   const [noticeDraft, setNoticeDraft] = useState("");
   // بنملّي المربع من صفّ المندوب مرة واحدة بس — بعدها اللي الأدمن بيكتبه
@@ -411,6 +415,41 @@ export default function AgentDetail() {
             <p className="mt-2 rounded-lg bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
               ظاهرة عنده دلوقتي: {p.agent_notice}
             </p>
+          )}
+          {/* 📣 نفس الرسالة لكل المناديب (المالك ٦ أكتوبر ٢٠٢٦: «او يحطها ل كل المناديب») — بالأحمر من
+              غير زر إخفاء لحد ما تشيلها، ومن غير ما تمسح الرسايل الخاصة اللي عندهم. */}
+          <button
+            disabled={busy || !noticeDraft.trim()}
+            onClick={async () => {
+              if (!confirm(`تبعت الرسالة دي لكل المناديب؟\n\n${noticeDraft.trim()}`)) return;
+              setBusy(true);
+              const r = await setAllAgentsNotice(noticeDraft);
+              setBusy(false);
+              if (r.ok) { setAllNotice(await fetchAllAgentsNotice()); setMsg("✅ اتبعتت الرسالة لكل المناديب."); }
+              else setMsg(r.setup ? "⚠️ الرسالة لكل المناديب محتاجة خطوة على سوبابيز الأول." : `❌ تعذّر الإرسال: ${r.error ?? ""}`);
+            }}
+            className="mt-2 w-full rounded-lg border border-danger/60 bg-danger/10 py-2 text-sm font-bold text-danger disabled:opacity-40"
+          >
+            ابعتها لكل المناديب
+          </button>
+          {allNotice && (
+            <div className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-danger/10 px-2.5 py-1.5">
+              <p className="text-[11px] leading-relaxed text-danger">ظاهرة عند كل المناديب دلوقتي: {allNotice.text}</p>
+              <button
+                disabled={busy}
+                onClick={async () => {
+                  if (!confirm("تشيل الرسالة من عند كل المناديب؟")) return;
+                  setBusy(true);
+                  const r = await setAllAgentsNotice("");
+                  setBusy(false);
+                  if (r.ok) { setAllNotice(null); setMsg("✅ اتشالت الرسالة من عند كل المناديب."); }
+                  else setMsg(`❌ تعذّر المسح: ${r.error ?? ""}`);
+                }}
+                className="shrink-0 rounded-full border border-danger/50 px-2.5 py-1 text-[11px] font-bold text-danger disabled:opacity-40"
+              >
+                شيلها من عند الكل
+              </button>
+            </div>
           )}
         </div>
 
