@@ -105,6 +105,18 @@ export function certExportRow(r: WantedRow, cols: readonly string[]): Record<str
   return o;
 }
 
+/**
+ * مشاركة واحدة للنافذتين (المالك ٦ أكتوبر ٢٠٢٦: «المشاركه تبقي مجمعه ... يشارك اللي طالع من الداتا
+ * واللي طالع من السجلات في مشاركه واحدة») — نفس الأعمدة، و«المصدر» جنب اللوحة (داتا / سجلات).
+ */
+export function certCombinedExportRows(dataRows: readonly WantedRow[], recordRows: readonly WantedRow[], cols: readonly string[]): Record<string, string>[] {
+  const tag = (r: WantedRow, src: string) => {
+    const { "رقم اللوحة": plate, ...rest } = certExportRow(r, cols);
+    return { "رقم اللوحة": plate, "المصدر": src, ...rest };
+  };
+  return [...dataRows.map((r) => tag(r, "داتا")), ...recordRows.map((r) => tag(r, "سجلات"))];
+}
+
 /** نص واتساب لعربية — نفس الأعمدة المعروضة: الحالة جنب اللوحة والخريطة في الآخر. */
 export function certShareText(r: WantedRow, cols: readonly string[]): string {
   const status = cols.includes("الحالة") && r.wantedStatus ? ` — ${r.wantedStatus}` : "";

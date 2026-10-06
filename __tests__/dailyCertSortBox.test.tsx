@@ -47,7 +47,13 @@ vi.mock("@/lib/checkSheets", async (orig) => ({
   loadAllCheckSources: async () => [{ headers: ["رقم اللوحة"], rows: [{ "رقم اللوحة": "ر ق ح 8377" }] }],
 }));
 vi.mock("@/lib/sortBeep", () => ({ playSortBeep: () => {} }));
-vi.mock("@/components/ShareSortButton", () => ({ default: () => null }));
+// زرار المشاركة: بنسجّل الصفوف اللي هيشاركها لما يتداس
+const shared: { label: string; rows: Record<string, unknown>[] }[] = [];
+vi.mock("@/components/ShareSortButton", () => ({
+  default: ({ label, rows }: { label?: string; rows: () => Record<string, unknown>[] }) => (
+    <button onClick={() => shared.push({ label: label ?? "", rows: rows() })}>{label}</button>
+  ),
+}));
 vi.mock("@/components/LocationNeighborsModal", () => ({
   default: ({ view }: { view: { target: Record<string, string> } | null }) => (view ? <div>موقع: {view.target["العنوان"]}</div> : null),
 }));
@@ -216,3 +222,16 @@ describe("🔴 أي يوم لحد أسبوع ورا + النهارده بيتح�
   });
 });
 
+describe("🔴 مشاركة الكل — الداتا والسجلات في مشاركة واحدة", () => {
+  it("🔴 زرار واحد تحت النافذتين بيشارك الاتنين مع عمود «المصدر»", async () => {
+    shared.length = 0;
+    render(<DailyCertSort variant="team" />);
+    fireEvent.click(await screen.findByText("افرز على شهايد النهارده"));
+    await screen.findByText("شهايد النهارده في الداتا");
+    fireEvent.click(screen.getByText("مشاركة الكل (الداتا + السجلات)"));
+    expect(shared).toHaveLength(1);
+    const rows = shared[0].rows;
+    expect(rows.map((r) => r["المصدر"])).toEqual(["داتا", "سجلات"]);
+    expect(Object.keys(rows[0]).slice(0, 2)).toEqual(["رقم اللوحة", "المصدر"]);
+  });
+});
