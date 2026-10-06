@@ -25,6 +25,9 @@ describe("🔴 صف النتيجة", () => {
       mapsLink: place.mapsLink, date: place.date, certFile: { id: "F1", name: "ا ب ح 1234.pdf" }, wantedStatus: "مطلوبة",
     });
   });
+  it("🔴 لينك الشهادة بيوصل للصف", () => {
+    expect(certResultRow(place, cert({ link: "https://x/c/T" }), true).certLink).toBe("https://x/c/T");
+  });
   it("🔴 مش في شيت التشييك ⇒ «تثبيت» · الناقص من الشهادة بيتاخد من الداتا", () => {
     const r = certResultRow({ ...place, color: "اسود", year: "2019" }, cert({ color: "", year: "", make: "", model: "" }), false);
     expect(r).toMatchObject({ wantedStatus: "تثبيت", color: "اسود", year: "2019" });

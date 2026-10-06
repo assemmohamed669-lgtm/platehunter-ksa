@@ -124,6 +124,8 @@ export function certShareText(r: WantedRow, cols: readonly string[]): string {
   const lines = [`🚗 ${r.plate}${status}`];
   for (const c of cols) {
     if (CERT_ACTION_COLS.has(c) || c === "GPS" || c === "الحالة") continue;
+    // 🔗 الشهادة بلينكها — الدوس عليه من واتساب بيفتحها (المالك ٦ أكتوبر ٢٠٢٦)
+    if (c === "الشهادة" && r.certLink) { lines.push(`📄 الشهادة${r.certNo ? ` ${r.certNo}` : ""}: ${r.certLink}`); continue; }
     const v = certCellValue(r, c);
     if (v) lines.push(`${c}: ${v}`);
   }
