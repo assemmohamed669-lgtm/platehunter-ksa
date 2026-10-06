@@ -10,7 +10,9 @@ import { cronAuthorized } from "@/lib/voiceHealth";
 import { getDriveAccessToken, driveListPage } from "@/lib/gdrive";
 import { certDailyTick } from "@/lib/certDailyJob";
 import { extractPdfText } from "@/lib/pdfText";
-import { insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts } from "@/lib/certDailyStore";
+import { insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, readDayCerts } from "@/lib/certDailyStore";
+import { riyadhDayStart, dayMinus, CERT_DAYS_BACK } from "@/lib/certDaily";
+import { certParseStats } from "@/lib/certParseStats";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -25,6 +27,24 @@ export async function GET(req: Request) {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // 🩺 مقياس القارئ على شهايد يوم (`?diag=1&offset=N`) — أرقام بس، مفيش لوحة ولا اسم ملف بيطلع.
+  const url = new URL(req.url);
+  if (url.searchParams.get("diag") === "1") {
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    if (!Number.isInteger(offset) || offset < 0 || offset > CERT_DAYS_BACK) {
+      return NextResponse.json({ error: "bad_offset" }, { status: 400 });
+    }
+    const day = dayMinus(riyadhDayStart(new Date()).day, offset);
+    try {
+      const d = await readDayCerts(day);
+      return NextResponse.json({ day, total: d.total, parsed: d.parsed, ...certParseStats(d.entries) },
+        { headers: { "Cache-Control": "no-store, max-age=0" } });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error)?.message || "error" }, { status: 500 });
+    }
+  }
+
   const token = await getDriveAccessToken();
   if (!token) return NextResponse.json({ error: "drive_unavailable" }, { status: 502 });
 
