@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   CERT_DEFAULT_COLS, CERT_EXTRA_COLS, DEFAULT_CERT_COL_PREFS, certDisplayCols, toggleCertCol, isCertColOn,
-  loadCertColPrefs, saveCertColPrefs, certCellValue, certExportRow, certShareText,
+  loadCertColPrefs, saveCertColPrefs, certCellValue, certExportRow, certShareText, certCombinedExportRows,
 } from "@/lib/certColumns";
 import type { WantedRow } from "@/components/WantedResultsTable";
 
@@ -89,5 +89,17 @@ describe("🔴 القيم والتصدير بنفس أعمدة الجدول", ()
     expect(t).not.toContain("رقم الشاص");
     const hidden = certShareText(row, certDisplayCols(toggleCertCol(DEFAULT_CERT_COL_PREFS, "المؤجر")));
     expect(hidden).not.toContain("المؤجر");
+  });
+});
+
+/** المالك (٦ أكتوبر ٢٠٢٦): «المشاركه تبقي مجمعه ... يشارك اللي طالع من الداتا واللي طالع من السجلات في مشاركه واحدة». */
+describe("🔴 مشاركة واحدة للداتا والسجلات", () => {
+  it("🔴 «المصدر» جنب اللوحة (داتا / سجلات) — الداتا الأول وبعدها السجلات بنفس الأعمدة", () => {
+    const rec: WantedRow = { ...row, id: "r:1", plate: "س ص ط 5678", type: "سيدان" };
+    const cols = certDisplayCols(DEFAULT_CERT_COL_PREFS);
+    const out = certCombinedExportRows([row], [rec], cols);
+    expect(out.map((o) => [o["رقم اللوحة"], o["المصدر"]])).toEqual([["ر ق ح 8377", "داتا"], ["س ص ط 5678", "سجلات"]]);
+    expect(Object.keys(out[0])).toEqual(["رقم اللوحة", "المصدر", ...Object.keys(certExportRow(row, cols)).slice(1)]);
+    expect(out[1]["النوع"]).toBe("سيدان");
   });
 });

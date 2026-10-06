@@ -25,7 +25,7 @@ import { runDailyCertSort, type CertDataSource } from "@/lib/dailyCertSort";
 import { collectCertDataSources, type CertSourceDeps } from "@/lib/dailyCertSources";
 import {
   CERT_DEFAULT_COLS, CERT_EXTRA_COLS, CERT_ACTION_COLS, DEFAULT_CERT_COL_PREFS, certDisplayCols, toggleCertCol,
-  isCertColOn, loadCertColPrefs, saveCertColPrefs, certExportRow, type CertColPrefs,
+  isCertColOn, loadCertColPrefs, saveCertColPrefs, certExportRow, certCombinedExportRows, type CertColPrefs,
 } from "@/lib/certColumns";
 import { getUploadedFile, getAllFieldCheckEntries, saveUploadedFile, type FieldCheckEntry } from "@/lib/idb";
 import { getDataMeta, getSampleRows, iterateRows } from "@/lib/dataStore";
@@ -427,6 +427,32 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
           )}
           {windowBlock(`شهايد ${resultName} في الداتا`, "dataRows", locate)}
           {windowBlock(`شهايد ${resultName} في السجلات`, "recordRows")}
+          {/* مشاركة الكل: الداتا والسجلات في مشاركة واحدة بعمود «المصدر» (المالك ٦ أكتوبر ٢٠٢٦) — بتظهر
+              لما النافذتين فيهم نتايج (لو واحدة بس، مشاركتها هي نفس الكلام). */}
+          {result.dataRows.length > 0 && result.recordRows.length > 0 && (() => {
+            const all = [...result.dataRows, ...result.recordRows];
+            const title = `شهايد ${resultName}`;
+            const rows = () => buildDisplayRows(certCombinedExportRows(result.dataRows, result.recordRows, cols)).rows;
+            const imageTable = () => {
+              const full = certCombinedExportRows(result.dataRows, result.recordRows, cols);
+              const columns = ["رقم اللوحة", "المصدر", ...cols.filter((c) => !CERT_ACTION_COLS.has(c) && c !== "GPS" && full.some((f) => f[c]))];
+              return { columns, rows: full.map((f) => columns.map((c) => f[c] ?? "")), rowColors: dupeHexColors(all) };
+            };
+            return (
+              <div className="flex flex-col gap-2 rounded-2xl border border-green-600/40 bg-green-600/5 p-3" dir="rtl">
+                <span className="text-sm font-bold text-ink">الداتا والسجلات مع بعض ({n(all.length)} لوحة)</span>
+                <ShareSortButton
+                  title={title}
+                  fileName={shareFileName("wanted")}
+                  label="مشاركة الكل (الداتا + السجلات)"
+                  rows={rows}
+                  excelBlob={async () => ({ blob: await buildColoredSortExcel(rows(), title, dupeHexColors(all)), ext: "xlsx" })}
+                  imageTable={imageTable}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-60"
+                />
+              </div>
+            );
+          })()}
         </>
       )}
       <LocationNeighborsModal view={neighborView} onClose={() => setNeighborView(null)} />
