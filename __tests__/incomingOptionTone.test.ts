@@ -24,6 +24,9 @@ describe("🔴 لون كل مربع", () => {
     expect(c).toMatch(/incomingOptionTone\(o\.slot\)/);
     expect(c).toMatch(/data: \{[^}]*green/);
     expect(c).toMatch(/referral: \{[^}]*red-/);
-    expect(c).toMatch(/check: \{[^}]*teal-/);
+    // المالك بعد ما شافها: «تقل الالوان شوي وخلي مربع ملف التشييك لونه اصفر»
+    expect(c).toMatch(/check: \{[^}]*yellow-/);
+    expect(c).not.toMatch(/teal-/);
+    for (const k of ["data", "referral", "check"]) expect(c).toMatch(new RegExp(`${k}: \\{ box: "border-[a-z]+-\\d{3} bg-[a-z]+-\\d{3}/30`));
   });
 });

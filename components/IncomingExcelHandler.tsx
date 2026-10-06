@@ -44,11 +44,12 @@ const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const n = (x: number) => x.toLocaleString("en-US");
 type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${number}` | `data-${number}`;
 
-// 🎨 لون كل مربع وجهة (المالك ٦ أكتوبر ٢٠٢٦): الداتا أخضر · الإحالة أحمر فاتح · التشييك تركوازي.
+// 🎨 لون كل مربع وجهة (المالك ٦ أكتوبر ٢٠٢٦): الداتا أخضر · الإحالة أحمر فاتح · التشييك أصفر —
+// وألوان تقيلة شوية («تقل الالوان شوي وخلي مربع ملف التشييك لونه اصفر»).
 const TONE: Record<IncomingTone, { box: string; icon: string }> = {
-  data: { box: "border-green-500/50 bg-green-500/15 hover:bg-green-500/25", icon: "text-green-600" },
-  referral: { box: "border-red-400/50 bg-red-400/15 hover:bg-red-400/25", icon: "text-red-500" },
-  check: { box: "border-teal-400/60 bg-teal-400/15 hover:bg-teal-400/25", icon: "text-teal-500" },
+  data: { box: "border-green-500 bg-green-500/30 hover:bg-green-500/40", icon: "text-green-600" },
+  referral: { box: "border-red-400 bg-red-400/30 hover:bg-red-400/40", icon: "text-red-500" },
+  check: { box: "border-yellow-400 bg-yellow-400/30 hover:bg-yellow-400/40", icon: "text-yellow-600" },
 };
 
 export default function IncomingExcelHandler() {
