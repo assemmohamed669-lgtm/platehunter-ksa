@@ -184,8 +184,8 @@ export default function AdminDashboard() {
       const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", userId).single();
       if (prof?.role !== "admin") { router.replace("/sorting"); return; }
       setIsSuper(!!prof?.is_super);
+      void fetchAppNotice().then(setNoticeActive);   // الرسالة الشغّالة دلوقتي (أي أدمن)
       if (prof?.is_super) {
-        void fetchAppNotice().then(setNoticeActive); // الرسالة الشغّالة دلوقتي (سوبر فقط)
         void loadPoll();                              // الاستطلاع الشغّال + نتايجه (سوبر فقط)
       }
       setAuthorized(true);
@@ -461,10 +461,11 @@ export default function AdminDashboard() {
           </button>
         )}
 
-        {/* بث للمناديب — رسالة عادية أو استطلاع رأي. سوبر أدمن فقط. */}
-        {isSuper && (
+        {/* بث للمناديب — «رسالة للمناديب» لأي أدمن (المالك ٦ أكتوبر ٢٠٢٦: «خلي الادمن يقدر يبعت رساله
+            … ل كل المناديب»). الاستطلاع وإشعار الهاتف للسوبر أدمن بس زي ما كانوا. */}
         <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
-          {/* زرّين جمب بعض — كل واحد يفتح قسمه بس */}
+          {/* أزرار جمب بعض — كل واحد يفتح قسمه بس (السوبر أدمن؛ الأدمن عنده الرسالة بس) */}
+          {isSuper ? (
           <div className="mb-2 flex gap-1.5">
             <button onClick={() => setBroadcastTab("notice")}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${broadcastTab === "notice" ? "bg-primary text-night" : "bg-surface-2 text-muted"}`}>
@@ -479,8 +480,11 @@ export default function AdminDashboard() {
               <BellRing size={13} /> إشعار هاتف
             </button>
           </div>
+          ) : (
+            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold text-primary"><Megaphone size={13} /> رسالة للمناديب</p>
+          )}
 
-          {broadcastTab === "notice" && (<>
+          {(broadcastTab === "notice" || !isSuper) && (<>
           {noticeActive ? (
             <div className="mb-2 rounded-lg border border-primary/30 bg-surface p-2">
               <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink">{noticeActive.text}</p>
@@ -550,7 +554,7 @@ export default function AdminDashboard() {
           </div>
           </>)}
 
-          {broadcastTab === "push" && (<>
+          {isSuper && broadcastTab === "push" && (<>
           <p className="mb-2 text-[11px] leading-relaxed text-muted">
             ده إشعار بيطلع على شاشة الموبايل <b className="text-ink">حتى لو التطبيق مقفول</b> —
             مش زي الرسالة اللي فوق اللي بتظهر جوّه البرنامج. بيوصل بس للمناديب اللي مركّبين
@@ -626,7 +630,7 @@ export default function AdminDashboard() {
           )}
           </>)}
 
-          {broadcastTab === "poll" && (<>
+          {isSuper && broadcastTab === "poll" && (<>
           {activePoll ? (
             <div className="mb-3 rounded-lg border border-primary/30 bg-surface p-2.5">
               <p className="mb-2 text-[11px] font-bold text-ink">{activePoll.question}</p>
@@ -736,7 +740,6 @@ export default function AdminDashboard() {
           </div>
           </>)}
         </div>
-        )}
 
         {/* List */}
         <div className="flex flex-col gap-2">
