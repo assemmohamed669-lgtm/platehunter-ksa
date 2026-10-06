@@ -31,7 +31,7 @@ describe("🔴 صف النتيجة", () => {
   });
   it("🔴 تصدير الأعمدة الأساسية: رقم اللوحة أول، والمؤجر آخر", () => {
     const keys = Object.keys(certExportRow(certResultRow(place, cert({}), true), certDisplayCols(DEFAULT_CERT_COL_PREFS)));
-    expect(keys).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "الحالة", "المؤجر"]);
+    expect(keys).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "الشهادة", "الحالة", "المؤجر"]);
   });
   it("نفس اللوحة من كذا شركة ⇒ شهادة واحدة (باللوحة وبالشاص)", () => {
     const list = [cert({ fileId: "a", bank: "" }), cert({ fileId: "b" }), cert({ fileId: "c", plate: "دهو5678", vin: "JTDBR32E720012345" })];

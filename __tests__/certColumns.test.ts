@@ -14,7 +14,7 @@ import type { WantedRow } from "@/components/WantedResultsTable";
 const row: WantedRow = {
   id: "d1", plate: "ر ق ح 8377", norm: "رقح8377", type: "ونيت", brand: "تويوتا", bank: "مصرف الراجحي",
   address: "شارع الملك فهد", district: "النسيم", color: "ابيض", year: "2021", date: "04-10-2026 21:00",
-  mapsLink: "https://maps.google.com/?q=24.7,46.6", vehicleModel: "هايلكس", vin: "MR0FA3CD100123456",
+  mapsLink: "https://maps.google.com/?q=24.7,46.6", vehicleModel: "هايلكس", vin: "MR0FA3CD100123456", certNo: "CRN-119-00133431",
   contract: "متعثر", certDate: "05/10/2026", certFile: { id: "F1", name: "8377.pdf" }, wantedStatus: "مطلوبة",
 };
 
@@ -77,7 +77,9 @@ describe("🔴 القيم والتصدير بنفس أعمدة الجدول", ()
   });
   it("🔴 الإكسيل: نفس الترتيب ومن غير الأزرار", () => {
     const cols = certDisplayCols(toggleCertCol(DEFAULT_CERT_COL_PREFS, "اللون"));
-    expect(Object.keys(certExportRow(row, cols))).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "الحالة", "المؤجر", "اللون"]);
+    expect(Object.keys(certExportRow(row, cols))).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "الشهادة", "الحالة", "المؤجر", "اللون"]);
+    // «الشهادة» = رقم العقد المسجل
+    expect(certExportRow(row, cols)["الشهادة"]).toBe("CRN-119-00133431");
     expect(certExportRow(row, cols)["GPS"]).toBe(row.mapsLink);
   });
   it("نص واتساب: الحالة في أول سطر والخريطة في الآخر — واللي المندوب خبّاه مابيطلعش", () => {

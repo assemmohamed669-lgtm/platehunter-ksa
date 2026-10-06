@@ -65,6 +65,7 @@ export interface WantedRow {
   contract?: string;       // حالة العقد (متعثر/نشط …)
   certDate?: string;       // تاريخ الشهادة
   certFile?: { id: string; name: string };
+  certNo?: string;         // رقم العقد المسجل — بيظهر بالأزرق بدل كلمة «شهادة»
   wantedStatus?: "مطلوبة" | "تثبيت";   // في شيت التشييك ولا لأ
 }
 
@@ -93,8 +94,11 @@ function rowText(r: WantedRow): string {
 // أعمدة الشهايد اللي محتواها في النص (أزرار/حالة)
 const CERT_CENTER: ReadonlySet<string> = new Set(["موقعها في الداتا", "الشهادة", "الحالة"]);
 
-/** «شهادة» بالأزرق لشهادة معروفة (شهايد النهارده) — الدوس بيحمّل الملف ويفتحه زي خانة «شهايد». */
-function CertOpen({ file }: { file: { id: string; name: string } }) {
+/**
+ * رقم الشهادة (رقم العقد المسجل) بالأزرق — ولو مالهاش رقم «شهادة» — الدوس بيحمّل الملف ويفتحه زي خانة
+ * «شهايد» (المالك ٦ أكتوبر ٢٠٢٦: «بدل كلمه شهادة عايز رقم كل شهادة … والمندوب يدوس عليها تفتح»).
+ */
+function CertOpen({ file, label }: { file: { id: string; name: string }; label?: string }) {
   const [busy, setBusy] = useState(false);
   async function open() {
     if (busy) return;
@@ -114,7 +118,7 @@ function CertOpen({ file }: { file: { id: string; name: string } }) {
     <button onClick={() => void open()} disabled={busy} title={file.name}
       className="inline-flex items-center gap-1 whitespace-nowrap font-bold text-primary underline disabled:opacity-50">
       {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-      شهادة
+      <span dir="ltr">{label || "شهادة"}</span>
     </button>
   );
 }
@@ -325,7 +329,7 @@ export default function WantedResultsTable({
                     if (label === "الشهادة") {
                       return (
                         <td key={label} className="border-l border-border px-3 py-2 text-center whitespace-nowrap">
-                          {r.certFile ? <CertOpen file={r.certFile} /> : "—"}
+                          {r.certFile ? <CertOpen file={r.certFile} label={r.certNo} /> : "—"}
                         </td>
                       );
                     }

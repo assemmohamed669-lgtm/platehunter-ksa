@@ -33,6 +33,8 @@ export interface CertFields {
   status: string;
   /** تاريخ الشهادة «dd/mm/yyyy». */
   certDate: string;
+  /** رقم العقد المسجل (رقم الشهادة) — «CRN-119-00133431» / «CRN1190013343100»، "" لو مفيش. */
+  certNo: string;
   issuer: "tawtheeq" | "sijil" | "";
 }
 
@@ -236,6 +238,21 @@ function pickCertDate(text: string): string {
   return best;
 }
 
+/**
+ * «رقم العقد المسجل» — رقم الشهادة اللي المندوب بيدوس عليه (المالك ٦ أكتوبر ٢٠٢٦: «بدل كلمه شهادة عايز
+ * رقم كل شهادة … CRN-119-00133431»). مقياس الشكل: «السجل» ⇒ «CRN-119-…» (وجنبه «REPO-119-…» رقم الطلب —
+ * مش هو)، و«توثيق» ⇒ «CRN» + الأرقام لازقين، والترتيب المرئي القديم ساعات بيحط الأرقام قبل CRN.
+ */
+function pickCertNo(text: string): string {
+  const sijil = text.match(/(^|[^A-Za-z0-9])(CRN-\d{3}-\d{5,12})(?![A-Za-z0-9])/);
+  if (sijil) return sijil[2];
+  const plain = text.match(/(^|[^A-Za-z0-9])CRN(\d{8,20})(?![0-9])/);
+  if (plain) return `CRN${plain[2]}`;
+  const flipped = text.match(/(^|[^A-Za-z0-9])(\d{8,20})CRN(?![A-Za-z0-9])/);
+  if (flipped) return `CRN${flipped[2]}`;
+  return "";
+}
+
 export function parseCertText(rawText: string, fileName = ""): CertFields {
   const text = cleanText(rawText);
   const issuer: CertFields["issuer"] = /توثيق|TawtheeqCo/i.test(text)
@@ -253,6 +270,7 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
     color: pickColor(text),
     status: pickStatus(text),
     certDate: pickCertDate(text),
+    certNo: pickCertNo(text),
     issuer,
   };
 }

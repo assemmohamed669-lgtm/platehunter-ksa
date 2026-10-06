@@ -10,7 +10,10 @@ import { cronAuthorized } from "@/lib/voiceHealth";
 import { getDriveAccessToken, driveListPage } from "@/lib/gdrive";
 import { certDailyTick } from "@/lib/certDailyJob";
 import { extractPdfText } from "@/lib/pdfText";
-import { insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, readDayCerts, sampleNoPlateCerts, requeueNoPlateCerts } from "@/lib/certDailyStore";
+import {
+  insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, readDayCerts, sampleNoPlateCerts, requeueNoPlateCerts,
+  requeueMissingCertNoCerts,
+} from "@/lib/certDailyStore";
 import { certTextShape } from "@/lib/certTextShape";
 import { riyadhDayStart, dayMinus, CERT_DAYS_BACK } from "@/lib/certDaily";
 import { certParseStats } from "@/lib/certParseStats";
@@ -104,6 +107,7 @@ export async function GET(req: Request) {
       insertNew: insertNewCerts,
       pending: pendingCerts,
       requeueNoPlate: requeueNoPlateCerts,
+      requeueMissingCertNo: requeueMissingCertNoCerts,
       download: (fileId) => downloadPdf(fileId, token),
       extractText: extractPdfText,
       saveParsed: saveParsedCert,

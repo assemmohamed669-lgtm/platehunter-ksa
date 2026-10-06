@@ -62,7 +62,7 @@ import DailyCertSort from "@/components/DailyCertSort";
 
 const entries = [
   { fileId: "F1aaaaaaaaaa", name: "8377.pdf", createdAt: "2026-10-05T05:00:00.000Z", plate: "رقح8377", plateText: "ر ق ح 8377", vin: "MR0FA3CD100123456",
-    bank: "مصرف الراجحي", make: "تويوتا", model: "هايلكس", year: "2021", color: "ابيض", status: "متعثر", certDate: "05/10/2026" },
+    bank: "مصرف الراجحي", make: "تويوتا", model: "هايلكس", year: "2021", color: "ابيض", status: "متعثر", certDate: "05/10/2026", certNo: "CRN-119-00133431" },
   { fileId: "F2bbbbbbbbbb", name: "JTDBR32E720012345.pdf", createdAt: "2026-10-05T06:00:00.000Z", plate: "سصط5678", plateText: "س ص ط 5678", vin: "JTDBR32E720012345",
     bank: "البنك الأهلي", make: "لكزس", model: "LX570", year: "2019", color: "اسود", status: "متعثر", certDate: "05/10/2026" },
 ];
@@ -118,6 +118,8 @@ describe("🔴 تبويب «شهايد» لمشتركين الصوت فقط — 
     const cells = [...dataRows[0].querySelectorAll("td")].map((td) => td.textContent?.trim());
     expect(cells.slice(3, 6)).toEqual(["ونيت", "هايلكس", "شارع التخصصي"]);
     expect(cells).toContain("مطلوبة");
+    // رقم العقد المسجل بدل كلمة «شهادة» (والسجل اللي شهادته من غير رقم ⇒ «شهادة» زي الأول)
+    expect(within(dataRows[0]).getByText("CRN-119-00133431")).toBeTruthy();
     expect(cells[cells.length - 1]).toBe("مصرف الراجحي");
 
     // السجلات: سجل الشاص اتطابق برقم الشاص — وتثبيت (مش في شيت التشييك)
