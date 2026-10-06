@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { riyadhDayStart, riyadhDayStartIso, dayMinus, dedupeDailyCerts, certDayLabel, certDayDate, CERT_DAYS_BACK, type DailyCertEntry } from "@/lib/certDaily";
 import { readFileSync } from "node:fs";
-import { certDailyTick, MAX_TRIES, type CertDailyDeps, type PendingCert, type CertDailyRow } from "@/lib/certDailyJob";
+import { certDailyTick, MAX_TRIES, CERT_PARSER_AT, type CertDailyDeps, type PendingCert, type CertDailyRow } from "@/lib/certDailyJob";
 import type { CertFields } from "@/lib/certParse";
 import type { StatFile } from "@/lib/certStats";
 
@@ -134,6 +134,18 @@ describe("🔴 دورة السيرفر", () => {
     const later = fakes({ now: () => new Date("2026-10-05T09:03:00Z") });
     await certDailyTick(later.d);
     expect(later.d.listRange).toHaveBeenCalledWith("2026-09-30T21:00:00.000Z", "2026-10-01T21:00:00.000Z", undefined);
+  });
+
+  it("🔴 القارئ اتحسّن ⇒ اللي مالقيناش فيها لوحة قبل كده بتتقري تاني (مرة واحدة)", async () => {
+    const requeue = vi.fn(async () => {});
+    const { d } = fakes({ requeueNoPlate: requeue });
+    await certDailyTick(d);
+    expect(requeue).toHaveBeenCalledWith("2026-09-28", CERT_PARSER_AT);
+    expect(Date.parse(CERT_PARSER_AT)).toBeGreaterThan(Date.parse("2026-10-06T10:00:00Z"));   // بعد آخر قراية بالقارئ القديم
+    const store = readFileSync("lib/certDailyStore.ts", "utf8");
+    const fn = store.slice(store.indexOf("export async function requeueNoPlateCerts"));
+    expect(fn).toMatch(/\.eq\("plate", ""\)/);
+    expect(fn).toMatch(/\.lt\("updated_at", beforeIso\)/);
   });
 
   it("🔴 اللي لسه ماتقراش من الأسبوع كله — النهارده الأول", async () => {

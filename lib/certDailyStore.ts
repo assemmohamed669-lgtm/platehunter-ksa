@@ -35,6 +35,14 @@ export async function saveParsedCert(fileId: string, f: CertFields | null, tries
   if (error) throw new Error(error.message);
 }
 
+/** اللي اتقرت قبل `beforeIso` ومالقيناش فيها لوحة ⇒ ترجع تتقري بالقارئ الجديد (مرة واحدة). */
+export async function requeueNoPlateCerts(fromDay: string, beforeIso: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .gte("day", fromDay).eq("parsed", true).eq("plate", "").lt("updated_at", beforeIso);
+  if (error) throw new Error(error.message);
+}
+
 /** عيّنة من شهايد يوم اتقرت ومالقيناش فيها لوحة (لمقياس الشكل). */
 export async function sampleNoPlateCerts(day: string, limit: number): Promise<string[]> {
   const { data, error } = await supabaseAdmin

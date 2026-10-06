@@ -14,6 +14,11 @@ describe("🔴 الإخفاء", () => {
     expect(maskCertLine("Plate No. 8377 JGR")).toBe("Plate No. 9999 LLL");
     expect(maskCertLine("VIN: MR0FA3CD100123456")).toBe("VIN: LL9LL9LL999999999");
   });
+  it("🔴 الحروف المتلخبطة من الخط (السجل) بتستخبى هي كمان — مفيش اسم يطلع حتى لو متلخبط", () => {
+    const out = maskCertLine("Ͳ̠͙ :௛͖̻̺͙̚ ௛̀௜̺͙̚ Ͱ̼̗ ઇ Ћ");
+    expect(out).toMatch(/^[ع :]+$/);
+    expect(maskCertLine("4321 J G R :ͱ̹௬̺͙̾ Ͳ̷ͣ")).toBe("9999 L L L :عع ع");
+  });
   it("السطور الفاضية بتتشال والعدد محدود", () => {
     expect(certTextShape("أ\n\n  \nب 12\nج", 2)).toEqual(["ع", "ع 99"]);
   });

@@ -32,6 +32,8 @@ export interface CertDailyDeps {
   insertNew(rows: CertDailyRow[]): Promise<void>;
   /** اللي لسه ماتقراش من `fromDay` لحد النهارده — الأحدث يوم الأول (النهارده قبل أي حاجة). */
   pending(fromDay: string, limit: number): Promise<PendingCert[]>;
+  /** اللي اتقرت قبل `beforeIso` ومالقيناش فيها لوحة ⇒ ترجع تتقري (القارئ اتحسّن). */
+  requeueNoPlate?(fromDay: string, beforeIso: string): Promise<void>;
   download(fileId: string): Promise<Uint8Array | null>;
   extractText(bytes: Uint8Array): Promise<string>;
   /** `fields` = null ⇒ فشل (tries بيزيد ومش متقري لسه). */
@@ -47,6 +49,12 @@ export const MAX_TRIES = 3;
 export const KEEP_DAYS = CERT_DAYS_BACK;
 /** أقصى شهايد بتتقري في الدورة الواحدة (الباقي الدورة الجاية). */
 export const PENDING_PER_TICK = 100;
+/**
+ * آخر مرة القارئ اتحسّن (`lib/certParse.ts`) — اللي اتقرت قبلها ومالقيناش فيها لوحة بتتقري تاني
+ * **مرة واحدة** (بعد ما تتقري تاريخها بيبقى بعد كده فمابتتعادش). ٦ أكتوبر ٢٠٢٦: حروف «السجل»
+ * الإنجليزي بمسافات. لو القارئ اتحسّن تاني ⇒ حرّك التاريخ ده لوقت النشر.
+ */
+export const CERT_PARSER_AT = "2026-10-06T10:35:00Z";
 
 export async function certDailyTick(d: CertDailyDeps): Promise<{
   day: string; listed: number; older: { day: string; listed: number }; parsed: number; failed: number;
@@ -85,7 +93,8 @@ export async function certDailyTick(d: CertDailyDeps): Promise<{
     listed: timeLeft() > 15_000 ? await listDay(olderDay, riyadhDayStartIso(olderDay), riyadhDayStartIso(dayMinus(olderDay, -1))) : 0,
   };
 
-  // ٣) قراية اللي لسه ماتقراش — النهارده الأول
+  // ٣) قراية اللي لسه ماتقراش — النهارده الأول (واللي القارئ القديم مالقاش فيها لوحة بترجع تتقري)
+  if (d.requeueNoPlate && timeLeft() > 10_000) await d.requeueNoPlate(dayMinus(day, KEEP_DAYS), CERT_PARSER_AT).catch(() => {});
   let parsed = 0, failed = 0;
   const queue = timeLeft() > 5_000 ? await d.pending(dayMinus(day, KEEP_DAYS), PENDING_PER_TICK) : [];
   const worker = async () => {
