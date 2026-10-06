@@ -62,7 +62,8 @@ import DailyCertSort from "@/components/DailyCertSort";
 
 const entries = [
   { fileId: "F1aaaaaaaaaa", name: "8377.pdf", createdAt: "2026-10-05T05:00:00.000Z", plate: "رقح8377", plateText: "ر ق ح 8377", vin: "MR0FA3CD100123456",
-    bank: "مصرف الراجحي", make: "تويوتا", model: "هايلكس", year: "2021", color: "ابيض", status: "متعثر", certDate: "05/10/2026", certNo: "CRN-119-00133431" },
+    bank: "مصرف الراجحي", make: "تويوتا", model: "هايلكس", year: "2021", color: "ابيض", status: "متعثر", certDate: "05/10/2026", certNo: "CRN-119-00133431",
+    link: "https://platehunter-ksa.vercel.app/c/TOKEN1" },
   { fileId: "F2bbbbbbbbbb", name: "JTDBR32E720012345.pdf", createdAt: "2026-10-05T06:00:00.000Z", plate: "سصط5678", plateText: "س ص ط 5678", vin: "JTDBR32E720012345",
     bank: "البنك الأهلي", make: "لكزس", model: "LX570", year: "2019", color: "اسود", status: "متعثر", certDate: "05/10/2026" },
 ];
@@ -110,13 +111,14 @@ describe("🔴 تبويب «شهايد» لمشتركين الصوت فقط — 
 
     // ترتيب المالك بالظبط بعد رقم اللوحة
     const tbl = dataBox.querySelector("table") as HTMLElement;
-    expect(headersOf(tbl).slice(2)).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "موقعها في الداتا", "الشهادة", "الحالة", "المؤجر"]);
+    // (المربع بقى جنب اللوحة ⇒ أول عمود «إجراءات»)
+    expect(headersOf(tbl).slice(1)).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "موقعها في الداتا", "الشهادة", "الحالة", "المؤجر"]);
 
     // الداتا: العربية اللي في داتا المجموعة — ونيت/هايلكس، ومطلوبة (في شيت التشييك)
     const dataRows = within(dataBox).getAllByRole("row").slice(1);
     expect(dataRows).toHaveLength(1);
     const cells = [...dataRows[0].querySelectorAll("td")].map((td) => td.textContent?.trim());
-    expect(cells.slice(3, 6)).toEqual(["ونيت", "هايلكس", "شارع التخصصي"]);
+    expect(cells.slice(2, 5)).toEqual(["ونيت", "هايلكس", "شارع التخصصي"]);
     expect(cells).toContain("مطلوبة");
     // رقم العقد المسجل بدل كلمة «شهادة» (والسجل اللي شهادته من غير رقم ⇒ «شهادة» زي الأول)
     expect(within(dataRows[0]).getByText("CRN-119-00133431")).toBeTruthy();
@@ -235,5 +237,28 @@ describe("🔴 مشاركة الكل — الداتا والسجلات في مش
     const rows = shared[0].rows;
     expect(rows.map((r) => r["المصدر"])).toEqual(["داتا", "سجلات"]);
     expect(Object.keys(rows[0]).slice(0, 2)).toEqual(["رقم اللوحة", "المصدر"]);
+  });
+});
+
+/**
+ * المالك (٦ أكتوبر ٢٠٢٦): «حط مربع قدام كل لوحه بحيث ان المندوب يقدر يعلم علي لوحه او اكتر او الكل وياخدها
+ * نسخ ويلصقهم في واتس اب مكتوبين ويبقي فيهم لينك الشهادة».
+ */
+describe("🔴 تحديد ونسخ اللوحات بلينك الشهادة", () => {
+  it("🔴 المربع جنب اللوحة ⇒ «نسخ» ⇒ نص فيه اللوحة ورقم الشهادة ولينكها", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t: string) => { copied.push(t); } }, configurable: true });
+    render(<DailyCertSort variant="team" />);
+    fireEvent.click(await screen.findByText("افرز على شهايد النهارده"));
+    const dataBox = (await screen.findByText("شهايد النهارده في الداتا")).closest("div.rounded-2xl") as HTMLElement;
+    const row = within(dataBox).getAllByRole("row")[1];
+    // المربع في نفس خانة اللوحة
+    const plateCell = within(row).getByTitle("علّم اللوحة دي").closest("td") as HTMLElement;
+    expect(plateCell.textContent).toContain("8377");
+    fireEvent.click(within(row).getByTitle("علّم اللوحة دي"));
+    fireEvent.click(within(dataBox).getByText("نسخ"));
+    await vi.waitFor(() => expect(copied).toHaveLength(1));
+    expect(copied[0]).toContain("8377");
+    expect(copied[0]).toContain("📄 الشهادة CRN-119-00133431: https://platehunter-ksa.vercel.app/c/TOKEN1");
   });
 });

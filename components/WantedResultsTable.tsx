@@ -66,6 +66,7 @@ export interface WantedRow {
   certDate?: string;       // تاريخ الشهادة
   certFile?: { id: string; name: string };
   certNo?: string;         // رقم العقد المسجل — بيظهر بالأزرق بدل كلمة «شهادة»
+  certLink?: string;       // 🔗 لينك الشهادة اللي بيتنسخ/يتبعت على واتساب
   wantedStatus?: "مطلوبة" | "تثبيت";   // في شيت التشييك ولا لأ
 }
 
@@ -217,11 +218,22 @@ export default function WantedResultsTable({
   function toggleAll() { setSelected((p) => (p.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)))); }
   async function copyRow(r: WantedRow) { try { await navigator.clipboard.writeText(rowShareText(r)); setCopiedId(r.id); setTimeout(() => setCopiedId(null), 1200); } catch { /* no clipboard */ } }
   function shareRow(r: WantedRow) { void shareTextViaChooser(rowShareText(r)); }
-  function shareSelected() {
+  function selectedText(): string | null {
     const rs = rows.filter((r) => selected.has(r.id));
-    if (!rs.length) return;
-    const text = `*لوحات (${rs.length})*\n\n` + rs.map((r, i) => `${i + 1}. ${rowShareText(r)}`).join("\n\n──────────\n\n");
-    void shareTextViaChooser(text);
+    if (!rs.length) return null;
+    return `*لوحات (${rs.length})*\n\n` + rs.map((r, i) => `${i + 1}. ${rowShareText(r)}`).join("\n\n──────────\n\n");
+  }
+  function shareSelected() {
+    const text = selectedText();
+    if (text) void shareTextViaChooser(text);
+  }
+  // 📋 نسخ المحدد — يتلزق في واتساب مكتوب ومعاه لينك كل شهادة (الشهايد — المالك ٦ أكتوبر ٢٠٢٦)
+  const [copiedSel, setCopiedSel] = useState(false);
+  async function copySelected() {
+    const text = selectedText();
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); setCopiedSel(true); setTimeout(() => setCopiedSel(false), 1500); }
+    catch { alert("تعذّر النسخ — جرّب «واتساب»."); }
   }
 
   if (rows.length === 0) return <p className="py-4 text-center text-xs text-muted">مفيش نتايج.</p>;
@@ -252,8 +264,9 @@ export default function WantedResultsTable({
         <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${px}px`, minWidth: "max-content" }}>
           <thead className="sticky top-0 z-10">
             <tr className="bg-surface-2 text-muted">
-              {/* التحديد (للمشاركة الجماعية) أول عمود، وبعده الترقيم + نسخ/واتساب/حذف */}
-              <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>
+              {/* التحديد (للمشاركة الجماعية) أول عمود، وبعده الترقيم + نسخ/واتساب/حذف — في الشهايد المربع جنب
+                  اللوحة نفسها («حط مربع قدام كل لوحه»). */}
+              {!certMode && <th className="border-b border-l border-border px-2 py-2 text-center font-bold">☐</th>}
               <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">إجراءات</th>
               <th className={TH}>رقم اللوحة</th>
               {dataCols.map((label) => <th key={label} className={TH}>{label}</th>)}
@@ -276,11 +289,13 @@ export default function WantedResultsTable({
               return (
                 <tr key={r.id} className="border-b border-border" style={{ backgroundColor: bg }}>
                   {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
-                  <td className="border-l border-border px-2 py-2 text-center">
-                    <button onClick={() => toggleSel(r.id)} className="text-muted hover:text-primary transition">
-                      {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
-                    </button>
-                  </td>
+                  {!certMode && (
+                    <td className="border-l border-border px-2 py-2 text-center">
+                      <button onClick={() => toggleSel(r.id)} className="text-muted hover:text-primary transition">
+                        {sel ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} />}
+                      </button>
+                    </td>
+                  )}
                   {/* ترقيم + نسخ/واتساب/حذف */}
                   <td className="border-l border-border px-2 py-2">
                     <div className="flex items-center gap-2 whitespace-nowrap">
@@ -292,7 +307,18 @@ export default function WantedResultsTable({
                       <button onClick={() => onDelete([r.id])} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={13} /></button>
                     </div>
                   </td>
-                  <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
+                  {certMode ? (
+                    <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">
+                      <span className="inline-flex items-center gap-2">
+                        <button onClick={() => toggleSel(r.id)} title="علّم اللوحة دي" className="text-muted hover:text-primary transition">
+                          {sel ? <CheckSquare size={16} className="text-primary" /> : <Square size={16} />}
+                        </button>
+                        {r.plate}
+                      </span>
+                    </td>
+                  ) : (
+                    <td className="border-l border-border px-3 py-2 whitespace-nowrap font-bold text-ink">{r.plate}</td>
+                  )}
                   {dataCols.map((label) =>
                     label === "GPS" ? (
                       <td key={label} className="border-l border-border px-3 py-2">
@@ -373,6 +399,11 @@ export default function WantedResultsTable({
         <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
           <span className="text-xs font-bold text-ink">{selected.size} محددة</span>
           <div className="flex gap-2">
+            {certMode && (
+              <button onClick={() => void copySelected()} className="flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary transition hover:bg-primary/20">
+                {copiedSel ? <Check size={13} /> : <Copy size={13} />} {copiedSel ? "اتنسخ" : "نسخ"}
+              </button>
+            )}
             <button onClick={shareSelected} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"><Share2 size={13} /> واتساب</button>
             <button onClick={() => { onDelete(Array.from(selected)); setSelected(new Set()); }} className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"><Trash2 size={13} /> مسح</button>
           </div>

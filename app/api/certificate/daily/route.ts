@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { riyadhDayStart, dayMinus, CERT_DAYS_BACK } from "@/lib/certDaily";
 import { readDayCerts, countDayCerts } from "@/lib/certDailyStore";
+import { signCertLink } from "@/lib/certLink";
 
 export const dynamic = "force-dynamic";
 // من غيرهم نكست ١٤.٢ بيخزّن قرايات سوبابيز للأبد في راوت GET (أول نتيجة بتفضل ترجع) — زي دورات السيرفر
@@ -31,8 +32,17 @@ export async function GET(req: NextRequest) {
   const { day: today } = riyadhDayStart(new Date());
   const day = dayMinus(today, offset);
   try {
-    const r = req.nextUrl.searchParams.get("count") === "1" ? await countDayCerts(day) : await readDayCerts(day);
-    return NextResponse.json({ day, today, offset, ...r }, { headers: { "Cache-Control": "private, no-store" } });
+    if (req.nextUrl.searchParams.get("count") === "1") {
+      return NextResponse.json({ day, today, offset, ...(await countDayCerts(day)) }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+    const r = await readDayCerts(day);
+    // 🔗 لينك لكل شهادة يتبعت على واتساب ويفتحها لأي حد (`lib/certLink.ts` — موقّع وبينتهي بعد ٣٠ يوم)
+    const now = Date.now();
+    const entries = r.entries.map((e) => {
+      const t = signCertLink(e.fileId, now);
+      return t ? { ...e, link: `${req.nextUrl.origin}/c/${t}` } : e;
+    });
+    return NextResponse.json({ day, today, offset, ...r, entries }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (e) {
     const err = e as Error & { code?: string };
     if (/cert_daily|42P01|PGRST205/.test(`${err.code ?? ""} ${err.message ?? ""}`)) return NextResponse.json({ day, today, offset, setup: true });

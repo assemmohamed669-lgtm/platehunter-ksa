@@ -15,6 +15,7 @@ const row: WantedRow = {
   id: "d1", plate: "ر ق ح 8377", norm: "رقح8377", type: "ونيت", brand: "تويوتا", bank: "مصرف الراجحي",
   address: "شارع الملك فهد", district: "النسيم", color: "ابيض", year: "2021", date: "04-10-2026 21:00",
   mapsLink: "https://maps.google.com/?q=24.7,46.6", vehicleModel: "هايلكس", vin: "MR0FA3CD100123456", certNo: "CRN-119-00133431",
+  certLink: "https://platehunter-ksa.vercel.app/c/TOKEN1",
   contract: "متعثر", certDate: "05/10/2026", certFile: { id: "F1", name: "8377.pdf" }, wantedStatus: "مطلوبة",
 };
 
@@ -103,5 +104,15 @@ describe("🔴 مشاركة واحدة للداتا والسجلات", () => {
     expect(out.map((o) => [o["رقم اللوحة"], o["المصدر"]])).toEqual([["ر ق ح 8377", "داتا"], ["س ص ط 5678", "سجلات"]]);
     expect(Object.keys(out[0])).toEqual(["رقم اللوحة", "المصدر", ...Object.keys(certExportRow(row, cols)).slice(1)]);
     expect(out[1]["النوع"]).toBe("سيدان");
+  });
+});
+
+describe("🔴 لينك الشهادة في نص واتساب", () => {
+  it("🔴 «📄 الشهادة <الرقم>: <اللينك>» — الدوس عليه بيفتحها", () => {
+    const t = certShareText(row, certDisplayCols(DEFAULT_CERT_COL_PREFS));
+    expect(t).toContain("📄 الشهادة CRN-119-00133431: https://platehunter-ksa.vercel.app/c/TOKEN1");
+    expect(t).not.toContain("الشهادة: CRN-119-00133431");
+    const noNo = certShareText({ ...row, certNo: "" }, certDisplayCols(DEFAULT_CERT_COL_PREFS));
+    expect(noNo).toContain("📄 الشهادة: https://platehunter-ksa.vercel.app/c/TOKEN1");
   });
 });

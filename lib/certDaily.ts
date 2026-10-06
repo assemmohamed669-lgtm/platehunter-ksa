@@ -60,6 +60,8 @@ export function certDayDate(day: string): string {
 export interface DailyCertEntry extends Omit<CertFields, "issuer" | "certNo"> {
   /** رقم العقد المسجل (رقم الشهادة) — "" / مش موجود لو الشهادة مافيهاش أو لسه ماتقراش بالقارئ الجديد. */
   certNo?: string;
+  /** 🔗 لينك الشهادة اللي يتبعت على واتساب (السيرفر بيحطه — `lib/certLink.ts`). */
+  link?: string;
   fileId: string;
   name: string;
   createdAt: string;
