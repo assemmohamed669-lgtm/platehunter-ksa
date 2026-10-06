@@ -12,6 +12,8 @@ export interface CertParseStats {
   /** فيها لوحة / فيها شاص / الاتنين ناقصين (من اللي اتقرى). */
   withPlate: number;
   withVin: number;
+  /** فيها رقم العقد المسجل (رقم الشهادة). */
+  withCertNo: number;
   /** اسم الملف لوحة كاملة ⇒ اللي اتقرى زيها / حروفه مقلوبة / حاجة تانية / مالقيناش لوحة. */
   nameFull: number;
   nameAgree: number;
@@ -25,13 +27,14 @@ export interface CertParseStats {
 
 const split = (key: string) => ({ letters: key.replace(/[0-9]/g, ""), digits: key.replace(/\D/g, "").replace(/^0+/, "") });
 
-export function certParseStats(rows: readonly { name: string; plate: string; vin: string }[]): CertParseStats {
+export function certParseStats(rows: readonly { name: string; plate: string; vin: string; certNo?: string }[]): CertParseStats {
   const s: CertParseStats = {
-    withPlate: 0, withVin: 0, nameFull: 0, nameAgree: 0, nameReversed: 0, nameOther: 0, nameNoPlate: 0, nameDigits: 0, digitsAgree: 0,
+    withPlate: 0, withVin: 0, withCertNo: 0, nameFull: 0, nameAgree: 0, nameReversed: 0, nameOther: 0, nameNoPlate: 0, nameDigits: 0, digitsAgree: 0,
   };
   for (const r of rows) {
     if (r.plate) s.withPlate++;
     if (r.vin) s.withVin++;
+    if (r.certNo) s.withCertNo++;
     const base = r.name.replace(/\.[A-Za-z0-9]{2,4}$/, "").replace(/_\d+$/, "").trim();
     if (plateOf(base)) {
       s.nameFull++;

@@ -15,10 +15,10 @@ describe("🔴 القارئ بيقرا اللوحة صح؟", () => {
       { name: "ل م ن 4444.pdf", plate: "", vin: "MR0FA3CD100123456" }, // مالقاش لوحة
       { name: "8377.pdf", plate: "رقح8377", vin: "" },                // أرقام بس — زيها
       { name: "0912.pdf", plate: "دهو912", vin: "" },
-      { name: "JTDBR32E720012345.pdf", plate: "", vin: "JTDBR32E720012345" },
+      { name: "JTDBR32E720012345.pdf", plate: "", vin: "JTDBR32E720012345", certNo: "CRN-119-00133431" },
     ]);
     expect(s).toEqual({
-      withPlate: 5, withVin: 2, nameFull: 4, nameAgree: 1, nameReversed: 1, nameOther: 1, nameNoPlate: 1, nameDigits: 2, digitsAgree: 2,
+      withPlate: 5, withVin: 2, withCertNo: 1, nameFull: 4, nameAgree: 1, nameReversed: 1, nameOther: 1, nameNoPlate: 1, nameDigits: 2, digitsAgree: 2,
     });
   });
   it("🔴 الدورة بترجّعه بالأرقام بس (مفيش لوحات ولا أسامي)", () => {
