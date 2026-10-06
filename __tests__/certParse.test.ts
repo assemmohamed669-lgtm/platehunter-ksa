@@ -162,6 +162,15 @@ describe("🔴 «السجل» — حروف اللوحة الإنجليزي بم�
   it("«J G R 4321» (الحروف الأول) ⇒ زي «JGR 4321»", () => {
     expect(parseCertText("Plate: J G R 4321", "x.pdf").plate).toBe(parseCertText("Plate: JGR 4321", "x.pdf").plate);
   });
+  it("🔴 «8377-JGR» بشَرطة (شهايد ٤ أكتوبر) ⇒ زي «8377JGR»", () => {
+    const t = "4321- \u0371\u0339 :\u0372\u0337 \u0363\n4321-JGR :\u0371\u0339\u0BEC \u0372\u0337\u0363\nKMHLN41E8RU000001 :\u0371";
+    expect(parseCertText(t, "REPO-119-00000001.pdf").plate).toBe("رقح4321");
+    expect(parseCertText("Plate: JGR-4321", "x.pdf").plate).toBe(parseCertText("Plate: JGR 4321", "x.pdf").plate);
+  });
+  it("🔴 أرقام العقود بالشَرطة مش لوحات («REPO-119-00000001» · «TSL-123-45678901»)", () => {
+    expect(parseCertText("REPO-119-00000001: x\nCRN-119-00000002: y\nTSL-123-45678901: z", "scan.pdf").plate).toBe("");
+    expect(parseCertText("REF-ABD-1234: x", "scan.pdf").plate).toBe("");
+  });
   it("حرفين بمسافة جنب رقم في كلام عادي مايتحسبوش لوحة", () => {
     expect(parseCertText("TEST 4 AB 2\nRiyadh 12361 ± 6858", "scan.pdf").plate).toBe("");
   });

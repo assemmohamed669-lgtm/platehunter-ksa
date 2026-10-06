@@ -69,16 +69,18 @@ function arabicPlates(text: string): Cand[] {
 }
 
 /**
- * «8377JGR» / «JGR 8377» / «8377 J G R» — حروف اللوحات الإنجليزي بس، ومش جوّه رقم (SAR 38,392).
- * ٣ حروف بالظبط زي اللوحات السعودي (حرفين جنب رقم في كلام عادي «4 AB» مش لوحة). «السجل» ساعات
- * بيكتبها بمسافة بين كل حرف (المقياس على شهايد ٤ أكتوبر ٢٠٢٦: خانة العربي فاضية والإنجليزي كده).
+ * «8377JGR» / «JGR 8377» / «8377 J G R» / «8377-JGR» — حروف اللوحات الإنجليزي بس، ومش جوّه رقم
+ * (SAR 38,392) ولا رقم عقد بشَرطات («REPO-119-00000001»). ٣ حروف بالظبط زي اللوحات السعودي (حرفين
+ * جنب رقم في كلام عادي «4 AB» مش لوحة). «السجل» ساعات بيكتبها بمسافة بين كل حرف أو بشَرطة بين
+ * الأرقام والحروف (مقياس الشكل على شهايد ٤ أكتوبر ٢٠٢٦).
  */
 function latinPlates(text: string): Cand[] {
   const out: Cand[] = [];
   const L = "[ABDEGHJKLNRSTUVXZ]";
   const LET = `${L}(?:[ \\t]?${L}){2}`;
-  const digitsFirst = new RegExp(`(^|[^A-Za-z0-9])(\\d{1,4})[ \\t]*(${LET})(?![A-Za-z0-9])`, "g");
-  const lettersFirst = new RegExp(`(^|[^A-Za-z0-9])(${LET})[ \\t]*(\\d{1,4})(?![A-Za-z0-9,.])`, "g");
+  const SEP = "[ \\t]*-?[ \\t]*";
+  const digitsFirst = new RegExp(`(^|[^A-Za-z0-9-])(\\d{1,4})${SEP}(${LET})(?![A-Za-z0-9-])`, "g");
+  const lettersFirst = new RegExp(`(^|[^A-Za-z0-9-])(${LET})${SEP}(\\d{1,4})(?![A-Za-z0-9,.-])`, "g");
   const push = (raw: string, digits: string, index: number) => {
     const ar = bankPlateToArabic(raw);
     const key = normalizePlate(ar);
