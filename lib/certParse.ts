@@ -68,12 +68,17 @@ function arabicPlates(text: string): Cand[] {
   return out;
 }
 
-/** «8377JGR» / «JGR 8377» — حروف اللوحات الإنجليزي بس، ومش جوّه رقم (SAR 38,392). */
+/**
+ * «8377JGR» / «JGR 8377» / «8377 J G R» — حروف اللوحات الإنجليزي بس، ومش جوّه رقم (SAR 38,392).
+ * ٣ حروف بالظبط زي اللوحات السعودي (حرفين جنب رقم في كلام عادي «4 AB» مش لوحة). «السجل» ساعات
+ * بيكتبها بمسافة بين كل حرف (المقياس على شهايد ٤ أكتوبر ٢٠٢٦: خانة العربي فاضية والإنجليزي كده).
+ */
 function latinPlates(text: string): Cand[] {
   const out: Cand[] = [];
   const L = "[ABDEGHJKLNRSTUVXZ]";
-  const digitsFirst = new RegExp(`(^|[^A-Za-z0-9])(\\d{1,4})[ \\t]*(${L}{2,3})(?![A-Za-z0-9])`, "g");
-  const lettersFirst = new RegExp(`(^|[^A-Za-z0-9])(${L}{2,3})[ \\t]*(\\d{1,4})(?![A-Za-z0-9,.])`, "g");
+  const LET = `${L}(?:[ \\t]?${L}){2}`;
+  const digitsFirst = new RegExp(`(^|[^A-Za-z0-9])(\\d{1,4})[ \\t]*(${LET})(?![A-Za-z0-9])`, "g");
+  const lettersFirst = new RegExp(`(^|[^A-Za-z0-9])(${LET})[ \\t]*(\\d{1,4})(?![A-Za-z0-9,.])`, "g");
   const push = (raw: string, digits: string, index: number) => {
     const ar = bankPlateToArabic(raw);
     const key = normalizePlate(ar);
@@ -81,8 +86,9 @@ function latinPlates(text: string): Cand[] {
     const letters = ar.replace(/[0-9]/g, "").split("");
     out.push({ key, display: `${letters.join(" ")} ${digits}`, index, digits, arabic: false });
   };
-  for (const m of text.matchAll(digitsFirst)) push(m[2] + m[3], m[2], (m.index ?? 0) + m[1].length);
-  for (const m of text.matchAll(lettersFirst)) push(`${m[2]} ${m[3]}`, m[3], (m.index ?? 0) + m[1].length);
+  const tight = (s: string) => s.replace(/[ \t]+/g, "");
+  for (const m of text.matchAll(digitsFirst)) push(m[2] + tight(m[3]), m[2], (m.index ?? 0) + m[1].length);
+  for (const m of text.matchAll(lettersFirst)) push(`${tight(m[2])} ${m[3]}`, m[3], (m.index ?? 0) + m[1].length);
   return out;
 }
 

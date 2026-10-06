@@ -137,6 +137,36 @@ describe("🔴 شهادة «السجل السعودي» (العربي متلخب
   });
 });
 
+/**
+ * المقياس على الشهايد الحقيقية (٦ أكتوبر ٢٠٢٦): شهايد «السجل» يوم ٤ أكتوبر خانة اللوحة العربي فاضية
+ * والإنجليزي مكتوبة بمسافات «9999 L L L» — القارئ كان مستني الحروف لازقة فمالقاش لوحة (١٣٦ من ٥٦١ بس).
+ */
+const SIJIL_SPACED = `صفحة 1 من 1
+௛͖̻̺͙̚ ͱ̢͙͋ ̼̓̓͜ ௬̗
+:͂௬̗௛̯̺͙ ̲͂ Ͼ̺̗̓ ̜͂ ͵Ͼ̺͙ Ͳ̷ͣ ͵Ͼ̺͙ Ͳ̷ͣ ͷ͙̼͡͵௬̽ :̢̰̼̻̺͙
+4321 J G R :͂̀௜௬Ͼ̼̚΀͙ ̲͂ Ͼ̺̗̓ ̜͂ ͵Ͼ̺͙ Ͳ̷ͣ ͷ͙̼͡͵௬̽ :̗̹͂௛̻̺͙ ͫ ͵̴̼̭́
+:̗̹͂௛̻̺͙ ͳ͵̺ KMHLN41E8RU000001 :ͱ̹௬̺͙̾ Ͳ̷ͣ ͚
+99/99/9999 :̸̯̺͙͡ ̟̘̀ͣ̓ AB_12345678901234 :̸̯̺͙͡ Ͳ̷ͣ
+TEST 4 AB 2́
+Saudi Finance Leasing Contracts Registry Company
+Riyadh 12361 ± 6858, Saudi Arabia, 920002942, www.sijil.sa
+REPO-119-00000001: ̡̺͙͛̓̾͡ Ͳ̷ͣͨ̓̀`;
+
+describe("🔴 «السجل» — حروف اللوحة الإنجليزي بمسافات", () => {
+  it("🔴 «4321 J G R» ⇒ نفس «4321JGR» (رقح4321) — من غير ما الكلام اللي تحت يلخبطها", () => {
+    const f = parseCertText(SIJIL_SPACED, "REPO-119-00000001.pdf");
+    expect(f.plate).toBe("رقح4321");
+    expect(f.plateText).toBe("ر ق ح 4321");
+    expect(f.vin).toBe("KMHLN41E8RU000001");
+  });
+  it("«J G R 4321» (الحروف الأول) ⇒ زي «JGR 4321»", () => {
+    expect(parseCertText("Plate: J G R 4321", "x.pdf").plate).toBe(parseCertText("Plate: JGR 4321", "x.pdf").plate);
+  });
+  it("حرفين بمسافة جنب رقم في كلام عادي مايتحسبوش لوحة", () => {
+    expect(parseCertText("TEST 4 AB 2\nRiyadh 12361 ± 6858", "scan.pdf").plate).toBe("");
+  });
+});
+
 describe("اسم الملف", () => {
   it("🔴 الكلام مفيهوش لوحة ⇒ من اسم الملف لو اسمه لوحة", () => {
     expect(parseCertText("كلام من غير لوحة", "ر ل ي 8377.pdf")).toMatchObject({ plate: "رلي8377", plateText: "ر ل ي 8377" });
