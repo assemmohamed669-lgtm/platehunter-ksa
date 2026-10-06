@@ -43,11 +43,11 @@ export async function requeueNoPlateCerts(fromDay: string, beforeIso: string): P
   if (error) throw new Error(error.message);
 }
 
-/** عيّنة من شهايد يوم اتقرت ومالقيناش فيها لوحة (لمقياس الشكل). */
-export async function sampleNoPlateCerts(day: string, limit: number): Promise<string[]> {
-  const { data, error } = await supabaseAdmin
-    .from("cert_daily").select("file_id")
-    .eq("day", day).eq("parsed", true).eq("plate", "").order("created_at", { ascending: true }).limit(limit);
+/** عيّنة من شهايد يوم اتقرت — اللي مالقيناش فيها لوحة بس، أو أي شهادة (`any`) — لمقياس الشكل. */
+export async function sampleNoPlateCerts(day: string, limit: number, any = false): Promise<string[]> {
+  let q = supabaseAdmin.from("cert_daily").select("file_id").eq("day", day).eq("parsed", true);
+  if (!any) q = q.eq("plate", "");
+  const { data, error } = await q.order("created_at", { ascending: true }).limit(limit);
   if (error) throw new Error(error.message);
   return ((data ?? []) as { file_id: string }[]).map((r) => r.file_id);
 }

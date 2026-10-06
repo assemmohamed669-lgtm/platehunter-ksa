@@ -67,7 +67,7 @@ export async function GET(req: Request) {
   const token = await getDriveAccessToken();
   if (!token) return NextResponse.json({ error: "drive_unavailable" }, { status: 502 });
 
-  // 🩺 شكل نص ٣ شهايد مالقيناش فيها لوحة (`?diag=shape&offset=N`) — كل حرف ورقم مستخبي
+  // 🩺 شكل نص ٣ شهايد مالقيناش فيها لوحة (`?diag=shape&offset=N`، أو أي شهادة بـ`&any=1`) — كل حرف ورقم مستخبي
   // (`lib/certTextShape.ts`)، فبيبان مكان اللوحة وشكلها من غير أي اسم ولا رقم.
   if (url.searchParams.get("diag") === "shape") {
     const offset = Number(url.searchParams.get("offset") ?? "0");
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
     }
     const day = dayMinus(riyadhDayStart(new Date()).day, offset);
     try {
-      const ids = await sampleNoPlateCerts(day, 3);
+      const ids = await sampleNoPlateCerts(day, 3, url.searchParams.get("any") === "1");
       const samples: string[][] = [];
       for (const id of ids) {
         const bytes = await downloadPdf(id, token);

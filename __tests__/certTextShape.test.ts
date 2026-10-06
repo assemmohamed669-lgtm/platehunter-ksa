@@ -26,5 +26,7 @@ describe("🔴 الإخفاء", () => {
     const r = readFileSync("app/api/cron/cert-daily/route.ts", "utf8");
     expect(r).toMatch(/searchParams\.get\("diag"\) === "shape"/);
     expect(r).toMatch(/certTextShape\(/);
+    expect(r).toMatch(/sampleNoPlateCerts\(day, 3, url\.searchParams\.get\("any"\) === "1"\)/);
+    expect(maskCertLine("رقم العقد المسجل: CRN-119-00133431")).toBe("رقم العقد المسجل: LLL-999-99999999");
   });
 });
