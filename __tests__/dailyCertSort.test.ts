@@ -66,6 +66,8 @@ describe("🔴 الداتا اللي على الجهاز بتتقري كلها",
       iterate: async (_slot, onBatch) => { await onBatch([{ "اللوحه": "س ص ط 5678", "الشارع": "طريق الملك عبدالله" }], 0); },
     }));
     expect(out.dataRows.map((r) => [r.plate, r.srcIdx, r.dataIdx])).toEqual([[disp("ر ق ح 8377"), 0, 1], [disp("س ص ط 5678"), 1, 0]]);
+    // اتفرز على ٣ صفوف من ملفين (الملف اللي مالوش عمود لوحة مابيتحسبش)
+    expect(out.scanned).toEqual({ dataRows: 3, dataFiles: 2, records: 0 });
     expect(out.dataRows[1].certFile).toEqual({ id: "F2", name: "8377.pdf" });
   });
 });

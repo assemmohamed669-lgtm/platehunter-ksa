@@ -66,6 +66,8 @@ interface DayResult {
   deleted: string[];
   /** آخر تحديث تلقائي: إمتى واتضاف كام عربية. */
   auto?: { at: string; added: number };
+  /** اتفرز على كام صف داتا من كام ملف وكام سجل. */
+  scanned?: { dataRows: number; dataFiles: number; records: number };
 }
 const cache: Partial<Record<Variant, Record<string, DayResult>>> = {};
 
@@ -223,6 +225,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
         day: d.day, dataRows, recordRows, plateCols: out.plateCols,
         sources: sources.map((s) => (s.kind === "mem" ? { ...s, rows: [] } : s)),
         parsedAt: d.parsed ?? 0, sortedAt: Date.now(), deleted: [...deleted], auto: silent ? auto : undefined,
+        scanned: out.scanned,
       });
     } catch (err) {
       if (!silent) setError(`تعذّر الفرز: ${err instanceof Error ? err.message : String(err)}`);
@@ -380,6 +383,14 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
           {sorting ? <RefreshCw size={16} className="animate-spin" /> : <FileText size={16} />}
           {sorting ? "جاري الفرز..." : `افرز على شهايد ${label}`}
         </button>
+        {/* اتفرز على إيه — صفر نتايج مع صفر صفوف داتا = الداتا مش على الجهاز ده */}
+        {result?.scanned && (
+          <p className="text-[11px] text-muted">
+            {result.scanned.dataFiles > 0
+              ? `اتفرز على ${n(result.scanned.dataRows)} صف داتا من ${n(result.scanned.dataFiles)} ملف و${n(result.scanned.records)} سجل.`
+              : `مفيش داتا على الجهاز ده — اتفرز على ${n(result.scanned.records)} سجل بس.`}
+          </p>
+        )}
         {result && offset === 0 && (
           <p className="text-[11px] text-muted">
             🔄 بيتحدّث لوحده لما تنزل شهايد جديدة

@@ -99,6 +99,9 @@ describe("🔴 تبويب «شهايد» لمشتركين الصوت فقط — 
     const dataBox = dataTitle.closest("div.rounded-2xl") as HTMLElement;
     const recBox = screen.getByText("شهايد النهارده في السجلات").closest("div.rounded-2xl") as HTMLElement;
 
+    // اتفرز على إيه (داتا المجموعة ٣ صفوف + سجل شاص واحد)
+    expect(screen.getByText("اتفرز على 3 صف داتا من 1 ملف و1 سجل.")).toBeTruthy();
+
     // ترتيب المالك بالظبط بعد رقم اللوحة
     const tbl = dataBox.querySelector("table") as HTMLElement;
     expect(headersOf(tbl).slice(2)).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "موقعها في الداتا", "الشهادة", "الحالة", "المؤجر"]);
