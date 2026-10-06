@@ -24,6 +24,7 @@ import { serviceActive } from "@/lib/subscription";
 import { setCheckTab } from "@/lib/checkTab";
 import {
   incomingExcelOptions, firstFreeSlotNum, saveIncomingExtraData, saveIncomingMainData, EXTRA_DATA_FROM_SHARE_FOR_ALL,
+  incomingOptionTone, type IncomingTone,
   VOICE_REFERRAL_SLOT, type IncomingOption,
 } from "@/lib/incomingExcel";
 import { readCacheFileBlob, base64ToBlob, FAST_SHARE_FOR_ALL } from "@/lib/incomingFileRead";
@@ -42,6 +43,13 @@ interface PendingFile {
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const n = (x: number) => x.toLocaleString("en-US");
 type Slot = "referral" | "data" | "check" | "voice-referral" | `referral-${number}` | `data-${number}`;
+
+// 🎨 لون كل مربع وجهة (المالك ٦ أكتوبر ٢٠٢٦): الداتا أخضر · الإحالة أحمر فاتح · التشييك تركوازي.
+const TONE: Record<IncomingTone, { box: string; icon: string }> = {
+  data: { box: "border-green-500/50 bg-green-500/15 hover:bg-green-500/25", icon: "text-green-600" },
+  referral: { box: "border-red-400/50 bg-red-400/15 hover:bg-red-400/25", icon: "text-red-500" },
+  check: { box: "border-teal-400/60 bg-teal-400/15 hover:bg-teal-400/25", icon: "text-teal-500" },
+};
 
 export default function IncomingExcelHandler() {
   const router = useRouter();
@@ -419,22 +427,25 @@ export default function IncomingExcelHandler() {
             )}
 
             <div className="flex flex-col gap-2">
-              {options.map((o) => (
-                <button
-                  key={o.slot}
-                  disabled={loading}
-                  onClick={() => openAs(o.slot as Slot)}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"
-                >
-                  {o.slot === "check"
-                    ? <CheckCircle2 size={20} className="shrink-0 text-primary" />
-                    : <ListFilter size={20} className="shrink-0 text-primary" />}
-                  <div>
-                    <p className="text-sm font-bold text-ink">{o.label}</p>
-                    <p className="text-xs text-muted">{o.hint}</p>
-                  </div>
-                </button>
-              ))}
+              {options.map((o) => {
+                const tone = TONE[incomingOptionTone(o.slot)];
+                return (
+                  <button
+                    key={o.slot}
+                    disabled={loading}
+                    onClick={() => openAs(o.slot as Slot)}
+                    className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-right transition disabled:opacity-50 ${tone.box}`}
+                  >
+                    {o.slot === "check"
+                      ? <CheckCircle2 size={20} className={`shrink-0 ${tone.icon}`} />
+                      : <ListFilter size={20} className={`shrink-0 ${tone.icon}`} />}
+                    <div>
+                      <p className="text-sm font-bold text-ink">{o.label}</p>
+                      <p className="text-xs text-muted">{o.hint}</p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             {loading && (
