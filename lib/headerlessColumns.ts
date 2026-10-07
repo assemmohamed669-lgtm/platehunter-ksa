@@ -74,7 +74,31 @@ export function looksLikePlate(v: string): boolean {
   const s = v
     .replace(/[\s\-_.ـ/]/g, "")
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
-  return /^[ء-ي]{2,3}\d{3,4}$/.test(s) || /^\d{3,4}[ء-ي]{2,3}$/.test(s);
+  return /^[ء-ي]{2,3}\d{3,4}$/.test(s) || /^\d{3,4}[ء-ي]{2,3}$/.test(s) || isShortDigitPlate(v);
+}
+
+/** حروف اللوحة السعودية (بعد توحيد أ/إ/آ ⇐ ا و ى ⇐ ي). */
+const PLATE_LETTERS = "ابحدرسصطعقكلمنهوي";
+const SEP = "[\\s\\-_./]";
+const SHORT_LETTERS_FIRST = new RegExp(`^([ء-ي])${SEP}+([ء-ي])${SEP}+([ء-ي])${SEP}*\\d{1,2}$`);
+const SHORT_DIGITS_FIRST = new RegExp(`^\\d{1,2}${SEP}*([ء-ي])${SEP}+([ء-ي])${SEP}+([ء-ي])$`);
+
+/**
+ * 0️⃣ لوحة البنك من غير الأصفار اللي قبل الأرقام: «ي ه ل 76» = «يهل0076» (المالك ٧ أكتوبر ٢٠٢٦) — ٣ حروف
+ * لوحة **عربي مفصولة** (زي ما البنك بينزّلها) + رقم أو رقمين، أي ترتيب. بتاخد الخلية **قبل** شيل المسافات:
+ * الحروف المفصولة هي اللي بتفرّقها عن كلمة + رقم («30 يوم» / «رقم 5») — لو اتحسبت لوحة كانت ممكن تكسب
+ * عمود اللوحة الحقيقي في الكشف بالمحتوى. وكود زي «R8» أو «حي1» مش لوحة (زي الأول).
+ * مشتركة بين كل نسخ كشف عمود اللوحة بالمحتوى (plateParser / excel / parseWorkbook / xlsxWorker).
+ */
+export function isShortDigitPlate(v: string): boolean {
+  const s = String(v ?? "")
+    .replace(/ـ/g, "")
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .trim();
+  const m = SHORT_LETTERS_FIRST.exec(s) ?? SHORT_DIGITS_FIRST.exec(s);
+  return !!m && [m[1], m[2], m[3]].every((c) => PLATE_LETTERS.includes(c));
 }
 
 /** قيمة حي: «حي العليا» / «الحي ...». */
