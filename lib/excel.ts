@@ -589,7 +589,7 @@ function _cellLooksLikePlate(raw: string): boolean {
   if (cleaned.length < 2 || cleaned.length > 10) return false;
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch || digitMatch[0].length > 4) return false;
-  // ٣ حروف لوحة عربي + رقم أو رقمين = لوحة البنك من غير الأصفار («يهل76» = «يهل0076»)
+  // حرفين أو ٣ حروف لوحة عربي مفصولة + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»)
   if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   return nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits);
