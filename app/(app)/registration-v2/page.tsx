@@ -103,7 +103,6 @@ import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
 import { wantedHits, shouldAlertNow, sweepKeeps, confirmWanted, wantedReadCount } from "@/lib/wantedFastPath";
-import { bikeWantedHits, hasNearbyRow } from "@/lib/bikePlates";
 import { setMicBusy } from "@/lib/micBusy";
 import { createBusyHold, type BusyHold } from "@/lib/busyHold";
 import { micLostNotice, type AutoStopReason } from "@/lib/micLoss";
@@ -1428,26 +1427,15 @@ export default function RegistrationV2Page() {
           const hits = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)))
             .filter((h) => confirmWanted(wantedSeenRef.current, normalizePlate(bankPlateToArabic(h.plate)), r.tMs));
           for (const h of hits) alertWanted(h.plate, h.row);
-          /**
-           * 🏍️ (السوبر أدمن الأول) **الموتوسيكل** — حرفين + أرقام: المندوب بيقول «طع0123» والشيت فيه
-           * «طع123». السيرفر بيرمي أي لوحة مش ٣+٤، فبتتاخد من كلام الموديل الخام **لو مطلوبة بس**، وبعد
-           * التأكيد (نافذتين) زي العربية بالظبط. شوف `lib/bikePlates.ts`. المناديب: `[]` ⇒ زي النهارده.
-           */
-          const bikeHits = sup
-            ? bikeWantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)))
-              .filter((h) => confirmWanted(wantedSeenRef.current, normalizePlate(bankPlateToArabic(h.plate)), r.tMs))
-            : [];
-          for (const h of bikeHits) alertWanted(h.plate, h.row);
-          const bikeSet = new Set(bikeHits.map((h) => h.plate));
-          const wantedMap = new Map([...hits, ...bikeHits].map((h) => [h.plate, h.row]));
+          const wantedMap = new Map(hits.map((h) => [h.plate, h.row]));
 
           // المطلوبة **المتأكّدة** بتطلع صف حتى لو ثقتها أقل من بوابة الظهور.
           if (!showProvisional(r) && wantedMap.size === 0) return;
           const g2 = gpsRef.current;
           const now2 = Date.now();
-          for (const raw of [...String(r.plate || "").trim().split(/\s+/), ...bikeSet]) {
+          for (const raw of String(r.plate || "").trim().split(/\s+/)) {
             const p2 = raw.replace(/\s+/g, "");
-            if (!WELL.test(p2) && !bikeSet.has(p2)) continue;
+            if (!WELL.test(p2)) continue;
             // لو القراية مش عالية الثقة، بس المطلوبة منها اللي تطلع صف
             if (!showProvisional(r) && !wantedMap.has(p2)) continue;
             const prov: LiveRow = {
@@ -1463,8 +1451,6 @@ export default function RegistrationV2Page() {
             agentId: agentRef.current,
             };
             setRows((prev0) => {
-              // 🏍️ صف الموتوسيكل مرة واحدة — دمج التوائم (`placeLiveRow`) مبني على ٣ حروف + ٤ أرقام
-              if (bikeSet.has(p2) && hasNearbyRow(prev0, p2, r.tMs)) return prev0;
               /**
                * 🔔 التأكيد وصل ⇒ الصف اللي ظاهر بنفس اللوحة ياخد «مطلوبة» **على
                * طول** — حتى لو القراية دي مش هتتدمج فيه (`confirmedWins`).
