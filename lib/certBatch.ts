@@ -16,7 +16,7 @@
  *    «مفيش شهادة».
  *  · درايف رجّع أقصى عدد (ممكن ناقصة) ⇒ السؤال بيتقسم نصين لحد ما يكمل.
  */
-import { plateDigits, matchCertFiles, toLatinDigits } from "./certificateMatch";
+import { plateDigitForms, matchCertFiles, toLatinDigits } from "./certificateMatch";
 import type { DriveFile } from "./gdrive";
 
 /** أقصى عدد لوحات في الطلب الواحد (العميل بيقسّم أكتر من كده). */
@@ -86,11 +86,16 @@ export async function batchFindCertificates(
   const uniq = [...new Set(plates.map((p) => String(p ?? "").trim()).filter(Boolean))].slice(0, CERT_BATCH_MAX_PLATES);
   const byDigits = new Map<string, string[]>();
   const results: Record<string, CertHit[]> = {};
+  // كل لوحة بكل أشكال أرقامها («0076» و«76» و«076») — البنك من غير أصفار والمندوب بيها (٧ أكتوبر ٢٠٢٦)
+  const formsOf = new Map<string, string[]>();
   for (const p of uniq) {
-    const d = plateDigits(p);
-    if (!d) { results[p] = []; continue; }        // من غير أرقام ⇒ مفيش بحث (زي العادي)
-    const list = byDigits.get(d);
-    if (list) list.push(p); else byDigits.set(d, [p]);
+    const forms = plateDigitForms(p);
+    if (!forms.length) { results[p] = []; continue; }        // من غير أرقام ⇒ مفيش بحث (زي العادي)
+    formsOf.set(p, forms);
+    for (const d of forms) {
+      const list = byDigits.get(d);
+      if (list) list.push(p); else byDigits.set(d, [p]);
+    }
   }
 
   const fresh = (d: string) => {
@@ -112,10 +117,11 @@ export async function batchFindCertificates(
   await Promise.all(Array.from({ length: Math.min(CERT_PARALLEL_QUERIES, chunks.length) }, worker));
 
   const failed: string[] = [];
-  for (const [d, list] of byDigits) {
-    if (failedDigits.has(d)) { failed.push(...list); continue; }
-    const files = cache.get(d)?.files ?? [];
-    for (const p of list) results[p] = matchCertFiles(p, files).map((f) => ({ id: f.id, name: f.name }));
+  for (const [p, forms] of formsOf) {
+    if (forms.some((d) => failedDigits.has(d))) { failed.push(p); continue; }
+    const seen = new Set<string>();
+    const files = forms.flatMap((d) => cache.get(d)?.files ?? []).filter((f) => !seen.has(f.id) && (seen.add(f.id), true));
+    results[p] = matchCertFiles(p, files).map((f) => ({ id: f.id, name: f.name }));
   }
   return { results, failed };
 }

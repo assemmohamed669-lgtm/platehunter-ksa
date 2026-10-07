@@ -75,15 +75,40 @@ export function plateCertKey(s: string): string {
   return letters + digits;
 }
 
-/** من قائمة أسماء ملفات درايف، رجّع اللي مفتاحها = مفتاح المدخل (لوحة). */
+/**
+ * 0️⃣ المفتاح من غير فرق الأصفار اللي قبل الأرقام: «يهل76» = «يهل0076» (المالك ٧ أكتوبر ٢٠٢٦: «البنك
+ * بينزلها بدون ال صفر والمندوب بيسجلها ... ب الصفر علشان يبقو 4 ارقام»). زي `normalizePlate` في الفرز.
+ */
+export function plateCertKeyLoose(s: string): string {
+  const k = plateCertKey(s);
+  const digits = k.replace(/\D/g, "");
+  return digits && digits.length < 4 ? k.replace(/[0-9]/g, "") + digits.padStart(4, "0") : k;
+}
+
+/**
+ * أرقام اللوحة بكل أشكالها في أسماء الملفات (للسؤال في درايف — «name contains» بيطابق أول الكلمة): البنك
+ * بيكتبها من غير الأصفار («76»)، والمندوب ٤ أرقام («0076»)، وأي حاجة بينهم («076»). الرقم الواحد من غير
+ * أصفار مابيتسألش لوحده (بيجيب نص درايف) — بالأصفار بس.
+ */
+export function plateDigitForms(input: string): string[] {
+  const runs = toLatinDigits(input).match(/[0-9]+/g) ?? [];
+  const last = [...runs].reverse().find((r) => r.length <= 4) ?? "";
+  if (!last) return [];
+  const core = last.replace(/^0+/, "") || "0";
+  const forms = new Set<string>();
+  for (let len = Math.max(2, core.length); len <= 4; len++) forms.add(core.padStart(len, "0"));
+  return [...forms];
+}
+
+/** من قائمة أسماء ملفات درايف، رجّع اللي مفتاحها = مفتاح المدخل (لوحة) — الأصفار اللي قبل الأرقام مش فرق. */
 export function matchCertFiles<T extends { name: string }>(plateInput: string, files: T[]): T[] {
-  const key = plateCertKey(plateInput);
+  const key = plateCertKeyLoose(plateInput);
   if (!key) return [];
   const digits = key.replace(/\D/g, "");
   const letters = key.replace(/[0-9]/g, "");
   // بحث بالأرقام بس («2104») → **كل** الشهادات اللي بالرقم ده والمندوب يختار.
   if (!letters && digits) {
-    return files.filter((f) => plateCertKey(f.name).replace(/\D/g, "") === digits);
+    return files.filter((f) => plateCertKeyLoose(f.name).replace(/\D/g, "") === digits);
   }
-  return files.filter((f) => plateCertKey(f.name) === key);
+  return files.filter((f) => plateCertKeyLoose(f.name) === key);
 }

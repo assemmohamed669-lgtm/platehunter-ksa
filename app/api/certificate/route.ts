@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { getDriveAccessToken, driveSearch } from "@/lib/gdrive";
-import { looksLikeChassis, looksLikeCertNumber, certSearchToken, plateDigits, matchCertFiles } from "@/lib/certificateMatch";
+import { looksLikeChassis, looksLikeCertNumber, certSearchToken, plateDigitForms, matchCertFiles } from "@/lib/certificateMatch";
 
 // يهرب علامة التنصيص المفردة في استعلام درايف.
 function esc(s: string): string { return s.replace(/'/g, "\\'"); }
@@ -40,9 +40,10 @@ export async function GET(req: NextRequest) {
     files = await driveSearch(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`, token);
     scanned = files.length;
   } else {
-    const digits = plateDigits(q);
-    if (!digits) return NextResponse.json({ found: false, results: [] });
-    const all = await driveSearch(`name contains '${esc(digits)}' and mimeType='application/pdf'`, token);
+    // الأرقام بكل أشكالها («0076» / «76») — البنك بينزلها من غير الأصفار والمندوب بيها
+    const forms = plateDigitForms(q);
+    if (!forms.length) return NextResponse.json({ found: false, results: [] });
+    const all = await driveSearch(`(${forms.map((d) => `name contains '${esc(d)}'`).join(" or ")}) and mimeType='application/pdf'`, token);
     scanned = all.length;
     files = matchCertFiles(q, all);
   }
