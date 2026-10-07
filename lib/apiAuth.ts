@@ -14,6 +14,7 @@
  */
 import { supabaseAdmin } from "./supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "./securityLogServer";
+import { agentIdFromKey } from "./rateLimitKey";
 
 /** أقل ما نحتاجه من الطلب — يقبل NextRequest أو Request عادي. */
 interface ReqLike {
@@ -76,6 +77,9 @@ export function rateLimit(key: string, limit: number, windowMs: number, req?: Re
     const meta = req ? requestMeta(req) : { ip: null, userAgent: null };
     logSecurityEvent({
       type: "api_rate_limited",
+      // 🪪 المندوب من المفتاح نفسه (`<الخدمة>:<رقمه>`) — من غيره السطر كان
+      //    بيطلع «الفاعل: —» ومافيش طريقة تعرف مين اتوقف. (بلاغ المالك ٧ أكتوبر.)
+      agentId: agentIdFromKey(key) ?? undefined,
       detail: `${pathOf(req) ?? key}`,
       ip: meta.ip,
       userAgent: meta.userAgent,

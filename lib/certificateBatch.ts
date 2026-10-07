@@ -114,7 +114,36 @@ export function subscribeCertStates(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
-async function postBatch(keys: string[]): Promise<void> {
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  ⏳ الرفض بسبب حد الاستهلاك — استنى وأعد بدل ما ترمي الطلب
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * بلاغ المالك (٧ أكتوبر ٢٠٢٦): سجل الأمان فيه «تعدّى حد الاستهلاك» على خدمة
+ * الشهايد. الحد ٢٠ طلب/دقيقة لكل مندوب، والدفعات كانت بتتبعت **كلها مرة
+ * واحدة**، فاللي يترفض كان بيتحوّل لـ«تعذّر» والمندوب يشوف عمود شهايد ناقص.
+ *
+ * الانتظار بيتدرّج، والسيرفر بيبعت `Retry-After` بالثواني فبنحترمه لو أطول —
+ * وبسقف ٣ دقايق عشان المندوب مايستناش للأبد.
+ */
+export const CERT_RETRY_DELAYS_MS = [3_000, 10_000, 30_000] as const;
+
+/** أقصى انتظار مهما قال السيرفر. */
+const CERT_RETRY_MAX_MS = 180_000;
+
+/** كام مللي نستنى قبل المحاولة رقم `attempt`؟ `null` = خلصت المحاولات. */
+export function certRetryDelayMs(attempt: number, retryAfter?: string | null): number | null {
+  if (attempt < 0 || attempt >= CERT_RETRY_DELAYS_MS.length) return null;
+  const base = CERT_RETRY_DELAYS_MS[attempt];
+  const secs = Number(String(retryAfter ?? "").trim());
+  const fromServer = Number.isFinite(secs) && secs > 0 ? secs * 1000 : 0;
+  return Math.min(Math.max(base, fromServer), CERT_RETRY_MAX_MS);
+}
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function postBatch(keys: string[], attempt = 0): Promise<void> {
   try {
     const { authHeader } = await import("./authHeader");
     const res = await fetch("/api/certificate/batch", {
@@ -122,6 +151,15 @@ async function postBatch(keys: string[]): Promise<void> {
       headers: { "Content-Type": "application/json", ...(await authHeader()) },
       body: JSON.stringify({ plates: keys }),
     });
+    // ⏳ اتوقفنا عند حد الاستهلاك ⇒ نستنى ونعيد بدل ما نرمي الدفعة. اللوحات
+    //    بتفضل «بتحمّل» مابتتحوّلش لـ«تعذّر» إلا لو كل المحاولات خلصت.
+    if (res.status === 429) {
+      const delay = certRetryDelayMs(attempt, res.headers.get("Retry-After"));
+      if (delay != null) {
+        await wait(delay);
+        return postBatch(keys, attempt + 1);
+      }
+    }
     if (!res.ok) throw new Error(String(res.status));
     const d = (await res.json()) as { results?: Record<string, { id: string; name: string }[]>; failed?: string[] };
     const failed = new Set(d.failed ?? []);

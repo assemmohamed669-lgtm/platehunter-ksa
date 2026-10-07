@@ -17,7 +17,9 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   // طلب لكل فرز (والعميل بيقسّم القايمة الكبيرة) — ٢٠ في الدقيقة كفاية ومايتعدّاش
   if (!rateLimit(`certb:${userId}`, 20, 60_000, req)) {
-    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+    // ⏳ `Retry-After` بالثواني — العميل بيستنى ويعيد بدل ما يرمي الدفعة
+    //    ويطلّع «تعذّر» (lib/certificateBatch.ts).
+    return NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": "30" } });
   }
 
   const body = (await req.json().catch(() => null)) as { plates?: unknown } | null;
