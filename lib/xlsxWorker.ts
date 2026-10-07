@@ -32,8 +32,8 @@ function cellLooksLikePlate(raw: string): boolean {
 
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch) return false;
-  // اللوحة السعودية = 3-4 أرقام — أكواد قصيرة (R8) مش لوحات. الاستثناء: ٣ حروف لوحة عربي
-  // + رقم أو رقمين = لوحة البنك من غير الأصفار («يهل76» = «يهل0076»).
+  // اللوحة السعودية = 3-4 أرقام — أكواد قصيرة (R8) مش لوحات. الاستثناء: حرفين أو ٣ حروف لوحة عربي مفصولة
+  // + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»).
   if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
   if (digitMatch[0].length > 4) return false;
 
