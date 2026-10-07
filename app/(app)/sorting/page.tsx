@@ -50,7 +50,7 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
-import { dedupeRecordsByPlate } from "@/lib/recordResultDedupe";
+import { dedupeRecordsByPlate, groupRecordsByPlate } from "@/lib/recordResultDedupe";
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
@@ -1642,6 +1642,21 @@ export default function SortingPage() {
       .sort((a, b) => a._dist - b._dist);
   }, [pasteResults, nearestActive, userLoc, gpsCol, dataTable]);
 
+  // نفس العربية بكذا مرة في ويندو سجلات اللصق ⇒ لون واحد (زي ويندو الداتا) + عدد العربيات من غير تكرار
+  const pasteRecordColorMap = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of pasteRecordResults) {
+      const k = normalizePlate(bankPlateToArabic(p.converted));
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const map = new Map<string, number>();
+    let ci = 0;
+    for (const [plate, count] of counts) {
+      if (count > 1) { map.set(plate, ci % DUPE_COLORS.length); ci++; }
+    }
+    return { map, unique: counts.size };
+  }, [pasteRecordResults]);
+
   const pasteColorMap = useMemo(() => {
     if (!pasteResults.length) return new Map<string, number>();
     const counts = new Map<string, number>();
@@ -3132,8 +3147,9 @@ export default function SortingPage() {
     }
 
     setPasteResults(matches);
-    // نفس دمج نتيجة الفرز: اللوحة الواحدة صف واحد (الأحدث) في ويندو السجلات.
-    const recordRows = dedupeRecordsByPlate(
+    // كل مرة العربية اتسجلت فيها (المالك ٧ أكتوبر ٢٠٢٦: «ممكن اماكنها تبقي مختلفه ف المندوب يعرف بالظبط
+    // يحصلها في اي مكان») — نفس العربية تحت بعض والأحدث فوق. (كان الأحدث بس زي الفرز العادي — #244.)
+    const recordRows = groupRecordsByPlate(
       recordMatches,
       (r) => String(r.row?.["رقم اللوحة"] ?? r.converted ?? ""),
       (r) => String(r.row?.["التاريخ"] ?? ""),
@@ -4629,7 +4645,9 @@ export default function SortingPage() {
               <div className="rounded-xl border border-brand/40 bg-brand/5 overflow-hidden">
                 <div className="flex items-center justify-between border-b border-brand/20 bg-brand/10 px-3 py-2">
                   <span className="text-xs font-bold text-brand">
-                    ويندو السجلات — {pasteRecordResults.length} لوحة سبق تشييكها
+                    {pasteRecordColorMap.unique < pasteRecordResults.length
+                      ? `ويندو السجلات — ${pasteRecordColorMap.unique} لوحة سبق تشييكها (${pasteRecordResults.length} مرة)`
+                      : `ويندو السجلات — ${pasteRecordResults.length} لوحة سبق تشييكها`}
                   </span>
                 </div>
                 <div ref={pastePinch2} className="overflow-auto" style={{ maxHeight: "50vh", direction: "rtl", touchAction: "pan-x pan-y" }}>
@@ -4647,8 +4665,10 @@ export default function SortingPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {pasteRecordResults.map((p, i) => (
-                        <tr key={i} className={`border-b border-border ${i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                      {pasteRecordResults.map((p, i) => {
+                        const recColor = pasteRecordColorMap.map.get(normalizePlate(bankPlateToArabic(p.converted)));
+                        return (
+                        <tr key={i} className={`border-b border-border ${recColor !== undefined ? DUPE_COLORS[recColor].tw : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
                           {/* ترقيم + نسخ/واتساب — أول عمود */}
                           <td className="border-l border-border px-2 py-1.5">
                             <div className="flex items-center gap-2 whitespace-nowrap">
@@ -4692,7 +4712,8 @@ export default function SortingPage() {
                             </td>
                           )}
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
