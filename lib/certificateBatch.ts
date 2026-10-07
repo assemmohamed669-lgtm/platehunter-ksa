@@ -15,7 +15,7 @@
  */
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { bankPlateToArabic } from "./plateParser";
-import { plateCertKey } from "./certificateMatch";
+import { plateCertKeyLoose } from "./certificateMatch";
 import type { CertResult } from "./certificate";
 // ⚠️ supabase/authHeader بيتحمّلوا وقت الحاجة بس (import ديناميكي) — الجداول اللي بتستورد
 //    الملف ده (المطلوب مثلاً) ماكانتش بتلمس supabase، ومايصحّش استيرادها يجرّه معاه.
@@ -51,7 +51,8 @@ export type CertState =
 
 /** مفتاح اللوحة الموحّد — نفس مفتاح مطابقة أسماء الشهادات على السيرفر. */
 export function certKey(plate: string): string {
-  return plateCertKey(bankPlateToArabic(String(plate ?? "").trim()));
+  // «يهل76» و«يهل0076» نفس العربية ⇒ نفس المفتاح (سؤال واحد ونتيجة واحدة)
+  return plateCertKeyLoose(bankPlateToArabic(String(plate ?? "").trim()));
 }
 
 const states = new Map<string, CertState>();
