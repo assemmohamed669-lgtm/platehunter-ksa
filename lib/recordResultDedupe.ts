@@ -33,6 +33,31 @@ export function checkDateValue(raw: string | null | undefined): number {
 }
 
 /**
+ * **كل المرات** — بس نفس اللوحة تحت بعض (بترتيب أول ظهور لكل لوحة) والأحدث فوق. لـ«لصق نصي» (المالك ٧
+ * أكتوبر ٢٠٢٦: «خليها يظهر السيارة لو مكررة … لان ممكن اماكنها تبقي مختلفه ف المندوب يعرف بالظبط يحصلها
+ * في اي مكان»). الصف اللي مالوش لوحة بيعدّي زي ما هو. (الفرز العادي لسه `dedupeRecordsByPlate`.)
+ */
+export function groupRecordsByPlate<T>(
+  rows: T[],
+  plateOf: (r: T) => string,
+  dateOf: (r: T) => string,
+): T[] {
+  const order: string[] = [];
+  const groups = new Map<string, { r: T; t: number; i: number }[]>();
+  rows.forEach((r, i) => {
+    const key = normalizePlate(bankPlateToArabic(String(plateOf(r) ?? ""))) || `\u0000${i}`;
+    let g = groups.get(key);
+    if (!g) { g = []; groups.set(key, g); order.push(key); }
+    g.push({ r, t: checkDateValue(dateOf(r)), i });
+  });
+  const out: T[] = [];
+  for (const key of order) {
+    for (const x of groups.get(key)!.sort((a, b) => b.t - a.t || a.i - b.i)) out.push(x.r);
+  }
+  return out;
+}
+
+/**
  * صف واحد لكل لوحة — الأحدث. الترتيب بيفضل على أول ظهور لكل لوحة،
  * والتعادل بيكسبه الأول (سجلات المندوب بتيجي قبل سجلات المجموعة).
  * الصف اللي مالوش لوحة بيعدّي زي ما هو.
