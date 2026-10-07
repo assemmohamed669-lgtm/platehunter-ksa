@@ -36,15 +36,20 @@ export async function verifySession(
   authHeader: string | null,
   req?: ReqLike
 ): Promise<string | null> {
-  const deny = (reason: string): null => {
+  // 🪪 `agentId` بيتبعت في الحالة الوحيدة اللي بنعرف فيها صاحب النداء يقيناً:
+  //    `inactive_account` — التوكن **سليم** والسيرفر عارف المندوب، بس حسابه
+  //    موقوف. باقي الأسباب (مافيش توكن / توكن مرفوض) مجهولة فعلاً، ومانخمّنش
+  //    فيها. (بلاغ المالك ٧ أكتوبر: «عايز أعرف فين مصدرها وبتيجي من مين».)
+  const deny = (reason: string, agentId?: string): null => {
     const meta = req ? requestMeta(req) : { ip: null, userAgent: null };
     logSecurityEvent({
       type: "api_unauthorized",
+      agentId,
       detail: `${pathOf(req) ?? "?"} — ${reason}`,
       ip: meta.ip,
       userAgent: meta.userAgent,
       // نخنق على المصدر + المسار: مهاجم بيضرب نفس الراوت = صف واحد كل دقيقة.
-      throttleKey: `unauth:${meta.ip ?? "?"}:${pathOf(req) ?? "?"}`,
+      throttleKey: `unauth:${agentId ?? meta.ip ?? "?"}:${pathOf(req) ?? "?"}`,
     });
     return null;
   };
@@ -58,7 +63,7 @@ export async function verifySession(
     // Deactivated accounts can't spend the server API keys.
     const { data: profile } = await supabaseAdmin
       .from("profiles").select("is_active").eq("id", data.user.id).single();
-    if (profile?.is_active === false) return deny("inactive_account");
+    if (profile?.is_active === false) return deny("inactive_account", data.user.id);
     return data.user.id;
   } catch {
     return deny("verify_failed");

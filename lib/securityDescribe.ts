@@ -146,3 +146,44 @@ export function formatEventTime(iso: string): string {
   const period = h24 < 12 ? "ص" : "م";
   return `${dt.getDate()} ${AR_MONTHS[dt.getMonth()]} ${dt.getFullYear()} · ${h12}:${mm} ${period}`;
 }
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  📱 نوع الجهاز من سطر الـUser-Agent
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * المالك (٧ أكتوبر ٢٠٢٦): «كل النداءات اللي بدون تصريح عايز أعرف فين مصدرها».
+ * نوع الجهاز متسجّل مع كل سطر من زمان، بس الصفحة ماكانتش بتعرضه — وهو اللي
+ * كشف إن ٥ نداءات جُم من **`curl`** (أداة سطر أوامر، مش تطبيقنا). من غيره كان
+ * السطر «الفاعل: —» ومفيش أي خيط.
+ *
+ * `suspicious` معناها **مش متصفّح** — يعني حد بيكلّم السيرفر بأداة بتتكتب
+ * بالإيد. مش دليل إدانة، بس ده اللي يستاهل تبص عليه.
+ */
+const CLI_AGENTS = /curl|wget|python-(requests|urllib)|go-http-client|postman|httpie|libwww|scrapy|java\/|okhttp|insomnia/i;
+
+export function describeUserAgent(ua: string | null | undefined): { label: string; suspicious: boolean } {
+  const s = String(ua ?? "").trim();
+  if (!s) return { label: "—", suspicious: false };
+
+  if (CLI_AGENTS.test(s)) {
+    // الاسم الأول بس (قبل أول مسافة) — «curl/8.19.0» مش السطر كله.
+    return { label: s.split(/\s+/)[0].slice(0, 40), suspicious: true };
+  }
+
+  if (/iPhone/i.test(s)) return { label: "آيفون", suspicious: false };
+  if (/iPad/i.test(s)) return { label: "آيباد", suspicious: false };
+
+  if (/Android/i.test(s)) {
+    // الموديل جوّه القوس: «Android 16; SM-S928B Build/…»
+    const m = s.match(/Android[^;)]*;\s*([^;)]+?)\s*(?:Build\/|[;)])/i);
+    const model = m?.[1]?.trim();
+    return { label: model ? `أندرويد · ${model}` : "أندرويد", suspicious: false };
+  }
+
+  if (/Windows/i.test(s)) return { label: "ويندوز", suspicious: false };
+  if (/Macintosh|Mac OS X/i.test(s)) return { label: "ماك", suspicious: false };
+  if (/Linux/i.test(s)) return { label: "لينكس", suspicious: false };
+
+  return { label: s.slice(0, 40), suspicious: false };
+}

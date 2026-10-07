@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ShieldAlert, RefreshCw, Info, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { securityRowMatches, type SecurityPerson } from "@/lib/securitySearch";
-import { describeSecurityEvent, formatEventTime } from "@/lib/securityDescribe";
+import { describeSecurityEvent, describeUserAgent, formatEventTime } from "@/lib/securityDescribe";
 
 interface EventRow {
   id: number;
@@ -25,6 +25,7 @@ interface EventRow {
   detail: string | null;
   suppressed: number;
   ip: string | null;
+  user_agent: string | null;
 }
 
 const KIND: Record<string, { label: string; tone: string }> = {
@@ -224,9 +225,22 @@ export default function SecurityLogPage() {
                 )}
               </div>
 
-              {(r.ip || r.suppressed > 0) && (
+              {(r.ip || r.suppressed > 0 || r.user_agent) && (
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted">
                   {r.ip && <span dir="ltr" className="font-mono">{r.ip}</span>}
+                  {/* 📱 نوع الجهاز — كان متسجّل ومش بيتعرض. ده اللي بيفرّق بين
+                      «تطبيقنا وجلسة انتهت» و«حد بيكلّم السيرفر بأداة سطر أوامر». */}
+                  {(() => {
+                    const ua = describeUserAgent(r.user_agent);
+                    if (ua.label === "—") return null;
+                    return ua.suspicious ? (
+                      <span dir="ltr" className="rounded-full bg-danger/15 px-1.5 font-bold text-danger" title="مش متصفّح — أداة بتتكتب بالإيد">
+                        ⚠ {ua.label}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-surface-2 px-1.5">{ua.label}</span>
+                    );
+                  })()}
                   {r.suppressed > 0 && (
                     <span className="rounded-full bg-alert/15 px-1.5 font-bold text-alert">
                       +{r.suppressed} مكرر
