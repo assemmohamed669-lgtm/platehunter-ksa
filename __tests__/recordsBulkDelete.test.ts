@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected } from "@/lib/recordsSelection";
+import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected, editorDeleteIds } from "@/lib/recordsSelection";
 
 /**
  * 🗑️ مسح السجلات: لوحة لوحة · كذا لوحة مع بعض · باليوم — المالك (٨ أكتوبر ٢٠٢٦): «في صفحه السجلات لما المندوب
@@ -62,7 +62,46 @@ describe("🔴 التحديد والمسح", () => {
   });
 });
 
+describe("🔴 الحفظ بيمسح اللي اتشال من المسوّدة بس (مراجعة ٨ أكتوبر)", () => {
+  // الأحدث الأول زي getAllFieldCheckEntries — a1/a2 نفس اللوحة ونفس اللينك في نفس اليوم، a3 نفسها من يوم تاني
+  const live = [{ id: "a1" }, { id: "a2" }, { id: "b" }, { id: "a3" }];
+  const base = new Set(live.map((e) => e.id));
+  it("🔴 شال العلامة من نسخة مكررة عشان تفضل ⇒ ماتتمسحش (ولا نسخة يوم تاني)", () => {
+    const draft = [{ id: "a2" }, { id: "a3" }];      // اتحدد a1 وb بس
+    expect(editorDeleteIds(live, draft, base)).toEqual(["a1", "b"]);
+  });
+  it("🔴 لوحة اتسجلت والنافذة مفتوحة (تصدير تلقائي/استرجاع) ⇒ ماتتمسحش ومابتتعدّش", () => {
+    const now = [{ id: "n1" }, ...live];               // n1 وصلت بعد ما المحرّر اتفتح
+    expect(editorDeleteIds(now, live, base)).toEqual([]);
+    expect(editorDeleteIds(now, [{ id: "a2" }], base)).toEqual(["a1", "b", "a3"]);
+  });
+  it("من غير لقطة (المناديب لحد «انشر للكل») ⇒ نفس الحساب القديم بالحرف", () => {
+    const now = [{ id: "n1" }, ...live];
+    const draft = [{ id: "a2" }];
+    expect(editorDeleteIds(now, draft, null)).toEqual(now.filter((e) => e.id !== "a2").map((e) => e.id));
+  });
+});
+
 describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — السوبر أدمن الأول", () => {
+  it("🔴 الحفظ: لقطة وقت الفتح + مفيش توسيع لإخوات المكرر عند السوبر أدمن — المناديب زي الأول", () => {
+    const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
+    expect(s).toMatch(/function openPlatesEditor\(\) \{[\s\S]{0,1000}peBaseIdsRef\.current = new Set\(fieldEntries\.map\(\(e\) => e\.id\)\);/);
+    const save = s.slice(s.indexOf("async function savePlatesEditor()"), s.indexOf("function buildFieldRows()"));
+    expect(save).toMatch(/const removedIds = editorDeleteIds\(fieldEntries, draftFieldEntries, isSuper \? peBaseIdsRef\.current : null\);/);
+    expect(save).toMatch(/await deleteFieldCheckEntries\(isSuper \? removedIds : withHiddenDuplicates\(removedIds\)\);/);
+    // عدّاد «هيتمسح N لوحة» من نفس الحساب
+    expect(s).toMatch(/const peRemovedN = useMemo\([\s\S]{0,300}editorDeleteIds\(fieldEntries, draftFieldEntries, peBaseIdsRef\.current\)/);
+  });
+  it("🔴 اليوم اللي اتمسح كله (بالسلة) ⇒ القايمة ترجع لكل الأيام — والتحميل مع التمرير بيرجع يشتغل", () => {
+    const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
+    expect(s).toMatch(/const peDayEff = peDay && peDays\.some\(\(d\) => d\.key === peDay\) \? peDay : "";/);
+    expect(s).toMatch(/return peDayEff \? entriesOfDay\(cat, peDayEff\) : cat;/);
+    expect(s).toMatch(/<select value=\{peDayEff\}/);
+    expect(s).toMatch(/\}, \[peShown, platesEditorOpen, peSearch, draftFieldEntries\.length, peDay\]\);/);
+  });
+});
+
+describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — السوبر أدمن الأول (الشريط)", () => {
   const src = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
   const editor = src.slice(src.indexOf("{/* ── نافذة «إظهار وتعديل اللوحات»"), src.indexOf("function AutoExportToggle"));
   it("🔴 فلتر اليوم في قايمة المحرّر (`entriesOfDay`) — وبيتمسح لما المحرّر يتفتح", () => {

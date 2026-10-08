@@ -38,7 +38,7 @@ import { usePinchZoom } from "@/components/usePinchZoom";
 import { objToPlateRow, type PlateImageRow } from "@/lib/plateImage";
 import { findDuplicateEntry, filterFieldEntries, plateKey, looksLikePlateQuery, collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
 import { areaOf, fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type FieldFilter } from "@/lib/fieldCheckView";
-import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected } from "@/lib/recordsSelection";
+import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected, editorDeleteIds } from "@/lib/recordsSelection";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
 import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
@@ -1304,6 +1304,8 @@ export default function InstantCheckPage() {
   // 🗑️ (السوبر أدمن الأول) تحديد كذا لوحة أو يوم كامل للمسح مرة واحدة — `lib/recordsSelection.ts`
   const [peSel, setPeSel] = useState<Set<string>>(() => new Set());
   const [peDay, setPeDay] = useState("");                  // "" = كل الأيام (زي الأول بالحرف)
+  /** 🛡️ (السوبر أدمن) معرّفات السجلات وقت فتح المحرّر — اللي يوصل بعدها مايتحسبش «اتمسح». `editorDeleteIds`. */
+  const peBaseIdsRef = useRef<Set<string>>(new Set());
   // ── ترقيم الرسم ──────────────────────────────────────────────────────────
   // بنرسم دفعة وبنزوّد مع التمرير. من غير كده مندوب عنده ٦٠٠٠ سجل بيرسم عشرات
   // الآلاف من العناصر مرة واحدة وسفاري على الأيفون بيقتل الصفحة. العدّادات
@@ -1339,7 +1341,7 @@ export default function InstantCheckPage() {
     }, { rootMargin: "400px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [peShown, platesEditorOpen, peSearch, draftFieldEntries.length]);
+  }, [peShown, platesEditorOpen, peSearch, draftFieldEntries.length, peDay]);
 
   // بحث أو فلتر جديد → نرجع لأول دفعة عشان النتيجة تبان من فوق
   useEffect(() => { setFieldShown(PAGE_STEP); }, [fieldSearch, fieldFilter]);
@@ -2167,17 +2169,19 @@ export default function InstantCheckPage() {
   // ── مشتقّات نافذة «إظهار وتعديل اللوحات» ──
   // محفوظة في useMemo: كانت بتتحسب جوّه الـJSX فبتتعاد على **كل** رندر للصفحة
   // (كل حرف في أي مربع بحث)، و`fieldCategoryOnly` بيلف على السجلات كلها.
-  const peEntries = useMemo(() => {
-    if (!platesEditorOpen) return EMPTY_ENTRIES;
-    const cat = fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry);
-    // 🗓️ (السوبر أدمن) يوم واحد بس لو اختاره — "" = كل الأيام زي الأول بالحرف
-    return peDay ? entriesOfDay(cat, peDay) : cat;
-  }, [platesEditorOpen, draftFieldEntries, fieldFilter, isWantedEntry, peDay]);
   /** 🗓️ (السوبر أدمن) أيام الشريحة الحالية بعدد لوحات كل يوم — للاختيار في «مسح بالتاريخ». */
   const peDays = useMemo(
     () => (platesEditorOpen && isSuper ? recordDays(fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry)) : []),
     [platesEditorOpen, isSuper, draftFieldEntries, fieldFilter, isWantedEntry],
   );
+  // اليوم اللي اتمسحت كل لوحاته (بالسلة) ⇒ نرجع لكل الأيام بدل قايمة فاضية مافيهاش رجوع
+  const peDayEff = peDay && peDays.some((d) => d.key === peDay) ? peDay : "";
+  const peEntries = useMemo(() => {
+    if (!platesEditorOpen) return EMPTY_ENTRIES;
+    const cat = fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry);
+    // 🗓️ (السوبر أدمن) يوم واحد بس لو اختاره — "" = كل الأيام زي الأول بالحرف
+    return peDayEff ? entriesOfDay(cat, peDayEff) : cat;
+  }, [platesEditorOpen, draftFieldEntries, fieldFilter, isWantedEntry, peDayEff]);
   const peAllSelected = useMemo(
     () => peEntries.length > 0 && peEntries.every((e) => peSel.has(e.id)),
     [peEntries, peSel],
@@ -2505,6 +2509,7 @@ export default function InstantCheckPage() {
     setPeSearch("");
     setPeSel(new Set());
     setPeDay("");
+    peBaseIdsRef.current = new Set(fieldEntries.map((e) => e.id));
     setPlatesEditorOpen(true);
   }
   function peUpdatePlate(id: string, value: string) {
@@ -2531,15 +2536,17 @@ export default function InstantCheckPage() {
   /** 🗑️ (السوبر أدمن) المتحدد يتشال من **المسوّدة** — المسح الفعلي مع «احفظ التعديلات» بالتأكيد زي اللوحة الواحدة. */
   function peDeleteSelected() {
     if (peSel.size === 0) return;
-    const dayEmptied = !!peDay && peEntries.every((e) => peSel.has(e.id));
+    const dayEmptied = !!peDayEff && peEntries.every((e) => peSel.has(e.id));
     setDraftFieldEntries((prev) => withoutSelected(prev, peSel));
     setPeSel(new Set());
     if (dayEmptied) setPeDay("");   // اليوم اتمسح كله ⇒ نرجع لكل الأيام بدل قايمة فاضية
   }
   // في تغييرات لسه ماتحفظتش؟ (حذف صف، أو تعديل لوحة/خانة)
   const platesEditorDirty = useMemo(() => {
-    if (draftFieldEntries.length !== fieldEntries.length) return true;
-    const byId = new Map(fieldEntries.map((e) => [e.id, e]));
+    // 🛡️ (السوبر أدمن) المقارنة مع اللقطة اللي اتفتح عليها المحرّر — اللي وصل بعدها مش «تعديل»
+    const base = isSuper ? fieldEntries.filter((e) => peBaseIdsRef.current.has(e.id)) : fieldEntries;
+    if (draftFieldEntries.length !== base.length) return true;
+    const byId = new Map(base.map((e) => [e.id, e]));
     for (const d of draftFieldEntries) {
       const o = byId.get(d.id);
       if (!o) return true;
@@ -2548,15 +2555,23 @@ export default function InstantCheckPage() {
       for (const k of keys) if ((d.row[k] ?? "") !== (o.row[k] ?? "")) return true;
     }
     return false;
-  }, [draftFieldEntries, fieldEntries]);
+  }, [draftFieldEntries, fieldEntries, isSuper]);
+  /** 🛡️ (السوبر أدمن) كام لوحة الحفظ هيمسحها — نفس حساب `savePlatesEditor` بالظبط. */
+  const peRemovedN = useMemo(
+    () => (platesEditorOpen && isSuper ? editorDeleteIds(fieldEntries, draftFieldEntries, peBaseIdsRef.current).length : 0),
+    [platesEditorOpen, isSuper, fieldEntries, draftFieldEntries],
+  );
 
   async function savePlatesEditor() {
-    const draftIds = new Set(draftFieldEntries.map((e) => e.id));
-    const removed = fieldEntries.filter((e) => !draftIds.has(e.id));
+    /**
+     * 🛡️ (السوبر أدمن الأول) اللي اتشال من المسوّدة بس — مش اللي وصل والنافذة مفتوحة، ومن غير توسيع لنسخة
+     * مكررة المندوب سابها (`editorDeleteIds`). المناديب: نفس الحساب القديم بالحرف لحد «انشر للكل».
+     */
+    const removedIds = editorDeleteIds(fieldEntries, draftFieldEntries, isSuper ? peBaseIdsRef.current : null);
     // تأكيد قبل تطبيق التعديل على شيت السجلات (بما فيه الحذف).
-    const delMsg = removed.length > 0 ? ` (هيتمسح ${removed.length} لوحة)` : "";
+    const delMsg = removedIds.length > 0 ? ` (هيتمسح ${removedIds.length} لوحة)` : "";
     if (!window.confirm(`هيتم تطبيق التعديلات على شيت السجلات${delMsg}. موافق؟`)) return;
-    await deleteFieldCheckEntries(withHiddenDuplicates(removed.map((r) => r.id)));
+    await deleteFieldCheckEntries(isSuper ? removedIds : withHiddenDuplicates(removedIds));
     const byId = new Map(fieldEntries.map((e) => [e.id, e]));
     for (const d of draftFieldEntries) {
       const o = byId.get(d.id);
@@ -2571,7 +2586,7 @@ export default function InstantCheckPage() {
     // كمان، فده بيخلّي السيرفر متطابق على طول مش بس محمي.)
     const uid = agentIdRef.current;
     if (uid) {
-      if (removed.length > 0) void pushFieldCheckDeletes(uid).catch(() => {});
+      if (removedIds.length > 0) void pushFieldCheckDeletes(uid).catch(() => {});
       void pushPendingFieldChecks(uid)
         .then((r) => setSyncWarning(syncFailureMessage(r)))
         .catch(() => {});
@@ -6655,7 +6670,7 @@ export default function InstantCheckPage() {
                     <label className="flex items-center gap-2 text-[11px] font-bold text-ink">
                       <CalendarDays size={14} className="shrink-0 text-danger" />
                       <span className="shrink-0">مسح بالتاريخ:</span>
-                      <select value={peDay} onChange={(ev) => peChooseDay(ev.target.value)}
+                      <select value={peDayEff} onChange={(ev) => peChooseDay(ev.target.value)}
                         className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none">
                         <option value="">كل الأيام</option>
                         {peDays.map((d) => (
@@ -6783,7 +6798,7 @@ export default function InstantCheckPage() {
               <div className="border-t border-border p-3">
                 {platesEditorDirty ? (
                   <div className="flex flex-col gap-1.5">
-                    <p className="text-center text-[11px] text-alert">عملت تعديلات — تحب تحفظها؟{isSuper && fieldEntries.length > draftFieldEntries.length ? ` (هيتمسح ${fieldEntries.length - draftFieldEntries.length} لوحة)` : ""}</p>
+                    <p className="text-center text-[11px] text-alert">عملت تعديلات — تحب تحفظها؟{isSuper && peRemovedN > 0 ? ` (هيتمسح ${peRemovedN} لوحة)` : ""}</p>
                     <div className="flex gap-2">
                       <button onClick={() => setPlatesEditorOpen(false)}
                         className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted transition active:scale-95">لا، إلغاء</button>

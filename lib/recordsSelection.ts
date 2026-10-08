@@ -67,3 +67,22 @@ export function withoutSelected<T extends { id: string }>(entries: T[], sel: Rea
   if (sel.size === 0) return entries;
   return entries.filter((e) => !sel.has(e.id));
 }
+
+/**
+ * 🛡️ اللوحات اللي «احفظ التعديلات» هيمسحها — **اللي اتشال من المسوّدة بس** (مراجعة ٨ أكتوبر ٢٠٢٦).
+ *
+ * `base` = لقطة المعرّفات وقت فتح المحرّر. من غيرها، أي لوحة وصلت **والنافذة مفتوحة** (التصدير التلقائي كل ٥
+ * دقايق، الاسترجاع على دفعات) مش في المسوّدة ⇒ كانت بتتحسب «اتمسحت» وتتمسح من الجهاز والسيرفر.
+ * `null` = الحساب القديم بالحرف (المناديب لحد «انشر للكل»).
+ *
+ * والصفحة مابتوسّعش لإخوات المكرر عند السوبر أدمن: المحرّر بيعرض **كل** نسخة لوحدها، فالنسخة اللي فضلت في
+ * المسوّدة المندوب سابها عن قصد («اللي متحدد هو اللي يتمسح»).
+ */
+export function editorDeleteIds(
+  live: readonly { id: string }[],
+  draft: readonly { id: string }[],
+  base: ReadonlySet<string> | null,
+): string[] {
+  const keep = new Set(draft.map((e) => e.id));
+  return live.filter((e) => (!base || base.has(e.id)) && !keep.has(e.id)).map((e) => e.id);
+}
