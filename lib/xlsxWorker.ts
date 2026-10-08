@@ -5,7 +5,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
-import { detectHeaderless, buildHeaderlessColumns, isShortDigitPlate } from "./headerlessColumns";
+import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { makeHeadersUnique } from "./uniqueHeaders";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData, markHiddenRows } from "./xlsxRange";
@@ -32,10 +32,8 @@ function cellLooksLikePlate(raw: string): boolean {
 
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch) return false;
-  // اللوحة السعودية = 3-4 أرقام — أكواد قصيرة (R8) مش لوحات. الاستثناء: حرفين أو ٣ حروف لوحة عربي مفصولة
-  // + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»).
-  if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
-  if (digitMatch[0].length > 4) return false;
+  // اللوحة السعودية = 3-4 أرقام — أكواد قصيرة (R8) مش لوحات.
+  if (digitMatch[0].length < 3 || digitMatch[0].length > 4) return false;
 
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   if (nonDigits.length === 0 || nonDigits.length > 3) return false;

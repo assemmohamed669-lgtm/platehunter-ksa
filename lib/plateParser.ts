@@ -16,8 +16,6 @@
  *  12. Notes = tokens not consumed by the plate
  */
 
-import { isShortDigitPlate } from "./headerlessColumns";
-
 // The arabized English "zero" — the recognizer clips/spells it a different
 // way almost every take (زير, زيرو, زيرة, زيره, زيرا, زيرى). Match the whole
 // family as one standalone word instead of chasing each variant. The
@@ -2127,17 +2125,14 @@ export function detectPlateColumnByContent(
  * (1-3 أحرف عربي/إنجليزي + 1-4 أرقام، طول إجمالي معقول)
  */
 function cellLooksLikePlate(raw: string): boolean {
-  // الشرطة «ـ» كمان («ي هـ ل») — زي باقي نسخ الكشف (excel / parseWorkbook / xlsxWorker)
-  const cleaned = raw.replace(/[\s\-_.ـ/]/g, "");
+  const cleaned = raw.replace(/[\s\-_./]/g, "");
   if (cleaned.length < 2 || cleaned.length > 10) return false;
 
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch) return false;
   // اللوحة السعودية = 3-4 أرقام. أكواد قصيرة زي «R8» (رقم واحد) مش لوحات — لو
   // سمحنا بيها، عمود تصنيف زي «Risk Grading» بقيمة R8 بيتحسب عمود لوحات ويكسب.
-  // الاستثناء: حرفين أو ٣ حروف لوحة عربي مفصولة + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»).
-  if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
-  if (digitMatch[0].length > 4) return false;
+  if (digitMatch[0].length < 3 || digitMatch[0].length > 4) return false;
 
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   if (nonDigits.length === 0 || nonDigits.length > 3) return false;

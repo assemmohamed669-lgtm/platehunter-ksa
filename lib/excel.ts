@@ -8,7 +8,7 @@ import * as XLSX from "xlsx";
 import type ExcelJS from "exceljs";
 import type { RecordingEntry } from "./idb";
 import { detectPlateColumnByContent } from "./plateParser";
-import { detectHeaderless, buildHeaderlessColumns, looksLikePlate, isShortDigitPlate } from "./headerlessColumns";
+import { detectHeaderless, buildHeaderlessColumns, looksLikePlate } from "./headerlessColumns";
 import { makeHeadersUnique } from "./uniqueHeaders";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
@@ -588,9 +588,7 @@ function _cellLooksLikePlate(raw: string): boolean {
   const cleaned = raw.replace(/[\s\-_.ـ/]/g, "");
   if (cleaned.length < 2 || cleaned.length > 10) return false;
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
-  if (!digitMatch || digitMatch[0].length > 4) return false;
-  // حرفين أو ٣ حروف لوحة عربي مفصولة + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»)
-  if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
+  if (!digitMatch || digitMatch[0].length < 3 || digitMatch[0].length > 4) return false;
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   return nonDigits.length > 0 && nonDigits.length <= 3 && /^[؀-ۿa-zA-Z]+$/.test(nonDigits);
 }
