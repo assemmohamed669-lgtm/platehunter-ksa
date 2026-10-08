@@ -93,6 +93,11 @@ describe("🔴 التوصيل في «إظهار وتعديل اللوحات» �
     // عدّاد «هيتمسح N لوحة» من نفس الحساب
     expect(s).toMatch(/const peRemovedN = useMemo\([\s\S]{0,300}editorDeleteIds\(fieldEntries, draftFieldEntries, peBaseIdsRef\.current\)/);
   });
+  it("🔴 «عملت تعديلات؟» مابتتحسبش والنافذة مقفولة (مراجعة: كانت بتقارن ١٦ ألف سجل مع كل لوحة جديدة)", () => {
+    const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
+    expect(s).toMatch(/const platesEditorDirty = useMemo\(\(\) => \{\n    if \(!platesEditorOpen\) return false;/);
+    expect(s).toMatch(/\}, \[platesEditorOpen, draftFieldEntries, fieldEntries\]\);/);
+  });
   it("🔴 اليوم اللي اتمسح كله (بالسلة) ⇒ القايمة ترجع لكل الأيام — والتحميل مع التمرير بيرجع يشتغل", () => {
     const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
     expect(s).toMatch(/const peDayEff = peDay && peDays\.some\(\(d\) => d\.key === peDay\) \? peDay : "";/);

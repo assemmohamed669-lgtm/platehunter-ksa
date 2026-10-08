@@ -2543,6 +2543,7 @@ export default function InstantCheckPage() {
   }
   // في تغييرات لسه ماتحفظتش؟ (حذف صف، أو تعديل لوحة/خانة)
   const platesEditorDirty = useMemo(() => {
+    if (!platesEditorOpen) return false;   // مقفولة ⇒ مفيش مقارنة لكل السجلات مع كل لوحة جديدة (مراجعة ٨ أكتوبر)
     // 🛡️ المقارنة مع اللقطة اللي اتفتح عليها المحرّر — اللي وصل بعدها (تصدير تلقائي/استرجاع) مش «تعديل»
     const base = fieldEntries.filter((e) => peBaseIdsRef.current.has(e.id));
     if (draftFieldEntries.length !== base.length) return true;
@@ -2555,7 +2556,7 @@ export default function InstantCheckPage() {
       for (const k of keys) if ((d.row[k] ?? "") !== (o.row[k] ?? "")) return true;
     }
     return false;
-  }, [draftFieldEntries, fieldEntries]);
+  }, [platesEditorOpen, draftFieldEntries, fieldEntries]);
   /** 🛡️ كام لوحة الحفظ هيمسحها — نفس حساب `savePlatesEditor` بالظبط. */
   const peRemovedN = useMemo(
     () => (platesEditorOpen ? editorDeleteIds(fieldEntries, draftFieldEntries, peBaseIdsRef.current).length : 0),
