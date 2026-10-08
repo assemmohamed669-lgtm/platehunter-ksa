@@ -12,7 +12,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
-import { detectHeaderless, buildHeaderlessColumns, isShortDigitPlate } from "./headerlessColumns";
+import { detectHeaderless, buildHeaderlessColumns } from "./headerlessColumns";
 import { resolveHyperlinkCells } from "./hyperlink";
 import { trimSheetToData } from "./xlsxRange";
 
@@ -33,9 +33,7 @@ function cellLooksLikePlate(raw: string): boolean {
   if (cleaned.length < 2 || cleaned.length > 10) return false;
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch) return false;
-  // ٣ حروف لوحة عربي + رقم أو رقمين = لوحة البنك من غير الأصفار («يهل76» = «يهل0076»)
-  if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
-  if (digitMatch[0].length > 4) return false;
+  if (digitMatch[0].length < 3 || digitMatch[0].length > 4) return false;
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");
   if (nonDigits.length === 0 || nonDigits.length > 3) return false;
   if (!/^[؀-ۿa-zA-Z]+$/.test(nonDigits)) return false;
