@@ -33,7 +33,7 @@ function cellLooksLikePlate(raw: string): boolean {
   if (cleaned.length < 2 || cleaned.length > 10) return false;
   const digitMatch = cleaned.match(/[0-9٠-٩]+/);
   if (!digitMatch) return false;
-  // حرفين أو ٣ حروف لوحة عربي مفصولة + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»)
+  // ٣ حروف لوحة عربي + رقم أو رقمين = لوحة البنك من غير الأصفار («يهل76» = «يهل0076»)
   if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
   if (digitMatch[0].length > 4) return false;
   const nonDigits = cleaned.replace(/[0-9٠-٩]/g, "");

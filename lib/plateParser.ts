@@ -2135,7 +2135,7 @@ function cellLooksLikePlate(raw: string): boolean {
   if (!digitMatch) return false;
   // اللوحة السعودية = 3-4 أرقام. أكواد قصيرة زي «R8» (رقم واحد) مش لوحات — لو
   // سمحنا بيها، عمود تصنيف زي «Risk Grading» بقيمة R8 بيتحسب عمود لوحات ويكسب.
-  // الاستثناء: حرفين أو ٣ حروف لوحة عربي مفصولة + رقم أو رقمين = لوحة البنك من غير الأصفار («ي ه ل 76» = «يهل0076»).
+  // الاستثناء: ٣ حروف لوحة عربي + رقم أو رقمين = لوحة البنك من غير الأصفار («يهل76» = «يهل0076»).
   if (digitMatch[0].length < 3) return isShortDigitPlate(raw);
   if (digitMatch[0].length > 4) return false;
 
