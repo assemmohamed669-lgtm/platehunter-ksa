@@ -2808,12 +2808,20 @@ export default function SortingPage() {
 
   // صورة الفرز كجدول = نفس أعمدة العرض، **بدون عمود GPS** (الصورة مش بتحمل رابط
   // قابل للنقر — بيبقى URL طويل يبوّظ الجدول). اللوحات المكررة كل مجموعة بلون واحد.
-  function buildSortImageTable(src: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[] } {
+  function buildSortImageTable(src: MatchResult[] = displayResults, tash: TashyeekResultRow[] = []): { columns: string[]; rows: string[][]; subtitle?: string; rowColors?: (string | null)[]; rowGroups?: (string | null)[] } {
     const { columns, rowObjects } = buildDisplayShareObjects(src, tash);
     const imgCols = columns.filter((c) => c !== "GPS");
     const rows = rowObjects.map((o) => imgCols.map((c) => String(o[c] ?? "")));
     const rowColors = shareRowColors(src, tash);
-    return { columns: imgCols, rows, subtitle: shareSubtitle(), rowColors };
+    // 🎨 مجموعة كل صف مكرر — الصورة «grid» بتلوّن منها جوّه كل صورة (٢٠ لون، ماتتكررش في نفس الصورة)
+    return { columns: imgCols, rows, subtitle: shareSubtitle(), rowColors, rowGroups: shareRowGroups(src, tash) };
+  }
+
+  /** مفتاح مجموعة المكرر لكل صف مشاركة (نفس ترتيب `shareRowColors` ونفس المفاتيح) — null لو مش مكرر. */
+  function shareRowGroups(src: MatchResult[], tash: TashyeekResultRow[]): (string | null)[] {
+    const keys = [...src.map(dataRowKey), ...tash.map(tashRowKey)];
+    const map = combinedDupColorMap([src.map(dataRowKey), tash.map(tashRowKey)], DUPE_COLORS.length);
+    return keys.map((k) => (map.has(k) ? k : null));
   }
 
   function buildRowObject(r: MatchResult): Record<string, unknown> {

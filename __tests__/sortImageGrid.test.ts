@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { chunkTableRows, imagePlanText, GRID_PER_IMAGE } from "@/lib/plateImage";
+import { chunkTableRows, imagePlanText, GRID_PER_IMAGE, GRID_DUP_PALETTE, gridGroupColors } from "@/lib/plateImage";
 
 /**
  * 🖼️ صورة نتيجة الفرز بشكل جدول مرتب — المالك (٨ أكتوبر ٢٠٢٦) بعت صورة برنامج منافس: «شوف ازاي مرتب وواضح
@@ -62,5 +62,42 @@ describe("🔴 التوصيل — صفحة الفرز، السوبر أدمن ا
   });
   it("الشكل القديم زي ما هو لباقي الصفحات (من غير style)", () => {
     expect(img).toMatch(/opts\.style === "grid"/);
+  });
+});
+
+/**
+ * 🎨 كل مجموعة مكررة لونها مختلف تماماً — المالك (٨ أكتوبر ٢٠٢٦) على صورة حقيقية: «كاب300 و اسك1743 و بعع8728
+ * واخدين نفس اللون وانا قولتلك قبل كدة المكرر كل لوحات مكررة تاخد لون مختلف عن لوحات مكررة تاني اللون يبقي
+ * مختلف تماما». السبب: ٨ ألوان بتلف مع ١٤٩ لوحة. الحل: الألوان بتتوزّع **جوّه كل صورة** من ٢٠ لون مختلف ⇒
+ * عمرها ما تتكرر في نفس الصورة (الصورة ٢٠ صف بالكتير). و«خلي الخط بولد علشان يبقي واضح».
+ */
+describe("🔴 ألوان المكرر في الصورة: مختلفة تماماً جوّه الصورة", () => {
+  it("🔴 ٢٠ لون مختلفين", () => {
+    expect(GRID_DUP_PALETTE.length).toBeGreaterThanOrEqual(GRID_PER_IMAGE);
+    expect(new Set(GRID_DUP_PALETTE.map((c) => c.toLowerCase())).size).toBe(GRID_DUP_PALETTE.length);
+  });
+  it("🔴 كاب300 · أسك1743 · بعع8728 ⇒ ٣ ألوان مختلفة، ونفس اللوحة نفس اللون", () => {
+    const c = gridGroupColors(["كاب0300", "كاب0300", null, "اسك1743", null, "بعع8728", "كاب0300"]);
+    expect(c[0]).toBe(c[1]);
+    expect(c[0]).toBe(c[6]);
+    expect(new Set([c[0], c[3], c[5]]).size).toBe(3);
+    expect(c[2]).toBeNull();
+    expect(c[4]).toBeNull();
+  });
+  it("🔴 ٢٠ مجموعة في صورة واحدة ⇒ ٢٠ لون مختلف", () => {
+    const groups = Array.from({ length: 20 }, (_, i) => `g${i}`);
+    expect(new Set(gridGroupColors(groups)).size).toBe(20);
+  });
+  it("🔴 التوصيل: الصفحة بتبعت مجموعات الصفوف، والزرار بيعدّيها، والرسم بيلوّن من جوّه الصورة", () => {
+    const s = readFileSync(path.resolve(__dirname, "../app/(app)/sorting/page.tsx"), "utf8").replace(/\r\n/g, "\n");
+    const b = readFileSync(path.resolve(__dirname, "../components/ShareSortButton.tsx"), "utf8").replace(/\r\n/g, "\n");
+    const im = readFileSync(path.resolve(__dirname, "../lib/plateImage.ts"), "utf8").replace(/\r\n/g, "\n");
+    expect(s).toMatch(/rowGroups: shareRowGroups\(src, tash\)/);
+    expect(b).toMatch(/rowGroups: t\.rowGroups/);
+    expect(im).toMatch(/o\.rowGroups \? gridGroupColors\(o\.rowGroups\.slice\(st, end\)\)/);
+  });
+  it("🔴 الخط عريض في كل الخانات (مش المكرر بس)", () => {
+    const im = readFileSync(path.resolve(__dirname, "../lib/plateImage.ts"), "utf8").replace(/\r\n/g, "\n");
+    expect(im).toMatch(/const G_CELL_FONT = `bold /);
   });
 });

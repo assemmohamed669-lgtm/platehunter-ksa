@@ -192,6 +192,11 @@ export interface TableImageOptions {
    * الصورة. من غيره = الشكل القديم بالحرف (باقي الصفحات).
    */
   style?: "grid";
+  /**
+   * 🎨 مفتاح مجموعة المكرر لكل صف (null = مش مكرر) — في «grid» الألوان بتتوزّع **جوّه كل صورة** من
+   * `GRID_DUP_PALETTE` (`gridGroupColors`) بدل `rowColors`، فمجموعتين في نفس الصورة عمرهم ما ياخدوا نفس اللون.
+   */
+  rowGroups?: (string | null)[];
 }
 
 /** 🖼️ لوحات كل صورة في الشكل «grid» — المالك: «3 صور كل صورة فيها 20 لوحه بتفاصيلها». */
@@ -201,7 +206,8 @@ const GRID_HEAD_BG = "#6d28d9";
 const GRID_LINE = "#374151";
 const GRID_TEXT = "#111827";
 const GRID_FONT_FAMILY = "system-ui, 'Segoe UI', Tahoma, sans-serif";
-const G_CELL_FONT = `30px ${GRID_FONT_FAMILY}`;
+// «خلي الخط بولد علشان يبقي واضح» (المالك ٨ أكتوبر ٢٠٢٦) — كل الخانات عريضة، والمكرر بيتميّز باللون
+const G_CELL_FONT = `bold 30px ${GRID_FONT_FAMILY}`;
 const G_BOLD_FONT = `bold 30px ${GRID_FONT_FAMILY}`;
 const G_PLATE_FONT = `bold 34px ${GRID_FONT_FAMILY}`;
 const G_HEAD_FONT = `bold 30px ${GRID_FONT_FAMILY}`;
@@ -209,6 +215,30 @@ const G_LINE_H = 42;
 const G_CELL_PAD = 14;
 const G_MIN_COL_W = 110;
 const G_MAX_COL_W = 250;
+
+/**
+ * 🎨 ٢٠ لون (الكتابة الغامقة مقروءة عليهم). **أول ١٠ = ١٠ عيلات ألوان مختلفة خالص** (أصفر · أزرق · أخضر ·
+ * بمبي · برتقالي · سماوي · أحمر · بنفسجي · ليموني · بيج) — والـ١٠ اللي بعدهم درجة تانية من نفس العيلات بنفس
+ * الترتيب، فاللونين من عيلة واحدة بينهم ١٠ مجموعات. المالك: «المكرر كل لوحات مكررة تاخد لون مختلف عن لوحات
+ * مكررة تاني اللون يبقي مختلف تماما».
+ */
+export const GRID_DUP_PALETTE = [
+  "#FDE68A", "#93C5FD", "#86EFAC", "#F9A8D4", "#FDBA74", "#67E8F9", "#FCA5A5", "#C4B5FD", "#D9F99D", "#E7D3B8",
+  "#FDE047", "#BAE6FD", "#A7F3D0", "#FECDD3", "#FED7AA", "#99F6E4", "#FECACA", "#E9D5FF", "#BEF264", "#CBD5E1",
+] as const;
+
+/**
+ * لون كل صف في **صورة واحدة**: أول مجموعة تظهر تاخد أول لون، والتانية التاني… ونفس المجموعة نفس اللون.
+ * الصورة فيها ٢٠ صف بالكتير و`GRID_DUP_PALETTE` ٢٠ لون ⇒ مجموعتين في نفس الصورة عمرهم ما يتشابهوا.
+ */
+export function gridGroupColors(groups: readonly (string | null | undefined)[]): (string | null)[] {
+  const idx = new Map<string, number>();
+  return groups.map((g) => {
+    if (!g) return null;
+    if (!idx.has(g)) idx.set(g, idx.size);
+    return GRID_DUP_PALETTE[idx.get(g)! % GRID_DUP_PALETTE.length];
+  });
+}
 
 /**
  * بدايات الصور (فهارس الصفوف) — صورة جديدة لما الصورة الحالية توصل `maxRows` صف أو ارتفاعها يعدّي
@@ -441,10 +471,12 @@ export function renderTableImages(opts: TableImageOptions): string[] {
     const chunk = o.rows.slice(st, end);
     const colors = (o.rowColors ?? []).slice(st, end).concat(Array(Math.max(0, chunk.length - (o.rowColors ?? []).slice(st, end).length)).fill(null));
     if (o.style === "grid") {
+      // 🎨 الألوان من جوّه الصورة نفسها لو المجموعات موجودة — وإلا ألوان الشاشة زي ما هي
+      const gridColors = o.rowGroups ? gridGroupColors(o.rowGroups.slice(st, end)) : colors;
       const pageInfo = total > 1
         ? `صورة ${idx + 1} من ${total} · اللوحات ${st + 1}–${end} من ${o.rows.length}`
         : `${o.rows.length} لوحة`;
-      return renderGridChunk(chunk, o, plan.colW, plan.tableW, pageInfo, colors);
+      return renderGridChunk(chunk, o, plan.colW, plan.tableW, pageInfo, gridColors);
     }
     const pageInfo = total > 1
       ? `صفحة ${idx + 1} من ${total} · ${o.rows.length} لوحة`
