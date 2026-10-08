@@ -41,14 +41,13 @@ describe("🔴 الرسالة قبل المشاركة: هييجوا على كا�
   });
 });
 
-describe("🔴 التوصيل — صفحة الفرز، السوبر أدمن الأول", () => {
+describe("🔴 التوصيل — صفحة الفرز، للكل (المالك: «انشر للكل» ٨ أكتوبر ٢٠٢٦)", () => {
   const sorting = readFileSync(path.resolve(__dirname, "../app/(app)/sorting/page.tsx"), "utf8").replace(/\r\n/g, "\n");
   const btn = readFileSync(path.resolve(__dirname, "../components/ShareSortButton.tsx"), "utf8").replace(/\r\n/g, "\n");
   const img = readFileSync(path.resolve(__dirname, "../lib/plateImage.ts"), "utf8").replace(/\r\n/g, "\n");
-  it("🔴 أزرار مشاركة الفرز التلاتة بتبعت الشكل الجديد للسوبر أدمن بس", () => {
-    expect(sorting.match(/imageStyle=\{isSuper \? "grid" : undefined\}/g)?.length).toBe(3);
-    expect(sorting).toMatch(/\.select\("role, is_super"\)/);
-    expect(sorting).toMatch(/setIsSuper\(prof\?\.is_super === true\)/);
+  it("🔴 أزرار مشاركة الفرز التلاتة بتبعت الشكل الجديد للكل", () => {
+    expect(sorting.match(/imageStyle="grid"/g)?.length).toBe(3);
+    expect(sorting).not.toMatch(/isSuper/);
   });
   it("🔴 الزرار بيحسب عدد الصور قبل المشاركة ويعرضه تحت «إرسال كصورة»", () => {
     expect(btn).toMatch(/imagePlanText\(/);
