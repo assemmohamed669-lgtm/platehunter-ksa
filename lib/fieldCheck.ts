@@ -131,7 +131,9 @@ function groupDuplicateChecks(entries: FieldCheckEntry[]): number[] {
     const key = loc === null ? `${plate}|~${Math.floor(t / 60_000)}` : `${plate}|${loc}`;
     const window = loc === null ? 60_000 : SAME_CHECK_WINDOW_MS;
     const prev = open.get(key);
-    if (prev && t - prev.t0 <= window) { groupOf[i] = prev.at; return; }
+    // 🔴 `Math.abs` — السجلات بتيجي **الأحدث الأول**، فـ`t - t0` كانت سالبة دايماً وأي تشييك أقدم بنفس اللوحة
+    // واللينك كان بيتلم مع الأحدث مهما بعد (أيام). مراجعة ٨ أكتوبر ٢٠٢٦ — «شيّكها مرتين تظهر مرتين».
+    if (prev && Math.abs(t - prev.t0) <= window) { groupOf[i] = prev.at; return; }
     open.set(key, { at: i, t0: t });
     groupOf[i] = i;
   });

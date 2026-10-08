@@ -75,22 +75,28 @@ describe("🔴 الحفظ بيمسح اللي اتشال من المسوّدة �
     expect(editorDeleteIds(now, live, base)).toEqual([]);
     expect(editorDeleteIds(now, [{ id: "a2" }], base)).toEqual(["a1", "b", "a3"]);
   });
-  it("من غير لقطة (المناديب لحد «انشر للكل») ⇒ نفس الحساب القديم بالحرف", () => {
+  it("من غير لقطة ⇒ اللي مش في المسوّدة (الحساب القديم)", () => {
     const now = [{ id: "n1" }, ...live];
     const draft = [{ id: "a2" }];
     expect(editorDeleteIds(now, draft, null)).toEqual(now.filter((e) => e.id !== "a2").map((e) => e.id));
   });
 });
 
-describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — السوبر أدمن الأول", () => {
-  it("🔴 الحفظ: لقطة وقت الفتح + مفيش توسيع لإخوات المكرر عند السوبر أدمن — المناديب زي الأول", () => {
+describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — للكل (المالك: «انشر للكل» ٨ أكتوبر ٢٠٢٦)", () => {
+  it("🔴 الحفظ: لقطة وقت الفتح + مفيش توسيع لإخوات المكرر — للكل", () => {
     const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
     expect(s).toMatch(/function openPlatesEditor\(\) \{[\s\S]{0,1000}peBaseIdsRef\.current = new Set\(fieldEntries\.map\(\(e\) => e\.id\)\);/);
     const save = s.slice(s.indexOf("async function savePlatesEditor()"), s.indexOf("function buildFieldRows()"));
-    expect(save).toMatch(/const removedIds = editorDeleteIds\(fieldEntries, draftFieldEntries, isSuper \? peBaseIdsRef\.current : null\);/);
-    expect(save).toMatch(/await deleteFieldCheckEntries\(isSuper \? removedIds : withHiddenDuplicates\(removedIds\)\);/);
+    expect(save).toMatch(/const removedIds = editorDeleteIds\(fieldEntries, draftFieldEntries, peBaseIdsRef\.current\);/);
+    expect(save).toMatch(/await deleteFieldCheckEntries\(removedIds\);/);
+    expect(save).not.toMatch(/withHiddenDuplicates|isSuper/);
     // عدّاد «هيتمسح N لوحة» من نفس الحساب
     expect(s).toMatch(/const peRemovedN = useMemo\([\s\S]{0,300}editorDeleteIds\(fieldEntries, draftFieldEntries, peBaseIdsRef\.current\)/);
+  });
+  it("🔴 «عملت تعديلات؟» مابتتحسبش والنافذة مقفولة (مراجعة: كانت بتقارن ١٦ ألف سجل مع كل لوحة جديدة)", () => {
+    const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
+    expect(s).toMatch(/const platesEditorDirty = useMemo\(\(\) => \{\n    if \(!platesEditorOpen\) return false;/);
+    expect(s).toMatch(/\}, \[platesEditorOpen, draftFieldEntries, fieldEntries\]\);/);
   });
   it("🔴 اليوم اللي اتمسح كله (بالسلة) ⇒ القايمة ترجع لكل الأيام — والتحميل مع التمرير بيرجع يشتغل", () => {
     const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
@@ -101,24 +107,26 @@ describe("🔴 التوصيل في «إظهار وتعديل اللوحات» �
   });
 });
 
-describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — السوبر أدمن الأول (الشريط)", () => {
+describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — الشريط للكل", () => {
   const src = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
   const editor = src.slice(src.indexOf("{/* ── نافذة «إظهار وتعديل اللوحات»"), src.indexOf("function AutoExportToggle"));
   it("🔴 فلتر اليوم في قايمة المحرّر (`entriesOfDay`) — وبيتمسح لما المحرّر يتفتح", () => {
     expect(src).toMatch(/const peEntries = useMemo\([\s\S]{0,400}entriesOfDay\(/);
     expect(src).toMatch(/function openPlatesEditor\(\) \{[\s\S]{0,900}setPeSel\(new Set\(\)\);[\s\S]{0,200}setPeDay\(""\);/);
   });
-  it("🔴 شريط التحديد (اليوم · حدد الكل · امسح المحدد) ورا `isSuper`", () => {
-    expect(editor).toMatch(/\{isSuper && \(\s*<div[^>]*data-records-bulk/);
+  it("🔴 شريط التحديد (اليوم · حدد الكل · امسح المحدد) للكل — مش ورا `isSuper`", () => {
+    expect(editor).toMatch(/<div data-records-bulk/);
+    expect(editor).not.toMatch(/isSuper && \(\s*<div[^>]*data-records-bulk/);
     // أيام الشريحة محفوظة برّه الـJSX (useMemo) — مش بتتحسب على ١٦ ألف سجل مع كل حرف
     expect(src).toMatch(/const peDays = useMemo\([\s\S]{0,300}recordDays\(/);
     expect(editor).toMatch(/peDays\.map\(/);
     expect(editor).toMatch(/امسح المحدد/);
     expect(editor).toMatch(/حدد الكل/);
   });
-  it("🔴 مربع تحديد قدام كل لوحة — للسوبر أدمن بس", () => {
-    expect(editor).toMatch(/\{isSuper && \(\s*<td[^>]*>\s*<input type="checkbox" checked=\{peSel\.has\(e\.id\)\}/);
-    expect(editor).toMatch(/\{isSuper && <th/);
+  it("🔴 مربع تحديد قدام كل لوحة — للكل", () => {
+    expect(editor).toMatch(/<td[^>]*>\s*<input type="checkbox" checked=\{peSel\.has\(e\.id\)\}/);
+    expect(editor).toMatch(/<th[^>]*>تحديد<\/th>/);
+    expect(editor).not.toMatch(/isSuper/);
   });
   it("🔴 المسح بيشيل من المسوّدة بس — والحفظ النهائي بتأكيد زي ما هو", () => {
     expect(src).toMatch(/function peDeleteSelected\(\) \{[\s\S]{0,400}withoutSelected\(/);

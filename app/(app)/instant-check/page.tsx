@@ -1301,10 +1301,10 @@ export default function InstantCheckPage() {
   const [platesEditorOpen, setPlatesEditorOpen] = useState(false);
   const [draftFieldEntries, setDraftFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [peSearch, setPeSearch] = useState("");            // بحث برقم اللوحة داخل المحرّر
-  // 🗑️ (السوبر أدمن الأول) تحديد كذا لوحة أو يوم كامل للمسح مرة واحدة — `lib/recordsSelection.ts`
+  // 🗑️ تحديد كذا لوحة أو يوم كامل للمسح مرة واحدة — `lib/recordsSelection.ts` (للكل: المالك «انشر للكل» ٨ أكتوبر ٢٠٢٦)
   const [peSel, setPeSel] = useState<Set<string>>(() => new Set());
   const [peDay, setPeDay] = useState("");                  // "" = كل الأيام (زي الأول بالحرف)
-  /** 🛡️ (السوبر أدمن) معرّفات السجلات وقت فتح المحرّر — اللي يوصل بعدها مايتحسبش «اتمسح». `editorDeleteIds`. */
+  /** 🛡️ معرّفات السجلات وقت فتح المحرّر — اللي يوصل بعدها مايتحسبش «اتمسح». `editorDeleteIds`. */
   const peBaseIdsRef = useRef<Set<string>>(new Set());
   // ── ترقيم الرسم ──────────────────────────────────────────────────────────
   // بنرسم دفعة وبنزوّد مع التمرير. من غير كده مندوب عنده ٦٠٠٠ سجل بيرسم عشرات
@@ -2169,17 +2169,17 @@ export default function InstantCheckPage() {
   // ── مشتقّات نافذة «إظهار وتعديل اللوحات» ──
   // محفوظة في useMemo: كانت بتتحسب جوّه الـJSX فبتتعاد على **كل** رندر للصفحة
   // (كل حرف في أي مربع بحث)، و`fieldCategoryOnly` بيلف على السجلات كلها.
-  /** 🗓️ (السوبر أدمن) أيام الشريحة الحالية بعدد لوحات كل يوم — للاختيار في «مسح بالتاريخ». */
+  /** 🗓️ أيام الشريحة الحالية بعدد لوحات كل يوم — للاختيار في «مسح بالتاريخ». */
   const peDays = useMemo(
-    () => (platesEditorOpen && isSuper ? recordDays(fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry)) : []),
-    [platesEditorOpen, isSuper, draftFieldEntries, fieldFilter, isWantedEntry],
+    () => (platesEditorOpen ? recordDays(fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry)) : []),
+    [platesEditorOpen, draftFieldEntries, fieldFilter, isWantedEntry],
   );
   // اليوم اللي اتمسحت كل لوحاته (بالسلة) ⇒ نرجع لكل الأيام بدل قايمة فاضية مافيهاش رجوع
   const peDayEff = peDay && peDays.some((d) => d.key === peDay) ? peDay : "";
   const peEntries = useMemo(() => {
     if (!platesEditorOpen) return EMPTY_ENTRIES;
     const cat = fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry);
-    // 🗓️ (السوبر أدمن) يوم واحد بس لو اختاره — "" = كل الأيام زي الأول بالحرف
+    // 🗓️ يوم واحد بس لو اختاره — "" = كل الأيام
     return peDayEff ? entriesOfDay(cat, peDayEff) : cat;
   }, [platesEditorOpen, draftFieldEntries, fieldFilter, isWantedEntry, peDayEff]);
   const peAllSelected = useMemo(
@@ -2524,7 +2524,7 @@ export default function InstantCheckPage() {
     setPeSel((s) => (s.has(id) ? toggleSel(s, id) : s));
   }
   /**
-   * 🗓️ (السوبر أدمن) اختار يوم ⇒ لوحاته بس قدامه و**كلها متحددة** (يشيل العلامة من اللي مش عايز يمسحه).
+   * 🗓️ اختار يوم ⇒ لوحاته بس قدامه و**كلها متحددة** (يشيل العلامة من اللي مش عايز يمسحه).
    * «كل الأيام» ⇒ القايمة كلها ومن غير تحديد.
    */
   function peChooseDay(key: string) {
@@ -2533,7 +2533,7 @@ export default function InstantCheckPage() {
     const cat = fieldCategoryOnly(draftFieldEntries, fieldFilter as FieldFilter, isWantedEntry);
     setPeSel(key ? new Set(entriesOfDay(cat, key).map((e) => e.id)) : new Set());
   }
-  /** 🗑️ (السوبر أدمن) المتحدد يتشال من **المسوّدة** — المسح الفعلي مع «احفظ التعديلات» بالتأكيد زي اللوحة الواحدة. */
+  /** 🗑️ المتحدد يتشال من **المسوّدة** — المسح الفعلي مع «احفظ التعديلات» بالتأكيد زي اللوحة الواحدة. */
   function peDeleteSelected() {
     if (peSel.size === 0) return;
     const dayEmptied = !!peDayEff && peEntries.every((e) => peSel.has(e.id));
@@ -2543,8 +2543,9 @@ export default function InstantCheckPage() {
   }
   // في تغييرات لسه ماتحفظتش؟ (حذف صف، أو تعديل لوحة/خانة)
   const platesEditorDirty = useMemo(() => {
-    // 🛡️ (السوبر أدمن) المقارنة مع اللقطة اللي اتفتح عليها المحرّر — اللي وصل بعدها مش «تعديل»
-    const base = isSuper ? fieldEntries.filter((e) => peBaseIdsRef.current.has(e.id)) : fieldEntries;
+    if (!platesEditorOpen) return false;   // مقفولة ⇒ مفيش مقارنة لكل السجلات مع كل لوحة جديدة (مراجعة ٨ أكتوبر)
+    // 🛡️ المقارنة مع اللقطة اللي اتفتح عليها المحرّر — اللي وصل بعدها (تصدير تلقائي/استرجاع) مش «تعديل»
+    const base = fieldEntries.filter((e) => peBaseIdsRef.current.has(e.id));
     if (draftFieldEntries.length !== base.length) return true;
     const byId = new Map(base.map((e) => [e.id, e]));
     for (const d of draftFieldEntries) {
@@ -2555,23 +2556,23 @@ export default function InstantCheckPage() {
       for (const k of keys) if ((d.row[k] ?? "") !== (o.row[k] ?? "")) return true;
     }
     return false;
-  }, [draftFieldEntries, fieldEntries, isSuper]);
-  /** 🛡️ (السوبر أدمن) كام لوحة الحفظ هيمسحها — نفس حساب `savePlatesEditor` بالظبط. */
+  }, [platesEditorOpen, draftFieldEntries, fieldEntries]);
+  /** 🛡️ كام لوحة الحفظ هيمسحها — نفس حساب `savePlatesEditor` بالظبط. */
   const peRemovedN = useMemo(
-    () => (platesEditorOpen && isSuper ? editorDeleteIds(fieldEntries, draftFieldEntries, peBaseIdsRef.current).length : 0),
-    [platesEditorOpen, isSuper, fieldEntries, draftFieldEntries],
+    () => (platesEditorOpen ? editorDeleteIds(fieldEntries, draftFieldEntries, peBaseIdsRef.current).length : 0),
+    [platesEditorOpen, fieldEntries, draftFieldEntries],
   );
 
   async function savePlatesEditor() {
     /**
-     * 🛡️ (السوبر أدمن الأول) اللي اتشال من المسوّدة بس — مش اللي وصل والنافذة مفتوحة، ومن غير توسيع لنسخة
-     * مكررة المندوب سابها (`editorDeleteIds`). المناديب: نفس الحساب القديم بالحرف لحد «انشر للكل».
+     * 🛡️ اللي اتشال من المسوّدة بس — مش اللي وصل والنافذة مفتوحة، ومن غير توسيع لنسخة مكررة المندوب سابها
+     * (المحرّر بيعرض كل نسخة لوحدها) — `editorDeleteIds`. للكل من ٨ أكتوبر ٢٠٢٦.
      */
-    const removedIds = editorDeleteIds(fieldEntries, draftFieldEntries, isSuper ? peBaseIdsRef.current : null);
+    const removedIds = editorDeleteIds(fieldEntries, draftFieldEntries, peBaseIdsRef.current);
     // تأكيد قبل تطبيق التعديل على شيت السجلات (بما فيه الحذف).
     const delMsg = removedIds.length > 0 ? ` (هيتمسح ${removedIds.length} لوحة)` : "";
     if (!window.confirm(`هيتم تطبيق التعديلات على شيت السجلات${delMsg}. موافق؟`)) return;
-    await deleteFieldCheckEntries(isSuper ? removedIds : withHiddenDuplicates(removedIds));
+    await deleteFieldCheckEntries(removedIds);
     const byId = new Map(fieldEntries.map((e) => [e.id, e]));
     for (const d of draftFieldEntries) {
       const o = byId.get(d.id);
@@ -6664,36 +6665,34 @@ export default function InstantCheckPage() {
                     })}
                   </div>
                 )}
-                {/* 🗑️ (السوبر أدمن الأول) مسح كذا لوحة مع بعض أو يوم كامل — `lib/recordsSelection.ts` */}
-                {isSuper && (
-                  <div data-records-bulk className="mt-2 flex flex-col gap-1.5 rounded-xl border border-danger/30 bg-danger/5 p-2">
-                    <label className="flex items-center gap-2 text-[11px] font-bold text-ink">
-                      <CalendarDays size={14} className="shrink-0 text-danger" />
-                      <span className="shrink-0">مسح بالتاريخ:</span>
-                      <select value={peDayEff} onChange={(ev) => peChooseDay(ev.target.value)}
-                        className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none">
-                        <option value="">كل الأيام</option>
-                        {peDays.map((d) => (
-                          <option key={d.key} value={d.key}>{dayLabel(d.key, dayKeyOf(new Date().toISOString()))} — {d.count} لوحة</option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="flex gap-1.5">
-                      <button onClick={() => setPeSel((sel) => toggleAll(sel, peEntries.map((e) => e.id)))} disabled={peEntries.length === 0}
-                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-border bg-surface-2 py-1.5 text-[11px] font-bold text-ink transition active:scale-95 disabled:opacity-40">
-                        {peAllSelected ? <Square size={13} /> : <CheckSquare size={13} />}
-                        {peAllSelected ? "شيل التحديد" : "حدد الكل"} ({peEntries.length})
-                      </button>
-                      <button onClick={peDeleteSelected} disabled={peSel.size === 0}
-                        className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-danger py-1.5 text-[11px] font-bold text-white transition active:scale-95 disabled:opacity-40">
-                        <Trash2 size={13} /> امسح المحدد ({peSel.size})
-                      </button>
-                    </div>
-                    <p className="text-[10px] leading-relaxed text-muted">
-                      اختار يوم ⇐ كل لوحاته بتتحدد. شيل العلامة من اللي مش عايز تمسحه، ودوس «امسح المحدد» وبعدين «احفظ التعديلات».
-                    </p>
+                {/* 🗑️ مسح كذا لوحة مع بعض أو يوم كامل — `lib/recordsSelection.ts` (للكل من ٨ أكتوبر ٢٠٢٦) */}
+                <div data-records-bulk className="mt-2 flex flex-col gap-1.5 rounded-xl border border-danger/30 bg-danger/5 p-2">
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-ink">
+                    <CalendarDays size={14} className="shrink-0 text-danger" />
+                    <span className="shrink-0">مسح بالتاريخ:</span>
+                    <select value={peDayEff} onChange={(ev) => peChooseDay(ev.target.value)}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none">
+                      <option value="">كل الأيام</option>
+                      {peDays.map((d) => (
+                        <option key={d.key} value={d.key}>{dayLabel(d.key, dayKeyOf(new Date().toISOString()))} — {d.count} لوحة</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex gap-1.5">
+                    <button onClick={() => setPeSel((sel) => toggleAll(sel, peEntries.map((e) => e.id)))} disabled={peEntries.length === 0}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-border bg-surface-2 py-1.5 text-[11px] font-bold text-ink transition active:scale-95 disabled:opacity-40">
+                      {peAllSelected ? <Square size={13} /> : <CheckSquare size={13} />}
+                      {peAllSelected ? "شيل التحديد" : "حدد الكل"} ({peEntries.length})
+                    </button>
+                    <button onClick={peDeleteSelected} disabled={peSel.size === 0}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-danger py-1.5 text-[11px] font-bold text-white transition active:scale-95 disabled:opacity-40">
+                      <Trash2 size={13} /> امسح المحدد ({peSel.size})
+                    </button>
                   </div>
-                )}
+                  <p className="text-[10px] leading-relaxed text-muted">
+                    اختار يوم ⇐ كل لوحاته بتتحدد. شيل العلامة من اللي مش عايز تمسحه، ودوس «امسح المحدد» وبعدين «احفظ التعديلات».
+                  </p>
+                </div>
               </div>
 
               {/* جدول زي الإكسيل — كل خانة قابلة للتعديل، وكل صف فيه زر حذف */}
@@ -6704,7 +6703,7 @@ export default function InstantCheckPage() {
                   <table className="border-collapse w-full text-xs" style={{ direction: "rtl" }}>
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-surface-2 text-muted">
-                        {isSuper && <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">تحديد</th>}
+                        <th className="border-b border-l border-border px-2 py-2 text-center font-bold whitespace-nowrap">تحديد</th>
                         <th className="border-b border-l border-border px-2 py-2 text-right font-bold whitespace-nowrap">رقم اللوحة</th>
                         {/* 📋 نفس أعمدة العرض المصغّر بالظبط — المحرّر كان بيعرض
                             أعمدة **ملف التشييك** بس، فالمندوب يفتح «إظهار وتعديل»
@@ -6728,13 +6727,11 @@ export default function InstantCheckPage() {
                         return (
                         <tr key={e.id}
                           ref={e.id === firstMatchId ? peFirstHitRef : undefined}
-                          className={`border-b border-border ${hit ? "bg-primary/15" : isSuper && peSel.has(e.id) ? "bg-danger/10" : ""}`}>
-                          {isSuper && (
-                            <td className="border-l border-border p-1 text-center">
-                              <input type="checkbox" checked={peSel.has(e.id)} onChange={() => setPeSel((sel) => toggleSel(sel, e.id))}
-                                aria-label="حدد اللوحة" className="h-4 w-4 accent-danger" />
-                            </td>
-                          )}
+                          className={`border-b border-border ${hit ? "bg-primary/15" : peSel.has(e.id) ? "bg-danger/10" : ""}`}>
+                          <td className="border-l border-border p-1 text-center">
+                            <input type="checkbox" checked={peSel.has(e.id)} onChange={() => setPeSel((sel) => toggleSel(sel, e.id))}
+                              aria-label="حدد اللوحة" className="h-4 w-4 accent-danger" />
+                          </td>
                           <td className="border-l border-border p-1 whitespace-nowrap">
                             <input dir="rtl" value={e.plate} onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
                               className={`w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none ${hit ? "font-black text-primary" : "font-bold"}`} />
@@ -6798,7 +6795,7 @@ export default function InstantCheckPage() {
               <div className="border-t border-border p-3">
                 {platesEditorDirty ? (
                   <div className="flex flex-col gap-1.5">
-                    <p className="text-center text-[11px] text-alert">عملت تعديلات — تحب تحفظها؟{isSuper && peRemovedN > 0 ? ` (هيتمسح ${peRemovedN} لوحة)` : ""}</p>
+                    <p className="text-center text-[11px] text-alert">عملت تعديلات — تحب تحفظها؟{peRemovedN > 0 ? ` (هيتمسح ${peRemovedN} لوحة)` : ""}</p>
                     <div className="flex gap-2">
                       <button onClick={() => setPlatesEditorOpen(false)}
                         className="flex-1 rounded-xl border border-border py-2.5 text-sm text-muted transition active:scale-95">لا، إلغاء</button>

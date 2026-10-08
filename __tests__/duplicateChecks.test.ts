@@ -117,3 +117,41 @@ describe("dedupeDuplicateRows", () => {
     expect(out).toHaveLength(2);
   });
 });
+
+/**
+ * 🔴 **الترتيب الحقيقي = الأحدث الأول** (`getAllFieldCheckEntries`) — المراجعة (٨ أكتوبر ٢٠٢٦) لقت إن نافذة
+ * المجموعة كانت بتتحسب `t - t0` ومع الأحدث الأول بتطلع **سالبة دايماً** ⇒ أي تشييك أقدم لنفس اللوحة بنفس
+ * اللينك كان بيتلم مع الأحدث **مهما بعد** (أيام). الاختبارات اللي فوق كلها الأقدم الأول فمامسكتهوش.
+ * المالك: «اة صلحها» — وقاعدته: «شيّكها مرتين تظهر مرتين».
+ */
+describe("🔴 القايمة الأحدث الأول (زي ما البرنامج بيقراها)", () => {
+  it("🔴 شيّكها يومين مختلفين بنفس اللينك ⇒ صفين", () => {
+    const out = collapseDuplicateChecks([
+      e("new", "رري3706", "2026-10-08T08:15:00.000Z", PIN),
+      e("old", "رري3706", "2026-10-03T08:15:00.000Z", PIN),
+    ]);
+    expect(out.map((r) => r.id)).toEqual(["new", "old"]);
+  });
+  it("🔴 شيّكها تاني بعد ساعة ⇒ صفين", () => {
+    expect(collapseDuplicateChecks([
+      e("2", "رري3706", "2026-09-10T09:30:00.000Z", PIN),
+      e("1", "رري3706", "2026-09-10T08:15:00.000Z", PIN),
+    ])).toHaveLength(2);
+  });
+  it("٨ إرسالات في ٧٦ ثانية (الأحدث الأول) ⇒ صف واحد زي الأول", () => {
+    const rows = Array.from({ length: 8 }, (_, i) =>
+      e(`${i}`, "رري3706", new Date(Date.UTC(2026, 8, 10, 8, 15, 20 + (7 - i) * 11)).toISOString(), PIN));
+    const out = collapseDuplicateChecks(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe("0");
+  });
+  it("🔴 مسح الصف من العرض المدموج مايشيلش تشييك يوم تاني (duplicateCheckIds)", () => {
+    const groups = duplicateCheckIds([
+      e("a1", "رري3706", "2026-10-08T08:15:30.000Z", PIN),
+      e("a2", "رري3706", "2026-10-08T08:15:00.000Z", PIN),
+      e("a3", "رري3706", "2026-10-03T08:15:00.000Z", PIN),
+    ]);
+    expect(groups.get("a1")).toEqual(["a1", "a2"]);
+    expect([...groups.values()].flat()).not.toContain("a3");
+  });
+});
