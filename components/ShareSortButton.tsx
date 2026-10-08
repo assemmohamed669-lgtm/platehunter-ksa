@@ -13,7 +13,7 @@
 import { useState, useEffect } from "react";
 import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2 } from "lucide-react";
 import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
-import { renderPlateImages, renderTableImages, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
+import { renderPlateImages, renderTableImages, planTableImages, imagePlanText, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
 import { shareImageWithText } from "@/lib/share";
 import { pushBackHandler } from "@/lib/backStack";
 
@@ -39,13 +39,18 @@ interface Props {
   className?: string;
   /** نص الزر + عنوان القائمة (افتراضي «مشاركة الفرز»). */
   label?: string;
+  /**
+   * 🖼️ «grid» = صورة الجدول المرتبة (عناوين بنفسجي · ٢٠ لوحة في الصورة · المكرر بلونه وعريض) — وتحت
+   * «إرسال كصورة» بيتكتب هيطلعوا في كام صورة قبل ما المندوب يدوس. من غيره = الشكل القديم بالحرف.
+   */
+  imageStyle?: "grid";
 }
 
 function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label }: Props) {
+export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label, imageStyle }: Props) {
   // اسم الملف: المسافات بتفضل (المتصفّح بيعرضها)، والموبايل بيحوّله لاسم آمن لوحده.
   const fileBase = fileNameProp
     ? fileNameProp.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
@@ -54,6 +59,20 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<string[] | null>(null);
+  /** 🖼️ «57 لوحة ⇐ هيطلعوا في 3 صور…» — بيتحسب لما القائمة تتفتح (`planTableImages` = نفس تقسيم الرسم). */
+  const [imagePlan, setImagePlan] = useState<string | null>(null);
+
+  function openMenu() {
+    setMenuOpen(true);
+    setImagePlan(null);
+    if (!imageStyle || !imageTable) return;
+    try {
+      const t = imageTable();
+      if (!t.rows.length) return;
+      const plan = planTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows, rowColors: t.rowColors, style: imageStyle });
+      setImagePlan(imagePlanText(plan.opts.rows.length, plan.starts));
+    } catch { /* الحساب إضافة — القائمة تفضل شغّالة */ }
+  }
 
   // زر الرجوع (الهاتف) يقفل الصور المعروضة الأول، ثم القائمة — بدل ما يطلّع من
   // التطبيق أو ينقلك لصفحة تانية.
@@ -96,7 +115,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
       if (imageTable) {
         const t = imageTable();
         if (!t.rows.length) { alert("مفيش نتايج."); return; }
-        imgs = renderTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows, rowColors: t.rowColors });
+        imgs = renderTableImages({ title, subtitle: t.subtitle, columns: t.columns, rows: t.rows, rowColors: t.rowColors, style: imageStyle });
       } else {
         const imgRowData = imageRows ? imageRows() : (getRows() ?? []).map((x) => objToPlateRow(x));
         if (!imgRowData.length) { alert("مفيش نتايج."); return; }
@@ -117,7 +136,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
 
   return (
     <>
-      <button onClick={() => setMenuOpen(true)} disabled={busy}
+      <button onClick={openMenu} disabled={busy}
         className={className ?? "flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"}>
         {busy ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />} {btnLabel}
       </button>
@@ -144,7 +163,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
               <button onClick={doImage}
                 className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-right transition hover:border-primary/40 hover:bg-primary/5">
                 <ImageDown size={20} className="shrink-0 text-primary" />
-                <div><p className="text-sm font-bold text-ink">إرسال كصورة</p><p className="text-xs text-muted">حوّل النتائج لصورة وابعتها على واتساب</p></div>
+                <div><p className="text-sm font-bold text-ink">إرسال كصورة</p><p className="text-xs text-muted">{imagePlan ?? "حوّل النتائج لصورة وابعتها على واتساب"}</p></div>
               </button>
             </div>
           </div>

@@ -186,6 +186,62 @@ export interface TableImageOptions {
   rows: string[][];     // كل صف = قيم بترتيب columns
   rowColors?: (string | null)[]; // لون خلفية كل صف (hex) — للوحات المكررة، محاذي لـ rows
   perImage?: number;    // أقصى عدد صفوف في الصورة قبل التقسيم
+  /**
+   * 🖼️ «grid» = جدول مرتب زي صورة البرنامج المنافس اللي بعتها المالك (٨ أكتوبر ٢٠٢٦): عناوين بنفسجي بكتابة
+   * بيضا، خطوط جدول غامقة، الكلام في نص الخانة، المكرر بلون مجموعته وبخط عريض، و`GRID_PER_IMAGE` لوحة في
+   * الصورة. من غيره = الشكل القديم بالحرف (باقي الصفحات).
+   */
+  style?: "grid";
+}
+
+/** 🖼️ لوحات كل صورة في الشكل «grid» — المالك: «3 صور كل صورة فيها 20 لوحه بتفاصيلها». */
+export const GRID_PER_IMAGE = 20;
+const GRID_TITLE_BG = "#4c1d95";
+const GRID_HEAD_BG = "#6d28d9";
+const GRID_LINE = "#374151";
+const GRID_TEXT = "#111827";
+const GRID_FONT_FAMILY = "system-ui, 'Segoe UI', Tahoma, sans-serif";
+const G_CELL_FONT = `30px ${GRID_FONT_FAMILY}`;
+const G_BOLD_FONT = `bold 30px ${GRID_FONT_FAMILY}`;
+const G_PLATE_FONT = `bold 34px ${GRID_FONT_FAMILY}`;
+const G_HEAD_FONT = `bold 30px ${GRID_FONT_FAMILY}`;
+const G_LINE_H = 42;
+const G_CELL_PAD = 14;
+const G_MIN_COL_W = 110;
+const G_MAX_COL_W = 250;
+
+/**
+ * بدايات الصور (فهارس الصفوف) — صورة جديدة لما الصورة الحالية توصل `maxRows` صف أو ارتفاعها يعدّي
+ * `maxBodyH` (حد الآيفون). **نفس الدالة للعدّ قبل المشاركة وللرسم** — فالرقم اللي المندوب بيشوفه هو اللي بيطلع.
+ */
+export function chunkTableRows(rowHeights: readonly number[], maxBodyH: number, maxRows: number): number[] {
+  const starts = [0];
+  let count = 0;
+  let curH = 0;
+  for (let i = 0; i < rowHeights.length; i++) {
+    const h = rowHeights[i];
+    if (count && (curH + h > maxBodyH || count >= maxRows)) {
+      starts.push(i);
+      count = 0; curH = 0;
+    }
+    count++;
+    curH += h;
+  }
+  return starts;
+}
+
+/** «57 لوحة ⇐ هيطلعوا في 3 صور — كل صورة فيها 20 لوحة بتفاصيلها (الأخيرة 17)» — بيتعرض تحت «إرسال كصورة». */
+export function imagePlanText(total: number, starts: readonly number[]): string {
+  const n = Math.max(1, starts.length);
+  if (n === 1) return `${total} لوحة ⇐ هيطلعوا في صورة واحدة بتفاصيلها`;
+  const sizes = starts.map((st, i) => (i + 1 < starts.length ? starts[i + 1] : total) - st);
+  const head = sizes.slice(0, -1);
+  const last = sizes[sizes.length - 1];
+  const imgs = n === 2 ? "صورتين" : n <= 10 ? `${n} صور` : `${n} صورة`;
+  const even = head.every((x) => x === head[0]) && head[0] === GRID_PER_IMAGE;
+  if (!even) return `${total} لوحة ⇐ هيطلعوا في ${imgs} — كل صورة فيها لحد ${Math.max(...sizes)} لوحة بتفاصيلها`;
+  return `${total} لوحة ⇐ هيطلعوا في ${imgs} — كل صورة فيها ${GRID_PER_IMAGE} لوحة بتفاصيلها`
+    + (last < GRID_PER_IMAGE ? ` (الأخيرة ${last})` : "");
 }
 
 // خطوط أكبر عشان بيانات اللوحة تبقى واضحة للمندوب في الصورة المشاركة (كانت
@@ -312,8 +368,27 @@ function renderTableChunk(
   return canvas.toDataURL("image/png");
 }
 
-/** يرسم النتائج كجدول (زي شيت إكسيل) — صورة واحدة أو أكتر حسب عدد الصفوف. */
-export function renderTableImages(opts: TableImageOptions): string[] {
+export interface TablePlan {
+  /** الخيارات بعد شيل الأعمدة الفاضية تماماً. */
+  opts: TableImageOptions;
+  colW: number[];
+  tableW: number;
+  /** بدايات الصور (`chunkTableRows`). */
+  starts: number[];
+}
+
+/**
+ * يقيس الجدول ويقرّر التقسيم **من غير ما يرسم** — بيستخدمه الرسم، وبيستخدمه زر المشاركة عشان يقول للمندوب
+ * «هيطلعوا في كام صورة» قبل ما يدوس.
+ */
+export function planTableImages(opts: TableImageOptions): TablePlan {
+  const grid = opts.style === "grid";
+  const cellFont = grid ? G_CELL_FONT : T_CELL_FONT;
+  const headFont = grid ? G_HEAD_FONT : T_HEAD_FONT;
+  const cellPad = grid ? G_CELL_PAD : T_CELL_PAD;
+  const lineH = grid ? G_LINE_H : T_LINE_H;
+  const minW = grid ? G_MIN_COL_W : T_MIN_COL_W;
+  const maxW = grid ? G_MAX_COL_W : T_MAX_COL_W;
   // نشيل الأعمدة الفاضية تماماً (كل خاناتها فاضية) — بتاخد عرض من غير أي فايدة
   // وبتصغّر الخط بالنسبة للصورة. العمود اللي فيه أي قيمة بيفضل.
   const keep = opts.columns.map((_, ci) => opts.rows.some((r) => String(r[ci] ?? "").trim() !== ""));
@@ -327,55 +402,158 @@ export function renderTableImages(opts: TableImageOptions): string[] {
   // عرض كل عمود = أعرض محتوى فيه (رأس أو خانة) محصور بين حد أدنى وأقصى.
   const measure = document.createElement("canvas").getContext("2d")!;
   const colW = opts.columns.map((h, ci) => {
-    measure.font = T_HEAD_FONT;
+    measure.font = headFont;
     let w = measure.measureText(h).width;
-    measure.font = T_CELL_FONT;
+    measure.font = grid && ci === 0 ? G_PLATE_FONT : grid ? G_BOLD_FONT : cellFont;
     for (const row of opts.rows) w = Math.max(w, measure.measureText(String(row[ci] ?? "")).width);
-    return Math.min(T_MAX_COL_W, Math.max(T_MIN_COL_W, Math.ceil(w) + T_CELL_PAD * 2));
+    return Math.min(maxW, Math.max(minW, Math.ceil(w) + cellPad * 2));
   });
   const tableW = colW.reduce((a, b) => a + b, 0);
   const totalW = tableW + T_PAD * 2;
 
-  // ── تقسيم آمن على آيفون: بدل عدد صفوف ثابت، بنقيس ارتفاع كل صف ونعبّي الصور
-  //    بحيث كل كانفاس يفضل تحت حدود iOS (مساحة/بُعد) — وإلا آيفون بيرجّع صورة فاضية.
-  const innerW = colW.map((w) => w - T_CELL_PAD * 2);
-  measure.font = T_HEAD_FONT;
-  const headH = T_CELL_PAD * 2 + Math.max(1, ...opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci]).length)) * T_LINE_H;
-  measure.font = T_CELL_FONT;
+  // ── تقسيم آمن على آيفون: بنقيس ارتفاع كل صف ونعبّي الصور بحيث كل كانفاس يفضل
+  //    تحت حدود iOS (مساحة/بُعد) — وإلا آيفون بيرجّع صورة فاضية.
+  const innerW = colW.map((w) => w - cellPad * 2);
+  measure.font = headFont;
+  const headH = cellPad * 2 + Math.max(1, ...opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci]).length)) * lineH;
+  measure.font = cellFont;
   const rowHeights = opts.rows.map((row) =>
-    T_CELL_PAD * 2 + Math.max(1, ...opts.columns.map((_, ci) => wrapText(measure, String(row[ci] ?? ""), innerW[ci]).length)) * T_LINE_H,
+    cellPad * 2 + Math.max(1, ...opts.columns.map((_, ci) => wrapText(measure, String(row[ci] ?? ""), innerW[ci]).length)) * lineH,
   );
-  const overhead = T_TITLE_H + (opts.subtitle ? T_SUB_H : 0) + headH + FOOTER_H;
+  const titleH = T_TITLE_H + (opts.subtitle ? T_SUB_H : 0);
+  const overhead = titleH + headH + FOOTER_H;
   // أقصى ارتفاع كانفاس (بكسل) يفضل تحت حدّ المساحة وحدّ البُعد على آيفون.
   const maxCanvasH = Math.min(IOS_MAX_CANVAS_DIM, Math.floor(IOS_MAX_CANVAS_AREA / (totalW * T_SCALE)));
   // أقصى ارتفاع صفوف (bodyH) لكل صورة بالوحدات المنطقية.
   const maxBodyH = Math.max(1, Math.floor(maxCanvasH / T_SCALE) - overhead);
-  // احترام perImage لو المستخدم حدّده (سقف إضافي)، وإلا بلا سقف عددي.
-  const maxRows = opts.perImage && opts.perImage > 0 ? opts.perImage : Infinity;
+  // احترام perImage لو المستخدم حدّده؛ «grid» = ٢٠؛ وإلا بلا سقف عددي.
+  const maxRows = opts.perImage && opts.perImage > 0 ? opts.perImage : grid ? GRID_PER_IMAGE : Infinity;
+  return { opts, colW, tableW, starts: chunkTableRows(rowHeights, maxBodyH, maxRows) };
+}
 
-  const chunks: string[][][] = [];
-  const colorChunks: (string | null)[][] = [];
-  let cur: string[][] = [];
-  let curColors: (string | null)[] = [];
-  let curH = 0;
-  for (let i = 0; i < opts.rows.length; i++) {
-    const h = rowHeights[i];
-    if (cur.length && (curH + h > maxBodyH || cur.length >= maxRows)) {
-      chunks.push(cur); colorChunks.push(curColors);
-      cur = []; curColors = []; curH = 0;
+/** يرسم النتائج كجدول (زي شيت إكسيل) — صورة واحدة أو أكتر حسب عدد الصفوف. */
+export function renderTableImages(opts: TableImageOptions): string[] {
+  const plan = planTableImages(opts);
+  const o = plan.opts;
+  const total = plan.starts.length;
+  return plan.starts.map((st, idx) => {
+    const end = idx + 1 < total ? plan.starts[idx + 1] : o.rows.length;
+    const chunk = o.rows.slice(st, end);
+    const colors = (o.rowColors ?? []).slice(st, end).concat(Array(Math.max(0, chunk.length - (o.rowColors ?? []).slice(st, end).length)).fill(null));
+    if (o.style === "grid") {
+      const pageInfo = total > 1
+        ? `صورة ${idx + 1} من ${total} · اللوحات ${st + 1}–${end} من ${o.rows.length}`
+        : `${o.rows.length} لوحة`;
+      return renderGridChunk(chunk, o, plan.colW, plan.tableW, pageInfo, colors);
     }
-    cur.push(opts.rows[i]);
-    curColors.push((opts.rowColors ?? [])[i] ?? null);
-    curH += h;
-  }
-  if (cur.length || chunks.length === 0) { chunks.push(cur); colorChunks.push(curColors); }
-  const total = chunks.length;
-  return chunks.map((chunk, idx) => {
     const pageInfo = total > 1
-      ? `صفحة ${idx + 1} من ${total} · ${opts.rows.length} لوحة`
-      : `${opts.rows.length} لوحة`;
-    return renderTableChunk(chunk, opts, colW, tableW, pageInfo, colorChunks[idx]);
+      ? `صفحة ${idx + 1} من ${total} · ${o.rows.length} لوحة`
+      : `${o.rows.length} لوحة`;
+    return renderTableChunk(chunk, o, plan.colW, plan.tableW, pageInfo, colors);
   });
+}
+
+/**
+ * 🖼️ صورة «grid» — جدول مرتب زي صورة المنافس: عناوين بنفسجي بكتابة بيضا، الكلام في نص الخانة، خطوط
+ * غامقة، المكرر بلون مجموعته (نفس لون الشاشة) وبخط عريض، واللوحة (العمود الأول) عريضة دايماً.
+ */
+function renderGridChunk(
+  rows: string[][], opts: TableImageOptions, colW: number[], tableW: number, pageInfo: string,
+  rowColors: (string | null)[],
+): string {
+  const totalW = tableW + T_PAD * 2;
+  const innerW = colW.map((w) => w - G_CELL_PAD * 2);
+  const measure = document.createElement("canvas").getContext("2d")!;
+  measure.font = G_HEAD_FONT;
+  const headLines = opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci]));
+  const headH = G_CELL_PAD * 2 + Math.max(1, ...headLines.map((l) => l.length)) * G_LINE_H;
+  measure.font = G_CELL_FONT;
+  const cellLines = rows.map((row) => opts.columns.map((_, ci) => wrapText(measure, String(row[ci] ?? ""), innerW[ci])));
+  const rowH = cellLines.map((cells) => G_CELL_PAD * 2 + Math.max(1, ...cells.map((l) => l.length)) * G_LINE_H);
+
+  const titleBlock = T_TITLE_H + (opts.subtitle ? T_SUB_H : 0);
+  const bodyH = rowH.reduce((a, b) => a + b, 0);
+  const height = titleBlock + headH + bodyH + FOOTER_H;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(totalW * T_SCALE);
+  canvas.height = Math.ceil(height * T_SCALE);
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(T_SCALE, T_SCALE);
+  ctx.textBaseline = "middle";
+  (ctx as CanvasRenderingContext2D & { direction: string }).direction = "rtl";
+
+  // حواف الأعمدة (RTL: العمود ٠ أقصى اليمين) ونصّها.
+  const colRight: number[] = [];
+  let xr = T_PAD + tableW;
+  for (let ci = 0; ci < colW.length; ci++) { colRight[ci] = xr; xr -= colW[ci]; }
+  const colMid = colW.map((w, ci) => colRight[ci] - w / 2);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, totalW, height);
+
+  // العنوان + التاريخ
+  ctx.fillStyle = GRID_TITLE_BG;
+  ctx.fillRect(0, 0, totalW, titleBlock);
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "right";
+  ctx.font = `bold 38px ${GRID_FONT_FAMILY}`;
+  ctx.fillText(opts.title, T_PAD + tableW, T_TITLE_H / 2);
+  if (opts.subtitle) {
+    ctx.font = `22px ${GRID_FONT_FAMILY}`;
+    ctx.fillText(opts.subtitle, T_PAD + tableW, T_TITLE_H + T_SUB_H / 2 - 2);
+  }
+
+  // صف العناوين — بنفسجي بكتابة بيضا في النص
+  let y = titleBlock;
+  ctx.fillStyle = GRID_HEAD_BG;
+  ctx.fillRect(T_PAD, y, tableW, headH);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = G_HEAD_FONT;
+  ctx.textAlign = "center";
+  opts.columns.forEach((_, ci) => {
+    const lines = headLines[ci];
+    let ly = y + headH / 2 - ((lines.length - 1) * G_LINE_H) / 2;
+    for (const line of lines) { ctx.fillText(line, colMid[ci], ly); ly += G_LINE_H; }
+  });
+  y += headH;
+
+  // الصفوف — المكرر بلون مجموعته وبخط عريض، والباقي أبيض عادي
+  rows.forEach((row, i) => {
+    const h = rowH[i];
+    const dup = rowColors[i];
+    if (dup) { ctx.fillStyle = dup; ctx.fillRect(T_PAD, y, tableW, h); }
+    row.forEach((_, ci) => {
+      ctx.font = ci === 0 ? G_PLATE_FONT : dup ? G_BOLD_FONT : G_CELL_FONT;
+      ctx.fillStyle = GRID_TEXT;
+      const lines = cellLines[i][ci];
+      let ly = y + h / 2 - ((lines.length - 1) * G_LINE_H) / 2;
+      for (const line of lines) { ctx.fillText(line, colMid[ci], ly); ly += G_LINE_H; }
+    });
+    y += h;
+  });
+
+  // خطوط الجدول — غامقة، وإطار حوالين الجدول كله
+  ctx.strokeStyle = GRID_LINE;
+  ctx.lineWidth = 1.5;
+  const top = titleBlock;
+  const bottom = titleBlock + headH + bodyH;
+  let hy = titleBlock + headH;
+  ctx.beginPath(); ctx.moveTo(T_PAD, hy); ctx.lineTo(T_PAD + tableW, hy); ctx.stroke();
+  for (const h of rowH) { hy += h; ctx.beginPath(); ctx.moveTo(T_PAD, hy); ctx.lineTo(T_PAD + tableW, hy); ctx.stroke(); }
+  for (let ci = 0; ci <= colW.length; ci++) {
+    const x = ci < colW.length ? colRight[ci] : T_PAD;
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(T_PAD, top); ctx.lineTo(T_PAD + tableW, top); ctx.stroke();
+
+  // الفوتر
+  ctx.fillStyle = COL.footer;
+  ctx.textAlign = "right";
+  ctx.font = `22px ${GRID_FONT_FAMILY}`;
+  ctx.fillText(pageInfo, T_PAD + tableW, height - FOOTER_H / 2);
+
+  return canvas.toDataURL("image/png");
 }
 
 /** ينزّل صورة data URL باسم معيّن (ويب/موبايل عبر رابط تنزيل). */
