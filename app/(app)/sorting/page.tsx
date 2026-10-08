@@ -390,8 +390,6 @@ export default function SortingPage() {
   // التشخيص التقني يظهر للأدمن فقط، ومطوي افتراضياً (سهم لفتحه). المندوب
   // مايشوفهوش خالص.
   const [isAdmin, setIsAdmin] = useState(false);
-  /** 🖼️ السوبر أدمن الأول — صورة الفرز المرتبة (`imageStyle="grid"`) لحد ما المالك يقول «انشر للكل». */
-  const [isSuper, setIsSuper] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
 
   // ── Paste ──
@@ -917,9 +915,8 @@ export default function SortingPage() {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
+        const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
         setIsAdmin(prof?.role === "admin");
-        setIsSuper(prof?.is_super === true);
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
@@ -4304,7 +4301,7 @@ export default function SortingPage() {
                   fileName={shareFileName(sortMode === "new" ? "newAll" : "fullAll", when)}
                   rows={() => buildDisplayShareObjects(displayResults, recs).rowObjects}
                   imageTable={() => buildSortImageTable(displayResults, recs)}
-                  imageStyle={isSuper ? "grid" : undefined}
+                  imageStyle="grid"
                   excelBlob={() => buildSortExcelBlob(displayResults, recs)} />
                 <button onClick={clearAllResults} className={clearCls}>
                   <Trash2 size={15} /> مسح كل الفرز
@@ -4317,7 +4314,7 @@ export default function SortingPage() {
                   fileName={shareFileName(sortMode === "new" ? "new" : "full", when)}
                   rows={() => buildDisplayShareObjects(displayResults, []).rowObjects}
                   imageTable={() => buildSortImageTable(displayResults, [])}
-                  imageStyle={isSuper ? "grid" : undefined}
+                  imageStyle="grid"
                   excelBlob={() => buildSortExcelBlob(displayResults, [])} />
                 <button onClick={clearMainResults} className={clearCls}>
                   <Trash2 size={15} /> مسح فرز الداتا
@@ -4330,7 +4327,7 @@ export default function SortingPage() {
                   fileName={shareFileName(sortMode === "new" ? "newRecords" : "fullRecords", when)}
                   rows={() => buildDisplayShareObjects([], recs).rowObjects}
                   imageTable={() => buildSortImageTable([], recs)}
-                  imageStyle={isSuper ? "grid" : undefined}
+                  imageStyle="grid"
                   excelBlob={() => buildSortExcelBlob([], recs)} />
                 <button onClick={clearTashyeekResults} className={clearCls}>
                   <Trash2 size={15} /> مسح فرز السجلات
