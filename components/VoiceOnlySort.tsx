@@ -21,8 +21,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
   CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronDown, Lock} from "lucide-react";
-import { loadColumnOrder, saveColumnOrder, loadOrderMode, saveOrderMode, toggleColumn, type OrderMode } from "@/lib/columnOrder";
-import { voiceSortTable, voiceSortGroups, VS_PLATE_COL } from "@/lib/voiceSortColumns";
+import { toggleColumn, type OrderMode } from "@/lib/columnOrder";
+import { voiceSortTable, voiceSortGroups, recordRowForSort, VS_PLATE_COL, loadVoiceSortOrder, saveVoiceSortOrder, loadVoiceSortMode, saveVoiceSortMode } from "@/lib/voiceSortColumns";
 import FileUploadBox from "@/components/FileUploadBox";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
@@ -358,16 +358,16 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [userLoc, setUserLoc] = useState<GpsCoords | null>(null);
   /**
    * 🎛️ ترتيب الأعمدة **زي صفحة الفرز** — «الترتيب الأساسي (زي البرنامج)» أو «تخصيص». المالك (٩ أكتوبر ٢٠٢٦):
-   * «تتحفظ حتي لو خرج من البرنامج او اتنقل للصفحات متتغيرش غير لو هو غيرها ب ايدو» ⇒ على الجهاز بنفس مفاتيح
-   * صفحة الفرز (`lib/columnOrder.ts`). كان هنا «الأعمدة» (إخفاء/فوق-تحت) في الذاكرة بس فبيضيع مع الخروج.
+   * «تتحفظ حتي لو خرج من البرنامج او اتنقل للصفحات متتغيرش غير لو هو غيرها ب ايدو» ⇒ على الجهاز بحفظ خاص
+   * بـ«صوت فقط» (`lib/voiceSortColumns.ts`). كان هنا «الأعمدة» (إخفاء/فوق-تحت) في الذاكرة بس فبيضيع مع الخروج.
    */
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderMode, setOrderModeState] = useState<OrderMode>("basic");
   const [colOrder, setColOrder] = useState<string[]>([]);
-  useEffect(() => { setColOrder(loadColumnOrder()); setOrderModeState(loadOrderMode()); }, []);
-  function setOrderMode(m: OrderMode) { setOrderModeState(m); saveOrderMode(m); }
+  useEffect(() => { setColOrder(loadVoiceSortOrder()); setOrderModeState(loadVoiceSortMode()); }, []);
+  function setOrderMode(m: OrderMode) { setOrderModeState(m); saveVoiceSortMode(m); }
   function toggleOrderCol(label: string) {
-    setColOrder((prev) => { const next = toggleColumn(prev, label); saveColumnOrder(next); return next; });
+    setColOrder((prev) => { const next = toggleColumn(prev, label); saveVoiceSortOrder(next); return next; });
   }
   const [rowCopied, setRowCopied] = useState<number | null>(null);
 
@@ -487,13 +487,19 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     }
     // 🎛️ أعمدة الجدول **زي صفحة الفرز**: «أساسي» = ترتيب البرنامج، «تخصيص» = اختيار المندوب بترتيبه.
     // الجدول ده نفسه هو اللي بيتشارك (إكسيل/صورة/نص) — نفس الأعمدة بنفس الترتيب.
-    const table = voiceSortTable(rows.map((m) => {
-      const o: Record<string, unknown> = { [VS_PLATE_COL]: plateOf(m) };
-      for (const [k, v] of Object.entries(mergedRow(m))) if (k !== REC_PLATE_COL) o[k] = v;
+    // صف السجل بأسماء البرنامج (تاريخ المندوب ⇐ «تاريخ التسجيل»، موقعه ⇐ «GPS») — في الفرز السجل هو dataRow
+    // وفي اللصق هو referralRow؛ `recordRowForSort` بيعرف السجل بنفسه وبيسيب صف الإحالة زي ما هو.
+    const normalized = rows.map((m) => ({
+      dataRow: m.dataRow ? recordRowForSort(m.dataRow) : undefined,
+      referralRow: recordRowForSort(m.referralRow),
+    }));
+    const table = voiceSortTable(normalized.map((n, i) => {
+      const o: Record<string, unknown> = { [VS_PLATE_COL]: plateOf(rows[i]) };
+      for (const [k, v] of Object.entries({ ...(n.dataRow ?? {}), ...n.referralRow })) if (k !== REC_PLATE_COL) o[k] = v;
       return o;
     }), orderMode, colOrder);
     const cols = table.columns.filter((c) => c !== VS_PLATE_COL);
-    const groups = voiceSortGroups(rows);
+    const groups = voiceSortGroups(normalized);
 
     // «الأقرب أولاً» — ترتيب بالمسافة من موقع المندوب. الصفوف اللي مالهاش موقع
     // بتروح آخر القايمة بدل ما تختفي.
