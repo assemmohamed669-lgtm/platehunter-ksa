@@ -23,7 +23,10 @@ const MIGRATED_KEY = "ph:sorting:colOrder:unlocked";
 export function loadColumnOrder(): string[] {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
+    // 🔴 مفيش ترتيب قديم يترحّل ⇒ نعلّم الترحيل «خلص» دلوقتي. من غير كده أول ترتيب يختاره مندوب جديد كان
+    //    بيتحفظ صح، وأول ما يفتح البرنامج تاني الترحيل يحط «نوع السيارة» و«الماركة» في أوله ⇒ اختياره
+    //    بيتغيّر لوحده (المالك ٩ أكتوبر ٢٠٢٦: «بترجع تاني ... متتغيرش غير لو هو غيرها ب ايدو»).
+    if (!raw) { try { localStorage.setItem(MIGRATED_KEY, "1"); } catch { /* */ } return []; }
     const arr = JSON.parse(raw) as unknown;
     const order = Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
 
@@ -50,7 +53,8 @@ export function migrateColumnOrder(order: string[]): string[] {
 }
 
 export function saveColumnOrder(order: string[]): void {
-  try { localStorage.setItem(KEY, JSON.stringify(order)); } catch { /* storage unavailable */ }
+  // أي ترتيب بيتحفظ دلوقتي هو بالشكل الجديد أصلاً ⇒ مايتعملوش ترحيل بعدين
+  try { localStorage.setItem(KEY, JSON.stringify(order)); localStorage.setItem(MIGRATED_KEY, "1"); } catch { /* storage unavailable */ }
 }
 
 /** الأعمدة المتاحة للترتيب = كل المتاح ناقص رقم اللوحة (بيتعرض منفصل دايماً). */
