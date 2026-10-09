@@ -50,7 +50,10 @@ export function migrateColumnOrder(order: string[]): string[] {
 }
 
 export function saveColumnOrder(order: string[]): void {
-  try { localStorage.setItem(KEY, JSON.stringify(order)); } catch { /* storage unavailable */ }
+  // 🔴 أي ترتيب بيتحفظ دلوقتي هو بالشكل الجديد أصلاً ⇒ نعلّم الترحيل «خلص». من غير كده أول ترتيب يختاره
+  //    مندوب جديد كان بيتحفظ صح، وأول ما يفتح البرنامج تاني الترحيل يحط «نوع السيارة» و«الماركة» في أوله ⇒
+  //    اختياره بيتغيّر لوحده (المالك ٩ أكتوبر ٢٠٢٦: «بترجع تاني ... متتغيرش غير لو هو غيرها ب ايدو»).
+  try { localStorage.setItem(KEY, JSON.stringify(order)); localStorage.setItem(MIGRATED_KEY, "1"); } catch { /* storage unavailable */ }
 }
 
 /** الأعمدة المتاحة للترتيب = كل المتاح ناقص رقم اللوحة (بيتعرض منفصل دايماً). */

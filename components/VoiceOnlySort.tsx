@@ -20,7 +20,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpreadsheet, Image as ImageIcon,
-  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronUp, ChevronDown, Lock} from "lucide-react";
+  CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronDown, Lock} from "lucide-react";
+import { toggleColumn, type OrderMode } from "@/lib/columnOrder";
+import { voiceSortTable, voiceSortGroups, recordRowForSort, VS_PLATE_COL, loadVoiceSortOrder, saveVoiceSortOrder, loadVoiceSortMode, saveVoiceSortMode } from "@/lib/voiceSortColumns";
 import FileUploadBox from "@/components/FileUploadBox";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
@@ -354,9 +356,19 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [zoom, setZoom] = useState(1);
   const [nearest, setNearest] = useState(false);
   const [userLoc, setUserLoc] = useState<GpsCoords | null>(null);
-  const [colsOpen, setColsOpen] = useState(false);
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  /**
+   * 🎛️ ترتيب الأعمدة **زي صفحة الفرز** — «الترتيب الأساسي (زي البرنامج)» أو «تخصيص». المالك (٩ أكتوبر ٢٠٢٦):
+   * «تتحفظ حتي لو خرج من البرنامج او اتنقل للصفحات متتغيرش غير لو هو غيرها ب ايدو» ⇒ على الجهاز بحفظ خاص
+   * بـ«صوت فقط» (`lib/voiceSortColumns.ts`). كان هنا «الأعمدة» (إخفاء/فوق-تحت) في الذاكرة بس فبيضيع مع الخروج.
+   */
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [orderMode, setOrderModeState] = useState<OrderMode>("basic");
   const [colOrder, setColOrder] = useState<string[]>([]);
+  useEffect(() => { setColOrder(loadVoiceSortOrder()); setOrderModeState(loadVoiceSortMode()); }, []);
+  function setOrderMode(m: OrderMode) { setOrderModeState(m); saveVoiceSortMode(m); }
+  function toggleOrderCol(label: string) {
+    setColOrder((prev) => { const next = toggleColumn(prev, label); saveVoiceSortOrder(next); return next; });
+  }
   const [rowCopied, setRowCopied] = useState<number | null>(null);
 
   // 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦) — لوحات النتيجتين بتتسأل مرة واحدة في درايف
@@ -389,16 +401,6 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     return null;
   }
 
-  /** نص صف واحد — نفس تنسيق مشاركة النص بالظبط. */
-  function rowText(m: MatchResult): string {
-    const r = mergedRow(m);
-    const details = Object.entries(r)
-      .filter(([k, v]) => k !== REC_PLATE_COL && String(v ?? "").trim())
-      .map(([k, v]) => `${k}: ${v}`)
-      .join("\n");
-    return `🚗 ${plateOf(m)}\n${details}`;
-  }
-
   function mergedRow(m: MatchResult): Record<string, string> {
     return { ...(m.dataRow ?? {}), ...m.referralRow };
   }
@@ -413,34 +415,36 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     return "";
   }
 
-  async function shareExcel(rows: MatchResult[]) {
-    if (rows.length === 0 || shareBusy) return;
+  /** جدول المشاركة = **نفس أعمدة الشاشة بترتيبها** (`voiceSortTable`) — زي صفحة الفرز. */
+  type ShareTable = { columns: string[]; rows: Record<string, unknown>[] };
+
+  async function shareExcel(t: ShareTable) {
+    if (t.rows.length === 0 || shareBusy) return;
     setShareBusy(true);
     try {
-      const blob = buildExcelBlob(rows.map(mergedRow), "المطلوب للسحب");
+      const blob = buildExcelBlob(t.rows.map((r) => Object.fromEntries(t.columns.map((c) => [c, r[c] ?? ""]))), "المطلوب للسحب");
       await shareExcelBlob(blob, `المطلوب-للسحب-${Date.now()}.xlsx`, "المطلوب للسحب");
     } catch { /* المستخدم لغى المشاركة */ }
     finally { setShareBusy(false); }
   }
 
-  async function shareImage(rows: MatchResult[]) {
-    if (rows.length === 0 || shareBusy) return;
+  async function shareImage(t: ShareTable) {
+    if (t.rows.length === 0 || shareBusy) return;
     setShareBusy(true);
     try {
-      const merged = rows.map(mergedRow);
-      // أول ٨ أعمدة بس — الصورة تفضل مقروءة على الموبايل.
-      const columns = Array.from(new Set(merged.flatMap((r) => Object.keys(r)))).slice(0, 8);
+      // أول ٨ أعمدة بس — الصورة تفضل مقروءة على الموبايل (بنفس ترتيب الشاشة).
+      const columns = t.columns.slice(0, 8);
       const images = renderTableImages({
         title: "🚗 المطلوب للسحب",
         subtitle: new Date().toLocaleString("ar-EG"),
         columns,
-        rows: merged.map((r) => columns.map((h) => String(r[h] ?? ""))),
+        rows: t.rows.map((r) => columns.map((h) => String(r[h] ?? ""))),
       });
       // renderTableImages بيرجّع صور متعددة لو الصفوف كتير — نبعتهم واحدة واحدة.
       for (let i = 0; i < images.length; i++) {
         await shareImageWithText(
           images[i],
-          images.length > 1 ? `المطلوب للسحب (${i + 1}/${images.length})` : `المطلوب للسحب (${rows.length})`,
+          images.length > 1 ? `المطلوب للسحب (${i + 1}/${images.length})` : `المطلوب للسحب (${t.rows.length})`,
           `المطلوب-للسحب-${i + 1}.png`,
           "المطلوب للسحب",
         );
@@ -449,20 +453,22 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     finally { setShareBusy(false); }
   }
 
-  async function shareAsText(rows: MatchResult[]) {
-    if (rows.length === 0 || shareBusy) return;
+  /** نص صف من جدول المشاركة — نفس أعمدة الشاشة بترتيبها. */
+  function tableRowText(t: ShareTable, r: Record<string, unknown>): string {
+    const details = t.columns
+      .filter((c) => c !== VS_PLATE_COL && String(r[c] ?? "").trim())
+      .map((c) => `${c}: ${r[c]}`)
+      .join("\n");
+    return `🚗 ${String(r[VS_PLATE_COL] ?? "")}\n${details}`;
+  }
+
+  async function shareAsText(t: ShareTable) {
+    if (t.rows.length === 0 || shareBusy) return;
     setShareBusy(true);
     try {
-      const lines = rows.map((m, i) => {
-        const r = mergedRow(m);
-        const details = Object.entries(r)
-          .filter(([k, v]) => k !== REC_PLATE_COL && String(v ?? "").trim())
-          .map(([k, v]) => `${k}: ${v}`)
-          .join("\n");
-        return `${i + 1}. 🚗 ${plateOf(m)}\n${details}`;
-      });
+      const lines = t.rows.map((r, i) => `${i + 1}. ${tableRowText(t, r)}`);
       await shareTextViaChooser(
-        `*المطلوب للسحب (${rows.length})*\n\n${lines.join("\n\n──────────\n\n")}`,
+        `*المطلوب للسحب (${t.rows.length})*\n\n${lines.join("\n\n──────────\n\n")}`,
         "المطلوب للسحب",
       );
     } catch { /* المستخدم لغى */ }
@@ -479,20 +485,21 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     if (rows.length === 0) {
       return <p className="rounded-2xl bg-surface-2 px-3 py-4 text-center text-xs text-muted">{emptyHint}</p>;
     }
-    // أعمدة الجدول = اتحاد مفاتيح كل الصفوف (بترتيب ظهورها)، وبعدين ترتيب
-    // المندوب وإخفاؤه لو غيّرهم.
-    const allCols: string[] = [];
-    for (const m of rows) {
-      for (const [k, v] of Object.entries(mergedRow(m))) {
-        if (k === REC_PLATE_COL) continue;
-        if (!String(v ?? "").trim()) continue;
-        if (!allCols.includes(k)) allCols.push(k);
-      }
-    }
-    const ordered = colOrder.length
-      ? [...colOrder.filter((c) => allCols.includes(c)), ...allCols.filter((c) => !colOrder.includes(c))]
-      : allCols;
-    const cols = ordered.filter((c) => !hiddenCols.has(c));
+    // 🎛️ أعمدة الجدول **زي صفحة الفرز**: «أساسي» = ترتيب البرنامج، «تخصيص» = اختيار المندوب بترتيبه.
+    // الجدول ده نفسه هو اللي بيتشارك (إكسيل/صورة/نص) — نفس الأعمدة بنفس الترتيب.
+    // صف السجل بأسماء البرنامج (تاريخ المندوب ⇐ «تاريخ التسجيل»، موقعه ⇐ «GPS») — في الفرز السجل هو dataRow
+    // وفي اللصق هو referralRow؛ `recordRowForSort` بيعرف السجل بنفسه وبيسيب صف الإحالة زي ما هو.
+    const normalized = rows.map((m) => ({
+      dataRow: m.dataRow ? recordRowForSort(m.dataRow) : undefined,
+      referralRow: recordRowForSort(m.referralRow),
+    }));
+    const table = voiceSortTable(normalized.map((n, i) => {
+      const o: Record<string, unknown> = { [VS_PLATE_COL]: plateOf(rows[i]) };
+      for (const [k, v] of Object.entries({ ...(n.dataRow ?? {}), ...n.referralRow })) if (k !== REC_PLATE_COL) o[k] = v;
+      return o;
+    }), orderMode, colOrder);
+    const cols = table.columns.filter((c) => c !== VS_PLATE_COL);
+    const groups = voiceSortGroups(normalized);
 
     // «الأقرب أولاً» — ترتيب بالمسافة من موقع المندوب. الصفوف اللي مالهاش موقع
     // بتروح آخر القايمة بدل ما تختفي.
@@ -505,17 +512,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       view.sort((a, b) => ((a as { _d?: number })._d ?? Infinity) - ((b as { _d?: number })._d ?? Infinity));
     }
 
-    const picked = sel.size > 0 ? rows.filter((_, i) => sel.has(i)) : rows;
+    const pickedTable: ShareTable = {
+      columns: table.columns,
+      rows: sel.size > 0 ? table.rows.filter((_, i) => sel.has(i)) : table.rows,
+    };
     const allSelected = sel.size === rows.length && rows.length > 0;
-
-    function moveCol(c: string, dir: -1 | 1) {
-      const base = ordered.slice();
-      const at = base.indexOf(c);
-      const to = at + dir;
-      if (at < 0 || to < 0 || to >= base.length) return;
-      [base[at], base[to]] = [base[to], base[at]];
-      setColOrder(base);
-    }
 
     return (
       <div className="flex flex-col gap-2">
@@ -527,9 +528,10 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
             }`}>
             <Navigation size={13} /> {nearest ? (userLoc ? "الأقرب أولاً ✓" : "جارٍ تحديد موقعك…") : "الأقرب أولاً"}
           </button>
-          <button onClick={() => setColsOpen((v) => !v)}
+          <button onClick={() => setOrderOpen((v) => !v)}
             className="flex items-center gap-1 rounded-xl border border-border bg-surface-2 px-2.5 py-1.5 text-[11px] font-bold text-muted">
-            <SlidersHorizontal size={13} /> الأعمدة ({cols.length}/{allCols.length})
+            <SlidersHorizontal size={13} /> ترتيب الأعمدة {orderMode === "custom" ? `(تخصيص · ${colOrder.length})` : "(أساسي)"}
+            <ChevronDown size={12} className={`transition-transform ${orderOpen ? "rotate-180" : ""}`} />
           </button>
           <div className="flex items-center gap-1.5 rounded-xl border border-border bg-surface px-2.5 py-1.5">
             <button onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.15).toFixed(2)))} className="text-muted"><ZoomOut size={13} /></button>
@@ -538,19 +540,52 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
           </div>
         </div>
 
-        {colsOpen && (
-          <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-2 p-2">
-            {ordered.map((c) => (
-              <div key={c} className="flex items-center gap-1.5 rounded-lg bg-surface px-2 py-1">
-                <button onClick={() => setHiddenCols((h) => { const n = new Set(h); if (n.has(c)) n.delete(c); else n.add(c); return n; })}
-                  className="shrink-0 text-muted">
-                  {hiddenCols.has(c) ? <Square size={13} /> : <CheckSquare size={13} className="text-primary" />}
-                </button>
-                <span className="min-w-0 flex-1 truncate text-[11px] text-ink">{c}</span>
-                <button onClick={() => moveCol(c, -1)} className="shrink-0 text-muted" title="فوق"><ChevronUp size={13} /></button>
-                <button onClick={() => moveCol(c, 1)} className="shrink-0 text-muted" title="تحت"><ChevronDown size={13} /></button>
-              </div>
-            ))}
+        {/* 🎛️ نفس «ترتيب الأعمدة» بتاع صفحة الفرز — خيارين تحت بعض + اختيار بالترتيب في «تخصيص» */}
+        {orderOpen && (
+          <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-2 p-2">
+            <div className="flex flex-col gap-1.5">
+              <button onClick={() => setOrderMode("basic")}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-right text-xs font-bold transition ${orderMode === "basic" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted"}`}>
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${orderMode === "basic" ? "border-primary" : "border-muted"}`}>{orderMode === "basic" && <span className="h-2 w-2 rounded-full bg-primary" />}</span>
+                الترتيب الأساسي للأعمدة (زي البرنامج)
+              </button>
+              <button onClick={() => setOrderMode("custom")}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-right text-xs font-bold transition ${orderMode === "custom" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted"}`}>
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${orderMode === "custom" ? "border-primary" : "border-muted"}`}>{orderMode === "custom" && <span className="h-2 w-2 rounded-full bg-primary" />}</span>
+                تخصيص (رتّب الأعمدة بنفسك)
+              </button>
+            </div>
+            {orderMode === "custom" && (() => {
+              const chip = (label: string) => {
+                const idx = colOrder.indexOf(label);
+                const on = idx >= 0;
+                return (
+                  <button key={label} onClick={() => toggleOrderCol(label)}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${on ? "bg-primary text-night font-bold" : "border border-border text-muted"}`}>
+                    {on && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-black">{idx + 1}</span>}
+                    {label}
+                  </button>
+                );
+              };
+              return (
+                <div className="space-y-2 border-t border-border pt-2">
+                  <span className="inline-block rounded-full bg-surface px-2.5 py-1 text-xs font-bold text-muted">📌 رقم اللوحة (ثابت في الأول)</span>
+                  <p className="text-[11px] text-muted">دوس بالترتيب اللي عايزه — الرقم بيبان جنبه (دوس تاني يشيله):</p>
+                  {groups.records.length > 0 && (
+                    <div>
+                      <p className="mb-1 text-[11px] font-bold text-primary">📄 أعمدة السجلات</p>
+                      <div className="flex flex-wrap gap-2">{groups.records.map(chip)}</div>
+                    </div>
+                  )}
+                  {groups.referral.length > 0 && (
+                    <div className="border-t border-dashed border-border pt-2">
+                      <p className="mb-1 text-[11px] font-bold text-primary">🏦 أعمدة الإحالة</p>
+                      <div className="flex flex-wrap gap-2">{groups.referral.map(chip)}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -581,7 +616,6 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
               </thead>
               <tbody>
                 {view.map(({ m, i }, n) => {
-                  const r = mergedRow(m);
                   const isSel = sel.has(i);
                   const d = (view[n] as { _d?: number })._d;
                   return (
@@ -596,11 +630,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                         <div className="flex items-center gap-2 whitespace-nowrap">
                           <span className="text-[0.85em] font-bold text-muted">{n + 1}</span>
                           <button title="نسخ" className="text-muted"
-                            onClick={async () => { await navigator.clipboard.writeText(rowText(m)); setRowCopied(i); setTimeout(() => setRowCopied(null), 1200); }}>
+                            onClick={async () => { await navigator.clipboard.writeText(tableRowText(table, table.rows[i])); setRowCopied(i); setTimeout(() => setRowCopied(null), 1200); }}>
                             {rowCopied === i ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
                           </button>
                           <button title="واتساب" className="text-muted"
-                            onClick={() => void shareTextViaChooser(rowText(m), "مطلوبة للسحب").catch(() => {})}>
+                            onClick={() => void shareTextViaChooser(tableRowText(table, table.rows[i]), "مطلوبة للسحب").catch(() => {})}>
                             <Share2 size={13} />
                           </button>
                           <button title="حذف الصف من النتيجة" className="text-muted hover:text-danger"
@@ -626,7 +660,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                         </td>
                       )}
                       {cols.map((c) => {
-                        const v = String(r[c] ?? "").trim();
+                        const v = String(table.rows[i]?.[c] ?? "").trim();
                         const gps = /^https?:\/\//i.test(v);
                         return (
                           <td key={c} className="whitespace-nowrap border-l border-border px-3 py-2 text-ink">
@@ -651,15 +685,15 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
         {/* أزرار المشاركة + المسح — نفس خدمات صفحة الفرز */}
         <div className="grid grid-cols-3 gap-1.5">
-          <button onClick={() => void shareExcel(picked)} disabled={shareBusy}
+          <button onClick={() => void shareExcel(pickedTable)} disabled={shareBusy}
             className="flex items-center justify-center gap-1 rounded-xl bg-emerald-600/15 py-2.5 text-[11px] font-bold text-emerald-600 disabled:opacity-50">
             <FileSpreadsheet size={14} /> إكسيل
           </button>
-          <button onClick={() => void shareImage(picked)} disabled={shareBusy}
+          <button onClick={() => void shareImage(pickedTable)} disabled={shareBusy}
             className="flex items-center justify-center gap-1 rounded-xl bg-primary/15 py-2.5 text-[11px] font-bold text-primary disabled:opacity-50">
             <ImageIcon size={14} /> صورة
           </button>
-          <button onClick={() => void shareAsText(picked)} disabled={shareBusy}
+          <button onClick={() => void shareAsText(pickedTable)} disabled={shareBusy}
             className="flex items-center justify-center gap-1 rounded-xl bg-brand/15 py-2.5 text-[11px] font-bold text-brand disabled:opacity-50">
             <Share2 size={14} /> نص
           </button>
