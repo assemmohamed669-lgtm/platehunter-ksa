@@ -4747,7 +4747,7 @@ export default function SortingPage() {
           const when = pasteResultsCache?.sortedAt;
           // 📁 «لصق نصي الراجحي» — اسم ملف الإحالة اللي في الصفحة (للكل).
           const refLabel = referralLabel([referralFile?.name, ...extraReferrals.map((e) => e.file?.name)]);
-          const dataShare =() => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
+          const dataShare = () => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
           const recShare = () => pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted)));
           const clearCls = "flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10";
           return (
