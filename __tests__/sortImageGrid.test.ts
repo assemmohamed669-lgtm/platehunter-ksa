@@ -47,7 +47,7 @@ describe("🔴 التوصيل — صفحة الفرز، للكل (المالك: 
   const img = readFileSync(path.resolve(__dirname, "../lib/plateImage.ts"), "utf8").replace(/\r\n/g, "\n");
   it("🔴 أزرار مشاركة الفرز التلاتة بتبعت الشكل الجديد للكل", () => {
     expect(sorting.match(/imageStyle="grid"/g)?.length).toBe(3);
-    expect(sorting).not.toMatch(/isSuper/);
+    expect(sorting).not.toMatch(/imageStyle=\{isSuper/);   // isSuper رجع (١١ أكتوبر) لمشاركة كل الصور واسم الإكسيل بس
   });
   it("🔴 الزرار بيحسب عدد الصور قبل المشاركة ويعرضه تحت «إرسال كصورة»", () => {
     expect(btn).toMatch(/imagePlanText\(/);

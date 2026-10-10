@@ -331,6 +331,64 @@ export async function shareImageWithText(
   return "whatsapp-text";
 }
 
+/**
+ * 🖼️ **كل الصور في مشاركة واحدة** — المالك (١١ أكتوبر ٢٠٢٦): «كذا ورقه صورة يتشاركو كلهم مرة واحده لان دلوقتي
+ * بيتشاركو صورة بصورة». الموبايل: ملف لكل صورة في الكاش (أسماء مختلفة) و`Share.share({ files })` مرة واحدة
+ * (أندرويد ACTION_SEND_MULTIPLE — موجودة في البلجن من غير APK جديد). المتصفّح: `navigator.share({ files })`.
+ * جهاز مابيدعمش كذا ملف ⇒ «unsupported» (والمشاركة صورة صورة لسه موجودة).
+ */
+export async function shareImagesWithText(
+  imageDataUrls: string[],
+  text: string,
+  filenames: string[],
+  title: string
+): Promise<ShareOutcome | "unsupported"> {
+  // ── Native (Capacitor) ──────────────────────────────────────────────────
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { Filesystem, Directory } = await import("@capacitor/filesystem");
+        const { Share } = await import("@capacitor/share");
+        const files: string[] = [];
+        for (let i = 0; i < imageDataUrls.length; i++) {
+          const ext = safeCacheName(filenames[i] ?? "").split(".").pop();
+          const { uri } = await Filesystem.writeFile({
+            path: `plate-share-${i + 1}.${ext}`,
+            data: imageDataUrls[i].split(",")[1] ?? "",
+            directory: Directory.Cache,
+          });
+          files.push(uri);
+        }
+        await Share.share({ title, text, files, dialogTitle: title });
+        return "shared";
+      } catch (err: unknown) {
+        const e = err as { name?: string; message?: string };
+        if (e?.name === "AbortError" || /cancel/i.test(e?.message ?? "")) return "cancelled";
+        // real native failure — fall through to the web path
+      }
+    }
+  } catch {
+    /* @capacitor/core unavailable — treat as web */
+  }
+
+  // ── Web Share API with all the files ────────────────────────────────────
+  try {
+    const files = imageDataUrls.map((src, i) => {
+      const blob = dataUrlToBlob(src);
+      return new File([blob], filenames[i] ?? `image-${i + 1}.png`, { type: blob.type });
+    });
+    const nav = navigator as Navigator & { canShare?: (d: { files?: File[] }) => boolean };
+    if (typeof navigator !== "undefined" && nav.canShare?.({ files })) {
+      await navigator.share({ files, text, title });
+      return "shared";
+    }
+  } catch (err: unknown) {
+    if ((err as { name?: string })?.name === "AbortError") return "cancelled";
+  }
+  return "unsupported";
+}
+
 /** أرقام عربية-هندية (١٢٣) — عشان عنوان الجزء يبان بلغة الرسالة. */
 export function arabicDigits(n: number): string {
   return String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
