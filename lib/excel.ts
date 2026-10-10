@@ -1289,20 +1289,42 @@ export async function openExcelBlob(
   return "downloaded";
 }
 
-export async function shareExcelBlob(blob: Blob, filename: string, title: string): Promise<void> {
+/**
+ * اسم ملف الكاش **بالعربي زي ما هو** (من غير الحروف الممنوعة في أسماء الملفات) — لـ`keepName`.
+ */
+function keptCacheFilename(filename: string): string {
+  const clean = filename.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/\s+/g, " ").trim();
+  return /\.[A-Za-z0-9]+$/.test(clean) ? clean : toSafeCacheFilename(filename);
+}
+
+/**
+ * @param opts.keepName 📁 (١١ أكتوبر ٢٠٢٦ — «كلي الراجحي») الموبايل يجرّب **الاسم العربي** الأول؛ لو المشاركة
+ *   رمت غلط (مش إلغاء) بيعيدها بالاسم الآمن من `fallbackName` — المندوب مايتوقفش. من غيره = زي الأول بالحرف.
+ * @param opts.fallbackName الاسم اللي بيتحوّل للاسم الآمن على الموبايل (افتراضي `filename`).
+ */
+export async function shareExcelBlob(
+  blob: Blob,
+  filename: string,
+  title: string,
+  opts: { keepName?: boolean; fallbackName?: string } = {},
+): Promise<void> {
   blob = await rtlAlignBlob(blob, filename);   // يفتح من اليمين + كل الخلايا محاذاة يمين
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
-    try {
-      const { Share } = await import("@capacitor/share");
+    const names = [toSafeCacheFilename(opts.fallbackName ?? filename)];
+    if (opts.keepName) names.unshift(keptCacheFilename(filename));
+    for (let i = 0; i < names.length; i++) {
+      try {
+        const { Share } = await import("@capacitor/share");
 
-      const uri = await writeToCache(blob, toSafeCacheFilename(filename));
+        const uri = await writeToCache(blob, names[i]);
 
-      await Share.share({ title, url: uri, dialogTitle: title });
-      return;
-    } catch (err: any) {
-      if (err?.name === "AbortError" || /cancel/i.test(err?.message ?? "")) return; // user dismissed the share sheet
-      throw new NativeExportError("تعذّرت مشاركة ملف Excel", err);
+        await Share.share({ title, url: uri, dialogTitle: title });
+        return;
+      } catch (err: any) {
+        if (err?.name === "AbortError" || /cancel/i.test(err?.message ?? "")) return; // user dismissed the share sheet
+        if (i === names.length - 1) throw new NativeExportError("تعذّرت مشاركة ملف Excel", err);
+      }
     }
   }
 

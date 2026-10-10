@@ -40,3 +40,32 @@ export function shareFileName(kind: ShareKind, when?: string | Date | null, extr
   const [ar, en] = NAMES[kind];
   return `${ar}${extra ? ` ${extra}` : ""} ${en} ${shareDate(when)}`;
 }
+
+/**
+ * 📁 **اسم الإكسيل من اسم ملف الإحالة** — المالك (١١ أكتوبر ٢٠٢٦): «لو المحفظه اسمها الراجحي ... كلي راجحي ...
+ * جديد راجحي ... لصق نصي راجخي ... علي حسب اسم اسم ملف الاحاله». نوع الفرز الأول وبعده اسم الإحالة وتاريخ يوم
+ * الفرز: «كلي الراجحي 11-10-2026». زرار السجلات بس عليه «سجلات» عشان المندوب يفرّق بينهم.
+ * الاسم ده عربي ⇒ بيتبعت على الموبايل بالاسم العربي (`shareExcelBlob` keepName) ولو فشل بيرجع لـ`shareFileName`.
+ */
+const SHORT: Partial<Record<ShareKind, string>> = {
+  new: "جديد", newAll: "جديد", newRecords: "جديد سجلات",
+  full: "كلي", fullAll: "كلي", fullRecords: "كلي سجلات",
+  paste: "لصق نصي", pasteAll: "لصق نصي", pasteRecords: "لصق نصي سجلات",
+};
+
+/** اسم الإحالة من أسماء ملفاتها (الأساسي + الإضافية): من غير الامتداد ولا التكرار، وحروف أسماء الملفات الممنوعة بتتشال. */
+export function referralLabel(fileNames: readonly (string | null | undefined)[]): string {
+  const out: string[] = [];
+  for (const f of fileNames) {
+    const base = String(f ?? "").replace(/\.[A-Za-z0-9]{1,5}$/, "").replace(/[\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/\s+/g, " ").trim();
+    if (base && !out.includes(base)) out.push(base);
+  }
+  return out.join(" + ");
+}
+
+/** «كلي الراجحي 11-10-2026» — أو null لو مافيش إحالة (الزرار بيفضل على `shareFileName`). */
+export function referralShareName(kind: ShareKind, referral: string, when?: string | Date | null): string | null {
+  const type = SHORT[kind];
+  if (!type || !referral.trim()) return null;
+  return `${type} ${referral.trim()} ${shareDate(when)}`;
+}

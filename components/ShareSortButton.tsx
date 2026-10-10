@@ -14,7 +14,7 @@ import { useState, useEffect } from "react";
 import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2 } from "lucide-react";
 import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { renderPlateImages, renderTableImages, planTableImages, imagePlanText, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
-import { shareImageWithText } from "@/lib/share";
+import { shareImageWithText, shareImagesWithText } from "@/lib/share";
 import { pushBackHandler } from "@/lib/backStack";
 
 interface Props {
@@ -44,17 +44,25 @@ interface Props {
    * «إرسال كصورة» بيتكتب هيطلعوا في كام صورة قبل ما المندوب يدوس. من غيره = الشكل القديم بالحرف.
    */
   imageStyle?: "grid";
+  /**
+   * 📁 اسم ملف الإكسيل في «واتساب» — نوع الفرز + اسم ملف الإحالة («كلي الراجحي 11-10-2026» — المالك ١١ أكتوبر
+   * ٢٠٢٦). على الموبايل بيتبعت بالاسم العربي، ولو فشل بيرجع لـ`fileName`. من غيره = `fileName` زي الأول.
+   */
+  excelName?: string;
+  /** 🖼️ زرار «مشاركة كل الصور مرة واحدة» في معاينة الصور لما تكون أكتر من صورة (المالك ١١ أكتوبر ٢٠٢٦). */
+  shareAllAtOnce?: boolean;
 }
 
 function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label, imageStyle }: Props) {
+export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label, imageStyle, excelName, shareAllAtOnce }: Props) {
   // اسم الملف: المسافات بتفضل (المتصفّح بيعرضها)، والموبايل بيحوّله لاسم آمن لوحده.
   const fileBase = fileNameProp
     ? fileNameProp.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
     : safeName(title);
+  const excelBase = excelName ? excelName.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim() : fileBase;
   const btnLabel = label ?? "مشاركة الفرز";
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -102,7 +110,8 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
     setMenuOpen(false); setBusy(true);
     try {
       const res = await buildBlob(); if (!res) return;
-      await shareExcelBlob(res.blob, `${fileBase}.${res.ext}`, title);
+      if (excelName) await shareExcelBlob(res.blob, `${excelBase}.${res.ext}`, title, { keepName: true, fallbackName: `${fileBase}.${res.ext}` });
+      else await shareExcelBlob(res.blob, `${fileBase}.${res.ext}`, title);
     } catch { alert("تعذّرت المشاركة على واتساب."); } finally { setBusy(false); }
   }
 
@@ -132,6 +141,17 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
   async function shareImg(src: string, i: number, total: number) {
     const caption = total > 1 ? `${title} — صورة ${i + 1}/${total}` : title;
     await shareImageWithText(src, caption, fileName(i, total), title);
+  }
+  /** 🖼️ كل الصور في مشاركة واحدة — جهاز مابيدعمش ⇒ المشاركة صورة صورة (الأزرار اللي تحت كل صورة). */
+  const [allBusy, setAllBusy] = useState(false);
+  async function shareAll(imgs: string[]) {
+    if (allBusy) return;
+    setAllBusy(true);
+    try {
+      const r = await shareImagesWithText(imgs, `${title} — ${imgs.length} صور`, imgs.map((_, i) => fileName(i, imgs.length)), title);
+      if (r === "unsupported") alert("جهازك مابيدعمش مشاركة كذا صورة مرة واحدة — شارك كل صورة من الزرار اللي تحتها.");
+    } catch { /* المندوب لغى */ }
+    finally { setAllBusy(false); }
   }
 
   return (
@@ -179,6 +199,12 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
               <button onClick={() => setImages(null)} className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
             <div className="flex flex-1 flex-col gap-4 overflow-auto p-3">
+              {shareAllAtOnce && images.length > 1 && (
+                <button onClick={() => void shareAll(images)} disabled={allBusy}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition active:scale-95 disabled:opacity-60">
+                  {allBusy ? <Loader2 size={16} className="animate-spin" /> : <MessageCircle size={16} />} مشاركة كل الصور مرة واحدة ({images.length})
+                </button>
+              )}
               {images.map((src, i) => (
                 <div key={i} className="flex flex-col gap-2 rounded-xl border border-border bg-surface-2 p-2">
                   {/* eslint-disable-next-line @next/next/no-img-element */}

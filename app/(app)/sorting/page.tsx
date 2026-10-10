@@ -34,7 +34,7 @@ import ReferralSheetPicker from "@/components/ReferralSheetPicker";
 import { syncTeamCheckToLocal } from "@/lib/teamCheck";
 import { orderRunsBySheet } from "@/lib/sheetOrder";
 import { pasteColumnsOf } from "@/lib/pasteColumns";
-import { shareFileName } from "@/lib/shareNames";
+import { shareFileName, referralLabel, referralShareName } from "@/lib/shareNames";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
@@ -391,6 +391,11 @@ export default function SortingPage() {
   // مايشوفهوش خالص.
   const [isAdmin, setIsAdmin] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
+  /**
+   * 🧪 السوبر أدمن الأول (المالك ١١ أكتوبر ٢٠٢٦) لحد «انشر للكل»: «مشاركة كل الصور مرة واحدة» واسم الإكسيل من اسم
+   * ملف الإحالة («كلي الراجحي»). المندوب: زي الأول بالحرف.
+   */
+  const [isSuper, setIsSuper] = useState(false);
 
   // ── Paste ──
   const [pasteText, setPasteText] = useState("");
@@ -915,8 +920,9 @@ export default function SortingPage() {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+        const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", data.user.id).single();
         setIsAdmin(prof?.role === "admin");
+        setIsSuper(prof?.is_super === true);
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
@@ -4292,6 +4298,8 @@ export default function SortingPage() {
         const hasData = displayResults.length > 0;
         const hasRecs = recs.length > 0;
         const when = sortCacheByMode[sortMode]?.sortedAt;
+        // 📁 اسم الإكسيل = نوع الفرز + اسم ملف الإحالة («كلي الراجحي») — السوبر أدمن الأول.
+        const refLabel = referralLabel([referralFile?.name, ...extraReferrals.map((e) => e.file?.name)]);
         const clearCls = "flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10";
         return (
           <div className="flex flex-col gap-2" dir="rtl">
@@ -4299,6 +4307,8 @@ export default function SortingPage() {
               <>
                 <ShareSortButton title="نتائج الفرز" label="مشاركة الداتا والسجلات"
                   fileName={shareFileName(sortMode === "new" ? "newAll" : "fullAll", when)}
+                  excelName={isSuper ? referralShareName(sortMode === "new" ? "newAll" : "fullAll", refLabel, when) ?? undefined : undefined}
+                  shareAllAtOnce={isSuper}
                   rows={() => buildDisplayShareObjects(displayResults, recs).rowObjects}
                   imageTable={() => buildSortImageTable(displayResults, recs)}
                   imageStyle="grid"
@@ -4312,6 +4322,8 @@ export default function SortingPage() {
               <>
                 <ShareSortButton title="نتائج الفرز" label="مشاركة نتيجة الداتا"
                   fileName={shareFileName(sortMode === "new" ? "new" : "full", when)}
+                  excelName={isSuper ? referralShareName(sortMode === "new" ? "new" : "full", refLabel, when) ?? undefined : undefined}
+                  shareAllAtOnce={isSuper}
                   rows={() => buildDisplayShareObjects(displayResults, []).rowObjects}
                   imageTable={() => buildSortImageTable(displayResults, [])}
                   imageStyle="grid"
@@ -4325,6 +4337,8 @@ export default function SortingPage() {
               <>
                 <ShareSortButton title="نتائج فرز السجلات" label="مشاركة نتيجة فرز السجلات"
                   fileName={shareFileName(sortMode === "new" ? "newRecords" : "fullRecords", when)}
+                  excelName={isSuper ? referralShareName(sortMode === "new" ? "newRecords" : "fullRecords", refLabel, when) ?? undefined : undefined}
+                  shareAllAtOnce={isSuper}
                   rows={() => buildDisplayShareObjects([], recs).rowObjects}
                   imageTable={() => buildSortImageTable([], recs)}
                   imageStyle="grid"
@@ -4737,7 +4751,9 @@ export default function SortingPage() {
           const hasData = pasteResults.length > 0;
           const hasRecs = pasteRecordResults.length > 0;
           const when = pasteResultsCache?.sortedAt;
-          const dataShare = () => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
+          // 📁 «لصق نصي الراجحي» — اسم ملف الإحالة اللي في الصفحة (السوبر أدمن الأول).
+          const refLabel = referralLabel([referralFile?.name, ...extraReferrals.map((e) => e.file?.name)]);
+          const dataShare =() => pasteShareOf(displayPaste.map((p) => buildPasteRowObject(p)), displayPaste.map((p) => pasteKeyOf(p.converted)));
           const recShare = () => pasteShareOf(pasteRecordResults.map((p) => buildPasteRecordRowObject(p)), pasteRecordResults.map((p) => pasteKeyOf(p.converted)));
           const clearCls = "flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/5 py-2.5 text-sm font-bold text-danger transition hover:bg-danger/10";
           return (
@@ -4746,6 +4762,8 @@ export default function SortingPage() {
                 <>
                   <ShareSortButton title="نتائج اللصق" label="مشاركة لصق نصي للكل"
                     fileName={shareFileName("pasteAll", when)}
+                    excelName={isSuper ? referralShareName("pasteAll", refLabel, when) ?? undefined : undefined}
+                    shareAllAtOnce={isSuper}
                     rows={() => pasteAllShareOf().rows}
                     excelBlob={() => { const sh = pasteAllShareOf(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
                     imageTable={() => pasteShareImage(pasteAllShareOf())} />
@@ -4758,6 +4776,8 @@ export default function SortingPage() {
                 <>
                   <ShareSortButton title="نتائج اللصق" label="مشاركة لصق نصي داتا"
                     fileName={shareFileName("paste", when)}
+                    excelName={isSuper ? referralShareName("paste", refLabel, when) ?? undefined : undefined}
+                    shareAllAtOnce={isSuper}
                     rows={() => dataShare().rows}
                     excelBlob={() => { const sh = dataShare(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
                     imageTable={() => pasteShareImage(dataShare())} />
@@ -4770,6 +4790,8 @@ export default function SortingPage() {
                 <>
                   <ShareSortButton title="لوحات سبق تشييكها" label="مشاركة لصق نصي سجلات"
                     fileName={shareFileName("pasteRecords", when)}
+                    excelName={isSuper ? referralShareName("pasteRecords", refLabel, when) ?? undefined : undefined}
+                    shareAllAtOnce={isSuper}
                     rows={() => recShare().rows}
                     excelBlob={() => { const sh = recShare(); return buildSortBlobBestEffort(sh.rows, "لوحات سبق تشييكها", sh.rowColors); }}
                     imageTable={() => pasteShareImage(recShare())} />
