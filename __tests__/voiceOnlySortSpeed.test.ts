@@ -57,8 +57,13 @@ describe("🔴 تبويب «فرز» (صوت فقط) — كل مطابقة في�
 
   it("كل نداء لـmatchChunkAgainstIndex بيقفل التقريبي صراحة (88, false)", () => {
     const calls = SRC.split("matchChunkAgainstIndex(").slice(1).map((c) => c.slice(0, c.indexOf(";")));
-    expect(calls.length).toBe(4);   // فرز (نتيجتي + المجموعة) · لصق (نتيجتي + المجموعة)
+    expect(calls.length).toBe(2);   // فرز (نتيجتي + المجموعة)
     for (const c of calls) expect(c, c).toContain(", 88, false)");
+  });
+
+  it("اللصق (كل مرة اتسجلت فيها اللوحة — ١١ أكتوبر ٢٠٢٦) تام بس برضه", () => {
+    expect(SRC.split("matchPastedOnRecords(").length - 1).toBe(2);   // لصق (نتيجتي + المجموعة)
+    expect(readFileSync("lib/voicePaste.ts", "utf8")).toMatch(/matchTokensAgainstRows\([^;]*REC_PLATE_COL, 88, false\)/);
   });
 });
 
