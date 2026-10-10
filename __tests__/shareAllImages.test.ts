@@ -63,7 +63,8 @@ describe("🔴 زرار «مشاركة كل الصور» في معاينة صو�
     expect(btn).toMatch(/shareImagesWithText\(imgs, /);
     expect(btn).toMatch(/مشاركة كل الصور مرة واحدة/);
   });
-  it("🔴 كل أزرار المشاركة في صفحة الفرز (جديد/كلي/لصق نصي) — السوبر أدمن الأول", () => {
-    expect((page.match(/shareAllAtOnce=\{isSuper\}/g) ?? []).length).toBe(6);   // ٣ للفرز + ٣ للصق
+  it("🔴 كل أزرار المشاركة في صفحة الفرز (جديد/كلي/لصق نصي) — للكل (المالك «انشر للكل» ١١ أكتوبر)", () => {
+    expect((page.match(/\n\s+shareAllAtOnce\n/g) ?? []).length).toBe(6);   // ٣ للفرز + ٣ للصق
+    expect(page).not.toMatch(/isSuper/);
   });
 });
