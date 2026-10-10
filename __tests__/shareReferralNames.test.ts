@@ -94,9 +94,9 @@ describe("🔴 التوصيل في صفحة الفرز — السوبر أدمن
     expect(btn).toMatch(/excelName\?: string/);
     expect(btn).toMatch(/shareExcelBlob\(res\.blob, `\$\{excelBase\}\.\$\{res\.ext\}`, title, \{ keepName: true, fallbackName: `\$\{fileBase\}\.\$\{res\.ext\}` \}\)/);
   });
-  it("🔴 الأزرار الستة بياخدوا اسم الإحالة — للسوبر أدمن بس لحد «انشر للكل»", () => {
-    expect((page.match(/excelName=\{isSuper \? referralShareName\(/g) ?? []).length).toBe(6);
+  it("🔴 الأزرار الستة بياخدوا اسم الإحالة — للكل (المالك «انشر للكل» ١١ أكتوبر)", () => {
+    expect((page.match(/excelName=\{referralShareName\([^\n]*\) \?\? undefined\}/g) ?? []).length).toBe(6);
     expect(page).toMatch(/const refLabel = referralLabel\(\[referralFile\?\.name, \.\.\.extraReferrals\.map\(\(e\) => e\.file\?\.name\)\]\)/);
-    expect(page).toMatch(/setIsSuper\(prof\?\.is_super === true\)/);
+    expect(page).not.toMatch(/isSuper/);
   });
 });

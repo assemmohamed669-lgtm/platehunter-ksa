@@ -23,6 +23,7 @@ import { ListFilter, Loader2, Share2, Trash2, ClipboardPaste, Search, FileSpread
   CheckSquare, Square, Copy, Check, Navigation, ZoomIn, ZoomOut, SlidersHorizontal, ChevronDown, Lock} from "lucide-react";
 import { toggleColumn, type OrderMode } from "@/lib/columnOrder";
 import { voiceSortTable, voiceSortGroups, recordRowForSort, VS_PLATE_COL, loadVoiceSortOrder, saveVoiceSortOrder, loadVoiceSortMode, saveVoiceSortMode } from "@/lib/voiceSortColumns";
+import { matchPastedOnRecords, pasteDupColors, VS_DUP_COLORS } from "@/lib/voicePaste";
 import FileUploadBox from "@/components/FileUploadBox";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
@@ -325,10 +326,10 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       const teamDataRows = teamRows && teamPlateCol
         ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
         : [];
-      const pastedRows = tokens.map((t) => ({ [REC_PLATE_COL]: t }));
-      // الفهرس من **السجلات** عشان النتيجة تطلع ببيانات السجل الكاملة.
+      // 🎨 **كل** مرة اللوحة اتسجلت فيها (المالك ١١ أكتوبر ٢٠٢٦: «لو حبك1234 مكررة 3 مرات تطلع ال 3 مرات») —
+      // الفهرس القديم كان بيحتفظ بصف واحد لكل لوحة. النتيجة ببيانات السجل الكاملة.
       // ⚡ نتيجة سجلاتي على طول — من غير ما نستنى السيرفر.
-      setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, buildReferralIndex([...mine, ...teamDataRows], REC_PLATE_COL), 88, false));
+      setPasteResults(matchPastedOnRecords(tokens, [...mine, ...teamDataRows]));
       setPasteRan(true);
       setBusy(false);
       if (!me.inTeam) return;
@@ -340,8 +341,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       if (groupRows.length) {
         const removed = pasteRemovedRef.current;
         setSel(new Set());   // نفس السبب — التحديد القديم بيشاور على قايمة اتغيّرت
-        const index = buildReferralIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL);
-        setPasteResults(matchChunkAgainstIndex(pastedRows, REC_PLATE_COL, index, 88, false)
+        setPasteResults(matchPastedOnRecords(tokens, [...mine, ...groupRows, ...teamDataRows])
           .filter((m) => !removed.has(m.referralRow)));
       }
     } finally {
@@ -478,9 +478,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   // ── العرض ─────────────────────────────────────────────────────────────────
   const canSort = !!refTable && !!refPlateCol && !busy;
 
-  function ResultsBlock({ rows, onClear, emptyHint, onRemoveRow }: {
+  function ResultsBlock({ rows, onClear, emptyHint, onRemoveRow, colorDups = false }: {
     rows: MatchResult[]; onClear: () => void; emptyHint: string;
     onRemoveRow: (i: number) => void;
+    /** 🎨 اللصق: نفس اللوحة بكل مراتها بلون واحد (زي جدول اللصق في صفحة الفرز). */
+    colorDups?: boolean;
   }) {
     if (rows.length === 0) {
       return <p className="rounded-2xl bg-surface-2 px-3 py-4 text-center text-xs text-muted">{emptyHint}</p>;
@@ -500,6 +502,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     }), orderMode, colOrder);
     const cols = table.columns.filter((c) => c !== VS_PLATE_COL);
     const groups = voiceSortGroups(normalized);
+    const dupColor = colorDups ? pasteDupColors(rows.map((m) => plateOf(m))) : [];
 
     // «الأقرب أولاً» — ترتيب بالمسافة من موقع المندوب. الصفوف اللي مالهاش موقع
     // بتروح آخر القايمة بدل ما تختفي.
@@ -618,8 +621,9 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
                 {view.map(({ m, i }, n) => {
                   const isSel = sel.has(i);
                   const d = (view[n] as { _d?: number })._d;
+                  const dup = dupColor[i];
                   return (
-                    <tr key={i} className={`border-b border-border ${isSel ? "bg-primary/10" : n % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                    <tr key={i} className={`border-b border-border ${isSel ? "bg-primary/10" : dup !== undefined ? VS_DUP_COLORS[dup] : n % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
                       <td className="border-l border-border px-2 py-2 text-center">
                         <button onClick={() => setSel((sset) => { const x = new Set(sset); if (x.has(i)) x.delete(i); else x.add(i); return x; })}
                           className="text-muted">
@@ -871,6 +875,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         {pasteRan && (
           <ResultsBlock
             rows={pasteResults}
+            colorDups
             onClear={() => { pasteRunRef.current++; setGroupPending(false); setPasteResults([]); setPasteRan(false); }}
             onRemoveRow={(i) => setPasteResults((rs) => {
               const gone = rs[i];
