@@ -3,7 +3,7 @@
  * Stores audio blobs, GPS data, plate text, and sync status.
  * No external dependency needed — uses raw IDB API.
  */
-import { loadActiveTeam } from "./activeTeam";
+import { loadActiveTeam, withoutHiddenTeams } from "./activeTeam";
 
 const DB_NAME = "platehunter";
 // v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions,
@@ -626,6 +626,13 @@ export async function saveFieldCheckEntriesChunked(
  * agents sharing one device don't see/upload each other's sheet.
  */
 export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCheckEntry[]> {
+  // 🙈 سجلات مجموعة قافلة عليه السجلات (سابها أو شغّال لغيرها) — مابتظهرش (lib/activeTeam.ts). للعرض بس:
+  //    الرفع بيقرا الكل (`getAllFieldCheckEntriesRaw`) عشان شغله يوصل للمسئول.
+  return withoutHiddenTeams(await getAllFieldCheckEntriesRaw(agentId));
+}
+
+/** كل السجلات **من غير** إخفاء أي مجموعة — للرفع للسيرفر (المعلّق والكامل). */
+export async function getAllFieldCheckEntriesRaw(agentId?: string): Promise<FieldCheckEntry[]> {
   return withFreshRetry<FieldCheckEntry[]>(async () => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -644,7 +651,7 @@ export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCh
 
 /** Field-check entries اللي لسه مترفعتش للسيرفر (للمزامنة التدريجية). */
 export async function getPendingFieldChecks(agentId?: string): Promise<FieldCheckEntry[]> {
-  const all = await getAllFieldCheckEntries(agentId);
+  const all = await getAllFieldCheckEntriesRaw(agentId);   // حتى المستخبي لازم يترفع
   return all.filter((e) => !e.synced);
 }
 

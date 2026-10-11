@@ -6,7 +6,7 @@
  * no audio.
  */
 import { supabase } from "./supabaseClient";
-import { clearFieldCheckDeletes, getAllFieldCheckEntries, getFieldCheckDeletes, getPendingFieldChecks, markFieldChecksSynced, markFieldChecksSyncedByIds, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
+import { clearFieldCheckDeletes, getAllFieldCheckEntriesRaw, getFieldCheckDeletes, getPendingFieldChecks, markFieldChecksSynced, markFieldChecksSyncedByIds, saveFieldCheckEntries, type FieldCheckEntry } from "./idb";
 
 /** شكل الصف على السيرفر — مكان واحد للرفع صف صف وللرفع على دفعات، فمايختلفوش. */
 function serverRowOf(uid: string, e: FieldCheckEntry) {
@@ -93,7 +93,7 @@ export async function pushFieldChecks(
 
   // Only this agent's own rows — never upload another agent's local sheet
   // under this uid (would corrupt attribution on a shared device).
-  const all = await getAllFieldCheckEntries(uid);
+  const all = await getAllFieldCheckEntriesRaw(uid);   // حتى السجلات المستخبية عن العرض لازم توصل للسيرفر
   let synced = 0;
   let firstError: string | undefined;
   for (const e of all) {

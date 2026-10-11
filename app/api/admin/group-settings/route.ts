@@ -37,7 +37,12 @@ export async function GET(req: NextRequest) {
     supabaseAdmin.from("team_data_files").select(cols),
     supabaseAdmin.from("team_check_files").select(cols),
   ]);
-  return NextResponse.json({ settings: data ?? [], dataFiles: df.data ?? [], checkFiles: cf.data ?? [] });
+  // 👥 العضويات (مندوب ممكن يبقى في أكتر من مجموعة) — لو الجدول لسه مش موجود الصفحة بتاخدها من profiles.team زي الأول.
+  const tm = await supabaseAdmin.from("team_members").select("team, agent_id");
+  return NextResponse.json({
+    settings: data ?? [], dataFiles: df.data ?? [], checkFiles: cf.data ?? [],
+    memberships: tm.error ? null : (tm.data ?? []),
+  });
 }
 
 export async function POST(req: NextRequest) {

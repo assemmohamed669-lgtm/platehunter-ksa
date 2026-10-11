@@ -12,3 +12,27 @@ export function loadActiveTeam(): string | null {
 export function saveActiveTeam(team: string | null): void {
   try { if (team) localStorage.setItem(KEY, team); else localStorage.removeItem(KEY); } catch { /* التخزين مش متاح */ }
 }
+
+/**
+ * 🙈 مجموعات سجلاتها مستخبية عن المندوب ده — قرار المالك (١١ أكتوبر ٢٠٢٦): «لو مقفوله عنه السجلات دي متروحش معاه
+ * ابدا». مجموعة سابها وهي قافلة عليه السجلات (`agent_hidden_record_teams` على السيرفر)، أو مجموعة لسه فيها وقافلة
+ * عليه السجلات وهو شغّال لمجموعة تانية. بتتحدّث مع أقفال المجموعة (`lib/groupLocksClient.ts`).
+ */
+const HIDDEN_KEY = "ph:hiddenRecordTeams";
+
+export function loadHiddenRecordTeams(): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]") as unknown;
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : []);
+  } catch { return new Set(); }
+}
+
+export function saveHiddenRecordTeams(teams: readonly string[]): void {
+  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...new Set(teams)])); } catch { /* التخزين مش متاح */ }
+}
+
+/** السجلات من غير اللي مختومة بمجموعة مستخبية (للعرض — السجل نفسه بيفضل على الجهاز والسيرفر). */
+export function withoutHiddenTeams<T extends { team?: string }>(rows: T[], hidden: Set<string> = loadHiddenRecordTeams()): T[] {
+  if (hidden.size === 0) return rows;
+  return rows.filter((r) => !r.team || !hidden.has(r.team));
+}
