@@ -77,7 +77,10 @@ export function findAlertRecipients(o: {
   finderId: string; mateIds: string[]; leaderId: string | null | undefined;
   notifyEnabled: boolean; findsLeaderOnly: boolean;
 }): string[] {
-  if (o.findsLeaderOnly) return o.leaderId && o.leaderId !== o.finderId ? [o.leaderId] : [];
+  // المسئول لازم يكون لسه من أعضاء المجموعة — لو اتنقل لمجموعة تانية لقطات القديمة ماتوصلوش.
+  if (o.findsLeaderOnly) {
+    return o.leaderId && o.leaderId !== o.finderId && o.mateIds.includes(o.leaderId) ? [o.leaderId] : [];
+  }
   if (!o.notifyEnabled) return [];
   return o.mateIds.filter((id) => id !== o.finderId);
 }
