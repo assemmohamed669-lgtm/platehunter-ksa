@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sendPush, fcmConfigured } from "@/lib/fcm";
 import { findAlertRecipients, shouldSendFind } from "@/lib/groupLocks";
+import { buildFindPush, type FindRow } from "@/lib/findPush";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
@@ -55,13 +56,19 @@ export async function POST(req: NextRequest) {
     .from("device_tokens").select("token").in("agent_id", ids);
   const tokens = (toks ?? []).map((t: { token: string }) => t.token);
 
+  // 🔔 الإشعار من صف اللقطة نفسه (المالك ١١ أكتوبر ٢٠٢٦): اسم المندوب + اللوحة + المجموعة + الوقت + بيانات العربية،
+  //    والضغط عليه بيفتح صفحة التفاصيل. نسخة قديمة من التطبيق مابتبعتش رقم اللقطة ⇒ آخر لقطة ليه بنفس اللوحة.
+  const findId = String(body.findId ?? "").trim();
+  const base = supabaseAdmin.from("group_finds")
+    .select("id, team, finder_name, plate, info, maps_link, created_at").eq("finder_id", uid);
+  const { data: found } = findId
+    ? await base.eq("id", findId).maybeSingle()
+    : await base.eq("plate", plate).order("created_at", { ascending: false }).limit(1).maybeSingle();
   const finder = (me as { username?: string | null } | null)?.username || "زميلك";
-  const mapsLink: string = String(body.mapsLink ?? "");
-  const r = await sendPush(tokens, {
-    title: `${finder} لقى سيارة مطلوبة!`,
-    body: plate,
-    data: { plate, finder, mapsLink },
-  });
+  const row: FindRow = (found as FindRow | null) ?? {
+    id: "", team, finder_name: finder, plate, info: null, maps_link: String(body.mapsLink ?? "") || null, created_at: new Date().toISOString(),
+  };
+  const r = await sendPush(tokens, buildFindPush({ ...row, finder_name: row.finder_name || finder }));
 
   // توكنات ماتت (الجهاز شال التطبيق) — امسحها عشان ماتفضلش تتجرّب كل مرة.
   if (r.dead.length) await supabaseAdmin.from("device_tokens").delete().in("token", r.dead);
