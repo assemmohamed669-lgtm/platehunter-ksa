@@ -250,14 +250,18 @@ export default function GroupsPage() {
   }
 
   // ── إنشاء مجموعة ──
-  function openCreate() { setCreateName(""); setCreateSel(new Set()); setCreateSearch(""); setCreateOpen(true); }
+  function openCreate() { setCreateName(""); setCreateSel(new Set()); setCreateSearch(""); setAddMode({}); setCreateOpen(true); }
   async function saveCreate() {
     const name = createName.trim();
     if (!name) { alert("اكتب اسم المجموعة."); return; }
     if (createSel.size === 0) { alert("اختار مندوب واحد على الأقل."); return; }
     setBusy(true); setErr(null); setOkMsg(null);
     try {
-      await setTeamFor([...createSel], name);
+      // 👥 «ضيفه كمان» ⇒ يفضل في مجموعته ويتضاف للجديدة؛ غير كده نقل زي الأول.
+      const also = [...createSel].filter((id) => addMode[id] === "also");
+      const move = [...createSel].filter((id) => addMode[id] !== "also");
+      if (move.length) await setTeamFor(move, name);
+      if (also.length) await setTeamFor(also, name, "addTeam");
       setOkMsg(`اتعملت مجموعة «${name}» ✓ (${createSel.size} مندوب)`);
       setTimeout(() => setOkMsg(null), 4000);
       setCreateOpen(false);
@@ -604,12 +608,33 @@ export default function GroupsPage() {
                 .filter((a) => { const q = createSearch.trim().toLowerCase(); return !q || a.username?.toLowerCase().includes(q); })
                 .map((a) => {
                   const on = createSel.has(a.id);
+                  // 👥 في مجموعة تانية ⇒ يختار: ينقله ولا يضيفه كمان (يفضل في الاتنين)
+                  const others = memberships ? otherTeamsOf(a.id, "") : [];
+                  if (others.length > 0 && !on) {
+                    const pick = (mode: "move" | "also") => {
+                      setCreateSel((s) => new Set(s).add(a.id));
+                      setAddMode((m) => ({ ...m, [a.id]: mode }));
+                    };
+                    return (
+                      <div key={a.id} className="flex items-center gap-1.5 rounded-lg border border-transparent px-2.5 py-1.5">
+                        <span className="min-w-0 flex-1 truncate text-xs text-ink">{a.username}
+                          {memberBadge(a.role) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold text-primary bg-primary/10">{memberBadge(a.role)}</span>}
+                          <span className="mr-1 text-[10px] text-amber-500">(في «{others.join("، ")}»)</span>
+                        </span>
+                        <button onClick={() => pick("move")}
+                          className="shrink-0 rounded-md border border-amber-500/50 px-2 py-0.5 text-[10px] font-bold text-amber-500">انقله</button>
+                        <button onClick={() => pick("also")}
+                          className="shrink-0 rounded-md bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">ضيفه كمان</button>
+                      </div>
+                    );
+                  }
                   return (
                     <button key={a.id} onClick={() => setCreateSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })}
                       className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-right transition ${on ? "border-primary bg-primary/10" : "border-transparent hover:bg-surface"}`}>
                       <span className="min-w-0 flex-1 truncate text-xs text-ink">{a.username}
                         {memberBadge(a.role) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold text-primary bg-primary/10">{memberBadge(a.role)}</span>}
-                        {a.team && <span className="mr-1 text-[10px] text-amber-500">(في «{a.team}» — هينتقل)</span>}
+                        {a.team && (!memberships || addMode[a.id] !== "also") && <span className="mr-1 text-[10px] text-amber-500">(في «{a.team}» — هينتقل)</span>}
+                        {on && addMode[a.id] === "also" && <span className="mr-1 text-[10px] font-bold text-primary">(هيفضل في مجموعته كمان)</span>}
                       </span>
                       <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${on ? "border-primary bg-primary text-night" : "border-border"}`}>{on && "✓"}</span>
                     </button>

@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Users, FileUp, MapPin, AlertCircle, Barcode } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchMyGroupsNames } from "@/lib/groupNames";
 import { currentSession } from "@/lib/authSession";
 import { parseExcelFile } from "@/lib/excel";
 import {
@@ -78,8 +79,8 @@ export default function GroupSortPage() {
       setTeam(t);
       // أعضاء المجموعة عبر دالة security definer — قراءة profiles مباشرة بترجّع
       // المندوب نفسه بس (RLS)، فالفرز كان بيطلع على سجلاته هو بس.
-      const { data: mem } = await supabase.rpc("my_team_members");
-      setNames(Object.fromEntries(((mem ?? []) as { id: string; username: string }[]).map((m) => [m.id, m.username])));
+      // 👥 أسامي أعضاء كل مجموعاتي — الفرز بقى على المجموعتين (والشاص كمان) — lib/groupNames.ts
+      setNames(await fetchMyGroupsNames(supabase));
       setReady("ok");
     })();
   }, [router]);

@@ -49,6 +49,7 @@ import {
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, fetchGroupRecordRows, createGroupRowsCache, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchMyGroupsNames } from "@/lib/groupNames";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import {
   fetchTeamDataState, downloadTeamData, uploadTeamData, deleteTeamData,
@@ -153,9 +154,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         const { data: prof } = await supabase.from("profiles").select("username, team").eq("id", uid).single();
         const pr = prof as { username?: string; team?: string | null } | null;
         if (!pr?.team) { if (!cancelled) setMe({ id: uid, name: pr?.username ?? "", names: {}, inTeam: false }); return; }
-        const { data: mem } = await supabase.rpc("my_team_members");
-        const names = Object.fromEntries(
-          ((mem ?? []) as Array<{ id: string; username: string }>).map((m) => [m.id, m.username]));
+        // 👥 أسامي أعضاء كل مجموعاتي — الفرز بقى على المجموعتين (lib/groupNames.ts)
+        const names = await fetchMyGroupsNames(supabase);
         if (!cancelled) setMe({ id: uid, name: pr.username ?? "", names, inTeam: true });
       } catch { /* أوفلاين — الفرز على سجلاتي بيكمّل عادي */ }
     })();
