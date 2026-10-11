@@ -49,6 +49,8 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
   const teamRef = useRef("");
   const [names, setNames] = useState<Record<string, string>>({});
   const memberIdsRef = useRef<string[]>([]);
+  /** كل اللي ليهم شغل في المجموعة (أعضاء + اللي مشيوا) — فلتر السجلات القديمة اللي من غير ختم. */
+  const scopeIdsRef = useRef<string[]>([]);
   const [memberCount, setMemberCount] = useState(0);
   /**
    * 👥 «سجلات فلان» — المالك (١١ أكتوبر ٢٠٢٦): «لما يحبو يفصلو الشغل وقالو هياخد سجلاته ... نقدر نطلع فقط سجلاته».
@@ -84,7 +86,7 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
     // «تحميل المزيد» بس اللي بيتمنع وقت وجود طلب شغّال؛ تبديل المصدر/البحث لازم
     // يمشي دايمًا (الطلب القديم بيترمي بفرق رقم الطلب) وإلا القايمة تفضل قديمة.
     if (loadingRef.current && !reset) return;
-    const ids = memberIdsRef.current;
+    const ids = scopeIdsRef.current.length ? scopeIdsRef.current : memberIdsRef.current;
     if (ids.length === 0) return;
     loadingRef.current = true; setLoading(true);
     try {
@@ -151,6 +153,7 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
         : (((await supabase.rpc("my_team_members")).data ?? []) as { id: string; username: string }[]).map((m) => ({ ...m, is_member: true }));
       const members = list.filter((m) => m.is_member);
       memberIdsRef.current = members.map((m) => m.id);
+      scopeIdsRef.current = list.map((m) => m.id);
       setMemberCount(members.length);
       setAuthors(list);
       try {
@@ -215,7 +218,7 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from(isCh ? "chassis_records" : "field_checks")
           .select("*")
-          .or(teamScopeFilter(teamRef.current, memberIdsRef.current))
+          .or(teamScopeFilter(teamRef.current, scopeIdsRef.current.length ? scopeIdsRef.current : memberIdsRef.current))
           .eq("agent_id", authorRef.current)
           .order("checked_at", { ascending: true })
           .range(from, from + 999);

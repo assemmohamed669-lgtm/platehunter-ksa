@@ -31,8 +31,22 @@ export function saveHiddenRecordTeams(teams: readonly string[]): void {
   try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...new Set(teams)])); } catch { /* التخزين مش متاح */ }
 }
 
+/**
+ * سجلاتي **القديمة** (من غير ختم) تبع مجموعة مستخبية؟ — السيرفر بيسجّل سطر واحد «سجلاتك القديمة تبع مجموعة كذا»
+ * (`agent_legacy_team`) بدل ما يختم كل سجل (multi-group-6-legacy-pin.sql).
+ */
+const HIDE_LEGACY_KEY = "ph:hideLegacyRecords";
+export function loadHideLegacyRecords(): boolean {
+  try { return localStorage.getItem(HIDE_LEGACY_KEY) === "1"; } catch { return false; }
+}
+export function saveHideLegacyRecords(on: boolean): void {
+  try { if (on) localStorage.setItem(HIDE_LEGACY_KEY, "1"); else localStorage.removeItem(HIDE_LEGACY_KEY); } catch { /* */ }
+}
+
 /** السجلات من غير اللي مختومة بمجموعة مستخبية (للعرض — السجل نفسه بيفضل على الجهاز والسيرفر). */
-export function withoutHiddenTeams<T extends { team?: string }>(rows: T[], hidden: Set<string> = loadHiddenRecordTeams()): T[] {
-  if (hidden.size === 0) return rows;
-  return rows.filter((r) => !r.team || !hidden.has(r.team));
+export function withoutHiddenTeams<T extends { team?: string }>(
+  rows: T[], hidden: Set<string> = loadHiddenRecordTeams(), hideLegacy: boolean = loadHideLegacyRecords(),
+): T[] {
+  if (hidden.size === 0 && !hideLegacy) return rows;
+  return rows.filter((r) => (r.team ? !hidden.has(r.team) : !hideLegacy));
 }

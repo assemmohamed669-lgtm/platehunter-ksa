@@ -7,7 +7,7 @@ import {
   memberLocks, NO_LOCKS, loadCachedLocks, saveCachedLocks, GROUP_LOCKS_EVENT as EVENT,
   type GroupLockSettings, type MemberLocks,
 } from "./groupLocks";
-import { saveActiveTeam, loadHiddenRecordTeams, saveHiddenRecordTeams } from "./activeTeam";
+import { saveActiveTeam, loadHiddenRecordTeams, saveHiddenRecordTeams, saveHideLegacyRecords } from "./activeTeam";
 
 /**
  * 🙈 المجموعات اللي سجلاتها مستخبية عني (قرار المالك: «لو مقفوله عنه السجلات دي متروحش معاه ابدا»):
@@ -19,9 +19,10 @@ async function refreshHiddenRecordTeams(
   supabase: any, uid: string, p: { team?: string | null; role?: string | null; is_super?: boolean | null },
 ): Promise<void> {
   try {
-    const [ht, tm] = await Promise.all([
+    const [ht, tm, lg] = await Promise.all([
       supabase.from("agent_hidden_record_teams").select("team").eq("agent_id", uid),
       supabase.from("team_members").select("team").eq("agent_id", uid),
+      supabase.from("agent_legacy_team").select("team").eq("agent_id", uid).maybeSingle(),
     ]);
     if (ht.error && tm.error) return;
     const hidden: string[] = ht.error ? [] : (ht.data ?? []).map((r: { team: string }) => r.team);
@@ -36,6 +37,9 @@ async function refreshHiddenRecordTeams(
     }
     const prev = loadHiddenRecordTeams();
     saveHiddenRecordTeams(hidden);
+    // سجلاتي القديمة (من غير ختم) تبع مجموعة مستخبية ⇒ تستخبى هي كمان
+    const legacyTeam = lg && !lg.error ? (lg.data as { team?: string } | null)?.team ?? null : null;
+    saveHideLegacyRecords(!!legacyTeam && hidden.includes(legacyTeam));
     if (hidden.some((t) => !prev.has(t))) {
       void import("./syncFieldCheck").then((m) => m.restoreFieldChecks(uid)).catch(() => {});
     }
@@ -94,6 +98,7 @@ function watchAuthOnce(): void {
         saveCachedLocks(NO_LOCKS);
         saveActiveTeam(null);
         saveHiddenRecordTeams([]);
+        saveHideLegacyRecords(false);
         lastAt = 0;
         try { window.dispatchEvent(new CustomEvent<MemberLocks>(EVENT, { detail: NO_LOCKS })); } catch { /* */ }
       } else if (ev === "SIGNED_IN") {
