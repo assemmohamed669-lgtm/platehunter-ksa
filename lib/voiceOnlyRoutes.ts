@@ -17,7 +17,8 @@
  * ⚠️ ده «مسموح يروح» بس — الدخول نفسه بيتقفل على اللي مالوش صوت
  *    (`canOpenTrialPage`). و`/registration` القديمة لسه ممنوعة (حدود المسار).
  */
-const ALLOWED_ROOTS = ["/instant-check", "/appearance", "/help", "/keys", "/registration-v2"];
+/** 🔔 `/group-find` = تفاصيل إشعار «لقى سيارة مطلوبة» (١١ أكتوبر ٢٠٢٦) — مشترك «صوت فقط» ممكن يبقى مسئول مجموعة. */
+const ALLOWED_ROOTS = ["/instant-check", "/appearance", "/help", "/keys", "/registration-v2", "/group-find"];
 
 export function isAllowedForVoiceOnly(pathname: string): boolean {
   if (!pathname) return false;

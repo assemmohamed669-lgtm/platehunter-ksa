@@ -96,10 +96,10 @@ export default function GroupFindNotifier() {
           if (!error && !shouldSendFind(gs as GroupLockSettings | null)) return;
         } catch { /* مافيش نت أو الجدول لسه ماتعملش — نكمّل عادي */ }
         // (١) الصف ده هو اللي بيوصل لحظيًا للي التطبيق مفتوح عندهم.
-        await supabase.from("group_finds").insert({
+        const { data: ins } = await supabase.from("group_finds").insert({
           team: me.team, finder_id: me.id, finder_name: me.name,
           plate: d.plate, info: d.info ?? null, maps_link: mapsLink,
-        });
+        }).select("id").single();
         // (٢) وده بيوصل للي التطبيق مقفول عندهم (إشعار هاتف). لو فشل
         //     مانعملش حاجة — اللقطة نفسها اتسجّلت وإشعار التطبيق شغّال.
         try {
@@ -109,7 +109,8 @@ export default function GroupFindNotifier() {
           await fetch("/api/group-push", {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${at}` },
-            body: JSON.stringify({ plate: d.plate, mapsLink: mapsLink ?? "" }),
+            // 🔔 رقم اللقطة — السيرفر بيبني الإشعار منها (الوقت والبيانات) والضغط عليه بيفتح تفاصيلها.
+            body: JSON.stringify({ plate: d.plate, mapsLink: mapsLink ?? "", findId: ins?.id ?? "" }),
           });
         } catch { /* مافيش نت — الإشعار الداخلي وصل والسجل اتحفظ */ }
       })();

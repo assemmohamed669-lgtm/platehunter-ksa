@@ -22,7 +22,7 @@ export const LAST_PAGE_KEY = "ph:lastPage";
  * تحويل خارجي. الأسماء دي هي مجلدات `app/(app)/` بالظبط.
  */
 const APP_PAGES = [
-  "appearance", "backup", "data-upload", "groq", "group-activity", "group-records",
+  "appearance", "backup", "data-upload", "groq", "group-activity", "group-find", "group-records",
   "group-sort", "help", "instant-check", "keys", "list", "maps",
   "registration", "registration-v2", "sorting", "wanted",
 ] as const;

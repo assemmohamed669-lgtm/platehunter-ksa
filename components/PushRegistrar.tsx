@@ -10,12 +10,14 @@
  * متركّب مرة واحدة في اللياوت (زي GroupFindNotifier).
  */
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 /** قناة الإشعار على أندرويد — لازم تبقى نفس القيمة اللي السيرفر بيبعت بيها. */
 export const PUSH_CHANNEL_ID = "wanted_finds";
 
 export default function PushRegistrar() {
+  const router = useRouter();
   useEffect(() => {
     let cancelled = false;
 
@@ -53,11 +55,18 @@ export default function PushRegistrar() {
       await PushNotifications.addListener("registrationError", () => {
         /* مافيش اتصال بـFCM — نسيبها من غير ضجّة، الإشعار الداخلي شغّال */
       });
+      // 🔔 الضغط على إشعار «لقى سيارة مطلوبة» بيفتح صفحة تفاصيلها (المالك ١١ أكتوبر ٢٠٢٦) — العربية بموقعها ومين لقاها
+      //    وإمتى. البلجن بيحتفظ بالضغطة لحد ما المستمع ده يتسجّل، فبتشتغل حتى لو البرنامج كان مقفول خالص.
+      await PushNotifications.addListener("pushNotificationActionPerformed", (a) => {
+        const url = String((a.notification?.data as { url?: unknown } | undefined)?.url ?? "");
+        if (url.startsWith("/group-find")) router.push(url);
+      });
 
       await PushNotifications.register();
     })();
 
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- router ثابت؛ التسجيل مرة واحدة
   }, []);
 
   return null;
