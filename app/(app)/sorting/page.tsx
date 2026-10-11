@@ -36,6 +36,7 @@ import { orderRunsBySheet } from "@/lib/sheetOrder";
 import { pasteColumnsOf } from "@/lib/pasteColumns";
 import { shareFileName, referralLabel, referralShareName } from "@/lib/shareNames";
 import { recordsLockedNow } from "@/lib/groupLocks";
+import { fetchMyGroupsNames } from "@/lib/groupNames";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
@@ -560,9 +561,8 @@ export default function SortingPage() {
             if (pr?.team) {
               hasTeamRef.current = true;
               setHasTeam(true);
-              const { data: mem } = await supabase.rpc("my_team_members");
-              groupNamesRef.current = Object.fromEntries(
-                ((mem ?? []) as Array<{ id: string; username: string }>).map((m) => [m.id, m.username]));
+              // 👥 أسامي أعضاء كل مجموعاتي — الفرز بقى على المجموعتين (lib/groupNames.ts)
+              groupNamesRef.current = await fetchMyGroupsNames(supabase);
             }
           }
         } catch { /* أوفلاين — الفرز المحلي شغّال عادي */ }
