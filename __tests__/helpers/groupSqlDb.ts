@@ -36,12 +36,13 @@ create table public.group_settings (
 create table public.field_checks (
   id uuid primary key default gen_random_uuid(),
   agent_id uuid not null references public.profiles(id) on delete cascade,
-  plate text not null, checked_at timestamptz not null default now(), extra jsonb
+  plate text not null, plate_norm text, method text, maps_link text,
+  checked_at timestamptz not null default now(), extra jsonb
 );
 create table public.chassis_records (
   local_id text primary key,
   agent_id uuid not null references public.profiles(id) on delete cascade,
-  vin text
+  vin text, checked_at timestamptz not null default now()
 );
 create table public.group_finds (
   id uuid primary key default gen_random_uuid(), team text not null,
@@ -74,6 +75,28 @@ grant select, insert on public.field_checks, public.chassis_records to authentic
 grant insert on public.group_finds to authenticated;
 `;
 
+// أسامي الأعضاء (group-share-records.sql) + فرز المجموعة (group-sort-perf.sql) — النسخ اللي على Supabase.
+const CURRENT_FUNCS = `
+create or replace function public.my_team_members() returns table (id uuid, username text)
+  language sql stable security definer set search_path = public as $$
+  select p.id, p.username from public.profiles p
+  where p.team is not null
+    and p.team = (select team from public.profiles where id = (select auth.uid()))
+$$;
+grant execute on function public.my_team_members() to authenticated;
+
+create function public.match_group_plates(p_norms text[])
+returns table (id uuid, plate text, method text, maps_link text, checked_at timestamptz, agent_id uuid, extra jsonb)
+language sql stable security invoker set search_path = public as $$
+  with norms as (select distinct n.norm from unnest(p_norms) as n(norm))
+  select fc.id, fc.plate, fc.method, fc.maps_link, fc.checked_at, fc.agent_id, fc.extra
+  from norms
+  join public.field_checks fc on fc.plate_norm = norms.norm
+  where fc.agent_id in (select public.my_team_member_ids());
+$$;
+grant execute on function public.match_group_plates(text[]) to authenticated;
+`;
+
 // سياسات قراءة سجلات الزمايل (group-share-records.sql) — بتعتمد على my_team_member_ids اللي بييجي من الملف بعدها.
 const TEAM_READ = `
 create policy "read team field_checks" on public.field_checks for select to authenticated
@@ -88,6 +111,7 @@ export async function makeGroupDb(): Promise<PGlite> {
   await db.exec(BASE);
   await db.exec(sqlFile("group-member-locks.sql"));
   await db.exec(TEAM_READ);
+  await db.exec(CURRENT_FUNCS);
   return db;
 }
 
