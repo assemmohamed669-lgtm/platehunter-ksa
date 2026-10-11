@@ -42,6 +42,8 @@ interface GroupSet {
   lockDownload: boolean;
   lockEdit: boolean;
   findsLeaderOnly: boolean;
+  /** 🧭 صفحة «إدارة مجموعتي» لمسئول المجموعة (مقفولة افتراضياً). */
+  leaderPage?: boolean;
 }
 
 /** مفاتيح «صلاحيات الأعضاء» بالترتيب اللي بتظهر بيه — [المفتاح, العنوان وهو مفتوح, العنوان وهو مقفول, الشرح]. */
@@ -146,6 +148,7 @@ export default function GroupsPage() {
             recordsLeaderOnly: !!r.records_leader_only, lockRecords: !!r.lock_member_records,
             lockSort: !!r.lock_member_sort, lockDownload: !!r.lock_member_download,
             lockEdit: !!r.lock_member_edit, findsLeaderOnly: !!r.finds_leader_only,
+            leaderPage: !!(r as { leader_page_enabled?: boolean }).leader_page_enabled,
           };
         }
         setSettings(m);
@@ -202,6 +205,7 @@ export default function GroupsPage() {
           activityReportEnabled: next.activityReport,
           recordsLeaderOnly: next.recordsLeaderOnly, lockMemberRecords: next.lockRecords, lockMemberSort: next.lockSort,
           lockMemberDownload: next.lockDownload, lockMemberEdit: next.lockEdit, findsLeaderOnly: next.findsLeaderOnly,
+          leaderPageEnabled: !!next.leaderPage,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "فشل الحفظ");
@@ -418,7 +422,7 @@ export default function GroupsPage() {
                             sharedData: leader ? groupSet(t).sharedData : false,
                             sharedCheck: leader ? groupSet(t).sharedCheck : false,
                             activityReport: leader ? groupSet(t).activityReport : false,
-                            ...(leader ? {} : NO_MEMBER_LOCKS),
+                            ...(leader ? {} : { ...NO_MEMBER_LOCKS, leaderPage: false }),
                           });
                         }}
                         className="mb-2 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink">
@@ -481,6 +485,20 @@ export default function GroupsPage() {
 
                     {/* 🔒 صلاحيات الأعضاء — كل مفتاح لوحده، مقفولة افتراضياً، والمسئول نفسه مابيتقفلش عليه حاجة. */}
                     <div className="rounded-lg border border-border bg-surface-2 px-2.5 py-2">
+                      {/* 🧭 «إدارة مجموعتي» — المسئول يتحكّم في الإشعارات والمشاركة والتشييك والصلاحيات بنفسه (مش الأعضاء) */}
+                      <button
+                        disabled={togglingTeam === t || !groupSet(t).leader}
+                        onClick={() => void saveGroupSet(t, { ...groupSet(t), leaderPage: !groupSet(t).leaderPage })}
+                        title={groupSet(t).leader ? "" : "حدّد المسئول الأول"}
+                        className={`mb-1 w-full rounded-full px-3 py-1.5 text-[11px] font-bold transition disabled:opacity-40 ${
+                          groupSet(t).leaderPage ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
+                        }`}>
+                        {groupSet(t).leaderPage ? "صفحة «إدارة مجموعتي» للمسئول مفتوحة ✓" : "صفحة «إدارة مجموعتي» للمسئول — مقفولة"}
+                      </button>
+                      <p className="mb-2.5 px-1 text-[10px] leading-relaxed text-muted">
+                        المسئول بيتحكّم بنفسه في الإشعارات ومشاركة السجلات وملف التشييك والصلاحيات اللي تحت (ما عدا «مايشوفوش سجلاتهم»).
+                        إضافة وشيل الأعضاء ليك إنت بس.
+                      </p>
                       <p className="text-xs font-bold text-ink">صلاحيات الأعضاء</p>
                       <p className="mb-2 text-[10px] leading-relaxed text-muted">
                         {groupSet(t).leader

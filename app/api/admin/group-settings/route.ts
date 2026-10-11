@@ -72,6 +72,13 @@ export async function POST(req: NextRequest) {
   if (lockErr && lockReq.length) {
     return NextResponse.json({ error: "شغّل ملف docs/sql/group-member-locks.sql على Supabase الأول." }, { status: 400 });
   }
+  // 🧭 صفحة «إدارة مجموعتي» للمسئول (docs/sql/group-leader-page.sql) — مقفولة افتراضياً ومحتاجة مسئول.
+  const { data: lpCur, error: lpErr } = await supabaseAdmin
+    .from("group_settings").select("leader_page_enabled").eq("team", team).maybeSingle();
+  if (lpErr && b.leaderPageEnabled === true) {
+    return NextResponse.json({ error: "شغّل ملف docs/sql/group-leader-page.sql على Supabase الأول." }, { status: 400 });
+  }
+  const leaderNow = b.leaderId === undefined ? (prev?.leader_id ?? null) : (b.leaderId || null);
   const row = {
     team,
     notify_enabled: typeof b.notifyEnabled === "boolean"
@@ -113,6 +120,11 @@ export async function POST(req: NextRequest) {
       const leader = b.leaderId === undefined ? (prev?.leader_id ?? null) : (b.leaderId || null);
       return [c, want === true && !!leader];
     }))),
+    ...(lpErr ? {} : {
+      leader_page_enabled: (typeof b.leaderPageEnabled === "boolean"
+        ? b.leaderPageEnabled
+        : ((lpCur as { leader_page_enabled?: boolean } | null)?.leader_page_enabled ?? false)) && !!leaderNow,
+    }),
     updated_at: new Date().toISOString(),
     updated_by: admin.id,
   };
