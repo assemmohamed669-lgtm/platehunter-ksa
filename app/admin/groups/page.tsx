@@ -83,6 +83,8 @@ export default function GroupsPage() {
   const [memberships, setMemberships] = useState<{ team: string; agent_id: string }[] | null>(null);
   /** «انقله» (يتشال من مجموعاته التانية) ولا «ضيفه كمان» — لكل مندوب اتضاف ولسه ماتحفظش. */
   const [addMode, setAddMode] = useState<Record<string, "move" | "also">>({});
+  /** اللي الأدمن دوس قدامه «شيل» بإيده — الحفظ بيشيل دول بس. */
+  const [removedByHand, setRemovedByHand] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   // مفاتيح كل مجموعة: الإشعارات + مشاركة السجلات. الافتراضي الاتنين مفتوحين،
@@ -120,12 +122,12 @@ export default function GroupsPage() {
     } catch (e) {
       // كانت بتفضل «جارٍ التحميل...» للأبد لو الطلب وقف — دلوقتي بتقول السبب.
       setErr((e as Error)?.message ?? "تعذّر التحميل.");
-    } finally {
-      setLoading(false);
     }
     // مفاتيح المجموعات — فشلها مايمنعش الصفحة (بتشتغل بالافتراضي: مفتوح).
+    // 🐞 (١١ أكتوبر ٢٠٢٦) «جارٍ التحميل» بيفضل لحد ما **العضويات** توصل كمان: قبل كده المجموعات كانت بتظهر من
+    //    profiles.team لوحدها، فمسئول في مجموعتين (محمد عفيفي) كان مش ظاهر في الجديدة، و«حفظ التغييرات» شاله منها.
     try {
-      const res = await fetch("/api/admin/group-settings", { headers: await authHeaders() });
+      const res = await withTimeout(fetch("/api/admin/group-settings", { headers: await authHeaders() }), 20000, "تحميل المجموعات");
       if (res.ok) {
         const j = await res.json();
         const m: Record<string, GroupSet> = {};
@@ -154,6 +156,7 @@ export default function GroupsPage() {
         setTeamFiles(files);
       }
     } catch { /* الافتراضي مفتوح */ }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -273,13 +276,17 @@ export default function GroupsPage() {
   // ── فتح/تعديل مجموعة ──
   function expand(t: string) {
     if (openGroup === t) { setOpenGroup(null); return; }
-    setOpenGroup(t); setEditSet(new Set(membersOf(t).map((a) => a.id))); setAddOpen(false); setAddSearch(""); setAddMode({});
+    setOpenGroup(t); setEditSet(new Set(membersOf(t).map((a) => a.id))); setAddOpen(false); setAddSearch(""); setAddMode({}); setRemovedByHand(new Set());
   }
   async function saveGroup() {
     if (!openGroup) return;
     const current = new Set(membersOf(openGroup).map((a) => a.id));
-    const added = [...editSet].filter((id) => !current.has(id));
-    const removed = [...current].filter((id) => !editSet.has(id));
+    // 🐞 بس اللي اتضاف/اتشال بالإيد (addMode / removedByHand) — لو القايمة اتلخبطت ماحدش يتشال من غير قصد.
+    const added = [...editSet].filter((id) => !current.has(id) && !!addMode[id]);
+    const removed = [...removedByHand].filter((id) => current.has(id) && !editSet.has(id));
+    const leader = groupSet(openGroup).leader;
+    if (leader && removed.includes(leader)
+      && !confirm(`«${nameOf(leader)}» هو مسئول المجموعة — لو اتشال هتبقى من غير مسئول. تكمّل؟`)) return;
     if (added.length === 0 && removed.length === 0) { setOpenGroup(null); return; }
     setBusy(true); setErr(null); setOkMsg(null);
     try {
@@ -514,7 +521,7 @@ export default function GroupsPage() {
                           )}
                         </span>
                         <button
-                          onClick={() => { if (confirm(`تشيل «${nameOf(id)}» من مجموعة «${t}»؟${otherTeamsOf(id, t).length ? ` (هيفضل في «${otherTeamsOf(id, t).join("، ")}»)` : ""}`)) setEditSet((s) => { const n = new Set(s); n.delete(id); return n; }); }}
+                          onClick={() => { if (confirm(`تشيل «${nameOf(id)}» من مجموعة «${t}»؟${otherTeamsOf(id, t).length ? ` (هيفضل في «${otherTeamsOf(id, t).join("، ")}»)` : ""}`)) { setEditSet((s) => { const n = new Set(s); n.delete(id); return n; }); setRemovedByHand((s) => new Set(s).add(id)); } }}
                           className="flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-bold text-muted transition hover:border-danger/50 hover:text-danger" title="شيل من المجموعة">
                           <Trash2 size={12} /> شيل
                         </button>
