@@ -30,7 +30,9 @@ export async function POST(req: NextRequest) {
   if (target === "team") {
     const team = String(b.team ?? "").trim();
     if (!team) return NextResponse.json({ error: "اختار المجموعة." }, { status: 400 });
-    q = q.eq("team", team);
+    // 👥 أعضاء المجموعة من جدول العضوية (مندوب ممكن يبقى في أكتر من مجموعة) — لو لسه مش موجود ⇒ زي الأول.
+    const tm = await supabaseAdmin.from("team_members").select("agent_id").eq("team", team);
+    q = tm.error ? q.eq("team", team) : q.in("id", (tm.data ?? []).map((r: { agent_id: string }) => r.agent_id));
   } else if (target === "agent") {
     const agentId = String(b.agentId ?? "");
     if (!agentId) return NextResponse.json({ error: "اختار المندوب." }, { status: 400 });

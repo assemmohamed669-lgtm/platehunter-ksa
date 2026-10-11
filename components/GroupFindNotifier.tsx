@@ -19,6 +19,7 @@ import { shouldSendFind, shouldShowFind, type GroupLockSettings } from "@/lib/gr
 
 interface GroupFind {
   id: string;
+  team?: string | null;
   finder_id: string;
   finder_name: string | null;
   plate: string;
@@ -33,9 +34,11 @@ export default function GroupFindNotifier() {
   const meRef = useRef<{ id: string; team: string | null; name: string } | null>(null);
   const coordsRef = useRef<GpsCoords | null>(null);
   const recentRef = useRef<Map<string, number>>(new Map()); // dedup نفس اللوحة
+  /** 👥 مندوب في أكتر من مجموعة ⇒ اسم المجموعة بيتكتب على الإشعار (في مجموعة واحدة: زي الأول بالحرف). */
+  const [multiTeam, setMultiTeam] = useState(false);
 
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    const channels: ReturnType<typeof supabase.channel>[] = [];
     let gpsUnsub: (() => void) | null = null;
 
     (async () => {
@@ -50,26 +53,37 @@ export default function GroupFindNotifier() {
 
       gpsUnsub = gpsService.subscribe((c) => { coordsRef.current = c; });
 
-      // استقبال لقطات المجموعة لحظيًا (من غيري).
-      channel = supabase
-        .channel(`group-finds-${team}`)
-        .on("postgres_changes",
-          { event: "INSERT", schema: "public", table: "group_finds", filter: `team=eq.${team}` },
-          (payload) => {
-            const row = payload.new as GroupFind;
-            if (!row?.plate || row.finder_id === meRef.current?.id) return; // مش لقطتي أنا
-            // 🔒 «إشعار المطلوب للمسئول بس» — السيرفر بيمنعها عن الأعضاء (سياسة group_finds)، وده تأكيد
-            //    على الجهاز لو السياسة لسه ماتشغّلتش. فشل القراية (مافيش نت) ⇒ تظهر زي الأول.
-            void (async () => {
-              try {
-                const { data: gs } = await supabase.from("group_settings").select("*").eq("team", team).maybeSingle();
-                if (!shouldShowFind(gs as GroupLockSettings | null, uid)) return;
-              } catch { /* نكمّل */ }
-              setQueue((q) => (q.some((x) => x.id === row.id) ? q : [...q, row]));
-              try { playNoticeTone(); } catch { /* الصوت مش متاح */ }
-            })();
-          })
-        .subscribe();
+      // 👥 كل مجموعة أنا عضو فيها (مش اللي شغّال لها بس) — المالك ١١ أكتوبر ٢٠٢٦: «لو مفتوحلو اشعارات المجموعتين
+      //    يوصلو اشعار ويتكتبلو من اي مجموعه». جدول العضوية لسه مش موجود ⇒ مجموعتي الحالية زي الأول.
+      let teams = [team];
+      try {
+        const { data: tm, error } = await supabase.from("team_members").select("team").eq("agent_id", uid);
+        if (!error && tm && tm.length) teams = [...new Set([team, ...(tm as { team: string }[]).map((r) => r.team)])];
+      } catch { /* زي الأول */ }
+      setMultiTeam(teams.length > 1);
+
+      // استقبال لقطات المجموعة لحظيًا (من غيري) — قناة لكل مجموعة.
+      for (const t of teams) {
+        channels.push(supabase
+          .channel(`group-finds-${t}`)
+          .on("postgres_changes",
+            { event: "INSERT", schema: "public", table: "group_finds", filter: `team=eq.${t}` },
+            (payload) => {
+              const row = payload.new as GroupFind;
+              if (!row?.plate || row.finder_id === meRef.current?.id) return; // مش لقطتي أنا
+              // 🔒 «إشعار المطلوب للمسئول بس» — السيرفر بيمنعها عن الأعضاء (سياسة group_finds)، وده تأكيد
+              //    على الجهاز لو السياسة لسه ماتشغّلتش. فشل القراية (مافيش نت) ⇒ تظهر زي الأول.
+              void (async () => {
+                try {
+                  const { data: gs } = await supabase.from("group_settings").select("*").eq("team", t).maybeSingle();
+                  if (!shouldShowFind(gs as GroupLockSettings | null, uid)) return;
+                } catch { /* نكمّل */ }
+                setQueue((q) => (q.some((x) => x.id === row.id) ? q : [...q, { ...row, team: row.team ?? t }]));
+                try { playNoticeTone(); } catch { /* الصوت مش متاح */ }
+              })();
+            })
+          .subscribe());
+      }
     })();
 
     // لما أنا ألاقي لوحة مطلوبة (أي طريقة: صوت/يدوي/كاميرا) → سجّلها لمجموعتي.
@@ -120,7 +134,7 @@ export default function GroupFindNotifier() {
     return () => {
       window.removeEventListener(WANTED_ALERT_EVENT, onFind);
       gpsUnsub?.();
-      if (channel) supabase.removeChannel(channel);
+      for (const c of channels) supabase.removeChannel(c);
     };
   }, []);
 
@@ -131,7 +145,7 @@ export default function GroupFindNotifier() {
       <div className="w-full max-w-sm overflow-hidden rounded-2xl border-2 border-brand bg-surface shadow-2xl">
         <div className="flex items-center justify-between gap-2 bg-brand px-3 py-2 text-night">
           <span className="flex items-center gap-1.5 text-sm font-black">
-            <Car size={16} /> {notif.finder_name || "زميلك"} لقى سيارة مطلوبة!{queue.length > 1 ? ` (+${queue.length - 1})` : ""}
+            <Car size={16} /> {notif.finder_name || "زميلك"} لقى سيارة مطلوبة!{multiTeam && notif.team ? ` — ${notif.team}` : ""}{queue.length > 1 ? ` (+${queue.length - 1})` : ""}
           </span>
           <button onClick={() => setQueue((q) => q.slice(1))} className="text-night/80 transition hover:text-night"><X size={18} /></button>
         </div>
