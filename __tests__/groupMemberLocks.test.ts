@@ -80,6 +80,9 @@ describe("🔴 إشعار المطلوب للمسئول بس", () => {
     expect(findAlertRecipients({ finderId: "m2", mateIds: mates, leaderId: LEADER, notifyEnabled: false, findsLeaderOnly: true })).toEqual([LEADER]);
     expect(findAlertRecipients({ finderId: "m2", mateIds: mates, leaderId: LEADER, notifyEnabled: true, findsLeaderOnly: true })).toEqual([LEADER]);
   });
+  it("🔴 المسئول اتنقل لمجموعة تانية (مش من الأعضاء) ⇒ لقطات مجموعته القديمة مابتوصلوش", () => {
+    expect(findAlertRecipients({ finderId: "m2", mateIds: ["m3"], leaderId: LEADER, notifyEnabled: true, findsLeaderOnly: true })).toEqual([]);
+  });
   it("المسئول هو اللي لقاها ⇒ مفيش حد يتبعتله", () => {
     expect(findAlertRecipients({ finderId: LEADER, mateIds: ["m2"], leaderId: LEADER, notifyEnabled: true, findsLeaderOnly: true })).toEqual([]);
   });
