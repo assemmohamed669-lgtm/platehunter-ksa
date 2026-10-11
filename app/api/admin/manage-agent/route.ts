@@ -267,6 +267,29 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
+      // 👥 «ضيفه كمان» / «شيل من المجموعة دي بس» — مندوب في أكتر من مجموعة (docs/sql/multi-group-4-add.sql).
+      case "addTeam":
+      case "removeTeam": {
+        const team = typeof body.team === "string" ? body.team.trim() : "";
+        if (!team) return NextResponse.json({ error: "المجموعة مطلوبة." }, { status: 400 });
+        const fn = action === "addTeam" ? "add_agent_to_team" : "remove_agent_from_team";
+        const { error } = await supabaseAdmin.rpc(fn, { p_agent: agentId, p_team: team });
+        if (error) {
+          const missing = /add_agent_to_team|remove_agent_from_team|PGRST202/i.test(error.message + " " + (error.code ?? ""));
+          // الشيل قبل ما الملف يتشغّل: لسه مفيش حد في مجموعتين ⇒ الشيل = «من غير مجموعة» زي الأول بالظبط.
+          if (missing && action === "removeTeam") {
+            const mv = await supabaseAdmin.rpc("move_agent_team", { p_agent: agentId, p_team: null });
+            if (mv.error) {
+              const { error: e2 } = await supabaseAdmin.from("profiles").update({ team: null }).eq("id", agentId);
+              if (e2) return NextResponse.json({ error: e2.message }, { status: 400 });
+            }
+            return NextResponse.json({ ok: true });
+          }
+          return NextResponse.json({ error: missing ? "شغّل ملف docs/sql/multi-group-4-add.sql على Supabase الأول." : error.message }, { status: 400 });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       case "setTeam": {
         // مجموعة المندوب — اللي نفس الـteam بيوصلهم لقطات بعض لحظيًا. فاضي = بلا مجموعة.
         const team = typeof body.team === "string" && body.team.trim() ? body.team.trim() : null;

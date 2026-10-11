@@ -7,7 +7,40 @@ import {
   memberLocks, NO_LOCKS, loadCachedLocks, saveCachedLocks, GROUP_LOCKS_EVENT as EVENT,
   type GroupLockSettings, type MemberLocks,
 } from "./groupLocks";
-import { saveActiveTeam } from "./activeTeam";
+import { saveActiveTeam, loadHiddenRecordTeams, saveHiddenRecordTeams } from "./activeTeam";
+
+/**
+ * 🙈 المجموعات اللي سجلاتها مستخبية عني (قرار المالك: «لو مقفوله عنه السجلات دي متروحش معاه ابدا»):
+ * اللي سبتها وهي قافلة عليّ السجلات (السيرفر) + اللي لسه فيها وقافلة عليّ وأنا شغّال لغيرها. فشل القراية ⇒ المحفوظ
+ * زي ما هو. لو اتضافت مجموعة جديدة للمستخبي ⇒ سجلاتي بترجع من السيرفر في الخلفية عشان القديمة تاخد ختمها.
+ */
+async function refreshHiddenRecordTeams(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any, uid: string, p: { team?: string | null; role?: string | null; is_super?: boolean | null },
+): Promise<void> {
+  try {
+    const [ht, tm] = await Promise.all([
+      supabase.from("agent_hidden_record_teams").select("team").eq("agent_id", uid),
+      supabase.from("team_members").select("team").eq("agent_id", uid),
+    ]);
+    if (ht.error && tm.error) return;
+    const hidden: string[] = ht.error ? [] : (ht.data ?? []).map((r: { team: string }) => r.team);
+    const others = tm.error ? [] : (tm.data ?? []).map((r: { team: string }) => r.team).filter((t: string) => t !== p.team);
+    if (others.length) {
+      const gs = await supabase.from("group_settings").select("*").in("team", others);
+      if (!gs.error) {
+        for (const s of (gs.data ?? []) as (GroupLockSettings & { team: string })[]) {
+          if (memberLocks(s, { id: uid, team: s.team, role: p.role, isSuper: p.is_super === true }).records) hidden.push(s.team);
+        }
+      }
+    }
+    const prev = loadHiddenRecordTeams();
+    saveHiddenRecordTeams(hidden);
+    if (hidden.some((t) => !prev.has(t))) {
+      void import("./syncFieldCheck").then((m) => m.restoreFieldChecks(uid)).catch(() => {});
+    }
+  } catch { /* المحفوظ زي ما هو */ }
+}
 
 // ── الجلب من السيرفر ───────────────────────────────────────────────────────
 
@@ -36,6 +69,7 @@ export function refreshMemberLocks(force = false): Promise<MemberLocks | null> {
         s = (gs as GroupLockSettings | null) ?? null;
       }
       const locks = memberLocks(s, { id: uid, team: p.team ?? null, role: p.role, isSuper: p.is_super === true });
+      await refreshHiddenRecordTeams(supabase, uid, p);
       saveCachedLocks(locks);
       lastAt = Date.now();
       try { window.dispatchEvent(new CustomEvent<MemberLocks>(EVENT, { detail: locks })); } catch { /* */ }
@@ -59,6 +93,7 @@ function watchAuthOnce(): void {
       if (ev === "SIGNED_OUT") {
         saveCachedLocks(NO_LOCKS);
         saveActiveTeam(null);
+        saveHiddenRecordTeams([]);
         lastAt = 0;
         try { window.dispatchEvent(new CustomEvent<MemberLocks>(EVENT, { detail: NO_LOCKS })); } catch { /* */ }
       } else if (ev === "SIGNED_IN") {

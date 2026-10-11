@@ -76,6 +76,13 @@ export default function GroupsPage() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
+  /**
+   * 👥 العضويات (`team_members`) — مندوب ممكن يبقى في أكتر من مجموعة (المالك ١١ أكتوبر ٢٠٢٦). `null` = الجدول لسه
+   * مش موجود ⇒ زي الأول من `profiles.team`.
+   */
+  const [memberships, setMemberships] = useState<{ team: string; agent_id: string }[] | null>(null);
+  /** «انقله» (يتشال من مجموعاته التانية) ولا «ضيفه كمان» — لكل مندوب اتضاف ولسه ماتحفظش. */
+  const [addMode, setAddMode] = useState<Record<string, "move" | "also">>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   // مفاتيح كل مجموعة: الإشعارات + مشاركة السجلات. الافتراضي الاتنين مفتوحين،
@@ -140,6 +147,7 @@ export default function GroupsPage() {
           };
         }
         setSettings(m);
+        setMemberships(Array.isArray(j.memberships) ? j.memberships : null);
         const files: Record<string, { data?: TeamFileRow; check?: TeamFileRow }> = {};
         for (const f of (j.dataFiles ?? []) as TeamFileRow[]) (files[f.team] ??= {}).data = f;
         for (const f of (j.checkFiles ?? []) as TeamFileRow[]) (files[f.team] ??= {}).check = f;
@@ -160,8 +168,17 @@ export default function GroupsPage() {
   }, [router, load]);
 
   const nameOf = (id: string) => agents.find((a) => a.id === id)?.username ?? id;
-  const teams = Array.from(new Set(agents.map((a) => a.team).filter((t): t is string => !!t))).sort();
-  const membersOf = (t: string) => agents.filter((a) => a.team === t);
+  const teams = Array.from(new Set([
+    ...agents.map((a) => a.team),
+    ...(memberships ?? []).map((m) => m.team),
+  ].filter((t): t is string => !!t))).sort();
+  const membersOf = (t: string) => memberships
+    ? agents.filter((a) => memberships.some((m) => m.team === t && m.agent_id === a.id))
+    : agents.filter((a) => a.team === t);
+  /** مجموعات المندوب التانية (غير t). */
+  const otherTeamsOf = (id: string, t: string): string[] => memberships
+    ? memberships.filter((m) => m.agent_id === id && m.team !== t).map((m) => m.team)
+    : [agents.find((a) => a.id === id)?.team].filter((x): x is string => !!x && x !== t);
 
   // الافتراضي: الإشعارات والمشاركة مفتوحين (زي ما كانوا)، و«داتا المجموعة»
   // **مقفولة** ومن غير مسئول — فمافيش مجموعة بتتأثر من غير قرار المالك.
@@ -211,7 +228,7 @@ export default function GroupsPage() {
   }
 
   // يطبّق setTeam على مجموعة من المناديب بالتتابع.
-  async function setTeamFor(ids: string[], team: string) {
+  async function setTeamFor(ids: string[], team: string, action: "setTeam" | "addTeam" | "removeTeam" = "setTeam") {
     // الهيدر مرة واحدة قبل اللفّة: getSession() جوّه اللوب كان ممكن يوقف على
     // شبكة ضعيفة لو صادف تجديد التوكن، فالشاشة تفضل «جارٍ» بلا نهاية.
     const headers = await withTimeout(authHeaders(), 15000, "التحقق من الجلسة");
@@ -221,7 +238,7 @@ export default function GroupsPage() {
       try {
         const res = await fetch("/api/admin/manage-agent", {
           method: "POST", headers, signal: ctrl.signal,
-          body: JSON.stringify({ agentId: id, action: "setTeam", team }),
+          body: JSON.stringify({ agentId: id, action, team }),
         });
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error ?? "تعذّر الحفظ."); }
       } catch (e) {
@@ -252,7 +269,7 @@ export default function GroupsPage() {
   // ── فتح/تعديل مجموعة ──
   function expand(t: string) {
     if (openGroup === t) { setOpenGroup(null); return; }
-    setOpenGroup(t); setEditSet(new Set(membersOf(t).map((a) => a.id))); setAddOpen(false); setAddSearch("");
+    setOpenGroup(t); setEditSet(new Set(membersOf(t).map((a) => a.id))); setAddOpen(false); setAddSearch(""); setAddMode({});
   }
   async function saveGroup() {
     if (!openGroup) return;
@@ -262,8 +279,16 @@ export default function GroupsPage() {
     if (added.length === 0 && removed.length === 0) { setOpenGroup(null); return; }
     setBusy(true); setErr(null); setOkMsg(null);
     try {
-      if (added.length) await setTeamFor(added, openGroup);
-      if (removed.length) await setTeamFor(removed, "");     // "" = يتشال من المجموعة
+      // 👥 «ضيفه كمان» ⇒ من غير ما يتشال من مجموعاته التانية؛ غير كده نقل زي الأول.
+      const also = added.filter((id) => addMode[id] === "also");
+      const move = added.filter((id) => addMode[id] !== "also");
+      if (move.length) await setTeamFor(move, openGroup);
+      if (also.length) await setTeamFor(also, openGroup, "addTeam");
+      // الشيل من المجموعة دي بس (مجموعاته التانية زي ما هي). الجدول لسه مش موجود ⇒ زي الأول.
+      if (removed.length) {
+        if (memberships) await setTeamFor(removed, openGroup, "removeTeam");
+        else await setTeamFor(removed, "");     // "" = يتشال من المجموعة
+      }
       // التعديل اتنفّذ خلاص — نقول «اتحفظ» قبل إعادة التحميل، عشان لو التحميل
       // اتأخّر المندوب مايفتكرش إن الحفظ فشل.
       setOkMsg(`اتحفظ ✓ ${added.length ? `أضفنا ${added.length}` : ""}${added.length && removed.length ? " · " : ""}${removed.length ? `شِلنا ${removed.length}` : ""}`);
@@ -391,6 +416,11 @@ export default function GroupsPage() {
                           <option key={a.id} value={a.id}>{a.username}</option>
                         ))}
                       </select>
+                      {groupSet(t).leader && !membersOf(t).some((a) => a.id === groupSet(t).leader) && (
+                        <p className="-mt-1 mb-2 text-[10px] font-bold text-amber-500">
+                          ⚠️ المسئول «{nameOf(groupSet(t).leader as string)}» مش عضو في المجموعة دي دلوقتي — اختار مسئول تاني.
+                        </p>
+                      )}
 
                       <button
                         disabled={togglingTeam === t || !groupSet(t).leader}
@@ -470,9 +500,17 @@ export default function GroupsPage() {
                     {[...editSet].length === 0 && <p className="text-[11px] text-muted">مفيش أعضاء — أضف مناديب.</p>}
                     {[...editSet].map((id) => (
                       <div key={id} className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5">
-                        <span className="min-w-0 flex-1 truncate text-sm text-ink">{nameOf(id)}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm text-ink">{nameOf(id)}
+                          {otherTeamsOf(id, t).length > 0 && (
+                            <span className="mr-1 text-[10px] text-amber-500">
+                              {addMode[id] === "move"
+                                ? `(هينتقل من «${otherTeamsOf(id, t).join("، ")}»)`
+                                : `(كمان في «${otherTeamsOf(id, t).join("، ")}»)`}
+                            </span>
+                          )}
+                        </span>
                         <button
-                          onClick={() => { if (confirm(`تشيل «${nameOf(id)}» من مجموعة «${t}»؟`)) setEditSet((s) => { const n = new Set(s); n.delete(id); return n; }); }}
+                          onClick={() => { if (confirm(`تشيل «${nameOf(id)}» من مجموعة «${t}»؟${otherTeamsOf(id, t).length ? ` (هيفضل في «${otherTeamsOf(id, t).join("، ")}»)` : ""}`)) setEditSet((s) => { const n = new Set(s); n.delete(id); return n; }); }}
                           className="flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-bold text-muted transition hover:border-danger/50 hover:text-danger" title="شيل من المجموعة">
                           <Trash2 size={12} /> شيل
                         </button>
@@ -494,15 +532,36 @@ export default function GroupsPage() {
                       </div>
                       <div className="flex max-h-52 flex-col gap-1 overflow-y-auto">
                         {addableShown.length === 0 && <p className="py-2 text-center text-[11px] text-muted">مفيش مناديب.</p>}
-                        {addableShown.map((a) => (
-                          <button key={a.id} onClick={() => setEditSet((s) => new Set(s).add(a.id))}
-                            className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-right transition hover:bg-surface">
-                            <span className="min-w-0 flex-1 truncate text-xs text-ink">{a.username}
-                              {a.team && a.team !== t && <span className="mr-1 text-[10px] text-amber-500">(في «{a.team}» — هينتقل)</span>}
-                            </span>
-                            <Plus size={14} className="shrink-0 text-primary" />
-                          </button>
-                        ))}
+                        {addableShown.map((a) => {
+                          const others = otherTeamsOf(a.id, t);
+                          const add = (mode: "move" | "also") => {
+                            setEditSet((s) => new Set(s).add(a.id));
+                            setAddMode((m) => ({ ...m, [a.id]: mode }));
+                          };
+                          // 👥 في مجموعة تانية ⇒ يختار: ينقله (زي الأول) ولا يضيفه كمان (يفضل في الاتنين)
+                          if (others.length > 0 && memberships) {
+                            return (
+                              <div key={a.id} className="flex items-center gap-1.5 rounded-lg px-2 py-1.5">
+                                <span className="min-w-0 flex-1 truncate text-xs text-ink">{a.username}
+                                  <span className="mr-1 text-[10px] text-amber-500">(في «{others.join("، ")}»)</span>
+                                </span>
+                                <button onClick={() => add("move")}
+                                  className="shrink-0 rounded-md border border-amber-500/50 px-2 py-0.5 text-[10px] font-bold text-amber-500">انقله</button>
+                                <button onClick={() => add("also")}
+                                  className="shrink-0 rounded-md bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">ضيفه كمان</button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <button key={a.id} onClick={() => add("move")}
+                              className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-right transition hover:bg-surface">
+                              <span className="min-w-0 flex-1 truncate text-xs text-ink">{a.username}
+                                {a.team && a.team !== t && <span className="mr-1 text-[10px] text-amber-500">(في «{a.team}» — هينتقل)</span>}
+                              </span>
+                              <Plus size={14} className="shrink-0 text-primary" />
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
