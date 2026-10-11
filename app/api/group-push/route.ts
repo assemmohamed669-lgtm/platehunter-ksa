@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   //    «*» عشان لو SQL المفاتيح الجديدة لسه ماتشغّلش الطلب مايفشلش (ويفضل زي الأول).
   const { data: gs } = await supabaseAdmin
     .from("group_settings").select("*").eq("team", team).maybeSingle();
-  const s = gs as { notify_enabled?: boolean; finds_leader_only?: boolean; leader_id?: string | null } | null;
+  const s = gs as { notify_enabled?: boolean; finds_leader_only?: boolean; leader_id?: string | null; notify_member_ids?: string[] | null } | null;
   if (!shouldSendFind(s)) {
     return NextResponse.json({ ok: true, sent: 0, skipped: "notifications-off" });
   }
@@ -52,6 +52,8 @@ export async function POST(req: NextRequest) {
     leaderId: s?.leader_id ?? null,
     notifyEnabled: s?.notify_enabled !== false,
     findsLeaderOnly: s?.finds_leader_only === true && !!s?.leader_id,
+    // 🧭 «إدارة مجموعتي»: أعضاء المسئول اختارهم (null = الكل زي الأول)
+    notifyMemberIds: Array.isArray(s?.notify_member_ids) ? s.notify_member_ids : null,
   });
   if (ids.length === 0) return NextResponse.json({ ok: true, sent: 0 });
 

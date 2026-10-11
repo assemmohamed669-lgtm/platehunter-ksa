@@ -64,6 +64,25 @@ export default function AppMenu({
   // نفس الدالة اللي الصفحة نفسها بتتحرس بيها، فمستحيل القايمة والحارس يختلفوا.
   const [canTrial, setCanTrial] = useState(false);
   const [menuSuper, setMenuSuper] = useState(false);
+  /**
+   * 🧭 «إدارة مجموعتي» — بتظهر بس لمسئول مجموعة السوبر أدمن فاتحله الصفحة (leader_page_enabled). أي غلط ⇒ مابتظهرش.
+   */
+  const [leadsGroup, setLeadsGroup] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const uid = data.session?.user?.id;
+        if (!uid) return;
+        const { data: gs, error } = await supabase.from("group_settings").select("team, leader_page_enabled").eq("leader_id", uid);
+        if (!alive || error) return;
+        setLeadsGroup(((gs ?? []) as { leader_page_enabled?: boolean }[]).some((g) => g.leader_page_enabled === true));
+      } catch { /* مابتظهرش */ }
+    })();
+    return () => { alive = false; };
+  }, [open]);
   // إيميل المندوب — بيظهر فوق في القائمة عشان كل مندوب يعرف هو داخل بأنهي حساب.
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
@@ -324,6 +343,12 @@ export default function AppMenu({
               <FileUp size={16} className="text-primary" /> فرز على سجلات المجموعة
             </Link>
             ) : null}
+            {leadsGroup && (
+            <Link href="/my-group" onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold text-ink hover:bg-surface-2 transition">
+              <Users size={16} className="text-primary" /> إدارة مجموعتي
+            </Link>
+            )}
             {/* نشاط المجموعة اليومي — الصفحة نفسها بتتقفل على غير المسئول/الأدمن. */}
             {canOpen("/group-activity") ? (
             <Link href="/group-activity" onClick={() => onOpenChange(false)}

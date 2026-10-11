@@ -25,6 +25,8 @@ export interface GroupLockSettings {
   lock_member_download?: boolean | null;
   lock_member_edit?: boolean | null;
   finds_leader_only?: boolean | null;
+  /** 🧭 «إدارة مجموعتي»: إشعارات المطلوب لأعضاء المسئول اختارهم (فاضي/null = كل الأعضاء). */
+  notify_member_ids?: string[] | null;
 }
 
 export interface MemberLocks { records: boolean; sort: boolean; download: boolean; edit: boolean }
@@ -76,13 +78,16 @@ export function lockedCheckTabs(locks: MemberLocks): Set<"sheet" | "sort"> {
 export function findAlertRecipients(o: {
   finderId: string; mateIds: string[]; leaderId: string | null | undefined;
   notifyEnabled: boolean; findsLeaderOnly: boolean;
+  /** 🧭 أعضاء المسئول اختارهم من «إدارة مجموعتي» — null/مش مبعوت = كل الأعضاء زي الأول. */
+  notifyMemberIds?: string[] | null;
 }): string[] {
   // المسئول لازم يكون لسه من أعضاء المجموعة — لو اتنقل لمجموعة تانية لقطات القديمة ماتوصلوش.
   if (o.findsLeaderOnly) {
     return o.leaderId && o.leaderId !== o.finderId && o.mateIds.includes(o.leaderId) ? [o.leaderId] : [];
   }
   if (!o.notifyEnabled) return [];
-  return o.mateIds.filter((id) => id !== o.finderId);
+  const chosen = o.notifyMemberIds ? new Set(o.notifyMemberIds) : null;
+  return o.mateIds.filter((id) => id !== o.finderId && (!chosen || chosen.has(id)));
 }
 
 /** اللقطة تتسجّل وتتبعت؟ — الإشعار العادي مفتوح (الافتراضي) أو «للمسئول بس» مفتوح. */
@@ -94,6 +99,7 @@ export function shouldSendFind(s: GroupLockSettings | null | undefined): boolean
 /** لقطة زميل وصلت جوّه التطبيق — تظهر لي؟ («للمسئول بس» ⇒ للمسئول بس؛ السيرفر بيمنعها كمان.) */
 export function shouldShowFind(s: GroupLockSettings | null | undefined, myId: string): boolean {
   if (s?.finds_leader_only === true && s.leader_id) return s.leader_id === myId;
+  if (Array.isArray(s?.notify_member_ids)) return s.notify_member_ids.includes(myId);
   return true;
 }
 
