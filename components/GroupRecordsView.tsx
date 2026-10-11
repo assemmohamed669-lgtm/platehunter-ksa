@@ -12,7 +12,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Users, Search, MapPin, AlertCircle, Pencil, Check, X, ZoomIn, ZoomOut, Trash2 } from "lucide-react";
+import { ChevronLeft, Users, Search, MapPin, AlertCircle, Pencil, Check, X, ZoomIn, ZoomOut, Trash2, FileSpreadsheet } from "lucide-react";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import EditableTextCell from "@/components/EditableTextCell";
 import { NOTES_KEY, TYPE_KEY } from "@/lib/fieldCheckEdit";
@@ -21,6 +21,8 @@ import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { dedupeDuplicateRows } from "@/lib/fieldCheck";
 import { canDeleteGroupRecord, type GroupViewer } from "@/lib/groupAdmin";
+import { teamScopeFilter, authorLabel } from "@/lib/groupRecordScope";
+import { buildExcelBlob, shareExcelBlob } from "@/lib/excel";
 
 const PAGE = 100;
 
@@ -44,8 +46,20 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
   const router = useRouter();
   const [ready, setReady] = useState<null | "ok" | "no-team">(null);
   const [team, setTeam] = useState("");
+  const teamRef = useRef("");
   const [names, setNames] = useState<Record<string, string>>({});
   const memberIdsRef = useRef<string[]>([]);
+  const [memberCount, setMemberCount] = useState(0);
+  /**
+   * 👥 «سجلات فلان» — المالك (١١ أكتوبر ٢٠٢٦): «لما يحبو يفصلو الشغل وقالو هياخد سجلاته ... نقدر نطلع فقط سجلاته».
+   * كل اللي ليهم شغل في المجموعة، حتى اللي مشيوا (`my_team_record_authors`).
+   */
+  const [authors, setAuthors] = useState<{ id: string; username: string | null; is_member: boolean }[]>([]);
+  const [author, setAuthor] = useState("");
+  const authorRef = useRef("");
+  const [exporting, setExporting] = useState(false);
+  /** «سجلات فلان» للمسئول والأدمن بس (المالك: «موجودين ل مسئول المجموعه»). */
+  const [isLeader, setIsLeader] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,15 +97,23 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
       // ⚠️ chassis_records مفتاحها local_id (مفيش عمود id) — الاختيار الغلط كان
       //    بيفشل الاستعلام فتاب «شاص» يطلع فاضي.
       const idCol = isCh ? "local_id" : "id";
-      let q = supabase.from(tbl)
-        .select(`${idCol}, ${pcol}, ${scol}, maps_link, checked_at, agent_id${isCh ? "" : ", extra"}`, reset ? { count: "exact" } : {})
-        .in("agent_id", ids)
-        .order("checked_at", { ascending: false })
-        .order(idCol, { ascending: false })   // فاصل ثابت — يمنع تكرار/تخطّي صفوف بين الصفحات
-        .range(offset, offset + PAGE - 1);
-      const term = searchRef.current.trim();
-      if (term) q = q.ilike(pcol, `%${term}%`);
-      const { data, count, error } = await q;
+      // 👥 المجموعة اللي شغّال لها بس: المختوم بيها (حتى لو صاحبه مشي) + القديم لأعضائها — من غير خلط مع مجموعة تانية.
+      //    السيرفر رفض الفلتر لأي سبب ⇒ الطريقة القديمة (أعضاء المجموعة) — الصفحة ماتقفش.
+      const build = (scoped: boolean) => {
+        let q = supabase.from(tbl)
+          .select(`${idCol}, ${pcol}, ${scol}, maps_link, checked_at, agent_id${isCh ? "" : ", extra"}`, reset ? { count: "exact" } : {});
+        q = scoped ? q.or(teamScopeFilter(teamRef.current, ids)) : q.in("agent_id", ids);
+        if (authorRef.current) q = q.eq("agent_id", authorRef.current);
+        q = q
+          .order("checked_at", { ascending: false })
+          .order(idCol, { ascending: false })   // فاصل ثابت — يمنع تكرار/تخطّي صفوف بين الصفحات
+          .range(offset, offset + PAGE - 1);
+        const term = searchRef.current.trim();
+        if (term) q = q.ilike(pcol, `%${term}%`);
+        return q;
+      };
+      let { data, count, error } = await build(true);
+      if (error && gen === genRef.current) ({ data, count, error } = await build(false));
       if (gen !== genRef.current) return;   // اتبدّل المصدر/البحث وإحنا مستنيين → ارمِ النتيجة
       if (error) { setErr("تعذّر تحميل السجلات. جرّب تاني."); return; }
       setErr(null);
@@ -119,13 +141,23 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
       const t = (me as { team?: string | null } | null)?.team ?? null;
       setViewer({ id: userId, role: (me as { role?: string | null } | null)?.role ?? null, team: t });
       if (!t) { setReady("no-team"); return; }
-      setTeam(t);
+      setTeam(t); teamRef.current = t;
       // أعضاء المجموعة عبر دالة security definer — قراءة profiles مباشرة بترجّع
       // المندوب نفسه بس (RLS)، فالمشاركة ماكانتش بتحصل.
-      const { data: mem } = await supabase.rpc("my_team_members");
-      const members = (mem ?? []) as { id: string; username: string }[];
+      // 👥 + اللي مشيوا وليهم شغل فيها (لفلتر «سجلات فلان») — الدالة لسه ماتشغّلتش ⇒ الأعضاء زي الأول.
+      const ra = await supabase.rpc("my_team_record_authors");
+      const list = !ra.error && ra.data
+        ? (ra.data as { id: string; username: string | null; is_member: boolean }[])
+        : (((await supabase.rpc("my_team_members")).data ?? []) as { id: string; username: string }[]).map((m) => ({ ...m, is_member: true }));
+      const members = list.filter((m) => m.is_member);
       memberIdsRef.current = members.map((m) => m.id);
-      setNames(Object.fromEntries(members.map((m) => [m.id, m.username])));
+      setMemberCount(members.length);
+      setAuthors(list);
+      try {
+        const { data: gs } = await supabase.from("group_settings").select("leader_id").eq("team", t).maybeSingle();
+        setIsLeader((gs as { leader_id?: string | null } | null)?.leader_id === userId);
+      } catch { /* مش مسئول */ }
+      setNames(Object.fromEntries(list.map((m) => [m.id, m.username ?? ""])));
       setReady("ok");
       void load(true);
     })();
@@ -168,6 +200,43 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
   }
 
   function runSearch() { genRef.current++; searchRef.current = search; setRows([]); setTotal(null); setHasMore(true); setErr(null); loadedRef.current = 0; void load(true); }
+  function chooseAuthor(id: string) {
+    setAuthor(id); authorRef.current = id;
+    genRef.current++; setRows([]); setTotal(null); setHasMore(true); setErr(null); loadedRef.current = 0; void load(true);
+  }
+
+  /** 👥 سجلات المندوب المختار في المجموعة دي كلها — إكسيل (على دفعات ١٠٠٠ عشان حد Supabase). */
+  async function exportAuthor() {
+    if (!authorRef.current || exporting) return;
+    setExporting(true);
+    try {
+      const isCh = sourceRef.current === "chassis";
+      const all: Record<string, unknown>[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from(isCh ? "chassis_records" : "field_checks")
+          .select("*")
+          .or(teamScopeFilter(teamRef.current, memberIdsRef.current))
+          .eq("agent_id", authorRef.current)
+          .order("checked_at", { ascending: true })
+          .range(from, from + 999);
+        if (error) { setErr("تعذّر التحميل: " + error.message); return; }
+        all.push(...((data ?? []) as Record<string, unknown>[]));
+        if (!data || data.length < 1000) break;
+      }
+      const who = names[authorRef.current] || "مندوب";
+      const rowsOut = all.map((r) => ({
+        [isCh ? "رقم الشاص" : "رقم اللوحة"]: String(r[isCh ? "chassis" : "plate"] ?? ""),
+        ...((r.extra as Record<string, string>) ?? {}),
+        "الطريقة": String(r[isCh ? "vehicle_type" : "method"] ?? ""),
+        "GPS": String(r.maps_link ?? ""),
+        "التاريخ": fmtDate(String(r.checked_at ?? "")),
+        "المندوب": who,
+      }));
+      const name = `سجلات ${who} - ${teamRef.current}.xlsx`;
+      await shareExcelBlob(buildExcelBlob(rowsOut, `سجلات ${who}`), name, name);
+    } catch { /* المندوب لغى المشاركة */ }
+    finally { setExporting(false); }
+  }
   function switchSource(s: Source) {
     if (s === source) return;
     genRef.current++;
@@ -189,13 +258,13 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
           </button>
           <div className="text-center">
             <h1 className="flex items-center justify-center gap-1.5 text-lg font-bold text-ink"><Users size={18} /> سجلات المجموعة</h1>
-            {ready === "ok" && <p className="text-[11px] text-muted">مجموعة «{team}» — {Object.keys(names).length} مندوب</p>}
+            {ready === "ok" && <p className="text-[11px] text-muted">مجموعة «{team}» — {memberCount} مندوب</p>}
           </div>
           <span className="w-[52px]" />
         </div>
         )}
         {embedded && ready === "ok" && (
-          <p className="text-center text-[11px] text-muted">مجموعة «{team}» — {Object.keys(names).length} مندوب</p>
+          <p className="text-center text-[11px] text-muted">مجموعة «{team}» — {memberCount} مندوب</p>
         )}
 
         {ready === "no-team" && (
@@ -215,6 +284,23 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
                 </button>
               ))}
             </div>
+
+            {/* 👥 «سجلات فلان» — كل اللي ليهم شغل في المجموعة (حتى اللي مشيوا) + تحميل سجلاته إكسيل */}
+            {authors.length > 1 && (isLeader || viewer.role === "admin") && (
+              <div className="flex items-center gap-1.5">
+                <select value={author} onChange={(e) => chooseAuthor(e.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-2 py-2 text-xs text-ink">
+                  <option value="">كل المجموعة</option>
+                  {authors.map((a) => <option key={a.id} value={a.id}>سجلات {authorLabel(a)}</option>)}
+                </select>
+                {author && (
+                  <button onClick={() => void exportAuthor()} disabled={exporting}
+                    className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-600/15 px-3 py-2 text-xs font-bold text-emerald-600 disabled:opacity-50">
+                    <FileSpreadsheet size={14} /> {exporting ? "جارٍ…" : "إكسيل"}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* العدد الإجمالي */}
             <div className="rounded-2xl border border-primary/40 bg-primary/10 p-3 text-center">

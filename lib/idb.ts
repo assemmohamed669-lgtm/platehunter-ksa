@@ -3,6 +3,7 @@
  * Stores audio blobs, GPS data, plate text, and sync status.
  * No external dependency needed — uses raw IDB API.
  */
+import { loadActiveTeam } from "./activeTeam";
 
 const DB_NAME = "platehunter";
 // v2 adds uploaded_files, v3 adds field_check, v4 adds voice_sessions,
@@ -102,6 +103,11 @@ export interface FieldCheckEntry {
    * التصدير، التعديل يوصل للسجل المحفوظ كمان مش يفضل في الذاكرة بس.
    */
   srcId?: string;
+  /**
+   * 👥 المجموعة اللي السجل اتعمل لها (وقت التشييك — `lib/activeTeam.ts`). بيتبعت للسيرفر وبيفضل عليه حتى لو
+   * المندوب سابها (قرار المالك ١١ أكتوبر ٢٠٢٦). فاضي = قديم أو من غير مجموعة (السيرفر بيختمه بنفسه).
+   */
+  team?: string;
 }
 
 /**
@@ -511,13 +517,23 @@ export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): P
 // =====================================================================
 
 /** Add or overwrite one field-check entry (put by id). */
-async function putFieldChecksOnce(entries: FieldCheckEntry[]): Promise<void> {
+async function putFieldChecksOnce(entries: FieldCheckEntry[], stampTeam: string | null = null): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     // `db.transaction` على اتصال ميت بيرمي على طول — جوّه الوعد فبيتحوّل لرفض
     const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
     const store = tx.objectStore(FIELD_CHECK_STORE);
-    for (const e of entries) store.put(e);
+    for (const e of entries) {
+      // الحفظ بالجملة (الاسترجاع) ومن غير مجموعة حالية ⇒ زي الأول بالحرف (put بس).
+      if (e.team !== undefined || stampTeam === null) { store.put(e); continue; }
+      // 👥 من غير مجموعة في الطلب: تعديل سجل موجود ⇒ مجموعته زي ما هي؛ سجل **جديد** ⇒ المجموعة اللي شغّال لها.
+      const g = store.get(e.id);
+      g.onsuccess = () => {
+        const prev = g.result as FieldCheckEntry | undefined;
+        const team = prev ? prev.team : (stampTeam ?? undefined);
+        store.put(team ? { ...e, team } : e);
+      };
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     // الحصّة خلصت أو الاتصال اتقطع في النص ⇒ `abort` — كان بيعلّق للأبد
@@ -526,7 +542,8 @@ async function putFieldChecksOnce(entries: FieldCheckEntry[]): Promise<void> {
 }
 
 export async function saveFieldCheckEntry(entry: FieldCheckEntry): Promise<void> {
-  return withFreshRetry(() => putFieldChecksOnce([entry]));
+  // 👥 السجل الجديد بيتختم بالمجموعة اللي المندوب شغّال لها دلوقتي (وقت التشييك مش وقت الرفع).
+  return withFreshRetry(() => putFieldChecksOnce([entry], loadActiveTeam()));
 }
 
 /**

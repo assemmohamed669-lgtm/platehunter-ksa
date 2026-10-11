@@ -21,6 +21,7 @@ import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 import { voiceProNames } from "@/lib/voiceProName";
+import ActiveTeamSwitcher from "@/components/ActiveTeamSwitcher";
 
 // رقم واتساب الأدمن بصيغة دولية بدون + أو 00
 const ADMIN_WHATSAPP = "971542482545";
@@ -269,6 +270,8 @@ export default function AppMenu({
           {/* ── إحصائيات سريعة ── */}
           <section className="border-t border-border pt-3">
             <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-muted"><BarChart3 size={14} /> إحصائيات</div>
+            {/* 👥 «شغّال لـ» — بيظهر بس للي في أكتر من مجموعة */}
+            <ActiveTeamSwitcher />
             <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface-2 p-2 text-center">
               {locks.records ? (
                 <div className="rounded-lg py-1"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></div>

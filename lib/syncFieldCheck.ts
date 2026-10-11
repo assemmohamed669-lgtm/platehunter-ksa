@@ -20,7 +20,33 @@ function serverRowOf(uid: string, e: FieldCheckEntry) {
     maps_link: e.mapsLink ?? null,
     extra: e.row ?? {},
     checked_at: e.checkedAt,
+    // 👥 المجموعة اللي السجل اتعمل لها — بس لو معروفة. من غيرها السيرفر بيختمه بنفسه، وإعادة رفع سجل قديم
+    //    مابتمسحش ختمه (multi-group-3-active.sql).
+    ...(e.team ? { team: e.team } : {}),
   };
+}
+
+/**
+ * 👥 الرفع على دفعات: السيرفر بيرفض دفعة صفوفها مش بنفس الأعمدة (PGRST102)، فاللي ليه مجموعة واللي من غيرها
+ * بيترفعوا في طلبين. أول غلط بيرجع زي ما هو (الدفعة كلها بتتعاد — الرفع بالمفتاح مابيكرّرش).
+ */
+export function splitByTeam<T extends { team?: string }>(rows: T[]): T[][] {
+  const without = rows.filter((r) => !r.team);
+  const withTeam = rows.filter((r) => !!r.team);
+  return [without, withTeam].filter((p) => p.length > 0);
+}
+
+async function upsertChunk(uid: string, chunk: FieldCheckEntry[]): Promise<{ error: unknown; status: number }> {
+  let last = { error: null as unknown, status: 201 };
+  for (const part of splitByTeam(chunk)) {
+    const { error, status } = await supabase.from("field_checks").upsert(
+      part.map((e) => serverRowOf(uid, e)),
+      { onConflict: "local_id" }
+    );
+    if (error) return { error, status };
+    last = { error: null, status };
+  }
+  return last;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,10 +196,7 @@ export async function pushPendingFieldChecksBatched(
 
   for (let i = 0; i < pending.length; ) {
     const chunk = pending.slice(i, i + cur);
-    const { error, status } = await supabase.from("field_checks").upsert(
-      chunk.map((e) => serverRowOf(uid, e)),
-      { onConflict: "local_id" }
-    );
+    const { error, status } = await upsertChunk(uid, chunk);
     if (!error) {
       const ids = chunk.map((e) => e.id);
       synced += ids.length;
@@ -291,6 +314,8 @@ export function serverRowToEntry(row: unknown, agentId: string): FieldCheckEntry
     mapsLink: (r.maps_link as string) ?? undefined,
     checkedAt: String(r.checked_at ?? ""),
     synced: true,
+    // 👥 مجموعة السجل زي ما هي على السيرفر — عشان أي تعديل بعدين يرجع بنفس الختم.
+    ...(typeof r.team === "string" && r.team ? { team: r.team } : {}),
   };
 }
 

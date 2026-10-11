@@ -270,8 +270,17 @@ export async function POST(req: NextRequest) {
       case "setTeam": {
         // مجموعة المندوب — اللي نفس الـteam بيوصلهم لقطات بعض لحظيًا. فاضي = بلا مجموعة.
         const team = typeof body.team === "string" && body.team.trim() ? body.team.trim() : null;
-        const { error } = await supabaseAdmin.from("profiles").update({ team }).eq("id", agentId);
-        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        // 👥 النقل/الشيل على السيرفر (docs/sql/multi-group-3-active.sql): عضويته القديمة بتتشال وشغله اللي من غير
+        //    ختم بيتختم بالمجموعة اللي سابها (قرار المالك ١١ أكتوبر ٢٠٢٦). الدالة لسه ماتشغّلتش ⇒ زي الأول بالحرف
+        //    (تريجر المرحلة ١ بيعمل نفس الحاجة).
+        const mv = await supabaseAdmin.rpc("move_agent_team", { p_agent: agentId, p_team: team });
+        if (mv.error) {
+          if (!/move_agent_team|function|PGRST202/i.test(mv.error.message + " " + (mv.error.code ?? ""))) {
+            return NextResponse.json({ error: mv.error.message }, { status: 400 });
+          }
+          const { error } = await supabaseAdmin.from("profiles").update({ team }).eq("id", agentId);
+          if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        }
         return NextResponse.json({ ok: true });
       }
 

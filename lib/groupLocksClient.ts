@@ -7,6 +7,7 @@ import {
   memberLocks, NO_LOCKS, loadCachedLocks, saveCachedLocks, GROUP_LOCKS_EVENT as EVENT,
   type GroupLockSettings, type MemberLocks,
 } from "./groupLocks";
+import { saveActiveTeam } from "./activeTeam";
 
 // ── الجلب من السيرفر ───────────────────────────────────────────────────────
 
@@ -26,6 +27,7 @@ export function refreshMemberLocks(force = false): Promise<MemberLocks | null> {
       const { data: prof, error } = await supabase.from("profiles").select("team, role, is_super").eq("id", uid).single();
       if (error || !prof) return null;
       const p = prof as { team?: string | null; role?: string | null; is_super?: boolean | null };
+      saveActiveTeam(p.team ?? null);   // 👥 المجموعة اللي شغّال لها — السجل الجديد بيتختم بيها (lib/activeTeam.ts)
       let s: GroupLockSettings | null = null;
       if (p.team) {
         // «*» مش أسماء الأعمدة: لو SQL الأعمدة الجديدة لسه ماتشغّلش، الطلب مايفشلش (ومفيش قفل).
@@ -56,6 +58,7 @@ function watchAuthOnce(): void {
     supabase.auth.onAuthStateChange((ev) => {
       if (ev === "SIGNED_OUT") {
         saveCachedLocks(NO_LOCKS);
+        saveActiveTeam(null);
         lastAt = 0;
         try { window.dispatchEvent(new CustomEvent<MemberLocks>(EVENT, { detail: NO_LOCKS })); } catch { /* */ }
       } else if (ev === "SIGNED_IN") {

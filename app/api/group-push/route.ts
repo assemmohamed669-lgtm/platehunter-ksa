@@ -41,8 +41,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, sent: 0, skipped: "notifications-off" });
   }
 
-  const { data: mates } = await supabaseAdmin
-    .from("profiles").select("id").eq("team", team).neq("id", uid);
+  // 👥 أعضاء المجموعة من جدول العضوية (مندوب ممكن يبقى في أكتر من مجموعة) — لو لسه مش موجود ⇒ زي الأول.
+  const tm = await supabaseAdmin.from("team_members").select("agent_id").eq("team", team).neq("agent_id", uid);
+  const mates = tm.error
+    ? (await supabaseAdmin.from("profiles").select("id").eq("team", team).neq("id", uid)).data
+    : (tm.data ?? []).map((r: { agent_id: string }) => ({ id: r.agent_id }));
   const ids = findAlertRecipients({
     finderId: uid,
     mateIds: (mates ?? []).map((m: { id: string }) => m.id),
