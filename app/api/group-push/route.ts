@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sendPush, fcmConfigured } from "@/lib/fcm";
+import { findAlertRecipients, shouldSendFind } from "@/lib/groupLocks";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
@@ -30,15 +31,24 @@ export async function POST(req: NextRequest) {
   if (!team || !fcmConfigured()) return NextResponse.json({ ok: true, sent: 0 });
 
   // إشعارات المجموعة مقفولة من صفحة المجموعات؟ مانبعتش. (غياب الصف = مفتوح.)
+  // 🔒 «إشعار المطلوب للمسئول بس» (المالك ١١ أكتوبر ٢٠٢٦) ⇒ المسئول لوحده، حتى لو الإشعار العادي مقفول.
+  //    «*» عشان لو SQL المفاتيح الجديدة لسه ماتشغّلش الطلب مايفشلش (ويفضل زي الأول).
   const { data: gs } = await supabaseAdmin
-    .from("group_settings").select("notify_enabled").eq("team", team).maybeSingle();
-  if ((gs as { notify_enabled?: boolean } | null)?.notify_enabled === false) {
+    .from("group_settings").select("*").eq("team", team).maybeSingle();
+  const s = gs as { notify_enabled?: boolean; finds_leader_only?: boolean; leader_id?: string | null } | null;
+  if (!shouldSendFind(s)) {
     return NextResponse.json({ ok: true, sent: 0, skipped: "notifications-off" });
   }
 
   const { data: mates } = await supabaseAdmin
     .from("profiles").select("id").eq("team", team).neq("id", uid);
-  const ids = (mates ?? []).map((m: { id: string }) => m.id);
+  const ids = findAlertRecipients({
+    finderId: uid,
+    mateIds: (mates ?? []).map((m: { id: string }) => m.id),
+    leaderId: s?.leader_id ?? null,
+    notifyEnabled: s?.notify_enabled !== false,
+    findsLeaderOnly: s?.finds_leader_only === true && !!s?.leader_id,
+  });
   if (ids.length === 0) return NextResponse.json({ ok: true, sent: 0 });
 
   const { data: toks } = await supabaseAdmin

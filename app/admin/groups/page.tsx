@@ -35,7 +35,28 @@ interface GroupSet {
   sharedData: boolean;
   sharedCheck: boolean;
   activityReport: boolean;
+  /** 🔒 صلاحيات الأعضاء (١١ أكتوبر ٢٠٢٦) — كلها مقفولة افتراضياً ومحتاجة مسئول (`lib/groupLocks.ts`). */
+  recordsLeaderOnly: boolean;
+  lockRecords: boolean;
+  lockSort: boolean;
+  lockDownload: boolean;
+  lockEdit: boolean;
+  findsLeaderOnly: boolean;
 }
+
+/** مفاتيح «صلاحيات الأعضاء» بالترتيب اللي بتظهر بيه — [المفتاح, العنوان وهو مفتوح, العنوان وهو مقفول, الشرح]. */
+const MEMBER_LOCKS: [keyof GroupSet, string, string, string][] = [
+  ["findsLeaderOnly", "إشعار المطلوب للمسئول بس ✓", "إشعار المطلوب للمسئول بس — مقفول",
+    "أي سيارة مطلوبة عضو يلاقيها بتوصل للمسئول بس في نفس اللحظة (في شريط إشعارات الموبايل)، حتى لو العضو ماصدّرهاش."],
+  ["recordsLeaderOnly", "السجلات للمسئول بس ✓", "السجلات للمسئول بس — مقفول",
+    "المسئول بيشوف سجلات الكل، وكل عضو مايشوفش سجلات زمايله ولا المسئول."],
+  ["lockRecords", "الأعضاء مايشوفوش سجلاتهم ✓", "الأعضاء مايشوفوش سجلاتهم — مقفول",
+    "صفحات وقوايم السجلات بتستخبى عن الأعضاء — بيشيّكوا ويصدّروا بس. سجلاتهم مابتتمسحش وبتوصل للمسئول."],
+  ["lockSort", "الأعضاء مايفرزوش ✓", "الأعضاء مايفرزوش — مقفول", "الفرز وفرز المجموعة والمطلوب مقفولين عن الأعضاء."],
+  ["lockDownload", "الأعضاء مايحمّلوش السجلات ✓", "الأعضاء مايحمّلوش السجلات — مقفول", "تحميل ومشاركة السجلات مقفولين عن الأعضاء."],
+  ["lockEdit", "الأعضاء مايعدّلوش السجلات ✓", "الأعضاء مايعدّلوش السجلات — مقفول", "تعديل ومسح السجلات مقفولين عن الأعضاء."],
+];
+const NO_MEMBER_LOCKS = { recordsLeaderOnly: false, lockRecords: false, lockSort: false, lockDownload: false, lockEdit: false, findsLeaderOnly: false };
 
 /** أي انتظار مالوش نهاية = شاشة واقفة عند المندوب. بنحط سقف زمني ونقول السبب. */
 function withTimeout<T>(p: PromiseLike<T>, ms: number, what: string): Promise<T> {
@@ -105,12 +126,17 @@ export default function GroupsPage() {
           team: string; notify_enabled: boolean; share_records_enabled: boolean;
           leader_id: string | null; shared_data_enabled: boolean; shared_check_enabled?: boolean;
           activity_report_enabled?: boolean;
+          records_leader_only?: boolean; lock_member_records?: boolean; lock_member_sort?: boolean;
+          lock_member_download?: boolean; lock_member_edit?: boolean; finds_leader_only?: boolean;
         }>) {
           m[r.team] = {
             notify: r.notify_enabled, share: r.share_records_enabled,
             leader: r.leader_id ?? null, sharedData: !!r.shared_data_enabled,
             sharedCheck: !!r.shared_check_enabled,
             activityReport: !!r.activity_report_enabled,
+            recordsLeaderOnly: !!r.records_leader_only, lockRecords: !!r.lock_member_records,
+            lockSort: !!r.lock_member_sort, lockDownload: !!r.lock_member_download,
+            lockEdit: !!r.lock_member_edit, findsLeaderOnly: !!r.finds_leader_only,
           };
         }
         setSettings(m);
@@ -140,7 +166,7 @@ export default function GroupsPage() {
   // الافتراضي: الإشعارات والمشاركة مفتوحين (زي ما كانوا)، و«داتا المجموعة»
   // **مقفولة** ومن غير مسئول — فمافيش مجموعة بتتأثر من غير قرار المالك.
   const groupSet = (t: string): GroupSet =>
-    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false, sharedCheck: false, activityReport: false };
+    settings[t] ?? { notify: true, share: true, leader: null, sharedData: false, sharedCheck: false, activityReport: false, ...NO_MEMBER_LOCKS };
 
   /** بيحفظ أي تغيير في مفاتيح المجموعة (تفاؤلي — بيرجع لو فشل). */
   async function saveGroupSet(team: string, next: GroupSet) {
@@ -154,6 +180,8 @@ export default function GroupsPage() {
           team, notifyEnabled: next.notify, shareRecordsEnabled: next.share,
           leaderId: next.leader, sharedDataEnabled: next.sharedData, sharedCheckEnabled: next.sharedCheck,
           activityReportEnabled: next.activityReport,
+          recordsLeaderOnly: next.recordsLeaderOnly, lockMemberRecords: next.lockRecords, lockMemberSort: next.lockSort,
+          lockMemberDownload: next.lockDownload, lockMemberEdit: next.lockEdit, findsLeaderOnly: next.findsLeaderOnly,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "فشل الحفظ");
@@ -354,6 +382,7 @@ export default function GroupsPage() {
                             sharedData: leader ? groupSet(t).sharedData : false,
                             sharedCheck: leader ? groupSet(t).sharedCheck : false,
                             activityReport: leader ? groupSet(t).activityReport : false,
+                            ...(leader ? {} : NO_MEMBER_LOCKS),
                           });
                         }}
                         className="mb-2 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink">
@@ -407,6 +436,32 @@ export default function GroupsPage() {
                         }`}>
                         {groupSet(t).activityReport ? "تقرير النشاط مفتوح ✓" : "تقرير النشاط مقفول"}
                       </button>
+                    </div>
+
+                    {/* 🔒 صلاحيات الأعضاء — كل مفتاح لوحده، مقفولة افتراضياً، والمسئول نفسه مابيتقفلش عليه حاجة. */}
+                    <div className="rounded-lg border border-border bg-surface-2 px-2.5 py-2">
+                      <p className="text-xs font-bold text-ink">صلاحيات الأعضاء</p>
+                      <p className="mb-2 text-[10px] leading-relaxed text-muted">
+                        {groupSet(t).leader
+                          ? `على كل الأعضاء ما عدا المسئول «${nameOf(groupSet(t).leader as string)}».`
+                          : "حدّد مسئول المجموعة الأول (فوق)."}
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        {MEMBER_LOCKS.map(([key, onLabel, offLabel, help]) => (
+                          <div key={key}>
+                            <button
+                              disabled={togglingTeam === t || !groupSet(t).leader}
+                              onClick={() => void saveGroupSet(t, { ...groupSet(t), [key]: !groupSet(t)[key] })}
+                              title={groupSet(t).leader ? "" : "حدّد المسئول الأول"}
+                              className={`w-full rounded-full px-3 py-1.5 text-[11px] font-bold transition disabled:opacity-40 ${
+                                groupSet(t)[key] ? "bg-green-600 text-white" : "border border-border bg-surface text-muted"
+                              }`}>
+                              {groupSet(t)[key] ? onLabel : offLabel}
+                            </button>
+                            <p className="mt-0.5 px-1 text-[10px] leading-relaxed text-muted">{help}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
 

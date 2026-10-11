@@ -21,6 +21,8 @@ import CertificateSearch from "@/components/CertificateSearch";
 import DailyCertSort from "@/components/DailyCertSort";
 import { DAILY_CERTS_FOR_ALL } from "@/lib/certDaily";
 import { setCheckTab, onCheckTabChange } from "@/lib/checkTab";
+import { lockedCheckTabs } from "@/lib/groupLocks";
+import { useMemberLocks } from "@/lib/groupLocksClient";
 import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
 import { loadGpsOff, saveGpsOff } from "@/lib/gpsCapture";
 import { buildCombinedCheckIndex, renumberCheckSlots } from "@/lib/checkSheets";
@@ -609,6 +611,16 @@ export default function InstantCheckPage() {
   // النشط صح. مابنفرضش تبويب عند الدخول — التذكّر (localStorage) يفضل شغّال.
   useEffect(() => onCheckTabChange((t) => setMode(t)), []);
   useEffect(() => { setCheckTab(mode); }, [mode]);
+  /**
+   * 🔒 صلاحيات أعضاء المجموعة (المالك ١١ أكتوبر ٢٠٢٦ — `lib/groupLocks.ts`): العضو المقفول عليه السجلات مايشوفش
+   * تبويب «السجلات»، والمقفول عليه الفرز (أو السجلات) مايشوفش «فرز» — بيشيّك ويصدّر بس. التعديل والتحميل جوّه
+   * «السجلات» بيستخبوا لوحدهم. المسئول ومن غير مجموعة: ولا حاجة بتتغيّر.
+   */
+  const memberLocks = useMemberLocks();
+  const lockedTabs = lockedCheckTabs(memberLocks);
+  useEffect(() => {
+    if ((mode === "sheet" || mode === "sort") && lockedCheckTabs(memberLocks).has(mode)) setMode("manual");
+  }, [memberLocks, mode]);
   /**
    * حارس تبويبات المشترك صوت-فقط: تبويبه المحفوظ ممكن يكون واحد من المخفيين
    * (يدوي/كاميرا/شاص) من قبل ما يتقفل عنه — من غير ده الصفحة تفضل فاضية لأن
@@ -4752,7 +4764,8 @@ export default function InstantCheckPage() {
               { key: "chassis", Icon: Barcode, label: "شاص" },
               { key: "sheet", Icon: ClipboardCheck, label: "السجلات" },
             ] as const)
-        ).filter((t) => t.key !== "ptt" || (voiceAllowed !== false && sawtiShown));
+        ).filter((t) => t.key !== "ptt" || (voiceAllowed !== false && sawtiShown))
+          .filter((t) => !lockedTabs.has(t.key as "sheet" | "sort"));
         const cols = tabs.length >= 6 ? "grid-cols-6"
           : tabs.length === 5 ? "grid-cols-5"
           : tabs.length === 4 ? "grid-cols-4"
@@ -4915,7 +4928,7 @@ export default function InstantCheckPage() {
       {/* ── تبويب «فرز» — للمشترك صوت-فقط بس (بديل صفحة الفرز الأساسية) ──
           مابقاش مشروط بملف التشييك: داتا المجموعة ومربع رفعها (لو هو المسئول)
           لازم يوصلوه حتى لو لسه مارفعش ملف تشييك. */}
-      {voiceOnly && mode === "sort" && (
+      {voiceOnly && mode === "sort" && !lockedTabs.has("sort") && (
         <VoiceOnlySort checkTable={checkTable} />
       )}
 
@@ -4937,7 +4950,7 @@ export default function InstantCheckPage() {
           {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
           {mode === "sheet" && recordsScope === "mine" && (
             <div className="flex flex-wrap justify-end gap-2">
-              {recordsLinkedUi ? (
+              {(memberLocks.sort || memberLocks.download) ? null : recordsLinkedUi ? (
                 <button onClick={() => { unlinkRecords(); setRecordsLinkedUi(false); }}
                   className="flex items-center gap-1.5 rounded-lg border border-green-600/40 bg-green-600/10 px-3 py-1.5 text-xs font-bold text-green-700 transition hover:bg-green-600/20"
                   title="سجلاتك مربوطة بخانة الداتا في الفرز — اضغط للفصل">
@@ -6356,8 +6369,8 @@ export default function InstantCheckPage() {
               </>
             ) : (
               <>
-                <button onClick={shareChassisWhatsApp} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Share2 size={14} /> مشاركة واتساب</button>
-                <button onClick={enterChassisEdit} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><Pencil size={14} /> تعديل</button>
+                {!memberLocks.download && <button onClick={shareChassisWhatsApp} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Share2 size={14} /> مشاركة واتساب</button>}
+                {!memberLocks.edit && <button onClick={enterChassisEdit} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><Pencil size={14} /> تعديل</button>}
               </>
             )}
           </div>
@@ -6507,17 +6520,23 @@ export default function InstantCheckPage() {
                           ) : (
                             <span className="inline-flex items-center gap-1.5">
                               {e.plate}
+                              {!memberLocks.edit && (
                               <button onClick={() => { setEditingFieldId(e.id); setEditFieldValue(e.plate); }} className="text-muted hover:text-primary transition" title="تعديل اللوحة">
                                 <Pencil size={12} />
                               </button>
+                              )}
                             </span>
                           )}
                         </td>
                         <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">
-                          <VehicleTypeSelect value={entryType(e)} onChange={(code) => void editFieldEntry(e.id, { type: code })} />
+                          {memberLocks.edit
+                            ? <span>{entryType(e) || "—"}</span>
+                            : <VehicleTypeSelect value={entryType(e)} onChange={(code) => void editFieldEntry(e.id, { type: code })} />}
                         </td>
                         <td className="border-l border-border px-3 py-2 min-w-[120px] text-ink">
-                          <EditableCell value={entryNotes(e)} placeholder="ملاحظة…" onSave={(v) => void editFieldEntry(e.id, { notes: v })} />
+                          {memberLocks.edit
+                            ? <span>{entryNotes(e) || "—"}</span>
+                            : <EditableCell value={entryNotes(e)} placeholder="ملاحظة…" onSave={(v) => void editFieldEntry(e.id, { notes: v })} />}
                         </td>
                         <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(e.row) || "—"}</td>
                         {dynCols.map((h) => (
@@ -6553,11 +6572,11 @@ export default function InstantCheckPage() {
             {/* إظهار وتعديل اللوحات — نافذة تعديل/حذف بتأكيد حفظ */}
             <button onClick={openPlatesEditor}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/5 py-2.5 text-sm font-bold text-primary transition hover:bg-primary/10">
-              <Pencil size={15} /> إظهار وتعديل اللوحات
+              <Pencil size={15} /> {memberLocks.edit ? "إظهار اللوحات" : "إظهار وتعديل اللوحات"}
             </button>
 
-            {/* Export / Share Excel */}
-            <div className="flex gap-2">
+            {/* Export / Share Excel — 🔒 مستخبي عن عضو المجموعة المقفول عليه التحميل */}
+            <div className={`flex gap-2 ${memberLocks.download ? "hidden" : ""}`}>
               <OpenDownloadButton
                 build={() => ({ blob: buildExcelBlob(buildFieldRows(), "التشييك الميداني"), name: `التشييك-الميداني-${Date.now()}.xlsx` })}
                 label="فتح الشيت"
@@ -6666,7 +6685,7 @@ export default function InstantCheckPage() {
                   </div>
                 )}
                 {/* 🗑️ مسح كذا لوحة مع بعض أو يوم كامل — `lib/recordsSelection.ts` (للكل من ٨ أكتوبر ٢٠٢٦) */}
-                <div data-records-bulk className="mt-2 flex flex-col gap-1.5 rounded-xl border border-danger/30 bg-danger/5 p-2">
+                <div data-records-bulk className={`mt-2 flex flex-col gap-1.5 rounded-xl border border-danger/30 bg-danger/5 p-2 ${memberLocks.edit ? "hidden" : ""}`}>
                   <label className="flex items-center gap-2 text-[11px] font-bold text-ink">
                     <CalendarDays size={14} className="shrink-0 text-danger" />
                     <span className="shrink-0">مسح بالتاريخ:</span>
@@ -6729,30 +6748,30 @@ export default function InstantCheckPage() {
                           ref={e.id === firstMatchId ? peFirstHitRef : undefined}
                           className={`border-b border-border ${hit ? "bg-primary/15" : peSel.has(e.id) ? "bg-danger/10" : ""}`}>
                           <td className="border-l border-border p-1 text-center">
-                            <input type="checkbox" checked={peSel.has(e.id)} onChange={() => setPeSel((sel) => toggleSel(sel, e.id))}
+                            <input type="checkbox" checked={peSel.has(e.id)} disabled={memberLocks.edit} onChange={() => setPeSel((sel) => toggleSel(sel, e.id))}
                               aria-label="حدد اللوحة" className="h-4 w-4 accent-danger" />
                           </td>
                           <td className="border-l border-border p-1 whitespace-nowrap">
-                            <input dir="rtl" value={e.plate} onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
+                            <input dir="rtl" value={e.plate} readOnly={memberLocks.edit} onChange={(ev) => peUpdatePlate(e.id, ev.target.value)}
                               className={`w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none ${hit ? "font-black text-primary" : "font-bold"}`} />
                           </td>
                           {/* النوع والملاحظات — بيتعدّلوا في **المسوّدة** زي باقي
                               الخانات (بيتحفظوا مع «احفظ التعديلات»)، مش فوراً زي
                               العرض المصغّر. الاتنين بيتخزّنوا جوّه `row`. */}
                           <td className="border-l border-border p-1 whitespace-nowrap">
-                            <input dir="rtl" value={e.row[TYPE_KEY] ?? ""} onChange={(ev) => peUpdateField(e.id, TYPE_KEY, ev.target.value)}
+                            <input dir="rtl" value={e.row[TYPE_KEY] ?? ""} readOnly={memberLocks.edit} onChange={(ev) => peUpdateField(e.id, TYPE_KEY, ev.target.value)}
                               placeholder="النوع…"
                               className="w-24 rounded border border-transparent bg-transparent px-2 py-1 text-ink placeholder:text-muted hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
                           </td>
                           <td className="border-l border-border p-1 whitespace-nowrap">
-                            <input dir="rtl" value={entryNotes(e)} onChange={(ev) => peUpdateField(e.id, notesKeyOf(e.row ?? {}), ev.target.value)}
+                            <input dir="rtl" value={entryNotes(e)} readOnly={memberLocks.edit} onChange={(ev) => peUpdateField(e.id, notesKeyOf(e.row ?? {}), ev.target.value)}
                               placeholder="ملاحظة…"
                               className="w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink placeholder:text-muted hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
                           </td>
                           <td className="border-l border-border p-1 whitespace-nowrap text-muted">{areaOf(e.row) || "—"}</td>
                           {shownCols.map((h) => (
                             <td key={h} className="border-l border-border p-1 whitespace-nowrap">
-                              <input dir="rtl" value={e.row[h] ?? ""} onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}
+                              <input dir="rtl" value={e.row[h] ?? ""} readOnly={memberLocks.edit} onChange={(ev) => peUpdateField(e.id, h, ev.target.value)}
                                 className="w-28 rounded border border-transparent bg-transparent px-2 py-1 text-ink hover:border-border focus:border-primary focus:bg-surface-2 focus:outline-none" />
                             </td>
                           ))}
@@ -6769,8 +6788,8 @@ export default function InstantCheckPage() {
                           </td>
                           <td className="border-l border-border p-1 whitespace-nowrap text-muted">{formatDate(e.checkedAt)}</td>
                           <td className="p-1 text-center">
-                            <button onClick={() => peDeleteEntry(e.id)} title="حذف اللوحة"
-                              className="rounded-lg border border-danger/40 bg-danger/10 p-1.5 text-danger transition hover:bg-danger/20"><Trash2 size={14} /></button>
+                            {!memberLocks.edit && <button onClick={() => peDeleteEntry(e.id)} title="حذف اللوحة"
+                              className="rounded-lg border border-danger/40 bg-danger/10 p-1.5 text-danger transition hover:bg-danger/20"><Trash2 size={14} /></button>}
                           </td>
                         </tr>
                         );

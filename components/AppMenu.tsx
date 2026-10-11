@@ -10,6 +10,8 @@ import Link from "next/link";
 import { getAllFieldCheckEntries, getUploadedFile, getAllRecordings } from "@/lib/idb";
 import { canOpenTrialPage } from "@/lib/trialModelGate";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
+import { isRouteLockedForMember } from "@/lib/groupLocks";
+import { useMemberLocks } from "@/lib/groupLocksClient";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
@@ -52,7 +54,9 @@ export default function AppMenu({
 
   /** اللينك يظهر للمندوب ده؟ المشترك صوت-فقط بيشوف المسموح بس — نفس سياسة
       الحارس بالظبط، فاللي بيتخفي هو اللي بيترمي، مافيش فرق بينهم. */
-  const canOpen = (href: string) => !voiceOnly || isAllowedForVoiceOnly(href);
+  // 🔒 صلاحيات أعضاء المجموعة — الصفحة المقفولة على العضو لينكها مايظهرش (الحارس في اللياوت).
+  const locks = useMemberLocks();
+  const canOpen = (href: string) => (!voiceOnly || isAllowedForVoiceOnly(href)) && !isRouteLockedForMember(href, locks);
   // مدخل مؤقّت لصفحة التسجيل الجديدة اللي بتتجرَّب — بقت **للأدمنز** (بطلب
   // المالك) والسوبر أدمن. الافتراضي **مقفول**: أي فشل في القراءة = الرابط
   // مايظهرش، فالمندوب مايشوفهوش بأي حال. القرار في `canOpenTrialPage` —
@@ -266,15 +270,19 @@ export default function AppMenu({
           <section className="border-t border-border pt-3">
             <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-muted"><BarChart3 size={14} /> إحصائيات</div>
             <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-surface-2 p-2 text-center">
+              {locks.records ? (
+                <div className="rounded-lg py-1"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></div>
+              ) : (
               <Link href={voiceOnly ? "/instant-check?tab=sheet" : "/list?type=records"} onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-brand">{stats.field}</p><p className="text-[10px] text-muted">لوحات السجلات</p></Link>
+              )}
               {/* المشترك صوت-فقط: الرقم يفضل ظاهر، بس من غير لينك — الصفحة
                   مقفولة عنده وكانت بترميه لصفحة التشييك من غير ما يفهم ليه. */}
-              {voiceOnly ? (
+              {voiceOnly || locks.records ? (
                 <div className="rounded-lg py-1"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></div>
               ) : (
                 <Link href="/list?type=wanted" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-danger">{stats.wanted}</p><p className="text-[10px] text-muted">مطلوبة اتلاقت</p></Link>
               )}
-              {voiceOnly ? (
+              {voiceOnly || locks.records ? (
                 <div className="rounded-lg py-1"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></div>
               ) : (
                 <Link href="/list?type=voice" onClick={() => onOpenChange(false)} className="rounded-lg py-1 transition hover:bg-surface active:scale-95"><p className="text-lg font-black text-primary">{stats.rec}</p><p className="text-[10px] text-muted">تسجيلات صوتية</p></Link>

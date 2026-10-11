@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { WANTED_ALERT_EVENT, type WantedAlertDetail } from "@/lib/wantedAlert";
 import { gpsService, toMapsLink, type GpsCoords } from "@/lib/gps";
 import { playNoticeTone } from "@/lib/noticeTone";
+import { shouldSendFind, shouldShowFind, type GroupLockSettings } from "@/lib/groupLocks";
 
 interface GroupFind {
   id: string;
@@ -57,8 +58,16 @@ export default function GroupFindNotifier() {
           (payload) => {
             const row = payload.new as GroupFind;
             if (!row?.plate || row.finder_id === meRef.current?.id) return; // مش لقطتي أنا
-            setQueue((q) => (q.some((x) => x.id === row.id) ? q : [...q, row]));
-            try { playNoticeTone(); } catch { /* الصوت مش متاح */ }
+            // 🔒 «إشعار المطلوب للمسئول بس» — السيرفر بيمنعها عن الأعضاء (سياسة group_finds)، وده تأكيد
+            //    على الجهاز لو السياسة لسه ماتشغّلتش. فشل القراية (مافيش نت) ⇒ تظهر زي الأول.
+            void (async () => {
+              try {
+                const { data: gs } = await supabase.from("group_settings").select("*").eq("team", team).maybeSingle();
+                if (!shouldShowFind(gs as GroupLockSettings | null, uid)) return;
+              } catch { /* نكمّل */ }
+              setQueue((q) => (q.some((x) => x.id === row.id) ? q : [...q, row]));
+              try { playNoticeTone(); } catch { /* الصوت مش متاح */ }
+            })();
           })
         .subscribe();
     })();
@@ -79,10 +88,12 @@ export default function GroupFindNotifier() {
       void (async () => {
         // مفتاح إشعارات المجموعة (من صفحة المجموعات). بنقراه **وقت اللقطة** مش
         // عند التشغيل عشان قفل الأدمن يسري فورًا. غياب الصف = مفتوح (الافتراضي).
+        // 🔒 «إشعار المطلوب للمسئول بس» مفتوح ⇒ بتتسجّل وتتبعت للمسئول حتى لو الإشعار العادي مقفول
+        //    («*» عشان لو SQL المفاتيح الجديدة لسه ماتشغّلش الطلب مايفشلش).
         try {
-          const { data: gs } = await supabase
-            .from("group_settings").select("notify_enabled").eq("team", me.team).maybeSingle();
-          if ((gs as { notify_enabled?: boolean } | null)?.notify_enabled === false) return;
+          const { data: gs, error } = await supabase
+            .from("group_settings").select("*").eq("team", me.team).maybeSingle();
+          if (!error && !shouldSendFind(gs as GroupLockSettings | null)) return;
         } catch { /* مافيش نت أو الجدول لسه ماتعملش — نكمّل عادي */ }
         // (١) الصف ده هو اللي بيوصل لحظيًا للي التطبيق مفتوح عندهم.
         await supabase.from("group_finds").insert({
