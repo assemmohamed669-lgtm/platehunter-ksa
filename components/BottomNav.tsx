@@ -12,6 +12,8 @@ import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib
 import { canOpenTrialPage } from "@/lib/trialModelGate";
 import { loadDraft } from "@/lib/checkDrafts";
 import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
+import { isRouteLockedForMember, lockedCheckTabs } from "@/lib/groupLocks";
+import { useMemberLocks } from "@/lib/groupLocksClient";
 
 // تبويبات المشترك «صوت فقط» في الشريط التحتي (زي قناص) — كل واحدة بتبدّل خيار
 // التشييك من مخزن checkTab (مش رابط)، ونفس ترتيب المالك.
@@ -147,9 +149,13 @@ export default function BottomNav() {
   }, []);
 
   // باقي الصفحات مقفولة (+ VoiceX مفتوح) = «صوت فقط» → تبويب التشييك بس.
-  const tabs = restPages
+  // 🔒 صلاحيات أعضاء المجموعة (`lib/groupLocks.ts`) — الصفحة/التبويب المقفول على العضو مايظهرش.
+  const memberLocks = useMemberLocks();
+  const lockedTabs = lockedCheckTabs(memberLocks);
+  const tabs = (restPages
     ? visibleTabs(TABS, { isSuper, isAdmin, hasVoice })
-    : TABS.filter((t) => t.href === "/instant-check");
+    : TABS.filter((t) => t.href === "/instant-check")
+  ).filter((t) => !isRouteLockedForMember(t.href, memberLocks));
   /** 🙈 زرار «صوتي» ظاهر؟ — السوبر أدمن الأول، ولو فيها شغل بيفضل (`lib/sawtiHidden.ts`). */
   const sawtiShown = sawtiTabVisible({ hidden: sawtiHiddenFor(isSuper), leftover: pttLeft });
   /** إحنا على صفحة «الجديد» دلوقتي؟ (عشان تبويبات التشييك ماتبانش نشطة غلط) */
@@ -168,7 +174,7 @@ export default function BottomNav() {
         {!restPages ? (
           // المشترك صوت-فقط: خيارات التشييك (صوتي/يدوي/شاص/شهايد/السجلات/فرز)
           // في الشريط التحتي زي قناص — بتبدّل الخيار من مخزن checkTab.
-          VOICE_TABS.filter((t) => t.tab !== "ptt" || sawtiShown).flatMap(({ tab, label, icon: Icon }, i) => {
+          VOICE_TABS.filter((t) => t.tab !== "ptt" || sawtiShown).filter((t) => !lockedTabs.has(t.tab as "sheet" | "sort")).flatMap(({ tab, label, icon: Icon }, i) => {
             // على «الجديد» تبويبات التشييك مابتبانش نشطة — المندوب مش فيها.
             const active = !onNew && activeTab === tab;
             const btn = (

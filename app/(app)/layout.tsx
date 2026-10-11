@@ -30,6 +30,8 @@ import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, typ
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 import { getDevicePlatform } from "@/lib/devicePlatform";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
+import { isRouteLockedForMember } from "@/lib/groupLocks";
+import { useMemberLocks } from "@/lib/groupLocksClient";
 import { rememberPage } from "@/lib/lastPage";
 import { markBootStable, takeBootGuardHit, pageLabel, BOOT_STABLE_MS } from "@/lib/bootGuard";
 
@@ -173,6 +175,13 @@ export default function AppShellLayout({
       router.replace("/instant-check");
     }
   }, [restPagesEnabled, pathname, router]);
+
+  // 🔒 حارس صلاحيات أعضاء المجموعة (المالك ١١ أكتوبر ٢٠٢٦ — `lib/groupLocks.ts`): صفحة مقفولة على العضو
+  //    (الفرز/السجلات/التحميل) ⇒ صفحة التشييك. المسئول ومن غير مجموعة مابيتأثروش (أقفالهم فاضية).
+  const memberLocks = useMemberLocks();
+  useEffect(() => {
+    if (pathname && isRouteLockedForMember(pathname, memberLocks)) router.replace("/instant-check");
+  }, [memberLocks, pathname, router]);
 
   async function handleLogout() {
     await logoutAgent();

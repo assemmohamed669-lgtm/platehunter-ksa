@@ -35,6 +35,7 @@ import { syncTeamCheckToLocal } from "@/lib/teamCheck";
 import { orderRunsBySheet } from "@/lib/sheetOrder";
 import { pasteColumnsOf } from "@/lib/pasteColumns";
 import { shareFileName, referralLabel, referralShareName } from "@/lib/shareNames";
+import { recordsLockedNow } from "@/lib/groupLocks";
 import { importLargeDataFile, importMultiSheetData, getDataMeta, getSampleRows, clearData as clearBigData, iterateRows, type DataMeta } from "@/lib/dataStore";
 import {
   recordAppearances, setPlateStatus, setPlateNote, sheetFingerprint, describeHistory, isClosedStatus,
@@ -569,7 +570,8 @@ export default function SortingPage() {
         // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
         try {
           // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
-          const fieldEntries = collapseDuplicateChecks(await getAllFieldCheckEntries());
+          // 🔒 عضو مجموعة مقفول عليه السجلات (`lib/groupLocks.ts`) ⇒ السجلات مابتدخلش الفرز (كانت هتظهر في نتيجته).
+          const fieldEntries = recordsLockedNow() ? [] : collapseDuplicateChecks(await getAllFieldCheckEntries());
           if (fieldEntries.length > 0) {
             const keys = new Set<string>(["رقم اللوحة"]);
             for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
@@ -2326,7 +2328,7 @@ export default function SortingPage() {
     // استنى بيانات المجموعة لو لسه في الطريق — من غير كده الفرز السريع بيطلع
     // من غير سجلات المجموعة **في صمت**.
     await teamReadyRef.current?.catch(() => {});
-    if (!hasTeamRef.current) return [];
+    if (!hasTeamRef.current || recordsLockedNow()) return [];   // 🔒 السجلات مقفولة على العضو
     const norms = [...index.keys()];
     if (norms.length === 0) return [];
     const out: TashyeekResultRow[] = [];
@@ -3115,7 +3117,7 @@ export default function SortingPage() {
     // في نفس ويندو السجلات. المطابقة على السيرفر والراجع هو المطابق بس.
     // (نفس فخ التوقيت بتاع الفرز العادي: نستنى بيانات المجموعة الأول.)
     await teamReadyRef.current?.catch(() => {});
-    if (hasTeamRef.current) {
+    if (hasTeamRef.current && !recordsLockedNow()) {   // 🔒 السجلات مقفولة على العضو
       const norms = [...new Set(
         tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean)
       )];

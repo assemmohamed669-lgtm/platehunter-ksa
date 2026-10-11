@@ -63,11 +63,15 @@ interface Props {
   extraColumns?: string[];
   /** قيم الأعمدة الزيادة لصف معيّن. بترجّع undefined = كل الخانات «—». */
   extraValuesFor?: (entry: RecordingEntry) => Record<string, string> | undefined;
+  /** 🔒 عضو مجموعة مقفول عليه المسح (`lib/groupLocks.ts`) — أزرار الحذف مابتظهرش. الافتراضي زي ما هو. */
+  canDelete?: boolean;
+  /** 🔒 عضو مجموعة مقفول عليه التحميل/المشاركة — أزرار واتساب مابتظهرش. الافتراضي زي ما هو. */
+  canShare?: boolean;
 }
 
 const ZOOM_LEVELS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4];
 
-export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates, extraColumns, extraValuesFor }: Props) {
+export default function RecordingsTable({ recordings, onDelete, onDeleteMany, onUpdatePlate, onUpdateField, onPlayAudio, onShareAudio, playingId, checkPlates, extraColumns, extraValuesFor, canDelete = true, canShare = true }: Props) {
   const [zoom, setZoom] = useState(3); // index into ZOOM_LEVELS (1.0 default)
   const pinchRef = usePinchZoom(zoom, setZoom);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -344,14 +348,18 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
                             : <Copy size={13} />
                           }
                         </button>
+                        {canShare && (
                         <button onClick={() => shareRow(entry)} title="واتساب"
                           className="text-muted hover:text-primary transition">
                           <Share2 size={13} />
                         </button>
+                        )}
+                        {canDelete && (
                         <button onClick={() => onDelete(entry.localId)} title="حذف"
                           className="text-muted hover:text-danger transition">
                           <Trash2 size={13} />
                         </button>
+                        )}
                       </div>
                     </td>
 
@@ -503,18 +511,22 @@ export default function RecordingsTable({ recordings, onDelete, onDeleteMany, on
         <div className="sticky bottom-0 flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-lg">
           <span className="text-xs font-bold text-ink">{selected.size} محددة</span>
           <div className="flex gap-2">
+            {canShare && (
             <button
               onClick={shareSelected}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-night transition hover:bg-primary/90"
             >
               <Share2 size={13} /> واتساب
             </button>
+            )}
+            {canDelete && (
             <button
               onClick={deleteSelected}
               className="flex items-center gap-1.5 rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-bold text-danger transition hover:bg-danger/20"
             >
               <Trash2 size={13} /> مسح
             </button>
+            )}
           </div>
         </div>
       )}

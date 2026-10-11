@@ -26,6 +26,7 @@ import PlateBadge from "@/components/PlateBadge";
 import PlateImagesButton from "@/components/PlateImagesButton";
 import { objToPlateRow } from "@/lib/plateImage";
 import { shareTextViaChooser } from "@/lib/share";
+import { useMemberLocks } from "@/lib/groupLocksClient";
 import type { MapPoint } from "@/components/MapView";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
@@ -69,6 +70,8 @@ const LS_MAP_COLLAPSED = "ph:maps:collapsed";
 const LS_MAP_SIZE = "ph:maps:size";
 
 export default function MapsPage() {
+  // 🔒 عضو مجموعة مقفول عليه المسح/التحميل (`lib/groupLocks.ts`) — أزرارهم مابتظهرش.
+  const locks = useMemberLocks();
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
   const [fieldEntries, setFieldEntries] = useState<FieldCheckEntry[]>([]);
   const [wanted, setWanted] = useState<{ map: Map<string, Record<string, string>>; col: string | null }>(
@@ -494,17 +497,19 @@ export default function MapsPage() {
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition disabled:opacity-40 ${nearest ? "bg-primary text-night" : "bg-surface-2 text-ink"}`}>
                 <Navigation size={13} /> {nearest ? "الأقرب أولاً ✓" : "رتّب حسب الأقرب"}
               </button>
+              {!locks.download && (
               <PlateImagesButton title="اللوحات المطلوبة"
                 build={() => filtered.map((m) => { const r = matchToRow(m); delete r["GPS"]; return objToPlateRow(r); })}
                 className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink transition" />
+              )}
               <span className="mr-auto text-[11px] text-muted">{selected.size} محددة</span>
             </div>
 
             {/* أزرار الإجراءات الجماعية — مسح / مشاركة / فتح في إكسيل */}
             <div className="grid grid-cols-3 gap-2 border-b border-border px-3 py-2">
-              <button onClick={deleteSelected} disabled={selected.size === 0 || busy} className="flex items-center justify-center gap-1.5 rounded-xl bg-danger/10 py-2 text-xs font-bold text-danger transition disabled:opacity-40"><Trash2 size={14} /> مسح</button>
-              <button onClick={shareSelected} disabled={selected.size === 0} className="flex items-center justify-center gap-1.5 rounded-xl bg-surface-2 py-2 text-xs font-bold text-ink transition disabled:opacity-40"><Share2 size={14} /> مشاركة</button>
-              <button onClick={excelSelected} disabled={busy || filtered.length === 0} className="flex items-center justify-center gap-1.5 rounded-xl bg-surface-2 py-2 text-xs font-bold text-ink transition disabled:opacity-40"><Download size={14} /> إكسيل</button>
+              {!locks.edit && <button onClick={deleteSelected} disabled={selected.size === 0 || busy} className="flex items-center justify-center gap-1.5 rounded-xl bg-danger/10 py-2 text-xs font-bold text-danger transition disabled:opacity-40"><Trash2 size={14} /> مسح</button>}
+              {!locks.download && <button onClick={shareSelected} disabled={selected.size === 0} className="flex items-center justify-center gap-1.5 rounded-xl bg-surface-2 py-2 text-xs font-bold text-ink transition disabled:opacity-40"><Share2 size={14} /> مشاركة</button>}
+              {!locks.download && <button onClick={excelSelected} disabled={busy || filtered.length === 0} className="flex items-center justify-center gap-1.5 rounded-xl bg-surface-2 py-2 text-xs font-bold text-ink transition disabled:opacity-40"><Download size={14} /> إكسيل</button>}
             </div>
 
             {/* القائمة */}
@@ -552,8 +557,8 @@ export default function MapsPage() {
                           <button onClick={() => copyMatch(m)} className="text-muted hover:text-primary transition" title="نسخ">
                             {copiedKey === m.key ? <Check size={14} className="text-primary" /> : <Copy size={14} />}
                           </button>
-                          <button onClick={() => shareMatch(m)} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={14} /></button>
-                          <button onClick={() => remove(m)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={14} /></button>
+                          {!locks.download && <button onClick={() => shareMatch(m)} className="text-muted hover:text-primary transition" title="واتساب"><Share2 size={14} /></button>}
+                          {!locks.edit && <button onClick={() => remove(m)} className="text-muted hover:text-danger transition" title="حذف"><Trash2 size={14} /></button>}
                         </div>
                       </div>
                     </div>

@@ -24,6 +24,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { pushFieldCheckDeletes } from "@/lib/syncFieldCheck";
 import { collapseDuplicateChecks, duplicateCheckIds } from "@/lib/fieldCheck";
 import { areaOf } from "@/lib/fieldCheckView";
+import { useMemberLocks } from "@/lib/groupLocksClient";
 
 type ListType = "records" | "wanted" | "voice";
 
@@ -51,6 +52,8 @@ function fieldToRec(e: FieldCheckEntry): RecordingEntry {
 }
 
 export default function ListPage() {
+  // 🔒 عضو مجموعة مقفول عليه المسح/التحميل (`lib/groupLocks.ts`) — أزرارهم مابتظهرش.
+  const locks = useMemberLocks();
   const [type, setType] = useState<ListType>("records");
   const [rows, setRows] = useState<RecordingEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,6 +168,8 @@ export default function ListPage() {
       ) : (
         <RecordingsTable
           recordings={rows}
+          canDelete={!locks.edit}
+          canShare={!locks.download}
           onDelete={handleDelete}
           onDeleteMany={handleDeleteMany}
           extraColumns={detailCols}
