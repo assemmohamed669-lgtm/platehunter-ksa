@@ -77,6 +77,8 @@ import {
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, saveFieldCheckEntriesChunked, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
+import { loadTrialAutoExport, saveTrialAutoExport } from "@/lib/trialAutoExport";
+import { setUnexportedCount } from "@/lib/unexportedGuard";
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -294,7 +296,12 @@ export default function RegistrationV2Page() {
   const noGpsRef = useRef(false);
   useEffect(() => { noGpsRef.current = noGps; }, [noGps]);
   /** ⑩ب التصدير التلقائي — بيسأل عند قفل التسجيل. */
-  const [autoExport, setAutoExport] = useState(false);
+  // 🔴 مفتوح افتراضياً وبيتحفظ — كان مقفول و**مش بيتخزّن أصلاً**، فحتى اللي
+  // فعّله كان بيلاقيه مقفول تاني. يوم ١٢ أكتوبر مندوب قفل التسجيل من غير
+  // تصدير وضاعت لوحاته بالكامل (مفيش نسخة على الجهاز ولا السيرفر ولا في
+  // الصوت الخام). التفاصيل في lib/trialAutoExport.
+  const [autoExport, setAutoExport] = useState(true);
+  useEffect(() => { setAutoExport(loadTrialAutoExport()); }, []);
   /** ⑫ زوم جدول اللوحات — جوّه المربّع بس، مش زوم الصفحة. */
   const [zoom, setZoom] = useState(1);
   /** ⑭ شكل تاني للمربّع — «فخم وعصري وبخط مختلف» بطلب المالك. */
@@ -805,6 +812,14 @@ export default function RegistrationV2Page() {
     // 🔒 المستخبية بتتحفظ مع الظاهرة — مسح/تصدير المندوب ده مايلمسش لوحات غيره
     void saveDraft("trial", "rv2-rows", stripForDraft([...rows, ...othersRef.current]));
   }, [rows]);
+  /**
+   * 🔴 عدّاد اللوحات غير المصدَّرة — الشريط التحتي بيسأل بيه قبل الخروج.
+   * (حادثة ١٢ أكتوبر: الخروج لصفحة الفرز من غير تصدير = ضياع كامل بلا أي
+   * نسخة في أي مكان.) بيتصفّر عند مغادرة الصفحة عشان السؤال مايلحقش
+   * المندوب وهو في صفحات تانية.
+   */
+  useEffect(() => { setUnexportedCount(rows.length); }, [rows.length]);
+  useEffect(() => () => setUnexportedCount(0), []);
   /** أول ما شيت التشييك يجهز، الصفوف المحمّلة تاخد «مطلوبة» بتاعتها. */
   useEffect(() => {
     if (!draftReady.current || checkIndex.size === 0) return;
@@ -2565,8 +2580,8 @@ export default function RegistrationV2Page() {
           <ToggleButton on={autoExport} onLabel="⚡ تصدير تلقائي" offLabel="✋ تصدير يدوي"
             tone={autoExport ? "on" : "off"}
             onClick={() => {
-              if (!autoExport) { if (!confirm(autoExportPrompt())) return; setAutoExport(true); }
-              else setAutoExport(false);
+              if (!autoExport) { if (!confirm(autoExportPrompt())) return; setAutoExport(true); saveTrialAutoExport(true); }
+              else { setAutoExport(false); saveTrialAutoExport(false); }
             }} />
         </div>
 
