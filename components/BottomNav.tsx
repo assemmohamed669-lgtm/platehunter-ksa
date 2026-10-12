@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ListFilter, Mic, MapPin, ScanLine, Crosshair, FileUp, Type, Barcode, FileText, ClipboardCheck, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { visibleTabs, isTabActive } from "@/lib/navTabs";
+import { getUnexportedCount, leaveWarning } from "@/lib/unexportedGuard";
 import { voiceProNames } from "@/lib/voiceProName";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
@@ -161,6 +162,20 @@ export default function BottomNav() {
   /** إحنا على صفحة «الجديد» دلوقتي؟ (عشان تبويبات التشييك ماتبانش نشطة غلط) */
   const onNew = !!pathname?.startsWith("/registration-v2");
 
+  /**
+   * 🔴 سؤال قبل الخروج لو فيه لوحات مش متصدّرة (Voice PRO بيحدّث العدّاد).
+   *
+   * حادثة ١٢ أكتوبر ٢٠٢٦: مندوب سجّل لوحات، قفل التسجيل من غير تصدير، راح
+   * لصفحة الفرز عشان إحالة جات من البنك، ورجع — ملقاش حاجة. واتأكدنا إنها
+   * ضاعت بالكامل: مش في سجلاته ولا على السيرفر ولا حتى في الصوت الخام.
+   *
+   * العدّاد بيتصفّر أول ما يسيب الصفحة، فالسؤال مابيلحقوش في أي صفحة تانية.
+   */
+  const confirmLeave = (): boolean => {
+    const msg = leaveWarning(getUnexportedCount());
+    return !msg || confirm(msg);
+  };
+
   return (
     // الشريط أسود ثابت في الوضعين (فاتح/غامق) بطلب المندوب — والكلام أبيض.
     // بينزلق لتحت ويختفي لما الكيبورد يطلع عشان مايظهرش فوقه.
@@ -181,6 +196,7 @@ export default function BottomNav() {
               <button
                 key={tab}
                 onClick={() => {
+                  if (!confirmLeave()) return;
                   setCheckTab(tab);
                   if (pathname !== "/instant-check") router.push("/instant-check");
                 }}
@@ -234,6 +250,7 @@ export default function BottomNav() {
               <Link
                 key={href}
                 href={href}
+                onClick={(e) => { if (!confirmLeave()) e.preventDefault(); }}
                 className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] transition ${
                   active ? "text-white" : "text-white/60 hover:text-white"
                 }`}
