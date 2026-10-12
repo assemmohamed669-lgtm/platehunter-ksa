@@ -300,8 +300,11 @@ export default function RegistrationV2Page() {
   // فعّله كان بيلاقيه مقفول تاني. يوم ١٢ أكتوبر مندوب قفل التسجيل من غير
   // تصدير وضاعت لوحاته بالكامل (مفيش نسخة على الجهاز ولا السيرفر ولا في
   // الصوت الخام). التفاصيل في lib/trialAutoExport.
-  const [autoExport, setAutoExport] = useState(true);
-  useEffect(() => { setAutoExport(loadTrialAutoExport()); }, []);
+  //
+  // 🛑 **للسوبر أدمن بس دلوقتي** (قاعدة المالك: أي تعديل خلف isSuper الأول).
+  // غير السوبر أدمن = الحي بالحرف: مقفول ومش محفوظ.
+  const [autoExport, setAutoExport] = useState(false);
+  useEffect(() => { if (isSuper) setAutoExport(loadTrialAutoExport()); }, [isSuper]);
   /** ⑫ زوم جدول اللوحات — جوّه المربّع بس، مش زوم الصفحة. */
   const [zoom, setZoom] = useState(1);
   /** ⑭ شكل تاني للمربّع — «فخم وعصري وبخط مختلف» بطلب المالك. */
@@ -818,7 +821,8 @@ export default function RegistrationV2Page() {
    * نسخة في أي مكان.) بيتصفّر عند مغادرة الصفحة عشان السؤال مايلحقش
    * المندوب وهو في صفحات تانية.
    */
-  useEffect(() => { setUnexportedCount(rows.length); }, [rows.length]);
+  // 🛑 للسوبر أدمن بس دلوقتي — غيره العدّاد صفر = الشريط مابيسألش (الحي بالحرف).
+  useEffect(() => { setUnexportedCount(isSuper ? rows.length : 0); }, [rows.length, isSuper]);
   useEffect(() => () => setUnexportedCount(0), []);
   /** أول ما شيت التشييك يجهز، الصفوف المحمّلة تاخد «مطلوبة» بتاعتها. */
   useEffect(() => {
@@ -2580,8 +2584,8 @@ export default function RegistrationV2Page() {
           <ToggleButton on={autoExport} onLabel="⚡ تصدير تلقائي" offLabel="✋ تصدير يدوي"
             tone={autoExport ? "on" : "off"}
             onClick={() => {
-              if (!autoExport) { if (!confirm(autoExportPrompt())) return; setAutoExport(true); saveTrialAutoExport(true); }
-              else { setAutoExport(false); saveTrialAutoExport(false); }
+              if (!autoExport) { if (!confirm(autoExportPrompt())) return; setAutoExport(true); if (isSuper) saveTrialAutoExport(true); }
+              else { setAutoExport(false); if (isSuper) saveTrialAutoExport(false); }
             }} />
         </div>
 
