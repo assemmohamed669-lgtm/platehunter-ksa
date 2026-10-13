@@ -12,6 +12,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { setCheckTab } from "@/lib/checkTab";
 
 /** قناة الإشعار على أندرويد — لازم تبقى نفس القيمة اللي السيرفر بيبعت بيها. */
 export const PUSH_CHANNEL_ID = "wanted_finds";
@@ -59,7 +60,9 @@ export default function PushRegistrar() {
       //    وإمتى. البلجن بيحتفظ بالضغطة لحد ما المستمع ده يتسجّل، فبتشتغل حتى لو البرنامج كان مقفول خالص.
       await PushNotifications.addListener("pushNotificationActionPerformed", (a) => {
         const url = String((a.notification?.data as { url?: unknown } | undefined)?.url ?? "");
-        if (url.startsWith("/group-find")) router.push(url);
+        // 📄🔔 «شهايد جديدة»: المطلوب، أو تبويب «شهايد» لمشترك الصوت فقط (حتى لو صفحة التشييك مفتوحة أصلاً)
+        if (url.includes("tab=cert")) setCheckTab("cert");
+        if (url.startsWith("/group-find") || url.startsWith("/wanted") || url.startsWith("/instant-check")) router.push(url);
       });
 
       await PushNotifications.register();

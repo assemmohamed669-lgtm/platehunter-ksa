@@ -17,6 +17,7 @@ import {
 import { certTextShape } from "@/lib/certTextShape";
 import { riyadhDayStart, dayMinus, CERT_DAYS_BACK } from "@/lib/certDaily";
 import { certParseStats } from "@/lib/certParseStats";
+import { runCertPush } from "@/lib/certPushStore";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -115,7 +116,10 @@ export async function GET(req: Request) {
       budgetMs: 40_000,
       concurrency: 8,
     });
-    return NextResponse.json(out, { headers: { "Cache-Control": "no-store, max-age=0" } });
+    // 📄🔔 إشعار الشهايد الجديدة على موبايلات المشتركين (المالك ١٣ أكتوبر ٢٠٢٦ — `lib/certPush.ts`): إشعار واحد لكل دفعة
+    //    لما تبطّل تنزل ٥ دقايق. أي غلط فيه (مثلاً SQL لسه ماتشغّلش) مايوقفش الشهايد اليومية.
+    const push = await runCertPush().catch((e) => ({ action: "error", error: String((e as Error)?.message ?? e) }));
+    return NextResponse.json({ ...out, push }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (e) {
     // الجدول لسه ماتعملش (docs/sql/cert-daily.sql) أو درايف/الداتابيز ماردّوش
     return NextResponse.json({ error: (e as Error)?.message || "error" }, { status: 500 });

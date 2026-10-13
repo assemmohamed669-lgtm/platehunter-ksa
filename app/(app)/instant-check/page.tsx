@@ -616,6 +616,10 @@ export default function InstantCheckPage() {
   useEffect(() => {
     try { window.localStorage.setItem("ph:check:mode", mode); } catch { /* ignore */ }
   }, [mode]);
+  // 📄🔔 الدوسة على إشعار «شهايد جديدة» (مشترك الصوت فقط) بتفتح الصفحة على تبويب «شهايد».
+  useEffect(() => {
+    try { if (new URLSearchParams(window.location.search).get("tab") === "cert") setMode("cert"); } catch { /* ignore */ }
+  }, []);
 
   // الشريط التحتي (للمشترك صوت-فقط) بيبدّل التبويب من مخزن checkTab. بنطبّق أي
   // تبديل منه على mode، ونبلّغ المخزن بالتبويب الحالي عشان الشريط يعلّم الزر
