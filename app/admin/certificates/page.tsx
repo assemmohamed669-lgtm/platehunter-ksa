@@ -15,11 +15,12 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, RefreshCw, FileText, Loader2, HardDriveDownload } from "lucide-react";
+import { ChevronLeft, RefreshCw, FileText, Loader2, HardDriveDownload, Bell } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import type { CertStatsView } from "@/lib/certStats";
 import { driveHealthMessage, type HealthMessage } from "@/lib/driveHealth";
+import { certPushTestMessage } from "@/lib/certPush";
 
 interface StatsResponse {
   setup?: boolean;
@@ -63,6 +64,25 @@ export default function CertStatsPage() {
   // فحص اتصال درايف (الشهادات) — عشان نعرف إن الصلاحية ماتت قبل شكوى مندوب.
   const [driveBusy, setDriveBusy] = useState(false);
   const [driveMsg, setDriveMsg] = useState<HealthMessage | null>(null);
+  // 🧪 تجربة إشعار الشهايد على موبايلي (المالك ١٣ أكتوبر ٢٠٢٦: «يشوف … ان فيه اشعارات بالفعل بتيجي»)
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState<{ level: "ok" | "warn" | "error"; text: string } | null>(null);
+
+  async function runPushTest() {
+    setPushBusy(true);
+    setPushMsg(null);
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/cert-push-test", { method: "POST", headers: { Authorization: `Bearer ${s.session?.access_token ?? ""}` } });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { setPushMsg({ level: "error", text: "❌ مش قادر أبعت — جرّب تاني." }); return; }
+      setPushMsg(certPushTestMessage({ configured: !!j.configured, devices: Number(j.devices ?? 0), sent: Number(j.sent ?? 0), dead: Number(j.dead ?? 0) }));
+    } catch {
+      setPushMsg({ level: "error", text: "❌ مافيش نت — جرّب تاني." });
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   /** فحص اتصال درايف — بينادي راوت الأدمن ويترجم الرد لرسالة مفهومة. */
   async function runDriveHealth() {
@@ -170,6 +190,29 @@ export default function CertStatsPage() {
                 : "bg-danger/10 text-danger"
             }`}>
               {driveMsg.text}
+            </p>
+          )}
+        </div>
+
+        {/* ── 🔔 إشعار الشهايد الجديدة — تجربة على موبايلي (الإشعار الحقيقي بيروح لكل المشتركين لوحده مع كل دفعة) ── */}
+        <div className="rounded-xl border border-border bg-surface-2/40 p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-ink">
+            <Bell size={15} /> إشعار الشهايد الجديدة
+          </div>
+          <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
+            مع كل دفعة شهايد جديدة، كل مشترك اشتراكه شغّال بيوصله إشعار على موبايله (أندرويد). اضغط تجرّب نفس الإشعار على موبايلك انت بس.
+          </p>
+          <button onClick={() => void runPushTest()} disabled={pushBusy}
+            className="w-full rounded-lg border border-primary/40 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
+            {pushBusy ? "بيبعت…" : "جرّب الإشعار على موبايلي"}
+          </button>
+          {pushMsg && (
+            <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold leading-relaxed ${
+              pushMsg.level === "ok" ? "bg-emerald-600/10 text-emerald-600"
+                : pushMsg.level === "warn" ? "bg-alert/10 text-alert"
+                : "bg-danger/10 text-danger"
+            }`}>
+              {pushMsg.text}
             </p>
           )}
         </div>
