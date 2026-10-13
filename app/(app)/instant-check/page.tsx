@@ -80,6 +80,7 @@ import {
   exportedMessage, nothingExportedMessage, AUTO_EXPORT_INTERVAL_MS,
 } from "@/lib/autoExport";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
+import { safeDraftsOn, rememberSafeDrafts, mergeById, mergeIds, createDraftSink } from "@/lib/safeDrafts";
 import { firstFailureReason, saveFailureMessage } from "@/lib/saveFailure";
 import { withoutLocation } from "@/lib/exportColumns";
 
@@ -533,6 +534,16 @@ let icManualDraftCache: FieldCheckEntry[] | null = null;
 let icHitsExportedCache: string[] | null = null;
 let icPttExportedCache: string[] | null = null;
 
+/**
+ * 🛡️ لوحات الصوت اللي بتوصل **بعد** الخروج من الصفحة (المحرّك بيطلّع آخر اللوحات بعد الإيقاف بثواني) —
+ * للصفحة المفتوحة دلوقتي، وإلا بتتحفظ على الموبايل على طول. شوف `lib/safeDrafts.ts`. السوبر أدمن الأول.
+ */
+const pttSink = createDraftSink<PttRow>({
+  read: () => icPttCache,
+  load: () => loadDraft<PttRow>("ptt", "ic-ptt-results"),
+  write: (next) => { icPttCache = next; void saveDraft("ptt", "ic-ptt-results", next); },
+});
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 /** مرجع ثابت لقايمة فاضية — عشان الـmemo مايرجّعش مصفوفة جديدة كل رندر. */
 const EMPTY_ENTRIES: FieldCheckEntry[] = [];
@@ -825,6 +836,28 @@ export default function InstantCheckPage() {
   const [pttRawLog, setPttRawLog] = useState<string[]>([]);
   const pttRawLogRef = useRef<string[]>([]);
   const [pttResults, setPttResults] = useState<PttRow[]>([]);
+  /**
+   * 🛡️ **كل تغيير في لوحات الصوت بيعدّي من هنا.** الصفحة مفتوحة ⇒ زي الأول بالحرف. اتقفلت (والسوبر أدمن —
+   * `safeDraftsOn`) ⇒ اللوحة اللي وصلت متأخر بتروح للصفحة المفتوحة أو بتتحفظ على الموبايل بدل ما تضيع.
+   */
+  const mountedRef = useRef(true);
+  const detachPttSinkRef = useRef<(() => void) | null>(null);
+  /** أحدث «إيقاف» (`stopPtt`) — بيتنده من الخروج من الصفحة. */
+  const stopPttRef = useRef<() => Promise<void>>(async () => {});
+  const setPttRows = useCallback((next: PttRow[] | ((prev: PttRow[]) => PttRow[])) => {
+    const fn = typeof next === "function" ? next : () => next;
+    if (mountedRef.current || !safeDraftsOn()) setPttResults(fn);
+    else void pttSink.apply(fn);
+  }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    detachPttSinkRef.current = pttSink.attach((fn) => setPttResults(fn));
+    return () => {
+      mountedRef.current = false;
+      detachPttSinkRef.current?.();
+      detachPttSinkRef.current = null;
+    };
+  }, []);
   /**
    * 🙈 تاب «صوتي» ظاهر؟ — المالك: «ابدأ اخفي صفحة صوتي» (Voice PRO بديلها). 🔒 السوبر
    * أدمن الأول. ولو لسه فيها لوحات ماتصدّرتش، بيفضل ظاهر لحد ما تخلص (`lib/sawtiHidden.ts`).
@@ -1218,6 +1251,7 @@ export default function InstantCheckPage() {
         if (!data.user) return;
         const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
         setIsSuper(!!prof?.is_super);
+        rememberSafeDrafts(!!prof?.is_super);   // 🛡️ الحماية الجديدة للوحات (السوبر أدمن الأول)
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);
@@ -1451,24 +1485,30 @@ export default function InstantCheckPage() {
       //    تأثيرات الحفظ تشتغل والقوايم لسه فاضية وتدوس على المحفوظ.
       //  • أي لوحة اتسجّلت **وإحنا لسه بنقرا** مايتدوسش عليها — عشان كده
       //    التحديث بالدالة: اللي في الشاشة يكسب لو فيه حاجة.
-      const keep = <T,>(prev: T[], loaded: T[]) => (prev.length ? prev : loaded);
+      // 🛡️ السوبر أدمن الأول: المحفوظ **بيتضاف** على اللي في الشاشة (`mergeById`) — لوحة اتسجّلت أو وصلت
+      //    متأخر من جلسة قبل الخروج كانت بتاخد مكان المحفوظ كله. المناديب زي الأول بالحرف.
+      const safeOn = safeDraftsOn();
+      const keep = <T,>(prev: T[], loaded: T[]) => (safeOn ? mergeById(prev as unknown as { id: string }[], loaded as unknown as { id: string }[]) as unknown as T[] : (prev.length ? prev : loaded));
+      const keepIds = (prev: Set<string>, loaded: string[]) => (safeOn ? mergeIds(prev, loaded) : (prev.size ? prev : new Set(loaded)));
       try {
-        if (icHitsCache) setManualHits(icHitsCache);
+        if (icHitsCache) { const c = icHitsCache; setManualHits((p) => keep(p, c)); }
         else { const v = await loadDraft<CheckHit>("hits", "ic-hits"); if (v.length) { icHitsCache = v; setManualHits((p) => keep(p, v)); } }
 
-        if (icPttCache) setPttResults(icPttCache);
+        if (icPttCache) { const c = icPttCache; setPttResults((p) => keep(p, c)); }
         else { const v = await loadDraft<PttRow>("ptt", "ic-ptt-results"); if (v.length) { icPttCache = v; setPttResults((p) => keep(p, v)); } }
 
-        if (icManualDraftCache) setManualDraft(icManualDraftCache);
+        if (icManualDraftCache) { const c = icManualDraftCache; setManualDraft((p) => keep(p, c)); }
         else { const v = await loadDraft<FieldCheckEntry>("manual", "ic-manual-draft"); if (v.length) { icManualDraftCache = v; setManualDraft((p) => keep(p, v)); } }
 
-        if (icHitsExportedCache) setHitsExportedIds(new Set(icHitsExportedCache));
-        else { const v = await loadDraft<string>("hits-exported", "ic-hits-exported"); if (v.length) { icHitsExportedCache = v; setHitsExportedIds((p) => (p.size ? p : new Set(v))); } }
+        if (icHitsExportedCache) { const c = icHitsExportedCache; setHitsExportedIds((p) => keepIds(p, c)); }
+        else { const v = await loadDraft<string>("hits-exported", "ic-hits-exported"); if (v.length) { icHitsExportedCache = v; setHitsExportedIds((p) => keepIds(p, v)); } }
 
-        if (icPttExportedCache) setPttExportedIds(new Set(icPttExportedCache));
-        else { const v = await loadDraft<string>("ptt-exported", "ic-ptt-exported"); if (v.length) { icPttExportedCache = v; setPttExportedIds((p) => (p.size ? p : new Set(v))); } }
+        if (icPttExportedCache) { const c = icPttExportedCache; setPttExportedIds((p) => keepIds(p, c)); }
+        else { const v = await loadDraft<string>("ptt-exported", "ic-ptt-exported"); if (v.length) { icPttExportedCache = v; setPttExportedIds((p) => keepIds(p, v)); } }
       } finally {
         listsHydrated.current = true;   // **بعد** الاسترجاع، مش قبله
+        // 🛡️ لوحة وصلت وإحنا بنقرا والمحفوظ كان فاضي ⇒ مفيش تغيير بعدها يحفظها — نحفظها دلوقتي.
+        if (safeOn) setPttRows((p) => (p.length ? [...p] : p));
       }
     })();
     try {
@@ -1979,15 +2019,15 @@ export default function InstantCheckPage() {
   // GPS for a voice (PTT) row — لحظي ثم أدق، أو gpsError عند الفشل.
   async function fetchGpsForPttRow(id: string) {
     await stampGpsFreshest(
-      (lat, lng, region) => setPttResults((prev) => prev.map((r) => r.id === id
+      (lat, lng, region) => setPttRows((prev) => prev.map((r) => r.id === id
         ? { ...r, lat, lng, mapsLink: toMapsLink(lat, lng), gpsError: false, row: region ? { ...(r.row ?? {}), "الحي-الشارع": region } : r.row }
         : r)),
-      () => setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r)),
+      () => setPttRows((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: true } : r)),
     );
   }
 
   async function retryGpsForPttRow(id: string) {
-    setPttResults((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: false } : r));
+    setPttRows((prev) => prev.map((r) => r.id === id ? { ...r, gpsError: false } : r));
     await fetchGpsForPttRow(id);
   }
 
@@ -3018,7 +3058,7 @@ export default function InstantCheckPage() {
       const dt = nowMs - already.at;
       already.at = nowMs;
       if (dt >= 2000) {
-        setPttResults((prev) => prev.map((r) =>
+        setPttRows((prev) => prev.map((r) =>
           r.id === already.id && r.needsReview ? { ...r, needsReview: false } : r));
       }
       return;
@@ -3060,7 +3100,7 @@ export default function InstantCheckPage() {
         // "drop-twin" — امسح صف التوأم الموجود (والحالات المعلّقة عليه) وكمّل.
         pttRowIdsRef.current.delete(v.id);
         seen.delete(k);
-        setPttResults((prev) => prev.filter((r) => r.id !== v.id));
+        setPttRows((prev) => prev.filter((r) => r.id !== v.id));
         setPttExportedIds((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
         setPttAlert((a) => (a?.id === v.id ? null : a));
         setPttSel((s) => { if (!s.has(v.id)) return s; const n = new Set(s); n.delete(v.id); return n; });
@@ -3103,7 +3143,7 @@ export default function InstantCheckPage() {
     // سجّل اللوحة عشان أي إعادة نطق ليها خلال ٦ث ترقّي الصف ده بدل ما تكرّره.
     seen.set(norm, { id, at: nowMs, mult, digits: cDigits, letters: cLetters, conf, tMs });
     for (const [k, v] of seen) if (nowMs - v.at > 24000) seen.delete(k); // تنضيف قيود قديمة
-    setPttResults((prev) => [row, ...prev]);
+    setPttRows((prev) => [row, ...prev]);
     // A matched (wanted) plate — exact OR suspected — pops the big alert.
     if (result.found) setPttAlert(row);
     void fetchGpsForPttRow(id);
@@ -3318,7 +3358,7 @@ export default function InstantCheckPage() {
       const rowAlive = pttRowIdsRef.current.has(rowId);
       const patched = changed && !userEdited && !!re && rowAlive;
 
-      setPttResults((prev) => prev.map((r) => {
+      setPttRows((prev) => prev.map((r) => {
         if (r.id !== rowId) return r;
         // المندوب عدّل الصف بإيده وسط ما الرد في الطريق؟ عينه أعلى من الاتنين.
         const patch = (patched && r.plate === dgPlateNorm && re)
@@ -3452,7 +3492,7 @@ export default function InstantCheckPage() {
 
     const res = searchInCheck(trimmed);
     const finalPlate = res?.plate ?? trimmed;
-    setPttResults((prev) => prev.map((r) => r.id === rowId
+    setPttRows((prev) => prev.map((r) => r.id === rowId
       ? { ...r, plate: finalPlate, found: res?.found ?? false, matchType: res?.matchType, similarity: res?.similarity, row: res?.row }
       : r));
     void editExportedEntry(rowId, { plate: finalPlate });   // لو الصف اتصدّر خلاص، عدّل السجل كمان
@@ -3517,13 +3557,13 @@ export default function InstantCheckPage() {
 
   // اختيار نوع السيارة (حرف مختصر) لصف صوتي — بيتخزّن في vehicleType.
   function setPttType(id: string, code: string) {
-    setPttResults((prev) => prev.map((r) => (r.id === id ? { ...r, vehicleType: code || undefined } : r)));
+    setPttRows((prev) => prev.map((r) => (r.id === id ? { ...r, vehicleType: code || undefined } : r)));
     void editExportedEntry(id, { type: code });   // لو الصف اتصدّر خلاص، عدّل السجل كمان
   }
 
   // ملاحظة المندوب لصف صوتي (بالقلم) — بتتخزّن في الصف وتتدفّق للتصدير/الفرز/المشاركة.
   function setPttNote(id: string, note: string) {
-    setPttResults((prev) => prev.map((r) => (r.id === id ? { ...r, notes: note || undefined } : r)));
+    setPttRows((prev) => prev.map((r) => (r.id === id ? { ...r, notes: note || undefined } : r)));
     void editExportedEntry(id, { notes: note });  // لو الصف اتصدّر خلاص، عدّل السجل كمان
   }
 
@@ -3532,7 +3572,7 @@ export default function InstantCheckPage() {
     // فوراً، قبل إعادة الرسم: أي رد طيّار في الطريق للصف ده يبقى بلا أي فعل
     // (لا ترقيع ولا صفّارة ولا كارت) — `deletePttRow` مابيلغيش الطلب نفسه.
     pttRowIdsRef.current.delete(id);
-    setPttResults((prev) => prev.filter((r) => r.id !== id));
+    setPttRows((prev) => prev.filter((r) => r.id !== id));
     setPttExportedIds((s) => { const n = new Set(s); n.delete(id); return n; });
     setPttAlert((a) => (a?.id === id ? null : a));
     setPttSel((s) => { const n = new Set(s); n.delete(id); return n; });
@@ -3594,7 +3634,7 @@ export default function InstantCheckPage() {
     const ids = pttSel;
     if (!confirmDeleteUnexported([...ids].filter((i) => !pttExportedIds.has(i)).length)) return;
     ids.forEach((i) => pttRowIdsRef.current.delete(i));   // نفس سبب `deletePttRow`
-    setPttResults((prev) => prev.filter((r) => !ids.has(r.id)));
+    setPttRows((prev) => prev.filter((r) => !ids.has(r.id)));
     setPttExportedIds((s) => { const n = new Set(s); ids.forEach((i) => n.delete(i)); return n; });
     setPttSel(new Set());
   }
@@ -3758,7 +3798,7 @@ export default function InstantCheckPage() {
       // #19 — بعد ما اتحفظت في السجلات، تتمسح من صفحة التشييك (مش بس تتعلّم «تم»).
       const freshIds = new Set(savedSrcIds);
       freshIds.forEach((id) => pttRowIdsRef.current.delete(id));
-      setPttResults((prev) => prev.filter((r) => !freshIds.has(r.id)));
+      setPttRows((prev) => prev.filter((r) => !freshIds.has(r.id)));
       setPttSel((s) => { const n = new Set(s); freshIds.forEach((id) => n.delete(id)); return n; });
       setPttAlert((a) => (a && freshIds.has(a.id) ? null : a));
       if (!opts.silent) {
@@ -3906,6 +3946,24 @@ export default function InstantCheckPage() {
   }
   // Clear the timer if the component unmounts mid-listen.
   useEffect(() => () => {
+    /**
+     * 🛡️ **الخروج من الصفحة والتسجيل شغّال** (السوبر أدمن الأول). كان: VoiceX مابيتقفلش خالص (الميك يفضل مفتوح
+     * واللوحات تتكتب في صفحة مقفولة)، وديبجرام بيتقفل من غير ما يفلّش آخر لوحة. دلوقتي: نفس «إيقاف» بالظبط
+     * (`stopPtt` — بيستنى آخر اللوحات ويقفل الميك)، والصفحة بتفك نفسها **الأول** فكل لوحة توصل بعد كده
+     * تروح للحفظ الآمن (`setPttRows` ⇒ `pttSink`) بدل ما تضيع.
+     */
+    if (safeDraftsOn()) {
+      mountedRef.current = false;
+      detachPttSinkRef.current?.();
+      detachPttSinkRef.current = null;
+      if (pttTimerRef.current) clearInterval(pttTimerRef.current);
+      if (dgWatchdogRef.current) { clearInterval(dgWatchdogRef.current); dgWatchdogRef.current = null; }
+      if (isListeningRef.current || voicexEngineRef.current || smHandleRef.current || dgSocketRef.current
+        || dgRecorderRef.current || dgStreamRef.current || pttChunkTimerRef.current) {
+        void stopPttRef.current();
+      }
+      return;
+    }
     // مهم: علّم إن الاستماع خلص **قبل** ما نقفل السوكيت، عشان منطق إعادة الاتصال
     // في onclose مايرجعش يفتح المايك في الخلفية بعد ما المندوب خرج من الصفحة
     // (ده كان بيسيب علامة المايك شغّالة رغم إن التسجيل «مقفول»).
@@ -4568,6 +4626,8 @@ export default function InstantCheckPage() {
     recognition.start();
   }
 
+  // 🛡️ أحدث نسخة من «إيقاف» — الخروج من الصفحة بيندهها (الغلاف القديم كان هيشوف أول رسمة بس).
+  stopPttRef.current = stopPtt;
   async function stopPtt() {
     isListeningRef.current = false;
     stopVoicexRetry();                                 // إيقاف يدوي يلغي محاولات رجوع VoiceX
@@ -6095,7 +6155,7 @@ export default function InstantCheckPage() {
                     <button
                       onClick={() => {
                         if (!confirmDeleteUnexported(pttResults.filter((r) => !pttExportedIds.has(r.id)).length)) return;
-                        setPttResults([]); setPttAlert(null); setPttSel(new Set());
+                        setPttRows([]); setPttAlert(null); setPttSel(new Set());
                       }}
                       className="flex items-center justify-center gap-2 rounded-xl border border-danger bg-danger/10 py-2.5 text-sm font-bold text-danger transition active:scale-95 hover:bg-danger/20">
                       <Trash2 size={15} /> مسح النتائج
