@@ -1,18 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Type as TypeIcon, Palette, Baseline, RotateCcw, Check, BellRing, Square, Loader2 } from "lucide-react";
+import { Type as TypeIcon, Palette, Baseline, RotateCcw, Check, BellRing, Square, Loader2, ChevronDown } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import {
-  type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance,
+  type Appearance, DEFAULT_APPEARANCE, APPEARANCE_COLLAPSE_FOR_ALL, loadAppearance, saveAppearance, applyAppearance,
 } from "@/lib/appSettings";
 import { THEME_TEMPLATES } from "@/lib/themePresets";
-import { ALERT_TONES, ALERT_TONES_FOR_ALL, DEFAULT_ALERT_TONE, loadAlertToneId, saveAlertToneId } from "@/lib/alertTones";
+import { ALERT_TONES, ALERT_TONES_FOR_ALL, DEFAULT_ALERT_TONE, alertToneById, loadAlertToneId, saveAlertToneId } from "@/lib/alertTones";
 import { previewAlertTone, preloadAlertTone, stopAlertTonePreview, isAlertSirenPlaying } from "@/lib/alertSiren";
 import { supabase } from "@/lib/supabaseClient";
 
 const DEFAULT_BG = "#F3F5F7";
 const DEFAULT_INK = "#FFFFFF";
+/** رأس القسم اللي بيتقفل بسهم («قوالب جاهزة» / «نغمة التحصيل»). */
+const SECTION_TOGGLE = "flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 p-3 text-sm font-bold text-ink transition hover:border-primary/40";
 
 /** صفحة «المظهر والقوالب» — بتفتح كصفحة مستقلة (مش في الشريط) فزر الرجوع يرجّع
  *  للصفحة اللي قبلها. فيها القوالب الجاهزة + التحكم اليدوي (خط/خلفية/نمط ليلي). */
@@ -70,6 +72,15 @@ export default function AppearancePage() {
   }
   function stopPreview() { stopAlertTonePreview(); setPreviewing(null); }
 
+  // ▾ «قوالب جاهزة» و«نغمة التحصيل» مقفولين بسهم — بيتفتحوا بالدوسة (السوبر أدمن الأول: `APPEARANCE_COLLAPSE_FOR_ALL`).
+  //    نغمة التحصيل ظاهرة للسوبر أدمن بس أصلاً، فبتتقفل على طول.
+  const collapsible = APPEARANCE_COLLAPSE_FOR_ALL || isSuper;
+  const [tplOpen, setTplOpen] = useState(false);
+  const [toneOpen, setToneOpen] = useState(false);
+  const templateName = appr.template
+    ? (THEME_TEMPLATES.find((t) => t.id === appr.template)?.name ?? "")
+    : "بدون قالب";
+
   return (
     <div className="flex flex-col gap-5" dir="rtl">
       <div>
@@ -79,7 +90,18 @@ export default function AppearancePage() {
 
       {/* ── القوالب الجاهزة (خلفية + زجاج) ── */}
       <section className="flex flex-col gap-2.5">
-        <h2 className="text-sm font-bold text-ink">قوالب جاهزة</h2>
+        {collapsible ? (
+          <button onClick={() => setTplOpen((o) => !o)} aria-expanded={tplOpen} className={SECTION_TOGGLE}>
+            <span>قوالب جاهزة</span>
+            <span className="flex min-w-0 items-center gap-1 text-[11px] font-normal text-muted">
+              <span className="truncate">{templateName}</span>
+              <ChevronDown size={16} className={`shrink-0 transition-transform ${tplOpen ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+        ) : (
+          <h2 className="text-sm font-bold text-ink">قوالب جاهزة</h2>
+        )}
+        {(!collapsible || tplOpen) && (<>
         <div className="grid grid-cols-2 gap-3">
           {/* بدون قالب — يرجّع الألوان العادية */}
           <button
@@ -129,6 +151,7 @@ export default function AppearancePage() {
           })}
         </div>
         <p className="text-[10px] text-muted">كل قالب بيغيّر الخلفية والكروت واللون المميّز — كروت واضحة القراءة. «بدون قالب» يرجّع الشكل العادي.</p>
+        </>)}
       </section>
 
       {/* ── تخصيص يدوي ── */}
@@ -186,7 +209,14 @@ export default function AppearancePage() {
       {/* ── 🔔 نغمة التحصيل — اللي بترن لما المندوب يلاقي سيارة مطلوبة ── */}
       {(ALERT_TONES_FOR_ALL || isSuper) && (
         <section className="flex flex-col gap-2.5">
-          <h2 className="flex items-center gap-1.5 text-sm font-bold text-ink"><BellRing size={14} className="text-primary" /> نغمة التحصيل</h2>
+          <button onClick={() => { if (toneOpen) stopPreview(); setToneOpen((o) => !o); }} aria-expanded={toneOpen} className={SECTION_TOGGLE}>
+            <span className="flex items-center gap-1.5"><BellRing size={14} className="text-primary" /> نغمة التحصيل</span>
+            <span className="flex min-w-0 items-center gap-1 text-[11px] font-normal text-muted">
+              <span className="truncate">{alertToneById(tone).name}</span>
+              <ChevronDown size={16} className={`shrink-0 transition-transform ${toneOpen ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+          {toneOpen && (<>
           <p className="text-[10px] text-muted">النغمة اللي بتسمعها لما تلاقي سيارة مطلوبة — بترن لحد ما تدوس «تم». دوس على أي نغمة تختارها وتسمعها.</p>
           <div className="flex flex-col gap-1.5">
             {ALERT_TONES.map((t) => {
@@ -214,6 +244,7 @@ export default function AppearancePage() {
           {toneFailed && (
             <p className="text-[10px] font-bold text-danger">ماقدرتش أحمّل النغمة — اتأكد من النت وجرّب تاني. لحد ما تتحمّل، التنبيه هيرن بالصفّارة العادية.</p>
           )}
+          </>)}
         </section>
       )}
     </div>
