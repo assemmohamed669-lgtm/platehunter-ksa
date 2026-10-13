@@ -8,6 +8,8 @@ out/
 .env.local
 *.webm
 *.mp3
+# 🔔 «نغمة التحصيل» — نغمات البرنامج نفسه لازم تترفع (`lib/alertTones.ts`)
+!public/tones/*.mp3
 
 # أسرار توقيع أندرويد — لازم تفضل محليّة، ما تترفعش على git
 android/keystore.properties
