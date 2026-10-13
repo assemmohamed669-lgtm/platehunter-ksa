@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { recordResultRows, collapseGroupRecordRepeats } from "@/lib/recordResultDedupe";
+import { groupRecordsByPlate, collapseGroupRecordRepeats } from "@/lib/recordResultDedupe";
 
 /**
  * 👥 الفرز العادي — كل مرة اتسجلت فيها العربية من كل أعضاء المجموعة. المالك (١٣ أكتوبر ٢٠٢٦، مجموعة احمد حسين
  * — «رمر6579» احمد شيّكها ٣ مرات وعلي ومحمد حسين مرة، والفرز كان بيطلّع آخر مرة بس فبتطلع «مع علي ومع احمد لا»):
  * «لو كل واحد فيهم مسجل اللوحه دي مرة او اكثر يطلع في نتيجه الفرز ... وحتي لو فيهم حد مسجلها اكتر من مرة بردو
- * تطلع معاهم المكرر». (زي «لصق نصي» #395 — الفرز العادي كان لسه الأحدث بس من #244.) السوبر أدمن الأول.
+ * تطلع معاهم المكرر». (زي «لصق نصي» #395 — الفرز العادي كان الأحدث بس من #244.) **للكل** («انشرة للكل»).
  */
 type R = { plate: string; date: string; who: string };
 const rows: R[] = [
@@ -18,18 +18,14 @@ const rows: R[] = [
   { plate: "ر م ر 6579", date: "02-10-2026 21:25", who: "محمد" },
   { plate: "رمر6579", date: "28-08-2026 06:18", who: "احمد" },
 ];
-const run = (allTimes: boolean) => recordResultRows(rows, (r) => r.plate, (r) => r.date, allTimes);
 
-describe("🔴 كل المرات (السوبر أدمن)", () => {
+describe("🔴 كل المرات", () => {
   it("🔴 رمر6579: احمد ٣ مرات + علي + محمد ⇒ ٥ صفوف تحت بعض والأحدث فوق", () => {
-    const out = run(true);
+    const out = groupRecordsByPlate(rows, (r) => r.plate, (r) => r.date);
     expect(out.map((r) => `${r.plate.replace(/ /g, "")}·${r.who}`)).toEqual([
       "رمر6579·علي", "رمر6579·محمد", "رمر6579·احمد", "رمر6579·احمد", "رمر6579·احمد",
       "حبك1234·علي",
     ]);
-  });
-  it("🔒 غير السوبر أدمن: زي ما هو بالحرف — الأحدث بس لكل لوحة", () => {
-    expect(run(false).map((r) => `${r.plate.replace(/ /g, "")}·${r.who}`)).toEqual(["رمر6579·علي", "حبك1234·علي"]);
   });
 });
 
@@ -47,20 +43,20 @@ describe("🔴 سجلات الزمايل من السيرفر: الإرسال ا�
   });
 });
 
-describe("🔴 التوصيل في صفحة الفرز", () => {
+describe("🔴 التوصيل في صفحة الفرز — للكل", () => {
   const p = readFileSync(path.resolve(__dirname, "..", "app/(app)/sorting/page.tsx"), "utf8").replace(/\r\n/g, "\n");
-  it("🔴 الكلي والجديد بيستخدموا «كل المرات» للسوبر أدمن بس", () => {
-    expect(p.match(/finalTashyeek = dedupeTashyeek\(finalTashyeek, allRecordTimesRef\.current\);/g)).toHaveLength(2);
-    expect(p).toMatch(/allRecordTimesRef\.current = \(sp as \{ is_super\?: boolean \} \| null\)\?\.is_super === true;/);
+  it("🔴 الكلي والجديد: كل المرات لكل المناديب (من غير شرط سوبر أدمن)", () => {
+    expect(p.match(/finalTashyeek = groupTashyeekByPlate\(finalTashyeek\);/g)).toHaveLength(2);
+    expect(p).not.toMatch(/allRecordTimes|is_super/);
   });
-  it("🔴 الإرسال المكرر من السيرفر بيتلم بس في «كل المرات»", () => {
-    expect(p).toMatch(/const clean = allRecordTimesRef\.current \? collapseGroupRecordRepeats\(raw\) : raw;/);
+  it("🔴 الإرسال المكرر من السيرفر بيتلم", () => {
+    expect(p).toMatch(/const clean = collapseGroupRecordRepeats\(raw\);/);
   });
-  it("🔴 ويندو السجلات: نفس العربية بلون واحد + «N سيارة (M مرة)» — للسوبر أدمن بس", () => {
+  it("🔴 ويندو السجلات: نفس العربية بلون واحد + «N سيارة (M مرة)»", () => {
     expect(p).toMatch(/const tashDupColorMap = useMemo\(/);
-    expect(p).toMatch(/const dupIdx = allRecordTimes \? tashDupColorMap\.map\.get\(/);
+    expect(p).toMatch(/const dupIdx = tashDupColorMap\.map\.get\(/);
     expect(p).toMatch(/\$\{sel \? "bg-primary\/15" : dupIdx !== undefined \? DUPE_COLORS\[dupIdx\]\.tw : "bg-primary\/5 hover:bg-primary\/10"\}/);
-    expect(p).toMatch(/allRecordTimes && tashDupColorMap\.unique < tashyeekResults\.length/);
+    expect(p).toMatch(/\{tashDupColorMap\.unique < tashyeekResults\.length/);
   });
   it("🔒 نداء بيانات المجموعة القديم زي ما هو (مالمسناهوش)", () => {
     expect(p).toMatch(/\.select\("username, team"\)\.eq\("id", au\.user\.id\)\.single\(\);/);

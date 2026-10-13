@@ -36,7 +36,7 @@ export function checkDateValue(raw: string | null | undefined): number {
 /**
  * **كل المرات** — بس نفس اللوحة تحت بعض (بترتيب أول ظهور لكل لوحة) والأحدث فوق. لـ«لصق نصي» (المالك ٧
  * أكتوبر ٢٠٢٦: «خليها يظهر السيارة لو مكررة … لان ممكن اماكنها تبقي مختلفه ف المندوب يعرف بالظبط يحصلها
- * في اي مكان»). الصف اللي مالوش لوحة بيعدّي زي ما هو. (الفرز العادي لسه `dedupeRecordsByPlate`.)
+ * في اي مكان»). الصف اللي مالوش لوحة بيعدّي زي ما هو. (والفرز العادي كمان من ١٣ أكتوبر — #423.)
  */
 export function groupRecordsByPlate<T>(
   rows: T[],
@@ -81,20 +81,6 @@ export function dedupeRecordsByPlate<T>(
     if (t > best[i]) { out[i] = r; best[i] = t; }
   }
   return out;
-}
-
-/**
- * 👥 نتيجة فرز السجلات: `allTimes` ⇒ **كل المرات** من كل أعضاء المجموعة (المالك ١٣ أكتوبر ٢٠٢٦: «لو كل واحد فيهم
- * مسجل اللوحه دي مرة او اكثر يطلع في نتيجه الفرز ... وحتي لو فيهم حد مسجلها اكتر من مرة بردو تطلع معاهم المكرر»)،
- * وإلا الأحدث بس زي الأول (#244).
- */
-export function recordResultRows<T>(
-  rows: T[],
-  plateOf: (r: T) => string,
-  dateOf: (r: T) => string,
-  allTimes: boolean,
-): T[] {
-  return allTimes ? groupRecordsByPlate(rows, plateOf, dateOf) : dedupeRecordsByPlate(rows, plateOf, dateOf);
 }
 
 /**

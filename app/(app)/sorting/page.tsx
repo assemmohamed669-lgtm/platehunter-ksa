@@ -52,7 +52,7 @@ import {
   getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
-import { groupRecordsByPlate, recordResultRows, collapseGroupRecordRepeats } from "@/lib/recordResultDedupe";
+import { groupRecordsByPlate, collapseGroupRecordRepeats } from "@/lib/recordResultDedupe";
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
@@ -87,19 +87,16 @@ const DUPE_COLORS = [
 type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string> };
 
 /**
- * اللوحة الواحدة صف واحد في نتيجة السجلات — الأحدث.
- * المندوب ممكن يكون شيّك نفس اللوحة أكتر من مرة، أو أكتر من مندوب في المجموعة
- * شافوها، فكانت بتطلع صفوف مكررة في النتيجة.
- * 👥 `allTimes` (السوبر أدمن الأول — المالك ١٣ أكتوبر ٢٠٢٦) ⇒ **كل المرات** من كل أعضاء المجموعة، نفس العربية تحت
- * بعض والأحدث فوق (`recordResultRows`).
+ * 👥 نتيجة السجلات: **كل مرة** اتسجلت فيها العربية من كل أعضاء المجموعة — نفس العربية تحت بعض والأحدث فوق.
+ * المالك (١٣ أكتوبر ٢٠٢٦): «لو كل واحد فيهم مسجل اللوحه دي مرة او اكثر يطلع في نتيجه الفرز ... وحتي لو فيهم حد
+ * مسجلها اكتر من مرة بردو تطلع معاهم المكرر». (كانت الأحدث بس من #244 — «رمر6579» كانت بتطلع بسجل علي بس.)
  */
-function dedupeTashyeek(rows: TashyeekResultRow[] | null, allTimes = false): TashyeekResultRow[] | null {
+function groupTashyeekByPlate(rows: TashyeekResultRow[] | null): TashyeekResultRow[] | null {
   if (!rows || rows.length < 2) return rows;
-  return recordResultRows(
+  return groupRecordsByPlate(
     rows,
     (r) => String(r.tashyeekRow["رقم اللوحة"] ?? ""),
     (r) => String(r.tashyeekRow["التاريخ"] ?? ""),
-    allTimes,
   );
 }
 
@@ -256,28 +253,6 @@ export default function SortingPage() {
   const groupNamesRef = useRef<Record<string, string>>({});
   const myNameRef = useRef<string>("");
   const myIdRef = useRef<string>("");
-  /**
-   * 👥 نتيجة فرز السجلات بـ«كل المرات» من كل أعضاء المجموعة (المالك ١٣ أكتوبر ٢٠٢٦: «لو كل واحد فيهم مسجل اللوحه
-   * دي مرة او اكثر يطلع في نتيجه الفرز ... وحتي لو فيهم حد مسجلها اكتر من مرة بردو تطلع معاهم المكرر») —
-   * **السوبر أدمن الأول**؛ الباقي الأحدث بس زي ما هو. في `ref` عشان الفرز بيقراه وقت التنفيذ.
-   */
-  const [allRecordTimes, setAllRecordTimes] = useState(false);
-  const allRecordTimesRef = useRef(false);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        const uid = data.session?.user?.id;
-        if (!uid) return;
-        const { data: sp } = await supabase.from("profiles").select("is_super").eq("id", uid).maybeSingle();
-        if (!alive) return;
-        allRecordTimesRef.current = (sp as { is_super?: boolean } | null)?.is_super === true;
-        setAllRecordTimes(allRecordTimesRef.current);
-      } catch { /* زي الأول — الأحدث بس */ }
-    })();
-    return () => { alive = false; };
-  }, []);
   const [recordsTgt, setRecordsTgt] = useState<RecordsTarget>("extra");
   const [outputCols, setOutputCols] = useState<Set<string>>(new Set());
   const [dataPlateColOverride, setDataPlateColOverride] = useState<string | null>(null);
@@ -1684,7 +1659,7 @@ export default function SortingPage() {
     return { map, unique: counts.size };
   }, [pasteRecordResults]);
 
-  /** 👥 «كل المرات» (السوبر أدمن الأول): نفس العربية في ويندو نتيجة السجلات بلون واحد — زي ويندو سجلات اللصق. */
+  /** 👥 «كل المرات»: نفس العربية في ويندو نتيجة السجلات بلون واحد — زي ويندو سجلات اللصق. */
   const tashDupColorMap = useMemo(() => {
     const counts = new Map<string, number>();
     for (const r of tashyeekResults ?? []) {
@@ -2389,7 +2364,7 @@ export default function SortingPage() {
       }
     } catch { /* مافيش نت — النتيجة المحلية شغّالة */ }
     // 👥 «كل المرات»: الإرسال المكرر لنفس التشييك (نفس المندوب والدقيقة والمكان) مرة واحدة — زي سجلاتي على الجهاز.
-    const clean = allRecordTimesRef.current ? collapseGroupRecordRepeats(raw) : raw;
+    const clean = collapseGroupRecordRepeats(raw);
     const out: TashyeekResultRow[] = [];
     for (const g of clean) {
       // سجلاتي أنا متطابقة فوق أصلاً من الشيت المحلي — مانكررهاش.
@@ -2528,7 +2503,7 @@ export default function SortingPage() {
       // سجلات باقي المجموعة — في **نفس الخانة**، بعد سجلات المندوب.
       const groupRows = await groupRecordMatches(refIndex);
       if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
-      finalTashyeek = dedupeTashyeek(finalTashyeek, allRecordTimesRef.current);
+      finalTashyeek = groupTashyeekByPlate(finalTashyeek);
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "full", 0, new Date().toISOString());
@@ -2671,7 +2646,7 @@ export default function SortingPage() {
         const groupRows = await groupRecordMatches(gIndex);
         if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
       }
-      finalTashyeek = dedupeTashyeek(finalTashyeek, allRecordTimesRef.current);
+      finalTashyeek = groupTashyeekByPlate(finalTashyeek);
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "new", newEntries.length, new Date().toISOString());
@@ -4183,7 +4158,7 @@ export default function SortingPage() {
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h2 className="text-sm font-bold text-primary">سيارات مطلوبة من ملف التشييك (السجلات)</h2>
-                <p className="text-xs text-muted mt-0.5">{allRecordTimes && tashDupColorMap.unique < tashyeekResults.length
+                <p className="text-xs text-muted mt-0.5">{tashDupColorMap.unique < tashyeekResults.length
                   ? `${tashDupColorMap.unique} سيارة (${tashyeekResults.length} مرة)`
                   : `${tashyeekResults.length} سيارة`} من شيت التسجيلات موجودة في قائمة الإحالة</p>
               </div>
@@ -4228,8 +4203,8 @@ export default function SortingPage() {
                   {displayTashyeek.map(({ r, idx: i, _dist, _min }, n) => {
                     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
                     const sel = tashyeekSelected.has(i);
-                    // 👥 «كل المرات»: نفس العربية بلون واحد (السوبر أدمن الأول — الباقي زي ما هو).
-                    const dupIdx = allRecordTimes ? tashDupColorMap.map.get(normalizePlate(bankPlateToArabic(String(r.tashyeekRow["رقم اللوحة"] ?? "")))) : undefined;
+                    // 👥 «كل المرات»: نفس العربية بلون واحد.
+                    const dupIdx = tashDupColorMap.map.get(normalizePlate(bankPlateToArabic(String(r.tashyeekRow["رقم اللوحة"] ?? ""))));
                     return (
                       <tr key={i} className={`border-b border-border transition ${sel ? "bg-primary/15" : dupIdx !== undefined ? DUPE_COLORS[dupIdx].tw : "bg-primary/5 hover:bg-primary/10"}`}>
                         {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
