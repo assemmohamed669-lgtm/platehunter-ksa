@@ -460,7 +460,7 @@ function writeCheckedAt(agentId: string, at: number): void {
 export async function restoreMissingFieldChecks(
   agentId: string,
   onProgress?: (done: number, total: number) => void,
-): Promise<{ restored: number; skipped?: boolean; error?: string }> {
+): Promise<{ restored: number; edited?: number; skipped?: boolean; error?: string }> {
   const local = await getAllFieldCheckEntriesRaw(agentId);
   const localIds = new Set(local.map((e) => e.id));
   const localSynced = local.reduce((n, e) => n + (e.synced === true ? 1 : 0), 0);
@@ -476,17 +476,20 @@ export async function restoreMissingFieldChecks(
 
   const now = Date.now();
   if (!needsRecordsCheck({ serverCount: count, localSynced, lastCheckAt: readCheckedAt(agentId), now })) {
-    return { restored: 0, skipped: true };
+    // 🕐 العدد زي ما هو — بس ممكن سجل اتعدّل من مكان تاني ⇒ التعديلات الجديدة بس (طلب صغير)
+    const ed = await pullEditedFieldChecks(agentId);
+    return { restored: 0, skipped: true, ...(ed.updated ? { edited: ed.updated } : {}) };
   }
 
   // ٢. أرقام السجلات بس ⇒ الناقص بس
   const ids = await fetchServerLocalIds(agentId, count);
   const missing = ids.ids.filter((id) => !localIds.has(id) && !tombstoned.has(id));
   const dl = await downloadByIds(agentId, missing, localIds, tombstoned, onProgress);
-  const firstError = ids.error ?? dl.error;
-  if (firstError) return { restored: dl.restored, error: firstError };
+  const ed = await pullEditedFieldChecks(agentId);   // 🕐 + التعديلات اللي اتعملت من مكان تاني
+  const firstError = ids.error ?? dl.error ?? ed.error;
+  if (firstError) return { restored: dl.restored, edited: ed.updated, error: firstError };
   writeCheckedAt(agentId, now);
-  return { restored: dl.restored };
+  return { restored: dl.restored, ...(ed.updated ? { edited: ed.updated } : {}) };
 }
 
 /** أرقام سجلات المندوب على السيرفر (`local_id` بس — خفيفة)، بترتيب ثابت (الوقت ثم المعرّف) عشان الصفحات ماتتداخلش. */
@@ -589,8 +592,66 @@ export async function syncFieldChecksSmart(
   const localIds = new Set(local.map((e) => e.id));
   const missing = server.ids.filter((id) => !localIds.has(id) && !tombstoned.has(id));
   const dl = await downloadByIds(uid, missing, localIds, tombstoned, onProgress);
+  const ed = await pullEditedFieldChecks(uid);   // 🕐 + التعديلات اللي اتعملت من مكان تاني
 
-  const error = del.error ?? up.error ?? dl.error;
+  const downloaded = dl.restored + ed.updated;
+  const error = del.error ?? up.error ?? dl.error ?? ed.error;
   if (!error) writeCheckedAt(uid, Date.now());
-  return error ? { uploaded: up.synced, downloaded: dl.restored, error } : { uploaded: up.synced, downloaded: dl.restored };
+  return error ? { uploaded: up.synced, downloaded, error } : { uploaded: up.synced, downloaded };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  🕐 التعديلات الجديدة بس — من أي مكان (صفحة «سجلات المجموعة»، موبايل تاني)
+// ══════════════════════════════════════════════════════════════════════════════
+// المالك (١٣ أكتوبر ٢٠٢٦): «السيرفر يعلّم وقت آخر تعديل لكل سجل، والموبايل ينزّل التعديلات الجديدة بس».
+// السيرفر بيختم `updated_at` لما السجل يتعدّل **فعلاً** بس (docs/sql/field-checks-updated-at.sql). الموبايل فاكر آخر
+// وقت نزّله (وقت السيرفر — مش ساعة الموبايل) وبيسأل عن اللي بعده بس.
+
+/** حجم الصفحة — دفعة تعديلات بنفس الوقت أكبر منها بتتكمّل بالمعرّف (مافيش واحدة بتتنط). */
+export const EDITS_PAGE = 500;
+const EDITS_SINCE_KEY = (agentId: string) => `ph:recordsEditsSince:${agentId}`;
+/** الأعمدة اللي السجل المحلي محتاجها بس (مش `*`). */
+const EDIT_COLS = "id,local_id,plate,method,lat,lng,maps_link,extra,checked_at,team,updated_at";
+
+/**
+ * 🕐 بينزّل السجلات اللي **اتعدّلت على السيرفر** من آخر مرة ويكتبها على الموبايل. تعديل محلي لسه مترفعش (أحدث) أو
+ * سجل المندوب مسحه بإيده ⇒ مايتلمسش. العمود لسه ماتعملش على السيرفر ⇒ ولا حاجة (ولا غلط).
+ */
+export async function pullEditedFieldChecks(agentId: string): Promise<{ updated: number; error?: string }> {
+  let since: string | null = null;
+  try { since = localStorage.getItem(EDITS_SINCE_KEY(agentId)); } catch { /* هيجيب كل المتعدّل */ }
+  const pending = new Set((await getPendingFieldChecks(agentId)).map((e) => e.id));
+  const tombstoned = new Set((await getFieldCheckDeletes(agentId)).map((d) => d.id));
+
+  type Row = Record<string, unknown> & { id: string; local_id: string | null; updated_at: string };
+  let ts = since;                     // آخر وقت اتنزّل كله
+  let lastId: string | null = null;   // لسه بنكمّل سجلات بنفس الوقت ده (بعد المعرّف ده)
+  let updated = 0;
+  for (let guard = 0; guard < 10_000; guard++) {
+    let q = supabase.from("field_checks").select(EDIT_COLS).eq("agent_id", agentId).not("updated_at", "is", null);
+    const sameTs = !!(ts && lastId);
+    if (sameTs) q = q.eq("updated_at", ts as string).gt("id", lastId as string);
+    else if (ts) q = q.gt("updated_at", ts);
+    const { data, error } = await (sameTs
+      ? q.order("id", { ascending: true }).limit(EDITS_PAGE)
+      : q.order("updated_at", { ascending: true }).order("id", { ascending: true }).limit(EDITS_PAGE));
+    if (error) {
+      const e = error as { code?: string; message?: string };
+      if (e.code === "42703" || /updated_at/.test(e.message ?? "")) return { updated };   // SQL لسه ماتشغّلش
+      return { updated, error: e.message ?? "تعذّر تنزيل التعديلات" };
+    }
+    const rows = (data ?? []) as unknown as Row[];
+    const entries = rows
+      .filter((r) => r.local_id && !pending.has(r.local_id) && !tombstoned.has(r.local_id))
+      .map((r) => serverRowToEntry(r, agentId));
+    if (entries.length) await saveFieldCheckEntries(entries);
+    updated += entries.length;
+    if (rows.length) { const last = rows[rows.length - 1]; ts = last.updated_at; lastId = last.id; }
+    if (rows.length < EDITS_PAGE) {
+      if (sameTs) { lastId = null; continue; }   // خلّصنا الوقت ده ⇒ اللي بعده
+      break;
+    }
+  }
+  if (ts && ts !== since) { try { localStorage.setItem(EDITS_SINCE_KEY(agentId), ts); } catch { /* هيعيدها */ } }
+  return { updated };
 }

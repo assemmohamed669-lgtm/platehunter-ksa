@@ -21,13 +21,11 @@ const r = (id: string, plate = "ابح1234"): Row => ({ id, plate });
 
 beforeEach(() => { try { localStorage.clear(); } catch { /* */ } });
 
-describe("🔒 المفتاح (السوبر أدمن الأول)", () => {
-  it("مقفول افتراضياً، وبيتفتح/يتقفل بالمحفوظ", () => {
-    expect(safeDraftsOn()).toBe(false);
-    rememberSafeDrafts(true);
+describe("🔓 للكل (المالك ١٣ أكتوبر ٢٠٢٦: «انشر للكل»)", () => {
+  it("🔴 شغّال لكل المناديب — مش بس السوبر أدمن، ومهما كان المحفوظ على الموبايل", () => {
     expect(safeDraftsOn()).toBe(true);
     rememberSafeDrafts(false);
-    expect(safeDraftsOn()).toBe(false);
+    expect(safeDraftsOn()).toBe(true);
   });
 });
 
@@ -167,8 +165,8 @@ describe("③ أحدث نسخة تكسب", () => {
     localStorage.setItem("t-newest", JSON.stringify([{ id: "a" }, { id: "b" }]));
     localStorage.setItem("t-newest:rev", String(Number(localStorage.getItem("t-newest:rev")) + 1));
     expect((await loadDraft<{ id: string }>("ptt", "t-newest")).map((x) => x.id)).toEqual(["a", "b"]);
-    rememberSafeDrafts(false);
-    expect((await loadDraft<{ id: string }>("ptt", "t-newest")).map((x) => x.id)).toEqual(["a"]);   // 🔒 المناديب زي الأول
+    rememberSafeDrafts(false);   // 🔓 للكل — حتى لو الموبايل مش سوبر أدمن
+    expect((await loadDraft<{ id: string }>("ptt", "t-newest")).map((x) => x.id)).toEqual(["a", "b"]);
   });
 
   it("🔴 من الآخر للآخر: بعد التصدير القايمة الفاضية بتفضل فاضية", async () => {

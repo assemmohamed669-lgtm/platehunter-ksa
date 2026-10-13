@@ -42,6 +42,8 @@ function query() {
     in(c: string, vs: unknown[]) { const s = new Set(vs); st.filters.push((r) => s.has((r as Record<string, unknown>)[c])); return q; },
     order(c: string, o?: { ascending?: boolean }) { st.orders.push([c, o?.ascending !== false]); return q; },
     range(a: number, b: number) { st.range = [a, b]; return q; },
+    gt(c: string, v: string) { st.filters.push((r) => String((r as Record<string, unknown>)[c]) > v); return q; },
+    limit(n: number) { st.range = [0, n - 1]; return q; },
     delete() { st.del = true; return q; },
     upsert(rows: SRow | SRow[]) {
       for (const r of Array.isArray(rows) ? rows : [rows]) {
