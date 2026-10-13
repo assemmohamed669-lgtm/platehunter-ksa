@@ -20,20 +20,22 @@ export const DEFAULT_ALERT_TONE = "siren";
 /** 🛑 السوبر أدمن الأول — `true` = الخيار يظهر للكل («انشر للكل»). */
 export const ALERT_TONES_FOR_ALL = false;
 
+// الأسامي «قناص 1…12» بالترتيب — المالك (١٤ أكتوبر ٢٠٢٦): «غير اسمائهم سميهم بالترتيب قناص 1 قناص 2 وهكذا».
+// الـid اسم الملف الأصلي (الاختيار المحفوظ على الموبايلات بيفضل زي ما هو).
 export const ALERT_TONES: AlertTone[] = [
   { id: "siren", name: "صفّارة البرنامج (الافتراضي)", file: null },
-  { id: "air-raid", name: "صفّارة غارة", file: "/tones/air-raid.mp3" },
-  { id: "alarm", name: "إنذار", file: "/tones/alarm.mp3" },
-  { id: "military", name: "رنين إنذار عسكرية", file: "/tones/military.mp3" },
-  { id: "best-alarm", name: "أفضل رنين منبّه", file: "/tones/best-alarm.mp3" },
-  { id: "classic-alarm", name: "المنبّه الكلاسيكي", file: "/tones/classic-alarm.mp3" },
-  { id: "classic-phone", name: "الهاتف الكلاسيكي", file: "/tones/classic-phone.mp3" },
-  { id: "robot", name: "استيقظ الروبوت", file: "/tones/robot.mp3" },
-  { id: "samsung", name: "استيقظ سامسونج", file: "/tones/samsung.mp3" },
-  { id: "turkish", name: "تركية", file: "/tones/turkish.mp3" },
-  { id: "funny", name: "نغمة مضحكة جداً", file: "/tones/funny.mp3" },
-  { id: "r114", name: "نغمة R114", file: "/tones/r114.mp3" },
-  { id: "r33", name: "نغمة R33", file: "/tones/r33.mp3" },
+  { id: "air-raid", name: "قناص 1", file: "/tones/air-raid.mp3" },
+  { id: "alarm", name: "قناص 2", file: "/tones/alarm.mp3" },
+  { id: "military", name: "قناص 3", file: "/tones/military.mp3" },
+  { id: "best-alarm", name: "قناص 4", file: "/tones/best-alarm.mp3" },
+  { id: "classic-alarm", name: "قناص 5", file: "/tones/classic-alarm.mp3" },
+  { id: "classic-phone", name: "قناص 6", file: "/tones/classic-phone.mp3" },
+  { id: "robot", name: "قناص 7", file: "/tones/robot.mp3" },
+  { id: "samsung", name: "قناص 8", file: "/tones/samsung.mp3" },
+  { id: "turkish", name: "قناص 9", file: "/tones/turkish.mp3" },
+  { id: "funny", name: "قناص 10", file: "/tones/funny.mp3" },
+  { id: "r114", name: "قناص 11", file: "/tones/r114.mp3" },
+  { id: "r33", name: "قناص 12", file: "/tones/r33.mp3" },
 ];
 
 const KEY = "ph:alertTone";

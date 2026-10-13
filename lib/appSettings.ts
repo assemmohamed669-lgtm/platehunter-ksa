@@ -27,6 +27,12 @@ export interface Appearance {
 
 export const DEFAULT_APPEARANCE: Appearance = { fontScale: 1, bgColor: null, inkColor: null, template: null };
 
+/**
+ * صفحة «الخلفية والنمط»: «قوالب جاهزة» و«نغمة التحصيل» مقفولين بسهم وبيتفتحوا بالدوسة — المالك (١٤ أكتوبر ٢٠٢٦):
+ * «حط سهم للقوالب تبقي مقفوله … لانها واخده مساحه كبيرة ودايما مفتوحه». 🛑 السوبر أدمن الأول — `true` = للكل.
+ */
+export const APPEARANCE_COLLAPSE_FOR_ALL = false;
+
 const KEY = "ph:appearance";
 const LIGHT_INK = "#F3F5F7"; // text on a dark background
 const DARK_INK = "#1A1F24";  // text on a light background
