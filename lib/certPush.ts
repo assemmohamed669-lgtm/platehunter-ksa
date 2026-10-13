@@ -124,3 +124,21 @@ export async function certPushTick(d: CertPushDeps): Promise<CertPushResult> {
   }
   return { action: "send", count: text.count, devices, sent };
 }
+
+/**
+ * 🧪 نتيجة «جرّب إشعار الشهايد على موبايلي» (السوبر أدمن) — المالك (١٣ أكتوبر ٢٠٢٦): «يشوف من خلاله ان فيه اشعارات
+ * بالفعل بتيجي حتي لو اي اشعار وهمي».
+ */
+export function certPushTestMessage(r: { configured: boolean; devices: number; sent: number; dead: number }):
+  { level: "ok" | "warn" | "error"; text: string } {
+  if (!r.configured) return { level: "error", text: "❌ إشعارات الموبايل مش متظبّطة على السيرفر (FCM_SERVICE_ACCOUNT في Vercel)." };
+  if (r.devices === 0) {
+    return { level: "warn", text: "⚠️ مافيش موبايل مسجّل باسمك — افتح التطبيق المتثبّت (APK) على موبايلك ووافق على الإشعارات، وجرّب تاني." };
+  }
+  if (r.sent === 0) {
+    return { level: "error", text: r.dead > 0
+      ? "❌ الموبايل المسجّل رفض الإشعار (غالباً التطبيق اتمسح أو اتعمله تحديث) — افتح التطبيق تاني عشان يتسجّل من جديد."
+      : "❌ الإشعار مااتبعتش — جرّب تاني بعد دقيقة." };
+  }
+  return { level: "ok", text: `✅ اتبعت على ${ar(r.sent)} جهاز — بص على شريط الإشعارات في موبايلك.` };
+}
