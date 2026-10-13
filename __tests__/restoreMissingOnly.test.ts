@@ -25,6 +25,8 @@ function query(table: string) {
     in(c: string, vs: unknown[]) { st.inSize = vs.length; const s = new Set(vs); st.filters.push((r) => s.has((r as Record<string, unknown>)[c])); return q; },
     order(c: string, o?: { ascending?: boolean }) { st.orders.push([c, o?.ascending !== false]); return q; },
     range(a: number, b: number) { st.range = [a, b]; return q; },
+    gt(c: string, v: string) { st.filters.push((r) => String((r as Record<string, unknown>)[c]) > v); return q; },
+    limit(n: number) { st.range = [0, n - 1]; return q; },
     then(res: (v: unknown) => void, rej?: (e: unknown) => void) {
       try {
         server.calls.push({ select: st.cols, count: st.count, inSize: st.inSize });
@@ -105,7 +107,11 @@ describe("📥 الاسترجاع بيضيف الناقص بس", () => {
     server.calls = [];
     const r = await restoreMissingFieldChecks(A);      // الفتحة الجاية: عدّ بس
     expect(r).toMatchObject({ restored: 0, skipped: true });
-    expect(server.calls).toEqual([{ select: "id", count: true, inSize: 0 }]);
+    // عدّ صغير + سؤال «اتعدّل حاجة من مكان تاني؟» (أعمدة محددة — مش كل السجلات)
+    expect(server.calls).toHaveLength(2);
+    expect(server.calls[0]).toEqual({ select: "id", count: true, inSize: 0 });
+    expect(server.calls[1].select).toContain("updated_at");
+    expect(selectAllCalls()).toBe(0);
   });
 
   it("🔴 ناقص ٣ (اتسجّلوا من موبايل تاني) ⇒ بينزّل التلاتة دول بس", async () => {
