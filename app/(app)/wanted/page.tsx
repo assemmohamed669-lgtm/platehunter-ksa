@@ -419,6 +419,7 @@ export default function WantedPage() {
               rows={exportRows}
               excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(rows)), ext: "xlsx" })}
               imageTable={() => toImageTable(rows, colOrder, orderMode)}
+              shareAllAtOnce
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
             <button onClick={clearAll} className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-3 text-sm font-bold text-danger transition hover:bg-danger/20"><Trash2 size={15} /> مسح نتايج الفرز</button>

@@ -326,6 +326,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
               rows={exportRows}
               excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(rows)), ext: "xlsx" })}
               imageTable={imageTable}
+              shareAllAtOnce
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
             <button onClick={() => clearWindow(which)} className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 py-3 text-sm font-bold text-danger transition hover:bg-danger/20"><Trash2 size={15} /> مسح نتايج الفرز</button>
@@ -448,6 +449,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
                   rows={rows}
                   excelBlob={async () => ({ blob: await buildColoredSortExcel(rows(), title, dupeHexColors(all)), ext: "xlsx" })}
                   imageTable={imageTable}
+                  shareAllAtOnce
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-60"
                 />
               </div>
