@@ -1251,7 +1251,7 @@ export default function InstantCheckPage() {
         if (!data.user) return;
         const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
         setIsSuper(!!prof?.is_super);
-        rememberSafeDrafts(!!prof?.is_super);   // 🛡️ الحماية الجديدة للوحات (السوبر أدمن الأول)
+        if (prof) rememberSafeDrafts(!!prof.is_super);   // 🛡️ الحماية الجديدة للوحات (السوبر أدمن الأول) — غلط النت مايشيلهاش
       } catch { /* غير متاح — يفضل مخفي */ }
     })();
   }, []);

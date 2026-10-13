@@ -21,7 +21,8 @@ describe("🔴 Voice PRO — كل لوحة لاسم صاحبها", () => {
     expect(src.match(/splitByAgent\(/g)?.length).toBeGreaterThanOrEqual(2);
   });
   it("🔴 المستخبية بتتحفظ مع الظاهرة — مابتضيعش لما المندوب التاني يمسح أو يصدّر", () => {
-    expect(src).toMatch(/saveDraft\("trial", "rv2-rows", stripForDraft\(\[\.\.\.rows, \.\.\.othersRef\.current\]\)\)/);
+    // (🛡️ نفس النسخة بتتحفظ كمان في الذاكرة — الحفظ الآمن للوحات اللي بتوصل بعد الخروج من الصفحة)
+    expect(src.replace(/\r\n/g, "\n")).toMatch(/const full = stripForDraft\(\[\.\.\.rows, \.\.\.othersRef\.current\]\);\n\s+rv2DraftCache = full;[^\n]*\n\s+void saveDraft\("trial", "rv2-rows", full\);/);
   });
   it("🔴 مفيش تصدير من غير حساب", () => {
     const guard = exportFn.indexOf("if (!uid)");
