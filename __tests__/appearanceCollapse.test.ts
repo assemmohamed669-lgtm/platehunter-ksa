@@ -21,8 +21,8 @@ describe("🔴 أسامي النغمات بالترتيب", () => {
 
 describe("🔴 القوالب ونغمة التحصيل بيتقفلوا بسهم", () => {
   const page = read("app/(app)/appearance/page.tsx");
-  it("🛑 السوبر أدمن الأول — المناديب الصفحة عندهم زي ما هي لحد «انشر للكل»", () => {
-    expect(APPEARANCE_COLLAPSE_FOR_ALL).toBe(false);
+  it("🔓 «انشر للكل» (المالك ١٤ أكتوبر ٢٠٢٦) — السهم عند كل المناديب (والشرط فاضل للرجوع)", () => {
+    expect(APPEARANCE_COLLAPSE_FOR_ALL).toBe(true);
     expect(page).toMatch(/const collapsible = APPEARANCE_COLLAPSE_FOR_ALL \|\| isSuper;/);
   });
   it("القوالب مقفولة في الأول، والدوسة على السهم بتفتحها", () => {
