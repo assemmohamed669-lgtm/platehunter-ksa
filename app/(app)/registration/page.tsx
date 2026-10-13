@@ -2720,6 +2720,8 @@ export default function RegistrationPage() {
         };
         await saveFieldCheckEntry(entry);
       }
+      // ☁️ على السيرفر على طول (المالك ١٣ أكتوبر ٢٠٢٦: «ترفع للسيرفر علي طول اي حاجه تتصدر»)
+      void import("@/lib/syncFieldCheck").then((m) => m.scheduleFieldChecksUpload()).catch(() => {});
       alert(`✅ تم تصدير ${n} لوحة لشيت التسجيلات.\nهتلاقيهم في تبويب «السجلات» بصفحة التشييك، والفرز هيطابقهم تلقائياً.`);
     } catch (err: any) {
       alert(`تعذّر التصدير للتشييك: ${err?.message ?? err}`);
