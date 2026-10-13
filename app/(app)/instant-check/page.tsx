@@ -43,7 +43,7 @@ import { areaOf, fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type
 import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected, editorDeleteIds } from "@/lib/recordsSelection";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
-import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, restoreMissingFieldChecks } from "@/lib/syncFieldCheck";
+import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, restoreMissingFieldChecks, scheduleFieldChecksUpload } from "@/lib/syncFieldCheck";
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
@@ -1414,6 +1414,24 @@ export default function InstantCheckPage() {
    * في صمت (`.catch(() => {})`). التحذير ده هو اللي بيمنع تكرارها.
    */
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  /**
+   * ☁️ **أي حاجة تتصدّر بتترفع للسيرفر على طول** — المالك (١٣ أكتوبر ٢٠٢٦): «اة ترفع للسيرفر علي طول اي حاجه
+   * تتصدر وارفع للكل». كان التصدير بيحفظ على الموبايل بس والرفع بيستنى فتحة الصفحة الجاية. دلوقتي كل حفظ سجل
+   * (تصدير صوت/يدوي/كاميرا، تعديل) بيعدّي على `saveRecord` ⇒ رفعة على دفعات بعد ثانية ونص (`scheduleFieldChecksUpload`)،
+   * وأول ما النت يرجع. لو الرفع فشل بيبان فوق السجلات زي الأول.
+   */
+  const uploadSoon = useCallback(() => {
+    scheduleFieldChecksUpload(agentIdRef.current, (r) => setSyncWarning(syncFailureMessage(r)));
+  }, []);
+  const saveRecord = useCallback(async (entry: FieldCheckEntry) => {
+    await saveFieldCheckEntry(entry);
+    uploadSoon();
+  }, [uploadSoon]);
+  useEffect(() => {
+    const onOnline = () => uploadSoon();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [uploadSoon]);
 
   // «مزامنة» — يرفع سجلات التشييك (شيت السجلات) للسيرفر تدريجياً: أول ضغطة كله،
   // وبعدين الجديد فقط (سريع). بيعرض نتيجة قصيرة.
@@ -2324,7 +2342,7 @@ export default function InstantCheckPage() {
       // لو واحدة فشلت بتفضل مكانها وتتعاد المحاولة — «المندوب يخسر شغله دي
       // مفيهاش تسامح». Promise.all كانت بترمي فالناجح مايتشالش والفاشل يتعاد،
       // فبيتكرّر الصف في السجلات.
-      const res = await Promise.allSettled(toSave.map((e) => saveFieldCheckEntry(e)));
+      const res = await Promise.allSettled(toSave.map((e) => saveRecord(e)));
       const saved = toSave.filter((_, i) => res[i].status === "fulfilled");
       const failed = toSave.length - saved.length;
       if (saved.length === 0) throw new Error(saveFailureMessage(firstFailureReason(res)));
@@ -2421,7 +2439,7 @@ export default function InstantCheckPage() {
     try {
       // #19 — تصدير سريع (بالتوازي). **allSettled**: اللوحة بتتشال من التشييك
       // بس لو حفظها نجح — اللي فشل بيفضل مكانه بدل ما يضيع.
-      const res = await Promise.allSettled(toSave.map((e) => saveFieldCheckEntry(e)));
+      const res = await Promise.allSettled(toSave.map((e) => saveRecord(e)));
       const saved = toSave.filter((_, i) => res[i].status === "fulfilled");
       const failed = toSave.length - saved.length;
       if (saved.length === 0) throw new Error(saveFailureMessage(firstFailureReason(res)));
@@ -2480,7 +2498,7 @@ export default function InstantCheckPage() {
     };
     // Optimistic add + persist locally
     setFieldEntries((prev) => [base, ...prev]);
-    await saveFieldCheckEntry(base);
+    await saveRecord(base);
     // Stamp GPS (best-effort) and persist the update — the image itself is
     // intentionally NOT stored on the sheet.
     const gps = await gpsPromise;
@@ -2488,7 +2506,7 @@ export default function InstantCheckPage() {
       const region = await regionTextFor(gps.lat, gps.lng);
       const withGps: FieldCheckEntry = { ...base, lat: gps.lat, lng: gps.lng, mapsLink: toMapsLink(gps.lat, gps.lng), row: region ? { ...base.row, "الحي-الشارع": region } : base.row };
       setFieldEntries((prev) => prev.map((e) => (e.id === id ? withGps : e)));
-      await saveFieldCheckEntry(withGps);
+      await saveRecord(withGps);
     }
   }
 
@@ -2539,7 +2557,7 @@ export default function InstantCheckPage() {
     const updated = applyEntryEdit(entry, edit);
     if (updated === entry) return;
     setFieldEntries((prev) => prev.map((e) => (e.id === id ? updated : e)));
-    await saveFieldCheckEntry(updated);
+    await saveRecord(updated);
   }
 
   /**
@@ -2632,7 +2650,7 @@ export default function InstantCheckPage() {
       const o = byId.get(d.id);
       const changed = !o || d.plate !== o.plate || JSON.stringify(d.row) !== JSON.stringify(o.row);
       // synced=false على المعدّل عشان المزامنة التدريجية ترفعه تاني.
-      if (changed && d.plate.trim()) await saveFieldCheckEntry({ ...d, synced: false });
+      if (changed && d.plate.trim()) await saveRecord({ ...d, synced: false });
     }
     setFieldEntries(await getAllFieldCheckEntries(agentIdRef.current ?? undefined).catch(() => []));
     // المسح **والتعديل** الاتنين لازم يوصلوا السيرفر. التعديل كان بيتحفظ محلياً
@@ -2642,9 +2660,7 @@ export default function InstantCheckPage() {
     const uid = agentIdRef.current;
     if (uid) {
       if (removedIds.length > 0) void pushFieldCheckDeletes(uid).catch(() => {});
-      void pushPendingFieldChecks(uid)
-        .then((r) => setSyncWarning(syncFailureMessage(r)))
-        .catch(() => {});
+      uploadSoon();   // ☁️ نفس الرفع على دفعات (كان طلب لكل سجل)
     }
     setPlatesEditorOpen(false);
   }
@@ -3770,7 +3786,7 @@ export default function InstantCheckPage() {
       return {
         // **معرّف مشتق من صف المصدر، مش من الوقت.** كان `${Date.now()}-${i}`،
         // يعني كل ضغطة على «تصدير» بتولّد معرّف جديد لنفس اللوحة و
-        // `saveFieldCheckEntry` (put بالمعرّف) بيضيف صف جديد بدل ما يكتب فوق
+        // `saveRecord` (put بالمعرّف) بيضيف صف جديد بدل ما يكتب فوق
         // القديم. المندوب اللي ضغط كذا مرة والتطبيق هنج خرج بنُسخ مكررة.
         // بالمعرّف الثابت التصدير بقى idempotent: مية ضغطة = صف واحد.
         id: `fc-ptt-${r.id}`,
@@ -3790,7 +3806,7 @@ export default function InstantCheckPage() {
     try {
       // #19 — تصدير سريع: نحفظ الكل بالتوازي بدل واحد ورا التاني.
       // **allSettled**: الصف بيتشال من التشييك بس لو حفظه نجح.
-      const res = await Promise.allSettled(toSave.map((e) => saveFieldCheckEntry(e)));
+      const res = await Promise.allSettled(toSave.map((e) => saveRecord(e)));
       const saved = toSave.filter((_, i) => res[i].status === "fulfilled");
       const failedCount = toSave.length - saved.length;
       if (saved.length === 0) throw new Error(saveFailureMessage(firstFailureReason(res)));

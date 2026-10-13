@@ -655,3 +655,49 @@ export async function pullEditedFieldChecks(agentId: string): Promise<{ updated:
   if (ts && ts !== since) { try { localStorage.setItem(EDITS_SINCE_KEY(agentId), ts); } catch { /* هيعيدها */ } }
   return { updated };
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ☁️ أي حاجة تتصدّر بتترفع للسيرفر **على طول**
+// ══════════════════════════════════════════════════════════════════════════════
+// المالك (١٣ أكتوبر ٢٠٢٦): «اة ترفع للسيرفر علي طول اي حاجه تتصدر وارفع للكل». كان التصدير في صفحة التشييك
+// بيحفظ على الموبايل بس، والرفع بيستنى فتحة الصفحة الجاية — والموبايل لو ضاع في الوقت ده السجلات مش على السيرفر.
+
+type UploadResult = { synced: number; pending: number; error?: string };
+const uploadState = new Map<string, { timer: ReturnType<typeof setTimeout> | null; running: boolean; again: boolean }>();
+
+/**
+ * ☁️ ارفع المستني **بعد ثانية ونص** (تصديرات ورا بعض = رفعة واحدة على دفعات) — ولو رفعة شغّالة، رفعة تانية بعدها
+ * عشان اللي اتصدّر في النص مايتنساش. النت مقطوع ⇒ الرفع بيرجع «أوفلاين» ويتعاد لما النت يرجع (الصفحة بتنده تاني).
+ */
+export function scheduleFieldChecksUpload(
+  agentId?: string | null,
+  onResult?: (r: UploadResult) => void,
+  delayMs = 1500,
+): void {
+  void (async () => {
+    let uid = agentId ?? null;
+    if (!uid) {
+      try { uid = (await supabase.auth.getSession()).data.session?.user?.id ?? null; } catch { uid = null; }
+    }
+    if (!uid) return;
+    const id = uid;
+    const st = uploadState.get(id) ?? { timer: null, running: false, again: false };
+    uploadState.set(id, st);
+    if (st.timer) clearTimeout(st.timer);
+    st.timer = setTimeout(() => {
+      st.timer = null;
+      if (st.running) { st.again = true; return; }
+      st.running = true;
+      void (async () => {
+        try {
+          do {
+            st.again = false;
+            const r = await pushPendingFieldChecksBatched(id);
+            try { onResult?.(r); } catch { /* الشاشة اتقفلت */ }
+          } while (st.again);
+        } catch { /* هيتعاد مع التصدير الجاي أو فتح الصفحة */ }
+        finally { st.running = false; }
+      })();
+    }, delayMs);
+  })();
+}
