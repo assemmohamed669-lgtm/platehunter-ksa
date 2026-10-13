@@ -202,7 +202,7 @@ describe("🔴 التوصيل في الصفحتين", () => {
       expect(p).toMatch(/const keep = <T,>\(prev: T\[\], loaded: T\[\]\) => \(safeOn \? mergeById/);
     });
     it("🔒 المفتاح بيتحفظ من بروفايل السوبر أدمن", () => {
-      expect(p).toMatch(/rememberSafeDrafts\(!!prof\?\.is_super\);/);
+      expect(p).toMatch(/if \(prof\) rememberSafeDrafts\(!!prof\.is_super\);/);   // غلط النت مايشيلش العلم
     });
   });
 
