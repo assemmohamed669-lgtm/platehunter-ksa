@@ -6,6 +6,8 @@ import { ShieldCheck, LogOut, ArrowRight } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { logoutAgent } from "@/lib/auth";
+import PushRegistrar from "@/components/PushRegistrar";
+import ForegroundPushBanner from "@/components/ForegroundPushBanner";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -74,6 +76,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </header>
       <main className="mx-auto max-w-md px-4 py-5">{children}</main>
+      {/* 🔔 إشعارات الموبايل في لوحة الأدمن كمان (كانت في صفحات التطبيق بس) + الشريط لو التطبيق مفتوح */}
+      <PushRegistrar />
+      <ForegroundPushBanner />
     </div>
   );
 }
