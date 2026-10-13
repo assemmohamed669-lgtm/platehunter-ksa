@@ -133,7 +133,24 @@ describe("🔴 الدورة على السيرفر", () => {
     expect(Date.parse(snap1.at)).toBeGreaterThan(Date.parse(snap0.at));
   });
 
-  it("🔴 كل يوم عدّ كامل جديد في الخلفية — والنتيجة القديمة تفضل ظاهرة لحد ما يخلص (والممسوح يتشال)", async () => {
+  /**
+   * 🔴 المالك (١٣ أكتوبر ٢٠٢٦): العدّ الكامل كان كل يوم بيعيد كتابة كل لوحة (~٥ مليون كتابة في الشهر لكل جدول) —
+   * وهو للسوبر أدمن بس. «كفايه عندي تظهر حتي كل اسبوع ولكن اليومي اللي بينزل جديد هو المهم». الجديد بيفضل كل دقيقة.
+   */
+  it("🔴 العدّ الكامل كل أسبوع مش كل يوم — والجديد بيفضل يتضاف", async () => {
+    expect(FULL_EVERY_MS).toBe(7 * 24 * 60 * 60_000);
+    const all = files(50, "2026-01-01T00:00:00Z", "2026-10-04T08:00:00Z");
+    const store = fakeStore(), plates = fakePlates(), d = fakeDrive(() => all);
+    let t = Date.parse("2026-10-04T09:00:00Z");
+    const now = () => new Date(t);
+    while (!store.get().snapshot) await certStatsTick(deps(store, plates, d, now));
+    t += 2 * 24 * 60 * 60_000;   // بعد يومين
+    const r = await certStatsTick(deps(store, plates, d, now));
+    expect(r.action).toBe("new");          // الجديد بس — مفيش عدّ كامل
+    expect(store.get().pass).toBeFalsy();
+  });
+
+  it("🔴 كل أسبوع عدّ كامل جديد في الخلفية — والنتيجة القديمة تفضل ظاهرة لحد ما يخلص (والممسوح يتشال)", async () => {
     let all = files(200, "2026-01-01T00:00:00Z", "2026-10-04T08:00:00Z");
     const store = fakeStore(), plates = fakePlates(), d = fakeDrive(() => all);
     let t = Date.parse("2026-10-04T09:00:00Z");

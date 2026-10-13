@@ -461,10 +461,6 @@ export async function restoreMissingFieldChecks(
   agentId: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ restored: number; skipped?: boolean; error?: string }> {
-  const PAGE = 1000;
-  const CHUNK = 200;          // نفس دفعة المسح — URL مقبول على الموبايل
-  const CONCURRENCY = 4;
-
   const local = await getAllFieldCheckEntriesRaw(agentId);
   const localIds = new Set(local.map((e) => e.id));
   const localSynced = local.reduce((n, e) => n + (e.synced === true ? 1 : 0), 0);
@@ -483,10 +479,21 @@ export async function restoreMissingFieldChecks(
     return { restored: 0, skipped: true };
   }
 
-  // ٢. أرقام السجلات بس — ترتيب ثابت (الوقت ثم المعرّف) عشان الصفحات ماتتداخلش
-  const serverIds: string[] = [];
-  let firstError: string | undefined;
-  for (let from = 0; from < count + PAGE; from += PAGE) {
+  // ٢. أرقام السجلات بس ⇒ الناقص بس
+  const ids = await fetchServerLocalIds(agentId, count);
+  const missing = ids.ids.filter((id) => !localIds.has(id) && !tombstoned.has(id));
+  const dl = await downloadByIds(agentId, missing, localIds, tombstoned, onProgress);
+  const firstError = ids.error ?? dl.error;
+  if (firstError) return { restored: dl.restored, error: firstError };
+  writeCheckedAt(agentId, now);
+  return { restored: dl.restored };
+}
+
+/** أرقام سجلات المندوب على السيرفر (`local_id` بس — خفيفة)، بترتيب ثابت (الوقت ثم المعرّف) عشان الصفحات ماتتداخلش. */
+async function fetchServerLocalIds(agentId: string, count?: number): Promise<{ ids: string[]; error?: string }> {
+  const PAGE = 1000;
+  const ids: string[] = [];
+  for (let from = 0; count == null || from < count + PAGE; from += PAGE) {
     const { data, error } = await supabase
       .from("field_checks")
       .select("local_id")
@@ -495,16 +502,30 @@ export async function restoreMissingFieldChecks(
       .order("checked_at", { ascending: false })
       .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
-    if (error) { firstError = error.message; break; }
+    if (error) return { ids: [...new Set(ids)], error: error.message };
     const rows = (data ?? []) as { local_id: string | null }[];
-    for (const r of rows) if (r.local_id) serverIds.push(r.local_id);
+    for (const r of rows) if (r.local_id) ids.push(r.local_id);
     if (rows.length < PAGE) break;
   }
+  return { ids: [...new Set(ids)] };
+}
 
-  const missing = [...new Set(serverIds)].filter((id) => !localIds.has(id) && !tombstoned.has(id));
+/**
+ * بينزّل السجلات دي بالرقم (على دفعات — فهرس فريد، مافيش ترتيب تقيل) ويضيفها. **مابيكتبش فوق أي سجل على الموبايل**
+ * ومابيرجّعش اللي المندوب مسحه.
+ */
+async function downloadByIds(
+  agentId: string,
+  missing: string[],
+  localIds: Set<string>,
+  tombstoned: Set<string>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ restored: number; error?: string }> {
+  const CHUNK = 200;          // نفس دفعة المسح — URL مقبول على الموبايل
+  const CONCURRENCY = 4;
   onProgress?.(0, missing.length);
-
   let restored = 0;
+  let firstError: string | undefined;
   const chunks: string[][] = [];
   for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
   for (let i = 0; i < chunks.length; i += CONCURRENCY) {
@@ -529,8 +550,47 @@ export async function restoreMissingFieldChecks(
     }
     onProgress?.(restored, missing.length);
   }
+  return firstError ? { restored, error: firstError } : { restored };
+}
 
-  if (firstError) return { restored, error: firstError };
-  writeCheckedAt(agentId, now);
-  return { restored };
+/**
+ * 🔄 **زرار «مزامنة» — الناقص بس في الاتجاهين** (السوبر أدمن الأول). المالك (١٣ أكتوبر ٢٠٢٦): «زر المزامنه يرفع بس
+ * اللي ناقص على السيرفر أو اللي لسه مترفعش، وينزّل الناقص بس ... اهم حاجه عندي شغل المندوب يكون محفوظ ليه».
+ * كان بيرفع **كل** السجلات من الأول (طلب لكل سجل) وينزّلهم كلهم تاني.
+ *  ١. المسح اللي المندوب عمله بإيده يوصل السيرفر الأول (عشان مايرجعش).
+ *  ٢. أرقام السجلات على السيرفر (خفيفة).
+ *  ٣. يرفع: اللي لسه مترفعش أو اتعدّل (synced=false) + اللي متعلّم «اترفع» ومش موجود على السيرفر (ضاع) — على دفعات.
+ *  ٤. ينزّل: اللي على السيرفر ومش على الموبايل بس — وسجلات الموبايل مايتكتبش فوقها.
+ * النت وقع وهو بيجيب الأرقام ⇒ اللي مستني بيترفع برضه (شغل المندوب الأول) والغلط بيبان.
+ */
+export async function syncFieldChecksSmart(
+  agentId: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ uploaded: number; downloaded: number; error?: string }> {
+  const uid = await requireSession(agentId);
+  if (!uid) return { uploaded: 0, downloaded: 0, error: "مفيش جلسة صالحة" };
+
+  const del = await pushFieldCheckDeletes(uid);
+  const tombstoned = new Set((await getFieldCheckDeletes(uid)).map((d) => d.id));
+  const server = await fetchServerLocalIds(uid);
+
+  if (server.error) {
+    const up = await pushPendingFieldChecksBatched(uid);
+    return { uploaded: up.synced, downloaded: 0, error: server.error };
+  }
+
+  const serverSet = new Set(server.ids);
+  const local = await getAllFieldCheckEntriesRaw(uid);
+  // متعلّم «اترفع» بس مش على السيرفر ⇒ يرجع «مستني» ويترفع مع الباقي
+  const lost = local.filter((e) => e.id && e.synced === true && !serverSet.has(e.id) && !tombstoned.has(e.id));
+  if (lost.length) await saveFieldCheckEntries(lost.map((e) => ({ ...e, synced: false })));
+  const up = await pushPendingFieldChecksBatched(uid);
+
+  const localIds = new Set(local.map((e) => e.id));
+  const missing = server.ids.filter((id) => !localIds.has(id) && !tombstoned.has(id));
+  const dl = await downloadByIds(uid, missing, localIds, tombstoned, onProgress);
+
+  const error = del.error ?? up.error ?? dl.error;
+  if (!error) writeCheckedAt(uid, Date.now());
+  return error ? { uploaded: up.synced, downloaded: dl.restored, error } : { uploaded: up.synced, downloaded: dl.restored };
 }

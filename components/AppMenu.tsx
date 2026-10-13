@@ -15,7 +15,8 @@ import { useMemberLocks } from "@/lib/groupLocksClient";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { forceSyncAll, restoreRecordings } from "@/lib/sync";
-import { pushFieldChecks, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { pushFieldChecks, restoreFieldChecks, syncFieldChecksSmart } from "@/lib/syncFieldCheck";
+import { safeDraftsOn } from "@/lib/safeDrafts";
 import { subStatus } from "@/lib/subscription";
 import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
@@ -205,6 +206,24 @@ export default function AppMenu({
       const { data } = await supabase.auth.getUser();
       const uid = data.user?.id;
       if (!uid) { alert("لازم تكون مسجّل دخول."); return; }
+      /**
+       * 🔄 السوبر أدمن الأول: **الناقص بس في الاتجاهين** (`syncFieldChecksSmart`) — كان بيرفع كل السجلات من الأول
+       * (طلب لكل سجل) وينزّلهم كلهم تاني. المالك: «يرفع بس اللي ناقص على السيرفر أو اللي لسه مترفعش، وينزّل الناقص بس».
+       */
+      if (safeDraftsOn()) {
+        const pushR = await forceSyncAll(uid);
+        const f = await syncFieldChecksSmart(uid);
+        const pullR = await restoreRecordings(uid);
+        const err = pushR.error || f.error || pullR.error;
+        alert(
+          `تمّت المزامنة:\n` +
+          `⬆️ رفع: ${pushR.synced} تسجيل + ${f.uploaded} تشييك\n` +
+          `⬇️ استرجاع: ${pullR.restored} تسجيل + ${f.downloaded} تشييك` +
+          (err ? `\n\n⚠️ ${err}` : "")
+        );
+        window.location.reload();
+        return;
+      }
       const pushR = await forceSyncAll(uid);
       const pushF = await pushFieldChecks(uid);
       const pullR = await restoreRecordings(uid);
