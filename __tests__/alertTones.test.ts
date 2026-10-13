@@ -56,8 +56,8 @@ describe("🔴 الاختيار بيتحفظ على الموبايل", () => {
 });
 
 describe("🔴 التوصيل", () => {
-  it("🛑 السوبر أدمن الأول — الخيار ظاهر له بس لحد «انشر للكل»", () => {
-    expect(ALERT_TONES_FOR_ALL).toBe(false);
+  it("🔓 «انشر للكل» (المالك ١٤ أكتوبر ٢٠٢٦) — الخيار ظاهر لكل المناديب (والشرط فاضل للرجوع)", () => {
+    expect(ALERT_TONES_FOR_ALL).toBe(true);
     const page = read("app/(app)/appearance/page.tsx");
     expect(page).toMatch(/نغمة التحصيل/);
     expect(page).toMatch(/\(ALERT_TONES_FOR_ALL \|\| isSuper\) &&/);
