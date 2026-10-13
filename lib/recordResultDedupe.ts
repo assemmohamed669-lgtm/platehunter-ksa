@@ -11,6 +11,7 @@
  */
 
 import { normalizePlate, bankPlateToArabic } from "./plateParser";
+import { dedupeDuplicateRows } from "./fieldCheck";
 
 /** صيغة تاريخ التشييك المعروضة: dd-MM-yyyy HH:mm */
 const CHECK_DATE_RE = /^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{2}):(\d{2}))?$/;
@@ -80,4 +81,29 @@ export function dedupeRecordsByPlate<T>(
     if (t > best[i]) { out[i] = r; best[i] = t; }
   }
   return out;
+}
+
+/**
+ * 👥 نتيجة فرز السجلات: `allTimes` ⇒ **كل المرات** من كل أعضاء المجموعة (المالك ١٣ أكتوبر ٢٠٢٦: «لو كل واحد فيهم
+ * مسجل اللوحه دي مرة او اكثر يطلع في نتيجه الفرز ... وحتي لو فيهم حد مسجلها اكتر من مرة بردو تطلع معاهم المكرر»)،
+ * وإلا الأحدث بس زي الأول (#244).
+ */
+export function recordResultRows<T>(
+  rows: T[],
+  plateOf: (r: T) => string,
+  dateOf: (r: T) => string,
+  allTimes: boolean,
+): T[] {
+  return allTimes ? groupRecordsByPlate(rows, plateOf, dateOf) : dedupeRecordsByPlate(rows, plateOf, dateOf);
+}
+
+/**
+ * سجلات الزمايل الجاية من السيرفر: الإرسال المكرر لنفس التشييك (نفس المندوب · نفس اللوحة · نفس الدقيقة/المكان —
+ * محرك الصوت بيعيد الإرسال) بيتلم مرة واحدة، زي `collapseDuplicateChecks` على سجلاتي. مندوبين مختلفين أو أيام
+ * مختلفة ⇒ كل واحدة لوحدها.
+ */
+export function collapseGroupRecordRepeats<T extends { plate: string | null; agent_id: string; checked_at: string; maps_link: string | null }>(
+  rows: T[],
+): T[] {
+  return dedupeDuplicateRows(rows, (g) => ({ plate: String(g.plate ?? ""), at: g.checked_at, owner: g.agent_id, location: g.maps_link }));
 }
