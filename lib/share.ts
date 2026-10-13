@@ -360,7 +360,19 @@ export async function shareImagesWithText(
           });
           files.push(uri);
         }
-        await Share.share({ title, text, files, dialogTitle: title });
+        /**
+         * 🔴 **من غير `text`** — بلاغ المالك (١٣ أكتوبر ٢٠٢٦): دوس «مشاركة كل
+         * الصور مرة واحدة (٥)» ⇒ واتساب وصله **النص بس** «نتائج الفرز — ٥ صور»
+         * والصور ماوصلتش.
+         *
+         * السبب: لما بنبعت نص **مع** ملفات، أندرويد بيعلّم الرسالة على إنها
+         * «نص»، فالواتساب بيفتح مسار النص ويتجاهل الملفات. المشاركة العادية
+         * (صورة واحدة) بتعدّي لأنها بتستعمل `url` مش `files`.
+         *
+         * الصور هي المطلوب؛ النص كان «نتائج الفرز — ٥ صور» وبس. العنوان
+         * (`title`) بيفضل — بيروح في خانة الموضوع ومابيأثرش على النوع.
+         */
+        await Share.share({ title, files, dialogTitle: title });
         return "shared";
       } catch (err: unknown) {
         const e = err as { name?: string; message?: string };

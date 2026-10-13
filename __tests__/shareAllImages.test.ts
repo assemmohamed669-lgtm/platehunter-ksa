@@ -28,8 +28,23 @@ describe("🔴 shareImagesWithText — كل الصور في مشاركة واح�
     expect(nativeShare).toHaveBeenCalledTimes(1);
     expect(nativeShare.mock.calls[0][0]).toMatchObject({
       files: ["file:///cache/plate-share-1.png", "file:///cache/plate-share-2.png", "file:///cache/plate-share-3.png"],
-      text: "فرز كلي — ٣ صور",
     });
+  });
+
+  /**
+   * 🔴 بلاغ المالك (١٣ أكتوبر ٢٠٢٦): دوس «مشاركة كل الصور مرة واحدة (٥)» ⇒
+   * واتساب وصله **النص بس** «نتائج الفرز — ٥ صور» والصور ماوصلتش.
+   *
+   * لما بنبعت نص مع ملفات، أندرويد بيعلّم الرسالة على إنها «نص» فالواتساب
+   * بيفتح مسار النص ويتجاهل الملفات. الصور هي المطلوب — فالنص بيتشال.
+   */
+  it("🔴 الموبايل: **مافيش نص** مع الملفات — النص كان بيخلّي واتساب يتجاهل الصور", async () => {
+    native.on = true;
+    await shareImagesWithText([PNG, PNG], "نتائج الفرز — ٥ صور", ["a-1.png", "a-2.png"], "نتائج الفرز");
+    const arg = nativeShare.mock.calls[0][0] as { text?: string; title?: string; files?: string[] };
+    expect(arg.text).toBeUndefined();
+    expect(arg.title).toBe("نتائج الفرز");
+    expect(arg.files).toHaveLength(2);
   });
 
   it("المندوب لغى ⇒ «cancelled» من غير ما نكمّل لطريقة تانية", async () => {
