@@ -11,6 +11,7 @@
  */
 
 import { normalizePlate, bankPlateToArabic } from "./plateParser";
+import { dedupeDuplicateRows } from "./fieldCheck";
 
 /** صيغة تاريخ التشييك المعروضة: dd-MM-yyyy HH:mm */
 const CHECK_DATE_RE = /^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{2}):(\d{2}))?$/;
@@ -35,7 +36,7 @@ export function checkDateValue(raw: string | null | undefined): number {
 /**
  * **كل المرات** — بس نفس اللوحة تحت بعض (بترتيب أول ظهور لكل لوحة) والأحدث فوق. لـ«لصق نصي» (المالك ٧
  * أكتوبر ٢٠٢٦: «خليها يظهر السيارة لو مكررة … لان ممكن اماكنها تبقي مختلفه ف المندوب يعرف بالظبط يحصلها
- * في اي مكان»). الصف اللي مالوش لوحة بيعدّي زي ما هو. (الفرز العادي لسه `dedupeRecordsByPlate`.)
+ * في اي مكان»). الصف اللي مالوش لوحة بيعدّي زي ما هو. (والفرز العادي كمان من ١٣ أكتوبر — #423.)
  */
 export function groupRecordsByPlate<T>(
   rows: T[],
@@ -80,4 +81,15 @@ export function dedupeRecordsByPlate<T>(
     if (t > best[i]) { out[i] = r; best[i] = t; }
   }
   return out;
+}
+
+/**
+ * سجلات الزمايل الجاية من السيرفر: الإرسال المكرر لنفس التشييك (نفس المندوب · نفس اللوحة · نفس الدقيقة/المكان —
+ * محرك الصوت بيعيد الإرسال) بيتلم مرة واحدة، زي `collapseDuplicateChecks` على سجلاتي. مندوبين مختلفين أو أيام
+ * مختلفة ⇒ كل واحدة لوحدها.
+ */
+export function collapseGroupRecordRepeats<T extends { plate: string | null; agent_id: string; checked_at: string; maps_link: string | null }>(
+  rows: T[],
+): T[] {
+  return dedupeDuplicateRows(rows, (g) => ({ plate: String(g.plate ?? ""), at: g.checked_at, owner: g.agent_id, location: g.maps_link }));
 }

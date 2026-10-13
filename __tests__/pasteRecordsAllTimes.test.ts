@@ -56,7 +56,8 @@ describe("🔴 التوصيل", () => {
     expect(p).toMatch(/pasteRecordColorMap\.map\.get\(/);
     expect(p).toMatch(/لوحة سبق تشييكها \(\$\{pasteRecordResults\.length\} مرة\)/);
   });
-  it("الفرز العادي زي ما هو (الأحدث بس)", () => {
-    expect(p).toMatch(/function dedupeTashyeek\(/);
+  it("الفرز العادي كمان بقى كل المرات (المالك ١٣ أكتوبر ٢٠٢٦ — #423، __tests__/sortRecordsAllTimes.test.ts)", () => {
+    expect(p).toMatch(/function groupTashyeekByPlate\(/);
+    expect(p).not.toMatch(/dedupeRecordsByPlate/);
   });
 });
