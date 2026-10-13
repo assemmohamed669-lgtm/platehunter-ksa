@@ -13,7 +13,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { setCheckTab } from "@/lib/checkTab";
-import { foregroundBannerOf, claimPushListeners, PUSH_BANNER_EVENT } from "@/lib/foregroundPush";
+import { foregroundBannerOf, claimPushListeners, nativeShowsForegroundPush, PUSH_BANNER_EVENT } from "@/lib/foregroundPush";
 
 /** قناة الإشعار على أندرويد — لازم تبقى نفس القيمة اللي السيرفر بيبعت بيها. */
 export const PUSH_CHANNEL_ID = "wanted_finds";
@@ -67,11 +67,17 @@ export default function PushRegistrar() {
         if (url.includes("tab=cert")) setCheckTab("cert");
         if (url.startsWith("/group-find") || url.startsWith("/wanted") || url.startsWith("/instant-check")) router.push(url);
       });
-      // 🔔 الإشعار وصل والتطبيق **مفتوح** ⇒ أندرويد مابيعرضهوش في الشريط — بنعرضه شريط فوق الشاشة (الشهايد بس؛
-      //    «لقى سيارة مطلوبة» ليها تنبيه جوّه التطبيق أصلاً). `lib/foregroundPush.ts`
+      // 🔔 الإشعار وصل والتطبيق **مفتوح** ⇒ النسخ القديمة (لحد 1.5) مابتعرضهوش في الشريط — بنعرضه شريط فوق الشاشة
+      //    (الشهايد بس؛ «لقى سيارة مطلوبة» ليها تنبيه جوّه التطبيق أصلاً). من 1.6 أندرويد بيعرضه بنفسه، فمانكرّرش.
+      //    `lib/foregroundPush.ts`
+      let nativeShown = false;
+      try {
+        const { App } = await import("@capacitor/app");
+        nativeShown = nativeShowsForegroundPush((await App.getInfo()).build);
+      } catch { /* مش عارفين النسخة ⇒ الشريط يفضل */ }
       await PushNotifications.addListener("pushNotificationReceived", (n) => {
         const b = foregroundBannerOf(n);
-        if (b) window.dispatchEvent(new CustomEvent(PUSH_BANNER_EVENT, { detail: b }));
+        if (b && !nativeShown) window.dispatchEvent(new CustomEvent(PUSH_BANNER_EVENT, { detail: b }));
       });
       }
 
