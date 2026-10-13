@@ -13,6 +13,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { setCheckTab } from "@/lib/checkTab";
+import { foregroundBannerOf, claimPushListeners, PUSH_BANNER_EVENT } from "@/lib/foregroundPush";
 
 /** قناة الإشعار على أندرويد — لازم تبقى نفس القيمة اللي السيرفر بيبعت بيها. */
 export const PUSH_CHANNEL_ID = "wanted_finds";
@@ -50,6 +51,8 @@ export default function PushRegistrar() {
       }
       if (perm.receive !== "granted" || cancelled) return;
 
+      // المستمعين مرة واحدة في عمر التطبيق (`PushRegistrar` في صفحات التطبيق ولوحة الأدمن) — وإلا كل حاجة بتتكرّر.
+      if (claimPushListeners()) {
       await PushNotifications.addListener("registration", (t) => {
         void saveToken(t.value, Capacitor.getPlatform());
       });
@@ -64,6 +67,13 @@ export default function PushRegistrar() {
         if (url.includes("tab=cert")) setCheckTab("cert");
         if (url.startsWith("/group-find") || url.startsWith("/wanted") || url.startsWith("/instant-check")) router.push(url);
       });
+      // 🔔 الإشعار وصل والتطبيق **مفتوح** ⇒ أندرويد مابيعرضهوش في الشريط — بنعرضه شريط فوق الشاشة (الشهايد بس؛
+      //    «لقى سيارة مطلوبة» ليها تنبيه جوّه التطبيق أصلاً). `lib/foregroundPush.ts`
+      await PushNotifications.addListener("pushNotificationReceived", (n) => {
+        const b = foregroundBannerOf(n);
+        if (b) window.dispatchEvent(new CustomEvent(PUSH_BANNER_EVENT, { detail: b }));
+      });
+      }
 
       await PushNotifications.register();
     })();

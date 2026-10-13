@@ -12,6 +12,7 @@ import SharePartsSheet from "@/components/SharePartsSheet";
 import WheelPopup from "@/components/WheelPopup";
 import GroupFindNotifier from "@/components/GroupFindNotifier";
 import PushRegistrar from "@/components/PushRegistrar";
+import ForegroundPushBanner from "@/components/ForegroundPushBanner";
 import AppMenu from "@/components/AppMenu";
 import UpdateBanner from "@/components/UpdateBanner";
 import NoticeBanner from "@/components/NoticeBanner";
@@ -322,6 +323,7 @@ export default function AppShellLayout({
         <WheelPopup granted={wheelGranted} />
         <GroupFindNotifier />
         <PushRegistrar />
+        <ForegroundPushBanner />
         <AppMenu open={menuOpen} onOpenChange={setMenuOpen} onLogout={handleLogout} voiceOnly={!restPagesEnabled} />
       </div>
     </SessionGuard>
