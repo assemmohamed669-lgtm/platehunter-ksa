@@ -417,3 +417,120 @@ export async function restoreFieldChecks(
 
   return firstError ? { restored, error: firstError } : { restored };
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  📥 الاسترجاع بيضيف **الناقص بس** (السوبر أدمن الأول — `safeDraftsOn`)
+// ══════════════════════════════════════════════════════════════════════════════
+// المالك (١٣ أكتوبر ٢٠٢٦): «يفضل سجلات المندوب علي تليفونه ولو فيه ناقص يتضاف عليه الناقص بس ... ولو غير تليفونه
+// او حاجه راحت بالغلط من السجلات بتاعته ترجعله كل سجلاته». `restoreFieldChecks` فوق كان بيتنده مع **كل** فتحة
+// لصفحة التشييك وينزّل كل السجلات ويكتبها فوق الموبايل: ٣٩٢ ألف طلب في ٢٩ يوم و١٨٨ جيجا ملفات مؤقتة على
+// الداتابيز (ترتيب صفوف تقيلة بـoffset). زرار «مزامنة» وإخفاء سجلات مجموعة لسه بيستخدموه — كامل زي ما هو.
+
+/** المراجعة الكاملة (بالأرقام) مرة في اليوم كاحتياط حتى لو العدد متساوي. */
+export const RECORDS_CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
+const CHECKED_AT_KEY = (agentId: string) => `ph:recordsCheckedAt:${agentId}`;
+
+/**
+ * محتاج أراجع السجلات بالأرقام؟ السيرفر عنده أكتر من المرفوع اللي على الموبايل (موبايل جديد / اتمسح / سجّل من
+ * موبايل تاني) ⇒ أيوه. أول مرة أو عدّى يوم ⇒ أيوه (احتياط). غير كده ⇒ لأ — **ولا سجل بينزل**.
+ */
+export function needsRecordsCheck(o: { serverCount: number; localSynced: number; lastCheckAt: number | null; now: number }): boolean {
+  if (o.serverCount > o.localSynced) return true;
+  if (o.lastCheckAt == null) return true;
+  return o.now - o.lastCheckAt >= RECORDS_CHECK_EVERY_MS;
+}
+
+function readCheckedAt(agentId: string): number | null {
+  try {
+    const n = Number(localStorage.getItem(CHECKED_AT_KEY(agentId)));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch { return null; }
+}
+function writeCheckedAt(agentId: string, at: number): void {
+  try { localStorage.setItem(CHECKED_AT_KEY(agentId), String(at)); } catch { /* التخزين مش متاح ⇒ هيراجع تاني */ }
+}
+
+/**
+ * 📥 **بيضيف الناقص بس — وسجلات الموبايل عمرها ما يتكتب فوقها.**
+ *  ١. عدّ صغير على السيرفر (سجلات المندوب ده بس). الموبايل عنده نفسه ومراجَع النهارده ⇒ خلاص.
+ *  ٢. غير كده: **أرقام** السجلات بس (خفيفة) ⇒ اللي مش على الموبايل (ومش ممسوح منه) ⇒ ينزل **هو بس** على دفعات
+ *     بالرقم (فهرس فريد — مافيش ترتيب تقيل).
+ *  ٣. أي غلط (نت) ⇒ الموبايل زي ما هو، والمراجعة تتعاد الفتحة الجاية.
+ */
+export async function restoreMissingFieldChecks(
+  agentId: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ restored: number; skipped?: boolean; error?: string }> {
+  const PAGE = 1000;
+  const CHUNK = 200;          // نفس دفعة المسح — URL مقبول على الموبايل
+  const CONCURRENCY = 4;
+
+  const local = await getAllFieldCheckEntriesRaw(agentId);
+  const localIds = new Set(local.map((e) => e.id));
+  const localSynced = local.reduce((n, e) => n + (e.synced === true ? 1 : 0), 0);
+  // اتمسح على الموبايل ولسه المسح ماوصلش السيرفر ⇒ مايرجعش
+  const tombstoned = new Set((await getFieldCheckDeletes(agentId)).map((d) => d.id));
+
+  const { count, error: cErr } = await supabase
+    .from("field_checks")
+    .select("id", { count: "exact", head: true })
+    .eq("agent_id", agentId)
+    .not("local_id", "is", null);
+  if (cErr || count == null) return { restored: 0, error: cErr?.message ?? "مش قادر أعدّ السجلات" };
+
+  const now = Date.now();
+  if (!needsRecordsCheck({ serverCount: count, localSynced, lastCheckAt: readCheckedAt(agentId), now })) {
+    return { restored: 0, skipped: true };
+  }
+
+  // ٢. أرقام السجلات بس — ترتيب ثابت (الوقت ثم المعرّف) عشان الصفحات ماتتداخلش
+  const serverIds: string[] = [];
+  let firstError: string | undefined;
+  for (let from = 0; from < count + PAGE; from += PAGE) {
+    const { data, error } = await supabase
+      .from("field_checks")
+      .select("local_id")
+      .eq("agent_id", agentId)
+      .not("local_id", "is", null)
+      .order("checked_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) { firstError = error.message; break; }
+    const rows = (data ?? []) as { local_id: string | null }[];
+    for (const r of rows) if (r.local_id) serverIds.push(r.local_id);
+    if (rows.length < PAGE) break;
+  }
+
+  const missing = [...new Set(serverIds)].filter((id) => !localIds.has(id) && !tombstoned.has(id));
+  onProgress?.(0, missing.length);
+
+  let restored = 0;
+  const chunks: string[][] = [];
+  for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    const batch = chunks.slice(i, i + CONCURRENCY);
+    const pages = await Promise.all(batch.map((ids) =>
+      supabase.from("field_checks").select("*").eq("agent_id", agentId).in("local_id", ids)));
+    const entries: FieldCheckEntry[] = [];
+    for (const p of pages) {
+      if (p.error) { if (!firstError) firstError = p.error.message; continue; }
+      for (const r of (p.data ?? []) as Record<string, unknown>[]) {
+        const id = r.local_id as string | null;
+        if (!id || localIds.has(id) || tombstoned.has(id)) continue;   // حزام تاني — مايتكتبش فوق الموبايل أبداً
+        entries.push(serverRowToEntry(r, agentId));
+      }
+    }
+    try {
+      if (entries.length) await saveFieldCheckEntries(entries);
+      restored += entries.length;
+      for (const e of entries) localIds.add(e.id);
+    } catch (e) {
+      if (!firstError) firstError = e instanceof Error ? e.message : String(e);
+    }
+    onProgress?.(restored, missing.length);
+  }
+
+  if (firstError) return { restored, error: firstError };
+  writeCheckedAt(agentId, now);
+  return { restored };
+}

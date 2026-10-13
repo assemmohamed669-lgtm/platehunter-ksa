@@ -43,7 +43,7 @@ import { areaOf, fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type
 import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected, editorDeleteIds } from "@/lib/recordsSelection";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
-import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks } from "@/lib/syncFieldCheck";
+import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, restoreMissingFieldChecks } from "@/lib/syncFieldCheck";
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
@@ -1452,7 +1452,9 @@ export default function InstantCheckPage() {
         await pushFieldCheckDeletes(uid).catch(() => {});
         // تقدّم حقيقي («٢٠٠٠ من ٦١١٠») + عرض أول دفعة فور وصولها بدل ما المندوب
         // يفضل قدام شاشة فاضية لحد ما الكل يخلص.
-        await restoreFieldChecks(uid, (done, total) => {
+        // 📥 السوبر أدمن الأول: **الناقص بس** وسجلات الموبايل مايتكتبش فوقها (`restoreMissingFieldChecks`) —
+        //    كانت كل فتحة بتنزّل كل السجلات من الأول. المناديب زي الأول لحد «انشر للكل».
+        await (safeDraftsOn() ? restoreMissingFieldChecks : restoreFieldChecks)(uid, (done, total) => {
           setRestoreProgress({ done, total });
           if (done > 0) void getAllFieldCheckEntries(uid).then(setFieldEntries).catch(() => {});
         });
