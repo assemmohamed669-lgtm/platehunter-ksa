@@ -69,7 +69,7 @@ export interface DailyCertEntry extends Omit<CertFields, "issuer" | "certNo"> {
 
 /** عدد الخانات المليانة — الشهادة الأغنى بتكسب لو نفس اللوحة اترفعت من كذا حساب. */
 function richness(e: DailyCertEntry): number {
-  return [e.vin, e.bank, e.make, e.model, e.year, e.color, e.status, e.certDate].filter(Boolean).length;
+  return [e.vin, e.bank, e.tenant, e.make, e.model, e.year, e.color, e.status, e.certDate].filter(Boolean).length;
 }
 
 /**
@@ -85,4 +85,36 @@ export function dedupeDailyCerts(entries: readonly DailyCertEntry[]): DailyCertE
     if (!cur || richness(e) > richness(cur) || (richness(e) === richness(cur) && e.createdAt > cur.createdAt)) best.set(key, e);
   }
   return [...best.values()];
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  📄 شيت «مشاركة الشهايد إكسيل»
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * المالك (١٤ أكتوبر ٢٠٢٦): «الإكسيل ده يبقى فيه بيانات كل السيارات اللي بينزل
+ * ليها شهايد بياناتها بالكامل».
+ *
+ * الشيت = **كل** شهايد اليوم، مش اللي طابقت داتا المندوب بس. والترتيب هنا هو
+ * ترتيب المالك بالحرف — ماتغيّرهوش من غير ما يطلب.
+ */
+export const CERT_SHEET_COLUMNS = [
+  "رقم اللوحة", "نوع المركبة", "المصنع", "لون المركبة", "سنة الصنع",
+  "اسم المؤجر", "اسم المستأجر", "رقم الهيكل", "رقم تسجيل العقد",
+] as const;
+
+/** صفوف الشيت — لوحة واحدة = صف واحد، والخانة الناقصة بتبقى فاضية مش «undefined». */
+export function certSheetRows(entries: readonly DailyCertEntry[]): Record<string, string>[] {
+  const v = (s: unknown) => String(s ?? "").trim();
+  return dedupeDailyCerts(entries).map((e) => ({
+    "رقم اللوحة": v(e.plateText) || v(e.plate),
+    "نوع المركبة": v(e.model),
+    "المصنع": v(e.make),
+    "لون المركبة": v(e.color),
+    "سنة الصنع": v(e.year),
+    "اسم المؤجر": v(e.bank),
+    "اسم المستأجر": v(e.tenant),
+    "رقم الهيكل": v(e.vin),
+    "رقم تسجيل العقد": v(e.certNo),
+  }));
 }

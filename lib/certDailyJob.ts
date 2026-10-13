@@ -36,6 +36,8 @@ export interface CertDailyDeps {
   requeueNoPlate?(fromDay: string, beforeIso: string): Promise<void>;
   /** اللي اتقرت قبل عمود «رقم العقد» ⇒ ترجع تتقري مرة عشان الرقم يتملى. */
   requeueMissingCertNo?(fromDay: string): Promise<void>;
+  /** اللي اتقرت قبل عمود «اسم المستأجر» ⇒ ترجع تتقري مرة واحدة (المالك ١٤ أكتوبر ٢٠٢٦). */
+  requeueMissingTenant?(fromDay: string): Promise<void>;
   download(fileId: string): Promise<Uint8Array | null>;
   extractText(bytes: Uint8Array): Promise<string>;
   /** `fields` = null ⇒ فشل (tries بيزيد ومش متقري لسه). */
@@ -98,6 +100,7 @@ export async function certDailyTick(d: CertDailyDeps): Promise<{
   // ٣) قراية اللي لسه ماتقراش — النهارده الأول (واللي القارئ القديم مالقاش فيها لوحة بترجع تتقري)
   if (d.requeueNoPlate && timeLeft() > 10_000) await d.requeueNoPlate(dayMinus(day, KEEP_DAYS), CERT_PARSER_AT).catch(() => {});
   if (d.requeueMissingCertNo && timeLeft() > 10_000) await d.requeueMissingCertNo(dayMinus(day, KEEP_DAYS)).catch(() => {});
+  if (d.requeueMissingTenant && timeLeft() > 10_000) await d.requeueMissingTenant(dayMinus(day, KEEP_DAYS)).catch(() => {});
   let parsed = 0, failed = 0;
   const queue = timeLeft() > 5_000 ? await d.pending(dayMinus(day, KEEP_DAYS), PENDING_PER_TICK) : [];
   const worker = async () => {

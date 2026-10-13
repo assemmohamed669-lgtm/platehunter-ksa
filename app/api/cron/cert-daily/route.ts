@@ -12,7 +12,7 @@ import { certDailyTick } from "@/lib/certDailyJob";
 import { extractPdfText } from "@/lib/pdfText";
 import {
   insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, readDayCerts, sampleNoPlateCerts, requeueNoPlateCerts,
-  requeueMissingCertNoCerts,
+  requeueMissingCertNoCerts, requeueMissingTenantCerts,
 } from "@/lib/certDailyStore";
 import { certTextShape } from "@/lib/certTextShape";
 import { riyadhDayStart, dayMinus, CERT_DAYS_BACK } from "@/lib/certDaily";
@@ -109,6 +109,7 @@ export async function GET(req: Request) {
       pending: pendingCerts,
       requeueNoPlate: requeueNoPlateCerts,
       requeueMissingCertNo: requeueMissingCertNoCerts,
+      requeueMissingTenant: requeueMissingTenantCerts,
       download: (fileId) => downloadPdf(fileId, token),
       extractText: extractPdfText,
       saveParsed: saveParsedCert,

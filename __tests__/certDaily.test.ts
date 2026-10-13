@@ -158,8 +158,11 @@ describe("🔴 دورة السيرفر", () => {
     expect(rq).toMatch(/\.is\("cert_no", null\)/);
     // الحفظ والقراية بيكمّلوا من غير العمود لو لسه ماتضافش
     expect(store).toMatch(/const NO_CERT_NO = \/cert_no\//);
-    const save = store.slice(store.indexOf("export async function saveParsedCert"), store.indexOf("export async function requeueNoPlateCerts"));
-    expect(save).toMatch(/NO_CERT_NO\.test/);
+    // الحفظ بيشيل أي عمود متأخر ناقص ويعيد (cert_no و tenant) — مش cert_no بس
+    const save = store.slice(store.indexOf("export async function saveParsedCert"), store.indexOf("export async function requeueMissingTenantCerts"));
+    expect(store).toMatch(/const LATE_COLUMNS = \["cert_no", "tenant"\]/);
+    expect(save).toMatch(/for \(const col of LATE_COLUMNS\)/);
+    expect(save).toMatch(/delete patch\[col\]/);
     const read = store.slice(store.indexOf("export async function readDayCerts"), store.indexOf("export async function countDayCerts"));
     expect(read).toMatch(/NO_CERT_NO\.test/);
   });

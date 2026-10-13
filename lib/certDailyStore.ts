@@ -23,22 +23,41 @@ export async function pendingCerts(fromDay: string, limit: number): Promise<Pend
   return (data ?? []) as PendingCert[];
 }
 
-/** عمود «رقم العقد» لسه ماتضافش (`docs/sql/cert-daily-certno.sql`) ⇒ نكمّل من غيره، مانقفش. */
+/**
+ * أعمدة اتضافت بعدين ويمكن تكون لسه ماتشغّلتش على الداتابيز:
+ *  · `cert_no` — `docs/sql/cert-daily-certno.sql`
+ *  · `tenant`  — `docs/sql/cert-daily-tenant.sql` (اسم المستأجر، المالك ١٤ أكتوبر ٢٠٢٦)
+ * لو ناقص، بنكمّل من غيره بدل ما نقف — فترتيب النشر مايكسرش دورة الشهايد.
+ */
 const NO_CERT_NO = /cert_no/;
+const LATE_COLUMNS = ["cert_no", "tenant"] as const;
 
 export async function saveParsedCert(fileId: string, f: CertFields | null, tries: number, done: boolean): Promise<void> {
   const patch: Record<string, unknown> = { tries, parsed: done, updated_at: new Date().toISOString() };
   if (f) {
     Object.assign(patch, {
-      plate: f.plate, plate_text: f.plateText, vin: f.vin, bank: f.bank, make: f.make, model: f.model,
-      year: f.year, color: f.color, status: f.status, cert_date: f.certDate, cert_no: f.certNo,
+      plate: f.plate, plate_text: f.plateText, vin: f.vin, bank: f.bank, tenant: f.tenant, make: f.make,
+      model: f.model, year: f.year, color: f.color, status: f.status, cert_date: f.certDate, cert_no: f.certNo,
     });
   }
   let { error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId);
-  if (error && "cert_no" in patch && NO_CERT_NO.test(error.message)) {
-    delete patch.cert_no;
+  // العمود الناقص اسمه بيبان في رسالة الغلط ⇒ نشيله ونعيد (مرة لكل عمود).
+  for (const col of LATE_COLUMNS) {
+    if (!error || !(col in patch) || !new RegExp(col).test(error.message)) continue;
+    delete patch[col];
     ({ error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId));
   }
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * اللي اتقرت قبل ما يبقى فيه عمود «اسم المستأجر» (قيمته لسه null) ⇒ ترجع تتقري مرة واحدة عشان
+ * الاسم يتملى. بعد القراية بيبقى "" أو الاسم ⇒ مابتتعادش.
+ */
+export async function requeueMissingTenantCerts(fromDay: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .gte("day", fromDay).eq("parsed", true).is("tenant", null);
   if (error) throw new Error(error.message);
 }
 
@@ -78,17 +97,22 @@ interface Row {
   file_id: string; name: string; created_at: string; parsed: boolean;
   plate: string; plate_text: string; vin: string; bank: string; make: string; model: string;
   year: string; color: string; status: string; cert_date: string; cert_no?: string | null;
+  tenant?: string | null;
 }
 
 /** كل شهايد اليوم (صفحات ١٠٠٠ — حد الـAPI). */
 export async function readDayCerts(day: string): Promise<{ total: number; parsed: number; entries: DailyCertEntry[] }> {
   const rows: Row[] = [];
   const COLS = "file_id, name, created_at, parsed, plate, plate_text, vin, bank, make, model, year, color, status, cert_date";
-  let cols = `${COLS}, cert_no`;
+  // الأعمدة المتأخرة بتتشال واحد واحد لو الداتابيز لسه ماخدتهاش — مانقفش عشان عمود.
+  let cols = `${COLS}, cert_no, tenant`;
   for (let from = 0; from < 50_000; from += 1000) {
     const page = () => supabaseAdmin.from("cert_daily").select(cols)
       .eq("day", day).order("created_at", { ascending: true }).range(from, from + 999);
     let { data, error } = await page();
+    if (error && cols.includes("tenant") && /tenant/.test(error.message)) {
+      cols = `${COLS}, cert_no`; ({ data, error } = await page());
+    }
     if (error && cols !== COLS && NO_CERT_NO.test(error.message)) { cols = COLS; ({ data, error } = await page()); }
     if (error) throw Object.assign(new Error(error.message), { code: error.code });
     rows.push(...((data ?? []) as unknown as Row[]));
@@ -99,8 +123,8 @@ export async function readDayCerts(day: string): Promise<{ total: number; parsed
     parsed: rows.filter((r) => r.parsed).length,
     entries: rows.filter((r) => r.plate || r.vin).map((r) => ({
       fileId: r.file_id, name: r.name, createdAt: r.created_at, plate: r.plate, plateText: r.plate_text, vin: r.vin,
-      bank: r.bank, make: r.make, model: r.model, year: r.year, color: r.color, status: r.status, certDate: r.cert_date,
-      certNo: r.cert_no ?? "",
+      bank: r.bank, tenant: r.tenant ?? "", make: r.make, model: r.model, year: r.year, color: r.color,
+      status: r.status, certDate: r.cert_date, certNo: r.cert_no ?? "",
     })),
   };
 }

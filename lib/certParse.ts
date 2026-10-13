@@ -11,8 +11,9 @@
  *  · «السجل السعودي لعقود الإيجار التمويلي» (sijil.sa): العربي متلخبط جوّه الملف — اللوحة
  *    بالحروف الإنجليزي (8377JGR) والشاص والتواريخ مقروءين؛ الباقي بيفضل فاضي.
  *
- * **مفيش أي بيانات شخصية بتتطلّع** (اسم المستأجر/هويته/تليفونه/عنوانه) — بيانات العربية والبنك
- * (المؤجر) والعقد بس. ومن غير «lookbehind» في أي regex (الآيفون القديم).
+ * **اسم المستأجر بس** هو البيان الشخصي اللي بيتطلّع — بطلب المالك (١٤ أكتوبر ٢٠٢٦) عشان شيت
+ * الشهايد اليومي. **الهوية والتليفون والعنوان لسه مابيتطلّعوش.** الباقي بيانات العربية والبنك
+ * (المؤجر) والعقد. ومن غير «lookbehind» في أي regex (الآيفون القديم).
  */
 import { bankPlateToArabic, normalizePlate } from "./plateParser";
 import { plateOf } from "./certStats";
@@ -25,6 +26,11 @@ export interface CertFields {
   vin: string;
   /** البنك/الشركة صاحبة العقد (المؤجر). */
   bank: string;
+  /**
+   * اسم المستأجر — بطلب المالك (١٤ أكتوبر ٢٠٢٦) لشيت الشهايد اليومي.
+   * الاسم **بس**؛ الهوية والتليفون والعنوان مابيتطلّعوش.
+   */
+  tenant: string;
   make: string;
   model: string;
   year: string;
@@ -133,8 +139,35 @@ function pickVin(text: string): string {
 const ORG = /(مصرف|بنك|شركة|للتمويل|تمويل|التأجير|التاجير|الراجحي|الأهلي|الاهلي|البلاد|الجزيرة|الإنماء|الانماء|اليسر|الراية|جميل|أملاك|املاك)/;
 const BOILER = /(توثيق|سحب|تسجيل عقود|وزارة|الوثيقة|السند|Tawtheeq|الصفة)/;
 
+/** قيمة «الاسم: …» مقصوصة عند أول خانة بعدها (رقم التواصل/الجنسية/الهوية/أرقام). */
+function trimNameValue(v: string): string {
+  return v.split(/رقم التواصل|الجنسية|رقم الهوية|\d{3,}/)[0].replace(/[:\s]+$/, "").trim();
+}
+
+/** كل قيم «الاسم: …» بالترتيب، بلا الفاضي ولا الكلام الثابت بتاع الوثيقة. */
+function nameValues(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(?:الاسم|االسم)\s*:[ \t]*([^\n]+)/g)) {
+    const v = trimNameValue(m[1]);
+    if (v && v.length <= 50 && !BOILER.test(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * اسم المستأجر — بطلب المالك (١٤ أكتوبر ٢٠٢٦).
+ *
+ * الشهادة فيها «الاسم» **مرتين**: المؤجر (شركة/بنك) وبعده المستأجر. فبناخد أول
+ * اسم **مش** بتاع المؤجر، ونفضّل اللي شكله اسم شخص (مش شركة). ولو المستأجر
+ * نفسه شركة، بناخد أول واحد مختلف عن المؤجر.
+ */
+function pickTenant(text: string, bank: string): string {
+  const vals = nameValues(text).filter((v) => v !== bank);
+  return vals.find((v) => !ORG.test(v)) ?? vals[0] ?? "";
+}
+
 function pickBank(text: string): string {
-  const trimVal = (v: string) => v.split(/رقم التواصل|الجنسية|رقم الهوية|\d{3,}/)[0].replace(/[:\s]+$/, "").trim();
+  const trimVal = trimNameValue;
   for (const m of text.matchAll(/(?:الاسم|االسم)\s*:[ \t]*([^\n]+)/g)) {
     const v = trimVal(m[1]);
     if (v && v.length <= 50 && ORG.test(v) && !BOILER.test(v)) return v;
@@ -259,11 +292,13 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
     ? "tawtheeq"
     : /sijil\.sa|Saudi Finance Leasing Contracts Registry/i.test(text) ? "sijil" : "";
   const plate = pickPlate(text, fileName);
+  const bank = pickBank(text);
   return {
     plate: plate.key,
     plateText: plate.display,
     vin: pickVin(text),
-    bank: pickBank(text),
+    bank,
+    tenant: pickTenant(text, bank),
     make: pickMake(text),
     model: pickModel(text),
     year: pickYear(text),

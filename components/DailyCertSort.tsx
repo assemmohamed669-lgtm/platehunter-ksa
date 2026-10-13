@@ -15,12 +15,12 @@
  * مين يشوفها بيقرّره اللي بيحطها (`DAILY_CERTS_FOR_ALL`).
  */
 import { useEffect, useRef, useState } from "react";
-import { FileText, RefreshCw, Trash2, ChevronDown, Loader2 } from "lucide-react";
+import { FileText, FileSpreadsheet, RefreshCw, Trash2, ChevronDown, Loader2 } from "lucide-react";
 import WantedResultsTable, { type WantedRow } from "@/components/WantedResultsTable";
 import ShareSortButton from "@/components/ShareSortButton";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { supabase } from "@/lib/supabaseClient";
-import { CERT_DAYS_BACK, certDayLabel, certDayDate, dayMinus, riyadhDayStart, type DailyCertEntry } from "@/lib/certDaily";
+import { CERT_DAYS_BACK, certDayLabel, certDayDate, certSheetRows, dayMinus, riyadhDayStart, type DailyCertEntry } from "@/lib/certDaily";
 import { runDailyCertSort, type CertDataSource } from "@/lib/dailyCertSort";
 import { collectCertDataSources, type CertSourceDeps } from "@/lib/dailyCertSources";
 import {
@@ -36,7 +36,7 @@ import { detectChassisColumn, normalizeChassis } from "@/lib/chassis";
 import { fetchTeamDataState, downloadTeamData, TEAM_DATA_SLOT } from "@/lib/teamData";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
-import { buildColoredSortExcel } from "@/lib/excel";
+import { buildColoredSortExcel, buildExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { playSortBeep } from "@/lib/sortBeep";
 import { shareFileName } from "@/lib/shareNames";
 import { buildDisplayRows } from "@/lib/exportColumns";
@@ -150,6 +150,8 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
   const [today, setToday] = useState<string>(() => riyadhDayStart(new Date()).day);
   const [daily, setDaily] = useState<{ day: string; total: number; parsed: number; setup?: boolean } | null>(null);
   const [sorting, setSorting] = useState(false);
+  // 📄 زرار «مشاركة الشهايد إكسيل» (المالك ١٤ أكتوبر ٢٠٢٦).
+  const [sheetBusy, setSheetBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, DayResult>>(() => ({ ...(cache[variant] ?? {}) }));
   const [prefs, setPrefsState] = useState<CertColPrefs>(DEFAULT_CERT_COL_PREFS);
@@ -300,6 +302,37 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
     keep({ ...result, [which]: [], deleted: [...new Set([...result.deleted, ...result[which].map((r) => r.id)])] });
   }
 
+  /**
+   * 📄 شيت إكسيل بكل شهايد اليوم — المالك (١٤ أكتوبر ٢٠٢٦): «الإكسيل ده يبقى
+   * فيه بيانات كل السيارات اللي بينزل ليها شهايد بياناتها بالكامل … ويتحدّث لو
+   * فيه شهادات جديدة نزلت على مدار اليوم».
+   *
+   * بنجيب أحدث قايمة من السيرفر **وقت الضغط** — مش من نتيجة الفرز — فأي شهادة
+   * نزلت من شوية بتدخل الشيت. والشيت فيه **كل** الشهايد مش اللي طابقت الداتا بس.
+   */
+  async function shareCertSheet() {
+    if (sheetBusy) return;
+    setSheetBusy(true);
+    setError(null);
+    try {
+      const d = await fetchDailyCerts(false, offset);
+      const rows = certSheetRows(d?.entries ?? []);
+      if (!rows.length) {
+        setError(offset === 0 ? "لسه مانزلش شهايد النهارده." : "مفيش شهايد في اليوم ده.");
+        return;
+      }
+      const blob = buildExcelBlob(rows, "الشهايد");
+      const day = d?.day ?? "";
+      await shareExcelBlob(blob, `شهايد ${day}.xlsx`, "الشهايد", {
+        keepName: true, fallbackName: `certs-${day}.xlsx`,
+      });
+    } catch {
+      setError("تعذّرت مشاركة الشيت — جرّب تاني.");
+    } finally {
+      setSheetBusy(false);
+    }
+  }
+
   function windowBlock(title: string, which: Which, onLocate?: (r: WantedRow) => void) {
     const rows = result?.[which] ?? [];
     // صفوف التصدير بنفس أعمدة الجدول (من غير الأزرار والأعمدة الفاضية)
@@ -384,6 +417,16 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
           {sorting ? <RefreshCw size={16} className="animate-spin" /> : <FileText size={16} />}
           {sorting ? "جاري الفرز..." : `افرز على شهايد ${label}`}
         </button>
+
+        {/* 📄 شيت كل شهايد اليوم — مش اللي طابقت الداتا بس (المالك ١٤ أكتوبر ٢٠٢٦).
+            بيجيب أحدث قايمة من السيرفر وقت الضغط، فأي شهادة نزلت من شوية بتدخل. */}
+        {daily && !daily.setup && daily.total > 0 && (
+          <button onClick={() => void shareCertSheet()} disabled={sheetBusy}
+            className="flex items-center justify-center gap-2 rounded-xl border border-green-600/50 bg-green-600/10 py-3 text-sm font-bold text-green-700 transition hover:bg-green-600/20 disabled:opacity-50 active:scale-[0.99]">
+            {sheetBusy ? <RefreshCw size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+            {sheetBusy ? "بيجهّز الشيت..." : "مشاركة الشهايد إكسيل"}
+          </button>
+        )}
         {/* اتفرز على إيه — صفر نتايج مع صفر صفوف داتا = الداتا مش على الجهاز ده */}
         {result?.scanned && (
           <p className="text-[11px] text-muted">
