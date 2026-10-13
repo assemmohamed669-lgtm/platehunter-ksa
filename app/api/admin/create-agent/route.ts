@@ -8,14 +8,16 @@
  * Admin-only. Creates the Supabase Auth user + the matching `profiles` row.
  * Agents get a monthly subscription (start = today, end = subscriptionEnd or +1 month).
  */
+import { cleanEmail } from "@/lib/cleanEmail";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
 import { classifyAgentCreateError } from "@/lib/adminErrors";
 import { resolveNewAgentFlags } from "@/lib/adminFlags";
 
+/** 📧 `cleanEmail`: علامات الاتجاه المخفية/الأرقام العربية بيتشالوا — كانت بترجّع «invalid format» (١٣ أكتوبر ٢٠٢٦). */
 function normalizeEmail(raw: string): string {
-  const v = raw.trim().toLowerCase();
+  const v = cleanEmail(raw);
   return v.includes("@") ? v : `${v}@platehunter.local`;
 }
 

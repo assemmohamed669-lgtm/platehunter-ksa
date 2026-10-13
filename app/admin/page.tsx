@@ -927,6 +927,7 @@ export default function AdminDashboard() {
               <input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="اسم المندوب (يظهر في القائمة)" dir="rtl"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="الإيميل ✱ إجباري" dir="ltr"
+                inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false}
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />
               <input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} placeholder="كلمة المرور (٦ أحرف+)" dir="ltr"
                 className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-primary" />

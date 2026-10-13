@@ -14,6 +14,7 @@
  *  - grantWheelSpin                (🎡 يفعّل لفّة عجلة حظ — مرة لكل تجديد)
  *  - delete
  */
+import { cleanEmail } from "@/lib/cleanEmail";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, verifyAdminContext } from "@/lib/supabaseAdmin";
 import { logSecurityEvent, requestMeta } from "@/lib/securityLogServer";
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
         const patch: Record<string, unknown> = {};
         if (typeof body.phone === "string") patch.phone = body.phone.trim() || null;
         if (typeof body.email === "string" && body.email.trim()) {
-          const email = body.email.trim().toLowerCase();
+          const email = cleanEmail(body.email);   // 📧 علامات الاتجاه المخفية بتتشال
           patch.email = email;
           patch.username = email;
           const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(agentId, { email });
