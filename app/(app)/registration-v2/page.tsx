@@ -77,6 +77,7 @@ import {
 } from "@/lib/trialRecords";
 import { saveFieldCheckEntry, saveFieldCheckEntriesChunked, type FieldCheckEntry } from "@/lib/idb";
 import { loadDraft, saveDraft, unexportedDeleteWarning } from "@/lib/checkDrafts";
+import { safeDraftsOn, rememberSafeDrafts, mergeById, createDraftSink } from "@/lib/safeDrafts";
 import CertificateBadge from "@/components/CertificateBadge";
 import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
@@ -208,6 +209,17 @@ const AUTO_AREA_KEY = "rv2-auto-area";
 /** رسالة «مافيش توكن» — ثابتة عشان تتشال لوحدها لو التوكن وصل بعدين. */
 const NO_TRIAL_TOKEN_MSG = "مافيش توكن للموديل. شغّل docs/sql/trial-model-token.sql وبعدين "
   + "select public.set_trial_token('<السرّ>') — أو حطّه بإيدك في مربّع الإعداد تحت.";
+
+/**
+ * 🛡️ آخر مسودّة اتحفظت (لوحات المندوب + المستخبية) — والحفظ الآمن للوحات اللي بتوصل **بعد** الخروج من الصفحة
+ * (المحرّك بيطلّع آخر اللوحات بعد الإيقاف بثواني). للصفحة المفتوحة دلوقتي، وإلا للموبايل. `lib/safeDrafts.ts`
+ */
+let rv2DraftCache: LiveRow[] | null = null;
+const rowsSink = createDraftSink<LiveRow>({
+  read: () => rv2DraftCache,
+  load: () => loadDraft<LiveRow>("trial", "rv2-rows"),
+  write: (next) => { rv2DraftCache = next; void saveDraft("trial", "rv2-rows", next); },
+});
 
 export default function RegistrationV2Page() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
@@ -579,6 +591,7 @@ export default function RegistrationV2Page() {
         return;
       }
       const sup = prof?.is_super === true;
+      rememberSafeDrafts(sup);   // 🛡️ الحماية الجديدة للوحات (السوبر أدمن الأول)
       // فشل قراية التوكن والكاش فيه توكن من الداتابيز ⇒ نكمّل بيه
       const token = dbToken || hit?.token || null;
       rememberTrialGate(userId, { isSuper: sup, token });
@@ -739,11 +752,11 @@ export default function RegistrationV2Page() {
       areaAskedRef.current.add(r.id);
       const id = r.id;
       if (!autoAreaEligible(r)) {
-        setRows((prev) => prev.map((x) => (x.id === id ? { ...x, areaFallback: true } : x)));
+        setRowsSafe((prev) => prev.map((x) => (x.id === id ? { ...x, areaFallback: true } : x)));
         continue;
       }
       void areaResolverRef.current!.resolve(r.lat, r.lng).then((label) => {
-        setRows((prev) => prev.map((x) => {
+        setRowsSafe((prev) => prev.map((x) => {
           if (x.id !== id || x.area) return x;
           return label ? { ...x, area: label, areaAuto: false } : { ...x, areaFallback: true };
         }));
@@ -775,6 +788,25 @@ export default function RegistrationV2Page() {
   const othersRef = useRef<LiveRow[]>([]);
   const splitUidRef = useRef<string | null>(null);
   /**
+   * 🛡️ **التغييرات اللي بتيجي من المحرّك/الشبكة بتعدّي من هنا.** الصفحة مفتوحة ⇒ زي الأول بالحرف. اتقفلت
+   * (السوبر أدمن الأول — `safeDraftsOn`) ⇒ للصفحة المفتوحة دلوقتي، وإلا بتتحفظ على الموبايل (ولوحات الحسابات
+   * التانية بتفضل مكانها).
+   */
+  const mountedRef = useRef(true);
+  const setRowsSafe = useCallback((fn: (prev: LiveRow[]) => LiveRow[]) => {
+    if (mountedRef.current || !safeDraftsOn()) { setRows(fn); return; }
+    const uid = agentRef.current;
+    void rowsSink.apply(fn, (all) => {
+      const { mine, others } = splitByAgent(all, uid);
+      return stripForDraft([...fn(mine), ...others]);
+    });
+  }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    const detach = rowsSink.attach((fn) => setRows(fn));
+    return () => { mountedRef.current = false; detach(); };
+  }, []);
+  /**
    * ⚡ بتتقري **على طول** مع فتح الصفحة — مش بعد ما الصلاحية ترجع من الشبكة
    * (بيانات المندوب على موبايله، والصفحة مابتترسمش لحد ما الصلاحية تيجي).
    *
@@ -792,18 +824,25 @@ export default function RegistrationV2Page() {
           if (uidNow) {
             const { mine, others } = splitByAgent(restored, uidNow);
             othersRef.current = uniqueById([...othersRef.current, ...others]);
-            setRows(mine);
-          } else setRows(restored);
+            // 🛡️ السوبر أدمن: المحفوظ **بيتضاف** على اللي في الشاشة (لوحة وصلت وإحنا بنقرا كانت بتاخد مكانه)
+            setRows((p) => (safeDraftsOn() ? mergeById(p, mine) : mine));
+          } else setRows((p) => (safeDraftsOn() ? mergeById(p, restored) : restored));
         }
       })
       .catch(() => { /* مافيش مسودّة */ })
-      .finally(() => { draftReady.current = true; });
+      .finally(() => {
+        draftReady.current = true;
+        // 🛡️ لوحة وصلت وإحنا بنقرا والمحفوظ كان فاضي ⇒ مفيش تغيير بعدها يحفظها — نحفظها دلوقتي.
+        if (safeDraftsOn()) setRows((p) => (p.length ? [...p] : p));
+      });
   }, []);
   useEffect(() => {
     // ⚠️ مانكتبش قبل ما نقرا — وإلا أول رسم (صفوف فاضية) بيمسح المسودّة.
     if (!draftReady.current) return;
     // 🔒 المستخبية بتتحفظ مع الظاهرة — مسح/تصدير المندوب ده مايلمسش لوحات غيره
-    void saveDraft("trial", "rv2-rows", stripForDraft([...rows, ...othersRef.current]));
+    const full = stripForDraft([...rows, ...othersRef.current]);
+    rv2DraftCache = full;   // 🛡️ آخر نسخة — الحفظ الآمن بيبني عليها لو لوحة وصلت بعد الخروج
+    void saveDraft("trial", "rv2-rows", full);
   }, [rows]);
   /** أول ما شيت التشييك يجهز، الصفوف المحمّلة تاخد «مطلوبة» بتاعتها. */
   useEffect(() => {
@@ -1121,7 +1160,7 @@ export default function RegistrationV2Page() {
        * الموديل). كل صف بيقصّ النص عند **أرقامه هو** — فصفّين في نفس
        * النافذة كل واحد بياخد نوعه.
        */
-      setRows((prev) => {
+      setRowsSafe((prev) => {
         let touched = false;
         const one = [{ text, tMs }];
         const next = prev.map((r) => {
@@ -1308,7 +1347,7 @@ export default function RegistrationV2Page() {
             areaAuto: areaSource(areaRef.current, autoAreaRef.current) === "auto",
             agentId: agentRef.current,
           };
-          setRows((prev) => {
+          setRowsSafe((prev) => {
             /**
              * 🔴 **لمّ التوائم على مستوى الصف.** الإجماع بيشتغل بنافذة ٢ث،
              * والقراءات المختلفة لنفس اللوحة ممكن تمتد ٩ ثواني (`دطس2177`
@@ -1387,7 +1426,7 @@ export default function RegistrationV2Page() {
           if (!noGpsRef.current) {
             const rowId = fresh.id;
             void gpsService.getFreshReading({ timeoutMs: 8000 }).then((fx) => {
-              if (fx) setRows((prev) => stampRowGps(prev, rowId, fx) as LiveRow[]);
+              if (fx) setRowsSafe((prev) => stampRowGps(prev, rowId, fx) as LiveRow[]);
             }).catch(() => { /* الموقع فشل — الصف بيفضل بختمه المبدئي */ });
           }
         },
@@ -1450,7 +1489,7 @@ export default function RegistrationV2Page() {
               areaAuto: areaSource(areaRef.current, autoAreaRef.current) === "auto",
             agentId: agentRef.current,
             };
-            setRows((prev0) => {
+            setRowsSafe((prev0) => {
               /**
                * 🔔 التأكيد وصل ⇒ الصف اللي ظاهر بنفس اللوحة ياخد «مطلوبة» **على
                * طول** — حتى لو القراية دي مش هتتدمج فيه (`confirmedWins`).
