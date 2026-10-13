@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
-import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
+import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked, preloadAlertTone } from "@/lib/alertSiren";
 import { WANTED_ALERT_EVENT, type WantedAlertDetail } from "@/lib/wantedAlert";
 import { pushAlert, dropCurrent, type QueuedAlert } from "@/lib/wantedAlertQueue";
 
@@ -31,6 +31,10 @@ export default function WantedAlertOverlay() {
       startAlertSiren();
     };
     window.addEventListener(WANTED_ALERT_EVENT, handler);
+
+    // 🔔 «نغمة التحصيل» المختارة بتتحمّل من أول ما التطبيق يفتح (والنت شغّال) — أول تنبيه يرن بيها على طول.
+    //    لو ماتحمّلتش، التنبيه بالصفّارة العادية (`lib/alertSiren.ts`).
+    void preloadAlertTone();
 
     // فكّ قفل الصوت من **أول لمسة** في التطبيق (وأي لمسة بعدها — تكراره آمن).
     // ضغطة زر الصوت نفسها لمسة، فبمجرد ما المندوب يبدأ التشييك الصوتي يبقى الـ

@@ -1,12 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Type as TypeIcon, Palette, Baseline, RotateCcw, Check } from "lucide-react";
+import { Type as TypeIcon, Palette, Baseline, RotateCcw, Check, BellRing, Square, Loader2 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import {
   type Appearance, DEFAULT_APPEARANCE, loadAppearance, saveAppearance, applyAppearance,
 } from "@/lib/appSettings";
 import { THEME_TEMPLATES } from "@/lib/themePresets";
+import { ALERT_TONES, ALERT_TONES_FOR_ALL, DEFAULT_ALERT_TONE, loadAlertToneId, saveAlertToneId } from "@/lib/alertTones";
+import { previewAlertTone, preloadAlertTone, stopAlertTonePreview, isAlertSirenPlaying } from "@/lib/alertSiren";
+import { supabase } from "@/lib/supabaseClient";
 
 const DEFAULT_BG = "#F3F5F7";
 const DEFAULT_INK = "#FFFFFF";
@@ -26,6 +29,46 @@ export default function AppearancePage() {
     });
   }
   function reset() { update({ ...DEFAULT_APPEARANCE }); }
+
+  // 🔔 «نغمة التحصيل» — السوبر أدمن الأول (`ALERT_TONES_FOR_ALL`). `lib/alertTones.ts`
+  const [isSuper, setIsSuper] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
+        setIsSuper((prof as { is_super?: boolean } | null)?.is_super === true);
+      } catch { /* مش عارفين — من غير الخيار */ }
+    })();
+  }, []);
+  const [tone, setTone] = useState(DEFAULT_ALERT_TONE);
+  useEffect(() => { setTone(loadAlertToneId()); }, []);
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  const [loadingTone, setLoadingTone] = useState<string | null>(null);
+  const [toneFailed, setToneFailed] = useState(false);
+  // المعاينة بتخلص لوحدها (النغمة مرة واحدة · الصفّارة ٤ ثواني) ⇒ الزرار يرجع.
+  useEffect(() => {
+    if (!previewing) return;
+    const t = setInterval(() => { if (!isAlertSirenPlaying()) setPreviewing(null); }, 300);
+    return () => clearInterval(t);
+  }, [previewing]);
+  // الخروج من الصفحة بيوقف المعاينة.
+  useEffect(() => () => { stopAlertTonePreview(); }, []);
+
+  /** الدوسة على نغمة = اختارها + سمّعها (زي اختيار رنّة الموبايل). */
+  async function pickTone(id: string) {
+    setTone(id);
+    saveAlertToneId(id);
+    setToneFailed(false);
+    setLoadingTone(id);
+    setPreviewing(null);
+    const ok = await previewAlertTone(id);
+    setLoadingTone((cur) => (cur === id ? null : cur));
+    if (ok) setPreviewing(id);
+    else if (!(await preloadAlertTone(id))) setToneFailed(true);
+  }
+  function stopPreview() { stopAlertTonePreview(); setPreviewing(null); }
 
   return (
     <div className="flex flex-col gap-5" dir="rtl">
@@ -139,6 +182,40 @@ export default function AppearancePage() {
           <RotateCcw size={13} /> استعادة الافتراضي
         </button>
       </section>
+
+      {/* ── 🔔 نغمة التحصيل — اللي بترن لما المندوب يلاقي سيارة مطلوبة ── */}
+      {(ALERT_TONES_FOR_ALL || isSuper) && (
+        <section className="flex flex-col gap-2.5">
+          <h2 className="flex items-center gap-1.5 text-sm font-bold text-ink"><BellRing size={14} className="text-primary" /> نغمة التحصيل</h2>
+          <p className="text-[10px] text-muted">النغمة اللي بتسمعها لما تلاقي سيارة مطلوبة — بترن لحد ما تدوس «تم». دوس على أي نغمة تختارها وتسمعها.</p>
+          <div className="flex flex-col gap-1.5">
+            {ALERT_TONES.map((t) => {
+              const on = tone === t.id;
+              const playingThis = previewing === t.id;
+              return (
+                <div key={t.id} className={`flex items-center gap-2 rounded-xl border p-2.5 transition ${on ? "border-primary bg-primary/5" : "border-border bg-surface-2"}`}>
+                  <button onClick={() => void pickTone(t.id)} className="flex min-w-0 flex-1 items-center gap-2 text-right text-xs font-bold text-ink">
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${on ? "border-primary bg-primary text-night" : "border-border"}`}>
+                      {on && <Check size={12} />}
+                    </span>
+                    <span className="truncate">{t.name}</span>
+                  </button>
+                  {loadingTone === t.id && <Loader2 size={15} className="shrink-0 animate-spin text-muted" />}
+                  {playingThis && (
+                    <button onClick={stopPreview} aria-label="إيقاف"
+                      className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-bold text-muted hover:text-ink">
+                      <Square size={11} /> إيقاف
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {toneFailed && (
+            <p className="text-[10px] font-bold text-danger">ماقدرتش أحمّل النغمة — اتأكد من النت وجرّب تاني. لحد ما تتحمّل، التنبيه هيرن بالصفّارة العادية.</p>
+          )}
+        </section>
+      )}
     </div>
   );
 }
