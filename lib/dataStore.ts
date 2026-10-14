@@ -50,6 +50,21 @@ export interface DataMeta {
   importedAt: string;
   /** موجودة فقط لو الملف متعدد الورقات (استيراد importMultiSheetData). */
   sheets?: DataSheetMeta[];
+  /**
+   * 📂 الملف الأصلي (لحد `KEEP_ORIGINAL_MAX_BYTES`) — «فتح» في مربع الداتا بيفتحه زي ما هو بكل ورقاته. من غيره
+   * المربع كان بيتبني بملف فاضي بعد إعادة الفتح (المالك ١٤ أكتوبر ٢٠٢٦: «بفتحه … مش بيظهر معايا البيانات»).
+   * بيتشال بعد تعديل من صفحة «تعديل» (`lib/dataEdit.ts`) عشان «فتح» يطلّع الشيت بالتعديلات.
+   */
+  fileBlob?: Blob;
+  /** آخر تعديل من صفحة «تعديل» (`lib/dataEdit.ts`). */
+  editedAt?: string;
+}
+
+/** 📂 أقصى حجم للملف الأصلي اللي بيتحفظ مع الدفعات (أكبر من كده «فتح» بيطلّع الشيت من الدفعات). */
+export const KEEP_ORIGINAL_MAX_BYTES = 40 * 1024 * 1024;
+
+export function originalToKeep(file: Blob | null | undefined): Blob | undefined {
+  return file && file.size > 0 && file.size <= KEEP_ORIGINAL_MAX_BYTES ? file : undefined;
 }
 
 export type DataRow = Record<string, string>;
@@ -189,6 +204,7 @@ export async function importLargeDataFile(
     plateCol = detectPlateColumn(headers, sample) ?? "";
   }
 
+  const keep = originalToKeep(file);
   const dataMeta: DataMeta = {
     slot,
     headers,
@@ -197,6 +213,7 @@ export async function importLargeDataFile(
     plateCol: plateCol || (headers[0] ?? ""),
     fileName: file.name,
     importedAt: new Date().toISOString(),
+    ...(keep ? { fileBlob: keep } : {}),
   };
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(META, "readwrite");
@@ -285,6 +302,7 @@ export async function importMultiSheetData(
     }
 
     const first = sheetsMeta[0];
+    const keep = originalToKeep(file);
     const dataMeta: DataMeta = {
       slot,
       headers: first.headers,
@@ -294,6 +312,7 @@ export async function importMultiSheetData(
       fileName: file.name,
       importedAt: new Date().toISOString(),
       sheets: sheetsMeta,
+      ...(keep ? { fileBlob: keep } : {}),
     };
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(META, "readwrite");

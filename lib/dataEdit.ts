@@ -345,6 +345,8 @@ export async function saveDataEdits(ref: DataFileRef, changes: DataChanges, stam
       headers: [...meta.headers, ...[...newCols].filter((c) => !meta.headers.includes(c))],
       rowCount: Math.max(0, meta.rowCount - deleted),
       sheets: meta.sheets?.map((s) => ({ ...s, rowCount: Math.max(0, s.rowCount - (deletedBySheet.get(s.name) ?? 0)) })),
+      // الأصل القديم مابقاش هو الشيت ⇒ «فتح» يطلّعه من الدفعات بالتعديلات (`openStoredData` في صفحة الفرز)
+      fileBlob: undefined,
       editedAt: now,
     };
     if (!meta.sheets) delete nextMeta.sheets;
