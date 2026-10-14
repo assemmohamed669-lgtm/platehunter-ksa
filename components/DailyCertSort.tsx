@@ -469,10 +469,10 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
           {locating && (
             <p className="flex items-center justify-center gap-1.5 text-xs text-muted" dir="rtl"><Loader2 size={13} className="animate-spin" /> بندوّر على موقعها في ملف الداتا…</p>
           )}
-          {windowBlock(`شهايد ${resultName} في الداتا`, "dataRows", locate)}
-          {windowBlock(`شهايد ${resultName} في السجلات`, "recordRows")}
           {/* مشاركة الكل: الداتا والسجلات في مشاركة واحدة بعمود «المصدر» (المالك ٦ أكتوبر ٢٠٢٦) — بتظهر
-              لما النافذتين فيهم نتايج (لو واحدة بس، مشاركتها هي نفس الكلام). */}
+              لما النافذتين فيهم نتايج (لو واحدة بس، مشاركتها هي نفس الكلام).
+              🔝 **فوق الجدولين** (المالك ١٤ أكتوبر ٢٠٢٦): «بيشارك معاه فقط اللي طالع من الداتا» —
+              كانت تحت خالص فالمندوب بيدوس على زرار نافذة الداتا ومايوصلش لها. */}
           {result.dataRows.length > 0 && result.recordRows.length > 0 && (() => {
             const all = [...result.dataRows, ...result.recordRows];
             const title = `شهايد ${resultName}`;
@@ -495,9 +495,15 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
                   shareAllAtOnce
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-60"
                 />
+                <p className="text-[11px] text-muted">
+                  دي بتشارك اللي طلع من الداتا واللي طلع من السجلات <b className="text-ink">مع بعض</b>{" "}
+                  في ملف واحد، وكل صف مكتوب جنبه مصدره.
+                </p>
               </div>
             );
           })()}
+          {windowBlock(`شهايد ${resultName} في الداتا`, "dataRows", locate)}
+          {windowBlock(`شهايد ${resultName} في السجلات`, "recordRows")}
         </>
       )}
       <LocationNeighborsModal view={neighborView} onClose={() => setNeighborView(null)} />
