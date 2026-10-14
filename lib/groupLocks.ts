@@ -47,7 +47,7 @@ export function memberLocks(
   };
 }
 
-const SORT_ROUTES = ["/sorting", "/group-sort", "/wanted"];
+const SORT_ROUTES = ["/sorting", "/group-sort", "/wanted", "/data-edit"];
 /** صفحات بتعرض سجلات (أو فرز عليها). */
 const RECORDS_ROUTES = ["/list", "/maps", "/group-records", "/backup", "/group-sort"];
 /** تحميل السجلات كلها. */
