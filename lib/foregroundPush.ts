@@ -23,11 +23,19 @@ export function foregroundBannerOf(n: { title?: string; body?: string; data?: un
  * الإشعار الحقيقي في شريط الإشعارات والتطبيق مفتوح، فالشريط اللي جوّه التطبيق بيفضل للنسخ القديمة بس (مايتكرّرش).
  */
 export const NATIVE_FOREGROUND_BUILD = 7;
+/** 🍏 الآيفون: الإشعارات اتضافت في 1.3 (build 9) بنفس الإعداد ⇒ الآيفون بيعرضه فوق بنفسه والتطبيق مفتوح. */
+export const NATIVE_FOREGROUND_BUILD_IOS = 9;
 
-/** `build` = رقم النسخة من `App.getInfo()` (versionCode على أندرويد). مش عارفينه ⇒ لأ (الشريط يفضل). */
-export function nativeShowsForegroundPush(build: string | undefined): boolean {
+/**
+ * `build` = رقم النسخة من `App.getInfo()` (versionCode على أندرويد · CFBundleVersion على الآيفون)، و`platform` من
+ * `Capacitor.getPlatform()`. مش عارفينه ⇒ لأ (الشريط يفضل).
+ */
+export function nativeShowsForegroundPush(build: string | undefined, platform: string = "android"): boolean {
   const n = Number.parseInt(String(build ?? ""), 10);
-  return Number.isFinite(n) && n >= NATIVE_FOREGROUND_BUILD;
+  if (!Number.isFinite(n)) return false;
+  if (platform === "ios") return n >= NATIVE_FOREGROUND_BUILD_IOS;
+  if (platform === "android") return n >= NATIVE_FOREGROUND_BUILD;
+  return false;
 }
 
 /**

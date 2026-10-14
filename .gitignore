@@ -13,5 +13,7 @@ out/
 
 # أسرار توقيع أندرويد — لازم تفضل محليّة، ما تترفعش على git
 android/keystore.properties
+# 🍏 ملف Firebase بتاع الآيفون — زي google-services.json بتاع أندرويد: محلي بس (المالك بينزّله من Firebase)
+ios/App/App/GoogleService-Info.plist
 *.keystore
 *.jks

@@ -73,7 +73,7 @@ export default function PushRegistrar() {
       let nativeShown = false;
       try {
         const { App } = await import("@capacitor/app");
-        nativeShown = nativeShowsForegroundPush((await App.getInfo()).build);
+        nativeShown = nativeShowsForegroundPush((await App.getInfo()).build, Capacitor.getPlatform());
       } catch { /* مش عارفين النسخة ⇒ الشريط يفضل */ }
       await PushNotifications.addListener("pushNotificationReceived", (n) => {
         const b = foregroundBannerOf(n);
