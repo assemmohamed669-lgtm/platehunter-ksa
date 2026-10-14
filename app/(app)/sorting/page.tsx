@@ -19,7 +19,7 @@ import {
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { buildExportRows, buildDisplayRows } from "@/lib/exportColumns";
-import { combinedDupColorMap } from "@/lib/dupColors";
+import { combinedDupColorMap, recordRowKey } from "@/lib/dupColors";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
@@ -84,7 +84,8 @@ const DUPE_COLORS = [
   { tw: "bg-red-100",     hex: "#FEE2E2" },
 ] as const;
 
-type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string> };
+/** `refPlateNorm` = المفتاح اللي اتطابق بيه وقت الفرز (زي `MatchResult`) — تلوين المكرر بيه (`recordRowKey`). */
+type TashyeekResultRow = { tashyeekRow: Record<string, string>; referralRow: Record<string, string>; refPlateNorm?: string };
 
 /**
  * 👥 نتيجة السجلات: **كل مرة** اتسجلت فيها العربية من كل أعضاء المجموعة — نفس العربية تحت بعض والأحدث فوق.
@@ -1504,23 +1505,15 @@ export default function SortingPage() {
     );
   };
 
-  const plateColorMap = useMemo(() => {
-    if (!results) return new Map<string, number>();
-    const counts = new Map<string, number>();
-    for (const r of results) {
-      // refPlateNorm محسوبة وقت الفرز (تشتغل عبر شيتات إحالة متعددة)؛ fallback
-      // للحساب من عمود الإحالة الأساسي لنتايج قديمة محفوظة قبل الميزة.
-      const k = r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
-      if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
-    }
-    const map = new Map<string, number>();
-    let ci = 0;
-    for (const [plate, count] of counts) {
-      if (count > 1) { map.set(plate, ci % DUPE_COLORS.length); ci++; }
-    }
-    return map;
+  /**
+   * 🎨 ألوان المكرر على الشاشة — **نتيجة الداتا ونتيجة السجلات مع بعض** (نفس الإكسيل/الصورة: `shareRowColors`).
+   * المالك (١٤ أكتوبر ٢٠٢٦): «لما بيطلع سيارات مطلوبه من السجلات وفيها مكرر مش بيتلون … زي ما بيحصل في نتيجه الفرز
+   * ل الداتا» ⇒ العربية اللي في الداتا وفي السجلات بنفس اللون في النافذتين. المفاتيح: `refPlateNorm` (محسوبة وقت
+   * الفرز، شغّالة عبر ملفات إحالة متعددة) لصف الداتا، و`recordRowKey` لصف السجلات.
+   */
+  const plateColorMap = useMemo(() => combinedDupColorMap([(results ?? []).map(dataRowKey), (tashyeekResults ?? []).map(tashRowKey)], DUPE_COLORS.length),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, effectiveReferralPlateCol]);
+  [results, tashyeekResults, effectiveReferralPlateCol]);
 
   // إخفاء المقفولة (سحبتها / حد تاني / سدّد / مستبعدة) — **مطفي افتراضياً**، فلو
   // المندوب ماشغّلهوش تبقى النتيجة زي ما هي بالظبط.
@@ -2373,6 +2366,7 @@ export default function SortingPage() {
       if (!hit) continue;
       out.push({
         referralRow: hit.row,
+        refPlateNorm: hit.norm,
         tashyeekRow: {
           ...(g.extra ?? {}),
           "رقم اللوحة": String(g.plate ?? ""),
@@ -2496,7 +2490,7 @@ export default function SortingPage() {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
           if (!n) continue;
           const hit = refIndex.get(n);
-          if (hit) tashyeekMatches.push({ tashyeekRow: row, referralRow: hit.row });
+          if (hit) tashyeekMatches.push({ tashyeekRow: row, referralRow: hit.row, refPlateNorm: n });
         }
         finalTashyeek = tashyeekMatches;
       }
@@ -2635,7 +2629,7 @@ export default function SortingPage() {
           const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
           if (!n) continue;
           const refRow = tashyeekRefIndex.get(n);
-          if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow });
+          if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow, refPlateNorm: n });
         }
         finalTashyeek = tashyeekMatches;
       }
@@ -2751,9 +2745,13 @@ export default function SortingPage() {
     return r.refPlateNorm ?? normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
   }
 
-  /** مفتاح اللوحة لصف نتيجة السجلات — من صف الإحالة اللي طابقه، فيتقارن بنفس المقياس. */
+  /**
+   * مفتاح اللوحة لصف نتيجة السجلات — المفتاح اللي اتطابق بيه وقت الفرز (`lib/dupColors.ts` → `recordRowKey`).
+   * 🔴 كان من عمود لوحة **ملف الإحالة الأساسي**، فالعربية اللي جاية من ملف إحالة تاني مفتاحها فاضي ومابتتلوّنش
+   *    (المالك ١٤ أكتوبر ٢٠٢٦: «مكرر مش بيتلون»).
+   */
   function tashRowKey(r: TashyeekResultRow): string {
-    return normalizePlate(bankPlateToArabic(String(r.referralRow[effectiveReferralPlateCol ?? ""] ?? "")));
+    return recordRowKey(r);
   }
 
   /**
@@ -4203,8 +4201,8 @@ export default function SortingPage() {
                   {displayTashyeek.map(({ r, idx: i, _dist, _min }, n) => {
                     const plate = r.tashyeekRow[tashyeekPlateCol ?? "رقم اللوحة"] ?? "";
                     const sel = tashyeekSelected.has(i);
-                    // 👥 «كل المرات»: نفس العربية بلون واحد.
-                    const dupIdx = tashDupColorMap.map.get(normalizePlate(bankPlateToArabic(String(r.tashyeekRow["رقم اللوحة"] ?? ""))));
+                    // 👥 «كل المرات» + المكرر مع نتيجة الداتا: نفس العربية بلون واحد في النافذتين (زي الإكسيل).
+                    const dupIdx = plateColorMap.get(tashRowKey(r));
                     return (
                       <tr key={i} className={`border-b border-border transition ${sel ? "bg-primary/15" : dupIdx !== undefined ? DUPE_COLORS[dupIdx].tw : "bg-primary/5 hover:bg-primary/10"}`}>
                         {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}

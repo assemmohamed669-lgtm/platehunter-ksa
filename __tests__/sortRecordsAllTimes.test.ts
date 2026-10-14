@@ -54,7 +54,8 @@ describe("🔴 التوصيل في صفحة الفرز — للكل", () => {
   });
   it("🔴 ويندو السجلات: نفس العربية بلون واحد + «N سيارة (M مرة)»", () => {
     expect(p).toMatch(/const tashDupColorMap = useMemo\(/);
-    expect(p).toMatch(/const dupIdx = tashDupColorMap\.map\.get\(/);
+    // ١٤ أكتوبر: نفس اللون بقى من خريطة واحدة للداتا والسجلات (recordsDupColors.test.ts)
+    expect(p).toMatch(/const dupIdx = plateColorMap\.get\(tashRowKey\(r\)\);/);
     expect(p).toMatch(/\$\{sel \? "bg-primary\/15" : dupIdx !== undefined \? DUPE_COLORS\[dupIdx\]\.tw : "bg-primary\/5 hover:bg-primary\/10"\}/);
     expect(p).toMatch(/\{tashDupColorMap\.unique < tashyeekResults\.length/);
   });
