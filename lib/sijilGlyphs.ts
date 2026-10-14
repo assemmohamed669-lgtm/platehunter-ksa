@@ -106,18 +106,35 @@ function labelRe(label: string): string {
   return [...label.replace(/\s+/g, "")].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*");
 }
 
+/**
+ * كل عناوين الشهادة — القيمة بتقف عند أول عنوان بعدها.
+ * الملف بيقطّع الكلمة على سطرين («ابي» في سطر و«ض» في اللي بعده)، فمابنقفش عند
+ * السطر — بنقف عند **العنوان اللي بعده** وبس.
+ */
+const ALL_LABELS = [
+  "المصنع", "نوع المركبة", "رقم اللوحة", "رقم الهيكل", "لون المركبة",
+  "اسم المؤجر", "رقم السجل", "الرقم الوطني", "اسم المستأجر", "رقم الهوية",
+  "نوع الهوية", "العنوان", "رقم العقد", "تاريخ العقد", "الدفعات", "المبلغ",
+  "مكان الوفاء", "مكان التحرير", "سبب التنفيذ", "بيانات",
+  // بدايات الكلام الثابت في آخر الشهادة — القيمة عمرها ما توصلها
+  "تعد هذه", "تؤكد", "أصدرت", "تستخدم",
+];
+
+/** أقصى طول لقيمة — حاجز أمان ضد ابتلاع فقرة كاملة. */
+const MAX_VALUE = 60;
+
 function between(text: string, label: string, stops: string[]): string {
   const start = new RegExp(labelRe(label) + "\\s*:?\\s*").exec(text);
   if (!start) return "";
-  // القيمة عمرها ما بتعدّي السطر — والقص عند السطر بيغني عن «وقف عند السطر الجديد».
-  const rest = text.slice(start.index + start[0].length).split("\n")[0];
-  let end = rest.length;
-  for (const s of stops) {
+  const rest = text.slice(start.index + start[0].length).replace(/\n/g, " ");
+  let end = Math.min(rest.length, MAX_VALUE);
+  for (const s of [...stops, ...ALL_LABELS]) {
     if (!s.replace(/\s+/g, "")) continue;   // وقف فاضي = تعبير فاضي بيطابق فوراً
     const m = new RegExp(labelRe(s)).exec(rest);
-    if (m && m.index < end) end = m.index;
+    if (m && m.index > 0 && m.index < end) end = m.index;
   }
-  return rest.slice(0, end).replace(/[:\s]+$/, "").trim();
+  // آخر قطعة من حرف واحد = أول حرف الكلمة اللي بعدها اتقطعت هنا — مش من القيمة.
+  return rest.slice(0, end).replace(/[:\s]+$/, "").trim().replace(/\s+[ء-ي]$/, "");
 }
 
 export interface SijilFields {
@@ -126,7 +143,16 @@ export interface SijilFields {
 
 /** الخانات من نص شهادة «سجل» **بعد فكّها**. أي خانة مش موجودة بترجع "". */
 export function extractSijilFields(decoded: string): SijilFields {
-  const one = (v: string) => v.replace(/\s+/g, "");         // كلمة واحدة ⇒ من غير مسافات
+  /**
+   * القيمة اللي كلمة واحدة: من غير مسافات، **وبترجع فاضية لو طلعت غريبة** —
+   * الملف بيقطّع الكلمة على سطرين بعيدين أحياناً فالقيمة بتطلع ناقصة أو بتبلع
+   * كلام الشهادة الثابت. **فاضي أحسن من غلط** في شيت المالك.
+   */
+  const one = (v: string) => {
+    const s = v.replace(/\s+/g, "");
+    if (!s || s.length > 20 || /تعد|الشهادة|سندا|التنفيذ/.test(s)) return "";
+    return s;
+  };
   const PLATE = "رقم اللوحة";
   return {
     make: one(between(decoded, "المصنع", [PLATE, "نوع المركبة"])),

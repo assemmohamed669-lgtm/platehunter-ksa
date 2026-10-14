@@ -17,6 +17,8 @@
  */
 import { bankPlateToArabic, normalizePlate } from "./plateParser";
 import { plateOf } from "./certStats";
+import { decodeSijilText, extractSijilFields } from "./sijilGlyphs";
+import { normalizeReversedLabels } from "./certReversed";
 
 export interface CertFields {
   /** مفتاح اللوحة المطبّع (زي باقي البرنامج) — "" لو مالقيناهاش. */
@@ -291,19 +293,37 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
   const issuer: CertFields["issuer"] = /توثيق|TawtheeqCo/i.test(text)
     ? "tawtheeq"
     : /sijil\.sa|Saudi Finance Leasing Contracts Registry/i.test(text) ? "sijil" : "";
+  /**
+   * 🔴 نصّان مختلفان عن قصد (المالك ١٤ أكتوبر ٢٠٢٦):
+   *
+   *  • `text` الأصلي — منه **اللوحة والشاص والتواريخ وأرقام العقد**. دول شغّالين
+   *    صح من زمان، وأي تطبيع بيخرّب اللوحة (ترتيب الحروف بيتقلب).
+   *  • `fields` بعد العلاج — منه **الخانات العربي**:
+   *      ① شهايد «السجل» عربيها رموز ⇒ `decodeSijilText` بيفكّها.
+   *      ② شهايد «توثيق» ساعات ترتيب كلماتها مقلوب («الراجحي مصرف :االسم»)
+   *        ⇒ `normalizeReversedLabels` بيرجّعها «الاسم: مصرف الراجحي».
+   *    الملف اللي مش محتاج ولا واحدة فيهم بيعدّي زي ما هو بالحرف.
+   */
+  // ⚠️ الفك لازم يتم على النص **الخام** — `cleanText` بيشيل العلامات، ورموز
+  //    «السجل» نفسها علامات، فلو نضّفنا الأول مابيبقاش فيه حاجة تتفكّ.
+  const decoded = cleanText(decodeSijilText(String(rawText ?? "")));
+  const fields = normalizeReversedLabels(decoded);
+  // «السجل» ليه استخراج بالعناوين — القيم فيه مش بتتلاقى بقوايم الماركات.
+  const sij = issuer === "sijil" ? extractSijilFields(decoded) : null;
+
   const plate = pickPlate(text, fileName);
-  const bank = pickBank(text);
+  const bank = sij?.bank || pickBank(fields);
   return {
     plate: plate.key,
     plateText: plate.display,
     vin: pickVin(text),
     bank,
-    tenant: pickTenant(text, bank),
-    make: pickMake(text),
-    model: pickModel(text),
-    year: pickYear(text),
-    color: pickColor(text),
-    status: pickStatus(text),
+    tenant: sij?.tenant || pickTenant(fields, bank),
+    make: sij?.make || pickMake(fields),
+    model: sij?.model || pickModel(fields),
+    year: pickYear(fields),
+    color: sij?.color || pickColor(fields),
+    status: pickStatus(fields),
     certDate: pickCertDate(text),
     certNo: pickCertNo(text),
     issuer,
