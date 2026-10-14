@@ -20,6 +20,7 @@ import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { buildExportRows, buildDisplayRows } from "@/lib/exportColumns";
 import { combinedDupColorMap, recordRowKey } from "@/lib/dupColors";
+import DataEditLink from "@/components/DataEditLink";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
@@ -3401,6 +3402,8 @@ export default function SortingPage() {
         largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
         onLargeFile={handleLargeData}
       />
+      {/* ✏️ «تعديل» — بحث عن لوحة في الشيت وتعديل/مسح صفوفها وحفظها (المالك ١٤ أكتوبر ٢٠٢٦ — `lib/dataEdit.ts`) */}
+      <DataEditLink slot="data" show={!!dataTable} />
       {/* ملف داتا فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه */}
       <ReferralSheetPicker
         ordered
@@ -3561,6 +3564,7 @@ export default function SortingPage() {
             showReplaceButtons
             locked={isLockedAt(extraLocks, i)}
           />
+          <DataEditLink slot={`data-${i + 2}`} show={!!ed.table} />
           {/* ملف إضافي فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه (زي الأساسي) */}
           {(ed.streamMeta?.sheets?.length ?? 0) > 1 && (
             <ReferralSheetPicker
