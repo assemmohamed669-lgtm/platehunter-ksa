@@ -30,13 +30,14 @@ describe("🧪 رسالة نتيجة التجربة", () => {
 
 describe("🔴 التوصيل", () => {
   const read = (p: string) => readFileSync(path.resolve(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n");
-  it("🔴 السوبر أدمن بس، وعلى أجهزته هو بس", () => {
+  it("🔴 السوبر أدمن بس؛ من غير إيميل ⇒ على أجهزته هو بس (بإيميل ⇒ الحساب ده بس — pushTestAnyAccount.test.ts)", () => {
     const r = read("app/api/admin/cert-push-test/route.ts");
     expect(r).toMatch(/if \(!admin \|\| !admin\.isSuper\) return NextResponse\.json\(\{ error: "forbidden" \}, \{ status: 403 \}\);/);
-    expect(r).toMatch(/\.from\("device_tokens"\)\.select\("token"\)\.eq\("agent_id", admin\.id\)/);
-    expect(r).not.toMatch(/profiles"\)\.select\(/);   // مابيجيبش مشتركين تانيين
+    expect(r).toMatch(/const targetId = email \? \(target as \{ id: string \}\)\.id : admin\.id;/);
+    expect(r).toMatch(/\.from\("device_tokens"\)\.select\("token, platform"\)\.eq\("agent_id", targetId\)/);
+    expect(r).not.toMatch(/\.in\("agent_id"/);   // عمره ما بيبعت لمشتركين كتير مرة واحدة
   });
   it("🔴 الزرار في صفحة إحصائيات الشهايد", () => {
-    expect(read("app/admin/certificates/page.tsx")).toMatch(/fetch\("\/api\/admin\/cert-push-test", \{ method: "POST"/);
+    expect(read("app/admin/certificates/page.tsx")).toMatch(/fetch\("\/api\/admin\/cert-push-test", \{\s*method: "POST"/);
   });
 });

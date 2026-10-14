@@ -21,6 +21,7 @@ import { currentSession } from "@/lib/authSession";
 import type { CertStatsView } from "@/lib/certStats";
 import { driveHealthMessage, type HealthMessage } from "@/lib/driveHealth";
 import { certPushTestMessage } from "@/lib/certPush";
+import { cleanEmail } from "@/lib/cleanEmail";
 
 interface StatsResponse {
   setup?: boolean;
@@ -68,15 +69,25 @@ export default function CertStatsPage() {
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<{ level: "ok" | "warn" | "error"; text: string } | null>(null);
 
+  // 🧪 على حساب تاني (إيميله) — المالك ١٤ أكتوبر ٢٠٢٦: الآيفون اللي بيجرّب عليه داخل بحساب أدمن تاني.
+  const [pushEmail, setPushEmail] = useState("");
+
   async function runPushTest() {
     setPushBusy(true);
     setPushMsg(null);
     try {
       const { data: s } = await supabase.auth.getSession();
-      const res = await fetch("/api/admin/cert-push-test", { method: "POST", headers: { Authorization: `Bearer ${s.session?.access_token ?? ""}` } });
+      const res = await fetch("/api/admin/cert-push-test", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.session?.access_token ?? ""}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail(pushEmail) }),
+      });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { setPushMsg({ level: "error", text: "❌ مش قادر أبعت — جرّب تاني." }); return; }
-      setPushMsg(certPushTestMessage({ configured: !!j.configured, devices: Number(j.devices ?? 0), sent: Number(j.sent ?? 0), dead: Number(j.dead ?? 0) }));
+      setPushMsg(certPushTestMessage({
+        configured: !!j.configured, devices: Number(j.devices ?? 0), sent: Number(j.sent ?? 0), dead: Number(j.dead ?? 0),
+        platforms: j.platforms, target: j.target, notFound: !!j.notFound,
+      }));
     } catch {
       setPushMsg({ level: "error", text: "❌ مافيش نت — جرّب تاني." });
     } finally {
@@ -202,9 +213,15 @@ export default function CertStatsPage() {
           <p className="mb-2.5 text-[11px] leading-relaxed text-muted">
             مع كل دفعة شهايد جديدة، كل مشترك اشتراكه شغّال بيوصله إشعار على موبايله (أندرويد). اضغط تجرّب نفس الإشعار على موبايلك انت بس.
           </p>
+          <input
+            type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} dir="ltr"
+            value={pushEmail} onChange={(e) => setPushEmail(e.target.value)}
+            placeholder="إيميل حساب تاني (اختياري)"
+            className="mb-2 w-full rounded-lg border border-border bg-surface px-2.5 py-2 text-xs text-ink placeholder:text-right placeholder:text-muted"
+          />
           <button onClick={() => void runPushTest()} disabled={pushBusy}
             className="w-full rounded-lg border border-primary/40 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/20 disabled:opacity-50">
-            {pushBusy ? "بيبعت…" : "جرّب الإشعار على موبايلي"}
+            {pushBusy ? "بيبعت…" : cleanEmail(pushEmail) ? "جرّب الإشعار على الحساب ده" : "جرّب الإشعار على موبايلي"}
           </button>
           {pushMsg && (
             <p className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-bold leading-relaxed ${

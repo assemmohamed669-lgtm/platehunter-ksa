@@ -129,16 +129,35 @@ export async function certPushTick(d: CertPushDeps): Promise<CertPushResult> {
  * 🧪 نتيجة «جرّب إشعار الشهايد على موبايلي» (السوبر أدمن) — المالك (١٣ أكتوبر ٢٠٢٦): «يشوف من خلاله ان فيه اشعارات
  * بالفعل بتيجي حتي لو اي اشعار وهمي».
  */
-export function certPushTestMessage(r: { configured: boolean; devices: number; sent: number; dead: number }):
-  { level: "ok" | "warn" | "error"; text: string } {
+export function certPushTestMessage(r: {
+  configured: boolean; devices: number; sent: number; dead: number;
+  /** الأجهزة المسجّلة حسب النوع — عشان نعرف إن الآيفون اتسجّل فعلاً. */
+  platforms?: { ios: number; android: number };
+  /** 🧪 التجربة على حساب تاني (إيميله) — المالك ١٤ أكتوبر ٢٠٢٦: الآيفون داخل بحساب أدمن مش السوبر أدمن. */
+  target?: string;
+  notFound?: boolean;
+}): { level: "ok" | "warn" | "error"; text: string } {
+  if (r.notFound) return { level: "error", text: `❌ مفيش حساب بالإيميل ${r.target ?? ""}.` };
   if (!r.configured) return { level: "error", text: "❌ إشعارات الموبايل مش متظبّطة على السيرفر (FCM_SERVICE_ACCOUNT في Vercel)." };
   if (r.devices === 0) {
-    return { level: "warn", text: "⚠️ مافيش موبايل مسجّل باسمك — افتح التطبيق المتثبّت (APK) على موبايلك ووافق على الإشعارات، وجرّب تاني." };
+    return { level: "warn", text: r.target
+      ? `⚠️ الحساب ${r.target} مالوش موبايل مسجّل — لازم يفتح أحدث نسخة من التطبيق المتثبّت ويوافق على الإشعارات، وجرّب تاني.`
+      : "⚠️ مافيش موبايل مسجّل باسمك — افتح التطبيق المتثبّت (APK) على موبايلك ووافق على الإشعارات، وجرّب تاني." };
   }
   if (r.sent === 0) {
     return { level: "error", text: r.dead > 0
       ? "❌ الموبايل المسجّل رفض الإشعار (غالباً التطبيق اتمسح أو اتعمله تحديث) — افتح التطبيق تاني عشان يتسجّل من جديد."
       : "❌ الإشعار مااتبعتش — جرّب تاني بعد دقيقة." };
   }
-  return { level: "ok", text: `✅ اتبعت على ${ar(r.sent)} جهاز — بص على شريط الإشعارات في موبايلك.` };
+  const kinds = r.platforms
+    ? [r.platforms.ios ? `آيفون ${ar(r.platforms.ios)}` : "", r.platforms.android ? `أندرويد ${ar(r.platforms.android)}` : ""]
+      .filter(Boolean).join(" · ")
+    : "";
+  const who = r.target ? ` لـ ${r.target}` : "";
+  return { level: "ok", text: `✅ اتبعت على ${ar(r.sent)} جهاز${who}${kinds ? ` (${kinds})` : ""} — بص على شريط الإشعارات في ${r.target ? "الموبايل" : "موبايلك"}.` };
+}
+
+/** نص يتدوّر عليه **بالظبط** في `ilike` — `_` و`%` (موجودين في إيميلات كتير) مايبقوش «أي حرف». */
+export function likeExact(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
