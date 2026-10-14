@@ -60,13 +60,13 @@ export const PENDING_PER_TICK = 100;
  * **مرة واحدة** (بعد ما تتقري تاريخها بيبقى بعد كده فمابتتعادش). ٦ أكتوبر ٢٠٢٦: حروف «السجل»
  * الإنجليزي بمسافات. لو القارئ اتحسّن تاني ⇒ حرّك التاريخ ده لوقت النشر.
  */
-export const CERT_PARSER_AT = "2026-10-14T12:00:00Z";   // + فك رموز «السجل» وترتيب «توثيق» المقلوب
+export const CERT_PARSER_AT = "2026-10-14T20:00:00Z";   // + فك رموز «السجل» وترتيب «توثيق» المقلوب
 
 /**
  * نفس الفكرة بس للخانات العربي: الشهايد اللي اتقرت قبل إصلاح ١٤ أكتوبر خاناتها
  * العربي فاضية وخلاص (مش `null`)، فمحتاجة قراية واحدة تانية.
  */
-export const CERT_FIELDS_AT = "2026-10-14T12:00:00Z";
+export const CERT_FIELDS_AT = "2026-10-14T20:00:00Z";
 
 export async function certDailyTick(d: CertDailyDeps): Promise<{
   day: string; listed: number; older: { day: string; listed: number }; parsed: number; failed: number;

@@ -288,6 +288,25 @@ function pickCertNo(text: string): string {
   return "";
 }
 
+/**
+ * اللوحة من خانة «رقم اللوحة باللغة العربية» في شهايد «السجل» بعد فكّها.
+ * الحروف بتطلع ملزوقة («رمب 3447») فبنفصلها بنفسنا. بنرجّع `null` لو الشكل مش
+ * لوحة سعودية (٣ حروف + ٤ أرقام) — مانخترعش لوحة.
+ */
+function sijilPlate(value: string): { key: string; display: string } | null {
+  // الحروف **قبل** الأرقام بس — اللي بعدها بقايا الخانة اللي بعدها («3447د»).
+  const m = /^([^0-9]*?)(\d{3,4})/.exec(value.replace(/\s+/g, ""));
+  if (!m) return null;
+  const letters = [...m[1]].filter((c) => AR_PLATE_LETTERS.has(normLetter(c)));
+  const digits = m[2];
+  if (letters.length < 2 || letters.length > 3) return null;
+  const norm = letters.map(normLetter);
+  return {
+    key: normalizePlate(norm.join("") + digits),
+    display: `${norm.join(" ")} ${digits}`,
+  };
+}
+
 export function parseCertText(rawText: string, fileName = ""): CertFields {
   const text = cleanText(rawText);
   const issuer: CertFields["issuer"] = /توثيق|TawtheeqCo/i.test(text)
@@ -312,10 +331,16 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
   const sij = issuer === "sijil" ? extractSijilFields(decoded) : null;
 
   const plate = pickPlate(text, fileName);
+  /**
+   * 🔴 شهايد «السجل» اللي خانة اللوحة **الإنجليزية فاضية** فيها (المالك ١٤
+   * أكتوبر): اللوحة العربي موجودة جوّه الشهادة، وبعد الفك بقينا نقدر نقراها.
+   * من غير كده الصف بيطلع من غير لوحة خالص.
+   */
+  const arPlate = !plate.key && sij?.plateAr ? sijilPlate(sij.plateAr) : null;
   const bank = sij?.bank || pickBank(fields);
   return {
-    plate: plate.key,
-    plateText: plate.display,
+    plate: arPlate?.key || plate.key,
+    plateText: arPlate?.display || plate.display,
     vin: pickVin(text),
     bank,
     tenant: sij?.tenant || pickTenant(fields, bank),

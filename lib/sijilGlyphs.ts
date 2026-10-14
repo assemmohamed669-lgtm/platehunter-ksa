@@ -133,12 +133,74 @@ function between(text: string, label: string, stops: string[]): string {
     const m = new RegExp(labelRe(s)).exec(rest);
     if (m && m.index > 0 && m.index < end) end = m.index;
   }
-  // آخر قطعة من حرف واحد = أول حرف الكلمة اللي بعدها اتقطعت هنا — مش من القيمة.
-  return rest.slice(0, end).replace(/[:\s]+$/, "").trim().replace(/\s+[ء-ي]$/, "");
+  // «ة» لوحدها في الآخر = أول حرف «ةرقم الهوية» اللي بعدها — مش من الاسم.
+  // ⚠️ **بس «ة»**: شيل أي حرف كان بيكسر «كي ا» ⇒ «كي» بدل «كيا».
+  const raw = rest.slice(0, end).replace(/[:\s]+$/, "").trim().replace(/\sة$/, "");
+  return glueFragments(raw);
+}
+
+/**
+ * الملف بيقطّع الكلمة لقطع صغيرة («مصر» + «ف» ⇒ «مصرف»، «قر» + «ناس» ⇒ «قرناس»).
+ * بنلزق أي قطعة حرف أو حرفين بجارتها. القطعة اللي في الآخر لوحدها بتتلزق باللي
+ * قبلها، واللي في الأول باللي بعدها.
+ *
+ * ⚠️ كنت بشيل القطعة الأخيرة بدل ما ألزقها — فـ«مصرف الانماء» طلعت «مصر».
+ */
+function glueFragments(value: string): string {
+  const parts = value.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (const p of parts) {
+    const short = p.length <= 2 && /[ء-ي]/.test(p);
+    if (short && out.length) out[out.length - 1] += p;
+    else if (short && parts.length > 1) out.push(p);     // في الأول — هيتلزق باللي بعده
+    else if (out.length && out[out.length - 1].length <= 2) out[out.length - 1] += p;
+    else out.push(p);
+  }
+  return out.join(" ").trim();
 }
 
 export interface SijilFields {
   make: string; model: string; color: string; bank: string; tenant: string;
+  /** اللوحة العربي من جوّه الشهادة — بتنفع لما الخانة الإنجليزية تكون فاضية. */
+  plateAr: string;
+}
+
+/**
+ * 🏦 المؤجرين المعروفين — الاسم بيتقسّم على سطرين **مش ورا بعض** في الملف
+ * («مصر» في سطر و«ف انماء» في السطر اللي قبله)، فبنكمّله من القايمة دي.
+ *
+ * بلاغ المالك (١٤ أكتوبر ٢٠٢٦): «مكتوب قدامها مصر».
+ * الإكمال بيحصل **بس** لو اللي طلع بداية اسم واحد معروف — وإلا بنسيبه زي ما هو.
+ */
+const KNOWN_LESSORS = [
+  "مصرف الانماء", "مصرف الراجحي", "البنك الأهلي السعودي", "البنك الاهلي السعودي",
+  "شركة عبداللطيف جميل المتحدة للتمويل", "شركة الجبر للتمويل", "تأجير للتمويل",
+  "شركة السعودي للتمويل", "البنك السعودي للاستثمار", "بنك البلاد", "مصرف الجزيرة",
+  "شركة اليسر للإجارة والتمويل", "شركة الراية للتمويل", "شركة أملاك العالمية",
+];
+
+/**
+ * 🔢 رقم السجل التجاري ⇒ المؤجر — الحسم لما الاسم المقصوص يحتمل أكتر من واحد
+ * («مصر» ممكن تكون الانماء أو الراجحي). الرقم **أرقام** فمابيتلخبطش أبداً.
+ */
+const LESSOR_BY_CR: Record<string, string> = {
+  "1010250808": "مصرف الانماء",
+  "1010000096": "مصرف الراجحي",
+  "4030001588": "البنك الأهلي السعودي",
+  "2050097254": "شركة الجبر للتمويل",
+};
+
+/**
+ * بيكمّل اسم المؤجر: بالسجل التجاري الأول (قاطع)، وإلا لو اللي طلع بداية اسم
+ * معروف **واحد** بس. وإلا بيسيبه زي ما هو — مانخترعش اسم.
+ */
+export function completeLessor(value: string, crNumber = ""): string {
+  const byCr = LESSOR_BY_CR[crNumber.replace(/\D/g, "")];
+  if (byCr) return byCr;
+  const v = value.replace(/\s+/g, "");
+  if (!v || v.length < 3) return value;
+  const hits = KNOWN_LESSORS.filter((k) => k.replace(/\s+/g, "").startsWith(v));
+  return hits.length === 1 ? hits[0] : value;
 }
 
 /** الخانات من نص شهادة «سجل» **بعد فكّها**. أي خانة مش موجودة بترجع "". */
@@ -158,7 +220,11 @@ export function extractSijilFields(decoded: string): SijilFields {
     make: one(between(decoded, "المصنع", [PLATE, "نوع المركبة"])),
     model: one(between(decoded, "نوع المركبة", [PLATE, "رقم الهيكل"])),
     color: one(between(decoded, "لون المركبة", ["رقم الهيكل", "\n"])),
-    bank: between(decoded, "اسم المؤجر", ["رقم السجل", "الرقم الوطني", "\n"]),
+    bank: completeLessor(
+      between(decoded, "اسم المؤجر", ["رقم السجل", "الرقم الوطني", "\n"]),
+      between(decoded, "رقم السجل التجاري", ["الرقم الوطني", "المنفذ"]),
+    ),
     tenant: between(decoded, "اسم المستأجر", ["رقم الهوية", "نوع الهوية", "\n"]),
+    plateAr: between(decoded, "رقم اللوحة باللغة العربية", ["رقم اللوحة", "نوع المركبة", "رقم الهيكل"]),
   };
 }
