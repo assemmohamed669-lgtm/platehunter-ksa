@@ -36,6 +36,11 @@ interface Props {
   loadedAccent?: "data" | "referral";
   /** مقفول؟ لما true بنخفي أزرار «تغيير» و«مسح» فمحدش يقدر يمسح/يبدّل الملف. */
   locked?: boolean;
+  /**
+   * 📂 «فتح» بطريقة تانية — ملف داتا متخزّن دفعات ومن غير أصله المحفوظ بيتطلع من الدفعات (المالك ١٤ أكتوبر ٢٠٢٦:
+   * «بفتحه … مش بيظهر معايا البيانات»). من غيره ⇒ بيفتح `parsedFile` زي الأول.
+   */
+  onOpen?: () => Promise<void> | void;
 }
 
 export default function FileUploadBox({
@@ -53,6 +58,7 @@ export default function FileUploadBox({
   sky = false,
   loadedAccent,
   locked = false,
+  onOpen,
 }: Props) {
   // إطار المربع: سماوي بظل واضح لو sky. بنستخدم صبغة سماوية فوق سطح الثيم (مش لون
   // ثابت) عشان النص يفضل مقروء في الوضع الفاتح والغامق.
@@ -175,7 +181,10 @@ export default function FileUploadBox({
   // ويب: تنزيل)، عشان المندوب يقدر يشوف/يفتح الشيت اللي رافعه في أي خانة.
   async function handleOpenSheet() {
     if (!parsedFile) return;
-    try { await openExcelBlob(parsedFile, parsedFile.name); } catch { /* ignore open/download failure */ }
+    try {
+      if (onOpen) { await onOpen(); return; }
+      await openExcelBlob(parsedFile, parsedFile.name);
+    } catch { /* ignore open/download failure */ }
   }
 
   function handleDownloadOriginal() {

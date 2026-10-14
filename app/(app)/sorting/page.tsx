@@ -469,7 +469,7 @@ export default function SortingPage() {
             setDataStreamed(true);
             setDataStreamMeta(bigMeta);
             setDataTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
-            setDataFile(new File([new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+            setDataFile(new File([bigMeta.fileBlob ?? new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
             setOutputCols(new Set(guessDefaultColumns(bigMeta.headers, bigMeta.plateCol)));
             // ملف متعدد الورقات؟ استرجع اختيار الورقات المحفوظ (أو الافتراضي).
             if (bigMeta.sheets && bigMeta.sheets.length > 1) applyDataSheetSelection(bigMeta, bigMeta.fileName);
@@ -532,7 +532,7 @@ export default function SortingPage() {
               extras.push({
                 id: `data-b${n}`,
                 table: { headers: meta.headers, rows: sample, sheetName: meta.sheetName },
-                file: new File([new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+                file: new File([meta.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
                 streamed: true, streamSlot: rec.streamSlot, streamMeta: meta,
               });
             } else {
@@ -845,7 +845,7 @@ export default function SortingPage() {
           const sample = await getSampleRows(50);
           setDataStreamed(true); setDataStreamMeta(bigMeta);
           setDataTable({ headers: bigMeta.headers, rows: sample, sheetName: bigMeta.sheetName });
-          setDataFile(new File([new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+          setDataFile(new File([bigMeta.fileBlob ?? new Blob()], bigMeta.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
           setDataPlateColOverride(null);
           setOutputCols(new Set(guessDefaultColumns(bigMeta.headers, bigMeta.plateCol)));
           setResults(null); setSorted(false);
@@ -889,7 +889,7 @@ export default function SortingPage() {
               extras.push({
                 id: `data-b${n}`,
                 table: { headers: meta.headers, rows: sample, sheetName: meta.sheetName },
-                file: new File([new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+                file: new File([meta.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
                 streamed: true, streamSlot: rec.streamSlot, streamMeta: meta,
               });
             } else {
@@ -1814,6 +1814,17 @@ export default function SortingPage() {
     setDataSheetSel(new Set()); // ملف بورقة واحدة → مفيش اختيار ورقات
     await shareDataToTeamIfLeader(file, meta.rowCount);
   }, [handleMultiSheetData, shareDataToTeamIfLeader]);
+
+  /**
+   * 📂 «فتح» ملف داتا متخزّن دفعات **من غير أصله المحفوظ** (اترفع قبل حفظ الأصل، أو أكبر من ٤٠ ميجا، أو اتعدّل من
+   * «تعديل») ⇒ الشيت بيتطلع من الدفعات نفسها بدل ملف فاضي. المالك (١٤ أكتوبر ٢٠٢٦): «بفتحه من هناك مش بيظهر معايا
+   * البيانات اللي فيه مع ان البرنامج قاري اللوحات».
+   */
+  async function openStoredData(store: string) {
+    const { exportDataFile } = await import("@/lib/dataEdit");
+    const out = await exportDataFile({ kind: "large", slot: store, store });
+    await openExcelBlob(new File([out.blob], out.name, { type: out.blob.type }), out.name);
+  }
 
   async function clearSlot(slot: "data" | "referral") {
     const td = teamDataRef.current;
@@ -3401,6 +3412,7 @@ export default function SortingPage() {
         locked={dataLocked}
         largeFileThresholdBytes={LARGE_DATA_THRESHOLD_BYTES}
         onLargeFile={handleLargeData}
+        onOpen={dataStreamed && !dataFile?.size ? () => openStoredData("data") : undefined}
       />
       {/* ✏️ «تعديل» — بحث عن لوحة في الشيت وتعديل/مسح صفوفها وحفظها (المالك ١٤ أكتوبر ٢٠٢٦ — `lib/dataEdit.ts`) */}
       <DataEditLink slot="data" show={!!dataTable} />
@@ -3563,6 +3575,7 @@ export default function SortingPage() {
             onClear={() => clearExtraDataFile(i)}
             showReplaceButtons
             locked={isLockedAt(extraLocks, i)}
+            onOpen={ed.streamed && ed.streamSlot && !ed.file?.size ? () => openStoredData(ed.streamSlot!) : undefined}
           />
           <DataEditLink slot={`data-${i + 2}`} show={!!ed.table} />
           {/* ملف إضافي فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه (زي الأساسي) */}
