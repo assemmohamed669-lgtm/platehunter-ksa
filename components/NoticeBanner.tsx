@@ -8,6 +8,8 @@ import {
 import { playNoticeTone, stopNoticeTone } from "@/lib/noticeTone";
 import { isMicBusy, onMicBusyChange } from "@/lib/micBusy";
 import { BANNER_POLL_MS } from "@/lib/pollRate";
+import NoticeText from "@/components/NoticeText";
+import { noticePlainText } from "@/lib/noticeLinks";
 
 /** كل قد إيه نسأل السيرفر عن رسالة جديدة (المندوب ممكن يفضل فاتح ساعات). */
 const POLL_MS = BANNER_POLL_MS;
@@ -94,12 +96,13 @@ export default function NoticeBanner() {
         : <Megaphone size={16} className="mt-0.5 shrink-0 text-primary" />}
       <div className="flex-1">
         <p className={`whitespace-pre-wrap text-xs leading-relaxed ${urgent ? "font-bold text-danger" : "text-ink"}`}>
-          {notice.text}
+          {/* 🔗 اللينكات أزرق وتتدس (المالك ١٤ أكتوبر ٢٠٢٦) — `lib/noticeLinks.ts` */}
+          <NoticeText text={notice.text} />
         </p>
         {/* زر تواصل — بيظهر بس لو الأدمن علّم عليه وقت النشر */}
         {notice.wa && (
           <a
-            href={adminWhatsappLink(notice.text)}
+            href={adminWhatsappLink(noticePlainText(notice.text))}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-green-600 px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-green-700"
