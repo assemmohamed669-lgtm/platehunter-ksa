@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { fetchAgentNotice, fetchAllAgentsNotice, type AgentNotice } from "@/lib/agentNotice";
 import { BANNER_POLL_MS } from "@/lib/pollRate";
+import NoticeText from "@/components/NoticeText";
 
 export default function AgentNoticeBanner() {
   const [notice, setNotice] = useState<AgentNotice | null>(null);
@@ -52,7 +53,8 @@ export default function AgentNoticeBanner() {
           role="alert"
         >
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span className="whitespace-pre-wrap leading-relaxed">{x.text}</span>
+          {/* 🔗 اللينكات أزرق وتتدس (المالك ١٤ أكتوبر ٢٠٢٦) — `lib/noticeLinks.ts` */}
+          <span className="whitespace-pre-wrap leading-relaxed"><NoticeText text={x.text} /></span>
         </div>
       ))}
     </>

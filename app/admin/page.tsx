@@ -14,6 +14,9 @@ import { APP_VERSION } from "@/lib/appVersion";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
 import { BarChart3, BellRing } from "lucide-react";
+import NoticeText from "@/components/NoticeText";
+import LinkInserter from "@/components/LinkInserter";
+import { appendLink, hasNoticeLink } from "@/lib/noticeLinks";
 
 interface AgentProfile {
   id: string;
@@ -487,7 +490,7 @@ export default function AdminDashboard() {
           {(broadcastTab === "notice" || !isSuper) && (<>
           {noticeActive ? (
             <div className="mb-2 rounded-lg border border-primary/30 bg-surface p-2">
-              <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink">{noticeActive.text}</p>
+              <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-ink"><NoticeText text={noticeActive.text} /></p>
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[10px] text-muted">
                   {noticeActive.until
@@ -522,6 +525,13 @@ export default function AdminDashboard() {
             placeholder="اكتب الرسالة هنا…"
             className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs text-ink outline-none focus:border-primary"
           />
+          {/* 🔗 «حط لينك» + معاينة شكلها عند المندوب (المالك ١٤ أكتوبر ٢٠٢٦: «اضغط هنا … يوديه علي مكان الرابط») */}
+          <LinkInserter onInsert={(m) => setNoticeText((t) => appendLink(t, m))} />
+          {hasNoticeLink(noticeText) && (
+            <p className="mt-1.5 whitespace-pre-wrap rounded-lg border border-dashed border-border bg-surface px-2.5 py-2 text-[11px] leading-relaxed text-ink">
+              <span className="text-muted">معاينة: </span><NoticeText text={noticeText} />
+            </p>
+          )}
           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
             <label className="flex items-center gap-1.5 text-[11px] text-muted">
               <input type="checkbox" checked={noticeWa} onChange={(e) => setNoticeWa(e.target.checked)} className="accent-primary" />

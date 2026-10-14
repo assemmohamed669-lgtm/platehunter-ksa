@@ -14,6 +14,9 @@ import { subStatus, extensionDays, extensionLabel } from "@/lib/subscription";
 import AgentVoiceKeys from "@/components/AgentVoiceKeys";
 import { fetchAllAgentsNotice, setAllAgentsNotice, type AgentNotice } from "@/lib/agentNotice";
 import { normalizeServiceKeys, type ServiceKeys } from "@/lib/voiceKeys";
+import NoticeText from "@/components/NoticeText";
+import LinkInserter from "@/components/LinkInserter";
+import { appendLink, hasNoticeLink } from "@/lib/noticeLinks";
 
 interface Profile {
   id: string; username: string; email: string | null; phone: string | null;
@@ -384,6 +387,13 @@ export default function AgentDetail() {
             placeholder="اكتب الرسالة هنا…"
             className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-danger"
           />
+          {/* 🔗 «حط لينك» + معاينة شكلها عند المندوب (المالك ١٤ أكتوبر ٢٠٢٦: «اضغط هنا … يوديه علي مكان الرابط») */}
+          <LinkInserter onInsert={(m) => setNoticeDraft((t) => appendLink(t, m))} />
+          {hasNoticeLink(noticeDraft) && (
+            <p className="mt-1.5 whitespace-pre-wrap rounded-lg border border-dashed border-danger/40 bg-danger/5 px-2.5 py-1.5 text-[11px] font-bold leading-relaxed text-danger">
+              <span className="font-normal text-muted">معاينة: </span><NoticeText text={noticeDraft} />
+            </p>
+          )}
           <div className="mt-2 flex items-center gap-2">
             <button
               disabled={busy || !noticeDraft.trim()}
@@ -413,7 +423,7 @@ export default function AgentDetail() {
           </div>
           {p.agent_notice && (
             <p className="mt-2 rounded-lg bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
-              ظاهرة عنده دلوقتي: {p.agent_notice}
+              ظاهرة عنده دلوقتي: <NoticeText text={p.agent_notice} />
             </p>
           )}
           {/* 📣 نفس الرسالة لكل المناديب (المالك ٦ أكتوبر ٢٠٢٦: «او يحطها ل كل المناديب») — بالأحمر من
@@ -434,7 +444,7 @@ export default function AgentDetail() {
           </button>
           {allNotice && (
             <div className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-danger/10 px-2.5 py-1.5">
-              <p className="text-[11px] leading-relaxed text-danger">ظاهرة عند كل المناديب دلوقتي: {allNotice.text}</p>
+              <p className="text-[11px] leading-relaxed text-danger">ظاهرة عند كل المناديب دلوقتي: <NoticeText text={allNotice.text} /></p>
               <button
                 disabled={busy}
                 onClick={async () => {
