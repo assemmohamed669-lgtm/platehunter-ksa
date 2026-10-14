@@ -57,7 +57,9 @@ export default function LoginPage() {
         <p className="text-sm text-muted">PlateHunter KSA — تسجيل الدخول</p>
       </div>
 
-      <form
+      {/* noValidate: فحص الإيميل بتاع أندرويد كان بيرفض إيميلات سليمة فيها علامة اتجاه مخفية من الكيبورد
+          («الجزء المتبوع بالعلامة "@" يجب ألا يشتمل على الرمز "."») — التنضيف بيحصل في `lib/loginEmail.ts`. */}
+      <form noValidate
         onSubmit={handleSubmit}
         className="surface-card w-full max-w-sm rounded-2xl border border-border bg-surface p-6 shadow-lg"
       >
@@ -70,7 +72,11 @@ export default function LoginPage() {
           </label>
           <input
             id="username"
-            type="email"
+            type="text"
+            inputMode="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             dir="ltr"
             autoComplete="username"
             value={username}
