@@ -78,7 +78,8 @@ describe("🔴 القيم والتصدير بنفس أعمدة الجدول", ()
   });
   it("🔴 الإكسيل: نفس الترتيب ومن غير الأزرار", () => {
     const cols = certDisplayCols(toggleCertCol(DEFAULT_CERT_COL_PREFS, "اللون"));
-    expect(Object.keys(certExportRow(row, cols))).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "الشهادة", "الحالة", "المؤجر", "اللون"]);
+    // 🔗 «لينك الشهادة» آخر عمود (المالك ١٤ أكتوبر ٢٠٢٦) — تفاصيله في certLinkColumn.test.ts
+    expect(Object.keys(certExportRow(row, cols))).toEqual(["رقم اللوحة", "النوع", "نوع المركبة", "العنوان", "GPS", "تاريخ التسجيل", "الشهادة", "الحالة", "المؤجر", "اللون", "لينك الشهادة"]);
     // «الشهادة» = رقم العقد المسجل
     expect(certExportRow(row, cols)["الشهادة"]).toBe("CRN-119-00133431");
     expect(certExportRow(row, cols)["GPS"]).toBe(row.mapsLink);

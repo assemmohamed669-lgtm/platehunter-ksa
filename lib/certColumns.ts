@@ -100,9 +100,20 @@ export function certCellValue(r: WantedRow, label: string): string {
 }
 
 /** صف إكسيل/مشاركة بنفس أعمدة الجدول وترتيبها — من غير الأزرار. */
+/**
+ * 🔗 عمود لينك الشهادة في الإكسيل — المالك (١٤ أكتوبر ٢٠٢٦): «يبقى فيه عمود
+ * اسمه لينك الشهادة، قدام كل سيارة لينك لما يدوس عليه يفتحله الشهادة PDF».
+ *
+ * اللينك موقّع وبينتهي بعد ٣٠ يوم (`lib/certLink.ts`) — نفس اللي بيتبعت على
+ * واتساب. وبيتحط **آخر عمود** عشان مايزقّش الأعمدة اللي المندوب بيقراها.
+ * الإكسيل بيحوّل أي خانة فيها رابط لرابط قابل للدوس لوحده.
+ */
+export const CERT_LINK_COL = "لينك الشهادة";
+
 export function certExportRow(r: WantedRow, cols: readonly string[]): Record<string, string> {
   const o: Record<string, string> = { "رقم اللوحة": r.plate };
   for (const c of cols) if (!CERT_ACTION_COLS.has(c)) o[c] = certCellValue(r, c);
+  o[CERT_LINK_COL] = r.certLink ?? "";
   return o;
 }
 
