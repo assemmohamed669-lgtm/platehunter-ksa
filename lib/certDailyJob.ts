@@ -38,6 +38,8 @@ export interface CertDailyDeps {
   requeueMissingCertNo?(fromDay: string): Promise<void>;
   /** اللي اتقرت قبل عمود «اسم المستأجر» ⇒ ترجع تتقري مرة واحدة (المالك ١٤ أكتوبر ٢٠٢٦). */
   requeueMissingTenant?(fromDay: string): Promise<void>;
+  /** اللي خاناتها العربي فاضية من قبل إصلاح ١٤ أكتوبر ⇒ قراية واحدة تانية. */
+  requeueStaleFields?(fromDay: string, beforeIso: string): Promise<void>;
   download(fileId: string): Promise<Uint8Array | null>;
   extractText(bytes: Uint8Array): Promise<string>;
   /** `fields` = null ⇒ فشل (tries بيزيد ومش متقري لسه). */
@@ -58,7 +60,13 @@ export const PENDING_PER_TICK = 100;
  * **مرة واحدة** (بعد ما تتقري تاريخها بيبقى بعد كده فمابتتعادش). ٦ أكتوبر ٢٠٢٦: حروف «السجل»
  * الإنجليزي بمسافات. لو القارئ اتحسّن تاني ⇒ حرّك التاريخ ده لوقت النشر.
  */
-export const CERT_PARSER_AT = "2026-10-06T11:00:00Z";   // + «8377-JGR» بشَرطة
+export const CERT_PARSER_AT = "2026-10-14T12:00:00Z";   // + فك رموز «السجل» وترتيب «توثيق» المقلوب
+
+/**
+ * نفس الفكرة بس للخانات العربي: الشهايد اللي اتقرت قبل إصلاح ١٤ أكتوبر خاناتها
+ * العربي فاضية وخلاص (مش `null`)، فمحتاجة قراية واحدة تانية.
+ */
+export const CERT_FIELDS_AT = "2026-10-14T12:00:00Z";
 
 export async function certDailyTick(d: CertDailyDeps): Promise<{
   day: string; listed: number; older: { day: string; listed: number }; parsed: number; failed: number;
@@ -101,6 +109,7 @@ export async function certDailyTick(d: CertDailyDeps): Promise<{
   if (d.requeueNoPlate && timeLeft() > 10_000) await d.requeueNoPlate(dayMinus(day, KEEP_DAYS), CERT_PARSER_AT).catch(() => {});
   if (d.requeueMissingCertNo && timeLeft() > 10_000) await d.requeueMissingCertNo(dayMinus(day, KEEP_DAYS)).catch(() => {});
   if (d.requeueMissingTenant && timeLeft() > 10_000) await d.requeueMissingTenant(dayMinus(day, KEEP_DAYS)).catch(() => {});
+  if (d.requeueStaleFields && timeLeft() > 10_000) await d.requeueStaleFields(dayMinus(day, KEEP_DAYS), CERT_FIELDS_AT).catch(() => {});
   let parsed = 0, failed = 0;
   const queue = timeLeft() > 5_000 ? await d.pending(dayMinus(day, KEEP_DAYS), PENDING_PER_TICK) : [];
   const worker = async () => {

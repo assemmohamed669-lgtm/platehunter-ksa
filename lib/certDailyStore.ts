@@ -54,6 +54,20 @@ export async function saveParsedCert(fileId: string, f: CertFields | null, tries
  * اللي اتقرت قبل ما يبقى فيه عمود «اسم المستأجر» (قيمته لسه null) ⇒ ترجع تتقري مرة واحدة عشان
  * الاسم يتملى. بعد القراية بيبقى "" أو الاسم ⇒ مابتتعادش.
  */
+/**
+ * 🔴 الشهايد اللي اتقرت **قبل** ما نصلّح قراية العربي (المالك ١٤ أكتوبر ٢٠٢٦):
+ * خاناتها العربي اتكتبت فاضية وخلاص، و`tenant` بقى `''` مش `null` — فحارس
+ * «المستأجر الناقص» مش بيشوفها. دي بترجّعها للقراية **مرة واحدة** (الشرط
+ * `updated_at < beforeIso` بيمنع اللفّة الأبدية على شهادة مافيهاش بيانات فعلاً).
+ */
+export async function requeueStaleFieldsCerts(fromDay: string, beforeIso: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .gte("day", fromDay).eq("parsed", true).lt("updated_at", beforeIso)
+    .or("make.eq.,make.is.null");
+  if (error) throw new Error(error.message);
+}
+
 export async function requeueMissingTenantCerts(fromDay: string): Promise<void> {
   const { error } = await supabaseAdmin
     .from("cert_daily").update({ parsed: false, tries: 0 })
