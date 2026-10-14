@@ -1,4 +1,5 @@
 import { clearNoticeDismissals } from "./appNotice";
+import { usernameToEmail } from "./loginEmail";
 import { clearPollDismissals } from "./polls";
 import { reportSecurityEvent } from "./reportSecurityEvent";
 import { supabase } from "./supabaseClient";
@@ -14,10 +15,7 @@ import {
  * so usernames are mapped to a synthetic email under a fixed domain.
  * This mapping is internal — agents never see or type an email.
  */
-function usernameToEmail(username: string): string {
-  const u = username.trim().toLowerCase();
-  return u.includes("@") ? u : `${u}@platehunter.local`;
-}
+// 📧 بيشيل علامات الاتجاه المخفية/الأرقام العربية قبل الدخول — `lib/loginEmail.ts` (١٤ أكتوبر ٢٠٢٦)
 
 export type LoginErrorCode =
   | "INVALID_CREDENTIALS"
