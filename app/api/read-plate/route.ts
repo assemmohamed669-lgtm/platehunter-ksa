@@ -169,7 +169,9 @@ export async function POST(req: NextRequest) {
     const data = await res.json();
     const raw: string = data?.choices?.[0]?.message?.content?.trim() ?? "";
     if (!raw || raw.toUpperCase().includes("NONE")) {
-      return NextResponse.json(isChassis ? { chassis: null } : { plate: null });
+      // 🔎 بنرجّع رد الموديل زي ما هو — من غيره الشاشة بتقول «HTTP 200» وبس
+      //    ومفيش أي خيط للتشخيص. (بلاغ المالك ١٤ أكتوبر ٢٠٢٦.)
+      return NextResponse.json(isChassis ? { chassis: null, raw } : { plate: null, raw });
     }
 
     if (isChassis) {

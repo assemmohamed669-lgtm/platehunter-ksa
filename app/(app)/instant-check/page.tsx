@@ -13,6 +13,7 @@ import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAll
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis, searchChassisBySuffix, type ChassisMatch } from "@/lib/chassis";
+import { ocrFailureHint } from "@/lib/ocrHint";
 import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
@@ -2890,7 +2891,7 @@ export default function InstantCheckPage() {
       });
       const json = await apiRes.json().catch(() => null);
       if (apiRes.ok && json?.chassis) { vin = String(json.chassis); debugLine = `[VIN] ${vin}`; }
-      else { const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`; debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`; }
+      else { debugLine = ocrFailureHint(json, apiRes.status); }
     } catch (err) {
       debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
     }
@@ -2936,9 +2937,8 @@ export default function InstantCheckPage() {
           plate = json.plate as string;
           debugLine = `[Claude] ${plate}`;
         } else {
-          const hint = json?.hint ?? json?.detail ?? json?.error ?? `HTTP ${apiRes.status}`;
-          debugLine = `خطأ OCR: ${String(hint).slice(0, 120)}`;
-          console.warn("OCR error:", hint);
+          debugLine = ocrFailureHint(json, apiRes.status);
+          console.warn("OCR error:", debugLine);
         }
       } catch (err) {
         debugLine = `شبكة: ${err instanceof Error ? err.message : String(err)}`.slice(0, 100);
