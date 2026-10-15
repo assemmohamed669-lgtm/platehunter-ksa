@@ -41,8 +41,8 @@ describe("🔴 صفحة الفرز عند العضو", () => {
   });
   it("وجودها لوحده بيكفّي للفرز (الكلي والجديد)", () => {
     expect(S).toMatch(/const memberDataReady = !!memberFile && \(\(memberStreamed && !!memberStreamMeta\) \|\| !!memberTable\);/);
-    expect(S).toMatch(/if \(!\(hasUploadedData \|\| hasRecordsData \|\| memberDataReady\) \|\|/);
-    expect(S).toMatch(/if \(\(!dataTable && !memberDataReady\) \|\| !referralTable/);
+    expect(S).toMatch(/if \(!\(hasUploadedData \|\| hasRecordsData \|\| memberDataReady[ |a-zA-Z]*\) \|\|/);
+    expect(S).toMatch(/if \(\(!dataTable && !memberDataReady[ &!a-zA-Z]*\) \|\| !referralTable/);
   });
   it("🔒 المربع من غير فتح ولا تنزيل ولا مسح", () => {
     expect(S).toMatch(/title="داتا من المسئول"[\s\S]{0,600}fixed\s+noOpen/);
