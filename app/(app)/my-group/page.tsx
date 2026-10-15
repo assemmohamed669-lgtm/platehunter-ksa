@@ -4,14 +4,16 @@
  * 🧭 «إدارة مجموعتي» — مسئول المجموعة بيتحكّم في مجموعته بنفسه (المالك ١١ أكتوبر ٢٠٢٦). بتظهر في القايمة الجانبية بس
  * لو السوبر أدمن فاتحها للمجموعة (`leader_page_enabled`). كل الحفظ عن طريق `/api/group/leader-settings` (السيرفر
  * بيتأكد إنه المسئول والقايمة البيضا في `lib/leaderSettings.ts`). إضافة وشيل الأعضاء للسوبر أدمن بس.
- * تابين: «الإعدادات» و«تقرير النشاط» (لو السوبر أدمن فاتحه للمجموعة).
+ * تابات: «الإعدادات» و«شغل الأعضاء» (الفرز/المواقع/المشاركة — المالك ١٥ أكتوبر ٢٠٢٦، للكل) و«تقرير النشاط» (لو السوبر أدمن
+ * فاتحه للمجموعة).
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Settings2, BarChart3, Users, AlertCircle } from "lucide-react";
+import { ChevronLeft, Settings2, BarChart3, Users, AlertCircle, Activity } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import GroupActivityView from "@/components/GroupActivityView";
+import TeamWorkLog from "@/components/TeamWorkLog";
 import { switchActiveTeam } from "@/lib/activeTeamSwitch";
 import type { LeaderView, NotifyMode } from "@/lib/leaderSettings";
 
@@ -44,7 +46,7 @@ export default function MyGroupPage() {
   const [groups, setGroups] = useState<LeaderGroup[]>([]);
   const [team, setTeam] = useState<string>("");
   const [activeTeam, setActiveTeam] = useState<string | null>(null);
-  const [tab, setTab] = useState<"settings" | "activity">("settings");
+  const [tab, setTab] = useState<"settings" | "work" | "activity">("settings");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -131,18 +133,22 @@ export default function MyGroupPage() {
         )}
         <p className="mb-3 text-center text-[11px] text-muted">مجموعة «{g.team}» — {g.members.length} عضو · إضافة وشيل الأعضاء من الإدارة</p>
 
-        {/* التابين */}
-        <div className="mb-3 grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1.5">
+        {/* التابات */}
+        <div className={`mb-3 grid ${g.settings.activityReport ? "grid-cols-3" : "grid-cols-2"} gap-1.5 rounded-2xl border border-border bg-surface-2 p-1.5`}>
           <button onClick={() => setTab("settings")}
             className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold ${tab === "settings" ? "bg-primary text-night" : "text-muted"}`}>
             <Settings2 size={15} /> الإعدادات
           </button>
-          {g.settings.activityReport ? (
+          <button onClick={() => setTab("work")}
+            className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold ${tab === "work" ? "bg-primary text-night" : "text-muted"}`}>
+            <Activity size={15} /> شغل الأعضاء
+          </button>
+          {g.settings.activityReport && (
             <button onClick={() => setTab("activity")}
               className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold ${tab === "activity" ? "bg-primary text-night" : "text-muted"}`}>
               <BarChart3 size={15} /> تقرير النشاط
             </button>
-          ) : <span />}
+          )}
         </div>
 
         {msg && <p className={`mb-2 text-center text-xs font-bold ${msg.startsWith("اتحفظ") ? "text-green-600" : "text-danger"}`}>{msg}</p>}
@@ -202,6 +208,9 @@ export default function MyGroupPage() {
               onChange={(v) => void save({ lockEdit: v }, { lockEdit: v })} />
           </div>
         )}
+
+        {/* 🧭 الفرز وفتح المواقع والمشاركة لكل عضو — أعضاء المجموعة دي بس */}
+        {tab === "work" && <TeamWorkLog team={g.team} members={g.members} />}
 
         {tab === "activity" && g.settings.activityReport && (
           activeTeam === g.team ? (

@@ -21,6 +21,7 @@ import { groupResultsBySource } from "@/lib/resultWindows";
 import { buildExportRows, buildDisplayRows } from "@/lib/exportColumns";
 import { combinedDupColorMap, recordRowKey } from "@/lib/dupColors";
 import DataEditLink from "@/components/DataEditLink";
+import { logAgentEvent, isMapsHref } from "@/lib/agentEvents";
 import { playSortBeep } from "@/lib/sortBeep";
 import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords } from "@/lib/shareLocation";
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
@@ -376,7 +377,24 @@ export default function SortingPage() {
     const next = idx + 1;
     setShareParts(next >= parts.length ? null : { parts, idx: next, which });
   }
+  /** 🧭 اتشاركت صورة/إكسيل للنتيجة ⇒ للمسئول، بمكان المندوب ساعتها (lib/agentEvents.ts — المالك ١٥ أكتوبر ٢٠٢٦). */
+  function onSortShared(kind: "image" | "excel", count: number, title: string) {
+    logAgentEvent("share", { kind, count, title }, { withLocation: true });
+  }
+  /** نص النتيجة على واتساب ⇒ للمسئول. */
+  function logTextShare(count?: number) {
+    logAgentEvent("share", { kind: "text", ...(count != null ? { count } : {}) }, { withLocation: true });
+  }
+  /** 🧭 فتح موقع عربية من أي جدول نتيجة ⇒ اللوحة + الوقت + مكان المندوب للمسئول. */
+  function onResultsClick(e: React.MouseEvent) {
+    const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!a || !isMapsHref(a.href)) return;
+    const plate = a.closest("[data-plate]")?.getAttribute("data-plate") ?? "";
+    logAgentEvent("open_location", { plate, link: a.href.slice(0, 300) }, { withLocation: true });
+  }
+
   async function shareBulk(text: string, which: "results" | "tashyeek") {
+    logTextShare();
     // 📤 شاشة الأجزاء مفعّلة ⇒ هي اللي بتقسّم تحت حد رسالة واتساب (٤٠٩٦ بايت) على
     //    كل الأجهزة — المالك (٢ أكتوبر): ٨٨ لوحة على أندرويد وصل منهم ٢٤ مقصوصين.
     if (hasSharePartsSheet()) { await shareTextViaChooser(text); return; }
@@ -2513,6 +2531,8 @@ export default function SortingPage() {
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "full", 0, new Date().toISOString());
+      // 🧭 سجل شغل الأعضاء — المسئول بيشوف إمتى فرز وطلع كام (lib/agentEvents.ts)
+      logAgentEvent("sort", { mode: "full", results: matches.length, records: finalTashyeek?.length ?? 0 });
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
@@ -2656,6 +2676,7 @@ export default function SortingPage() {
       setTashyeekResults(finalTashyeek);
       setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
       persistSortResults(matches, finalTashyeek, "new", newEntries.length, new Date().toISOString());
+      logAgentEvent("sort", { mode: "new", results: matches.length, records: finalTashyeek?.length ?? 0, newPlates: newEntries.length });
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
     finally { setSorting(false); }
@@ -2983,6 +3004,7 @@ export default function SortingPage() {
     return withLocationLink(buildRowSummaryText(buildTashyeekRowObj(r)), rawGpsOfTashyeek(r));
   }
   function shareTashyeekRow(r: TashyeekResultRow) {
+    logTextShare(1);
     void shareTextViaChooser(tashyeekShareText(r));
   }
   async function copyTashyeekRow(r: TashyeekResultRow, i: number) {
@@ -3187,6 +3209,7 @@ export default function SortingPage() {
     }
 
     setPasteResults(matches);
+    logAgentEvent("sort", { mode: "paste", results: matches.length, plates: tokens.length });
     // كل مرة العربية اتسجلت فيها (المالك ٧ أكتوبر ٢٠٢٦: «ممكن اماكنها تبقي مختلفه ف المندوب يعرف بالظبط
     // يحصلها في اي مكان») — نفس العربية تحت بعض والأحدث فوق. (كان الأحدث بس زي الفرز العادي — #244.)
     const recordRows = groupRecordsByPlate(
@@ -3242,6 +3265,7 @@ export default function SortingPage() {
   }
 
   function shareResultRow(r: MatchResult) {
+    logTextShare(1);
     void shareTextViaChooser(rowShareText(r));
   }
   /** نص المشاركة للصفوف المحددة — نفس النص للمشاركة وللنسخ. */
@@ -3268,6 +3292,7 @@ export default function SortingPage() {
   function sharePasteToWhatsApp() {
     const text = `*اللوحات المطلوبة (${pasteResults.length})*\n\n` +
       pasteResults.map((p, i) => `${i + 1}. ${pasteShareText(p)}`).join("\n\n──────────\n\n");
+    logTextShare(pasteResults.length);
     void shareTextViaChooser(text);
   }
 
@@ -3312,6 +3337,7 @@ export default function SortingPage() {
     if (!rows.length) return;
     const text = `*اللوحات المطلوبة (${rows.length})*\n\n` +
       rows.map((p, i) => `${i + 1}. ${pasteShareText(p)}`).join("\n\n──────────\n\n");
+    logTextShare(rows.length);
     void shareTextViaChooser(text);
   }
   async function copyPasteRow(p: { converted: string; row: Record<string, string> }, i: number) {
@@ -3366,7 +3392,7 @@ export default function SortingPage() {
   if (!hydrated) return <p className="py-10 text-center text-sm text-muted">جارٍ تحميل الملفات المحفوظة...</p>;
 
   return (
-    <div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl">
+    <div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl" onClickCapture={onResultsClick}>
 
       {/* Header */}
       <div>
@@ -3925,7 +3951,7 @@ export default function SortingPage() {
                     // المكرر بس بيتلوّن؛ اللي ملهاش شبيه تفضل بيضا (بدون أي لون) بطلب المستخدم.
                     const rowBg = isSel ? "bg-primary/15" : colorIdx !== undefined ? DUPE_COLORS[colorIdx].tw : "hover:bg-brand/10";
                     return (
-                      <tr key={i} className={`border-b border-border transition ${rowBg}`}>
+                      <tr key={i} data-plate={plate} className={`border-b border-border transition ${rowBg}`}>
                         {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
                         <td className="border-l border-border px-2 py-2 text-center">
                           <button onClick={() => toggleResult(g.key, i)} className="text-muted hover:text-primary transition">
@@ -4221,7 +4247,7 @@ export default function SortingPage() {
                     // 👥 «كل المرات» + المكرر مع نتيجة الداتا: نفس العربية بلون واحد في النافذتين (زي الإكسيل).
                     const dupIdx = plateColorMap.get(tashRowKey(r));
                     return (
-                      <tr key={i} className={`border-b border-border transition ${sel ? "bg-primary/15" : dupIdx !== undefined ? DUPE_COLORS[dupIdx].tw : "bg-primary/5 hover:bg-primary/10"}`}>
+                      <tr key={i} data-plate={plate} className={`border-b border-border transition ${sel ? "bg-primary/15" : dupIdx !== undefined ? DUPE_COLORS[dupIdx].tw : "bg-primary/5 hover:bg-primary/10"}`}>
                         {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
                         <td className="border-l border-border px-2 py-2 text-center">
                           <button onClick={() => toggleTashyeekSel(i)} className="text-muted hover:text-primary transition">
@@ -4347,7 +4373,7 @@ export default function SortingPage() {
                   rows={() => buildDisplayShareObjects(displayResults, recs).rowObjects}
                   imageTable={() => buildSortImageTable(displayResults, recs)}
                   imageStyle="grid"
-                  excelBlob={() => buildSortExcelBlob(displayResults, recs)} />
+                  excelBlob={() => buildSortExcelBlob(displayResults, recs)} onShared={onSortShared} />
                 <button onClick={clearAllResults} className={clearCls}>
                   <Trash2 size={15} /> مسح كل الفرز
                 </button>
@@ -4362,7 +4388,7 @@ export default function SortingPage() {
                   rows={() => buildDisplayShareObjects(displayResults, []).rowObjects}
                   imageTable={() => buildSortImageTable(displayResults, [])}
                   imageStyle="grid"
-                  excelBlob={() => buildSortExcelBlob(displayResults, [])} />
+                  excelBlob={() => buildSortExcelBlob(displayResults, [])} onShared={onSortShared} />
                 <button onClick={clearMainResults} className={clearCls}>
                   <Trash2 size={15} /> مسح فرز الداتا
                 </button>
@@ -4377,7 +4403,7 @@ export default function SortingPage() {
                   rows={() => buildDisplayShareObjects([], recs).rowObjects}
                   imageTable={() => buildSortImageTable([], recs)}
                   imageStyle="grid"
-                  excelBlob={() => buildSortExcelBlob([], recs)} />
+                  excelBlob={() => buildSortExcelBlob([], recs)} onShared={onSortShared} />
                 <button onClick={clearTashyeekResults} className={clearCls}>
                   <Trash2 size={15} /> مسح فرز السجلات
                 </button>
@@ -4412,7 +4438,7 @@ export default function SortingPage() {
                   const vtype = pickReferralCol(m.referralRow, ["نوع السيارة", "نوع المركبة", "vehicle name", "vehicle type", "طراز", "صانع", "موديل", "make", "model"]) || m.record.vehicleType || "";
                   const link = m.record.mapsLink || (m.record.lat != null && m.record.lng != null ? `https://www.google.com/maps?q=${m.record.lat},${m.record.lng}` : "");
                   return (
-                    <tr key={m.record.id || i} className="border-t border-border bg-danger/5">
+                    <tr key={m.record.id || i} data-plate={plate} className="border-t border-border bg-danger/5">
                       <td className="whitespace-nowrap px-2 py-1.5 font-mono font-bold text-ink" dir="ltr">{m.record.chassis}{m.matchType !== "exact" ? " ⚠️" : ""}</td>
                       <td className="whitespace-nowrap px-2 py-1.5 font-bold text-ink">{plate || "—"}</td>
                       <td className="whitespace-nowrap px-2 py-1.5 text-ink">{vtype || "—"}</td>
@@ -4596,6 +4622,7 @@ export default function SortingPage() {
                       return (
                       <tr
                         key={i}
+                        data-plate={p.converted}
                         className={`border-b border-border ${pasteSelected.has(i) ? "bg-primary/15" : pasteBg}`}
                       >
                         {/* التحديد أول عمود (بيفتح شريط المشاركة الجماعية على واتساب) */}
@@ -4728,7 +4755,7 @@ export default function SortingPage() {
                       {pasteRecordResults.map((p, i) => {
                         const recColor = pasteRecordColorMap.map.get(normalizePlate(bankPlateToArabic(p.converted)));
                         return (
-                        <tr key={i} className={`border-b border-border ${recColor !== undefined ? DUPE_COLORS[recColor].tw : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
+                        <tr key={i} data-plate={p.converted} className={`border-b border-border ${recColor !== undefined ? DUPE_COLORS[recColor].tw : i % 2 === 0 ? "bg-surface" : "bg-surface-2/40"}`}>
                           {/* ترقيم + نسخ/واتساب — أول عمود */}
                           <td className="border-l border-border px-2 py-1.5">
                             <div className="flex items-center gap-2 whitespace-nowrap">
@@ -4801,7 +4828,7 @@ export default function SortingPage() {
                     shareAllAtOnce
                     rows={() => pasteAllShareOf().rows}
                     excelBlob={() => { const sh = pasteAllShareOf(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
-                    imageTable={() => pasteShareImage(pasteAllShareOf())} />
+                    imageTable={() => pasteShareImage(pasteAllShareOf())} onShared={onSortShared} />
                   <button onClick={clearAllPasteResults} className={clearCls}>
                     <Trash2 size={15} /> مسح كل الفرز
                   </button>
@@ -4815,7 +4842,7 @@ export default function SortingPage() {
                     shareAllAtOnce
                     rows={() => dataShare().rows}
                     excelBlob={() => { const sh = dataShare(); return buildSortBlobBestEffort(sh.rows, "نتائج اللصق", sh.rowColors); }}
-                    imageTable={() => pasteShareImage(dataShare())} />
+                    imageTable={() => pasteShareImage(dataShare())} onShared={onSortShared} />
                   <button onClick={clearPasteResults} className={clearCls}>
                     <Trash2 size={15} /> مسح فرز الداتا
                   </button>
@@ -4829,7 +4856,7 @@ export default function SortingPage() {
                     shareAllAtOnce
                     rows={() => recShare().rows}
                     excelBlob={() => { const sh = recShare(); return buildSortBlobBestEffort(sh.rows, "لوحات سبق تشييكها", sh.rowColors); }}
-                    imageTable={() => pasteShareImage(recShare())} />
+                    imageTable={() => pasteShareImage(recShare())} onShared={onSortShared} />
                   <button onClick={clearPasteRecordResults} className={clearCls}>
                     <Trash2 size={15} /> مسح فرز السجلات
                   </button>
