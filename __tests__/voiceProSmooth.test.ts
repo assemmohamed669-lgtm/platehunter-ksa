@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   WEAK_NET_TEXT, WEAK_NET_LONG_TEXT, WEAK_NET_LONG_AFTER_MS, weakNetBanner,
+  SERVER_WAIT_TEXT, SERVER_WAIT_LONG_TEXT,
   createOutageClock, isRequestFailSkip,
   fatalText, createSessionGate,
   reachabilityCheck, REACH_CHECK_TIMEOUT_MS,
@@ -51,6 +52,30 @@ describe("① 📶 شريط النت الضعيف", () => {
   });
   it("ساعة الجهاز رجعت لورا ⇒ مايقعش", () => {
     expect(weakNetBanner(10_000, 5_000)).toEqual({ text: WEAK_NET_TEXT, extra: null });
+  });
+});
+
+/**
+ * 🔌 المالك (١٥ أكتوبر ٢٠٢٦): Cloudflare قفل وصلات نفق ألمانيا دقايق والتسجيل وقف بـ«السيرفر
+ * فصل». بـ`outageResilience` (السوبر أدمن) التسجيل بيكمّل ومستني — والشريط لازم يقول
+ * الحقيقة: **السيرفر** مش بيرد (مش «النت ضعيف» — نت المندوب شغّال).
+ */
+describe("① 🔌 شريط انقطاع السيرفر/النفق (outageResilience)", () => {
+  it("السبب سيرفر ⇒ نص السيرفر (كمّل كلامك — بنعيد المحاولة)", () => {
+    const b = weakNetBanner(1_000, 1_000 + 10_000, "server");
+    expect(b).toEqual({ text: SERVER_WAIT_TEXT, extra: null });
+    expect(SERVER_WAIT_TEXT).toBe("🔌 السيرفر مش بيرد لحظياً — كمّل كلامك، بنعيد المحاولة واللوحات هتظهر أول ما يرجع");
+    expect(SERVER_WAIT_TEXT).not.toContain("النت ضعيف");
+  });
+  it("بعد ٧٥ث ⇒ نفس قاعدة الصوت الفايت، بس من غير «لما النت يرجع»", () => {
+    const b = weakNetBanner(1_000, 1_000 + WEAK_NET_LONG_AFTER_MS + 1, "server");
+    expect(b).toEqual({ text: SERVER_WAIT_TEXT, extra: SERVER_WAIT_LONG_TEXT });
+    expect(SERVER_WAIT_LONG_TEXT).toBe("اللوحات اللي اتقالت من أكتر من دقيقة وربع ممكن ماتظهرش — عيدها لما السيرفر يرجع");
+  });
+  it("🔒 من غير سبب أو بسبب النت ⇒ نص النت الضعيف بالحرف زي ما هو", () => {
+    expect(weakNetBanner(1_000, 1_000 + 10_000)).toEqual({ text: WEAK_NET_TEXT, extra: null });
+    expect(weakNetBanner(1_000, 1_000 + 10_000, "net")).toEqual({ text: WEAK_NET_TEXT, extra: null });
+    expect(weakNetBanner(null, 5_000, "server")).toBeNull();
   });
 });
 

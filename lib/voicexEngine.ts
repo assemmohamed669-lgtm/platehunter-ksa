@@ -220,6 +220,18 @@ export function isWeakNetFailure(code: string | null | undefined): boolean {
 }
 
 /**
+ * 🔌 **انقطاع سيرفر/نفق مؤقّت** (`outageResilience` بس): 5xx · 52x · 429 — ردود من
+ * Cloudflare/السيرفر بتقول «مش متاح دلوقتي»، والانتظار ممكن يحلّها. 404/400 (عنوان
+ * غلط) والتوكن والرد المش مفهوم **مش** منهم — بيوقّعوا زي ما هم.
+ *
+ * المالك (١٥ أكتوبر ٢٠٢٦): Cloudflare قفل وصلات نفق ألمانيا ~١٢ دقيقة (فقد حزم بين
+ * الداتا سنتر وفرانكفورت) والتسجيل وقف عنده بـ«السيرفر فصل» — والسيرفر نفسه ماوقعش.
+ */
+export function isOutageCode(code: string | null | undefined): boolean {
+  return typeof code === "string" && /^http_(5\d\d|429)$/.test(code);
+}
+
+/**
  * ⛔ سبب الوقوع اللي الصفحة بتشوفه (`netResilience` بس — من غيره `tunnel_down`
  * دايماً زي النهارده). الكود الخام بيتبعت معاه معامل تاني.
  *   · `net_lost`      — نت الموبايل مقطوع ٣ دقايق (`WEAK_NET_GIVE_UP_MS`)
@@ -376,6 +388,25 @@ export interface VoicexEngineOpts {
    */
   onWeakNet?: (weak: boolean) => void;
   /**
+   * 🔌 **انقطاع السيرفر/النفق ⇒ انتظار بدل الوقوع** (فوق `netResilience` بس — من
+   * غيره مالوش أي أثر). المالك (١٥ أكتوبر ٢٠٢٦، «يلا»): Cloudflare قفل وصلات النفق
+   * دقايق والتسجيل وقف بـ«السيرفر فصل» مع إن السيرفر ماوقعش. بالعلم:
+   *   · ٨ فشل من السيرفر/النفق (`isOutageCode`: 5xx · 52x · 429) ⇒ نفس وضع الانتظار
+   *     بتاع النت الضعيف بالحرف (جسّات · الفايت بيتسجّل ويرجع) بدل `server_down`.
+   *   · منتظر بسبب النت وجسّة رجعت كود انقطاع ⇒ بيفضل منتظر (السبب بقى السيرفر).
+   *   · نفق ميت (`network` + `checkReachable` واصل) ⇒ بيفضل منتظر بدل `tunnel_error`.
+   *   · ٣ دقايق متواصلة (`WEAK_NET_GIVE_UP_MS`) ⇒ `server_down` (مش `net_lost`).
+   *   · التوكن · رد مش مفهوم · 404 · كود مش معروف ⇒ وقوع زي ما هو.
+   * «الجديد» بيبعته للسوبر أدمن بس لحد ما المالك يجرّب.
+   */
+  outageResilience?: boolean;
+  /**
+   * 🔌 سبب الانتظار (`outageResilience` بس): `"net"` نت الموبايل · `"server"` السيرفر/
+   * النفق. بيتنده مع دخول الوضع ومع أي تغيير في السبب — عشان الشريط يقول الحقيقة.
+   * **مابيتندهش بعد `stop()`**.
+   */
+  onWaitReason?: (kind: "net" | "server") => void;
+  /**
    * 🔌 **نفق واقع ولا نت الموبايل؟** (`netResilience` بس — من غيره مابيتندهش
    * خالص). `true` = نت الموبايل واصل لحد السيرفر (الصفحة: `fetch` no-cors
    * لـ`/health` رجع **أي** رد خلال ٤ث)، `false` = مش واصل. رمية/تعليق = `false`
@@ -486,6 +517,15 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
    * لـ«صوتي» والمناديب.
    */
   const NET = opts.netResilience === true;
+  /** 🔌 انقطاع السيرفر/النفق ⇒ انتظار بدل الوقوع — شوف `VoicexEngineOpts.outageResilience`. */
+  const OUTAGE = NET && opts.outageResilience === true;
+  /** 🔌 سبب الانتظار الحالي (`OUTAGE` بس بيتبلّغ) — بيرجع `"net"` مع الخروج. */
+  let waitKind: "net" | "server" = "net";
+  const setWaitKind = (k: "net" | "server") => {
+    if (!OUTAGE || waitKind === k) return;
+    waitKind = k;
+    if (!stopped) { try { opts.onWaitReason?.(k); } catch { /* ignore */ } }
+  };
   let weak = false;
   /** فيه جسّة طايرة دلوقتي؟ — جسّة واحدة بس في المرة. */
   let probing = false;
@@ -588,7 +628,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
    * 🐢 الفشل الـ٨ المتتالي وأغلبيته نت موبايل (`WEAK_NET_MAJORITY`) — بالظبط
    * مكان `tunnel_down` القديم.
    */
-  const enterWeakNet = () => {
+  const enterWeakNet = (kind: "net" | "server" = "net") => {
     // بعد الوقوع الجلسة خلصت بالنسبة للصفحة — مافيش «نت ضعيف» بعده
     if (weak || stopped || fatalFired) return;
     weak = true;
@@ -599,6 +639,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     probeDelayMs = WEAK_PROBE_FIRST_MS;
     nextProbeAt = Date.now() + probeDelayMs;
     try { opts.onWeakNet?.(true); } catch { /* ignore */ }
+    // 🔌 (`OUTAGE` بس) السبب بيتبلّغ مع الدخول دايماً — حتى لو نفس اللي فات
+    if (OUTAGE) {
+      waitKind = kind;
+      try { opts.onWaitReason?.(kind); } catch { /* ignore */ }
+    }
     /**
      * 🔌 السلسلة فيها `network` (فشل سريع من غير رد) ⇒ يا الموبايل أوفلاين يا
      * النفق ميت (رد Cloudflare من غير CORS بيبان كده بالظبط). `/health` وصل ⇒
@@ -621,6 +666,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // والصفحة قفلت التسجيل خلاص (أو هتقفله).
     if (!weak || gaveUp) return;
     weak = false;
+    waitKind = "net";      // 🔌 الوقعة الجاية بتبلّغ سببها من جديد
     weakGen += 1;          // 🔌 أي فحص طاير بقى عن وقعة خلصت
     tunnelSuspectAt = 0;
     probeDelayMs = WEAK_PROBE_FIRST_MS;
@@ -646,6 +692,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     gaveUp = true;
     pending.length = 0;
     const code = lastFailCode ?? "no_response";
+    // 🔌 (`OUTAGE`) منتظر بسبب السيرفر/النفق ⇒ ده سبب الاستسلام، مش نت الموبايل
+    if (OUTAGE && waitKind === "server") { fatal("server_down", code === "network" ? TUNNEL_ERROR_CODE : code); return; }
     if (code !== "network" || !opts.checkReachable || unreachableKnown) { fatal("net_lost", code); return; }
     // `fatal` نفسه بيتجاهل لو الإيقاف حصل وإحنا مستنيين
     void reach().then((ok) => { fatal(ok ? "server_down" : "net_lost", code); });
@@ -661,7 +709,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     const gen = weakGen;
     void reach().then((ok) => {
       if (!sameWeak(gen)) return;
-      if (ok) { fatal("server_down", TUNNEL_ERROR_CODE); return; }
+      if (ok) {
+        // 🔌 (`OUTAGE`) النفق واقع ⇒ بنستنى يرجع بدل ما نقفل التسجيل (الاستسلام بالوقت زي ما هو)
+        if (OUTAGE) { setWaitKind("server"); if (pastGiveUp) giveUp(true); return; }
+        fatal("server_down", TUNNEL_ERROR_CODE); return;
+      }
       if (pastGiveUp) giveUp(true);
     });
   };
@@ -911,14 +963,21 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
           //    · غير كده ⇒ وقوع زي النهارده بأوضح سبب فيها (مرة واحدة)
           //    وجوّه الوضع: الجسّة رجعت نت ⇒ فاضل ضعيف؛ رجعت رد سيرفر/توكن/رد
           //    بايظ ⇒ وقوع بأوضح سبب في السلسلة (زي ما كان).
+          //    🔌 (`OUTAGE` بس) كود انقطاع سيرفر/نفق (`isOutageCode`) ⇒ انتظار بدل الوقوع
+          //       — والتوكن لسه بيكسب في أي مكان في السلسلة.
           if (fails >= FATAL_FAILS) {
             if (!NET) fatal("tunnel_down");
             else if (weak) {
-              if (cls !== "net" && streakWorst) fatal(REASON_OF_CLASS[streakWorst.cls], streakWorst.code);
+              if (cls !== "net" && streakWorst) {
+                if (OUTAGE && streakWorst.cls === "server" && isOutageCode(lastFailCode)) setWaitKind("server");
+                else fatal(REASON_OF_CLASS[streakWorst.cls], streakWorst.code);
+              }
             } else if (streakWorst && streakWorst.cls === "auth") {
               fatal(REASON_OF_CLASS.auth, streakWorst.code);
             } else if (streakCodes.filter(isWeakNetFailure).length >= WEAK_NET_MAJORITY || !streakWorst) {
               enterWeakNet();
+            } else if (OUTAGE && streakWorst.cls === "server" && isOutageCode(streakWorst.code)) {
+              enterWeakNet("server");
             } else {
               fatal(REASON_OF_CLASS[streakWorst.cls], streakWorst.code);
             }

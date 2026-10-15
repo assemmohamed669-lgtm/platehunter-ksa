@@ -42,11 +42,23 @@ export const WEAK_NET_LONG_AFTER_MS = REPLAY_MAX_AGE_SEC * 1000;
 export function weakNetBanner(
   weakSinceMs: number | null,
   nowMs: number,
+  /** 🔌 سبب الانتظار (`onWaitReason` — `outageResilience` بس). من غيره = النت زي ما كان. */
+  kind: "net" | "server" = "net",
 ): { text: string; extra: string | null } | null {
   if (weakSinceMs == null) return null;
   const long = nowMs - weakSinceMs > WEAK_NET_LONG_AFTER_MS;
+  if (kind === "server") return { text: SERVER_WAIT_TEXT, extra: long ? SERVER_WAIT_LONG_TEXT : null };
   return { text: WEAK_NET_TEXT, extra: long ? WEAK_NET_LONG_TEXT : null };
 }
+
+/**
+ * 🔌 **السيرفر/النفق مش بيرد** (`outageResilience` — السوبر أدمن). المالك (١٥ أكتوبر
+ * ٢٠٢٦): Cloudflare قفل وصلات النفق دقايق والتسجيل وقف بـ«السيرفر فصل». دلوقتي
+ * التسجيل بيكمّل والمحرّك بيعيد المحاولة — والشريط بيقول الحقيقة: نت المندوب شغّال،
+ * السيرفر هو اللي مش بيرد. ونفس قاعدة الـ٧٥ث للصوت الفايت.
+ */
+export const SERVER_WAIT_TEXT = "🔌 السيرفر مش بيرد لحظياً — كمّل كلامك، بنعيد المحاولة واللوحات هتظهر أول ما يرجع";
+export const SERVER_WAIT_LONG_TEXT = "اللوحات اللي اتقالت من أكتر من دقيقة وربع ممكن ماتظهرش — عيدها لما السيرفر يرجع";
 
 /**
  * 📶 **بداية الانقطاع الفعلية.** المحرّك بيقول «ضعيف» عند الفشل الـ٨ ورا بعض —

@@ -1322,3 +1322,177 @@ describe("🔌 ⑥ نفق ميت ولا نت الموبايل؟ (`checkReachable
     await stopNow(ctrl);
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔌 انقطاع السيرفر/النفق (`outageResilience` — السوبر أدمن بس)
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * المالك (١٥ أكتوبر ٢٠٢٦): Cloudflare قفل وصلات نفق ألمانيا ~١٢ دقيقة (فقد حزم
+ * بين الداتا سنتر وفرانكفورت) — والتسجيل وقف عنده بـ«السيرفر فصل وسط التسجيل»
+ * مع إن السيرفر نفسه ماوقعش. «يلا» على: **التطبيق مايقفلش التسجيل** — يستنى
+ * ويعيد المحاولة ويرجّع الفايت لما الاتصال يرجع.
+ *
+ * فبالعلم الجديد (فوق `netResilience`):
+ *   · ٨ فشل من السيرفر/النفق (5xx · 52x · 429) ⇒ وضع الانتظار (`onWaitReason("server")`)
+ *     بدل `server_down` — ونفق ميت (network + `/health` واصل) كمان.
+ *   · رد ناجح ⇒ خروج عادي والفايت بيرجع (نفس آلية النت الضعيف بالحرف).
+ *   · ٣ دقايق متواصلة من غير ولا رد ⇒ استسلام `server_down` (مش `net_lost`).
+ *   · التوكن (401/403) · رد مش مفهوم · 404 · كود مش معروف ⇒ وقوع زي ما هو
+ *     (الانتظار مش هيحلّهم).
+ *   · من غير `netResilience` العلم ده مالوش أي أثر.
+ */
+describe("🔌 انقطاع السيرفر/النفق (`outageResilience`) ⇒ انتظار بدل الوقوع", () => {
+  const OUT = { netResilience: true, outageResilience: true } as const;
+  async function bootOut(extra: Record<string, unknown> = {}) {
+    const kinds: string[] = [];
+    const r = await boot({ ...OUT, onWaitReason: (k: string) => { kinds.push(k); }, ...extra });
+    return { ...r, kinds };
+  }
+
+  it.each(["http_530", "http_502", "http_503", "http_504", "http_520", "http_429"])(
+    "٨ %s ⇒ انتظار (server) — مش وقوع",
+    async (code) => {
+      net.up = false; net.code = code;
+      const { ev, ctrl, kinds } = await bootOut();
+      await until(() => net.failures >= 8);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(ev.fatal).toEqual([]);
+      expect(ev.weak).toEqual([true]);
+      expect(kinds).toEqual(["server"]);
+      await stopNow(ctrl);
+    },
+  );
+
+  it("🔁 السيرفر رجع جوّه الـ٣ دقايق ⇒ خروج عادي، والفايت بيرجع، واللوحة اللي اتقالت وقت الانقطاع بتظهر", async () => {
+    net.up = false; net.code = "http_530";
+    net.plate = { from: 30, to: 32, text: "ابح1234" };
+    const { ev, ctrl } = await bootOut();
+    await until(() => ev.weak.length === 1);
+    await vi.advanceTimersByTimeAsync(45_000 - 12_400);
+    expect(ev.plates).toEqual([]);
+    net.up = true;
+    await until(() => ev.weak.length === 2, 60_000);
+    expect(ev.weak).toEqual([true, false]);
+    expect(ev.fatal).toEqual([]);
+    await until(() => ev.plates.includes("ابح1234"), 60_000);
+    expect(ev.replays).toBeGreaterThan(0);
+    await stopNow(ctrl);
+  });
+
+  it("〰️ ١٢ دقيقة متقطّعة (زي ١٥ أكتوبر: 530/502 ونجاح متلخبطين) ⇒ ولا وقوع", async () => {
+    net.up = false;
+    net.okFor = (i) => i % 20 >= 12;
+    net.codeFor = (i) => (i % 2 ? "http_502" : "http_530");
+    const { ev, ctrl } = await bootOut();
+    await vi.advanceTimersByTimeAsync(12 * 60_000);
+    expect(ev.fatal).toEqual([]);
+    await stopNow(ctrl);
+  });
+
+  it("⏱️ انقطاع متواصل ٣ دقايق ⇒ يستسلم server_down بالكود مرة واحدة (مش net_lost) — ومافيش إرسال بعدها", async () => {
+    net.up = false; net.code = "http_530";
+    const { ev, ctrl } = await bootOut();
+    await until(() => ev.weak.length === 1);
+    const tWeak = ev.weakAt[0];
+    await vi.advanceTimersByTimeAsync(WEAK_NET_GIVE_UP_MS - 10_000);
+    expect(ev.fatal).toEqual([]);
+    await until(() => ev.fatal.length === 1, 60_000);
+    expect(ev.fatalArgs).toEqual([["server_down", "http_530"]]);
+    expect(ev.fatalAt[0] - tWeak).toBeGreaterThanOrEqual(WEAK_NET_GIVE_UP_MS);
+    await until(() => net.inflight === 0, 10_000);
+    const n = net.sends.length;
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(net.sends.length).toBe(n);
+    expect(ev.fatal.length).toBe(1);
+    await stopNow(ctrl);
+  });
+
+  it("📶⇢🔌 منتظر بسبب نت الموبايل، وجسّة رجعت 503 ⇒ السبب بقى السيرفر وبيفضل منتظر (مش وقوع)", async () => {
+    net.up = false; net.code = "timeout";
+    const { ev, ctrl, kinds } = await bootOut();
+    await until(() => ev.weak.length === 1);
+    expect(kinds).toEqual(["net"]);
+    net.code = "http_503";
+    await until(() => kinds.length === 2, 60_000);
+    expect(kinds).toEqual(["net", "server"]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(ev.fatal).toEqual([]);
+    expect(ev.weak).toEqual([true]);
+    await stopNow(ctrl);
+  });
+
+  it("🚇 نفق ميت (network + الفحص واصل) ⇒ بيفضل منتظر (server) بدل tunnel_error، وأول ما يرجع ⇒ خروج", async () => {
+    net.up = false; net.code = "network";
+    const r = reachSpy(true);
+    const { ev, ctrl, kinds } = await bootOut({ checkReachable: r.fn });
+    await until(() => kinds.includes("server"), 30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(ev.fatal).toEqual([]);
+    expect(ev.weak).toEqual([true]);
+    net.up = true;
+    await until(() => ev.weak.length === 2, 60_000);
+    expect(ev.weak).toEqual([true, false]);
+    expect(ev.fatal).toEqual([]);
+    await stopNow(ctrl);
+  });
+
+  it("🚇 نفق ميت متواصل ٣ دقايق ⇒ server_down «tunnel_error» مرة واحدة (مش net_lost)", async () => {
+    net.up = false; net.code = "network";
+    const r = reachSpy(true);
+    const { ev, ctrl } = await bootOut({ checkReachable: r.fn });
+    await until(() => ev.fatal.length === 1, WEAK_NET_GIVE_UP_MS + 120_000);
+    expect(ev.fatalArgs).toEqual([["server_down", "tunnel_error"]]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(ev.fatal.length).toBe(1);
+    await stopNow(ctrl);
+  });
+
+  it.each([
+    ["التوكن (401) ⇒ auth_rejected على طول — الانتظار مش هيحلّه", "http_401", "auth_rejected"],
+    ["رد مش مفهوم (bad_json) ⇒ bad_reply زي ما هو", "bad_json", "bad_reply"],
+    ["404 (عنوان غلط) ⇒ server_down زي ما هو", "http_404", "server_down"],
+    ["كود مش معروف (error) ⇒ tunnel_down زي ما هو", "error", "tunnel_down"],
+  ])("%s", async (_name, code, reason) => {
+    net.up = false; net.code = code;
+    const { ev, ctrl, kinds } = await bootOut();
+    await until(() => net.failures >= 8);
+    expect(ev.fatalArgs).toEqual([[reason, code]]);
+    expect(ev.fatalAtFailures).toEqual([8]);
+    expect(ev.weak).toEqual([]);
+    expect(kinds).toEqual([]);
+    await stopNow(ctrl);
+  });
+
+  it("وهو منتظر (server): جسّة رجعت 401 ⇒ auth_rejected مرة واحدة", async () => {
+    net.up = false; net.code = "http_530";
+    const { ev, ctrl } = await bootOut();
+    await until(() => ev.weak.length === 1);
+    net.code = "http_401";
+    await until(() => ev.fatal.length === 1, 60_000);
+    expect(ev.fatalArgs).toEqual([["auth_rejected", "http_401"]]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(ev.fatal.length).toBe(1);
+    await stopNow(ctrl);
+  });
+
+  it("🔒 من غير netResilience العلم لوحده مالوش أثر — tunnel_down مع كل فشل زي النهارده", async () => {
+    net.up = false; net.code = "http_530";
+    const kinds: string[] = [];
+    const { ev, ctrl } = await boot({ outageResilience: true, onWaitReason: (k: string) => { kinds.push(k); }, onWeakNet: undefined });
+    await until(() => net.failures >= 9);
+    expect(ev.fatalArgs).toEqual([["tunnel_down"], ["tunnel_down"]]);
+    expect(kinds).toEqual([]);
+    await stopNow(ctrl);
+  });
+
+  it("🔒 netResilience من غير العلم الجديد ⇒ server_down عند الـ٨ زي ما هو (onWaitReason بيتنده بـnet بس)", async () => {
+    net.up = false; net.code = "http_530";
+    const kinds: string[] = [];
+    const { ev, ctrl } = await boot({ ...WEAK, onWaitReason: (k: string) => { kinds.push(k); } });
+    await until(() => net.failures >= 8);
+    expect(ev.fatalArgs).toEqual([["server_down", "http_530"]]);
+    expect(kinds).toEqual([]);
+    await stopNow(ctrl);
+  });
+});

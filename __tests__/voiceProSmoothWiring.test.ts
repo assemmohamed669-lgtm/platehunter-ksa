@@ -39,7 +39,7 @@ describe("① 📶 النت الضعيف — للسوبر أدمن بس", () => 
     expect(src.match(/netResilience:/g)?.length).toBe(1);
   });
   it("الشريط من weakNetBanner وللسوبر أدمن بس، وبيتشال في البداية والإيقاف", () => {
-    expect(src).toMatch(/isSuper \? weakNetBanner\(weakSince, Date\.now\(\)\) : null/);
+    expect(src).toMatch(/isSuper \? weakNetBanner\(weakSince, Date\.now\(\), waitKind\) : null/);
     expect(startFn).toMatch(/setWeakSince\(null\)/);
     expect(stopFn).toMatch(/setWeakSince\(null\)/);
   });
@@ -68,6 +68,22 @@ describe("① 📶 النت الضعيف — للسوبر أدمن بس", () => 
     // الخيار نفسه مكتوب مرة واحدة بس (المناديب: الخيارات من غيره بالحرف)
     expect(src.match(/checkReachable:/g)?.length).toBe(1);
     expect(src).toMatch(/import \{[^}]*\breachabilityCheck\b[^}]*\} from "@\/lib\/voiceProSmooth";/);
+  });
+});
+
+describe("①ب 🔌 انقطاع السيرفر/النفق ⇒ انتظار بدل الوقوع — للسوبر أدمن بس (١٥ أكتوبر)", () => {
+  it("العلم بيتبعت جوّه فرع sup لوحده (المناديب: نفس الخيارات بالحرف)", () => {
+    expect(startFn).toMatch(/\.\.\.\(sup \? \{\s*outageResilience: true,\s*onWaitReason: \(kind: "net" \| "server"\) => \{\s*if \(!live\(\)\) return;\s*tel\?\.event\("wait_reason", \{ kind \}\);\s*setWaitKind\(kind\);\s*\},\s*\} : \{\}\),/);
+    expect(src.match(/outageResilience:/g)?.length).toBe(1);
+    expect(src.match(/onWaitReason:/g)?.length).toBe(1);
+  });
+  it("السبب بيتصفّر مع البداية والإيقاف (زي weakSince)", () => {
+    expect(startFn).toMatch(/setWeakSince\(null\);\s*setWaitKind\("net"\);/);
+    expect(stopFn).toMatch(/setWeakSince\(null\);\s*setWaitKind\("net"\);/);
+  });
+  it("🔴 «صوتي» (instant-check) مابتبعتش العلم ده خالص", () => {
+    expect(instantSrc).not.toMatch(/outageResilience/);
+    expect(instantSrc).not.toMatch(/onWaitReason/);
   });
 });
 
