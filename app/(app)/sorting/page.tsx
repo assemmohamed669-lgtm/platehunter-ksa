@@ -63,6 +63,8 @@ import {
   fetchTeamDataState, uploadTeamData, deleteTeamData, downloadTeamData,
   needsTeamDataRefresh, teamIngestMode, setTeamDataOpen, TEAM_DATA_SLOT, type TeamDataState,
 } from "@/lib/teamData";
+import { fetchMyMemberData, downloadMyMemberData, MEMBER_DATA_SLOT } from "@/lib/memberData";
+import { ingestRemoteData, loadLocalRemoteData, clearRemoteData, type RemoteDataState } from "@/lib/remoteDataSlot";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import ShareSortButton from "@/components/ShareSortButton";
 import CertCell from "@/components/CertCell";
@@ -688,6 +690,17 @@ export default function SortingPage() {
   const [teamOpenBusy, setTeamOpenBusy] = useState(false);
   useEffect(() => { setExtraLocks(loadExtraDataLocks()); }, []);
 
+  // ── 🗂️ داتا مخصوصة من مسئول المجموعة (ملف لكل عضو) ─────────────────────────
+  // المسئول بيرفعها للعضو ده بعينه من «إدارة مجموعتي ← داتا الأعضاء». العضو بيفرز عليها **هي بس** بدل داتا
+  // المجموعة (قرار المالك ١٥ أكتوبر ٢٠٢٦)، ومايقدرش يفتحها ولا ينزّلها (المربع من غير فتح/تنزيل/مسح).
+  const [memberFile, setMemberFile] = useState<File | null>(null);
+  const [memberTable, setMemberTable] = useState<ExcelTable | null>(null);
+  const [memberStreamed, setMemberStreamed] = useState(false);
+  const [memberStreamMeta, setMemberStreamMeta] = useState<DataMeta | null>(null);
+  const [memberBusy, setMemberBusy] = useState(false);
+  const [memberMsg, setMemberMsg] = useState<string | null>(null);
+  const memberDataReady = !!memberFile && ((memberStreamed && !!memberStreamMeta) || !!memberTable);
+
   /**
    * بينزّل داتا المجموعة لو فيه نسخة أحدث، وبيشيلها لو المسئول مسحها.
    * بيقارن تاريخ التحديث الأول — الملف ممكن يكون عشرات الميجات والمندوب على
@@ -789,6 +802,40 @@ export default function SortingPage() {
   }, [teamOpenBusy, syncTeamData]);
 
   useEffect(() => { void syncTeamData(); }, [syncTeamData]);
+
+  /**
+   * 🗂️ بينزّل الداتا المخصوصة لو فيه نسخة أحدث، وبيشيلها لو المسئول شالها. من غير نت ⇒ النسخة اللي على الموبايل
+   * (مانعرفش إنها اتشالت، فماتتمسحش). الملف نفسه مابيتحفظش على الموبايل — الصفوف بس (للفرز).
+   */
+  const syncMemberData = useCallback(async () => {
+    const apply = (st: RemoteDataState | null) => {
+      setMemberFile(st ? new File([], st.fileName) : null);
+      setMemberTable(st?.table ?? null);
+      setMemberStreamed(!!st?.streamed);
+      setMemberStreamMeta(st?.streamMeta ?? null);
+    };
+    const res = await fetchMyMemberData();
+    const local = await loadLocalRemoteData(MEMBER_DATA_SLOT).catch(() => null);
+    if (res.offline) { apply(local); return; }
+    if (!res.file) {
+      apply(null);
+      if (local) await clearRemoteData(MEMBER_DATA_SLOT);
+      return;
+    }
+    if (local && !needsTeamDataRefresh(local.uploadedAt ?? null, res.file.updatedAt)) { apply(local); return; }
+    setMemberBusy(true);
+    try {
+      const blob = await downloadMyMemberData();
+      if (!blob) { apply(local); setMemberMsg("تعذّر تنزيل الداتا من المسئول — جرّب تاني."); return; }
+      const file = new File([blob], res.file.fileName, { type: blob.type });
+      apply(await ingestRemoteData(MEMBER_DATA_SLOT, file, res.file.updatedAt, LARGE_DATA_THRESHOLD_BYTES));
+      setMemberMsg(null);
+    } catch {
+      apply(await loadLocalRemoteData(MEMBER_DATA_SLOT).catch(() => null));
+      setMemberMsg("تعذّر قراءة الداتا من المسئول.");
+    } finally { setMemberBusy(false); }
+  }, []);
+  useEffect(() => { void syncMemberData(); }, [syncMemberData]);
   // 👥 شيت تشييك المجموعة كمان — العضو اللي بيفتح على الفرز على طول كان بيفرز
   //    على شيته القديم لحد ما يفتح صفحة التشييك (بلاغ ٢٩ سبتمبر). المزامنة
   //    بتبعت idbFileUpdated لو نزل شيت أحدث، والمستمع تحت بيعيد قراءته.
@@ -1117,6 +1164,10 @@ export default function SortingPage() {
     const sources: ResultColumnSource[] = [];
     if (dataTable) {
       sources.push({ kind: "data", headers: dataTable.headers, rows: dataTable.rows, plateCol: effectiveDataPlateCol });
+    } else if (memberTable) {
+      // 🗂️ العضو اللي بيفرز على الداتا المخصوصة بس ⇒ أعمدة الداتا (الحي/الموقع…) من ملفها.
+      sources.push({ kind: "data", headers: memberTable.headers, rows: memberTable.rows,
+        plateCol: memberStreamMeta?.plateCol || resolveDataPlateCol(memberTable.headers, memberTable.rows, null) });
     }
     // سجلات المندوب كخانة داتا (ربط حي) — أعمدتها لازم تظهر في نتيجة الفرز زي أي داتا.
     if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
@@ -1158,7 +1209,7 @@ export default function SortingPage() {
     }
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals,
-      isMultiSheetRef, selectedRefSheets, recordsLinked, tashyeekTable, tashyeekPlateCol]);
+      isMultiSheetRef, selectedRefSheets, recordsLinked, tashyeekTable, tashyeekPlateCol, memberTable, memberStreamMeta]);
 
   // أعمدة الإحالة الإضافية المختارة — من المربع الأساسي (referralExtraCols) +
   // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
@@ -1753,8 +1804,8 @@ export default function SortingPage() {
   // الفرز زي ما ملف الداتا العادي بيكفّي. عمود اللوحة بييجي من مصدر المجموعة.
   const teamDataReady = teamData.role === "member" && ((teamStreamed && !!teamStreamMeta) || !!teamTable);
   const canSort = sortMode === "new"
-    ? (!!dataTable || teamDataReady) && referralReady && !!checkTable && (!!effectiveDataPlateCol || teamDataReady) && !!effectiveCheckPlateCol && dataSheetsReady
-    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || teamDataReady || recordsAsDataReady);
+    ? (!!dataTable || teamDataReady || memberDataReady) && referralReady && !!checkTable && (!!effectiveDataPlateCol || teamDataReady || memberDataReady) && !!effectiveCheckPlateCol && dataSheetsReady
+    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || teamDataReady || memberDataReady || recordsAsDataReady);
 
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
@@ -2050,7 +2101,17 @@ export default function SortingPage() {
     // يحمّلوها، بس الفرز عليها شغّال (ده كل الهدف منها).
     // المسئول عنده **نفس الملف** في مربع الداتا بتاعه (هو اللي رفعه)، فإضافته
     // تاني هنا كانت هتفرز عليه مرتين وتطلّع كل لوحة مكررة.
-    if (teamData.role !== "leader") {
+    // 🗂️ داتا مخصوصة من المسئول ⇒ بيفرز عليها هي بس **بدل** داتا المجموعة (قرار المالك ١٥ أكتوبر ٢٠٢٦).
+    if (memberDataReady) {
+      if (memberStreamed && memberStreamMeta) {
+        const pc = memberStreamMeta.plateCol
+          || (memberTable ? resolveDataPlateCol(memberTable.headers, memberTable.rows, effectiveDataPlateCol) : null);
+        if (pc) srcs.push({ rows: [], plateCol: pc, slot: MEMBER_DATA_SLOT, rowCount: memberStreamMeta.rowCount, sheets: null });
+      } else if (memberTable) {
+        const pc = resolveDataPlateCol(memberTable.headers, memberTable.rows, effectiveDataPlateCol);
+        if (pc) srcs.push({ rows: memberTable.rows, plateCol: pc });
+      }
+    } else if (teamData.role !== "leader") {
       if (teamStreamed && teamStreamMeta) {
         // داتا مجموعة كبيرة → تتقري من الجهاز على دفعات (نفس مسار الداتا الكبيرة).
         const pc = teamStreamMeta.plateCol
@@ -2415,7 +2476,7 @@ export default function SortingPage() {
   async function runFullSort() {
     const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
     const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
-    if (!(hasUploadedData || hasRecordsData) || !referralTable || !effectiveReferralPlateCol) return;
+    if (!(hasUploadedData || hasRecordsData || memberDataReady) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
@@ -2542,7 +2603,7 @@ export default function SortingPage() {
   // اللوحات الجديدة = لوحات الإحالة (كل الشيتات) غير الموجودة في ملف التشييك،
   // وبعدين بتتطابق على ملف الداتا وعلى شيت السجلات → الجديد بس في النتيجة.
   async function runNewSort() {
-    if (!dataTable || !referralTable || !checkTable || !effectiveDataPlateCol || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
+    if ((!dataTable && !memberDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
@@ -3528,7 +3589,36 @@ export default function SortingPage() {
 
       {/* العضو بيشوف داتا المجموعة **زي المسئول بالظبط**: كارت ملف باسمه، يفتحه
           ويعاين ويفرز عليه — بس المسح والاستبدال للمسئول (fixed = فتح/تنزيل بس). */}
-      {teamData.role === "member" && teamData.file && (
+      {/* 🗂️ داتا مخصوصة من مسئول المجموعة للعضو ده بعينه — بيفرز عليها بس (بدل داتا المجموعة):
+          مافيش فتح ولا تنزيل ولا مسح (fixed noOpen). */}
+      {(memberFile || memberBusy || memberMsg) && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <span className="text-xs font-bold text-muted">داتا من المسئول</span>
+            <span className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary">
+              <Lock size={11} /> للفرز بس
+            </span>
+          </div>
+          {memberFile ? (
+            <FileUploadBox
+              title="داتا من المسئول"
+              loadedAccent="data"
+              hint="مسئول المجموعة خصّصها ليك — الفرز عليها بس (من غير فتح ولا تنزيل)"
+              parsedFile={memberFile}
+              parsedRowCount={memberStreamed && memberStreamMeta ? memberStreamMeta.rowCount : (memberTable?.rows.length ?? 0)}
+              onParsed={() => { /* العضو مايغيّرش */ }}
+              onClear={() => { /* المسح للمسئول بس */ }}
+              fixed
+              noOpen
+            />
+          ) : memberBusy ? (
+            <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-[11px] text-muted">جارٍ تنزيل الداتا من المسئول…</div>
+          ) : null}
+          {memberMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{memberMsg}</p>}
+        </div>
+      )}
+
+      {!memberFile && teamData.role === "member" && teamData.file && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2 px-0.5">
             <span className="text-xs font-bold text-muted">داتا المجموعة</span>
