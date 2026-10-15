@@ -1168,6 +1168,10 @@ export default function SortingPage() {
       // 🗂️ العضو اللي بيفرز على الداتا المخصوصة بس ⇒ أعمدة الداتا (الحي/الموقع…) من ملفها.
       sources.push({ kind: "data", headers: memberTable.headers, rows: memberTable.rows,
         plateCol: memberStreamMeta?.plateCol || resolveDataPlateCol(memberTable.headers, memberTable.rows, null) });
+    } else if (teamData.role === "member" && teamTable) {
+      // 👥 العضو اللي بيفرز على داتا المجموعة بس (من غير ملف بتاعه) ⇒ أعمدة الداتا من ملف المجموعة.
+      sources.push({ kind: "data", headers: teamTable.headers, rows: teamTable.rows,
+        plateCol: teamStreamMeta?.plateCol || resolveDataPlateCol(teamTable.headers, teamTable.rows, null) });
     }
     // سجلات المندوب كخانة داتا (ربط حي) — أعمدتها لازم تظهر في نتيجة الفرز زي أي داتا.
     if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
@@ -1209,7 +1213,8 @@ export default function SortingPage() {
     }
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals,
-      isMultiSheetRef, selectedRefSheets, recordsLinked, tashyeekTable, tashyeekPlateCol, memberTable, memberStreamMeta]);
+      isMultiSheetRef, selectedRefSheets, recordsLinked, tashyeekTable, tashyeekPlateCol, memberTable, memberStreamMeta,
+      teamData.role, teamTable, teamStreamMeta]);
 
   // أعمدة الإحالة الإضافية المختارة — من المربع الأساسي (referralExtraCols) +
   // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
@@ -2476,7 +2481,7 @@ export default function SortingPage() {
   async function runFullSort() {
     const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
     const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
-    if (!(hasUploadedData || hasRecordsData || memberDataReady) || !referralTable || !effectiveReferralPlateCol) return;
+    if (!(hasUploadedData || hasRecordsData || memberDataReady || teamDataReady) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
@@ -2603,7 +2608,7 @@ export default function SortingPage() {
   // اللوحات الجديدة = لوحات الإحالة (كل الشيتات) غير الموجودة في ملف التشييك،
   // وبعدين بتتطابق على ملف الداتا وعلى شيت السجلات → الجديد بس في النتيجة.
   async function runNewSort() {
-    if ((!dataTable && !memberDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
+    if ((!dataTable && !memberDataReady && !teamDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady && !teamDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
     try {
