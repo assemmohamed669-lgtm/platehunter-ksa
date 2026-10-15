@@ -410,6 +410,11 @@ export default function RegistrationV2Page() {
    * أدمن بس (المحرّك مابيندهش `onWeakNet` من غير `netResilience`).
    */
   const [weakSince, setWeakSince] = useState<number | null>(null);
+  /**
+   * 🔌 سبب الانتظار (`onWaitReason` — `outageResilience`، السوبر أدمن بس): `"server"` ⇒
+   * الشريط بيقول «السيرفر مش بيرد» بدل «النت ضعيف». المالك (١٥ أكتوبر ٢٠٢٦).
+   */
+  const [waitKind, setWaitKind] = useState<"net" | "server">("net");
   /** ساعة الصوت للتأخير — بتفضل بعد الإيقاف عشان آخر اللوحات تتحسب صح. */
   const clockRef = useRef<VoicexEngineController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1198,6 +1203,7 @@ export default function RegistrationV2Page() {
   async function start() {
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
+    setWaitKind("net");
     wantedSeenRef.current = new Map();
     // 🚚 التسلسل الفوري للكل — المالك جرّبه (٢٤ سبتمبر): «شغّال زي الفل، ارفعوه للكل»
     fleetRef.current = new FleetMemory({ sequence: true, firstCar: true });   // 🚚 أول عربية: للكل (المالك جرّبه ٢٤ سبتمبر)
@@ -1298,6 +1304,21 @@ export default function RegistrationV2Page() {
            * السيرفر ⇒ «السيرفر مش واصل (النفق واقع)» بدل «النت ضعيف» ٣ دقايق.
            */
           checkReachable: reachabilityCheck(modelUrl.trim().replace(/\/+$/, "") + "/health"),
+        } : {}),
+        /**
+         * 🔌 **انقطاع السيرفر/النفق ⇒ انتظار بدل الوقوع — السوبر أدمن بس** (المالك ١٥
+         * أكتوبر ٢٠٢٦، «يلا»): Cloudflare قفل وصلات نفق ألمانيا دقايق والتسجيل وقف بـ«السيرفر
+         * فصل وسط التسجيل» والسيرفر نفسه ماوقعش. دلوقتي 5xx/52x/429 أو نفق ميت ⇒ التسجيل
+         * بيكمّل، المحرّك بيعيد المحاولة ويرجّع الفايت، والشريط بيقول «السيرفر مش بيرد».
+         * ٣ دقايق متواصلة ⇒ نفس الوقوع. شوف `outageResilience`. المناديب: الخيارات من غيره بالحرف.
+         */
+        ...(sup ? {
+          outageResilience: true,
+          onWaitReason: (kind: "net" | "server") => {
+            if (!live()) return;
+            tel?.event("wait_reason", { kind });
+            setWaitKind(kind);
+          },
         } : {}),
         onPlate: (plate: string, meta: VoicexPlateMeta) => {
           tel?.shown(plate, meta);
@@ -1598,6 +1619,7 @@ export default function RegistrationV2Page() {
     // 🔒 الجلسة دي خلصت — أي نداء متأخّر منها بيتجاهل (السوبر أدمن)، والشريط يتشال
     sessionRef.current.end();
     setWeakSince(null);
+    setWaitKind("net");
     const release = recReleaseRef.current;
     recReleaseRef.current = null;
     // 🩺 الجلسة دي بتتقفل بعد ما آخر اللوحات توصل — عشان قراياتها تدخل في آخر دفعة
@@ -2043,7 +2065,7 @@ export default function RegistrationV2Page() {
    * فسطر «عيدها لما النت يرجع» بيظهر لوحده لما الانقطاع يعدّي ٧٥ث (عمر الصوت الفايت
    * في الذاكرة — `REPLAY_MAX_AGE_SEC` في `lib/voicexReplay.ts`).
    */
-  const weakBanner = isSuper ? weakNetBanner(weakSince, Date.now()) : null;
+  const weakBanner = isSuper ? weakNetBanner(weakSince, Date.now(), waitKind) : null;
   /** 🔒 تصدير السوبر أدمن شغّال ⇒ التعديل والمسح مقفولين (المناديب: دايماً false). */
   const rowsLocked = isSuper && rowsLockedState;
 
