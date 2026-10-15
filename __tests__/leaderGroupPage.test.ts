@@ -93,7 +93,8 @@ describe("🔴 التوصيل", () => {
   });
   it("🔴 الصفحة: تاب «تقرير النشاط» بس لو السوبر أدمن فاتحه", () => {
     const p = read("app/(app)/my-group/page.tsx");
-    expect(p).toMatch(/\{g\.settings\.activityReport \? \(/);
+    // ١٥ أكتوبر: بقوا ٣ تابات («شغل الأعضاء» للكل) — «تقرير النشاط» لسه بس لو السوبر أدمن فاتحه
+    expect(p).toMatch(/\{g\.settings\.activityReport && \(\n\s+<button onClick=\{\(\) => setTab\("activity"\)\}/);
     expect(p).toMatch(/\{tab === "activity" && g\.settings\.activityReport && \(/);
     expect(p).not.toMatch(/lockRecords|leaderId|sharedData/);
   });

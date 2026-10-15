@@ -10,7 +10,7 @@
  * اللي كانت متفرّقة (فتح إكسيل + واتساب + صورة) في مكان واحد.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Share2, ExternalLink, MessageCircle, ImageDown, X, Download, Loader2 } from "lucide-react";
 import { buildSpreadsheetBlob, openExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { renderPlateImages, renderTableImages, planTableImages, imagePlanText, objToPlateRow, downloadDataUrl, type PlateImageRow } from "@/lib/plateImage";
@@ -51,13 +51,18 @@ interface Props {
   excelName?: string;
   /** 🖼️ زرار «مشاركة كل الصور مرة واحدة» في معاينة الصور لما تكون أكتر من صورة (المالك ١١ أكتوبر ٢٠٢٦). */
   shareAllAtOnce?: boolean;
+  /**
+   * 🧭 اتشاركت صورة/إكسيل للنتيجة (بعد الإرسال) — صفحة الفرز بتسجّلها لمسئول المجموعة بمكان المندوب ساعتها
+   * (`lib/agentEvents.ts` — المالك ١٥ أكتوبر ٢٠٢٦). الصور بتتسجّل مرة واحدة لكل مجموعة صور.
+   */
+  onShared?: (kind: "image" | "excel", count: number, title: string) => void;
 }
 
 function safeName(title: string): string {
   return title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "results";
 }
 
-export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label, imageStyle, excelName, shareAllAtOnce }: Props) {
+export default function ShareSortButton({ title, fileName: fileNameProp, rows, excelBlob, imageRows, imageTable, className, label, imageStyle, excelName, shareAllAtOnce, onShared }: Props) {
   // اسم الملف: المسافات بتفضل (المتصفّح بيعرضها)، والموبايل بيحوّله لاسم آمن لوحده.
   const fileBase = fileNameProp
     ? fileNameProp.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
@@ -87,6 +92,12 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
   useEffect(() => { if (images) return pushBackHandler(() => setImages(null)); }, [images]);
   useEffect(() => { if (menuOpen) return pushBackHandler(() => setMenuOpen(false)); }, [menuOpen]);
 
+  /** عدد العربيات في اللي اتشارك (للسجل بس). */
+  function countRows(): number {
+    try { return imageTable ? imageTable().rows.length : rows().length; } catch { return 0; }
+  }
+  const imagesLogged = useRef(false);
+
   function getRows(): Record<string, unknown>[] | null {
     const r = rows();
     if (!r.length) { alert("مفيش نتايج للمشاركة."); return null; }
@@ -112,6 +123,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
       const res = await buildBlob(); if (!res) return;
       if (excelName) await shareExcelBlob(res.blob, `${excelBase}.${res.ext}`, title, { keepName: true, fallbackName: `${fileBase}.${res.ext}` });
       else await shareExcelBlob(res.blob, `${fileBase}.${res.ext}`, title);
+      onShared?.("excel", countRows(), title);
     } catch { alert("تعذّرت المشاركة على واتساب."); } finally { setBusy(false); }
   }
 
@@ -131,6 +143,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
         imgs = renderPlateImages({ title, rows: imgRowData });
       }
       if (!imgs.length) { alert("مفيش نتايج."); return; }
+      imagesLogged.current = false;
       setImages(imgs);
     } catch { alert("تعذّر إنشاء الصورة."); } finally { setBusy(false); }
   }
@@ -141,6 +154,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
   async function shareImg(src: string, i: number, total: number) {
     const caption = total > 1 ? `${title} — صورة ${i + 1}/${total}` : title;
     await shareImageWithText(src, caption, fileName(i, total), title);
+    if (!imagesLogged.current) { imagesLogged.current = true; onShared?.("image", countRows(), title); }
   }
   /** 🖼️ كل الصور في مشاركة واحدة — جهاز مابيدعمش ⇒ المشاركة صورة صورة (الأزرار اللي تحت كل صورة). */
   const [allBusy, setAllBusy] = useState(false);
@@ -150,6 +164,7 @@ export default function ShareSortButton({ title, fileName: fileNameProp, rows, e
     try {
       const r = await shareImagesWithText(imgs, `${title} — ${imgs.length} صور`, imgs.map((_, i) => fileName(i, imgs.length)), title);
       if (r === "unsupported") alert("جهازك مابيدعمش مشاركة كذا صورة مرة واحدة — شارك كل صورة من الزرار اللي تحتها.");
+      else if (!imagesLogged.current) { imagesLogged.current = true; onShared?.("image", countRows(), title); }
     } catch { /* المندوب لغى */ }
     finally { setAllBusy(false); }
   }
