@@ -66,6 +66,7 @@ import {
 import { fetchMyMemberData, downloadMyMemberData, MEMBER_DATA_SLOT } from "@/lib/memberData";
 import { ingestRemoteData, loadLocalRemoteData, clearRemoteData, type RemoteDataState } from "@/lib/remoteDataSlot";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
+import { splitReferralByCheck, checkSourcesSignature, isNewCacheFresh, resultBelongsOnScreen } from "@/lib/newSortCheck";
 import ShareSortButton from "@/components/ShareSortButton";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
@@ -119,7 +120,10 @@ function groupTashyeekByPlate(rows: TashyeekResultRow[] | null): TashyeekResultR
 const LARGE_DATA_THRESHOLD_BYTES = 3 * 1024 * 1024; // ~3MB (كان 12MB — عالي جداً على iOS)
 
 // sortedAt = اليوم اللي الفرز اتعمل فيه — اسم الملف المشارك بيتسمّى بيه (مش بيوم المشاركة).
-type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number; sortedAt?: string };
+// 🆕 newStats = من كام لوحة في المحفظة وكام منها في التشييك؛ checkSig = بصمة ملفات التشييك اللي «الجديد» اتحسب عليها
+//    (lib/newSortCheck.ts) — لو الملف اتغيّر النتيجة المحفوظة ماتتعرضش.
+type NewStats = { total: number; inCheck: number };
+type SortCache = { results: MatchResult[]; tashyeekResults: TashyeekResultRow[] | null; sortMode: "new" | "full"; newPlatesCount: number; sortedAt?: string; checkSig?: string; newStats?: NewStats };
 type PasteCache = { results: TokenMatch[]; recordResults: TokenMatch[]; text: string; sortedAt?: string };
 // نتايج الفرز محفوظة لكل وضع لوحده (جديد/كلي) — عشان التبديل بين الوضعين
 // مايمسحش نتايج الوضع التاني؛ كل وضع بيفضّل نتايجه لحد ما تعمل فرز جديد فيه
@@ -173,11 +177,17 @@ function persistSortResults(
   sortMode: "new" | "full",
   newPlatesCount: number,
   sortedAtNow?: string,
+  opts: { checkSig?: string; newStats?: NewStats; activate?: boolean } = {},
 ) {
   // مسح صف/تعديل بعد الفرز مابيغيّرش يوم الفرز — فرز جديد بيبعت وقته صراحةً.
-  const sortedAt = sortedAtNow ?? sortCacheByMode[sortMode]?.sortedAt ?? new Date().toISOString();
-  sortCacheByMode[sortMode] = { results, tashyeekResults, sortMode, newPlatesCount, sortedAt };
-  sortActiveMode = sortMode;
+  const prev = sortCacheByMode[sortMode];
+  const sortedAt = sortedAtNow ?? prev?.sortedAt ?? new Date().toISOString();
+  // مسح صف/تعديل مابيغيّرش ملف التشييك اللي النتيجة اتحسبت عليه — البصمة والإحصائية بيفضلوا.
+  const checkSig = opts.checkSig ?? prev?.checkSig;
+  const newStats = opts.newStats ?? prev?.newStats;
+  sortCacheByMode[sortMode] = { results, tashyeekResults, sortMode, newPlatesCount, sortedAt, checkSig, newStats };
+  // activate=false ⇒ النتيجة اتحفظت لتابها بس والمندوب على التاب التاني (مانغيّرش التاب اللي يرجعله).
+  if (opts.activate !== false) sortActiveMode = sortMode;
   persistSortCache();
 }
 
@@ -229,6 +239,9 @@ function basicLeadOrder(cols: MergedResultColumn[]): MergedResultColumn[] {
 
 export default function SortingPage() {
   const [sortMode, setSortMode] = useState<"new" | "full">("new");
+  // 🆕 التاب المفتوح دلوقتي — الفرز بيقراه **وقت ما يخلص** عشان نتيجته ماتنزلش في التاب التاني.
+  const sortModeRef = useRef<"new" | "full">("new");
+  useEffect(() => { sortModeRef.current = sortMode; }, [sortMode]);
   const [hydrated, setHydrated] = useState(false);
 
   // ── Data file ──
@@ -408,6 +421,8 @@ export default function SortingPage() {
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const [newPlatesCount, setNewPlatesCount] = useState(0);
+  // 🆕 من كام لوحة في المحفظة وكام منها موجودة في التشييك (آخر «فرز جديد»).
+  const [newStats, setNewStats] = useState<NewStats | null>(null);
   // عدد **لوحات** الإحالة اللي الفرز فحصها فعلاً. كان العرض بيستخدم عدد الصفوف
   // ويسمّيه لوحات — وده غلط في أي ملف الصف فيه أكتر من لوحة (جداول جنب بعض).
   const [refPlateCount, setRefPlateCount] = useState(0);
@@ -633,13 +648,17 @@ export default function SortingPage() {
           const active = sortActiveMode;
           const s = sortCacheByMode[active];
           setSortMode(active);
+          sortModeRef.current = active;
           if (s && Array.isArray(s.results) && s.results.length > 0) {
             setNewPlatesCount(s.newPlatesCount ?? 0);
+            setNewStats(s.newStats ?? null);
             setResults(s.results);
             setSorted(true);
             if (Array.isArray(s.tashyeekResults)) setTashyeekResults(s.tashyeekResults);
           }
           if (chassisSortCache && chassisSortCache.length > 0) setChassisResults(chassisSortCache);
+          // 🆕 نتيجة «الجديد» المحفوظة اتحسبت على ملف التشييك الحالي؟ لو لأ ماتتعرضش.
+          void dropStaleNewCache();
         } catch { /* corrupt storage */ }
         try {
           let s: PasteCache | null = pasteResultsCache;
@@ -890,6 +909,7 @@ export default function SortingPage() {
           if (!rec) return;
           setCheckTable({ headers: rec.headers, rows: rec.rows });
           setResults(null); setSorted(false);
+          void dropStaleNewCache();
         }).catch(() => {});
       } else if (slot === "data") {
         (async () => {
@@ -2594,9 +2614,13 @@ export default function SortingPage() {
       const groupRows = await groupRecordMatches(refIndex);
       if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
       finalTashyeek = groupTashyeekByPlate(finalTashyeek);
-      setTashyeekResults(finalTashyeek);
-      setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
-      persistSortResults(matches, finalTashyeek, "full", 0, new Date().toISOString());
+      // 🆕 النتيجة بتتحفظ لتاب «الكلي»، وبتنزل على الشاشة بس لو المندوب لسه عليه (مش في «الجديد»).
+      const onScreen = resultBelongsOnScreen("full", sortModeRef.current);
+      if (onScreen) {
+        setTashyeekResults(finalTashyeek);
+        setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
+      }
+      persistSortResults(matches, finalTashyeek, "full", 0, new Date().toISOString(), { activate: onScreen });
       // 🧭 سجل شغل الأعضاء — المسئول بيشوف إمتى فرز وطلع كام (lib/agentEvents.ts)
       logAgentEvent("sort", { mode: "full", results: matches.length, records: finalTashyeek?.length ?? 0 });
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
@@ -2614,15 +2638,17 @@ export default function SortingPage() {
     try {
       // ملفات التشييك الإضافية (زر «+» في صفحة التشييك) بتتحسب زي الأساسي —
       // وإلا إحالة المندوب رافعها كملف تشييك إضافي تفضل تطلع «جديدة» كل مرة.
-      const checkSet = combinedCheckPlates(await loadAllCheckSources());
+      const checkSources = await loadAllCheckSources();
+      const checkSet = combinedCheckPlates(checkSources);
       for (const row of checkTable.rows) {
         const n = normalizePlate(bankPlateToArabic(String(row[effectiveCheckPlateCol] ?? "")));
         if (!n) continue;
         checkSet.add(n);
       }
       // كل شيتات الإحالة مدموجة، ناقص اللي موجود في التشييك = الجديد.
-      const newEntries = collectReferralEntries(collectRefSources()).filter((e) => !checkSet.has(e.norm));
-      setNewPlatesCount(newEntries.length);
+      const split = splitReferralByCheck(collectReferralEntries(collectRefSources()), checkSet);
+      const newEntries = split.fresh;
+      const stats: NewStats = { total: split.total, inCheck: split.inCheck };
       // Track each data row's original position so results can be ordered the
       // same way as the data file (not the referral file) — cars at the same
       // location sit adjacent in the data file, so this keeps them grouped.
@@ -2739,9 +2765,18 @@ export default function SortingPage() {
         if (groupRows.length) finalTashyeek = [...(finalTashyeek ?? []), ...groupRows];
       }
       finalTashyeek = groupTashyeekByPlate(finalTashyeek);
-      setTashyeekResults(finalTashyeek);
-      setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
-      persistSortResults(matches, finalTashyeek, "new", newEntries.length, new Date().toISOString());
+      // 🆕 النتيجة بتتحفظ لتاب «الجديد» (مع بصمة ملف التشييك اللي اتحسبت عليه)، وبتنزل على الشاشة بس لو المندوب لسه عليه.
+      const onScreen = resultBelongsOnScreen("new", sortModeRef.current);
+      if (onScreen) {
+        setNewPlatesCount(newEntries.length);
+        setNewStats(stats);
+        setTashyeekResults(finalTashyeek);
+        setResults(matches); setSorted(true); setNearestActive(false); setVisibleByWin({}); setSelectedByWin({});
+      }
+      persistSortResults(matches, finalTashyeek, "new", newEntries.length, new Date().toISOString(),
+        { checkSig: checkSourcesSignature(checkSources), newStats: stats, activate: onScreen });
+      // ملف التشييك اتغيّر والفرز شغّال (مزامنة المجموعة مثلاً) ⇒ النتيجة دي اتحسبت على القديم فماتفضلش.
+      void dropStaleNewCache();
       logAgentEvent("sort", { mode: "new", results: matches.length, records: finalTashyeek?.length ?? 0, newPlates: newEntries.length });
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
@@ -2766,8 +2801,10 @@ export default function SortingPage() {
   // التبديل بين «فرز جديد» و«فرز كلي» — بيحفظ نتايج كل وضع لوحده ويسترجع
   // نتايج الوضع اللي رحتله (لو عملت فيه فرز قبل كده)، بدل ما يمسح.
   function switchMode(target: "new" | "full") {
-    if (target === sortMode) return;
+    // 🆕 وهو بيفرز التبديل مقفول — وإلا نتيجة الفرز الشغّال كانت بتنزل في التاب التاني («الجديد زي الكلي»).
+    if (target === sortMode || sorting) return;
     setSortMode(target);
+    sortModeRef.current = target;
     sortActiveMode = target;
     persistSortCache();
     const c = sortCacheByMode[target];
@@ -2777,9 +2814,28 @@ export default function SortingPage() {
       setResults(c.results);
       setTashyeekResults(c.tashyeekResults);
       setNewPlatesCount(c.newPlatesCount);
+      setNewStats(c.newStats ?? null);
       setSorted(true);
     } else {
       setResults(null); setTashyeekResults(null); setSorted(false);
+    }
+    // 🆕 رجع لـ«الجديد» بعد ما غيّر ملف التشييك ⇒ النتيجة القديمة ماتتعرضش.
+    if (target === "new") void dropStaleNewCache();
+  }
+
+  /**
+   * 🆕 نتيجة «الجديد» المحفوظة اتحسبت على ملف تشييك غير الحالي (المندوب غيّره في «التشييك» أو ضاف ملف إضافي) ⇒ تتشال،
+   * ولو المندوب على تاب «الجديد» الشاشة بتفضى لحد ما يفرز تاني. «الكلي» مالوش دعوة بالتشييك فمابيتلمسش.
+   */
+  async function dropStaleNewCache() {
+    const c = sortCacheByMode.new;
+    if (!c) return;
+    const sig = checkSourcesSignature(await loadAllCheckSources().catch(() => []));
+    if (isNewCacheFresh(c.checkSig, sig) || sortCacheByMode.new !== c) return;
+    sortCacheByMode.new = null;
+    persistSortCache();
+    if (sortModeRef.current === "new") {
+      setResults(null); setTashyeekResults(null); setSorted(false); setNewStats(null);
     }
   }
 
@@ -3741,12 +3797,12 @@ export default function SortingPage() {
 
       {/* ③ SORT MODE TABS */}
       <div className="flex gap-2 rounded-xl border border-border bg-surface p-1">
-        <button onClick={() => switchMode("new")}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "new" ? "bg-primary text-night font-bold" : "text-muted"}`}>
+        <button onClick={() => switchMode("new")} disabled={sorting}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition disabled:opacity-60 ${sortMode === "new" ? "bg-primary text-night font-bold" : "text-muted"}`}>
           <ScanLine size={15} /> فرز جديد
         </button>
-        <button onClick={() => switchMode("full")}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition ${sortMode === "full" ? "bg-primary text-night font-bold" : "text-muted"}`}>
+        <button onClick={() => switchMode("full")} disabled={sorting}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm transition disabled:opacity-60 ${sortMode === "full" ? "bg-primary text-night font-bold" : "text-muted"}`}>
           <FileSpreadsheet size={15} /> فرز كلي
         </button>
       </div>
@@ -3869,6 +3925,11 @@ export default function SortingPage() {
                 <p className="text-xl font-black text-primary">{newPlatesCount}</p>
                 <p className="text-xs font-bold text-primary/80">لوحة جديدة في الإحالة</p>
                 <p className="text-[10px] text-muted mt-0.5">غير موجودة في التشييك</p>
+                {newStats && (
+                  <p className={`mt-0.5 text-[10px] font-bold ${newStats.inCheck === 0 && newStats.total > 0 ? "text-danger" : "text-muted"}`}>
+                    {newStats.inCheck} من {newStats.total} موجودة في التشييك
+                  </p>
+                )}
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-surface p-3">
