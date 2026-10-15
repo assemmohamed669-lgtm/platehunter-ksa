@@ -41,6 +41,11 @@ interface Props {
    * «بفتحه … مش بيظهر معايا البيانات»). من غيره ⇒ بيفتح `parsedFile` زي الأول.
    */
   onOpen?: () => Promise<void> | void;
+  /**
+   * 🔒 من غير «فتح» ولا «تنزيل» — «داتا من المسئول» (المالك ١٥ أكتوبر ٢٠٢٦: «ميقدرش يفتح الداتا دي ولا يحملها علي جهازة
+   * هو يفرز فقط عليها»). مع `fixed` كمان: من غير تغيير ولا مسح.
+   */
+  noOpen?: boolean;
 }
 
 export default function FileUploadBox({
@@ -59,6 +64,7 @@ export default function FileUploadBox({
   loadedAccent,
   locked = false,
   onOpen,
+  noOpen = false,
 }: Props) {
   // إطار المربع: سماوي بظل واضح لو sky. بنستخدم صبغة سماوية فوق سطح الثيم (مش لون
   // ثابت) عشان النص يفضل مقروء في الوضع الفاتح والغامق.
@@ -217,15 +223,15 @@ export default function FileUploadBox({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
-            {/* «فتح الشيت» — متاح في كل الأوضاع لكل مربع رفع إكسيل */}
-            <button
+            {/* «فتح الشيت» — متاح في كل الأوضاع لكل مربع رفع إكسيل (إلا «داتا من المسئول») */}
+            {!noOpen && <button
               onClick={handleOpenSheet}
               title="فتح الشيت"
               className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted hover:text-primary transition"
             >
               <ExternalLink size={13} /> فتح
-            </button>
-            {fixed ? (
+            </button>}
+            {fixed ? (noOpen ? null :
               <button
                 onClick={handleDownloadOriginal}
                 title="تنزيل"
