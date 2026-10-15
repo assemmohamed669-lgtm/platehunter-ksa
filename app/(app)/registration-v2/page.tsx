@@ -31,6 +31,7 @@ import {
   FileSpreadsheet, BellRing, BellOff, MapPin, Download, ChevronDown, ChevronUp,
   Pencil, Building2, Hash, Car, X,
 } from "lucide-react";
+import { gpsRecordWarning } from "@/lib/gpsWarning";
 import { supabase } from "@/lib/supabaseClient";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord } from "@/lib/idb";
 import { type ExcelTable } from "@/lib/excel";
@@ -2245,6 +2246,19 @@ export default function RegistrationV2Page() {
             ? <><Loader2 size={20} className="animate-spin" /> بيجهّز المايك…</>
             : listening ? <><Square size={20} /> إيقاف التسجيل</> : <><Mic size={20} /> ابدأ التسجيل</>}
         </button>
+
+        {/**
+          * ⚠️ **الموقع مش جاهز وهو بيسجّل** (المالك ١٥ أكتوبر ٢٠٢٦).
+          *
+          * مندوب سجّل ٩٦ لوحة كلها بلا موقع ومعرفش غير لما جه يصدّر — البرنامج
+          * كان بيرفض القراية **وساكت**. دلوقتي بيقول وهو بيسجّل، فيستنى ثانية
+          * أو يطلع لمكان مكشوف بدل ما الشغل كله يضيع.
+          */}
+        {!noGps && gpsRecordWarning(gps, listening) && (
+          <p className="mt-2 rounded-xl border border-amber-400/60 bg-amber-50 px-3 py-2 text-center text-xs font-bold leading-relaxed text-amber-800" dir="rtl">
+            {gpsRecordWarning(gps, listening)}
+          </p>
+        )}
 
         {listening && (
           <div className="mt-3 flex flex-col items-center gap-2">
