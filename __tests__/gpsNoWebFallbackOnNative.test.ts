@@ -74,7 +74,9 @@ describe("نداء الموقع مركزي — مافيش نداء مباشر ب
       for (const f of walk(join(process.cwd(), root))) {
         scanned++;
         const rel = f.replace(process.cwd(), "").split("\\").join("/");
-        if (rel.endsWith("/lib/gps.ts")) continue;            // المكان المسموح الوحيد
+        // المكان المسموح الوحيد — المسار بالظبط (🧮 ١٦ أكتوبر: `components/mujammaa/lib/gps.ts`
+        // كان بيعدّي بـendsWith وهو بينده الويب مباشرةً)
+        if (rel === "/lib/gps.ts") continue;
         // ⚠️ الكود بلا تعليقات — التعليقات بتذكر الاسم عشان توثّق الحادثة،
         //    فالبحث الخام بيمسك نفسه ويفشل بالغلط (حصل فعلاً وإحنا بنكتبه).
         const body = readFileSync(f, "utf8")
