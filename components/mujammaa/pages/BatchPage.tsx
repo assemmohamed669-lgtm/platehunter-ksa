@@ -468,7 +468,6 @@ export default function BatchPage({
   agentNameRef.current = agentName;
   const onBusyChangeRef = useRef(onBusyChange);
   onBusyChangeRef.current = onBusyChange;
-  void advanced;
   /**
    * 🧮 ملف التشييك **الحالي** وقت بناء كل صف — عامل الطابور شغّال بـclosure من وقت ما
    * بدأ، فلو الملف لسه بيتقري (أو اتغيّر) كانت اللوحات المطلوبة هتطلع «مش مطلوبة».
@@ -2275,7 +2274,8 @@ export default function BatchPage({
       {/* ============================================ الإعداد */}
       <div className="grid gap-4 lg:grid-cols-2">
         <CheckSheetBox bank={bank} />
-        <ReadingSheetBox value={readingSheet} onChange={setReadingSheet} />
+        {/* ورقة القراية = أداة تجربة المالك (تقارير الدقة) — للسوبر أدمن بس */}
+        {advanced && <ReadingSheetBox value={readingSheet} onChange={setReadingSheet} />}
       </div>
 
       {/* ============================================ المسجّل */}
@@ -2406,13 +2406,15 @@ export default function BatchPage({
           </div>
         )}
 
-        {/* 🧮 قناص: محرك واحد — «كامل ⚡» (الخمسة التانيين بتوع سيرفرات المعمل) */}
+        {/* 🧮 قناص: محرك واحد — «كامل ⚡» (الخمسة التانيين بتوع سيرفرات المعمل) — شرح للسوبر أدمن بس */}
+        {advanced && (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
           <span className="font-bold">كامل ⚡</span>
           <span className="text-amber-100/70">
             نداء واحد · {batchModelName} · النوع والملاحظة من كوهير
           </span>
         </div>
+        )}
 
         {/*
           🔴 **زر يوقّف التفريغ.** قبل كده الإلغاء كان بيحصل في حالة واحدة
@@ -2542,16 +2544,19 @@ export default function BatchPage({
       */}
       {witnessUsed === false && (
         <div className="card border-amber-400/40 bg-amber-500/[0.08]">
-          <div className="card-title text-amber-200">⚠️ النوع والملاحظة ماجوش من كوهير</div>
+          <div className="card-title text-amber-200">
+            {advanced ? "⚠️ النوع والملاحظة ماجوش من كوهير" : "⚠️ النوع والملاحظة ماوصلوش المرة دي"}
+          </div>
           <p className="text-[11px] leading-relaxed text-amber-100/80">
-            اللوحات طلعت عادي، بس سيرفر النوع (كوهير) ماكانش شغّال وقت التفريغ — فالنوع
-            والملاحظة ممكن يبقوا فاضيين. المقطع محفوظ: دوس «فرّغ تاني» كمان شوية.
+            {advanced
+              ? "اللوحات طلعت عادي، بس سيرفر النوع (كوهير) ماكانش شغّال وقت التفريغ — فالنوع والملاحظة ممكن يبقوا فاضيين. المقطع محفوظ: دوس «فرّغ تاني» كمان شوية."
+              : "اللوحات طلعت عادي، بس النوع والملاحظة ممكن يبقوا فاضيين. المقطع محفوظ: دوس «فرّغ تاني» كمان شوية."}
           </p>
         </div>
       )}
 
-      {/* وقت التفريغ — رقم قدام المندوب يقارن بيه بدل ما يحزر */}
-      {scanTiming && (
+      {/* وقت التفريغ — رقم قدام المندوب يقارن بيه بدل ما يحزر (تشخيص — للسوبر أدمن) */}
+      {advanced && scanTiming && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-slate-300">
           <span className="font-bold text-emerald-300">
             ⏱️ التفريغ خد {(scanTiming.ms / 1000).toFixed(1)} ثانية
@@ -2722,8 +2727,8 @@ export default function BatchPage({
         </div>
       )}
 
-      {/* ============================================ النص المفرّغ */}
-      {transcript && (
+      {/* ============================================ النص المفرّغ — تقرير التجربة للسوبر أدمن بس */}
+      {advanced && transcript && (
         <div className="card">
           <div className="card-title justify-between">
             <span>📋 تقرير التفريغ (ابعته زي ما هو)</span>
@@ -2785,9 +2790,35 @@ export default function BatchPage({
         </div>
       )}
 
-      <BatchReports refreshKey={reportsKey} sheetKey={readingSheetKey} />
+      {/*
+        التقارير وسجل الأخطاء بالتفاصيل الخام = أدوات تجربة المالك (بيبعتهم في التجربة) — للسوبر
+        أدمن بس. المندوب بيشوف آخر غلط بكلامه هو بس (الميك/السيرفر/التصدير) من غير نسخ ولا تفاصيل.
+      */}
+      {advanced ? (
+        <>
+          <BatchReports refreshKey={reportsKey} sheetKey={readingSheetKey} />
+          <ErrorLogBox errorLog={errorLog} title="أخطاء صفحة التسجيل المجمع" />
+        </>
+      ) : (
+        <LastErrorNote errorLog={errorLog} />
+      )}
+    </div>
+  );
+}
 
-      <ErrorLogBox errorLog={errorLog} title="أخطاء صفحة التسجيل المجمع" />
+/** المندوب: آخر غلط بس، بكلامه، ويتقفل — من غير نسخ ولا تفاصيل خام */
+function LastErrorNote({ errorLog }: { errorLog: ErrorLog }) {
+  const [items, setItems] = useState(() => errorLog.getSnapshot());
+  const [hiddenId, setHiddenId] = useState<string | null>(null);
+  useEffect(() => errorLog.subscribe(() => setItems(errorLog.getSnapshot())), [errorLog]);
+  const last = items[0];
+  if (!last || last.id === hiddenId) return null;
+  return (
+    <div className="flex items-start justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+      <span>⚠️ {last.message}</span>
+      <button className="btn-ghost btn-sm" onClick={() => setHiddenId(last.id)}>
+        تمام
+      </button>
     </div>
   );
 }

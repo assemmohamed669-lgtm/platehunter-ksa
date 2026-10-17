@@ -67,6 +67,10 @@ import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 import dynamic from "next/dynamic";
+import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
+import type { PlateEntry } from "@/components/mujammaa/lib/plateEntry";
+import type { BankSheet } from "@/components/mujammaa/lib/bankSheet";
 
 /**
  * 🧮 المجمّع (صفحة المعمل «كامل ⚡» بالحرف — `components/mujammaa`) — للسوبر أدمن بس.
@@ -490,6 +494,12 @@ export default function RegistrationPage() {
    */
   const [superOk, setSuperOk] = useState(false);
   /**
+   * 🧮➡️ المندوب المشترك في **كل** الخدمات (١٨ أكتوبر ٢٠٢٦ — `canUseMujammaa`): المجمّع بس، من غير
+   * «التسجيل القديم» ولا الشروحات ولا التقارير. المالك: «متاح مبدأيا ل اللي مشترك في كل خدمات
+   * البرنامج يظهر معاه تلقائي لكن اللي مشترك صوت بس واللي مشترك فرز بس ميظهرش معاهم».
+   */
+  const [mjAgentOk, setMjAgentOk] = useState(false);
+  /**
    * الفحص خلص (أو عدّى ٤ث)؟ — قبله مافيش محتوى خالص: لو التسجيل القديم ظهر الأول
    * والمندوب بدأ يسجّل، أول ما `superOk` يرجع المجمّع كان هيغطّيه والميك شغّال ورا.
    */
@@ -509,8 +519,10 @@ export default function RegistrationPage() {
     try { localStorage.setItem(LS_REG_MODE, m); } catch { /* ignore */ }
   }
   useEffect(() => {
-    if (superOk && regMode === "mujammaa") setMjOpened(true);
-  }, [superOk, regMode]);
+    if ((superOk && regMode === "mujammaa") || mjAgentOk) setMjOpened(true);
+  }, [superOk, regMode, mjAgentOk]);
+  /** المجمّع ظاهر دلوقتي؟ — السوبر أدمن بالمفتاح، والمندوب دايماً */
+  const mjShown = superOk ? regMode === "mujammaa" : mjAgentOk;
   useEffect(() => {
     // النت بطيء/معلّق ⇒ التسجيل القديم يظهر بعد ٤ث بالكتير (زي ما كان قبل كده: الحارس بيعدّي)
     const t = setTimeout(() => setSuperChecked(true), 4000);
@@ -518,9 +530,15 @@ export default function RegistrationPage() {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
-        if (!prof?.is_super) router.replace("/instant-check");
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until")
+          .eq("id", data.user.id)
+          .single();
+        const mjAllowed = canUseMujammaa(prof);
+        if (!prof?.is_super && !mjAllowed) router.replace("/instant-check");
         if (prof?.is_super === true) setSuperOk(true);
+        else if (mjAllowed) setMjAgentOk(true);
       } catch { /* غير متاح — نسيبها */ }
       finally { setSuperChecked(true); }
     })();
@@ -2736,6 +2754,25 @@ export default function RegistrationPage() {
     setRecordings(updated);
   }
 
+  /**
+   * 📋 «تصدير للسجلات» من المجمّع ⇒ تاب «داتا التسجيلات» في صفحة السجلات (١٨ أكتوبر ٢٠٢٦).
+   * نفس شيت السجلات بمعرّف `fc-mj-` (`lib/mujammaaRecords.ts`) — بيترفع على طول وبيتطابق في الفرز.
+   * المالك عايز آخر رسالة: «اول ما تتصدر وتتحفظ تلقائي تتمسح» — المجمّع بيشيل اللي اتحفظ فعلاً بس.
+   */
+  const exportMujammaa = useCallback(
+    async (entries: PlateEntry[], ctx: { sheet: BankSheet | null; clipKey: string }) => {
+      const { data } = await supabase.auth.getSession();
+      const uid = data.session?.user?.id ?? "";
+      return saveMujammaaRecords(entries, {
+        uid,
+        clipKey: ctx.clipKey,
+        sheet: ctx.sheet,
+        recorder: recorderName.trim() || agentEmail || null,
+      });
+    },
+    [recorderName, agentEmail]
+  );
+
   // Push the given recordings onto شيت التسجيلات (field_check) — the same sheet
   // the التشييك «السجلات» tab shows and the sort reads from. Scoped to the
   // section's own recordings (manual button → manual, voice button → voice).
@@ -2796,7 +2833,7 @@ export default function RegistrationPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-black text-ink">التسجيل</h1>
-          <p className="text-xs text-muted">{recordings.length} سجل</p>
+          {!mjAgentOk && <p className="text-xs text-muted">{recordings.length} سجل</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {isOnline ? (
@@ -2840,13 +2877,19 @@ export default function RegistrationPage() {
         </div>
       )}
 
-      {superOk && mjOpened && (
-        <div hidden={regMode !== "mujammaa"}>
-          <MujammaaSection agentName={recorderName.trim() || agentEmail || agentId || ""} onBusyChange={setMjBusy} visible={regMode === "mujammaa"} />
+      {(superOk || mjAgentOk) && mjOpened && (
+        <div hidden={!mjShown}>
+          <MujammaaSection
+            agentName={recorderName.trim() || agentEmail || agentId || ""}
+            onBusyChange={setMjBusy}
+            visible={mjShown}
+            advanced={superOk}
+            onExportToRecords={exportMujammaa}
+          />
         </div>
       )}
 
-      {superChecked && !(superOk && regMode === "mujammaa") && (<>
+      {superChecked && !mjShown && !mjAgentOk && (<>
       {/* ملف التشييك المشترك (local:check) — يُقرأ عند التحميل للمقارنة فقط.
           الرفع/التغيير/الحذف من صفحة «تشييك» — مفيش مربع رفع هنا. */}
 

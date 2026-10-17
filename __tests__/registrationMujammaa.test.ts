@@ -8,6 +8,11 @@
  *   · التسجيل القديم زي ما هو (مالمسناش ولا سطر جوّاه) — بس بقى ورا مفتاح
  *   · المفتاح مقفول وفيه تسجيل/تفريغ شغّال في القديم (عشان الميك مايفضلش مفتوح)
  *   · كود المجمّع بيتحمّل لما يتفتح بس (`next/dynamic`, ssr:false) — مش على كل فتحة
+ *
+ * 🧮➡️ ١٨ أكتوبر: المجمّع بقى للمشترك في **كل** الخدمات كمان (`canUseMujammaa`) — المالك:
+ * «متاح مبدأيا ل اللي مشترك في كل خدمات البرنامج … اللي مشترك صوت بس واللي مشترك فرز بس ميظهرش
+ * معاهم». المندوب بياخد المجمّع **بس** (من غير التسجيل القديم ولا المفتاح) و`advanced` مقفول
+ * («الشروحات … تظهر بس للسوبر ادمن فقط»)، والسوبر أدمن زي ما هو بالحرف.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,19 +31,33 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     expect(SRC).toMatch(/const \[superOk, setSuperOk\] = useState\(false\);/);
     expect(SRC).toMatch(/if \(prof\?\.is_super === true\) setSuperOk\(true\);/);
     expect((SRC.match(/setSuperOk\(true\)/g) ?? []).length).toBe(1);
-    // الحارس القديم زي ما هو
-    expect(SRC).toMatch(/if \(!prof\?\.is_super\) router\.replace\("\/instant-check"\);/);
+    // الحارس: مش سوبر **ومش** مشترك في كل الخدمات ⇒ برّه الصفحة
+    expect(SRC).toMatch(/const mjAllowed = canUseMujammaa\(prof\);/);
+    expect(SRC).toMatch(/if \(!prof\?\.is_super && !mjAllowed\) router\.replace\("\/instant-check"\);/);
   });
 
-  it("المجمّع ورا superOk — وبعد أول فتحة بيفضل متحمّل ومخفي (التسجيل والتفريغ مايقفوش لما تبدّل)", () => {
-    expect(SRC).toMatch(/\{superOk && mjOpened && \(\s*<div hidden=\{regMode !== "mujammaa"\}>/);
-    expect(SRC).toMatch(/if \(superOk && regMode === "mujammaa"\) setMjOpened\(true\);/);
-    expect((SRC.match(/<MujammaaSection /g) ?? []).length).toBe(1);
+  it("🧮➡️ المندوب: المجمّع بس بإذن «كل الخدمات» — وأدوات السوبر أدمن (advanced) مقفولة عليه", () => {
+    expect(SRC).toMatch(/const \[mjAgentOk, setMjAgentOk\] = useState\(false\);/);
+    expect(SRC).toMatch(/else if \(mjAllowed\) setMjAgentOk\(true\);/);
+    expect((SRC.match(/setMjAgentOk\(true\)/g) ?? []).length).toBe(1);
+    // الاشتراك من نفس أعمدة الشريط والتشييك
+    expect(SRC).toMatch(/\.select\("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until"\)/);
+    expect(SRC).toMatch(/advanced=\{superOk\}/);
+    expect(SRC).toMatch(/const mjShown = superOk \? regMode === "mujammaa" : mjAgentOk;/);
+    // التصدير للسجلات من صفحة التسجيل (الحفظ برّه المجمّع)
+    expect(SRC).toMatch(/onExportToRecords=\{exportMujammaa\}/);
+    expect(SRC).toMatch(/return saveMujammaaRecords\(entries, \{/);
+  });
+
+  it("المجمّع ورا superOk (أو كل الخدمات) — وبعد أول فتحة بيفضل متحمّل ومخفي (التسجيل والتفريغ مايقفوش لما تبدّل)", () => {
+    expect(SRC).toMatch(/\{\(superOk \|\| mjAgentOk\) && mjOpened && \(\s*<div hidden=\{!mjShown\}>/);
+    expect(SRC).toMatch(/if \(\(superOk && regMode === "mujammaa"\) \|\| mjAgentOk\) setMjOpened\(true\);/);
+    expect((SRC.match(/<MujammaaSection[\s>]/g) ?? []).length).toBe(1);
     expect(SRC).toMatch(/onBusyChange=\{setMjBusy\}/);
   });
 
   it("📍 الموقع كل ثانية (أندرويد) شغّال والمجمّع **ظاهر** بس — مستخبي ورا «التسجيل القديم» بيتقفل (بطارية)", () => {
-    expect(SRC).toMatch(/<MujammaaSection [^>]*visible=\{regMode === "mujammaa"\}/);
+    expect(SRC).toMatch(/<MujammaaSection[\s\S]*?visible=\{mjShown\}/);
     const section = readFileSync(join(__dirname, "..", "components", "mujammaa", "MujammaaSection.tsx"), "utf8");
     expect(section).toMatch(/visible = true,/);
     expect(section).toMatch(/visible=\{visible\}/);
@@ -50,11 +69,11 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     expect(SRC).toMatch(/const \[superChecked, setSuperChecked\] = useState\(false\);/);
     expect(SRC).toMatch(/finally \{ setSuperChecked\(true\); \}/);
     expect(SRC).toMatch(/setTimeout\(\(\) => setSuperChecked\(true\), 4000\)/);
-    expect(SRC).toMatch(/\{superChecked && !\(superOk && regMode === "mujammaa"\) && \(/);
+    expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(/);
   });
 
-  it("التسجيل القديم ورا المفتاح — ومكوّناته لسه موجودة زي ما هي", () => {
-    expect(SRC).toMatch(/\{superChecked && !\(superOk && regMode === "mujammaa"\) && \(/);
+  it("التسجيل القديم ورا المفتاح (للسوبر أدمن) — والمندوب مابيشوفوش — ومكوّناته لسه موجودة زي ما هي", () => {
+    expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(/);
     expect(SRC).toMatch(/<RecordingsTable/);
     expect(SRC).toMatch(/handleTranscribeAndSave/);
     expect(SRC).toMatch(/scheduleFieldChecksUpload\(/);

@@ -10,6 +10,7 @@ import { voiceProNames } from "@/lib/voiceProName";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
 import { canOpenTrialPage } from "@/lib/trialModelGate";
+import { canUseMujammaa } from "@/lib/mujammaaAccess";
 import { loadDraft } from "@/lib/checkDrafts";
 import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
 import { isRouteLockedForMember, lockedCheckTabs } from "@/lib/groupLocks";
@@ -43,8 +44,12 @@ const TABS = [
    * «فتح الصوت» الواحد بيقفل ويفتح الاتنين.
    */
   { href: "/registration-v2", label: "الجديد", icon: Sparkles, needsVoice: true },
-  // التسجيل للسوبر أدمن فقط (superOnly) — مخفي عن المناديب.
-  { href: "/registration", label: "التسجيل", icon: Mic, superOnly: true },
+  /**
+   * 🧮 «التسجيل» = المجمّع — للمشترك في **كل** الخدمات (١٨ أكتوبر ٢٠٢٦، كان للسوبر أدمن بس).
+   * المالك: «متاح مبدأيا ل اللي مشترك في كل خدمات البرنامج يظهر معاه تلقائي لكن اللي مشترك صوت
+   * بس واللي مشترك فرز بس ميظهرش معاهم». (`canUseMujammaa` · `MUJAMMAA_FOR_DELEGATES` للرجوع.)
+   */
+  { href: "/registration", label: "التسجيل", icon: Mic, needsAll: true },
   { href: "/maps", label: "الخرائط", icon: MapPin },
   { href: "/wanted", label: "المطلوب", icon: Crosshair },
   { href: "/data-upload", label: "رفع داتا", icon: FileUp },
@@ -67,6 +72,8 @@ export default function BottomNav() {
    * نت. «الجديد» محتاجة الشبكة أصلاً (سيرفر ماليزيا)، فمافيش فايدة تظهر أوفلاين.
    */
   const [hasVoice, setHasVoice] = useState<boolean>(false);
+  /** مشترك في كل الخدمات؟ ⇒ «التسجيل» (المجمّع). مش معروف لسه ⇒ مقفول. */
+  const [hasAll, setHasAll] = useState<boolean>(false);
   /**
    * 🙈 لوحات لسه في «صوتي» (ماتصدّرتش) — لو «صوتي» اتخبّت وفيها شغل، زرارها بيفضل ظاهر
    * لحد ما المندوب يخلّصه. بنقرا مسودّتها نفسها (نفس اللي صفحة التشييك بتقراه) مع كل تنقّل.
@@ -127,6 +134,8 @@ export default function BottomNav() {
         setIsAdmin(prof.role === "admin");
         // ✨ «الجديد» بتظهر مع «صوتي» وبتختفي معاها — زرّ «فتح الصوت» الواحد.
         setHasVoice(canOpenTrialPage(prof as Parameters<typeof canOpenTrialPage>[0]));
+        // 🧮 «التسجيل» (المجمّع) للمشترك في كل الخدمات بس
+        setHasAll(canUseMujammaa(prof as Parameters<typeof canUseMujammaa>[0]));
         // باقي البرنامج متاح لو (مفتوح يدويًا) و(أيامه سارية) — أو سوبر أدمن.
         const rp = prof as { is_super?: boolean; rest_pages_enabled?: boolean; rest_until?: string | null };
         setRestPages(rp.is_super === true || (rp.rest_pages_enabled !== false && serviceActive(rp.rest_until)));
@@ -153,7 +162,7 @@ export default function BottomNav() {
   const memberLocks = useMemberLocks();
   const lockedTabs = lockedCheckTabs(memberLocks);
   const tabs = (restPages
-    ? visibleTabs(TABS, { isSuper, isAdmin, hasVoice })
+    ? visibleTabs(TABS, { isSuper, isAdmin, hasVoice, hasAll })
     : TABS.filter((t) => t.href === "/instant-check")
   ).filter((t) => !isRouteLockedForMember(t.href, memberLocks));
   /** 🙈 زرار «صوتي» ظاهر؟ — السوبر أدمن الأول، ولو فيها شغل بيفضل (`lib/sawtiHidden.ts`). */

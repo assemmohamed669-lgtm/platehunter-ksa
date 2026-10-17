@@ -27,6 +27,12 @@ export interface TabPerm {
    * الاتنين ماشيين على `voiceTabVisible` (نفس دالة «صوتي»).
    */
   needsVoice?: boolean;
+  /**
+   * 🧮 للمشترك في **كل** خدمات البرنامج (تبويب «التسجيل» = المجمّع — ١٨ أكتوبر ٢٠٢٦).
+   * المالك: «اللي مشترك صوت بس واللي مشترك فرز بس ميظهرش معاهم». السوبر أدمن دايماً.
+   * (`canUseMujammaa` في `lib/mujammaaAccess.ts`.)
+   */
+  needsAll?: boolean;
 }
 
 export interface UserPerms {
@@ -37,6 +43,8 @@ export interface UserPerms {
    * بتتعامل **مقفولة** — التبويب مايظهرش قبل ما نتأكد.
    */
   hasVoice?: boolean;
+  /** مشترك في كل الخدمات؟ (`canUseMujammaa`) — مش معروف لسه ⇒ مقفول. */
+  hasAll?: boolean;
 }
 
 /**
@@ -52,6 +60,7 @@ export function canSeeTab(tab: unknown, perms: UserPerms): boolean {
   if (t.adminOnly && !perms.isAdmin) return false;
   if (t.adminOrSuper && !perms.isAdmin && !perms.isSuper) return false;
   if (t.needsVoice && perms.hasVoice !== true) return false;
+  if (t.needsAll && !perms.isSuper && perms.hasAll !== true) return false;
   return true;
 }
 
