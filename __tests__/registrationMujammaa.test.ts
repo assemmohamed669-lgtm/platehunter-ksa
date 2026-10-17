@@ -33,13 +33,25 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     expect((SRC.match(/setSuperOk\(true\)/g) ?? []).length).toBe(1);
     // الحارس: مش سوبر **ومش** مشترك في كل الخدمات ⇒ برّه الصفحة
     expect(SRC).toMatch(/const mjAllowed = canUseMujammaa\(prof\);/);
-    expect(SRC).toMatch(/if \(!prof\?\.is_super && !mjAllowed\) router\.replace\("\/instant-check"\);/);
+    expect(SRC).toMatch(/if \(!prof\?\.is_super && !mjAllowed\) \{\s*setMjAgentOk\(false\);\s*router\.replace\("\/instant-check"\);/);
+    // 🔴 غلط عابر في القراية مابيطردش (بيفضل على آخر صلاحية متأكدة)
+    expect(SRC).toMatch(/if \(error \|\| !prof\) return;/);
+  });
+
+  it("📴 من غير نت: آخر صلاحية متأكدة لنفس الحساب — المندوب على المجمّع، والتسجيل القديم للسوبر أدمن بس", () => {
+    expect(SRC).toMatch(/const LS_MJ_ACCESS = "ph:mj:access:";/);
+    expect(SRC).toMatch(/const \{ data: ses \} = await supabase\.auth\.getSession\(\);/);
+    expect(SRC).toMatch(/if \(c === "agent"\) setMjAgentOk\(true\);/);
+    expect(SRC).toMatch(/writeMjAccess\(data\.user\.id, prof\.is_super === true \? "super" : mjAllowed \? "agent" : "none"\);/);
+    // الصلاحية المحفوظة عمرها ما بتدّي أدوات السوبر أدمن (advanced = superOk المتأكد بس)
+    expect(SRC).not.toMatch(/setSuperOk\(cached|c === "super"\) setSuperOk/);
   });
 
   it("🧮➡️ المندوب: المجمّع بس بإذن «كل الخدمات» — وأدوات السوبر أدمن (advanced) مقفولة عليه", () => {
     expect(SRC).toMatch(/const \[mjAgentOk, setMjAgentOk\] = useState\(false\);/);
     expect(SRC).toMatch(/else if \(mjAllowed\) setMjAgentOk\(true\);/);
-    expect((SRC.match(/setMjAgentOk\(true\)/g) ?? []).length).toBe(1);
+    // مرتين بس: الفحص المتأكد + آخر صلاحية متأكدة لنفس الحساب (من غير نت)
+    expect((SRC.match(/setMjAgentOk\(true\)/g) ?? []).length).toBe(2);
     // الاشتراك من نفس أعمدة الشريط والتشييك
     expect(SRC).toMatch(/\.select\("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until"\)/);
     expect(SRC).toMatch(/advanced=\{superOk\}/);
@@ -67,13 +79,18 @@ describe("🧮 المجمّع في «التسجيل»", () => {
 
   it("🔴 مافيش محتوى قبل ما فحص الحساب يخلص (تسجيل قديم يبدأ ويستخبى) — وبحد أقصى ٤ث", () => {
     expect(SRC).toMatch(/const \[superChecked, setSuperChecked\] = useState\(false\);/);
-    expect(SRC).toMatch(/finally \{ setSuperChecked\(true\); \}/);
+    expect(SRC).toMatch(/finally \{ if \(alive\) setSuperChecked\(true\); \}/);
     expect(SRC).toMatch(/setTimeout\(\(\) => setSuperChecked\(true\), 4000\)/);
-    expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(/);
+    // التسجيل القديم للسوبر أدمن (المتأكد أو المحفوظ) بس — غير كده رسالة «اتأكد من النت»
+    expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(superOk \|\| cachedAccess === "super"\) && \(/);
+    expect(SRC).toMatch(/\{superChecked && !superOk && !mjAgentOk && cachedAccess !== "super" && \(/);
   });
 
   it("التسجيل القديم ورا المفتاح (للسوبر أدمن) — والمندوب مابيشوفوش — ومكوّناته لسه موجودة زي ما هي", () => {
-    expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(/);
+    expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(superOk \|\| cachedAccess === "super"\) && \(/);
+    // وحاجات القديم اللي برّه البلوك مابتظهرش للمندوب
+    expect(SRC).toMatch(/\{pinPrompt && !mjAgentOk && \(/);
+    expect(SRC).toMatch(/\{!mjAgentOk && pendingCount > 0 && \(/);
     expect(SRC).toMatch(/<RecordingsTable/);
     expect(SRC).toMatch(/handleTranscribeAndSave/);
     expect(SRC).toMatch(/scheduleFieldChecksUpload\(/);

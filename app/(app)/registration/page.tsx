@@ -91,6 +91,28 @@ const LS_ANALYSIS_MODE = "ph:registration:analysisMode";
 const LS_PACER = "ph:registration:pacer";
 /** 🧮 «المجمّع» / «التسجيل القديم» — آخر اختيار للسوبر أدمن */
 const LS_REG_MODE = "ph:registration:mode";
+/**
+ * 📴 آخر صلاحية متأكدة للحساب ده على الجهاز ده (super | agent | none) — مراجعة ١٨ أكتوبر: من غير نت
+ * (أو نت بطيء) فحص الحساب بيفشل، والمندوب كان بيلاقي «التسجيل القديم» بتاع السوبر أدمن بدل المجمّع.
+ * المجمّع بيسجّل ويحفظ على الموبايل من غير نت، فالمندوب لازم يفضل عليه. بالحساب (`uid`) مش بالجهاز.
+ */
+const LS_MJ_ACCESS = "ph:mj:access:";
+type MjAccess = "super" | "agent" | "none";
+function readMjAccess(uid: string): MjAccess | null {
+  try {
+    const v = localStorage.getItem(LS_MJ_ACCESS + uid);
+    return v === "super" || v === "agent" || v === "none" ? v : null;
+  } catch {
+    return null;
+  }
+}
+function writeMjAccess(uid: string, a: MjAccess) {
+  try {
+    localStorage.setItem(LS_MJ_ACCESS + uid, a);
+  } catch {
+    /* تخزين مقفول */
+  }
+}
 
 // Vercel rejects any serverless function request over 4.5MB — at this
 // recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio, so 180s
@@ -499,6 +521,8 @@ export default function RegistrationPage() {
    * البرنامج يظهر معاه تلقائي لكن اللي مشترك صوت بس واللي مشترك فرز بس ميظهرش معاهم».
    */
   const [mjAgentOk, setMjAgentOk] = useState(false);
+  /** آخر صلاحية متأكدة على الجهاز (قبل ما الفحص يرجع) — `null` = مافيش */
+  const [cachedAccess, setCachedAccess] = useState<MjAccess | null>(null);
   /**
    * الفحص خلص (أو عدّى ٤ث)؟ — قبله مافيش محتوى خالص: لو التسجيل القديم ظهر الأول
    * والمندوب بدأ يسجّل، أول ما `superOk` يرجع المجمّع كان هيغطّيه والميك شغّال ورا.
@@ -526,23 +550,43 @@ export default function RegistrationPage() {
   useEffect(() => {
     // النت بطيء/معلّق ⇒ التسجيل القديم يظهر بعد ٤ث بالكتير (زي ما كان قبل كده: الحارس بيعدّي)
     const t = setTimeout(() => setSuperChecked(true), 4000);
+    let alive = true;
     (async () => {
+      // 📴 الجلسة على الجهاز (من غير نت) ⇒ آخر صلاحية متأكدة لنفس الحساب، قبل الفحص
+      try {
+        const { data: ses } = await supabase.auth.getSession();
+        const sid = ses.session?.user?.id;
+        const c = sid ? readMjAccess(sid) : null;
+        if (alive && c) {
+          setCachedAccess(c);
+          if (c === "agent") setMjAgentOk(true);
+        }
+      } catch { /* مافيش جلسة محفوظة */ }
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase
+        const { data: prof, error } = await supabase
           .from("profiles")
           .select("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until")
           .eq("id", data.user.id)
           .single();
+        // غلط عابر في القراية ⇒ نفضل على آخر صلاحية متأكدة (مانطردش مندوب مشترك بسبب النت)
+        if (error || !prof) return;
         const mjAllowed = canUseMujammaa(prof);
-        if (!prof?.is_super && !mjAllowed) router.replace("/instant-check");
+        writeMjAccess(data.user.id, prof.is_super === true ? "super" : mjAllowed ? "agent" : "none");
+        if (!prof?.is_super && !mjAllowed) {
+          setMjAgentOk(false);
+          router.replace("/instant-check");
+        }
         if (prof?.is_super === true) setSuperOk(true);
         else if (mjAllowed) setMjAgentOk(true);
       } catch { /* غير متاح — نسيبها */ }
-      finally { setSuperChecked(true); }
+      finally { if (alive) setSuperChecked(true); }
     })();
-    return () => clearTimeout(t);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
   }, [router]);
 
   // Recording state
@@ -2845,7 +2889,7 @@ export default function RegistrationPage() {
               <WifiOff size={13} /> غير متصل
             </span>
           )}
-          {pendingCount > 0 && (
+          {!mjAgentOk && pendingCount > 0 && (
             <button
               onClick={handleSync}
               className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-1 text-xs text-primary"
@@ -2889,7 +2933,17 @@ export default function RegistrationPage() {
         </div>
       )}
 
-      {superChecked && !mjShown && !mjAgentOk && (<>
+      {/*
+        📴 الفحص ماوصلش (من غير نت أول مرة) ⇒ رسالة بس — «التسجيل القديم» للسوبر أدمن بس (المتأكد أو
+        المحفوظ على الجهاز)، ماينفعش يظهر لمندوب وبعدين يختفي وهو بيسجّل فيه.
+      */}
+      {superChecked && !superOk && !mjAgentOk && cachedAccess !== "super" && (
+        <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+          مش قادرين نتأكد من حسابك دلوقتي — اتأكد إن النت شغّال وافتح الصفحة تاني.
+        </p>
+      )}
+
+      {superChecked && !mjShown && !mjAgentOk && (superOk || cachedAccess === "super") && (<>
       {/* ملف التشييك المشترك (local:check) — يُقرأ عند التحميل للمقارنة فقط.
           الرفع/التغيير/الحذف من صفحة «تشييك» — مفيش مربع رفع هنا. */}
 
@@ -3401,7 +3455,7 @@ export default function RegistrationPage() {
 
       {/* PIN gate for the Groq key — reveal/clear both need it; a key saved
           with no PIN yet (mid-setup app close) forces setup again on load. */}
-      {pinPrompt && (
+      {pinPrompt && !mjAgentOk && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" dir="rtl">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
             {pinPrompt.mode === "setup" && (

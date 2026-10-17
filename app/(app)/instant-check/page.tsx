@@ -5068,7 +5068,7 @@ export default function InstantCheckPage() {
       {checkTable && mode !== "sort" && mode !== "cert" && (
         <>
           {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
-          {mode === "sheet" && recordsScope === "mine" && (
+          {mode === "sheet" && scopeMine && (
             <div className="flex flex-wrap justify-end gap-2">
               {(memberLocks.sort || memberLocks.download) ? null : recordsLinkedUi ? (
                 <button onClick={() => { unlinkRecords(); setRecordsLinkedUi(false); }}
@@ -6425,7 +6425,7 @@ export default function InstantCheckPage() {
       )}
 
       {mode === "sheet" && recTab === "check" && recordsScope === "group" && (
-        <div className="mb-3"><GroupRecordsView embedded /></div>
+        <div className="mb-3"><GroupRecordsView embedded excludeMujammaa={showRecordsTabs} /></div>
       )}
 
       {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات (قابل للتعديل + مشاركة/تصدير) */}

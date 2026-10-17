@@ -42,8 +42,20 @@ function fmtDate(iso: string): string {
   catch { return iso; }
 }
 
-export default function GroupRecordsView({ embedded = false }: { embedded?: boolean }) {
+export default function GroupRecordsView({
+  embedded = false,
+  excludeMujammaa = false,
+}: {
+  embedded?: boolean;
+  /**
+   * 📋 «سجل التشييك» في السجلات (١٨ أكتوبر ٢٠٢٦): من غير لوحات المجمّع (`fc-mj-`) — ليها تاب «داتا
+   * التسجيلات». المالك: «كل واحد يظهر في التاب بتاعه». صفحة «سجلات المجموعة» لوحدها بتعرض الكل.
+   */
+  excludeMujammaa?: boolean;
+}) {
   const router = useRouter();
+  const excludeMjRef = useRef(excludeMujammaa);
+  excludeMjRef.current = excludeMujammaa;
   const [ready, setReady] = useState<null | "ok" | "no-team">(null);
   const [team, setTeam] = useState("");
   const teamRef = useRef("");
@@ -106,6 +118,8 @@ export default function GroupRecordsView({ embedded = false }: { embedded?: bool
           .select(`${idCol}, ${pcol}, ${scol}, maps_link, checked_at, agent_id${isCh ? "" : ", extra"}`, reset ? { count: "exact" } : {});
         q = scoped ? q.or(teamScopeFilter(teamRef.current, ids)) : q.in("agent_id", ids);
         if (authorRef.current) q = q.eq("agent_id", authorRef.current);
+        // من غير المجمّع — والسجل اللي مالوش local_id يفضل (NOT LIKE على NULL كان هيخفيه)
+        if (!isCh && excludeMjRef.current) q = q.or("local_id.is.null,local_id.not.like.fc-mj-*");
         q = q
           .order("checked_at", { ascending: false })
           .order(idCol, { ascending: false })   // فاصل ثابت — يمنع تكرار/تخطّي صفوف بين الصفحات

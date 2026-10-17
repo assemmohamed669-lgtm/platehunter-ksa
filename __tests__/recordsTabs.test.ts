@@ -48,6 +48,16 @@ describe("تابات السجلات", () => {
     expect(SRC).toMatch(/\{mode === "sheet" && recTab === "check" && recordsScope === "mine" && chassisRecords\.length > 0 && \(/);
   });
 
+  it("«سجلات المجموعة» جوّه «سجل التشييك» من غير لوحات المجمّع — والسجل القديم اللي مالوش local_id يفضل", () => {
+    expect(SRC).toMatch(/<GroupRecordsView embedded excludeMujammaa=\{showRecordsTabs\} \/>/);
+    const g = readFileSync(join(__dirname, "..", "components", "GroupRecordsView.tsx"), "utf8");
+    expect(g).toMatch(/if \(!isCh && excludeMjRef\.current\) q = q\.or\("local_id\.is\.null,local_id\.not\.like\.fc-mj-\*"\);/);
+  });
+
+  it("«مزامنة» و«أضف لخانة الداتا» مابيختفوش في «داتا التسجيلات» (المجموعة كانت فاضلة مختارة)", () => {
+    expect(SRC).toMatch(/\{mode === "sheet" && scopeMine && \(\s*<div/);
+  });
+
   it("الاسم القديم لما مافيش تابات، والجديد معاهم", () => {
     expect(SRC).toMatch(
       /\{showRecordsTabs \? \(recTab === "mjdata" \? "داتا التسجيلات" : "سجل التشييك"\) : "شيت التسجيلات \(صوتي\+يدوي\)"\}/
