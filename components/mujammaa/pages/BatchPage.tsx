@@ -51,7 +51,7 @@ import Waveform from "../components/Waveform";
 import { matchInCheckSheet } from "../lib/checkSheetAdapter";
 import { chunksHeaders, chunksUrl, httpFailure, type BatchProbe } from "../lib/batchServer";
 import { ErrorLog } from "../lib/errorLog";
-import { GpsTrack, currentFix, pinLink, recordGpsWarning, subscribeGps } from "../lib/gps";
+import { GpsTrack, currentFix, lastFixRecvAt, pinLink, recordGpsWarning, subscribeGps } from "../lib/gps";
 import {
   FixCollector,
   MEM_ONLY_WARNING,
@@ -417,6 +417,7 @@ export default function BatchPage({
   server,
   agentName,
   onBusyChange,
+  visible = true,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -426,9 +427,15 @@ export default function BatchPage({
   agentName: string;
   /** 🧮 بيسجّل أو بيقفل المقطع — صفحة «التسجيل» بتقفل مفتاح «التسجيل القديم» وقتها */
   onBusyChange?: (busy: boolean) => void;
+  /**
+   * 📍 المجمّع ظاهر؟ — بعد أول فتحة بيفضل متحمّل مستخبي ورا «التسجيل القديم» (عشان
+   * الطابور مايقفش)، فالموقع (كل ثانية على أندرويد) بيشتغل **وهو ظاهر بس** — بطارية.
+   * المفتاح مقفول وهو بيسجّل (`onBusyChange`)، فالتسجيل عمره ما يبقى وهو مستخبي.
+   */
+  visible?: boolean;
 }) {
   const bank = useAppCheckSheet(errorLog);
-  const gps = useGps(true);
+  const gps = useGps(visible);
   // النداء جوّه عامل الطابور (closure قديم) ⇒ آخر قيمة من ref
   const serverRef = useRef(server);
   serverRef.current = server;
@@ -2182,7 +2189,7 @@ export default function BatchPage({
           بيحدّث الصفحة كل ثانية وهو بيسجّل، فـ«واقف من كام ثانية» بيتحدّث معاه.
         */}
         {(() => {
-          const warn = recordGpsWarning(gps.fix, phase === "recording");
+          const warn = recordGpsWarning(gps.fix, phase === "recording", Date.now(), lastFixRecvAt());
           return warn ? (
             <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
               {warn}

@@ -34,6 +34,12 @@ import { GPS_STAMP_MAX_ACCURACY_M } from "@/lib/gpsWarning";
  * التقريبي باين إنه تقريبي. أوسع من ١٠٠م لسه **مش موقع**.
  */
 export const PIN_MAX_ACCURACY_M = GPS_STAMP_MAX_ACCURACY_M;
+/**
+ * الدقيق الأول: قراءات ≤٢٥م (الحد القديم) بتتجرّب **قبل** أي قراءة أوسع. الحد الواسع
+ * (١٠٠م) احتياطي بس للوحة اللي مالقتش دقيق حواليها — فعمره ما يغيّر دبوس كان هيطلع
+ * دقيق: قراءة ٩٠م بين قراءتين ٥م قريبين كانت هتشدّ الدبوس ليها (مراجعة ١٧ أكتوبر).
+ */
+export const PIN_PRECISE_ACCURACY_M = 25;
 /** أبعد مسافة زمنية بين لحظة النطق وأقرب قراءة نستخدمها (ملي ثانية) */
 export const PIN_MAX_SNAP_MS = 2000;
 /**
@@ -167,12 +173,17 @@ export function trackFromRaw(raw: RawFix[], startEpoch: number): TrackFix[] {
 export function resolvePlatePin(track: TrackFix[], tMs: number | undefined | null): PinResolution {
   if (!finite(tMs)) return { pin: null, reason: "no-time", fixIdx: [] };
   if (!track || track.length === 0) return { pin: null, reason: "no-fix", fixIdx: [] };
+  const precise = resolveWithin(track, tMs, PIN_PRECISE_ACCURACY_M);
+  return precise.pin ? precise : resolveWithin(track, tMs, PIN_MAX_ACCURACY_M);
+}
 
+/** نفس القواعد بحد دقة معيّن — `resolvePlatePin` بيجرّب الدقيق الأول */
+function resolveWithin(track: TrackFix[], tMs: number, maxAcc: number): PinResolution {
   let bi = -1;
   let ai = -1;
   for (let i = 0; i < track.length; i++) {
     const f = track[i];
-    if (!(f.acc <= PIN_MAX_ACCURACY_M)) continue;
+    if (!(f.acc <= maxAcc)) continue;
     if (f.tMs <= tMs) bi = i;
     else if (ai < 0) ai = i;
   }
@@ -216,7 +227,7 @@ export function resolvePlatePin(track: TrackFix[], tMs: number | undefined | nul
     };
   }
   const coarseNear = track.some(
-    (f) => !(f.acc <= PIN_MAX_ACCURACY_M) && Math.abs(f.tMs - tMs) <= PIN_MAX_SNAP_MS
+    (f) => !(f.acc <= maxAcc) && Math.abs(f.tMs - tMs) <= PIN_MAX_SNAP_MS
   );
   return { pin: null, reason: coarseNear ? "coarse" : "gap", fixIdx: [] };
 }

@@ -136,13 +136,23 @@ let appStop: (() => void) | null = null;
  * القراءة الأحدث بس هي اللي تكتب. المصدرين (مراقبة المجمّع الخاصة + خدمة التطبيق)
  * بيبعتوا نفس القراءات أحياناً، وخدمة التطبيق بتعيد «الأفضل» عندها كل ثانية — وده
  * ممكن يبقى أقدم من آخر قراءة خام ⇒ مايرجّعش الموقع لورا.
+ * ووقت وصولها للصفحة بيتحفظ لتحذير «الموقع مش بيتحدّث» — وقت القراءة نفسها ساعة
+ * الأقمار، وممكن تفرق عن ساعة الموبايل ثواني (`platePin.ts` — CLOCK_TOLERANCE_MS).
  */
+let latestRecvAt: number | null = null;
+
 function acceptFix(f: GpsFix) {
   if (latest && f.at <= latest.at) return;
   latest = f;
+  latestRecvAt = Date.now();
   status = "active";
   lastError = null;
   notify();
+}
+
+/** آخر قراءة جديدة وصلت إمتى (ساعة الموبايل) */
+export function lastFixRecvAt(): number | null {
+  return latestRecvAt;
 }
 
 function stopOne() {
@@ -160,7 +170,7 @@ function stopOne() {
 }
 
 /* ==========================================================================
- *  📍 أندرويد: قراءة كل ثانية طول ما المجمّع مفتوح (١٧ أكتوبر ٢٠٢٦)
+ *  📍 أندرويد: قراءة كل ثانية طول ما المجمّع ظاهر (١٧ أكتوبر ٢٠٢٦)
  * ==========================================================================
  *  تجربة المالك: ٣٣ لوحة و**٤ بس** خدوا موقع — قراءة كل ٢٠ث بالظبط. مراقبة التطبيق
  *  (`@/lib/gps`) على أندرويد من غير `interval`، و`@capacitor/geolocation` 8 بيخلّيه =
@@ -170,24 +180,31 @@ function stopOne() {
  *
  *  ⇒ مراقبة أصلية **تانية** خاصة بالمجمّع (سوبر أدمن بس)، كل ثانية، وبتتقفل مع آخر
  *    مستخدم. مراقبة التطبيق نفسها **ماتتلمسش** — المناديب زي ما هم بالحرف.
- *  · **أندرويد بس.** هناك كل مراقبة طلب مستقل. على الآيفون كل المراقبات على مدير
- *    موقع واحد بيبعت كل قراءة لكل المشتركين أصلاً (مافيش `interval` هناك)، ومهلته
+ *  · **أندرويد بس.** هناك كل مراقبة طلب مستقل بمهلته. على الآيفون كل المراقبات على
+ *    مدير موقع واحد بيبعت كل قراءة لكل المشتركين أصلاً (مافيش `interval` هناك)، ومهلته
  *    **مشتركة** وبتمسح كل المراقبات لما تخلص — مراقبة جديدة جوّه مبنى ممكن تقفل
  *    مراقبة التطبيق. والمتصفّح بيبعت كل ثانية لوحده.
- *  · `timeout` = نفس مراقبة التطبيق (٢٠ث) — مانغيّرش أي حاجة مشتركة.
- *  · خطأ عابر ⇒ نقفلها ونعيدها بمهلة بتطول (٢ث ⇐ ٣٠ث)، وقراءة ناجحة بترجّع المهلة.
- *  · الإذن مرفوض / الموقع مقفول / رفض تشغيله ⇒ **مانعيدش**: كل إعادة كانت هتطلّع
- *    رسالة تشغيل الموقع للمندوب. (الصفحة الجاية بتجرّب من الأول.)
+ *  · 🔴 **مابتطلبش إذن أبداً** (مراجعة ١٧ أكتوبر): `watchPosition` من غير إذن بيطلب
+ *    الإذن بنفسه، وCapacitor بيوزّع ردود طلبات الإذن بالترتيب — فطلبها مع طلب خدمة
+ *    التطبيق كان بيدّي كل واحد رد التاني: خدمة التطبيق ماتفتحش مراقبتها خالص.
+ *    ⇒ `checkPermissions` الأول (مابيطلّعش أي رسالة)، ولو مش «granted» (أو الموقع مقفول،
+ *    أو «تقريبي» بس) نسأل تاني كل ٣ث لحد ما خدمة التطبيق تاخد الإذن.
+ *  · `timeout` هنا = مهلة **أول قراءة** بس، وبعدها المكتبة بتقفل المراقبة نفسها —
+ *    فعشر دقايق بدل ٢٠ث: جوّه جراج مابتموتش وتستنى إعادة.
+ *  · خطأ ⇒ نقفلها ونعيدها: المهلة (0010) بعد ٢ث على طول، والباقي بمهلة بتطول لحد ١٠ث،
+ *    وقراءة ناجحة بترجّعها. رفض تشغيل الموقع / خدمات جوجل ⇒ **مانعيدش** (رسالة للمندوب).
  */
 export const FAST_WATCH_OPTS = {
   enableHighAccuracy: true,
-  timeout: 20_000,
+  timeout: 600_000,
   maximumAge: 0,
   interval: 1_000,
   minimumUpdateInterval: 1_000,
 } as const;
 export const FAST_REARM_MIN_MS = 2_000;
-export const FAST_REARM_MAX_MS = 30_000;
+export const FAST_REARM_MAX_MS = 10_000;
+/** لسه مافيش إذن ⇒ نسأل تاني كل كده (سؤال بس، مابيطلّعش رسالة) */
+export const FAST_PERM_RECHECK_MS = 3_000;
 /** الإذن مرفوض · الموقع مقفول · ممنوع · رفض تشغيله · خدمات جوجل (رسائل للمندوب) */
 const FAST_FATAL = new Set([
   "OS-PLUG-GLOC-0003",
@@ -198,6 +215,7 @@ const FAST_FATAL = new Set([
   "OS-PLUG-GLOC-0015",
   "OS-PLUG-GLOC-0017",
 ]);
+const FAST_TIMEOUT_CODE = "OS-PLUG-GLOC-0010";
 
 /** كل فتح/قفل بيزوّده — نداءات مراقبة قديمة بعده بتتجاهل */
 let fastToken = 0;
@@ -205,17 +223,22 @@ let fastIdP: Promise<string | null> | null = null;
 let fastTimer: ReturnType<typeof setTimeout> | null = null;
 let fastBackoff = FAST_REARM_MIN_MS;
 
-type Geo = (typeof import("@capacitor/geolocation"))["Geolocation"];
-let geoP: Promise<Geo> | null = null;
-/** المكتبة مرة واحدة — الفتح والقفل على نفس النسخة */
-function loadGeo(): Promise<Geo> {
-  if (!geoP) {
-    geoP = import("@capacitor/geolocation").then((m) => m.Geolocation);
-    geoP.catch(() => {
-      geoP = null;
+type GeoModule = typeof import("@capacitor/geolocation");
+let geoModP: Promise<GeoModule> | null = null;
+/**
+ * المكتبة مرة واحدة — الفتح والقفل على نفس النسخة.
+ * 🔴 **الوعد شايل الموديول، مش `Geolocation` نفسه** (مراجعة ١٧ أكتوبر): بلجن Capacitor
+ * بيرد على أي اسم دالة — حتى `then` — فوعد بيتحلّ بيه بيعامله كوعد ويفضل معلّق للأبد
+ * على الموبايل، والمراقبة ماكانتش هتتفتح خالص.
+ */
+function loadGeo(): Promise<GeoModule> {
+  if (!geoModP) {
+    geoModP = import("@capacitor/geolocation");
+    geoModP.catch(() => {
+      geoModP = null;
     });
   }
-  return geoP;
+  return geoModP;
 }
 
 function errCode(e: unknown): string {
@@ -235,24 +258,46 @@ function dropFast(): void {
   void p.then(async (id) => {
     if (!id) return;
     try {
-      await (await loadGeo()).clearWatch({ id });
+      const { Geolocation } = await loadGeo();
+      await Geolocation.clearWatch({ id });
     } catch {
       /* اتقفلت لوحدها */
     }
   });
 }
 
+/** يفتح تاني بعد `wait` — لو الصفحة لسه مفتوحة */
+function retryFast(wait: number): void {
+  if (fastTimer !== null) clearTimeout(fastTimer);
+  fastTimer = setTimeout(() => {
+    fastTimer = null;
+    if (watchId !== null) void armFast();
+  }, wait);
+}
+
 async function armFast(): Promise<void> {
   const token = ++fastToken;
   if (!(await isNativeApp()) || token !== fastToken) return;
   if (getDevicePlatform() !== "android") return;
-  let geo: Geo;
+  let geo: GeoModule["Geolocation"];
   try {
-    geo = await loadGeo();
+    geo = (await loadGeo()).Geolocation;
   } catch {
     return;
   }
   if (token !== fastToken) return;
+  // الإذن: سؤال بس — الطلب نفسه شغل خدمة التطبيق (`gpsService.startTracking`)
+  let granted = false;
+  try {
+    granted = (await geo.checkPermissions())?.location === "granted";
+  } catch {
+    /* الموقع مقفول من الموبايل ⇒ زي «لسه» */
+  }
+  if (token !== fastToken) return;
+  if (!granted) {
+    retryFast(FAST_PERM_RECHECK_MS);
+    return;
+  }
   let failed = false;
   const fail = (err: unknown) => {
     if (failed || token !== fastToken) return;
@@ -262,15 +307,16 @@ async function armFast(): Promise<void> {
   const idP = geo
     .watchPosition(FAST_WATCH_OPTS, (pos, err) => {
       if (token !== fastToken) return;
-      if (err || !pos) {
+      const c = pos?.coords;
+      if (err || !pos || !c || !Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) {
         fail(err);
         return;
       }
       fastBackoff = FAST_REARM_MIN_MS;
       acceptFix({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy ?? 0,
+        lat: c.latitude,
+        lng: c.longitude,
+        accuracy: c.accuracy ?? 0,
         at: pos.timestamp || Date.now(),
       });
     })
@@ -286,29 +332,38 @@ async function armFast(): Promise<void> {
 
 function rearmAfter(err: unknown): void {
   dropFast();
-  if (watchId === null || FAST_FATAL.has(errCode(err))) return;
+  const code = errCode(err);
+  if (watchId === null || FAST_FATAL.has(code)) return;
+  if (code === FAST_TIMEOUT_CODE) {
+    // المهلة نفسها بتباعد المحاولات — مانطوّلش فوقها
+    retryFast(FAST_REARM_MIN_MS);
+    return;
+  }
   const wait = fastBackoff;
   fastBackoff = Math.min(wait * 2, FAST_REARM_MAX_MS);
-  fastTimer = setTimeout(() => {
-    fastTimer = null;
-    if (watchId !== null) void armFast();
-  }, wait);
+  retryFast(wait);
 }
 
 /* ------------------------------------------- تحذير وهو بيسجّل */
 
-/** آخر قراءة أقدم من كده وهو بيسجّل ⇒ «الموقع مش بيتحدّث» */
+/** آخر قراءة جديدة وصلت من أكتر من كده وهو بيسجّل ⇒ «الموقع مش بيتحدّث» */
 export const FIX_LATE_MS = 3_000;
 
 /**
- * ⚠️ المندوب يعرف **وهو بيسجّل** إن اللوحات اللي بيقولها دلوقتي هتطلع من غير موقع —
- * مش بعد التفريغ (زي «٩٦ لوحة بلا موقع» ١٥ أكتوبر في التطبيق — `lib/gpsWarning.ts`).
- * نفس حد الدقة (١٠٠م) + الموقع واقف (المجمّع محتاج قراءة في حدود ثانيتين من كل لوحة).
+ * ⚠️ المندوب يعرف **وهو بيسجّل** إن اللوحات اللي بيقولها دلوقتي ممكن تطلع من غير
+ * موقع — مش بعد التفريغ (زي «٩٦ لوحة بلا موقع» ١٥ أكتوبر في التطبيق —
+ * `lib/gpsWarning.ts`). نفس حد الدقة (١٠٠م) + الموقع واقف (المجمّع محتاج قراءة في
+ * حدود ثانيتين من كل لوحة).
+ *
+ * `recvAt` = وقت وصول آخر قراءة جديدة بساعة الموبايل (`lastFixRecvAt`). من غيره بنقيس
+ * بوقت القراءة نفسها — وده ساعة الأقمار، وموبايل ساعته قدّام كان هيطلّع التحذير طول
+ * التسجيل واللوحات كلها بموقعها.
  */
 export function recordGpsWarning(
   fix: GpsFix | null | undefined,
   recording: boolean,
-  now = Date.now()
+  now = Date.now(),
+  recvAt?: number | null
 ): string | null {
   if (!recording) return null;
   if (!fix || !Number.isFinite(fix.accuracy) || fix.accuracy <= 0) {
@@ -317,7 +372,7 @@ export function recordGpsWarning(
   if (fix.accuracy > GPS_STAMP_MAX_ACCURACY_M) {
     return `⚠️ دقة الموقع ضعيفة (${Math.round(fix.accuracy)} متر) — اللوحات اللي بتقولها دلوقتي هتطلع من غير موقع. اطلع لمكان مكشوف.`;
   }
-  const age = now - fix.at;
+  const age = now - (typeof recvAt === "number" && Number.isFinite(recvAt) ? recvAt : fix.at);
   if (age > FIX_LATE_MS) {
     return `⚠️ الموقع مش بيتحدّث (آخر قراءة من ${Math.floor(age / 1000)} ثانية) — اللوحات اللي بتقولها دلوقتي ممكن تطلع من غير موقع.`;
   }

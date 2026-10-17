@@ -147,4 +147,11 @@ describe("recordGpsWarning — المندوب يعرف وهو بيسجّل، م�
     expect(recordGpsWarning(fix(FIX_LATE_MS + 1), true, NOW)).toMatch(/مش بيتحدّث/);
     expect(recordGpsWarning(fix(12_400), true, NOW)).toMatch(/12 ثانية/);
   });
+
+  it("🔴 بيقيس بوقت **وصول** القراءة (ساعة الموبايل) مش وقتها (ساعة الأقمار): موبايل ساعته قدّام ٨ث مايطلّعش تحذير غلط", () => {
+    // القراءة وصلت من نص ثانية، بس وقتها بساعة الأقمار ٨ث ورا
+    expect(recordGpsWarning(fix(8_000), true, NOW, NOW - 500)).toBeNull();
+    // وواقفة فعلاً ⇒ التحذير بيطلع حتى لو وقت القراءة «حديث» (ساعة ورا)
+    expect(recordGpsWarning(fix(-6_000), true, NOW, NOW - 7_000)).toMatch(/7 ثانية/);
+  });
 });

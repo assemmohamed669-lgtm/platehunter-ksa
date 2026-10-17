@@ -240,6 +240,20 @@ describe("resolvePlatePin — المكان لحظة النطق أو لا شيء"
     expect(resolvePlatePin([fx(1500, 24.0, 46.7, 100.5)], 2000).pin).toBeNull();
   });
 
+  it("🔴 الدقيق الأول: قراءة ٩٠م بين قراءتين ٥م قريبين مابتشدّش الدبوس — الـ١٠٠م احتياطي بس", () => {
+    const track = [fx(9000, 24.0, 46.7, 5), fx(10_100, 24.5, 46.7, 90), fx(11_000, 24.002, 46.7, 5)];
+    const r = resolvePlatePin(track, 10_000);
+    expect(r.kind).toBe("interp");
+    expect(r.pin!.acc).toBe(5);
+    expect(r.pin!.lat).toBeCloseTo(24.001, 9);
+  });
+
+  it("مافيش دقيق حواليها ⇒ بتاخد الأوسع (لحد ١٠٠م) ودقته متسجّلة", () => {
+    const r = resolvePlatePin([fx(1500, 24.0, 46.7, 60), fx(2500, 24.0001, 46.7, 70)], 2000);
+    expect(r.pin).not.toBeNull();
+    expect(r.pin!.acc).toBe(70);
+  });
+
   it(`قراءة واحدة في حدود ${PIN_MAX_SNAP_MS / 1000}ث ⇒ مكانها؛ أبعد ⇒ بلا موقع («gap»)`, () => {
     expect(resolvePlatePin([fx(1000, 24.0)], 3000).kind).toBe("snap");
     const far = resolvePlatePin([fx(1000, 24.0)], 3500);
