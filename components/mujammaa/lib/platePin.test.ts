@@ -229,13 +229,15 @@ describe("resolvePlatePin — المكان لحظة النطق أو لا شيء"
   });
 
   it(`دقة أوسع من ${PIN_MAX_ACCURACY_M}م ⇒ مش قراءة — بلا موقع والسبب «coarse»`, () => {
-    const r = resolvePlatePin([fx(1000, 24.0, 46.7, 40), fx(2500, 24.001, 46.7, 60)], 2000);
+    const r = resolvePlatePin([fx(1000, 24.0, 46.7, 140), fx(2500, 24.001, 46.7, 260)], 2000);
     expect(r.pin).toBeNull();
     expect(r.reason).toBe("coarse");
   });
 
-  it("دقة ٢٥م بالظبط مقبولة", () => {
-    expect(resolvePlatePin([fx(1500, 24.0, 46.7, 25)], 2000).pin).not.toBeNull();
+  it("دقة ١٠٠م بالظبط مقبولة — زي باقي التطبيق (قرار المالك ١٥ أكتوبر)", () => {
+    expect(PIN_MAX_ACCURACY_M).toBe(100);
+    expect(resolvePlatePin([fx(1500, 24.0, 46.7, 100)], 2000).pin).not.toBeNull();
+    expect(resolvePlatePin([fx(1500, 24.0, 46.7, 100.5)], 2000).pin).toBeNull();
   });
 
   it(`قراءة واحدة في حدود ${PIN_MAX_SNAP_MS / 1000}ث ⇒ مكانها؛ أبعد ⇒ بلا موقع («gap»)`, () => {
