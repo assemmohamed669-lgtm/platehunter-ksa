@@ -51,7 +51,7 @@ import Waveform from "../components/Waveform";
 import { matchInCheckSheet } from "../lib/checkSheetAdapter";
 import { chunksHeaders, chunksUrl, httpFailure, type BatchProbe } from "../lib/batchServer";
 import { ErrorLog } from "../lib/errorLog";
-import { GpsTrack, currentFix, pinLink, subscribeGps } from "../lib/gps";
+import { GpsTrack, currentFix, lastFixRecvAt, pinLink, recordGpsWarning, subscribeGps } from "../lib/gps";
 import {
   FixCollector,
   MEM_ONLY_WARNING,
@@ -174,7 +174,7 @@ export interface ClipJob {
   clipId?: string;
   /**
    * 📍 مسار موقع المقطع بتوقيت نسبي لبداية صوته — لو موجود، الدبوس بيتحط
-   * بعد التفريغ بقواعد `platePin` الصارمة (≤٢٥م · ≤٢ث · مافيش قراءة واحدة على لوحتين جيران)
+   * بعد التفريغ بقواعد `platePin` الصارمة (≤١٠٠م · ≤٢ث · مافيش قراءة واحدة على لوحتين جيران)
    * بدل `GpsTrack.pinAt` الواسعة.
    */
   fixes?: TrackFix[];
@@ -417,6 +417,7 @@ export default function BatchPage({
   server,
   agentName,
   onBusyChange,
+  visible = true,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -426,9 +427,16 @@ export default function BatchPage({
   agentName: string;
   /** 🧮 بيسجّل أو بيقفل المقطع — صفحة «التسجيل» بتقفل مفتاح «التسجيل القديم» وقتها */
   onBusyChange?: (busy: boolean) => void;
+  /**
+   * 📍 المجمّع ظاهر؟ — بعد أول فتحة بيفضل متحمّل مستخبي ورا «التسجيل القديم» (عشان
+   * الطابور مايقفش)، فالموقع (كل ثانية على أندرويد) بيشتغل **وهو ظاهر بس** — بطارية.
+   * وهو بيسجّل المفتاح مقفول (`onBusyChange`)، ولو التسجيل بدأ وهو مستخبي (دوسة على
+   * «التسجيل القديم» وإذن الميك لسه بيتطلب) `GpsTrack.start()` بيفتح الموقع لوحده.
+   */
+  visible?: boolean;
 }) {
   const bank = useAppCheckSheet(errorLog);
-  const gps = useGps(true);
+  const gps = useGps(visible);
   // النداء جوّه عامل الطابور (closure قديم) ⇒ آخر قيمة من ref
   const serverRef = useRef(server);
   serverRef.current = server;
@@ -1337,7 +1345,7 @@ export default function BatchPage({
       /**
        * 📍 مقطع محفوظ معاه مساره (`fixes`) ⇒ الدبوس **مابيتحطّش هنا**:
        * بيتحط بعد ما المقطع كله يتقري (`stampEntriesWithTrack` في `runQueue`)
-       * بقواعد «مميّز ودقيق» — ≤٢٥م، ≤ثانيتين من لحظة النطق، ومافيش لوحتين
+       * بقواعد «مميّز ودقيق» — ≤١٠٠م، ≤ثانيتين من لحظة النطق، ومافيش لوحتين
        * ورا بعض على نفس قراءة GPS. القاعدة الأخيرة محتاجة كل اللوحات مع بعض.
        * و`source` من سياق المهمة: الحيّة هنا قديمة (`[bank.sheet]` بس).
        */
@@ -1982,7 +1990,7 @@ export default function BatchPage({
 
         /**
          * 📍 الدبوس بعد ما المقطع كله يتقري: كل لوحة بمكان المندوب **لحظة
-         * نطقها** من مسار المقطع ده — ≤٢٥م و≤ثانيتين، ومافيش لوحتين ورا بعض
+         * نطقها** من مسار المقطع ده — ≤١٠٠م و≤ثانيتين، ومافيش لوحتين ورا بعض
          * على نفس القراءة؛ وغير كده «من غير موقع دقيق» (`platePin.ts`).
          */
         const outcome = clipRunOutcome({
@@ -2175,6 +2183,20 @@ export default function BatchPage({
             التسجيل لحد {Math.floor(MAX_BATCH_SECONDS / 60)} دقيقة
           </span>
         </div>
+
+        {/*
+          ⚠️ الموقع وهو بيسجّل: لو مش جاهز/ضعيف/واقف، يعرف **دلوقتي** إن اللوحات اللي
+          بيقولها هتطلع من غير موقع — مش بعد التفريغ (`recordGpsWarning`). العدّاد
+          بيحدّث الصفحة كل ثانية وهو بيسجّل، فـ«واقف من كام ثانية» بيتحدّث معاه.
+        */}
+        {(() => {
+          const warn = recordGpsWarning(gps.fix, phase === "recording", Date.now(), lastFixRecvAt());
+          return warn ? (
+            <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+              {warn}
+            </div>
+          ) : null;
+        })()}
 
         {/*
           سياق الجلسة — يتكتب **مرة واحدة** ويختم كل اللوحات اللي بعده.
@@ -2560,7 +2582,7 @@ export default function BatchPage({
                    * فبقى `engineReportLabel` بيغطّي الستة كلهم.
                    */
                   `المحرك: ${batchEngineLabel(engine, batchModelName)}`,
-                  // 📍 كام لوحة خدت موقع دقيق (≤٢٥م و≤ثانيتين من لحظة نطقها)
+                  // 📍 كام لوحة خدت موقع (≤١٠٠م و≤ثانيتين من لحظة نطقها)
                   `📍 بموقع دقيق: ${entries.filter((e) => e.pin).length} من ${entries.length}`,
                   "",
                   ...entries.map(

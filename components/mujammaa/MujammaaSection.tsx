@@ -37,10 +37,13 @@ let sessionLog: ErrorLog | null = null;
 export default function MujammaaSection({
   agentName,
   onBusyChange,
+  visible = true,
 }: {
   agentName: string;
   /** بيسجّل أو بيقفل المقطع — «التسجيل» بتقفل المفتاح وقتها */
   onBusyChange?: (busy: boolean) => void;
+  /** 📍 ظاهر؟ — المجمّع بيفضل متحمّل ورا «التسجيل القديم»، والموقع كل ثانية بيتقفل وقتها */
+  visible?: boolean;
 }) {
   const errorLog = useMemo(() => (sessionLog ??= new ErrorLog()), []);
   const [base, setBase] = useState<string>(() => readBatchBase());
@@ -168,6 +171,7 @@ export default function MujammaaSection({
         server={{ base, token, probe }}
         agentName={agentName}
         onBusyChange={onBusyChange}
+        visible={visible}
       />
     </div>
   );

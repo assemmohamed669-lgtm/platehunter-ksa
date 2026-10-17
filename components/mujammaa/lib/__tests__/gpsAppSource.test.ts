@@ -17,6 +17,8 @@ const svc = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/gps", () => ({
+  // المتصفّح: مراقبة المجمّع الخاصة (أندرويد بس — gpsFastWatch.test.ts) مابتتفتحش
+  isNativeApp: async () => false,
   gpsService: {
     startTracking: async () => { svc.starts++; },
     stopTracking: () => { svc.stops++; },

@@ -37,6 +37,15 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     expect(SRC).toMatch(/onBusyChange=\{setMjBusy\}/);
   });
 
+  it("📍 الموقع كل ثانية (أندرويد) شغّال والمجمّع **ظاهر** بس — مستخبي ورا «التسجيل القديم» بيتقفل (بطارية)", () => {
+    expect(SRC).toMatch(/<MujammaaSection [^>]*visible=\{regMode === "mujammaa"\}/);
+    const section = readFileSync(join(__dirname, "..", "components", "mujammaa", "MujammaaSection.tsx"), "utf8");
+    expect(section).toMatch(/visible = true,/);
+    expect(section).toMatch(/visible=\{visible\}/);
+    const batch = readFileSync(join(__dirname, "..", "components", "mujammaa", "pages", "BatchPage.tsx"), "utf8");
+    expect(batch).toMatch(/const gps = useGps\(visible\);/);
+  });
+
   it("🔴 مافيش محتوى قبل ما فحص الحساب يخلص (تسجيل قديم يبدأ ويستخبى) — وبحد أقصى ٤ث", () => {
     expect(SRC).toMatch(/const \[superChecked, setSuperChecked\] = useState\(false\);/);
     expect(SRC).toMatch(/finally \{ setSuperChecked\(true\); \}/);
