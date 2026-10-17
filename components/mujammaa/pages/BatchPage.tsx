@@ -1138,7 +1138,8 @@ export default function BatchPage({
     unlockAudio();
     setTranscript("");
     setEntries([]);
-    setTableClip(null);
+    // الجلسة لسه شايلة الجدول ده (saveSession مابتحفظش الفاضي) ⇒ مفتاح الربط يفضل، والرجوع للصفحة يربطه تاني
+    tableClipIdRef.current = null;
     setExportMsg(null);
     setEditing(null);
     audioBlobRef.current = null;
@@ -1803,6 +1804,11 @@ export default function BatchPage({
       return;
     }
     if (id === recSessionRef.current?.clipId) return; // لسه بيتسجّل/بيتقفل
+    // 📋 وهو بيصدّر للسجلات ⇒ استنى (التفريغ بيفضّي الجدول اللي بيتصدّر)
+    if (exportingRef.current) {
+      errorLog.add("التفريغ", "استنى التصدير للسجلات يخلص وبعدين فرّغ.");
+      return;
+    }
     // 📋 المقطع اتصدّر للسجلات قبل كده ⇒ التفريغ تاني بيطلّع لوحاته تاني (لو اتصدّرت هتتكرر)
     const exportedBefore = storedClipsRef.current.find((c) => c.id === id)?.result?.exportedCount ?? 0;
     if (
@@ -2034,7 +2040,7 @@ export default function BatchPage({
         void markClip(next.clipId, { status: "working" });
         // 🔴 التفريغ ده بيفضّي الجدول ويحط لوحاته هو ⇒ الجدول مش مربوط بالمقطع اللي قبله (التعديل أو التصدير
         // كان بيكتب فوق لوحات مقطع تاني لما الرد يتقطع بعد اللوحات) — بيترَبط تاني بعد النجاح بس.
-        setTableClip(null);
+        tableClipIdRef.current = null;
         setExportMsg(null);
         // وقت نطق لوحة من غير توقيت بياخد آخر وقت معروف **في المقطع ده** (مش المقطع اللي قبله)
         lastKnownSpokenAtRef.current = 0;
@@ -2099,12 +2105,29 @@ export default function BatchPage({
           entriesRef.current = outcome.entries;
           setEntries(outcome.entries);
         }
-        if (ok && next.clipId) {
+        // اللوحات اللي في الجدول من المقطع ده — حتى لو الرد اتقطع بعد اللوحات (من غير أنواع/موقع):
+        // تعديلها وتصديرها لازم يتسجّلوا على مقطعها (وإلا «فرّغ تاني» بيكرّرها في السجلات من غير سؤال)
+        if (next.clipId && (ok || platesOnlyRef.current)) {
           setTableClip(next.clipId);
           setExportMsg(null);
         }
         // 💾 النتيجة بتتحفظ مع المقطع — بعد التحديث الصف بيقول «N لوحة» ويعرضها
         if (next.clipId) {
+          // «فرّغ تاني» لمقطع اتصدّر منه قبل كده ⇒ العدّ يفضل (التحذير من التكرار يفضل شغّال)
+          if (outcome.patch.result) {
+            try {
+              const prev = (await (await getClipStore()).get(next.clipId))?.result;
+              if (prev?.exportedCount) {
+                outcome.patch.result = {
+                  ...outcome.patch.result,
+                  exportedCount: prev.exportedCount,
+                  exportedAt: prev.exportedAt,
+                };
+              }
+            } catch {
+              /* التخزين مابيردّش — النتيجة الجديدة بس */
+            }
+          }
           await markClip(next.clipId, outcome.patch);
           // الصوت محفوظ في المقطع — مانشيلش نسخة تانية منه في الذاكرة
           mark({ blob: new Blob() });
@@ -2200,8 +2223,8 @@ export default function BatchPage({
 
   /** نتيجة المقطع اللي الجدول بيعرضه = الجدول (بعد تعديل/مسح/تصدير) */
   const saveTableToClip = useCallback(
-    async (next: PlateEntry[], extra?: { exported?: number }): Promise<boolean> => {
-      const id = tableClipIdRef.current;
+    async (next: PlateEntry[], extra?: { exported?: number; clipId?: string | null }): Promise<boolean> => {
+      const id = extra?.clipId !== undefined ? extra.clipId : tableClipIdRef.current;
       if (!id) return true;
       // من التخزين نفسه — بيستنى نتيجة التفريغ اللي لسه بتتكتب (القايمة المعروضة ممكن تكون قبلها)
       let c: StoredClip | undefined;
@@ -2210,15 +2233,18 @@ export default function BatchPage({
       } catch {
         c = storedClipsRef.current.find((x) => x.id === id);
       }
-      if (!c?.result) return false;
+      if (!c) return false;
+      // الرد اتقطع بعد اللوحات ⇒ المقطع مالوش نتيجة محفوظة — الجدول هو نتيجته (تعديل/تصدير ماتضيعش)
+      if (!c.result && c.status !== "failed") return false;
+      const base = c.result ?? { at: Date.now(), plates: 0, pinned: 0, entries: [] };
       await markClip(id, {
         result: {
-          ...c.result,
+          ...base,
           entries: next,
           plates: next.length,
           pinned: countPinned(next),
           ...(extra?.exported
-            ? { exportedAt: Date.now(), exportedCount: (c.result.exportedCount ?? 0) + extra.exported }
+            ? { exportedAt: Date.now(), exportedCount: (base.exportedCount ?? 0) + extra.exported }
             : {}),
         },
       });
@@ -2251,6 +2277,8 @@ export default function BatchPage({
     if (!tableDirtyRef.current) return;
     tableDirtyRef.current = false;
     entriesRef.current = entries;
+    // المندوب مسح آخر لوحة ⇒ الجلسة كمان (saveSession مابتحفظش الفاضي — كانت هترجع مع أول فتحة)
+    if (entries.length === 0) clearSession("batch");
     void saveTableToClip(entries).then((ok) => {
       // المقطع لسه مالوش نتيجة محفوظة ⇒ التعديل يفضل مستني ويتحفظ أول ما القايمة تتحدّث
       if (!ok) tableDirtyRef.current = true;
@@ -2284,8 +2312,10 @@ export default function BatchPage({
     exportingRef.current = true;
     setExporting(true);
     setExportMsg(null);
+    // المقطع اللي الجدول بيعرضه **دلوقتي** — تفريغ يبدأ وإحنا بنحفظ مايغيّرش هو اتعلّم على أنهي مقطع
+    const exportClipId = tableClipIdRef.current;
     try {
-      const clipKey = tableClipIdRef.current ?? "restored";
+      const clipKey = exportClipId ?? "restored";
       const res = await run(list, { sheet: bank.sheet, clipKey });
       const saved = new Set(res.savedEntryIds);
       const left = list.filter((e) => !saved.has(e.id));
@@ -2293,7 +2323,7 @@ export default function BatchPage({
       setEntries(left);
       setEditing(null);
       setConfirmClear(false);
-      await saveTableToClip(left, { exported: saved.size });
+      await saveTableToClip(left, { exported: saved.size, clipId: exportClipId });
       if (left.length === 0) {
         // saveSession بترفض القايمة الفاضية عن قصد ⇒ لازم مسح صريح وإلا ترجع مع أول فتح
         clearSession("batch");

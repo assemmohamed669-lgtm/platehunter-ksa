@@ -29,7 +29,7 @@ describe("🧮 المجمّع في «التسجيل»", () => {
 
   it("🔴 superOk بيتعلّم true بس لما is_super === true (يقفل لو الفحص فشل)", () => {
     expect(SRC).toMatch(/const \[superOk, setSuperOk\] = useState\(false\);/);
-    expect(SRC).toMatch(/if \(prof\?\.is_super === true\) setSuperOk\(true\);/);
+    expect(SRC).toMatch(/if \(prof\?\.is_super === true\) \{\s*setSuperOk\(true\);\s*setMjAgentOk\(false\);/);
     expect((SRC.match(/setSuperOk\(true\)/g) ?? []).length).toBe(1);
     // الحارس: مش سوبر **ومش** مشترك في كل الخدمات ⇒ برّه الصفحة
     expect(SRC).toMatch(/const mjAllowed = canUseMujammaa\(prof\);/);
@@ -40,7 +40,10 @@ describe("🧮 المجمّع في «التسجيل»", () => {
 
   it("📴 من غير نت: آخر صلاحية متأكدة لنفس الحساب — المندوب على المجمّع، والتسجيل القديم للسوبر أدمن بس", () => {
     expect(SRC).toMatch(/const LS_MJ_ACCESS = "ph:mj:access:";/);
-    expect(SRC).toMatch(/const \{ data: ses \} = await supabase\.auth\.getSession\(\);/);
+    expect(SRC).toMatch(/const sid = await currentUidForMujammaa\(\);/);
+    // الجلسة انتهت من غير نت (غلط مش خروج) ⇒ آخر حساب اتأكد
+    expect(SRC).toMatch(/const LS_MJ_LAST = "ph:mj:access:last";/);
+    expect(SRC).toMatch(/if \(error\) return readLastMjAccess\(\)\?\.uid \?\? "";/);
     expect(SRC).toMatch(/if \(c === "agent"\) setMjAgentOk\(true\);/);
     expect(SRC).toMatch(/writeMjAccess\(data\.user\.id, prof\.is_super === true \? "super" : mjAllowed \? "agent" : "none"\);/);
     // الصلاحية المحفوظة عمرها ما بتدّي أدوات السوبر أدمن (advanced = superOk المتأكد بس)

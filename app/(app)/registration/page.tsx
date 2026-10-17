@@ -109,9 +109,35 @@ function readMjAccess(uid: string): MjAccess | null {
 function writeMjAccess(uid: string, a: MjAccess) {
   try {
     localStorage.setItem(LS_MJ_ACCESS + uid, a);
+    localStorage.setItem(LS_MJ_LAST, JSON.stringify({ uid, a }));
   } catch {
     /* تخزين مقفول */
   }
+}
+/**
+ * آخر حساب اتأكد على الجهاز — من غير نت أكتر من ساعة الجلسة بتنتهي و`getSession` بترجع فاضية
+ * **بغلط** (مش خروج) ⇒ نفس الحساب اللي كان شغّال. مراجعة ١٨ أكتوبر (جولة ٢).
+ */
+const LS_MJ_LAST = "ph:mj:access:last";
+function readLastMjAccess(): { uid: string; a: MjAccess } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(LS_MJ_LAST) || "null");
+    if (v && typeof v.uid === "string" && (v.a === "super" || v.a === "agent" || v.a === "none")) return v;
+  } catch {
+    /* مافيش */
+  }
+  return null;
+}
+/** الحساب الشغّال: الجلسة، ولو انتهت من غير نت (غلط مش خروج) ⇒ آخر حساب اتأكد */
+async function currentUidForMujammaa(): Promise<string> {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (data.session?.user?.id) return data.session.user.id;
+    if (error) return readLastMjAccess()?.uid ?? "";
+  } catch {
+    return readLastMjAccess()?.uid ?? "";
+  }
+  return "";
 }
 
 // Vercel rejects any serverless function request over 4.5MB — at this
@@ -554,8 +580,7 @@ export default function RegistrationPage() {
     (async () => {
       // 📴 الجلسة على الجهاز (من غير نت) ⇒ آخر صلاحية متأكدة لنفس الحساب، قبل الفحص
       try {
-        const { data: ses } = await supabase.auth.getSession();
-        const sid = ses.session?.user?.id;
+        const sid = await currentUidForMujammaa();
         const c = sid ? readMjAccess(sid) : null;
         if (alive && c) {
           setCachedAccess(c);
@@ -578,8 +603,10 @@ export default function RegistrationPage() {
           setMjAgentOk(false);
           router.replace("/instant-check");
         }
-        if (prof?.is_super === true) setSuperOk(true);
-        else if (mjAllowed) setMjAgentOk(true);
+        if (prof?.is_super === true) {
+          setSuperOk(true);
+          setMjAgentOk(false);   // كان محفوظ «مندوب» واترقّى ⇒ السوبر أدمن بأدواته كلها
+        } else if (mjAllowed) setMjAgentOk(true);
       } catch { /* غير متاح — نسيبها */ }
       finally { if (alive) setSuperChecked(true); }
     })();
@@ -2805,8 +2832,8 @@ export default function RegistrationPage() {
    */
   const exportMujammaa = useCallback(
     async (entries: PlateEntry[], ctx: { sheet: BankSheet | null; clipKey: string }) => {
-      const { data } = await supabase.auth.getSession();
-      const uid = data.session?.user?.id ?? "";
+      // من غير نت والجلسة انتهت ⇒ آخر حساب اتأكد (السجل بيتحفظ على الجهاز ويترفع لما النت يرجع)
+      const uid = await currentUidForMujammaa();
       return saveMujammaaRecords(entries, {
         uid,
         clipKey: ctx.clipKey,

@@ -101,7 +101,9 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
     const fn = SRC.slice(at, SRC.indexOf("const copyAll", at));
     expect(fn).toMatch(/const saved = new Set\(res\.savedEntryIds\);/);
     expect(fn).toMatch(/const left = list\.filter\(\(e\) => !saved\.has\(e\.id\)\);/);
-    expect(fn).toMatch(/await saveTableToClip\(left, \{ exported: saved\.size \}\);/);
+    // المقطع اتمسك قبل الحفظ — تفريغ يبدأ في النص مايغيّرش هو اتعلّم على أنهي مقطع
+    expect(fn).toMatch(/const exportClipId = tableClipIdRef\.current;/);
+    expect(fn).toMatch(/await saveTableToClip\(left, \{ exported: saved\.size, clipId: exportClipId \}\);/);
     expect(fn).toMatch(/if \(left\.length === 0\) \{\s*\/\/[^\n]*\n\s*clearSession\("batch"\);/);
     // لوحة من غير موقع ⇒ سؤال الأول (مابنخترعش موقع)
     expect(fn).toMatch(/window\.confirm\(/);
@@ -112,7 +114,9 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
       const i = SRC.indexOf(name);
       expect(SRC.slice(i, i + 400)).toMatch(/tableDirtyRef\.current = true;/);
     }
-    expect(SRC).toMatch(/if \(!tableDirtyRef\.current\) return;\s*tableDirtyRef\.current = false;\s*entriesRef\.current = entries;\s*void saveTableToClip\(entries\)\.then\(/);
+    expect(SRC).toMatch(/if \(!tableDirtyRef\.current\) return;\s*tableDirtyRef\.current = false;\s*entriesRef\.current = entries;[\s\S]{0,200}void saveTableToClip\(entries\)\.then\(/);
+    // مسح آخر لوحة ⇒ الجلسة كمان (كانت بترجع مع أول فتحة)
+    expect(SRC).toMatch(/if \(entries\.length === 0\) clearSession\("batch"\);/);
     // 🔴 مراجعة ١٨ أكتوبر: المقطع لسه مالوش نتيجة ⇒ التعديل يفضل مستني (كان بيضيع) — والقراية من التخزين
     expect(SRC).toMatch(/if \(!ok\) tableDirtyRef\.current = true;/);
     expect(SRC).toMatch(/\}, \[entries, storedClips, saveTableToClip\]\);/);
@@ -120,11 +124,14 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
   });
 
   it("الجدول بيتربط بالمقطع اللي بيعرضه، وبيتفك مع تسجيل جديد و«مسح الكل»", () => {
-    expect(SRC).toMatch(/if \(ok && next\.clipId\) \{\s*setTableClip\(next\.clipId\);/);
+    // النجاح **أو** رد اتقطع بعد اللوحات — لوحات الجدول من المقطع ده
+    expect(SRC).toMatch(/if \(next\.clipId && \(ok \|\| platesOnlyRef\.current\)\) \{\s*setTableClip\(next\.clipId\);/);
     const show = SRC.slice(SRC.indexOf("const showClipPlates"), SRC.indexOf("const deleteClip"));
     expect(show).toMatch(/setTableClip\(id\);/);
-    const start = SRC.slice(SRC.indexOf("const startRecordingInner"), SRC.indexOf("const startRecordingInner") + 300);
-    expect(start).toMatch(/setTableClip\(null\);/);
+    const start = SRC.slice(SRC.indexOf("const startRecordingInner"), SRC.indexOf("const startRecordingInner") + 500);
+    // الجلسة لسه شايلة الجدول ⇒ الربط بيتفك من الذاكرة بس (المفتاح بيفضل للرجوع)
+    expect(start).toMatch(/tableClipIdRef\.current = null;/);
+    expect(start).not.toMatch(/setTableClip\(null\);/);
     const clear = SRC.slice(SRC.indexOf("const clearAll = useCallback"), SRC.indexOf("const clearAll = useCallback") + 200);
     expect(clear).toMatch(/setTableClip\(null\);/);
   });
@@ -132,7 +139,7 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
   it("🔴 كل تفريغ بيفك الربط في أوله (رد بيتقطع بعد اللوحات كان بيخلّي التعديل يكتب فوق مقطع تاني)", () => {
     const i = SRC.indexOf("await runTranscription();");
     const before = SRC.slice(i - 700, i);
-    expect(before).toMatch(/setTableClip\(null\);/);
+    expect(before).toMatch(/tableClipIdRef\.current = null;/);
     expect(before).toMatch(/lastKnownSpokenAtRef\.current = 0;/);
   });
 
@@ -147,6 +154,17 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
     const fn = SRC.slice(at, SRC.indexOf("const copyAll", at));
     expect(fn).toMatch(/if \(canStopTranscription\(clipsRef\.current\)\) \{/);
     expect(SRC).toMatch(/disabled=\{exporting \|\| canStopTranscription\(clips\)\}/);
+  });
+
+  it("«فرّغ تاني» بيحتفظ بعدّ التصدير (التحذير يفضل) — ومافيش تفريغ وهو بيصدّر", () => {
+    expect(SRC).toMatch(/if \(prev\?\.exportedCount\) \{\s*outcome\.patch\.result = \{/);
+    const t = SRC.slice(SRC.indexOf("const transcribeClip = async"), SRC.indexOf("const transcribeClip = async") + 900);
+    expect(t).toMatch(/if \(exportingRef\.current\) \{/);
+  });
+
+  it("رد اتقطع بعد اللوحات ⇒ الجدول نتيجة المقطع (التعديل والتصدير بيتسجّلوا عليه)", () => {
+    expect(SRC).toMatch(/if \(!c\.result && c\.status !== "failed"\) return false;/);
+    expect(SRC).toMatch(/const base = c\.result \?\? \{ at: Date\.now\(\), plates: 0, pinned: 0, entries: \[\] \};/);
   });
 
   it("مقطع اتصدّر قبل كده ⇒ «فرّغ تاني» بيسأل الأول (اللوحات هتتكرر)", () => {
