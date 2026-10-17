@@ -22,12 +22,14 @@ const RAW = {
 };
 
 describe("compactVitals — حقول معروفة بس", () => {
-  it("بياخد اللي التقرير محتاجه ويشيل الباقي (pid والعدّادات الخام والغريب)", () => {
+  it("بياخد اللي التقرير محتاجه ويشيل الباقي (الغريب والكبير)", () => {
     const v = compactVitals(RAW) as Record<string, Record<string, unknown>>;
     expect(Object.keys(v).sort()).toEqual(["age_s", "batch", "gpu", "host", "plates", "t", "tunnel"]);
     expect(v.gpu).toEqual(RAW.gpu);
-    expect(v.plates).toEqual({ ok: true, ms: 20, inflight: 0, device: "cuda", age_s: 91978, rss_mb: 15077 });
-    expect(v.tunnel).toEqual({ procs: 1, age_s: 22947, ha: 4, bad: 0, mode: "normal", edge_ms: [8, 17], req_1m: 150, err_1m: 1 });
+    // pid والعدّادات الخام بيتحفظوا: التقرير بيعرف إعادة التشغيل (pid اتغيّر) ويحسب الطلبات من فرق العدّاد
+    expect(v.plates).toEqual({ ok: true, ms: 20, inflight: 0, device: "cuda", pid: 1655, age_s: 91978, rss_mb: 15077 });
+    expect(v.tunnel).toEqual({ pid: 1650596, procs: 1, age_s: 22947, req: 52718, err: 213, ha: 4, bad: 0, mode: "normal",
+      edge_ms: [8, 17], req_1m: 150, err_1m: 1 });
     expect(v.host).not.toHaveProperty("junk");
     expect(JSON.stringify(v).length).toBeLessThan(1200);
   });

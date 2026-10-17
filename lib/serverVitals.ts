@@ -17,8 +17,8 @@ type Shape = Record<string, "n" | "s" | "b" | "na">;
 const SHAPE: Record<string, Shape> = {
   host: { load1: "n", ram_gb: "n", ram_limit_gb: "n", disk_free_gb: "n" },
   gpu: { temp: "n", util: "n", mem_used: "n", mem_total: "n", power: "n", pstate: "s", throttle: "s", sm_mhz: "n", error: "s" },
-  plates: { ok: "b", ms: "n", inflight: "n", device: "s", age_s: "n", rss_mb: "n", error: "s" },
-  tunnel: { procs: "n", age_s: "n", ha: "n", bad: "n", mode: "s", edge_ms: "na", req_1m: "n", err_1m: "n", restarted: "b", error: "s" },
+  plates: { ok: "b", ms: "n", inflight: "n", device: "s", pid: "n", age_s: "n", rss_mb: "n", error: "s" },
+  tunnel: { pid: "n", procs: "n", age_s: "n", req: "n", err: "n", ha: "n", bad: "n", mode: "s", edge_ms: "na", req_1m: "n", err_1m: "n", restarted: "b", error: "s" },
   batch: { gateway: "b", seg: "b", cohere: "b", inflight: "n", cohere_rss_mb: "n", tunnel: "b", error: "s" },
 };
 

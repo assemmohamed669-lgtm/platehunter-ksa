@@ -72,7 +72,9 @@ export async function GET(req: Request) {
   ]);
   const merged = mergeHealth(health, deep, VOICE_PROBE_PLATE);
   const row = { ...merged, detail: { ...(merged.detail ?? {}), vitals } };
-  const { error } = await supabaseAdmin.from("voice_health").insert(row);
+  let { error } = await supabaseAdmin.from("voice_health").insert(row);
+  // الصف بالحالة اترفض لأي سبب ⇒ نبضة الفحص نفسها ماتضيعش (تتكتب من غير الحالة)
+  if (error) ({ error } = await supabaseAdmin.from("voice_health").insert(merged));
 
   if (isCleanupMinute(new Date())) {
     const cutoff = retentionCutoff(new Date());

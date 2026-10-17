@@ -56,6 +56,10 @@ describe("🗃️ /api/cron/voice-health — حالة الجهاز مع كل ن�
     expect(src).toMatch(/detail: \{ \.\.\.\(merged\.detail \?\? \{\}\), vitals \}/);
   });
 
+  it("لو الصف بالحالة اترفض لأي سبب ⇒ بيتكتب تاني من غيرها (نبضة الفحص ماتضيعش)", () => {
+    expect(src).toMatch(/if \(error\) \(\{ error \} = await supabaseAdmin\.from\("voice_health"\)\.insert\(merged\)\);/);
+  });
+
   it("الفحص الأصلي زي ما هو: التفريغ بس لو السيرفر صاحي", () => {
     const chain = src.slice(src.indexOf("const probe = (async"), src.indexOf("})();", src.indexOf("const probe = (async")));
     expect(chain).toMatch(/if \(health\.ok\)/);
