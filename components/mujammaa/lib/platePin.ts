@@ -8,7 +8,7 @@
  *  وقاعدته الدائمة (٢٧ سبتمبر): «كل لوحة ليها موقعها الخاص بيها ويكون دقيق».
  *
  *  🔴 **ليه مش `GpsTrack.pinAt` القديمة؟** حدودها كانت واسعة جداً للمجمّع:
- *    · دقة لحد ١٠٠م مقبولة            ⇒ هنا **٢٥م** بس
+ *    · دقة لحد ١٠٠م مقبولة            ⇒ كان **٢٥م** هنا، ورجع ١٠٠م زي التطبيق (١٧ أكتوبر — تحت)
  *    · قراءة واحدة بتتمدّ ٥ دقايق       ⇒ هنا **ثانيتين** بس من لحظة النطق
  *    · استنباط عبر فجوة دقيقتين         ⇒ هنا بين قراءتين **≤٤ث** بس
  *  فكانت كل اللوحات اللي بعد آخر قراءة (دخل جراج/مبنى) بتاخد **نفس النقطة**.
@@ -23,9 +23,23 @@
 
 import type { GpsPin } from "./gps";
 import type { PlateEntry } from "./plateEntry";
+import { GPS_STAMP_MAX_ACCURACY_M } from "@/lib/gpsWarning";
 
-/** أسوأ دقة نقبلها لدبوس لوحة (متر) */
-export const PIN_MAX_ACCURACY_M = 25;
+/**
+ * أسوأ دقة نقبلها لدبوس لوحة (متر).
+ *
+ * 🔧 **١٠٠م زي باقي التطبيق** (١٧ أكتوبر ٢٠٢٦ — كان ٢٥ من المعمل). المالك: «كل لوحه
+ * يبقي قدامها موقعها»، وقراره ١٥ أكتوبر: «خليه ياخد الدقة لـ١٠٠ متر، أفضل من إنه
+ * مياخدش خالص». الدقة بتتسجّل مع كل لوحة («دقة الموقع (م)» في التصدير)، فالموقع
+ * التقريبي باين إنه تقريبي. أوسع من ١٠٠م لسه **مش موقع**.
+ */
+export const PIN_MAX_ACCURACY_M = GPS_STAMP_MAX_ACCURACY_M;
+/**
+ * الدقيق الأول: قراءات ≤٢٥م (الحد القديم) بتتجرّب **قبل** أي قراءة أوسع. الحد الواسع
+ * (١٠٠م) احتياطي بس للوحة اللي مالقتش دقيق حواليها — فعمره ما يغيّر دبوس كان هيطلع
+ * دقيق: قراءة ٩٠م بين قراءتين ٥م قريبين كانت هتشدّ الدبوس ليها (مراجعة ١٧ أكتوبر).
+ */
+export const PIN_PRECISE_ACCURACY_M = 25;
 /** أبعد مسافة زمنية بين لحظة النطق وأقرب قراءة نستخدمها (ملي ثانية) */
 export const PIN_MAX_SNAP_MS = 2000;
 /**
@@ -76,7 +90,7 @@ export type PinMiss =
   | "no-time"
   /** مافيش ولا قراءة صالحة في المسار */
   | "no-fix"
-  /** فيه قراءات قريبة بس كلها أوسع من ٢٥م */
+  /** فيه قراءات قريبة بس كلها أوسع من حد الدقة (١٠٠م) */
   | "coarse"
   /** القراءات الدقيقة أبعد من ثانيتين عن لحظة النطق */
   | "gap"
@@ -159,12 +173,17 @@ export function trackFromRaw(raw: RawFix[], startEpoch: number): TrackFix[] {
 export function resolvePlatePin(track: TrackFix[], tMs: number | undefined | null): PinResolution {
   if (!finite(tMs)) return { pin: null, reason: "no-time", fixIdx: [] };
   if (!track || track.length === 0) return { pin: null, reason: "no-fix", fixIdx: [] };
+  const precise = resolveWithin(track, tMs, PIN_PRECISE_ACCURACY_M);
+  return precise.pin ? precise : resolveWithin(track, tMs, PIN_MAX_ACCURACY_M);
+}
 
+/** نفس القواعد بحد دقة معيّن — `resolvePlatePin` بيجرّب الدقيق الأول */
+function resolveWithin(track: TrackFix[], tMs: number, maxAcc: number): PinResolution {
   let bi = -1;
   let ai = -1;
   for (let i = 0; i < track.length; i++) {
     const f = track[i];
-    if (!(f.acc <= PIN_MAX_ACCURACY_M)) continue;
+    if (!(f.acc <= maxAcc)) continue;
     if (f.tMs <= tMs) bi = i;
     else if (ai < 0) ai = i;
   }
@@ -208,7 +227,7 @@ export function resolvePlatePin(track: TrackFix[], tMs: number | undefined | nul
     };
   }
   const coarseNear = track.some(
-    (f) => !(f.acc <= PIN_MAX_ACCURACY_M) && Math.abs(f.tMs - tMs) <= PIN_MAX_SNAP_MS
+    (f) => !(f.acc <= maxAcc) && Math.abs(f.tMs - tMs) <= PIN_MAX_SNAP_MS
   );
   return { pin: null, reason: coarseNear ? "coarse" : "gap", fixIdx: [] };
 }
@@ -254,23 +273,44 @@ export function resolvePlatePins(
     .sort((p, q) => p.t - q.t || p.i - q.i)
     .map((x) => x.i);
 
-  let k = 0;
-  while (k < order.length) {
-    let end = k + 1;
-    while (end < order.length && samePoint(order[end - 1], order[end])) end++;
-    if (end - k > 1) {
-      // الأقرب زمنياً للقراءة يكسب؛ التعادل للأسبق في الوقت
-      let keep = order[k];
-      for (let j = k + 1; j < end; j++) {
-        if (out[order[j]].pin!.ageMs < out[keep].pin!.ageMs) keep = order[j];
+  const dedupe = () => {
+    let k = 0;
+    while (k < order.length) {
+      let end = k + 1;
+      while (end < order.length && samePoint(order[end - 1], order[end])) end++;
+      if (end - k > 1) {
+        // الأقرب زمنياً للقراءة يكسب؛ التعادل للأسبق في الوقت
+        let keep = order[k];
+        for (let j = k + 1; j < end; j++) {
+          if (out[order[j]].pin!.ageMs < out[keep].pin!.ageMs) keep = order[j];
+        }
+        for (let j = k; j < end; j++) {
+          const i = order[j];
+          if (i !== keep) out[i] = { pin: null, reason: "same-fix", fixIdx: [] };
+        }
       }
-      for (let j = k; j < end; j++) {
-        const i = order[j];
-        if (i !== keep) out[i] = { pin: null, reason: "same-fix", fixIdx: [] };
-      }
+      k = end;
     }
-    k = end;
+  };
+  dedupe();
+
+  /**
+   * 🔴 الدقيق الأول بيلقط قراءة دقيقة لحد ثانيتين بعيد — فلوحتين جنب قراءة دقيقة واحدة
+   * (وبعدها قراءات أوسع كل ثانية) بيقعوا عليها الاتنين، وواحدة بتطلع «same-fix» بلا موقع
+   * مع إن القراءات الأوسع حواليها بتدّيلها مكانها هي (مراجعة ١٧ أكتوبر — جولة ٢).
+   * ⇒ اللي خسرت بتتجرّب بالحد الواسع (١٠٠م)، وبعدها تمريرة تكرار **أخيرة** (مابتعيدش
+   *   تاني — فمفيش لفّ). لو مافيش غير القراءة الدقيقة نفسها ⇒ لسه بلا موقع (مابنخترعش).
+   */
+  let retried = false;
+  for (const i of order) {
+    if (out[i].reason !== "same-fix") continue;
+    const r = resolveWithin(track, timesMs[i] as number, PIN_MAX_ACCURACY_M);
+    if (r.pin) {
+      out[i] = r;
+      retried = true;
+    }
   }
+  if (retried) dedupe();
   return out;
 }
 

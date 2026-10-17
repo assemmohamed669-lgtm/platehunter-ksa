@@ -2842,7 +2842,7 @@ export default function RegistrationPage() {
 
       {superOk && mjOpened && (
         <div hidden={regMode !== "mujammaa"}>
-          <MujammaaSection agentName={recorderName.trim() || agentEmail || agentId || ""} onBusyChange={setMjBusy} />
+          <MujammaaSection agentName={recorderName.trim() || agentEmail || agentId || ""} onBusyChange={setMjBusy} visible={regMode === "mujammaa"} />
         </div>
       )}
 
