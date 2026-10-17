@@ -28,6 +28,7 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  ClipboardCheck,
   Mic,
   Play,
   Share2,
@@ -76,7 +77,8 @@ import {
   type SaveError,
   type StoredClip,
 } from "../lib/clipStore";
-import { type TrackFix } from "../lib/platePin";
+import { countPinned, type TrackFix } from "../lib/platePin";
+import type { BankSheet } from "../lib/bankSheet";
 import { CorrectionLog } from "../lib/corrections";
 import { chunkScanTiming, mapChunkFields } from "../lib/chunksResult";
 import { spokenTimes } from "../lib/spokenTime";
@@ -430,6 +432,7 @@ export default function BatchPage({
   agentName,
   onBusyChange,
   visible = true,
+  onExportToRecords,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -446,6 +449,15 @@ export default function BatchPage({
    * «التسجيل القديم» وإذن الميك لسه بيتطلب) `GpsTrack.start()` بيفتح الموقع لوحده.
    */
   visible?: boolean;
+  /**
+   * 📋 «تصدير للسجلات» ⇒ تاب «داتا التسجيلات» في صفحة السجلات (١٨ أكتوبر — المالك: «هيتحفظ
+   * هناك لما المندوب يصدر اللوحات اللي اتفرغت واول ما تتصدر وتتحفظ تلقائي تتمسح»). صفحة التسجيل
+   * بتدّيها (الحفظ برّه المجمّع — `lib/mujammaaRecords.ts`). بترجّع اللوحات اللي اتحفظت فعلاً.
+   */
+  onExportToRecords?: (
+    entries: PlateEntry[],
+    ctx: { sheet: BankSheet | null; clipKey: string }
+  ) => Promise<{ savedEntryIds: string[]; failed: number }>;
 }) {
   const bank = useAppCheckSheet(errorLog);
   const gps = useGps(visible);
@@ -607,6 +619,22 @@ export default function BatchPage({
    */
   const clipStoreP = useRef<Promise<ClipStore> | null>(null);
   const [storedClips, setStoredClips] = useState<StoredClip[]>([]);
+  const storedClipsRef = useRef<StoredClip[]>([]);
+  storedClipsRef.current = storedClips;
+  /**
+   * 📋 الجدول بيعرض لوحات أنهي مقطع — عشان التعديل/المسح يرجع للمقطع نفسه (التسجيل الجديد
+   * بيفضّي الجدول، فاللوحات اللي لسه ماتصدّرتش لازم تفضل في مقطعها بتعديلاتها)، وعشان التصدير
+   * يعلّم المقطع «اتصدّر».
+   */
+  const tableClipIdRef = useRef<string | null>(null);
+  /** المندوب عدّل/مسح في الجدول ⇒ يتحفظ في المقطع بعد ما الحالة تتحدّث */
+  const tableDirtyRef = useRef(false);
+  const [exporting, setExporting] = useState(false);
+  /** وهو بيصدّر الجدول مقفول — تعديل في النص كان هيضيع مع تفضية اللي اتحفظ */
+  const exportingRef = useRef(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const onExportToRecordsRef = useRef(onExportToRecords);
+  onExportToRecordsRef.current = onExportToRecords;
   const [clipsPersistent, setClipsPersistent] = useState(true);
   const [storageWarn, setStorageWarn] = useState<string | null>(null);
   /** الحفظ وقت التسجيل فشل (المساحة/الاتصال) — بيتشال أول ما حفظ ينجح */
@@ -1093,6 +1121,8 @@ export default function BatchPage({
     unlockAudio();
     setTranscript("");
     setEntries([]);
+    tableClipIdRef.current = null;
+    setExportMsg(null);
     setEditing(null);
     audioBlobRef.current = null;
     chunksRef.current = [];
@@ -1697,6 +1727,8 @@ export default function BatchPage({
 
   const clearAll = useCallback(() => {
     setEntries([]);
+    tableClipIdRef.current = null;
+    setExportMsg(null);
     clearSession("batch");
     /**
      * 🔴 **«مسح الكل» ماكانش بيمسح كل حاجة.**
@@ -1885,6 +1917,8 @@ export default function BatchPage({
     entriesBaseRef.current = [];
     entriesRef.current = c.result.entries;
     setEntries(c.result.entries);
+    tableClipIdRef.current = id;
+    setExportMsg(null);
     setEditing(null);
     setConfirmClear(false);
   };
@@ -2032,6 +2066,10 @@ export default function BatchPage({
           entriesRef.current = outcome.entries;
           setEntries(outcome.entries);
         }
+        if (ok && next.clipId) {
+          tableClipIdRef.current = next.clipId;
+          setExportMsg(null);
+        }
         // 💾 النتيجة بتتحفظ مع المقطع — بعد التحديث الصف بيقول «N لوحة» ويعرضها
         if (next.clipId) {
           await markClip(next.clipId, outcome.patch);
@@ -2086,6 +2124,8 @@ export default function BatchPage({
     id: string,
     patch: { vehicleType?: string; neighborhood?: string; note?: string }
   ) => {
+    if (exportingRef.current) return;
+    tableDirtyRef.current = true;
     setEntries((prev) => {
       const next = prev.map((e) => (e.id === id ? { ...e, ...patch } : e));
       entriesRef.current = next;
@@ -2094,6 +2134,8 @@ export default function BatchPage({
   };
 
   const editEntry = (id: string, next: { letters?: string[]; digits?: string }) => {
+    if (exportingRef.current) return;
+    tableDirtyRef.current = true;
     setEntries((prev) =>
       prev.map((entry) => {
         if (entry.id !== id) return entry;
@@ -2118,7 +2160,92 @@ export default function BatchPage({
   };
 
   const removeEntry = (id: string) => {
+    if (exportingRef.current) return;
+    tableDirtyRef.current = true;
     setEntries((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  /** نتيجة المقطع اللي الجدول بيعرضه = الجدول (بعد تعديل/مسح/تصدير) */
+  const saveTableToClip = useCallback(
+    async (next: PlateEntry[], extra?: { exported?: number }) => {
+      const id = tableClipIdRef.current;
+      if (!id) return;
+      const c = storedClipsRef.current.find((x) => x.id === id);
+      if (!c?.result) return;
+      await markClip(id, {
+        result: {
+          ...c.result,
+          entries: next,
+          plates: next.length,
+          pinned: countPinned(next),
+          ...(extra?.exported
+            ? { exportedAt: Date.now(), exportedCount: (c.result.exportedCount ?? 0) + extra.exported }
+            : {}),
+        },
+      });
+    },
+    [markClip]
+  );
+
+  // ✏️ التعديل والمسح بيرجعوا للمقطع نفسه — تسجيل جديد بيفضّي الجدول، والمقطع لازم يفضل فيه
+  // اللوحات اللي لسه ماتصدّرتش **بتعديلاتها** («اعرض لوحاته» بيرجّعها زي ما سابها).
+  useEffect(() => {
+    if (!tableDirtyRef.current) return;
+    tableDirtyRef.current = false;
+    entriesRef.current = entries;
+    void saveTableToClip(entries);
+  }, [entries, saveTableToClip]);
+
+  /**
+   * 📋 «تصدير للسجلات» ⇒ «داتا التسجيلات». اللي اتحفظ فعلاً بس بيتشال من الجدول (الفاشل بيفضل
+   * قدامه يجرّب تاني)، والمقطع بيتعلّم «اتصدّر». اللوحة اللي مالهاش موقع بيتسأل عليها الأول —
+   * مابنخترعش موقع، ومابنسيبهاش محبوسة (المجمّع مش هيجيبلها موقع بعدين).
+   */
+  const exportToRecords = async () => {
+    const run = onExportToRecordsRef.current;
+    const list = entries;
+    if (!run || exportingRef.current || list.length === 0) return;
+    const noPin = list.filter((e) => !e.pin).length;
+    if (
+      noPin > 0 &&
+      !window.confirm(
+        noPin === list.length
+          ? `اللوحات (${noPin}) من غير موقع — هتتصدّر من غير موقع. تكمّل؟`
+          : `فيه ${noPin} لوحة من غير موقع — هتتصدّر من غير موقع. تكمّل؟`
+      )
+    )
+      return;
+    exportingRef.current = true;
+    setExporting(true);
+    setExportMsg(null);
+    try {
+      const clipKey = tableClipIdRef.current ?? "restored";
+      const res = await run(list, { sheet: bank.sheet, clipKey });
+      const saved = new Set(res.savedEntryIds);
+      const left = list.filter((e) => !saved.has(e.id));
+      entriesRef.current = left;
+      setEntries(left);
+      setEditing(null);
+      setConfirmClear(false);
+      await saveTableToClip(left, { exported: saved.size });
+      if (left.length === 0) {
+        // saveSession بترفض القايمة الفاضية عن قصد ⇒ لازم مسح صريح وإلا ترجع مع أول فتح
+        clearSession("batch");
+        tableClipIdRef.current = null;
+      }
+      setExportMsg(
+        res.failed > 0
+          ? `⚠️ اتصدّر ${saved.size} لوحة — ${res.failed} ماتحفظوش وفاضلين في الجدول، دوس «تصدير للسجلات» تاني.`
+          : `✅ اتصدّر ${saved.size} لوحة لـ«داتا التسجيلات» في صفحة السجلات.`
+      );
+    } catch (err) {
+      const m = (err as Error)?.message ?? String(err);
+      errorLog.add("التصدير", `ماتصدّرش للسجلات: ${m}`);
+      setExportMsg(`⚠️ ماتصدّرش للسجلات: ${m} — اللوحات زي ما هي، جرّب تاني.`);
+    } finally {
+      exportingRef.current = false;
+      setExporting(false);
+    }
   };
 
   const copyAll = async () => {
@@ -2387,6 +2514,8 @@ export default function BatchPage({
         onPlay={(id) => void playClip(id)}
         onShow={showClipPlates}
         onDelete={(id) => void deleteClip(id)}
+        showExportState={!!onExportToRecords}
+        advanced={advanced}
       />
 
       {/* شريط الاسترجاع — يطمّن المندوب إن اللوحات ما ضاعتش */}
@@ -2481,6 +2610,17 @@ export default function BatchPage({
             </span>
 
             <span className="flex flex-wrap gap-1">
+              {onExportToRecords && (
+                <button className="btn-primary btn-sm" onClick={() => void exportToRecords()} disabled={exporting}>
+                  {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardCheck className="h-3.5 w-3.5" />}
+                  {exporting ? "بيصدّر…" : "تصدير للسجلات"}
+                </button>
+              )}
+              {/*
+                📋 المندوب بيصدّر للسجلات بس — وصفحة السجلات فيها الفتح والمشاركة (وأقفال المجموعة
+                على التنزيل بتشتغل هناك). Excel/CSV/النسخ هنا للسوبر أدمن.
+              */}
+              {advanced && (<>
               <button className="btn-ghost btn-sm" onClick={copyAll}>
                 <Copy className="h-3.5 w-3.5" />
                 انسخ الكل
@@ -2507,6 +2647,7 @@ export default function BatchPage({
                 <Download className="h-3.5 w-3.5" />
                 CSV
               </button>
+              </>)}
 
               {/*
                 مسح الكل بخطوتين. الدوسة الأولى بتسأل، والتانية بتمسح.
@@ -2537,6 +2678,12 @@ export default function BatchPage({
               )}
             </span>
           </div>
+
+          {exportMsg && (
+            <div className="mb-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+              {exportMsg}
+            </div>
+          )}
 
           {/* ملخّص سريع */}
           <div className="mb-3 flex flex-wrap gap-2 text-xs">

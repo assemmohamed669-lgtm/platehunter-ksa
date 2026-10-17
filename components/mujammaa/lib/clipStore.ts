@@ -58,6 +58,10 @@ export interface ClipResult {
   tookSec?: number;
   reportId?: string;
   engine?: string;
+  /** 📋 آخر مرة لوحاته اتصدّرت للسجلات («داتا التسجيلات») */
+  exportedAt?: number;
+  /** كام لوحة منه اتصدّرت لحد دلوقتي */
+  exportedCount?: number;
 }
 
 export interface StoredClip {

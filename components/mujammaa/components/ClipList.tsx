@@ -42,6 +42,10 @@ export interface ClipListProps {
   onPlay: (id: string) => void;
   onShow: (id: string) => void;
   onDelete: (id: string) => void;
+  /** 📋 «اتصدّر للسجلات» / «لسه ماتصدّرتش» تحت كل مقطع خلص (لما التصدير للسجلات شغّال) */
+  showExportState?: boolean;
+  /** false = المندوب: من غير أرقام التشخيص (قراءات الموقع · التقارير) — للسوبر أدمن بس */
+  advanced?: boolean;
 }
 
 const mmss = (s: number) => {
@@ -66,6 +70,8 @@ export default function ClipList({
   onPlay,
   onShow,
   onDelete,
+  showExportState = false,
+  advanced = true,
 }: ClipListProps) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -132,7 +138,7 @@ export default function ClipList({
                       : c.memOnly
                         ? " · في الذاكرة"
                         : ` · ${formatBytes(c.bytes)}`}
-                    {!isRec && c.source === "record" && (
+                    {advanced && !isRec && c.source === "record" && (
                       <span title={`قراءات موقع دقتها ${PIN_MAX_ACCURACY_M}م أو أحسن`}>
                         {" · 📍 "}
                         {(c.rawFixes || []).filter((f) => f.acc <= PIN_MAX_ACCURACY_M).length} قراءة دقيقة
@@ -246,10 +252,26 @@ export default function ClipList({
 
               {isPlaying && playing && <audio src={playing.url} controls autoPlay className="mt-2 w-full" />}
 
+              {/*
+                📋 اللوحات اللي لسه ماتصدّرتش بتفضل في مقطعها (بتعديلاتها) — التسجيل الجديد بيفضّي
+                الجدول، فلازم المندوب يشوف إن فيه لوحات مستنياه يصدّرها.
+              */}
+              {showExportState && !isRec && c.status === "done" && c.result && (
+                c.result.entries.length > 0 ? (
+                  <p className="mt-1.5 rounded-lg bg-amber-500/15 p-2 text-[11px] font-semibold leading-relaxed text-amber-100">
+                    ⚠️ {c.result.entries.length} لوحة لسه ماتصدّرتش للسجلات — «اعرض لوحاته في الجدول» وبعدين «تصدير للسجلات».
+                  </p>
+                ) : c.result.exportedAt ? (
+                  <p className="mt-1 text-[11px] text-emerald-300">
+                    ✅ اتصدّر للسجلات{c.result.exportedCount ? ` (${c.result.exportedCount} لوحة)` : ""}
+                  </p>
+                ) : null
+              )}
+
               {c.result?.tookSec ? (
                 <p className="mt-1 text-[10px] text-slate-500">
                   التفريغ خد {c.result.tookSec.toFixed(1)}ث
-                  {c.result.reportId ? " · 📊 تقريره محفوظ تحت في «التقارير»" : ""}
+                  {advanced && c.result.reportId ? " · 📊 تقريره محفوظ تحت في «التقارير»" : ""}
                 </p>
               ) : null}
 
