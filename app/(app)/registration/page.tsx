@@ -66,6 +66,18 @@ import { syncPending, restoreRecordings, registerOnlineSync } from "@/lib/sync";
 import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
+import dynamic from "next/dynamic";
+
+/**
+ * 🧮 المجمّع (صفحة المعمل «كامل ⚡» بالحرف — `components/mujammaa`) — للسوبر أدمن بس.
+ * المالك (١٦ أكتوبر ٢٠٢٦): «تنقل شغل المجمع زي ماهو في صفحه التسجيل … ظاهرة للسوبر
+ * ادمن فقط». بيتحمّل لما يتفتح بس (مش مع كل فتحة للصفحة) ومن غير SSR (بيستخدم
+ * الميك وIndexedDB والموقع من أول سطر).
+ */
+const MujammaaSection = dynamic(
+  () => import("@/components/mujammaa/MujammaaSection"),
+  { ssr: false, loading: () => <p className="py-6 text-center text-xs text-muted">بيحمّل المجمّع…</p> },
+);
 
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
@@ -73,6 +85,8 @@ const LS_LETTER_CONFUSIONS = "ph:registration:letterConfusions";
 const LS_WORD_BLENDS = "ph:registration:wordBlends";
 const LS_ANALYSIS_MODE = "ph:registration:analysisMode";
 const LS_PACER = "ph:registration:pacer";
+/** 🧮 «المجمّع» / «التسجيل القديم» — آخر اختيار للسوبر أدمن */
+const LS_REG_MODE = "ph:registration:mode";
 
 // Vercel rejects any serverless function request over 4.5MB — at this
 // recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio, so 180s
@@ -470,15 +484,47 @@ export default function RegistrationPage() {
 
   // حارس: صفحة التسجيل للسوبر أدمن فقط — أي مستخدم تاني يترجّع للتشييك.
   const router = useRouter();
+  /**
+   * 🧮 المجمّع ليه تأكيده هو: الحارس ده بيعدّي الصفحة لو الفحص فشل (`return`/`catch`)،
+   * فالمجمّع مابيظهرش غير لما `is_super === true` يرجع فعلاً — غير كده التسجيل القديم.
+   */
+  const [superOk, setSuperOk] = useState(false);
+  /**
+   * الفحص خلص (أو عدّى ٤ث)؟ — قبله مافيش محتوى خالص: لو التسجيل القديم ظهر الأول
+   * والمندوب بدأ يسجّل، أول ما `superOk` يرجع المجمّع كان هيغطّيه والميك شغّال ورا.
+   */
+  const [superChecked, setSuperChecked] = useState(false);
+  /** المجمّع اتفتح مرة ⇒ يفضل متحمّل (مخفي في «القديم») — التسجيل والتفريغ مايقفوش لما تبدّل */
+  const [mjOpened, setMjOpened] = useState(false);
+  /** المجمّع بيسجّل أو بيقفل المقطع ⇒ المفتاح مقفول (الميك واحد) */
+  const [mjBusy, setMjBusy] = useState(false);
+  const [regMode, setRegModeState] = useState<"classic" | "mujammaa">("mujammaa");
   useEffect(() => {
+    try {
+      if (localStorage.getItem(LS_REG_MODE) === "classic") setRegModeState("classic");
+    } catch { /* تخزين مقفول — الافتراضي */ }
+  }, []);
+  function setRegMode(m: "classic" | "mujammaa") {
+    setRegModeState(m);
+    try { localStorage.setItem(LS_REG_MODE, m); } catch { /* ignore */ }
+  }
+  useEffect(() => {
+    if (superOk && regMode === "mujammaa") setMjOpened(true);
+  }, [superOk, regMode]);
+  useEffect(() => {
+    // النت بطيء/معلّق ⇒ التسجيل القديم يظهر بعد ٤ث بالكتير (زي ما كان قبل كده: الحارس بيعدّي)
+    const t = setTimeout(() => setSuperChecked(true), 4000);
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
         const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
         if (!prof?.is_super) router.replace("/instant-check");
+        if (prof?.is_super === true) setSuperOk(true);
       } catch { /* غير متاح — نسيبها */ }
+      finally { setSuperChecked(true); }
     })();
+    return () => clearTimeout(t);
   }, [router]);
 
   // Recording state
@@ -2774,6 +2820,33 @@ export default function RegistrationPage() {
         </div>
       </div>
 
+      {/* 🧮 «المجمّع» / «التسجيل القديم» — للسوبر أدمن بس، ومقفول وفيه تسجيل شغّال في القديم
+          (الميك والتفريغ بتوعه مايفضلوش شغّالين ورا الشاشة). */}
+      {superOk && (
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface p-1" data-testid="reg-mode-switch" dir="rtl">
+          {([["mujammaa", "🧮 المجمّع"], ["classic", "التسجيل القديم"]] as const).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setRegMode(m)}
+              disabled={isRecording || isTranscribing || reAnalyzing || mjBusy}
+              className={`rounded-lg px-3 py-2 text-sm font-bold transition disabled:opacity-50 ${
+                regMode === m ? "bg-primary text-white" : "text-muted hover:bg-surface-2"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {superOk && mjOpened && (
+        <div hidden={regMode !== "mujammaa"}>
+          <MujammaaSection agentName={recorderName.trim() || agentEmail || agentId || ""} onBusyChange={setMjBusy} />
+        </div>
+      )}
+
+      {superChecked && !(superOk && regMode === "mujammaa") && (<>
       {/* ملف التشييك المشترك (local:check) — يُقرأ عند التحميل للمقارنة فقط.
           الرفع/التغيير/الحذف من صفحة «تشييك» — مفيش مربع رفع هنا. */}
 
@@ -3281,6 +3354,7 @@ export default function RegistrationPage() {
           </p>
         </div>
       )}
+      </>)}
 
       {/* PIN gate for the Groq key — reveal/clear both need it; a key saved
           with no PIN yet (mid-setup app close) forces setup again on load. */}

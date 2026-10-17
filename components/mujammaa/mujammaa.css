@@ -1,0 +1,52 @@
+/*
+ * 🧮 المجمّع في قناص — الغلاف والمتغيّرات (كلاسات card/btn/chip/input/table في app/globals.css
+ *    جوّه @layer components — عشان الأدوات الصغيرة تغلبها زي المعمل). كلاسات صفحة المعمل (`plate-voice-lab/client/src/index.css`) بالقيم نفسها،
+ * بس **محبوسة جوّه `.mj-root`** عشان مايلمسوش أي صفحة تانية في التطبيق (التطبيق مافيهوش
+ * card/btn/chip/input عامة، بس الحبس بيضمن إن ولا كلاس يهرب). الثيم غامق زي المعمل
+ * بالظبط (ألوان المكوّنات معمولة على خلفية غامقة: slate/white-10…).
+ */
+.mj-root {
+  --qx-bg: #0b0f17;
+  --qx-surface: #131a26;
+  --qx-box: #18202e;
+  --qx-box-border: #2a3547;
+  --qx-ink: #eaf0f7;
+  --qx-muted: #93a1b3;
+  --qx-accent: #3b82f6;
+  --qx-accent2: #06b6d4;
+  --qx-line: rgba(255, 255, 255, 0.09);
+  color-scheme: dark;
+  background: var(--qx-bg);
+  color: var(--qx-ink);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  font-family: Tahoma, "Segoe UI", system-ui, -apple-system, Cairo, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.mj-root .qx-accent-tx { color: var(--qx-accent); }
+.mj-root input.qx-field,
+.mj-root select.qx-field,
+.mj-root textarea.qx-field {
+  background: var(--qx-box);
+  border: 1px solid var(--qx-box-border);
+  color: var(--qx-ink);
+}
+.mj-root input.qx-field::placeholder,
+.mj-root textarea.qx-field::placeholder { color: var(--qx-muted); }
+
+.mj-root .ltr-nums {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+@keyframes mj-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
+  100% { box-shadow: 0 0 0 22px rgba(239, 68, 68, 0); }
+}
+.mj-root .animate-pulse-ring { animation: mj-pulse-ring 1.4s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .mj-root .animate-pulse-ring { animation: none; }
+}
