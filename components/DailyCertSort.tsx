@@ -38,6 +38,7 @@ import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, fin
 import { normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { buildColoredSortExcel, buildExcelBlob, shareExcelBlob } from "@/lib/excel";
 import { playSortBeep } from "@/lib/sortBeep";
+import { createSortRunner, withTimeout, TimeoutError } from "@/lib/sortRunner";
 import { shareFileName } from "@/lib/shareNames";
 import { buildDisplayRows } from "@/lib/exportColumns";
 
@@ -75,13 +76,25 @@ const n = (x: number) => x.toLocaleString("en-US");
 
 interface DailyResponse { day: string; today?: string; total?: number; parsed?: number; setup?: boolean; entries?: DailyCertEntry[] }
 
+/** ⏱️ حد أقصى لطلب الشهايد — النت لو علّق المندوب يشوف «جرّب تاني» بدل زرار مقفول لحد ما يقفل البرنامج. */
+const CERT_FETCH_MS = 20_000;
+/** حد أقصى لفرز اليوم كله (الشهايد + الداتا) — بعده القفل بيتفك والمندوب يقدر يدوس تاني. */
+const CERT_SORT_MAX_MS = 120_000;
+
 async function fetchDailyCerts(countOnly: boolean, offset: number): Promise<DailyResponse | null> {
-  const { data: s } = await supabase.auth.getSession();
-  const res = await fetch(`/api/certificate/daily?offset=${offset}${countOnly ? "&count=1" : ""}`, {
-    headers: { Authorization: `Bearer ${s.session?.access_token ?? ""}` },
-  });
-  if (!res.ok) return null;
-  return (await res.json().catch(() => null)) as DailyResponse | null;
+  const { data: s } = await withTimeout(supabase.auth.getSession(), 8_000);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CERT_FETCH_MS);
+  try {
+    const res = await fetch(`/api/certificate/daily?offset=${offset}${countOnly ? "&count=1" : ""}`, {
+      headers: { Authorization: `Bearer ${s.session?.access_token ?? ""}` },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return null;
+    return (await res.json().catch(() => null)) as DailyResponse | null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** تاريخ تشييك المندوب بنفس شكل صفحة التشييك (يوم-شهر-سنة ساعة:دقيقة). */
@@ -120,7 +133,7 @@ const sourceDeps: CertSourceDeps = {
   getDataMeta: (slot) => getDataMeta(slot),
   getSampleRows: (count, slot) => getSampleRows(count, slot),
   teamState: async () => {
-    const s = await fetchTeamDataState();
+    const s = await withTimeout(fetchTeamDataState(), 10_000);
     return { role: s.role, file: s.file ? { path: s.file.path, fileName: s.file.fileName, updatedAt: s.file.updatedAt } : null };
   },
   // نفس اللي تبويب «فرز» بتاع مشتركين الصوت بيعمله لما يلاقي نسخة أحدث.
@@ -150,6 +163,8 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
   const [today, setToday] = useState<string>(() => riyadhDayStart(new Date()).day);
   const [daily, setDaily] = useState<{ day: string; total: number; parsed: number; setup?: boolean } | null>(null);
   const [sorting, setSorting] = useState(false);
+  // 🔄 التحديث التلقائي شغّال في الخلفية (شهايد جديدة نزلت) — كان من غير أي علامة على الشاشة.
+  const [bgUpdating, setBgUpdating] = useState(false);
   // 📄 زرار «مشاركة الشهايد إكسيل» (المالك ١٤ أكتوبر ٢٠٢٦).
   const [sheetBusy, setSheetBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +176,8 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
   const cols = certDisplayCols(prefs);
   // للعدّاد اللي شغّال كل دقيقة (مايقراش حالة قديمة)
   const resultsRef = useRef(results);
-  const busyRef = useRef(false);
+  // فرز واحد في نفس الوقت — ودوسة المندوب وهو شغّال بتستناه بدل ما ترجع في صمت (lib/sortRunner.ts).
+  const runnerRef = useRef(createSortRunner<number>());
   const offsetRef = useRef(offset);
   offsetRef.current = offset;
 
@@ -179,15 +195,40 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
     setResults(next);
   }
 
-  /** فرز يوم: بالزرار (بصوت ورسايل) أو لوحده لما تنزل شهايد جديدة (من غير إزعاج). */
+  /**
+   * فرز يوم: بالزرار (بصوت ورسايل) أو لوحده لما تنزل شهايد جديدة (من غير إزعاج).
+   *
+   * 🔴 المناديب (١٧ أكتوبر ٢٠٢٦): «ييجي يفرز مش بيتفرز معاه لازم يخرج من البرنامج ويفتح تاني او يقعد شوي». بعد
+   * الإشعار التحديث التلقائي بيبدأ لوحده، والدوسة وهو شغّال كانت بترجع في صمت. دلوقتي الدوسة بتلف على طول وبتستنى
+   * الشغّال (ونتيجته هي النتيجة)، والتحديث الخلفي باين، وفيه حد أقصى للوقت.
+   */
   async function sortDay(off: number, silent: boolean) {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    if (!silent) { playSortBeep(); setSorting(true); setError(null); }
+    if (silent) {
+      if (runnerRef.current.busy()) return;
+      setBgUpdating(true);
+    } else {
+      playSortBeep(); setSorting(true); setError(null);
+    }
     try {
-      const d = await fetchDailyCerts(false, off);
-      if (!d) { if (!silent) setError("تعذّر جلب الشهايد — جرّب تاني."); return; }
-      if (d.setup) { if (!silent) setError("الشهايد لسه محتاجة خطوة على سوبابيز."); return; }
+      await runnerRef.current.run(off, !silent, async () => {
+        try {
+          return await withTimeout(doSortDay(off, silent), CERT_SORT_MAX_MS);
+        } catch (e) {
+          if (!silent && e instanceof TimeoutError) setError("الفرز خد وقت طويل (النت بطيء) — جرّب تاني.");
+          return false;
+        }
+      });
+    } finally {
+      if (silent) setBgUpdating(false); else setSorting(false);
+    }
+  }
+
+  /** الفرز نفسه — true لو النتيجة اتحفظت. */
+  async function doSortDay(off: number, silent: boolean): Promise<boolean> {
+    try {
+      const d = await fetchDailyCerts(false, off).catch(() => null);
+      if (!d) { if (!silent) setError("تعذّر جلب الشهايد — جرّب تاني."); return false; }
+      if (d.setup) { if (!silent) setError("الشهايد لسه محتاجة خطوة على سوبابيز."); return false; }
       if (d.today) setToday(d.today);
       if (off === offsetRef.current) setDaily({ day: d.day, total: d.total ?? 0, parsed: d.parsed ?? 0 });
       const certs = d.entries ?? [];
@@ -195,7 +236,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
         if (!silent) {
           setError((d.total ?? 0) > 0 ? "لسه بنقرا الشهايد دي — جرّب كمان دقيقة." : off === 0 ? "لسه مانزلش شهايد النهارده." : "مفيش شهايد متسجّلة لليوم ده.");
         }
-        return;
+        return false;
       }
       const [sources, fieldEntries, checkSources] = await Promise.all([
         collectCertDataSources(variant, sourceDeps),
@@ -229,11 +270,10 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
         parsedAt: d.parsed ?? 0, sortedAt: Date.now(), deleted: [...deleted], auto: silent ? auto : undefined,
         scanned: out.scanned,
       });
+      return true;
     } catch (err) {
       if (!silent) setError(`تعذّر الفرز: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      busyRef.current = false;
-      if (!silent) setSorting(false);
+      return false;
     }
   }
 
@@ -417,6 +457,11 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
           {sorting ? <RefreshCw size={16} className="animate-spin" /> : <FileText size={16} />}
           {sorting ? "جاري الفرز..." : `افرز على شهايد ${label}`}
         </button>
+        {bgUpdating && !sorting && (
+          <p className="flex items-center gap-1.5 text-[11px] font-bold text-green-700">
+            <Loader2 size={12} className="animate-spin" /> بيتحدّث بالشهايد الجديدة… النتيجة هتظهر لوحدها بعد ثواني
+          </p>
+        )}
 
         {/* 📄 شيت كل شهايد اليوم — مش اللي طابقت الداتا بس (المالك ١٤ أكتوبر ٢٠٢٦).
             بيجيب أحدث قايمة من السيرفر وقت الضغط، فأي شهادة نزلت من شوية بتدخل. */}
