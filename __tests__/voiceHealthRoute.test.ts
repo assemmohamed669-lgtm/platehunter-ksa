@@ -43,3 +43,22 @@ describe("🎙️ /api/cron/voice-health — التفريغ الحقيقي", () 
     expect(src).not.toMatch(/json\([^)]*trial_token/);
   });
 });
+
+/**
+ * 🗃️ «الصندوق الأسود» (١٧ أكتوبر): آخر سطر حالة إيطاليا بيتحفظ مع الفحص — **بالتوازي**
+ * (مابيطوّلش النبضة) وبمهلة قصيرة، وأي فشل فيه مايلمسش نتيجة الفحص نفسه.
+ */
+describe("🗃️ /api/cron/voice-health — حالة الجهاز مع كل نبضة", () => {
+  it("بتتجاب بالتوازي مع الفحص وبتتحط في detail.vitals", () => {
+    expect(src).toMatch(/import \{ fetchServerVitals \} from "@\/lib\/serverVitals";/);
+    expect(src).toMatch(/Promise\.all\(\[/);
+    expect(src).toMatch(/fetchServerVitals\(\{ token, timeoutMs: 3000 \}\)/);
+    expect(src).toMatch(/detail: \{ \.\.\.\(merged\.detail \?\? \{\}\), vitals \}/);
+  });
+
+  it("الفحص الأصلي زي ما هو: التفريغ بس لو السيرفر صاحي", () => {
+    const chain = src.slice(src.indexOf("const probe = (async"), src.indexOf("})();", src.indexOf("const probe = (async")));
+    expect(chain).toMatch(/if \(health\.ok\)/);
+    expect(chain.indexOf("probeVoiceTranscribe(")).toBeGreaterThan(chain.indexOf("if (health.ok"));
+  });
+});
