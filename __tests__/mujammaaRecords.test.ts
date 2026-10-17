@@ -60,6 +60,9 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
     const a = mujammaaRecordOf(entry(), { uid: "u1", clipKey: "c9" });
     const b = mujammaaRecordOf(entry(), { uid: "u1", clipKey: "c9" });
     expect(a.id).toBe(b.id);
+    // 🔴 مراجعة ١٨ أكتوبر: المعرّف من اللوحة نفسها بس — نفس اللوحات من جدول مسترجَع (من غير مقطع)
+    // أو من «اعرض لوحاته» = نفس السجل (كان بيتكرّر)
+    expect(mujammaaRecordOf(entry(), { uid: "u1", clipKey: "restored" }).id).toBe(a.id);
     expect(a.id.startsWith(MUJAMMAA_RECORD_PREFIX)).toBe(true);
     expect(a.id).toContain("u1");
     expect(a.method).toBe(MUJAMMAA_RECORD_METHOD);
@@ -77,7 +80,8 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
     expect(r.lng).toBe(46.6754321);
     expect(r.mapsLink).toContain("24.7123456");
     expect(r.checkedAt).toBe(new Date(T + 5000).toISOString());
-    expect(r.row["رقم اللوحة"]).toBe("ابح1234");
+    // اللوحة في `plate` بس — نسخة في الصف كانت بتفضل قديمة بعد التصحيح والفرز بيطابق عليها
+    expect(r.row["رقم اللوحة"]).toBeUndefined();
     expect(r.row["النوع"]).toBe("ونيت");                  // عمود النوع بتاع السجلات (TYPE_KEY)
     expect(r.row["ملاحظة المندوب"]).toBe("مصدومة");        // بيتقري كملاحظات (/ملاح/)
     expect(r.row["اسم الحي - الشارع"]).toBe("النرجس - شارع ١٢");
@@ -96,7 +100,23 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
     expect(r.row["مطلوبة"]).toBe("نعم");
     expect(r.row["البنك"]).toBe("الراجحي");
     expect(r.row["الطراز"]).toBe("كامري");
-    expect(r.row["رقم اللوحة"]).toBe("ابح1234");           // لوحتنا مش اللي في الشيت
+    expect(r.row["رقم اللوحة"]).toBeUndefined();           // لوحة الشيت مابتتنسخش
+  });
+
+  it("🔴 ملاحظات/نوع ملف التشييك مابيغطّوش كلام المندوب (السجلات بتقرا أول عمود ملاحظات)", () => {
+    const sheet = { plateColumn: "رقم اللوحة", headers: ["رقم اللوحة", "ملاحظات البنك", "النوع", "البنك"] } as unknown as BankSheet;
+    const e = entry({
+      match: { kind: "exact", similarity: 100, row: { "رقم اللوحة": "ابح1234", "ملاحظات البنك": "متأخر ٣ أقساط", النوع: "سيدان", البنك: "الأهلي" } },
+    } as Partial<PlateEntry>);
+    const r = mujammaaRecordOf(e, { uid: "u1", clipKey: "c9", sheet });
+    expect(Object.keys(r.row).find((k) => /ملاح/.test(k))).toBe("ملاحظة المندوب");
+    expect(r.row["ملاحظات البنك"]).toBeUndefined();
+    expect(r.row["النوع"]).toBe("ونيت");
+    expect(r.row["البنك"]).toBe("الأهلي");
+    // ومن غير كلام من المندوب ⇒ نوع/ملاحظة الشيت مايتحطّوش كأنه هو اللي قالهم
+    const r2 = mujammaaRecordOf({ ...e, vehicleType: undefined, note: undefined } as PlateEntry, { uid: "u1", clipKey: "c9", sheet });
+    expect(r2.row["النوع"]).toBeUndefined();
+    expect(Object.keys(r2.row).some((k) => /ملاح/.test(k))).toBe(false);
   });
 
   it("من غير موقع ⇒ من غير إحداثيات (مابنخترعش)، والحقول الفاضية مابتتكتبش", () => {
@@ -107,7 +127,7 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
     expect(r.lat).toBeUndefined();
     expect(r.lng).toBeUndefined();
     expect(r.mapsLink).toBeUndefined();
-    expect(Object.keys(r.row).sort()).toEqual(["الحالة", "رقم اللوحة"].sort());
+    expect(Object.keys(r.row)).toEqual(["الحالة"]);
   });
 
   it("لوحة متصحّحة بإيد المندوب = مؤكّدة؛ محتاجة مراجعة = «محتاجة نظرة»", () => {
@@ -117,6 +137,21 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
 });
 
 describe("saveMujammaaRecords — الحفظ والرفع", () => {
+  it("بيحفظ لوحة لوحة (مش كلهم مع بعض — الآيفون، #306)", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const slow = vi.fn(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+    });
+    const two = [entry({}, "ابح1234"), { ...entry({}, "حطس5678"), id: "p2" } as PlateEntry];
+    const res = await saveMujammaaRecords(two, { uid: "u1", clipKey: "c" }, { save: slow, upload: vi.fn() });
+    expect(maxInFlight).toBe(1);
+    expect(res.savedEntryIds).toHaveLength(2);
+  });
+
   it("بيحفظ كل لوحة، والفاشلة بتفضل (allSettled — المندوب مايخسرش شغله)، وبيرفع للسيرفر مرة واحدة", async () => {
     const saved: string[] = [];
     const save = vi.fn(async (e: { id: string; plate: string }) => {

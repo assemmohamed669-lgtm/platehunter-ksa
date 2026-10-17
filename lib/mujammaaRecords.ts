@@ -32,7 +32,7 @@ export function isMujammaaRecord(e: { id?: string | null } | null | undefined): 
 export interface MujammaaRecordCtx {
   /** صاحب السجل (`auth.uid`) */
   uid: string;
-  /** المقطع اللي اللوحات جاية منه — بيخلّي المعرّف ثابت (التصدير مرتين = نفس السجل) */
+  /** المقطع اللي اللوحات جاية منه (للتتبّع — المعرّف من اللوحة نفسها) */
   clipKey: string;
   /** ملف التشييك وقت المطابقة — أعمدته بتتنسخ جنب اللوحة المطلوبة */
   sheet?: BankSheet | null;
@@ -46,15 +46,9 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
     const s = String(v ?? "").trim();
     if (s) row[k] = s;
   };
-  // أعمدة ملف التشييك للوحة المطلوبة — زي سجلات التشييك (الجدول بيعرضها كأعمدة)
-  const sheetRow = entry.match?.kind === "exact" ? entry.match.row : undefined;
-  if (ctx.sheet && sheetRow) {
-    for (const h of ctx.sheet.headers) {
-      if (h === ctx.sheet.plateColumn) continue;
-      put(h, sheetRow[h]);
-    }
-  }
-  row["رقم اللوحة"] = plate;
+  // ⚠️ اللوحة في `plate` بس — نسخة منها في الصف كانت بتفضل قديمة بعد ما المندوب يصحّحها في
+  //    السجلات، والفرز بيقرا الصف بعد اللوحة فيطابق على الغلط (مراجعة ١٨ أكتوبر).
+  // حقول المندوب **الأول**: السجلات بتقرا أول عمود «ملاح…» كملاحظة المندوب.
   put("النوع", entry.vehicleType);
   put("ملاحظة المندوب", entry.note);
   put("اسم الحي - الشارع", entry.neighborhood);
@@ -63,10 +57,21 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
   const pin = entry.pin;
   if (pin) put("دقة الموقع (م)", Math.round(pin.accuracy));
   put("اسم المسجّل", ctx.recorder);
+  // أعمدة ملف التشييك للوحة المطلوبة — زي سجلات التشييك (الجدول بيعرضها كأعمدة). من غير ملاحظات
+  // الشيت ولا نوعه: كانوا بيتعرضوا كأنهم كلام المندوب (أول «ملاح…» / عمود «النوع»).
+  const sheetRow = entry.match?.kind === "exact" ? entry.match.row : undefined;
+  if (ctx.sheet && sheetRow) {
+    for (const h of ctx.sheet.headers) {
+      if (h === ctx.sheet.plateColumn || h in row || /ملاح/.test(h) || h === "النوع") continue;
+      put(h, sheetRow[h]);
+    }
+  }
 
   const at = Number.isFinite(entry.capturedAt) ? entry.capturedAt : Date.now();
   return {
-    id: `${MUJAMMAA_RECORD_PREFIX}${ctx.uid}-${ctx.clipKey}-${entry.id}`,
+    // معرّف اللوحة نفسها (فريد: بادئة التحميل + عدّاد) — مش المقطع: نفس اللوحات من جدول مسترجَع أو
+    // من «اعرض لوحاته» = نفس السجل، فالتصدير مرتين بيستبدل بدل ما يكرّر (مراجعة ١٨ أكتوبر).
+    id: `${MUJAMMAA_RECORD_PREFIX}${ctx.uid}-${entry.id}`,
     agentId: ctx.uid,
     plate,
     row,
@@ -82,7 +87,7 @@ export interface SaveDeps {
 }
 
 /**
- * يحفظ لوحات المجمّع في السجلات — كل لوحة لوحدها (`allSettled`): اللي اتحفظ بس بيتشال من
+ * يحفظ لوحات المجمّع في السجلات — كل لوحة لوحدها: اللي اتحفظ بس بيتشال من
  * المجمّع، والفاشل بيفضل قدام المندوب (قاعدة «المندوب يخسر شغله دي مفيهاش تسامح»).
  * وبعدها رفع للسيرفر على طول (المالك ١٣ أكتوبر: «ترفع للسيرفر علي طول اي حاجه تتصدر»).
  */
@@ -94,8 +99,16 @@ export async function saveMujammaaRecords(
   if (!ctx.uid) throw new Error("لازم تكون مسجّل دخول عشان اللوحات تتحفظ باسمك");
   if (entries.length === 0) return { savedEntryIds: [], failed: 0 };
   const d = deps ?? (await defaultDeps());
-  const results = await Promise.allSettled(entries.map((e) => d.save(mujammaaRecordOf(e, ctx))));
-  const savedEntryIds = entries.filter((_, i) => results[i].status === "fulfilled").map((e) => e.id);
+  // واحدة واحدة — معاملات IndexedDB كتير مع بعض بتقع كلها على الآيفون لما الاتصال يموت (#306)
+  const savedEntryIds: string[] = [];
+  for (const e of entries) {
+    try {
+      await d.save(mujammaaRecordOf(e, ctx));
+      savedEntryIds.push(e.id);
+    } catch {
+      /* بتفضل في الجدول — المندوب يجرّب تاني */
+    }
+  }
   if (savedEntryIds.length > 0) d.upload();
   return { savedEntryIds, failed: entries.length - savedEntryIds.length };
 }

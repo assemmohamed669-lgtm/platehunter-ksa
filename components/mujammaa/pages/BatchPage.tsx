@@ -409,6 +409,9 @@ const FINALIZE_MAX_MS = 6000;
 /** كل قد إيه نجرّب نحفظ الصوت المحجوز في الذاكرة لو المساحة فضيت (عيب ٧) */
 const RETRY_SAVE_MS = 20_000;
 
+/** 📋 الجدول المسترجَع من الجلسة بيعرض لوحات أنهي مقطع (بيتحفظ مع الجلسة) */
+const TABLE_CLIP_KEY = "mj:batch:tableClip";
+
 const PHASE_LABEL: Record<Phase, string> = {
   idle: "جاهز",
   recording: "بيسجّل",
@@ -626,12 +629,27 @@ export default function BatchPage({
    * يعلّم المقطع «اتصدّر».
    */
   const tableClipIdRef = useRef<string | null>(null);
+  /**
+   * 🔴 مراجعة ١٨ أكتوبر: الربط **بيتحفظ مع الجلسة** — المندوب بيخرج من الصفحة ويرجع (أو الآيفون بيقفلها)
+   * والجدول بيرجع من الجلسة؛ من غير الربط التعديل ماكانش بيوصل لمقطعه والمقطع يفضل «لسه ماتصدّرتش».
+   */
+  const setTableClip = (id: string | null) => {
+    tableClipIdRef.current = id;
+    try {
+      if (id) localStorage.setItem(TABLE_CLIP_KEY, id);
+      else localStorage.removeItem(TABLE_CLIP_KEY);
+    } catch {
+      /* تخزين مقفول — الربط للجلسة دي بس */
+    }
+  };
   /** المندوب عدّل/مسح في الجدول ⇒ يتحفظ في المقطع بعد ما الحالة تتحدّث */
   const tableDirtyRef = useRef(false);
   const [exporting, setExporting] = useState(false);
   /** وهو بيصدّر الجدول مقفول — تعديل في النص كان هيضيع مع تفضية اللي اتحفظ */
   const exportingRef = useRef(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const advancedRef = useRef(advanced);
+  advancedRef.current = advanced;
   const onExportToRecordsRef = useRef(onExportToRecords);
   onExportToRecordsRef.current = onExportToRecords;
   const [clipsPersistent, setClipsPersistent] = useState(true);
@@ -1120,7 +1138,7 @@ export default function BatchPage({
     unlockAudio();
     setTranscript("");
     setEntries([]);
-    tableClipIdRef.current = null;
+    setTableClip(null);
     setExportMsg(null);
     setEditing(null);
     audioBlobRef.current = null;
@@ -1658,7 +1676,8 @@ export default function BatchPage({
      * التقرير (`reportId` في `runQueue`). الجدول لسه لوحات المقطع ده بس.
      */
     let reportBuilt = false;
-    try {
+    // 📊 تقرير التجربة (تشخيص) للسوبر أدمن بس — عند المندوب كان بيتراكم في التخزين ومالوش مسح
+    if (advancedRef.current) try {
       const sheet = parseReadingSheet(readingSheetRef.current);
       const ctx = jobCtxRef.current;
       const part: ReportPart = {
@@ -1726,7 +1745,7 @@ export default function BatchPage({
 
   const clearAll = useCallback(() => {
     setEntries([]);
-    tableClipIdRef.current = null;
+    setTableClip(null);
     setExportMsg(null);
     clearSession("batch");
     /**
@@ -1784,6 +1803,15 @@ export default function BatchPage({
       return;
     }
     if (id === recSessionRef.current?.clipId) return; // لسه بيتسجّل/بيتقفل
+    // 📋 المقطع اتصدّر للسجلات قبل كده ⇒ التفريغ تاني بيطلّع لوحاته تاني (لو اتصدّرت هتتكرر)
+    const exportedBefore = storedClipsRef.current.find((c) => c.id === id)?.result?.exportedCount ?? 0;
+    if (
+      exportedBefore > 0 &&
+      !window.confirm(
+        `المقطع ده اتصدّر منه ${exportedBefore} لوحة للسجلات قبل كده — التفريغ تاني هيطلّع لوحاته تاني، ولو صدّرتها هتتكرر في السجلات. تكمّل؟`
+      )
+    )
+      return;
     queuingRef.current.add(id);
     try {
       const store = await getClipStore();
@@ -1916,7 +1944,7 @@ export default function BatchPage({
     entriesBaseRef.current = [];
     entriesRef.current = c.result.entries;
     setEntries(c.result.entries);
-    tableClipIdRef.current = id;
+    setTableClip(id);
     setExportMsg(null);
     setEditing(null);
     setConfirmClear(false);
@@ -2004,6 +2032,12 @@ export default function BatchPage({
         // آخر رسالة في السجل قبل المهمة — اللي بعدها هي سبب الفشل لو المحرّك ماقالش
         const logMark = errorLog.getSnapshot()[0]?.id;
         void markClip(next.clipId, { status: "working" });
+        // 🔴 التفريغ ده بيفضّي الجدول ويحط لوحاته هو ⇒ الجدول مش مربوط بالمقطع اللي قبله (التعديل أو التصدير
+        // كان بيكتب فوق لوحات مقطع تاني لما الرد يتقطع بعد اللوحات) — بيترَبط تاني بعد النجاح بس.
+        setTableClip(null);
+        setExportMsg(null);
+        // وقت نطق لوحة من غير توقيت بياخد آخر وقت معروف **في المقطع ده** (مش المقطع اللي قبله)
+        lastKnownSpokenAtRef.current = 0;
         let threw: string | null = null;
         try {
           await runTranscription();
@@ -2066,7 +2100,7 @@ export default function BatchPage({
           setEntries(outcome.entries);
         }
         if (ok && next.clipId) {
-          tableClipIdRef.current = next.clipId;
+          setTableClip(next.clipId);
           setExportMsg(null);
         }
         // 💾 النتيجة بتتحفظ مع المقطع — بعد التحديث الصف بيقول «N لوحة» ويعرضها
@@ -2123,7 +2157,7 @@ export default function BatchPage({
     id: string,
     patch: { vehicleType?: string; neighborhood?: string; note?: string }
   ) => {
-    if (exportingRef.current) return;
+    if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
     setEntries((prev) => {
       const next = prev.map((e) => (e.id === id ? { ...e, ...patch } : e));
@@ -2133,7 +2167,7 @@ export default function BatchPage({
   };
 
   const editEntry = (id: string, next: { letters?: string[]; digits?: string }) => {
-    if (exportingRef.current) return;
+    if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
     setEntries((prev) =>
       prev.map((entry) => {
@@ -2159,18 +2193,24 @@ export default function BatchPage({
   };
 
   const removeEntry = (id: string) => {
-    if (exportingRef.current) return;
+    if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
     setEntries((prev) => prev.filter((e) => e.id !== id));
   };
 
   /** نتيجة المقطع اللي الجدول بيعرضه = الجدول (بعد تعديل/مسح/تصدير) */
   const saveTableToClip = useCallback(
-    async (next: PlateEntry[], extra?: { exported?: number }) => {
+    async (next: PlateEntry[], extra?: { exported?: number }): Promise<boolean> => {
       const id = tableClipIdRef.current;
-      if (!id) return;
-      const c = storedClipsRef.current.find((x) => x.id === id);
-      if (!c?.result) return;
+      if (!id) return true;
+      // من التخزين نفسه — بيستنى نتيجة التفريغ اللي لسه بتتكتب (القايمة المعروضة ممكن تكون قبلها)
+      let c: StoredClip | undefined;
+      try {
+        c = await (await getClipStore()).get(id);
+      } catch {
+        c = storedClipsRef.current.find((x) => x.id === id);
+      }
+      if (!c?.result) return false;
       await markClip(id, {
         result: {
           ...c.result,
@@ -2182,9 +2222,28 @@ export default function BatchPage({
             : {}),
         },
       });
+      return true;
     },
-    [markClip]
+    [markClip, getClipStore]
   );
+
+  // 📋 الجدول رجع من الجلسة ⇒ يرجع مربوط بمقطعه — بس لو لوحاته فعلاً من المقطع ده (نفس المعرّفات)
+  const bindRestoredRef = useRef(false);
+  useEffect(() => {
+    if (bindRestoredRef.current || storedClips.length === 0) return;
+    bindRestoredRef.current = true;
+    if (tableClipIdRef.current) return;
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(TABLE_CLIP_KEY);
+    } catch {
+      saved = null;
+    }
+    const ids = new Set(entriesRef.current.concat(entries).map((e) => e.id));
+    const c = saved ? storedClips.find((x) => x.id === saved) : undefined;
+    if (c?.result && ids.size > 0 && c.result.entries.some((e) => ids.has(e.id))) tableClipIdRef.current = c.id;
+    else setTableClip(null);
+  }, [storedClips, entries]);
 
   // ✏️ التعديل والمسح بيرجعوا للمقطع نفسه — تسجيل جديد بيفضّي الجدول، والمقطع لازم يفضل فيه
   // اللوحات اللي لسه ماتصدّرتش **بتعديلاتها** («اعرض لوحاته» بيرجّعها زي ما سابها).
@@ -2192,8 +2251,11 @@ export default function BatchPage({
     if (!tableDirtyRef.current) return;
     tableDirtyRef.current = false;
     entriesRef.current = entries;
-    void saveTableToClip(entries);
-  }, [entries, saveTableToClip]);
+    void saveTableToClip(entries).then((ok) => {
+      // المقطع لسه مالوش نتيجة محفوظة ⇒ التعديل يفضل مستني ويتحفظ أول ما القايمة تتحدّث
+      if (!ok) tableDirtyRef.current = true;
+    });
+  }, [entries, storedClips, saveTableToClip]);
 
   /**
    * 📋 «تصدير للسجلات» ⇒ «داتا التسجيلات». اللي اتحفظ فعلاً بس بيتشال من الجدول (الفاشل بيفضل
@@ -2204,6 +2266,11 @@ export default function BatchPage({
     const run = onExportToRecordsRef.current;
     const list = entries;
     if (!run || exportingRef.current || list.length === 0) return;
+    // تفريغ شغّال ⇒ لوحاته لسه من غير موقع ومش مربوطة بمقطعها — استنى يخلص
+    if (canStopTranscription(clipsRef.current)) {
+      setExportMsg("⏳ استنى التفريغ اللي شغّال يخلص وبعدين صدّر — اللوحات لسه بتاخد مواقعها.");
+      return;
+    }
     const noPin = list.filter((e) => !e.pin).length;
     if (
       noPin > 0 &&
@@ -2230,7 +2297,7 @@ export default function BatchPage({
       if (left.length === 0) {
         // saveSession بترفض القايمة الفاضية عن قصد ⇒ لازم مسح صريح وإلا ترجع مع أول فتح
         clearSession("batch");
-        tableClipIdRef.current = null;
+        setTableClip(null);
       }
       setExportMsg(
         res.failed > 0
@@ -2335,6 +2402,13 @@ export default function BatchPage({
           </span>
         </div>
 
+        {/* المندوب: آخر غلط (الميك/السيرفر/التصدير) هنا جنب زرار التسجيل — مش في آخر الصفحة */}
+        {!advanced && (
+          <div className="mt-3">
+            <LastErrorNote errorLog={errorLog} />
+          </div>
+        )}
+
         {/*
           ⚠️ الموقع وهو بيسجّل: لو مش جاهز/ضعيف/واقف، يعرف **دلوقتي** إن اللوحات اللي
           بيقولها هتطلع من غير موقع — مش بعد التفريغ (`recordGpsWarning`). العدّاد
@@ -2432,6 +2506,10 @@ export default function BatchPage({
           «بيسجّل») أو بعد ما وقف التسجيل (الحالة «التسجيل جاهز») والتفريغ لسه
           ماشي، الزرار كان مستخبي ومافيش طريقة توقّفه.
         */}
+        {/* 🚦 حالة التفريغ الشغّال (الطابور/بيفرّغ) — باينة حتى وهو بيسجّل اللي بعده */}
+        {canStopTranscription(clips) && vadStage && phase !== "transcribing" && (
+          <p className="mt-3 rounded-xl bg-black/30 px-3 py-2 text-center text-xs text-slate-200">{vadStage}</p>
+        )}
         {canStopTranscription(clips) && (
           <button
             className="btn-ghost mt-3 w-full py-2 text-sm text-amber-300"
@@ -2455,7 +2533,7 @@ export default function BatchPage({
         )}
 
         {/* 🧮 قناص: حالة سيرفر المجمّع من الفحص (`probeBatchServer`) */}
-        {server.probe && !(server.probe.ready && server.probe.tokenOk) && (
+        {advanced && server.probe && !(server.probe.ready && server.probe.tokenOk) && (
           <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">
             ⚠️ {server.probe.message || "سيرفر المجمّع مش جاهز دلوقتي"} — المقاطع بتتحفظ عادي وتتفرّغ لما يرجع.
           </div>
@@ -2518,6 +2596,7 @@ export default function BatchPage({
         onDelete={(id) => void deleteClip(id)}
         showExportState={!!onExportToRecords}
         advanced={advanced}
+        transcribing={canStopTranscription(clips)}
       />
 
       {/* شريط الاسترجاع — يطمّن المندوب إن اللوحات ما ضاعتش */}
@@ -2616,7 +2695,7 @@ export default function BatchPage({
 
             <span className="flex flex-wrap gap-1">
               {onExportToRecords && (
-                <button className="btn-primary btn-sm" onClick={() => void exportToRecords()} disabled={exporting}>
+                <button className="btn-primary btn-sm" onClick={() => void exportToRecords()} disabled={exporting || canStopTranscription(clips)}>
                   {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardCheck className="h-3.5 w-3.5" />}
                   {exporting ? "بيصدّر…" : "تصدير للسجلات"}
                 </button>
@@ -2794,13 +2873,11 @@ export default function BatchPage({
         التقارير وسجل الأخطاء بالتفاصيل الخام = أدوات تجربة المالك (بيبعتهم في التجربة) — للسوبر
         أدمن بس. المندوب بيشوف آخر غلط بكلامه هو بس (الميك/السيرفر/التصدير) من غير نسخ ولا تفاصيل.
       */}
-      {advanced ? (
+      {advanced && (
         <>
           <BatchReports refreshKey={reportsKey} sheetKey={readingSheetKey} />
           <ErrorLogBox errorLog={errorLog} title="أخطاء صفحة التسجيل المجمع" />
         </>
-      ) : (
-        <LastErrorNote errorLog={errorLog} />
       )}
     </div>
   );

@@ -84,6 +84,11 @@ describe("ClipList — حالة التصدير تحت كل مقطع", () => {
     expect(screen.queryByText(/ماتصدّرتش/)).toBeNull();
   });
 
+  it("تفريغ شغّال ⇒ الملاحظة بتقول استنى يخلص", () => {
+    list([clip()], { showExportState: true, transcribing: true });
+    expect(screen.getByText(/بعد ما التفريغ اللي شغّال يخلص/)).toBeTruthy();
+  });
+
   it("المندوب (advanced=false) مابيشوفش أرقام التشخيص", () => {
     list([clip({ status: "ready", result: undefined } as Partial<StoredClip>)], { advanced: false });
     expect(screen.queryByText(/قراءة دقيقة/)).toBeNull();
@@ -107,17 +112,57 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
       const i = SRC.indexOf(name);
       expect(SRC.slice(i, i + 400)).toMatch(/tableDirtyRef\.current = true;/);
     }
-    expect(SRC).toMatch(/if \(!tableDirtyRef\.current\) return;\s*tableDirtyRef\.current = false;\s*entriesRef\.current = entries;\s*void saveTableToClip\(entries\);/);
+    expect(SRC).toMatch(/if \(!tableDirtyRef\.current\) return;\s*tableDirtyRef\.current = false;\s*entriesRef\.current = entries;\s*void saveTableToClip\(entries\)\.then\(/);
+    // 🔴 مراجعة ١٨ أكتوبر: المقطع لسه مالوش نتيجة ⇒ التعديل يفضل مستني (كان بيضيع) — والقراية من التخزين
+    expect(SRC).toMatch(/if \(!ok\) tableDirtyRef\.current = true;/);
+    expect(SRC).toMatch(/\}, \[entries, storedClips, saveTableToClip\]\);/);
+    expect(SRC).toMatch(/c = await \(await getClipStore\(\)\)\.get\(id\);/);
   });
 
   it("الجدول بيتربط بالمقطع اللي بيعرضه، وبيتفك مع تسجيل جديد و«مسح الكل»", () => {
-    expect(SRC).toMatch(/if \(ok && next\.clipId\) \{\s*tableClipIdRef\.current = next\.clipId;/);
+    expect(SRC).toMatch(/if \(ok && next\.clipId\) \{\s*setTableClip\(next\.clipId\);/);
     const show = SRC.slice(SRC.indexOf("const showClipPlates"), SRC.indexOf("const deleteClip"));
-    expect(show).toMatch(/tableClipIdRef\.current = id;/);
+    expect(show).toMatch(/setTableClip\(id\);/);
     const start = SRC.slice(SRC.indexOf("const startRecordingInner"), SRC.indexOf("const startRecordingInner") + 300);
-    expect(start).toMatch(/tableClipIdRef\.current = null;/);
+    expect(start).toMatch(/setTableClip\(null\);/);
     const clear = SRC.slice(SRC.indexOf("const clearAll = useCallback"), SRC.indexOf("const clearAll = useCallback") + 200);
-    expect(clear).toMatch(/tableClipIdRef\.current = null;/);
+    expect(clear).toMatch(/setTableClip\(null\);/);
+  });
+
+  it("🔴 كل تفريغ بيفك الربط في أوله (رد بيتقطع بعد اللوحات كان بيخلّي التعديل يكتب فوق مقطع تاني)", () => {
+    const i = SRC.indexOf("await runTranscription();");
+    const before = SRC.slice(i - 700, i);
+    expect(before).toMatch(/setTableClip\(null\);/);
+    expect(before).toMatch(/lastKnownSpokenAtRef\.current = 0;/);
+  });
+
+  it("🔴 الربط بيتحفظ مع الجلسة ويرجع بعد الرجوع للصفحة — بس لو لوحات الجدول من المقطع ده", () => {
+    expect(SRC).toMatch(/const TABLE_CLIP_KEY = "mj:batch:tableClip";/);
+    expect(SRC).toMatch(/localStorage\.setItem\(TABLE_CLIP_KEY, id\)/);
+    expect(SRC).toMatch(/c\.result\.entries\.some\(\(e\) => ids\.has\(e\.id\)\)/);
+  });
+
+  it("تفريغ شغّال ⇒ مافيش تصدير ولا تعديل (لوحاته لسه من غير موقع)", () => {
+    const at = SRC.indexOf("const exportToRecords = async");
+    const fn = SRC.slice(at, SRC.indexOf("const copyAll", at));
+    expect(fn).toMatch(/if \(canStopTranscription\(clipsRef\.current\)\) \{/);
+    expect(SRC).toMatch(/disabled=\{exporting \|\| canStopTranscription\(clips\)\}/);
+  });
+
+  it("مقطع اتصدّر قبل كده ⇒ «فرّغ تاني» بيسأل الأول (اللوحات هتتكرر)", () => {
+    const t = SRC.slice(SRC.indexOf("const transcribeClip = async"), SRC.indexOf("const transcribeClip = async") + 1200);
+    expect(t).toMatch(/result\?\.exportedCount/);
+    expect(t).toMatch(/window\.confirm\(/);
+  });
+
+  it("تقرير التجربة (تشخيص) بيتحفظ للسوبر أدمن بس — مش بيتراكم عند المندوب", () => {
+    expect(SRC).toMatch(/if \(advancedRef\.current\) try \{\s*const sheet = parseReadingSheet/);
+  });
+
+  it("المندوب: آخر غلط جنب زرار التسجيل، وحالة الطابور باينة وهو بيسجّل اللي بعده", () => {
+    expect(SRC).toMatch(/\{!advanced && \(\s*<div className="mt-3">\s*<LastErrorNote errorLog=\{errorLog\} \/>/);
+    expect(SRC).toMatch(/\{canStopTranscription\(clips\) && vadStage && phase !== "transcribing" && \(/);
+    expect(SRC).toMatch(/\{advanced && server\.probe && /);
   });
 
   it("المندوب: «تصدير للسجلات» بس — Excel/CSV/المشاركة/النسخ للسوبر أدمن", () => {
@@ -133,7 +178,7 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
   it("وهو بيصدّر الجدول مقفول للتعديل (التعديل في النص كان هيضيع)", () => {
     for (const name of ["const annotateEntry", "const editEntry", "const removeEntry"]) {
       const i = SRC.indexOf(name);
-      expect(SRC.slice(i, i + 300)).toMatch(/if \(exportingRef\.current\) return;/);
+      expect(SRC.slice(i, i + 300)).toMatch(/if \(exportingRef\.current \|\| canStopTranscription\(clipsRef\.current\)\) return;/);
     }
   });
 });

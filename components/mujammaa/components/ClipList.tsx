@@ -46,6 +46,8 @@ export interface ClipListProps {
   showExportState?: boolean;
   /** false = المندوب: من غير أرقام التشخيص (قراءات الموقع · التقارير) — للسوبر أدمن بس */
   advanced?: boolean;
+  /** فيه تفريغ شغّال (أو مستني في طابور السيرفر) ⇒ «اعرض لوحاته» بيستنى يخلص */
+  transcribing?: boolean;
 }
 
 const mmss = (s: number) => {
@@ -72,6 +74,7 @@ export default function ClipList({
   onDelete,
   showExportState = false,
   advanced = true,
+  transcribing = false,
 }: ClipListProps) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -259,7 +262,8 @@ export default function ClipList({
               {showExportState && !isRec && c.status === "done" && c.result && (
                 c.result.entries.length > 0 ? (
                   <p className="mt-1.5 rounded-lg bg-amber-500/15 p-2 text-[11px] font-semibold leading-relaxed text-amber-100">
-                    ⚠️ {c.result.entries.length} لوحة لسه ماتصدّرتش للسجلات — «اعرض لوحاته في الجدول» وبعدين «تصدير للسجلات».
+                    ⚠️ {c.result.entries.length} لوحة لسه ماتصدّرتش للسجلات — «اعرض لوحاته في الجدول» وبعدين «تصدير للسجلات»
+                    {transcribing ? " (بعد ما التفريغ اللي شغّال يخلص)." : "."}
                   </p>
                 ) : c.result.exportedAt ? (
                   <p className="mt-1 text-[11px] text-emerald-300">
