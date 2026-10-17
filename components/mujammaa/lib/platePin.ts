@@ -273,23 +273,44 @@ export function resolvePlatePins(
     .sort((p, q) => p.t - q.t || p.i - q.i)
     .map((x) => x.i);
 
-  let k = 0;
-  while (k < order.length) {
-    let end = k + 1;
-    while (end < order.length && samePoint(order[end - 1], order[end])) end++;
-    if (end - k > 1) {
-      // الأقرب زمنياً للقراءة يكسب؛ التعادل للأسبق في الوقت
-      let keep = order[k];
-      for (let j = k + 1; j < end; j++) {
-        if (out[order[j]].pin!.ageMs < out[keep].pin!.ageMs) keep = order[j];
+  const dedupe = () => {
+    let k = 0;
+    while (k < order.length) {
+      let end = k + 1;
+      while (end < order.length && samePoint(order[end - 1], order[end])) end++;
+      if (end - k > 1) {
+        // الأقرب زمنياً للقراءة يكسب؛ التعادل للأسبق في الوقت
+        let keep = order[k];
+        for (let j = k + 1; j < end; j++) {
+          if (out[order[j]].pin!.ageMs < out[keep].pin!.ageMs) keep = order[j];
+        }
+        for (let j = k; j < end; j++) {
+          const i = order[j];
+          if (i !== keep) out[i] = { pin: null, reason: "same-fix", fixIdx: [] };
+        }
       }
-      for (let j = k; j < end; j++) {
-        const i = order[j];
-        if (i !== keep) out[i] = { pin: null, reason: "same-fix", fixIdx: [] };
-      }
+      k = end;
     }
-    k = end;
+  };
+  dedupe();
+
+  /**
+   * 🔴 الدقيق الأول بيلقط قراءة دقيقة لحد ثانيتين بعيد — فلوحتين جنب قراءة دقيقة واحدة
+   * (وبعدها قراءات أوسع كل ثانية) بيقعوا عليها الاتنين، وواحدة بتطلع «same-fix» بلا موقع
+   * مع إن القراءات الأوسع حواليها بتدّيلها مكانها هي (مراجعة ١٧ أكتوبر — جولة ٢).
+   * ⇒ اللي خسرت بتتجرّب بالحد الواسع (١٠٠م)، وبعدها تمريرة تكرار **أخيرة** (مابتعيدش
+   *   تاني — فمفيش لفّ). لو مافيش غير القراءة الدقيقة نفسها ⇒ لسه بلا موقع (مابنخترعش).
+   */
+  let retried = false;
+  for (const i of order) {
+    if (out[i].reason !== "same-fix") continue;
+    const r = resolveWithin(track, timesMs[i] as number, PIN_MAX_ACCURACY_M);
+    if (r.pin) {
+      out[i] = r;
+      retried = true;
+    }
   }
+  if (retried) dedupe();
   return out;
 }
 

@@ -119,10 +119,14 @@ export function startGpsWatch(): () => void {
   notify();
   void gpsService.startTracking();
   appStop = () => gpsService.stopTracking();
+  // الاشتراك بيبعت القراءة المخزّنة عند الخدمة على طول (ممكن عمرها ٢٠ث+) — دي مش
+  // «وصلت دلوقتي»، فوقت وصولها مش معروف والتحذير بيقيس بوقتها هي (مراجعة ١٧ أكتوبر).
+  seeding = true;
   appUnsub = gpsService.subscribe((c) => {
     if (!c) return;
     acceptFix({ lat: c.lat, lng: c.lng, accuracy: c.accuracy ?? 0, at: c.timestamp || Date.now() });
   });
+  seeding = false;
   fastBackoff = FAST_REARM_MIN_MS;
   void armFast();
 
@@ -140,11 +144,13 @@ let appStop: (() => void) | null = null;
  * الأقمار، وممكن تفرق عن ساعة الموبايل ثواني (`platePin.ts` — CLOCK_TOLERANCE_MS).
  */
 let latestRecvAt: number | null = null;
+/** جوّه نداء الاشتراك الأول — القراءة اللي بتيجي وقتها مخزّنة مش جديدة */
+let seeding = false;
 
 function acceptFix(f: GpsFix) {
   if (latest && f.at <= latest.at) return;
   latest = f;
-  latestRecvAt = Date.now();
+  latestRecvAt = seeding ? null : Date.now();
   status = "active";
   lastError = null;
   notify();

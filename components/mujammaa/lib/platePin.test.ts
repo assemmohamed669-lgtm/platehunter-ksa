@@ -248,6 +248,28 @@ describe("resolvePlatePin — المكان لحظة النطق أو لا شيء"
     expect(r.pin!.lat).toBeCloseTo(24.001, 9);
   });
 
+  it("🔴 قراءة دقيقة واحدة وبعدها أوسع كل ثانية ⇒ لوحتين جنبها الاتنين بموقع (اللي خسرت القراءة الدقيقة بتاخد من الأوسع)", () => {
+    // مراجعة ١٧ أكتوبر (جولة ٢): الاتنين كانوا بيلقطوا القراءة الدقيقة ⇒ واحدة «same-fix» بلا موقع
+    const track = [fx(0, 24.0, 46.7, 10), ...[1000, 2000, 3000, 4000].map((t) => fx(t, 24 + t / 1e6, 46.7, 40))];
+    const out = resolvePlatePins(track, [500, 1500]);
+    expect(out.every((r) => r.pin !== null)).toBe(true);
+    expect(out[0].pin!.lat).not.toBe(out[1].pin!.lat);
+  });
+
+  it("🔴 دقة بتلف حوالين ٢٥م (٢٠/٣٠/٣٥/٣٠/٤٠/٣٠/٢٠) ⇒ ٣ من ٣ بموقع مختلف", () => {
+    const accs = [20, 30, 35, 30, 40, 30, 20];
+    const track = accs.map((a, i) => fx(i * 1000, 24 + i / 1e4, 46.7, a));
+    const out = resolvePlatePins(track, [800, 1600, 4500]);
+    expect(out.map((r) => r.pin !== null)).toEqual([true, true, true]);
+    expect(new Set(out.map((r) => r.pin!.lat.toFixed(7))).size).toBe(3);
+  });
+
+  it("⚖️ ولو مافيش غير القراءة الدقيقة (مافيش أوسع حواليها) ⇒ لسه واحدة بس تاخدها — مابنخترعش", () => {
+    const out = resolvePlatePins([fx(0, 24.0, 46.7, 10)], [500, 1500]);
+    expect(out.filter((r) => r.pin).length).toBe(1);
+    expect(out[1].reason).toBe("same-fix");
+  });
+
   it("مافيش دقيق حواليها ⇒ بتاخد الأوسع (لحد ١٠٠م) ودقته متسجّلة", () => {
     const r = resolvePlatePin([fx(1500, 24.0, 46.7, 60), fx(2500, 24.0001, 46.7, 70)], 2000);
     expect(r.pin).not.toBeNull();

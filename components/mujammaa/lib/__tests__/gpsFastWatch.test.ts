@@ -43,6 +43,8 @@ const h = vi.hoisted(() => ({
   permChecks: 0,
   /** أي دالة تانية اتندهت على البلجن (requestPermissions مثلاً) */
   otherCalls: [] as string[],
+  /** القراءة المخزّنة اللي خدمة التطبيق بتبعتها أول ما حد يشترك */
+  seed: null as unknown,
 }));
 
 vi.mock("@/lib/gps", () => ({
@@ -50,7 +52,7 @@ vi.mock("@/lib/gps", () => ({
   gpsService: {
     startTracking: async () => { h.starts++; },
     stopTracking: () => { h.stops++; },
-    subscribe: (cb: (c: unknown) => void) => { h.svcCbs.add(cb); cb(null); return () => h.svcCbs.delete(cb); },
+    subscribe: (cb: (c: unknown) => void) => { h.svcCbs.add(cb); cb(h.seed); return () => h.svcCbs.delete(cb); },
   },
 }));
 
@@ -132,6 +134,7 @@ beforeEach(() => {
   h.perm = "granted";
   h.permChecks = 0;
   h.otherCalls = [];
+  h.seed = null;
   setPlatform("android");
 });
 afterEach(() => {
@@ -199,6 +202,24 @@ describe("أندرويد — مراقبة المجمّع كل ثانية", () =>
     vi.setSystemTime(T0 + 12_000);
     svcEmit({ lat: 24.5, lng: 46.7, accuracy: 6, timestamp: T0 + 2_000 }); // نفس القراءة تاني
     expect(gps.lastFixRecvAt()).toBe(T0 + 10_000);
+    stop();
+    await flush();
+  });
+
+  it("القراءة المخزّنة اللي بتيجي مع الاشتراك (قديمة) مابتتحسبش «وصلت دلوقتي» — التحذير بيقيس عمرها الحقيقي", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + 25_000);
+    // خدمة التطبيق معاها قراءة من ٢٥ث وبتبعتها أول ما حد يشترك
+    h.seed = { lat: 24.4, lng: 46.7, accuracy: 6, timestamp: T0 };
+    const gps = await import("../gps");
+    const stop = gps.startGpsWatch();
+    await flush();
+    expect(gps.currentFix()?.at).toBe(T0);
+    expect(gps.lastFixRecvAt()).toBeNull();
+    expect(gps.recordGpsWarning(gps.currentFix(), true, Date.now(), gps.lastFixRecvAt())).toMatch(/25 ثانية/);
+    // وأول قراءة جديدة حقيقية بتتحسب
+    live()[0].cb(pos(T0 + 25_000, 24.5));
+    expect(gps.lastFixRecvAt()).toBe(T0 + 25_000);
     stop();
     await flush();
   });
