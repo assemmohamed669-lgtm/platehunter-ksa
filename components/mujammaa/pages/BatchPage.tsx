@@ -258,7 +258,9 @@ function unwrapDone(msg: ChunksMsg): ChunksMsg {
  */
 export async function readChunksResponse(
   res: Response,
-  onPlates: (msg: ChunksMsg) => void
+  onPlates: (msg: ChunksMsg) => void,
+  /** 🚦 الطابور (١٨ أكتوبر): رقمه في الطابور، و`null` لما دوره ييجي («admitted») */
+  onQueue?: (position: number | null) => void
 ): Promise<ChunksMsg> {
   /**
    * 🧮 قناص: الصفحة بتكلّم السيرفر مباشرةً (مش Express) — والسيرفر بيرجّع 401/400/413/
@@ -279,6 +281,16 @@ export async function readChunksResponse(
     if (!obj || typeof obj.phase !== "string") return; // مش سطر مرحلة
     streaming = true;
     if (final) return;
+    // 🚦 وقت الزحمة الوسيط بيحط المجمّع في طابور — سطور معلومات بس، مش نتيجة
+    if (obj.phase === "queued") {
+      const pos = typeof obj.position === "number" && obj.position > 0 ? obj.position : 1;
+      onQueue?.(pos);
+      return;
+    }
+    if (obj.phase === "admitted") {
+      onQueue?.(null);
+      return;
+    }
     if (obj.phase === "plates") {
       platesMsg = obj;
       onPlates(obj);
@@ -1480,6 +1492,18 @@ export default function BatchPage({
      * الدبوس والحقول بييجوا من «done» بس (`runQueue` ⇐ `clipRunOutcome`).
      */
     let early: PlateEntry[] = [];
+    /**
+     * 🚦 السيرفر عليه ضغط من المناديب ⇒ الوسيط بيحط التسجيل في طابور (١٨ أكتوبر). المندوب يشوف
+     * «في الطابور» بدل «بيفرّغ» الساكتة، ولما دوره ييجي الرسالة بترجع لوحدها.
+     */
+    const onQueue = (pos: number | null) => {
+      if (cancelScanRef.current) return;
+      setVadStage(
+        pos === null
+          ? "بيفرّغ التسجيل كامل…"
+          : `⏳ السيرفر عليه ضغط دلوقتي — تسجيلك في الطابور${pos > 1 ? ` (قبلك ${pos - 1})` : " (الدور الجاي عليك)"}. هيبدأ لوحده، ماتقفلش الصفحة.`
+      );
+    };
     const onPlates = (msg: Record<string, unknown>) => {
       if (cancelScanRef.current) return;
       try {
@@ -1524,7 +1548,7 @@ export default function BatchPage({
         body: blob,
         signal: ac.signal,
       });
-      data = await readChunksResponse(r, onPlates);
+      data = await readChunksResponse(r, onPlates, onQueue);
     } catch (err) {
       const aborted = (err as Error)?.name === "AbortError" || cancelScanRef.current;
       errorLog.add(
