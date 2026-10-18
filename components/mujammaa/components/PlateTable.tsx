@@ -26,6 +26,7 @@ import { MatchChip, StageChip } from "./Chips";
 import type { BankSheet } from "../lib/bankSheet";
 import { type PlateEntry, VEHICLE_TYPE_KINDS } from "../lib/plateEntry";
 import { pinLink } from "../lib/gps";
+import { neighborPinOf } from "../lib/platePin";
 import { plateDetailHeaders, buildPlateRow, tierCounts } from "../lib/plateTable";
 
 export interface PlateTableProps {
@@ -247,6 +248,12 @@ export default function PlateTable({
                             title="افتح الموقع"
                           >
                             <MapPin className="h-3.5 w-3.5" /> خريطة
+                            {/* 📍 منسوخ من اللوحة اللي جنبها (١٩ أكتوبر) — باين إنه مش قراءة خاصة بيها */}
+                            {neighborPinOf(entry) && (
+                              <span className="text-[10px] text-amber-300">
+                                {neighborPinOf(entry) === "before" ? " (نفس اللي قبلها)" : " (نفس اللي بعدها)"}
+                              </span>
+                            )}
                           </a>
                         ) : (
                           <span className="text-slate-600">—</span>

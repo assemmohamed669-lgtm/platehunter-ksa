@@ -31,6 +31,7 @@ import type { PlateEntry } from "./plateEntry";
 import {
   NO_PRECISE_PIN,
   countPinned,
+  isPinMark,
   stampEntriesWithTrack,
   trackFromRaw,
   type RawFix,
@@ -1284,10 +1285,7 @@ export const PLATES_ONLY_ERROR = "الأنواع ماوصلتش — فرّغ ت�
 export const PIN_PENDING = "📍 بيتحدّد…";
 
 const withoutPinMarks = (notes: string[] | undefined) =>
-  (notes || []).filter((n) => {
-    const s = String(n);
-    return s !== PIN_PENDING && !s.startsWith(NO_PRECISE_PIN);
-  });
+  (notes || []).filter((n) => String(n) !== PIN_PENDING && !isPinMark(n));
 
 /**
  * 🔴 (عيب ٢) لوحات سطر اللوحات — أوقاتها **مبدئية** (`t_s_final:false`،

@@ -13,6 +13,7 @@
  * القارئ: `mujammaa_report.py` في platehunter-server-scripts.
  */
 import type { PlateEntry } from "./plateEntry";
+import { NO_PRECISE_PIN, neighborPinOf, type TrackFix } from "./platePin";
 
 export const OUTBOX_KEY = "mj:reports:outbox";
 /** الصندوق مايكبرش للأبد — الأقدم بيتشال */
@@ -20,6 +21,8 @@ export const OUTBOX_MAX = 30;
 /** السيرفر بيقبل لحد ٥١٢ ك في الطلب — نسيب مسافة */
 const OUTBOX_MAX_CHARS = 380_000;
 export const PLATES_MAX = 600;
+/** قراءة في الثانية ⇒ ٢٠ دقيقة (الحد ١٥) — كل واحدة ~١٤ حرف */
+export const GPS_FIXES_MAX = 1200;
 const ERRORS_MAX = 10;
 const ERROR_CHARS = 200;
 const SEND_TIMEOUT_MS = 15_000;
@@ -48,8 +51,25 @@ export interface RunReport {
   n_plates: number;
   pinned: number;
   wanted: number;
-  plates: Array<{ p: string; t: number | null; ty?: string; w?: 1; acc: number | null }>;
+  /** `ts` = ثانية النطق من السيرفر (اللي الدبوس بيتحط بيها) · `pm` = ليه مالهاش موقع / إنه منسوخ */
+  plates: Array<{ p: string; t: number | null; ts?: number; ty?: string; w?: 1; acc: number | null; pm?: string }>;
   fixes?: number;
+  /**
+   * 📍 الموقع وقت التسجيل (١٩ أكتوبر): `f` = كل قراءة [ثانيتها من بداية الصوت (سالب = قبل البداية), دقتها م] ·
+   * `in_clip` كام قراءة جوّه التسجيل · `first_s` أول واحدة جوّه · `old_s` عمر القراءة الجاهزة وقت البداية ·
+   * `max_gap_s` أطول وقت من غير قراءة (من البداية للنهاية) · الدقة أحسن/وسط/أوحش.
+   */
+  gps?: {
+    n: number;
+    in_clip: number;
+    f: Array<[number, number | null]>;
+    first_s?: number;
+    old_s?: number;
+    max_gap_s?: number;
+    acc_min?: number;
+    acc_med?: number;
+    acc_max?: number;
+  };
   errors?: string[];
   export?: { saved: number; failed: number; total: number; no_pin: number; edited?: number; deleted?: number };
   dev?: DeviceInfo;
@@ -67,6 +87,8 @@ export interface RunReportInput {
   result?: { n?: number; durS?: number; serverMs?: number; fieldsFrom?: string; cohereCalls?: number; dropped?: number };
   entries?: PlateEntry[];
   fixes?: number;
+  /** مسار المقطع (`clipJobFields(clip).fixes`) — بيطلع منه `gps` */
+  track?: TrackFix[];
   errors?: string[];
   export?: RunReport["export"];
   now?: number;
@@ -87,9 +109,13 @@ export function buildRunReport(i: RunReportInput): RunReport {
       t: t0 !== undefined && at !== undefined ? round1((at - t0) / 1000) : null,
       acc: null,
     };
+    const ts = num(e.review?.timeStart);
+    if (ts !== undefined) o.ts = round1(ts);
     if (e.vehicleType) o.ty = e.vehicleType;
     if (e.match?.kind === "exact") o.w = 1;
     o.acc = e.pin && num(e.pin.accuracy) !== undefined ? Math.round(e.pin.accuracy) : null;
+    const pm = pinNote(e);
+    if (pm) o.pm = pm;
     return o;
   });
   const clip = i.clip
@@ -137,10 +163,56 @@ export function buildRunReport(i: RunReportInput): RunReport {
     };
   }
   if (num(i.fixes) !== undefined) r.fixes = i.fixes;
+  if (Array.isArray(i.track)) r.gps = gpsSummary(i.track, num(i.clip?.sec));
   if (i.errors?.length) r.errors = i.errors.slice(0, ERRORS_MAX).map((e) => String(e).slice(0, ERROR_CHARS));
   if (i.export) r.export = i.export;
   r.dev = i.dev ?? deviceInfo();
   return r;
+}
+
+/** ليه اللوحة مالهاش موقع (من علامتها) — أو إنه منسوخ من اللي جنبها */
+function pinNote(e: PlateEntry): string | undefined {
+  const side = neighborPinOf(e);
+  if (side) return side === "before" ? "نفس اللي قبلها" : "نفس اللي بعدها";
+  if (e.pin) return undefined;
+  const miss = (e.review?.notes || []).find((n) => String(n).startsWith(NO_PRECISE_PIN));
+  if (!miss) return undefined;
+  const why = String(miss).split(" — ").slice(1).join(" — ").trim();
+  return (why || String(miss)).slice(0, 120);
+}
+
+function gpsSummary(track: TrackFix[], sec: number | undefined): NonNullable<RunReport["gps"]> {
+  const list = track.filter((f) => f && num(f.tMs) !== undefined).sort((a, b) => a.tMs - b.tMs);
+  const endMs = sec !== undefined ? sec * 1000 : undefined;
+  const inClip = list.filter((f) => f.tMs >= 0 && (endMs === undefined || f.tMs <= endMs));
+  const g: NonNullable<RunReport["gps"]> = {
+    n: list.length,
+    in_clip: inClip.length,
+    f: list
+      .slice(0, GPS_FIXES_MAX)
+      .map((f): [number, number | null] => [round1(f.tMs / 1000), num(f.acc) !== undefined ? Math.round(f.acc) : null]),
+  };
+  if (inClip.length) g.first_s = round1(inClip[0].tMs / 1000);
+  const before = list.filter((f) => f.tMs < 0);
+  if (before.length) g.old_s = round1(-before[before.length - 1].tMs / 1000);
+  const marks = [0, ...inClip.map((f) => f.tMs)];
+  if (endMs !== undefined) marks.push(endMs);
+  if (marks.length > 1) {
+    let gap = 0;
+    for (let k = 1; k < marks.length; k++) gap = Math.max(gap, marks[k] - marks[k - 1]);
+    g.max_gap_s = round1(gap / 1000);
+  }
+  const accs = list
+    .map((f) => f.acc)
+    .filter((a) => num(a) !== undefined)
+    .sort((a, b) => a - b);
+  if (accs.length) {
+    const m = accs.length >> 1;
+    g.acc_min = Math.round(accs[0]);
+    g.acc_med = Math.round(accs.length % 2 ? accs[m] : (accs[m - 1] + accs[m]) / 2);
+    g.acc_max = Math.round(accs[accs.length - 1]);
+  }
+  return g;
 }
 
 export function deviceInfo(): DeviceInfo {

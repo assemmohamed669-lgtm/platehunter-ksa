@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NEIGHBOR_PIN, NO_PRECISE_PIN } from "./platePin";
 import {
+  GPS_FIXES_MAX,
   OUTBOX_KEY,
   OUTBOX_MAX,
   PLATES_MAX,
@@ -146,5 +148,88 @@ describe("deviceInfo", () => {
     expect(typeof d.ua).toBe("string");
     expect(d.ua!.length).toBeLessThanOrEqual(240);
     expect(typeof d.online).toBe("boolean");
+  });
+});
+
+/**
+ * 📍 تفاصيل الموقع في التقرير (١٩ أكتوبر ٢٠٢٦) — لوحة المالك طلعت من غير موقع والتقرير كان فيه
+ * «fixes: 1» بس. دلوقتي: كل قراءة بوقتها (من بداية الصوت) ودقتها + ملخّص + لكل لوحة ثانية نطقها وسبب
+ * غياب الموقع (أو إنه منسوخ من اللي جنبها) ⇒ لو اتكررت السبب يبان من التقرير.
+ */
+describe("buildRunReport — 📍 تفاصيل الموقع", () => {
+  const fix = (tMs: number, acc: number) => ({ tMs, lat: 24.7, lng: 46.7, acc });
+
+  it("كل قراءة بوقتها ودقتها + أول قراءة جوّه التسجيل · عمر القديمة · أكبر فجوة · الدقة", () => {
+    const r = buildRunReport({
+      kind: "run",
+      agent: "x",
+      uid: null,
+      clip: { sec: 10, startedAtMs: T0 },
+      entries: [],
+      track: [fix(-21_000, 35), fix(4_200, 12), fix(5_200, 6), fix(9_800, 5.4)],
+      now: T0,
+      dev: {},
+    });
+    expect(r.gps).toEqual({
+      n: 4,
+      in_clip: 3,
+      f: [[-21, 35], [4.2, 12], [5.2, 6], [9.8, 5]],
+      first_s: 4.2,
+      old_s: 21,
+      max_gap_s: 4.6,
+      acc_min: 5,
+      acc_med: 9,
+      acc_max: 35,
+    });
+  });
+
+  it("زي لوحة المالك: قراءة قديمة بس ومافيش ولا واحدة جوّه التسجيل ⇒ الفجوة = طول المقطع", () => {
+    const r = buildRunReport({
+      kind: "run",
+      agent: "x",
+      uid: null,
+      clip: { sec: 4.98, startedAtMs: T0 },
+      entries: [],
+      track: [fix(-40_000, 18)],
+      now: T0,
+      dev: {},
+    });
+    expect(r.gps).toMatchObject({ n: 1, in_clip: 0, old_s: 40, max_gap_s: 5 });
+    expect(r.gps!.first_s).toBeUndefined();
+  });
+
+  it("مسار فاضي (الموقع مقفول) ⇒ n=0", () => {
+    const r = buildRunReport({ kind: "run", agent: "x", uid: null, clip: { sec: 8 }, entries: [], track: [], now: T0, dev: {} });
+    expect(r.gps).toEqual({ n: 0, in_clip: 0, f: [], max_gap_s: 8 });
+  });
+
+  it("كل لوحة: ثانية نطقها + سبب غياب الموقع أو إنه منسوخ", () => {
+    const r = buildRunReport({
+      kind: "run",
+      agent: "x",
+      uid: null,
+      clip: { sec: 10, startedAtMs: T0 },
+      entries: [
+        entry("ابح1234", 1, {
+          pin: null,
+          review: { plate: "ابح1234", timeStart: 0.83, notes: [`${NO_PRECISE_PIN} — مافيش قراءة GPS في حدود 2ث من لحظة نطقها`] },
+        }),
+        entry("حطس5678", 6, { review: { plate: "حطس5678", timeStart: 6, notes: [`${NEIGHBOR_PIN} قبلها (فرق 5ث)`] } }),
+        entry("دعو9012", 8, { review: { plate: "دعو9012", timeStart: 8.04, notes: [] } }),
+      ],
+      now: T0,
+      dev: {},
+    });
+    expect(r.plates[0]).toMatchObject({ ts: 0.8, acc: null, pm: "مافيش قراءة GPS في حدود 2ث من لحظة نطقها" });
+    expect(r.plates[1]).toMatchObject({ ts: 6, acc: 8, pm: "نفس اللي قبلها" });
+    expect(r.plates[2]).toMatchObject({ ts: 8 });
+    expect(r.plates[2].pm).toBeUndefined();
+  });
+
+  it("تسجيل طويل: القراءات ليها حد (التقرير مايكبرش)", () => {
+    const track = Array.from({ length: GPS_FIXES_MAX + 300 }, (_, i) => fix(i * 1000, 5));
+    const r = buildRunReport({ kind: "run", agent: "x", uid: null, clip: { sec: 2000 }, entries: [], track, now: T0, dev: {} });
+    expect(r.gps!.n).toBe(GPS_FIXES_MAX + 300);
+    expect(r.gps!.f.length).toBe(GPS_FIXES_MAX);
   });
 });
