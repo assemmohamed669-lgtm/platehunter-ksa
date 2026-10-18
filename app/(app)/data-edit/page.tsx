@@ -10,11 +10,11 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Search, Save, Trash2, X, Loader2, Share2, AlertTriangle, CheckCircle2, ArrowRight, Lock } from "lucide-react";
+import { Search, Save, Trash2, X, Loader2, Share2, AlertTriangle, CheckCircle2, ArrowRight, Lock, FileSpreadsheet } from "lucide-react";
 import DataEditTable from "@/components/DataEditTable";
 import {
   DATA_EDIT_FOR_ALL, editorHeaders, editSummary, exportDataFile, listEditableDataFiles, loadDataFileInfo,
-  saveDataEdits, searchDataFile, type DataFileRef, type EditRow, type SearchResult,
+  saveDataEdits, searchDataFile, startXlsxExport, type DataFileRef, type EditRow, type SearchResult, type DataExport,
 } from "@/lib/dataEdit";
 import { shareExcelBlob } from "@/lib/excel";
 import { gpsService, toMapsLink } from "@/lib/gps";
@@ -68,6 +68,9 @@ export default function DataEditPage() {
   const [deletes, setDeletes] = useState<Set<string>>(new Set());
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<null | "search" | "save" | "export">(null);
+  // 📗 التصدير: أنهي صيغة شغّالة + وصل لكام ٪ (الملف الكبير)
+  const [exporting, setExporting] = useState<null | "xlsx" | "csv">(null);
+  const [exportPct, setExportPct] = useState<number | null>(null);
   const [locating, setLocating] = useState<string | null>(null);
   const [msg, setMsg] = useState<Msg | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -148,25 +151,45 @@ export default function DataEditPage() {
       const list = await listEditableDataFiles().catch(() => files ?? []);
       setFiles(list);
       setMsg({ level: "ok", text: `${parts.join(" · ") || "✅ اتحفظ"} — اعمل فرز تاني عشان النتيجة تمشي على التعديل.` });
+      // ⚡ الملف الكبير: Excel بيبدأ يتجهّز في الخلفية دلوقتي ⇒ «تصدير Excel» بعدها بشوية بيبقى فوري
+      if (file.ref.kind === "large") {
+        const ref = file.ref;
+        void loadDataFileInfo(ref).then((info) => { startXlsxExport(ref, info.stamp); }).catch(() => {});
+      }
     } catch (e) {
       setConfirmOpen(false);
       setMsg({ level: "error", text: `❌ ${(e as Error)?.message ?? "تعذّر الحفظ."}` });
     } finally { setBusy(null); }
   }
 
-  async function doExport() {
+  /**
+   * 📗 تصدير بالصيغة اللي اختارها — المالك (١٨ أكتوبر ٢٠٢٦): «يختار يصدر الملف باي صيغه». Excel للملف الكبير بيتعمل
+   * «حتة حتة» ولو كان اتجهّز في الخلفية بعد الحفظ بيطلع على طول.
+   */
+  async function doExport(format: "xlsx" | "csv") {
     if (!file) return;
     if (hasPending && !confirm("فيه تعديلات لسه ماتحفظتش — التصدير هيطلع الشيت من غيرها. تكمّل؟")) return;
-    setBusy("export"); setMsg(null);
+    const total = Math.max(1, file.rowCount);
+    const pct = (n: number) => Math.min(100, Math.round((n / total) * 100));
+    setBusy("export"); setExporting(format); setExportPct(null); setMsg(null);
     try {
-      const out = await exportDataFile(file.ref);
-      await shareExcelBlob(out.blob, out.name, "الشيت بعد التعديل", { keepName: true });
+      let out: DataExport;
+      if (format === "xlsx" && file.ref.kind === "large") {
+        const job = startXlsxExport(file.ref, (await loadDataFileInfo(file.ref)).stamp);
+        setExportPct(pct(job.done));
+        const off = job.onProgress((n) => setExportPct(pct(n)));
+        try { out = await job.promise; } finally { off(); }
+      } else {
+        out = await exportDataFile(file.ref, { format, onRows: (n) => setExportPct(pct(n)) });
+      }
+      if (out.fellBack) setMsg({ level: "warn", text: "⚠️ الموبايل ده مايقدرش يعمل Excel للملف الكبير ده — اتعمل CSV (بيتفتح في الإكسيل عادي)." });
+      await shareExcelBlob(out.blob, out.name, "الشيت بعد التعديل", { keepName: true, rtlDone: out.rtlDone });
     } catch (e) {
       setMsg({ level: "error", text: `❌ ${(e as Error)?.message ?? "تعذّر التصدير."}` });
-    } finally { setBusy(null); }
+    } finally { setBusy(null); setExporting(null); setExportPct(null); }
   }
 
-  if (isSuper === null) return <div className="flex justify-center py-10 text-muted"><Loader2 className="animate-spin" /></div>;
+  if (isSuper === null && !DATA_EDIT_FOR_ALL) return <div className="flex justify-center py-10 text-muted"><Loader2 className="animate-spin" /></div>;
   if (!allowed) {
     return <p className="rounded-xl border border-border bg-surface p-4 text-center text-sm text-muted" dir="rtl">الصفحة دي لسه مش متاحة.</p>;
   }
@@ -236,10 +259,24 @@ export default function DataEditPage() {
       </>)}
 
       {file && (
-        <button onClick={() => void doExport()} disabled={busy === "export"}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface py-2.5 text-xs font-bold text-ink disabled:opacity-50">
-          {busy === "export" ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />} تصدير الشيت بعد التعديل
-        </button>
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[11px] font-bold text-muted">تصدير الشيت بعد التعديل:</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => void doExport("xlsx")} disabled={busy === "export"}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-600/50 bg-emerald-600/10 py-2.5 text-xs font-bold text-emerald-700 disabled:opacity-50">
+              {exporting === "xlsx" ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />} تصدير Excel
+            </button>
+            <button onClick={() => void doExport("csv")} disabled={busy === "export"}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface py-2.5 text-xs font-bold text-ink disabled:opacity-50">
+              {exporting === "csv" ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />} تصدير CSV
+            </button>
+          </div>
+          {exporting && (
+            <p className="text-center text-[11px] font-bold text-primary">
+              بيجهّز الملف…{exportPct != null && exportPct > 0 ? ` ${ar(exportPct)}٪` : ""}
+            </p>
+          )}
+        </div>
       )}
 
       {/* شريط التعديلات اللي لسه ماتحفظتش */}
@@ -270,7 +307,7 @@ export default function DataEditPage() {
             <ul className="mb-2 flex flex-col gap-1 text-[12px] font-bold text-ink">
               {editSummary(pending).map((l) => <li key={l}>• {l}</li>)}
             </ul>
-            <p className="mb-3 text-[11px] text-muted">التعديل بيتحفظ في شيت الداتا اللي جوّه البرنامج، والفرز الجاي هيمشي عليه. ولو عايز ملف إكسيل بالتعديلات دوس «تصدير الشيت بعد التعديل».</p>
+            <p className="mb-3 text-[11px] text-muted">التعديل بيتحفظ في شيت الداتا اللي جوّه البرنامج، والفرز الجاي هيمشي عليه. ولو عايز ملف بالتعديلات دوس «تصدير Excel» أو «تصدير CSV».</p>
             <button onClick={() => void doSave()} disabled={busy === "save"}
               className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-sm font-bold text-night disabled:opacity-50">
               {busy === "save" ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} احفظ
