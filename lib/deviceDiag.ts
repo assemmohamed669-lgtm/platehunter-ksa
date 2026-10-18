@@ -95,6 +95,60 @@ export function chunkForUpload(events: DiagEvent[], maxChars = 55_000): DiagEven
   return out;
 }
 
+/**
+ * موديل الآيفون **التقريبي** من مقاس الشاشة (نقط CSS + الكثافة). iOS مابيدّيش اسم الموديل لصفحة الويب،
+ * والاسم المضبوط محتاج بلجن أصلي (نسخة جديدة من المتجر). «تكبير العرض» في الإعدادات بيغيّر المقاس.
+ */
+const IPHONE_SCREENS: Array<[number, number, number, string]> = [
+  [320, 568, 2, "iPhone SE (الأول) / 5s"],
+  [375, 667, 2, "iPhone 6/6s/7/8 أو SE (التاني/التالت)"],
+  [414, 736, 3, "iPhone 6+/7+/8+ Plus"],
+  [375, 812, 3, "iPhone X/XS/11 Pro أو 12 mini/13 mini"],
+  [360, 780, 3, "iPhone 12 mini/13 mini"],
+  [414, 896, 2, "iPhone XR / 11"],
+  [414, 896, 3, "iPhone XS Max / 11 Pro Max"],
+  [390, 844, 3, "iPhone 12/12 Pro/13/13 Pro/14"],
+  [428, 926, 3, "iPhone 12 Pro Max/13 Pro Max/14 Plus"],
+  [393, 852, 3, "iPhone 14 Pro/15/15 Pro/16"],
+  [430, 932, 3, "iPhone 14 Pro Max/15 Plus/15 Pro Max/16 Plus"],
+  [402, 874, 3, "iPhone 16 Pro/17/17 Pro"],
+  [440, 956, 3, "iPhone 16 Pro Max/17 Pro Max"],
+  [420, 912, 3, "iPhone Air"],
+];
+export function guessIphoneModel(w: number, h: number, dpr: number): string | null {
+  const a = Math.min(w, h);
+  const b = Math.max(w, h);
+  const d = Math.round(dpr);
+  const hit = IPHONE_SCREENS.find(([x, y, z]) => x === a && y === b && z === d);
+  return hit ? hit[3] : null;
+}
+
+/** المؤقّت بتاع الثانية اتأخّر أكتر من ٣ث ⇒ الصفحة كانت معلّقة المدة دي */
+export function freezeGap(prevTick: number, now: number, everyMs = 1000, thresholdMs = 3000): number | null {
+  const late = now - prevTick - everyMs;
+  return late > thresholdMs - everyMs ? now - prevTick - everyMs : null;
+}
+
+/** رسالة غلط من غير لوحات (أرقام ٤+ بتتشال — كود الرد ٣ أرقام بيفضل) ومحدودة */
+export function safeMsg(s: unknown): string {
+  return String(s ?? "")
+    .replace(/[0-9٠-٩]{4,}/g, (m) => "#".repeat(m.length))
+    .slice(0, 200);
+}
+
+/** الرابط من غير الاستعلام (مافيش توكن ولا بيانات) */
+export function netUrl(u: string): string {
+  try {
+    if (/^https?:\/\//i.test(u)) {
+      const x = new URL(u);
+      return x.host + x.pathname;
+    }
+  } catch {
+    /* مش رابط كامل */
+  }
+  return String(u).split(/[?#]/)[0].slice(0, 120);
+}
+
 /* ------------------------------------------------------------- التشغيل */
 
 function readJson<T>(key: string): T | null {
@@ -177,6 +231,19 @@ async function flush() {
   }
 }
 
+/**
+ * حدث من صفحة (Voice PRO: التسجيل · حجم ملف التشييك · حالة السيرفر …). مابيعملش حاجة لو الصندوق مقفول
+ * (أي مندوب مش في القايمة) — ومابيرميش أبداً.
+ */
+export function diagNote(k: string, data: Record<string, unknown> = {}) {
+  if (!started) return;
+  try {
+    push({ k, path: location.pathname, ...data });
+  } catch {
+    /* التشخيص عمره ما يوقّع البرنامج */
+  }
+}
+
 /** الانتقال بين الصفحات — بتتنده من الـlayout مع كل تغيير مسار */
 export function diagNav(path: string) {
   if (!started || !path || path === lastPath) return;
@@ -205,6 +272,13 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   const ua = navigator.userAgent || "";
   const ios = /OS (\d+[_\d]*) like Mac OS X/.exec(ua)?.[1]?.replace(/_/g, ".") ?? null;
   lastPath = location.pathname;
+  const raw = (k: string) => {
+    try {
+      return (localStorage.getItem(k) ?? "").slice(0, 120) || null;
+    } catch {
+      return null;
+    }
+  };
   push({
     k: "start",
     path: lastPath,
@@ -215,8 +289,23 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
     ios,
     ua: ios ? undefined : ua.slice(0, 120),
     scr: `${screen.width}x${screen.height}@${window.devicePixelRatio || 1}`,
+    model: guessIphoneModel(screen.width, screen.height, window.devicePixelRatio || 1),
     mem: (navigator as unknown as { deviceMemory?: number }).deviceMemory ?? null,
+    cores: navigator.hardwareConcurrency ?? null,
+    online: navigator.onLine,
+    // البرنامج كان فاكر إيه: آخر صفحة · حارس اللفّة · تبويب التشييك
+    lastPage: raw("ph:lastPage"),
+    bootGuard: raw("ph:bootGuard"),
+    checkMode: raw("ph:check:mode"),
   });
+  // نسخة التطبيق نفسه (من المتجر) + مساحة التخزين — مابيعطّلوش حاجة لو فشلوا
+  void import("@capacitor/app")
+    .then(({ App }) => App.getInfo())
+    .then((i) => push({ k: "appinfo", version: i.version, build: i.build }))
+    .catch(() => {});
+  void (navigator.storage?.estimate?.() ?? Promise.reject())
+    .then((e) => push({ k: "storage", usedMB: Math.round((e.usage ?? 0) / 1e6), quotaMB: Math.round((e.quota ?? 0) / 1e6) }))
+    .catch(() => {});
   writeJson(STATE_KEY, { sid: sidRef, path: lastPath, beat: now, vis: document.visibilityState });
 
   const beat = setInterval(() => saveState({ beat: Date.now(), path: location.pathname, vis: document.visibilityState }), BEAT_MS);
@@ -247,6 +336,73 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   window.addEventListener("unhandledrejection", onRej);
   document.addEventListener("click", onTap, true);
 
+  // 🧊 التهنيج: مؤقّت كل ثانية — لو اتأخّر أكتر من ٣ث والصفحة قدامه ⇒ كانت معلّقة المدة دي
+  let lastTick = Date.now();
+  const freeze = setInterval(() => {
+    const n = Date.now();
+    const g = freezeGap(lastTick, n);
+    if (g && document.visibilityState === "visible") push({ k: "freeze", ms: g, path: location.pathname });
+    lastTick = n;
+  }, 1000);
+  const resetTick = () => {
+    lastTick = Date.now();
+  };
+  document.addEventListener("visibilitychange", resetTick);
+
+  // 📶 النت فصل/رجع
+  const onOnline = () => push({ k: "net-on" });
+  const onOffline = () => push({ k: "net-off" });
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+  const onShow = (e: PageTransitionEvent) => {
+    if (e.persisted) push({ k: "pageshow", persisted: true, path: location.pathname });
+  };
+  window.addEventListener("pageshow", onShow);
+
+  // 📝 رسايل الغلط اللي البرنامج نفسه بيكتبها (التخزين/السيرفر/الصوت…) — من غير أرقام لوحات، وبحد
+  let consoleLeft = 80;
+  const origError = console.error;
+  const origWarn = console.warn;
+  const wrapConsole = (level: "error" | "warn", orig: (...a: unknown[]) => void) =>
+    function (this: unknown, ...a: unknown[]) {
+      try {
+        if (consoleLeft > 0) {
+          consoleLeft--;
+          push({ k: level === "error" ? "cerr" : "cwarn", msg: safeMsg(a.map((x) => (x instanceof Error ? x.message : typeof x === "string" ? x : "")).join(" ")) });
+        }
+      } catch {
+        /* التشخيص عمره ما يوقّع البرنامج */
+      }
+      return orig.apply(this, a);
+    };
+  console.error = wrapConsole("error", origError);
+  console.warn = wrapConsole("warn", origWarn);
+
+  // 🌐 الطلبات اللي فشلت أو ردّت بغلط سيرفر أو خدت أكتر من ٨ث — الرابط من غير استعلام (مافيش توكن)
+  let netLeft = 150;
+  const origFetch = window.fetch;
+  const wrappedFetch: typeof fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+    const mine = /\/rest\/v1\/voice_telemetry/.test(url);
+    const t0 = Date.now();
+    try {
+      const res = await origFetch(input, init);
+      const ms = Date.now() - t0;
+      if (!mine && netLeft > 0 && (res.status >= 500 || ms > 8000)) {
+        netLeft--;
+        push({ k: "net", u: netUrl(url), st: res.status, ms });
+      }
+      return res;
+    } catch (err) {
+      if (!mine && netLeft > 0 && (err as { name?: string })?.name !== "AbortError") {
+        netLeft--;
+        push({ k: "net", u: netUrl(url), st: 0, ms: Date.now() - t0, msg: safeMsg((err as Error)?.message) });
+      }
+      throw err;
+    }
+  };
+  window.fetch = wrappedFetch;
+
   // حالة التطبيق نفسه (قدامه/في الخلفية) من الأصلي — لو متاح
   let removeApp: (() => void) | undefined;
   void import("@capacitor/app")
@@ -262,11 +418,19 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   return () => {
     clearInterval(beat);
     clearInterval(tick);
+    clearInterval(freeze);
     document.removeEventListener("visibilitychange", onVis);
+    document.removeEventListener("visibilitychange", resetTick);
     window.removeEventListener("pagehide", onHide);
+    window.removeEventListener("pageshow", onShow);
     window.removeEventListener("error", onErr);
     window.removeEventListener("unhandledrejection", onRej);
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
     document.removeEventListener("click", onTap, true);
+    if (window.fetch === wrappedFetch) window.fetch = origFetch;
+    console.error = origError;
+    console.warn = origWarn;
     removeApp?.();
     started = false;
   };

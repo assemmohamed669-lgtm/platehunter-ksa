@@ -118,6 +118,8 @@ import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine
 import { startTelemetrySession, sharedTelemetryQueue, type TelBatch } from "@/lib/voiceTelemetry";
 import { getDevicePlatform } from "@/lib/devicePlatform";
 import { BUILD_ID } from "@/lib/appVersion";
+// 🩺 الصندوق الأسود (مندوب واحد في القايمة — `lib/deviceDiag.ts`): مابيعملش حاجة لأي حد تاني
+import { diagEnabledFor, diagNote } from "@/lib/deviceDiag";
 
 /**
  * 🩺 **مراقبة الصوت** (٣ أكتوبر ٢٠٢٦) — ملخّص كل دقيقتين لـ`voice_telemetry`
@@ -475,6 +477,13 @@ export default function RegistrationV2Page() {
   const checkIndexRef = useRef(checkIndex);
 
   useEffect(() => { checkIndexRef.current = checkIndex; }, [checkIndex]);
+  // 🩺 حجم ملف التشييك (الذاكرة) وحالة سيرفر الصوت — للصندوق الأسود بس
+  useEffect(() => {
+    diagNote("rv2-sheet", { plates: (checkIndex as unknown as { size?: number } | null)?.size ?? null, files: checkSources.length });
+  }, [checkIndex, checkSources.length]);
+  useEffect(() => {
+    if (probe) diagNote("rv2-probe", { ok: probe.ok, msg: String(probe.msg ?? "").slice(0, 80) });
+  }, [probe]);
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   /**
    * 🏷️ أعمدة نوع السيارة والشركة (البنك) — بتتحل بالاسم من رؤوس كل
@@ -1201,6 +1210,7 @@ export default function RegistrationV2Page() {
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
+    diagNote("rv2-rec", { on: true, rows: rowsRef.current.length });
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
     setWaitKind("net");
@@ -1252,7 +1262,8 @@ export default function RegistrationV2Page() {
     // ⚠️ متغيّر منفصل عن قصد: `voiceProAttribution.test` بيعدّ ختم الصفوف بالحرف
     const telAgentId = agentRef.current;
     try {
-      telRef.current = !isSuper ? null : startTelemetrySession({
+      // 🩺 سجل الصوت: السوبر أدمن + المندوب اللي في قايمة الصندوق الأسود بس (طلب المالك ١٨ أكتوبر)
+      telRef.current = !(isSuper || diagEnabledFor(telAgentId)) ? null : startTelemetrySession({
         enabled: true,
         agentId: telAgentId,
         server: hostOf(modelUrl),
@@ -1613,6 +1624,7 @@ export default function RegistrationV2Page() {
    * مع كل تغيير، والمحرك بيكمّل آخر النوافذ من ذاكرة الميك بعد ما يسيبه.
    */
   function stop(why: "manual" | "fatal" | AutoStopReason = "manual") {
+    diagNote("rv2-rec", { on: false, why, rows: rowsRef.current.length });
     const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
     levelStoreRef.current!.set(0);
