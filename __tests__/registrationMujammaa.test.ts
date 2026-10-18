@@ -57,8 +57,8 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     expect((SRC.match(/setMjAgentOk\(true\)/g) ?? []).length).toBe(2);
     // الاشتراك من نفس أعمدة الشريط والتشييك
     expect(SRC).toMatch(/\.select\("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until"\)/);
-    expect(SRC).toMatch(/advanced=\{superOk\}/);
-    expect(SRC).toMatch(/const mjShown = superOk \? regMode === "mujammaa" : mjAgentOk;/);
+    expect(SRC).toMatch(/advanced=\{superOk && !asAgent\}/);
+    expect(SRC).toMatch(/const mjShown = superOk \? asAgent \|\| regMode === "mujammaa" : mjAgentOk;/);
     // التصدير للسجلات من صفحة التسجيل (الحفظ برّه المجمّع)
     expect(SRC).toMatch(/onExportToRecords=\{exportMujammaa\}/);
     expect(SRC).toMatch(/return saveMujammaaRecords\(entries, \{/);
@@ -66,7 +66,7 @@ describe("🧮 المجمّع في «التسجيل»", () => {
 
   it("المجمّع ورا superOk (أو كل الخدمات) — وبعد أول فتحة بيفضل متحمّل ومخفي (التسجيل والتفريغ مايقفوش لما تبدّل)", () => {
     expect(SRC).toMatch(/\{\(superOk \|\| mjAgentOk\) && mjOpened && \(\s*<div hidden=\{!mjShown\}>/);
-    expect(SRC).toMatch(/if \(\(superOk && regMode === "mujammaa"\) \|\| mjAgentOk\) setMjOpened\(true\);/);
+    expect(SRC).toMatch(/if \(\(superOk && \(asAgent \|\| regMode === "mujammaa"\)\) \|\| mjAgentOk\) setMjOpened\(true\);/);
     expect((SRC.match(/<MujammaaSection[\s>]/g) ?? []).length).toBe(1);
     expect(SRC).toMatch(/onBusyChange=\{setMjBusy\}/);
   });
@@ -92,15 +92,15 @@ describe("🧮 المجمّع في «التسجيل»", () => {
   it("التسجيل القديم ورا المفتاح (للسوبر أدمن) — والمندوب مابيشوفوش — ومكوّناته لسه موجودة زي ما هي", () => {
     expect(SRC).toMatch(/\{superChecked && !mjShown && !mjAgentOk && \(superOk \|\| cachedAccess === "super"\) && \(/);
     // وحاجات القديم اللي برّه البلوك مابتظهرش للمندوب
-    expect(SRC).toMatch(/\{pinPrompt && !mjAgentOk && \(/);
-    expect(SRC).toMatch(/\{!mjAgentOk && pendingCount > 0 && \(/);
+    expect(SRC).toMatch(/\{pinPrompt && !agentView && \(/);
+    expect(SRC).toMatch(/\{!agentView && pendingCount > 0 && \(/);
     expect(SRC).toMatch(/<RecordingsTable/);
     expect(SRC).toMatch(/handleTranscribeAndSave/);
     expect(SRC).toMatch(/scheduleFieldChecksUpload\(/);
   });
 
   it("المفتاح ظاهر للسوبر بس، ومقفول وفيه تسجيل/تفريغ شغّال في القديم", () => {
-    expect(SRC).toMatch(/\{superOk && \(\s*<div[^>]*data-testid="reg-mode-switch"/);
+    expect(SRC).toMatch(/\{superOk && !asAgent && \(\s*<div[^>]*data-testid="reg-mode-switch"/);
     // وكمان وهو بيسجّل في المجمّع (الميك واحد)
     expect(SRC).toMatch(/disabled=\{isRecording \|\| isTranscribing \|\| reAnalyzing \|\| mjBusy\}/);
   });
@@ -109,5 +109,32 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     expect(SRC).toMatch(/const LS_REG_MODE = "ph:registration:mode";/);
     expect(SRC).toMatch(/useState<"classic" \| "mujammaa">\("mujammaa"\)/);
     expect(SRC).toMatch(/localStorage\.setItem\(LS_REG_MODE, m\)/);
+  });
+});
+
+/**
+ * 👁️ «زي المندوب» (١٨ أكتوبر ٢٠٢٦) — المالك: «دلوقتي اظهر ليا انا بس اللي هيظهر للمناديب وبعدين ابقي
+ * رجع تاني التقارير وكل حاجه بس علشان اشوف ايه بالظبط قبل ما ننشر». السوبر أدمن بيشوف «التسجيل»
+ * بنفس مسار المندوب بالظبط (من غير المفتاح ولا الأدوات)، وشريط صغير ليه هو بس يرجّع بيه أدواته.
+ */
+describe("👁️ السوبر أدمن يشوف «التسجيل» زي المندوب", () => {
+  it("نفس مسار المندوب: المجمّع على طول، من غير المفتاح ولا advanced ولا حاجات القديم", () => {
+    expect(SRC).toMatch(/import \{ loadAgentPreview, saveAgentPreview \} from "@\/lib\/mujammaaPreview";/);
+    expect(SRC).toMatch(/const asAgent = superOk && agentPreview;/);
+    expect(SRC).toMatch(/const agentView = mjAgentOk \|\| asAgent;/);
+    expect(SRC).toMatch(/\{!agentView && <p className="text-xs text-muted">\{recordings\.length\} سجل<\/p>\}/);
+  });
+
+  it("الشريط للسوبر أدمن بس، ومقفول وهو بيسجّل/بيفرّغ", () => {
+    expect(SRC).toMatch(/\{superOk && \(\s*<div[^>]*data-testid="mj-agent-preview"/);
+    const i = SRC.indexOf('data-testid="mj-agent-preview"');
+    const bar = SRC.slice(i, i + 1200);
+    expect(bar).toMatch(/disabled=\{isRecording \|\| isTranscribing \|\| reAnalyzing \|\| mjBusy\}/);
+    expect(bar).toMatch(/رجّع أدواتي/);
+  });
+
+  it("الاختيار بيتقري بعد التحميل (مش وقت SSR)", () => {
+    expect(SRC).toMatch(/const \[agentPreview, setAgentPreviewState\] = useState\(false\);/);
+    expect(SRC).toMatch(/setAgentPreviewState\(loadAgentPreview\(\)\)/);
   });
 });

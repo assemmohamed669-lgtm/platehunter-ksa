@@ -13,7 +13,9 @@
 import { serviceActive } from "@/lib/subscription";
 import { voiceTabVisible } from "@/lib/voiceAccess";
 
-export const MUJAMMAA_FOR_DELEGATES = true;
+// ⛔ مقفول على المناديب — المالك (١٨ أكتوبر): «المهم متفتحش للمناديب دلوقتي». السوبر أدمن بيشوفه «زي المندوب»
+// (`lib/mujammaaPreview.ts`) لحد ما يقول نفتح ⇒ `true`.
+export const MUJAMMAA_FOR_DELEGATES = false;
 
 export interface AccessProfile {
   is_super?: boolean | null;

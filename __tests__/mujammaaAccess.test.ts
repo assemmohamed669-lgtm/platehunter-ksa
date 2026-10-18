@@ -16,10 +16,15 @@ const PAST = "2000-01-01";
 const all = { voicex_enabled: true, voicex_until: FUTURE, rest_pages_enabled: true, rest_until: FUTURE };
 
 describe("hasAllServices / canUseMujammaa", () => {
-  it("مشترك في كل الخدمات ⇒ يظهر", () => {
+  it("مشترك في كل الخدمات ⇒ يظهر — بس لما المالك يفتح (`MUJAMMAA_FOR_DELEGATES`)", () => {
     expect(hasAllServices(all)).toBe(true);
     expect(canUseMujammaa(all)).toBe(MUJAMMAA_FOR_DELEGATES);
-    expect(MUJAMMAA_FOR_DELEGATES).toBe(true);
+  });
+
+  it("⛔ مقفول على المناديب لحد ما المالك يقول (١٨ أكتوبر: «المهم متفتحش للمناديب دلوقتي»)", () => {
+    expect(MUJAMMAA_FOR_DELEGATES).toBe(false);
+    expect(canUseMujammaa(all)).toBe(false);
+    expect(canUseMujammaa({ is_super: true })).toBe(true);
   });
 
   it("صوت بس ⇒ لأ (باقي البرنامج مقفول أو أيامه خلصت)", () => {
@@ -33,7 +38,8 @@ describe("hasAllServices / canUseMujammaa", () => {
   });
 
   it("تواريخ فاضية = من غير حد (زي باقي التطبيق)", () => {
-    expect(canUseMujammaa({ voicex_enabled: true, rest_pages_enabled: true })).toBe(true);
+    expect(hasAllServices({ voicex_enabled: true, rest_pages_enabled: true })).toBe(true);
+    expect(canUseMujammaa({ voicex_enabled: true, rest_pages_enabled: true })).toBe(MUJAMMAA_FOR_DELEGATES);
   });
 
   it("السوبر أدمن دايماً، والبروفايل المش معروف ⇒ لأ (مقفول لحد ما نتأكد)", () => {

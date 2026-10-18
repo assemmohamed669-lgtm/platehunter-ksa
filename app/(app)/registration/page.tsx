@@ -68,6 +68,7 @@ import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 import dynamic from "next/dynamic";
 import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { loadAgentPreview, saveAgentPreview } from "@/lib/mujammaaPreview";
 import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
 import type { PlateEntry } from "@/components/mujammaa/lib/plateEntry";
 import type { BankSheet } from "@/components/mujammaa/lib/bankSheet";
@@ -568,11 +569,27 @@ export default function RegistrationPage() {
     setRegModeState(m);
     try { localStorage.setItem(LS_REG_MODE, m); } catch { /* ignore */ }
   }
+  /**
+   * 👁️ «زي المندوب» (١٨ أكتوبر ٢٠٢٦ — `lib/mujammaaPreview.ts`): السوبر أدمن بيشوف «التسجيل» بنفس مسار
+   * المندوب بالظبط (المجمّع على طول · من غير المفتاح ولا الشروحات ولا التقارير). المالك: «اظهر ليا انا بس
+   * اللي هيظهر للمناديب وبعدين ابقي رجع تاني التقارير وكل حاجه». بيتقري بعد التحميل (مش وقت SSR).
+   */
+  const [agentPreview, setAgentPreviewState] = useState(false);
   useEffect(() => {
-    if ((superOk && regMode === "mujammaa") || mjAgentOk) setMjOpened(true);
-  }, [superOk, regMode, mjAgentOk]);
-  /** المجمّع ظاهر دلوقتي؟ — السوبر أدمن بالمفتاح، والمندوب دايماً */
-  const mjShown = superOk ? regMode === "mujammaa" : mjAgentOk;
+    setAgentPreviewState(loadAgentPreview());
+  }, []);
+  function setAgentPreview(on: boolean) {
+    setAgentPreviewState(on);
+    saveAgentPreview(on);
+  }
+  const asAgent = superOk && agentPreview;
+  /** الصفحة بتتعرض زي المندوب (مندوب فعلاً أو السوبر أدمن في «زي المندوب») */
+  const agentView = mjAgentOk || asAgent;
+  useEffect(() => {
+    if ((superOk && (asAgent || regMode === "mujammaa")) || mjAgentOk) setMjOpened(true);
+  }, [superOk, regMode, mjAgentOk, asAgent]);
+  /** المجمّع ظاهر دلوقتي؟ — السوبر أدمن بالمفتاح (أو «زي المندوب»)، والمندوب دايماً */
+  const mjShown = superOk ? asAgent || regMode === "mujammaa" : mjAgentOk;
   useEffect(() => {
     // النت بطيء/معلّق ⇒ التسجيل القديم يظهر بعد ٤ث بالكتير (زي ما كان قبل كده: الحارس بيعدّي)
     const t = setTimeout(() => setSuperChecked(true), 4000);
@@ -2904,7 +2921,7 @@ export default function RegistrationPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-black text-ink">التسجيل</h1>
-          {!mjAgentOk && <p className="text-xs text-muted">{recordings.length} سجل</p>}
+          {!agentView && <p className="text-xs text-muted">{recordings.length} سجل</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {isOnline ? (
@@ -2916,7 +2933,7 @@ export default function RegistrationPage() {
               <WifiOff size={13} /> غير متصل
             </span>
           )}
-          {!mjAgentOk && pendingCount > 0 && (
+          {!agentView && pendingCount > 0 && (
             <button
               onClick={handleSync}
               className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-1 text-xs text-primary"
@@ -2928,9 +2945,28 @@ export default function RegistrationPage() {
         </div>
       </div>
 
+      {/* 👁️ «زي المندوب» — الشريط ده للسوبر أدمن بس (المندوب مابيشوفوش)، ومقفول وفيه تسجيل/تفريغ شغّال */}
+      {superOk && (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800" data-testid="mj-agent-preview" dir="rtl">
+          <span>
+            {asAgent
+              ? "👁️ بتشوف «التسجيل» زي المندوب بالظبط — الشريط ده ليك انت بس"
+              : "👁️ عايز تشوف «التسجيل» زي ما المندوب هيشوفه؟"}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAgentPreview(!agentPreview)}
+            disabled={isRecording || isTranscribing || reAnalyzing || mjBusy}
+            className="shrink-0 rounded-lg border border-amber-400 bg-white px-2 py-1 disabled:opacity-50"
+          >
+            {asAgent ? "رجّع أدواتي" : "زي المندوب"}
+          </button>
+        </div>
+      )}
+
       {/* 🧮 «المجمّع» / «التسجيل القديم» — للسوبر أدمن بس، ومقفول وفيه تسجيل شغّال في القديم
           (الميك والتفريغ بتوعه مايفضلوش شغّالين ورا الشاشة). */}
-      {superOk && (
+      {superOk && !asAgent && (
         <div className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface p-1" data-testid="reg-mode-switch" dir="rtl">
           {([["mujammaa", "🧮 المجمّع"], ["classic", "التسجيل القديم"]] as const).map(([m, label]) => (
             <button
@@ -2954,7 +2990,7 @@ export default function RegistrationPage() {
             agentName={recorderName.trim() || agentEmail || agentId || ""}
             onBusyChange={setMjBusy}
             visible={mjShown}
-            advanced={superOk}
+            advanced={superOk && !asAgent}
             onExportToRecords={exportMujammaa}
           />
         </div>
@@ -3482,7 +3518,7 @@ export default function RegistrationPage() {
 
       {/* PIN gate for the Groq key — reveal/clear both need it; a key saved
           with no PIN yet (mid-setup app close) forces setup again on load. */}
-      {pinPrompt && !mjAgentOk && (
+      {pinPrompt && !agentView && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" dir="rtl">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
             {pinPrompt.mode === "setup" && (
