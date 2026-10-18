@@ -36,6 +36,8 @@ export const ALERT_TONES: AlertTone[] = [
   { id: "funny", name: "قناص 10", file: "/tones/funny.mp3" },
   { id: "r114", name: "قناص 11", file: "/tones/r114.mp3" },
   { id: "r33", name: "قناص 12", file: "/tones/r33.mp3" },
+  // المالك (١٨ أكتوبر ٢٠٢٦): «ضيفها علي النغمات … بس متثبتهاش للكل خليها ك خيار» — خيار زي الباقي، والافتراضي فاضل الصفّارة.
+  { id: "gemini-music", name: "قناص 13", file: "/tones/gemini-music.mp3" },
 ];
 
 const KEY = "ph:alertTone";

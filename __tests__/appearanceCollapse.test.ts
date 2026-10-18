@@ -12,10 +12,10 @@ import { APPEARANCE_COLLAPSE_FOR_ALL } from "@/lib/appSettings";
 const read = (p: string) => readFileSync(path.resolve(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n");
 
 describe("🔴 أسامي النغمات بالترتيب", () => {
-  it("قناص 1 … قناص 12 — والافتراضي زي ما هو", () => {
+  it("قناص 1 … قناص 13 (١٣ اتضافت ١٨ أكتوبر) — والافتراضي زي ما هو", () => {
     expect(ALERT_TONES[0].name).toBe("صفّارة البرنامج (الافتراضي)");
     expect(ALERT_TONES.filter((t) => t.file).map((t) => t.name))
-      .toEqual(Array.from({ length: 12 }, (_, i) => `قناص ${i + 1}`));
+      .toEqual(Array.from({ length: 13 }, (_, i) => `قناص ${i + 1}`));
   });
 });
 
