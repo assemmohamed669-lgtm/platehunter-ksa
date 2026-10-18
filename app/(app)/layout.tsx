@@ -34,6 +34,7 @@ import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 import { isRouteLockedForMember } from "@/lib/groupLocks";
 import { useMemberLocks } from "@/lib/groupLocksClient";
 import { rememberPage } from "@/lib/lastPage";
+import { diagNav, startDeviceDiag } from "@/lib/deviceDiag";
 import { markBootStable, takeBootGuardHit, pageLabel, BOOT_STABLE_MS } from "@/lib/bootGuard";
 
 const ADMIN_WHATSAPP = "971542482545";
@@ -55,6 +56,8 @@ export default function AppShellLayout({
    * الفرز ولازم يرجع بنفسه كل مرة. (بلاغ المالك ٢٧ سبتمبر ٢٠٢٦.)
    */
   useEffect(() => { if (pathname) rememberPage(pathname); }, [pathname]);
+  // 🩺 الصندوق الأسود (للمندوب اللي في القايمة بس — `lib/deviceDiag.ts`): كل انتقال بين الصفحات
+  useEffect(() => { if (pathname) diagNav(pathname); }, [pathname]);
 
   /**
    * 🔁 حارس اللفّة (`lib/bootGuard.ts` — السكربت في أول الـHTML): البرنامج عاش ٣٠ ثانية ⇒
@@ -104,6 +107,8 @@ export default function AppShellLayout({
       // شبكة زيادة بلا لزوم. صفحات الأدمن مستعملة `currentSession` أصلاً.
       const { userId } = await currentSession();
       if (!userId) return;
+      // 🩺 الصندوق الأسود — مقفول على أي حد مش في القايمة (ولا سطر بيتسجّل)
+      startDeviceDiag(userId);
       // 👤 زرار «الأدمن» يظهر **فوراً** من آخر مرة، والسيرفر يأكّد بعدها بلحظة.
       //    (بلاغ المالك ٢٩ سبتمبر: «فيه لاج في ظهور كلمة أدمن».)
       const remembered = readCachedRole(userId);

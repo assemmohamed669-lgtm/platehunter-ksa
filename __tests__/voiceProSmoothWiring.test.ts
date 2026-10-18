@@ -105,7 +105,8 @@ describe("② 🔒 جلسة قديمة ماتوقّفش جلسة أحدث — ل
   });
   it("🩺 الكود بيتسجّل في المراقبة (tel للسوبر أدمن بس) — ومن غير كود نفس الحدث القديم", () => {
     expect(startFn).toMatch(/tel\?\.event\("fatal", code === undefined \? \{ reason \} : \{ reason, code \}\);/);
-    expect(src).toMatch(/telRef\.current = !isSuper \? null : startTelemetrySession\(/);
+    // السوبر أدمن + المندوب اللي في قايمة الصندوق الأسود بس (١٨ أكتوبر — `lib/deviceDiag.ts`)
+    expect(src).toMatch(/telRef\.current = !\(isSuper \|\| diagEnabledFor\(telAgentId\)\) \? null : startTelemetrySession\(/);
   });
   it("🔴 startingRef بيتحط **جوّه** الـtry اللي finally بتاعه بيرجّعه (رمية في النص ماتعلّقش الهيكل)", () => {
     expect(startFn).toMatch(/try \{\s*(?:\/\/[^\n]*\n\s*)*startingRef\.current = true;\s*(?:\/\/[^\n]*\n\s*)*const \{ startVoicexEngine \} = await import\("@\/lib\/voicexEngine"\);/);
