@@ -45,6 +45,8 @@ export default function MujammaaSection({
   visible = true,
   advanced = true,
   onExportToRecords,
+  hideCheckBox = false,
+  onCheckInfo,
 }: {
   agentName: string;
   /** بيسجّل أو بيقفل المقطع — «التسجيل» بتقفل المفتاح وقتها */
@@ -55,6 +57,9 @@ export default function MujammaaSection({
   advanced?: boolean;
   /** 📋 «تصدير للسجلات» ⇒ «داتا التسجيلات» (من صفحة التسجيل — الحفظ برّه المجمّع) */
   onExportToRecords?: ComponentProps<typeof BatchPage>["onExportToRecords"];
+  /** 📥 «التسجيل» بيعرض مربع ملف التشييك (رفع/تغيير/مسح) ⇒ مربع القراية بتاع المجمّع يستخبى */
+  hideCheckBox?: boolean;
+  onCheckInfo?: ComponentProps<typeof BatchPage>["onCheckInfo"];
 }) {
   const errorLog = useMemo(() => (sessionLog ??= new ErrorLog()), []);
   // المندوب بيكلّم السيرفر الأساسي دايماً — العنوان البديل (للتجربة) للسوبر أدمن بس
@@ -202,6 +207,8 @@ export default function MujammaaSection({
         onBusyChange={onBusyChange}
         visible={visible}
         onExportToRecords={onExportToRecords}
+        hideCheckBox={hideCheckBox}
+        onCheckInfo={onCheckInfo}
       />
     </div>
   );

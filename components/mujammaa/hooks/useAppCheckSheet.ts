@@ -4,12 +4,15 @@
  * ==========================================================================
  *  في المعمل الصفحة ليها شيت بنك بترفعه وتمسحه. في قناص **ملف التشييك واحد**
  *  (`local:check` + `check-2..N`) والرفع والمسح من صفحة التشييك بس — هنا قراية بس.
- *  بيتقري تاني لوحده لما الملف يتغيّر (`idbFileUpdated` — استقبال واتساب/المجموعة).
+ *  بيتقري تاني لوحده لما الملف يتغيّر — من **أي** صفحة (`onCheckSheetChanged`: التشييك · «Voice PRO» ·
+ *  مربع «التسجيل» · الوارد من واتساب/المجموعة) ولما المندوب يرجع للصفحة وفاته تغيير. المالك (١٨ أكتوبر):
+ *  «لو غير الملف بتاع التشييك من صفحه التشييك او من صفحه المجمع يظهر في باقي الصفحات».
  */
 import { useEffect, useRef, useState } from "react";
 import type { BankSheet } from "../lib/bankSheet";
 import type { ErrorLog } from "../lib/errorLog";
 import { buildCheckBankSheet } from "../lib/checkSheetAdapter";
+import { lastCheckSheetStamp, onCheckSheetChanged } from "@/lib/checkSheetSync";
 
 export interface UseAppCheckSheet {
   sheet: BankSheet | null;
@@ -31,7 +34,9 @@ export function useAppCheckSheet(errorLog: ErrorLog): UseAppCheckSheet {
 
   useEffect(() => {
     let alive = true;
+    let loadedStamp: string | null = null;
     const load = async () => {
+      loadedStamp = lastCheckSheetStamp();
       try {
         const [{ loadAllCheckSources }, { getUploadedFile }] = await Promise.all([
           import("@/lib/checkSheets"),
@@ -47,16 +52,21 @@ export function useAppCheckSheet(errorLog: ErrorLog): UseAppCheckSheet {
       }
     };
     void load();
-    const onIdb = () => void load();
+    // نفس إشارة «Voice PRO» — `idbEvent`: الوارد من واتساب/المجموعة كمان
+    const off = onCheckSheetChanged(() => void load(), { idbEvent: true });
+    const onVis = () => {
+      if (document.visibilityState === "visible" && lastCheckSheetStamp() !== loadedStamp) void load();
+    };
     try {
-      window.addEventListener("idbFileUpdated", onIdb);
+      document.addEventListener("visibilitychange", onVis);
     } catch {
-      // مش متاح — القراية الأولى كفاية
+      // مش متاح — الإشارة كفاية
     }
     return () => {
       alive = false;
+      off();
       try {
-        window.removeEventListener("idbFileUpdated", onIdb);
+        document.removeEventListener("visibilitychange", onVis);
       } catch {
         // ignore
       }

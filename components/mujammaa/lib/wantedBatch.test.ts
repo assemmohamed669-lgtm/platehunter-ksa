@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { carInfoRows, chassisOf, mergeWanted, wantedHeadline, wantedOf } from "./wantedBatch";
+import { carInfoRows, chassisOf, mergeWanted, newlyWanted, rematchEntries, wantedHeadline, wantedOf } from "./wantedBatch";
 import type { PlateEntry } from "./plateEntry";
 
 /**
@@ -74,5 +74,34 @@ describe("wantedOf / mergeWanted", () => {
     const a = [entry("بسن8921", "exact", ROW)];
     const b = [entry("بسن8921", "exact", ROW), entry("حقل5830", "exact", {})];
     expect(mergeWanted(a, b).map((e) => e.review.plate)).toEqual(["بسن8921", "حقل5830"]);
+  });
+});
+
+describe("rematchEntries / newlyWanted — ملف التشييك اتغيّر", () => {
+  /**
+   * المالك (١٨ أكتوبر): «لو غير الملف بتاع التشييك من صفحه التشييك او من صفحه المجمع يظهر في باقي الصفحات
+   * والبرنامج يعتمدة في كل حاجه» ⇒ اللوحات اللي في الجدول بتتقارن تاني بالملف الجديد.
+   */
+  // نفس الملف بيرجّع نفس الصف (الفهرس) — ملف جديد بيرجّع صفوف جديدة
+  const rows: Record<string, Record<string, string>> = {};
+  const sheetWith = (plates: string[]) => (p: string) =>
+    plates.includes(p)
+      ? ({ kind: "exact", row: (rows[p] ??= { البنك: "x" }), similarity: 100 } as never)
+      : ({ kind: "none", similarity: 0 } as never);
+
+  it("كل لوحة بتاخد حالتها من الملف الجديد — والمرجع نفسه لو مافيش تغيير", () => {
+    const list = [entry("ابح1234", "none"), entry("بسن8921", "exact", ROW)];
+    const a = rematchEntries(list, sheetWith(["ابح1234"]));
+    expect(a.changed).toBe(true);
+    expect(a.entries.map((e) => e.match.kind)).toEqual(["exact", "none"]);
+    const b = rematchEntries(a.entries, sheetWith(["ابح1234"]));
+    expect(b.changed).toBe(false);
+    expect(b.entries).toBe(a.entries);
+  });
+
+  it("المطلوبة الجديدة بس (اللي ماكانتش مطلوبة قبل كده)", () => {
+    const before = [entry("ابح1234", "none"), entry("بسن8921", "exact", ROW)];
+    const after = rematchEntries(before, sheetWith(["ابح1234", "بسن8921"])).entries;
+    expect(newlyWanted(before, after).map((e) => e.review.plate)).toEqual(["ابح1234"]);
   });
 });

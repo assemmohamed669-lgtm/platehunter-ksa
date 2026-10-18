@@ -69,6 +69,7 @@ import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExce
 import dynamic from "next/dynamic";
 import { canUseMujammaa } from "@/lib/mujammaaAccess";
 import { loadAgentPreview, saveAgentPreview } from "@/lib/mujammaaPreview";
+import SharedCheckFileBox from "@/components/SharedCheckFileBox";
 import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
 import type { PlateEntry } from "@/components/mujammaa/lib/plateEntry";
 import type { BankSheet } from "@/components/mujammaa/lib/bankSheet";
@@ -585,6 +586,11 @@ export default function RegistrationPage() {
   const asAgent = superOk && agentPreview;
   /** الصفحة بتتعرض زي المندوب (مندوب فعلاً أو السوبر أدمن في «زي المندوب») */
   const agentView = mjAgentOk || asAgent;
+  /**
+   * 📥 ملف التشييك من «التسجيل» كمان (١٨ أكتوبر — المالك: «لو غير الملف بتاع التشييك من صفحه التشييك او من
+   * صفحه المجمع يظهر في باقي الصفحات والبرنامج يعتمدة في كل حاجه»). العدد من المجمّع نفسه (مافيش فهرس تاني).
+   */
+  const [mjCheckInfo, setMjCheckInfo] = useState<{ plates: number | null; files: number } | null>(null);
   useEffect(() => {
     if ((superOk && (asAgent || regMode === "mujammaa")) || mjAgentOk) setMjOpened(true);
   }, [superOk, regMode, mjAgentOk, asAgent]);
@@ -2984,6 +2990,10 @@ export default function RegistrationPage() {
         </div>
       )}
 
+      {(superOk || mjAgentOk) && mjShown && (
+        <SharedCheckFileBox plateCount={mjCheckInfo?.plates ?? null} extraFiles={Math.max(0, (mjCheckInfo?.files ?? 0) - 1)} />
+      )}
+
       {(superOk || mjAgentOk) && mjOpened && (
         <div hidden={!mjShown}>
           <MujammaaSection
@@ -2992,6 +3002,8 @@ export default function RegistrationPage() {
             visible={mjShown}
             advanced={superOk && !asAgent}
             onExportToRecords={exportMujammaa}
+            hideCheckBox
+            onCheckInfo={setMjCheckInfo}
           />
         </div>
       )}
