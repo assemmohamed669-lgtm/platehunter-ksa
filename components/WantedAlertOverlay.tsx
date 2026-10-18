@@ -11,7 +11,7 @@ import { AlertTriangle, Check } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked, preloadAlertTone } from "@/lib/alertSiren";
 import { installMicCaptureWatch } from "@/lib/micCapture";
-import { WANTED_ALERT_EVENT, type WantedAlertDetail } from "@/lib/wantedAlert";
+import { WANTED_ALERT_EVENT, type WantedAlertDetail, fireWantedAlertsCleared } from "@/lib/wantedAlert";
 import { pushAlert, dropCurrent, type QueuedAlert } from "@/lib/wantedAlertQueue";
 
 export default function WantedAlertOverlay() {
@@ -68,6 +68,8 @@ export default function WantedAlertOverlay() {
    */
   function dismiss() {
     stopAlertSiren();
+    // 🔕 آخر تنبيه ⇒ Voice PRO يرجّع التسجيل اللي وقّفه عشان الصفّارة تتسمع (جوّه الضغطة نفسها)
+    if (queue.length <= 1) fireWantedAlertsCleared();
     setQueue((q) => {
       const rest = dropCurrent(q);
       if (rest.length > 0) setTimeout(() => startAlertSiren(), 250);

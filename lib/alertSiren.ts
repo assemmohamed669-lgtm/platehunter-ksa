@@ -128,6 +128,27 @@ function playThroughSilent(): void {
   if (isMicBusy() || isCapturingAudio()) return;   // 🎙️ التسجيل شغّال — تغيير نوع الصوت ممكن يوقفه
   try { prevSessionType = as.type; as.type = "playback"; } catch { prevSessionType = null; }
 }
+/**
+ * 🔕 التنبيه بدأ والمايك مفتوح (مالمسناش نوع الصوت) ⇒ أول ما المايك يتقفل (Voice PRO بيوقّفه مع العربية المطلوبة)
+ * بنحط «يرن حتى لو صامت» ونصحّي الصوت — من غير كده الآيفون الصامت كان هيكتم الصفّارة بعد ما المايك يتقفل.
+ */
+let captureWatch: ReturnType<typeof setInterval> | null = null;
+function stopCaptureWatch(): void {
+  if (captureWatch) { clearInterval(captureWatch); captureWatch = null; }
+}
+function watchCaptureEnd(): void {
+  stopCaptureWatch();
+  if (!silentRingOn() || !audioSession()) return;
+  const started = Date.now();
+  captureWatch = setInterval(() => {
+    if (!playing || kind !== "alert" || Date.now() - started > 15_000) { stopCaptureWatch(); return; }
+    if (isMicBusy() || isCapturingAudio()) return;
+    stopCaptureWatch();
+    playThroughSilent();
+    ctx?.resume?.().catch(() => {});
+  }, 300);
+}
+
 function restoreSession(): void {
   const as = audioSession();
   if (!as || prevSessionType === null) return;
@@ -150,11 +171,16 @@ export function startAlertSiren(): void {
   const tone = alertToneById(loadAlertToneId());
   if (tone.file) {
     const buf = buffers.get(tone.id);
-    if (buf && playBuffer(c, buf, true)) { kind = "alert"; return; }
+    if (buf && playBuffer(c, buf, true)) {
+      kind = "alert";
+      if (prevSessionType === null) watchCaptureEnd();
+      return;
+    }
     void loadToneBuffer(tone); // لسه ماتحمّلتش ⇒ الصفّارة دلوقتي، والنغمة للمرة الجاية
   }
   startOscSiren(c);
   if (playing) kind = "alert";
+  if (playing && prevSessionType === null) watchCaptureEnd();
 }
 
 /**
@@ -294,6 +320,7 @@ function stopNodes(): void {
   playing = false;
   kind = null;
   stopVibration();
+  stopCaptureWatch();
   restoreSession();
 }
 

@@ -123,7 +123,7 @@ const parse = (s: unknown): Record<string, unknown> => {
 
 const STOP_REASON: Record<string, string> = {
   manual: "بإيده", fatal: "عطل", call: "مكالمة", background: "التطبيق راح للخلفية",
-  unmount: "خرج من الصفحة", restart: "بدأ تسجيل جديد", mic_failed: "المايك مافتحش", engine_failed: "المحرّك مااشتغلش",
+  unmount: "خرج من الصفحة", restart: "بدأ تسجيل جديد", wanted: "عربية مطلوبة (بيرجع بعد «تم»)", mic_failed: "المايك مافتحش", engine_failed: "المحرّك مااشتغلش",
 };
 
 export function describeTelEvent(ev: TelEvent): { label: string; text: string; tone: Tone } {
