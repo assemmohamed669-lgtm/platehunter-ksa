@@ -2861,10 +2861,10 @@ export default function RegistrationPage() {
         uid,
         clipKey: ctx.clipKey,
         sheet: ctx.sheet,
-        recorder: recorderName.trim() || agentEmail || null,
       });
     },
-    [recorderName, agentEmail]
+    // 🧾 «اسم المسجّل» بقى من مربع المجمّع لحظة النطق (`entry.recorderName`) — مش اسم الحساب
+    []
   );
 
   // Push the given recordings onto شيت التسجيلات (field_check) — the same sheet

@@ -61,6 +61,8 @@ export default function PlateTable({
   const headers = plateDetailHeaders(sheet);
   const tiers = tierCounts(entries);
   const fieldMode = !!onAnnotate;
+  /** 🧾 عمود «المسجّل» بيظهر بس لو المندوب كتب في مربع «اسم المسجّل» (١٨ أكتوبر ٢٠٢٦) */
+  const showRecorder = fieldMode && entries.some((e) => !!e.recorderName);
 
   // تحرير خلية حي/ملاحظة بالقلم (خلية واحدة في المرة)
   const [editCell, setEditCell] = useState<{ id: string; field: EditField } | null>(null);
@@ -145,7 +147,8 @@ export default function PlateTable({
             {fieldMode ? (
               <>
                 <th className="p-2 font-medium">النوع</th>
-                <th className="p-2 font-medium">الحي</th>
+                <th className="p-2 font-medium">اسم الحي</th>
+                {showRecorder && <th className="p-2 font-medium">المسجّل</th>}
                 <th className="p-2 font-medium">ملاحظة</th>
                 <th className="p-2 font-medium">GPS</th>
               </>
@@ -166,7 +169,7 @@ export default function PlateTable({
             const r = entry.review;
             const wanted = row.status === "wanted";
             const tone = wanted ? "wanted" : "normal";
-            const colSpan = 4 + (fieldMode ? 4 : headers.length);
+            const colSpan = 4 + (fieldMode ? 4 + (showRecorder ? 1 : 0) : headers.length);
             const gps = pinLink(entry.pin);
 
             return (
@@ -228,6 +231,9 @@ export default function PlateTable({
                       <td className="whitespace-nowrap p-2 text-xs">
                         {editableCell(entry, "neighborhood", "— الحي")}
                       </td>
+                      {showRecorder && (
+                        <td className="whitespace-nowrap p-2 text-xs text-slate-300">{entry.recorderName || "—"}</td>
+                      )}
                       <td className="whitespace-nowrap p-2 text-xs">
                         {editableCell(entry, "note", "— ملاحظة")}
                       </td>

@@ -123,6 +123,10 @@ export interface PlateEntry {
   neighborhood?: string;
   /** ملاحظة حرة يكتبها المندوب — بتتحفظ وتتصدّر وتتدفّق لصفحة الداتا. */
   note?: string;
+  /** 🧾 «اسم المسجّل» من المربع لحظة النطق (١٨ أكتوبر ٢٠٢٦) — فاضي ⇒ عموده مايظهرش */
+  recorderName?: string;
+  /** 🏘️ «اسم الحي» جه من موقع اللوحة (المندوب ماكتبوش) — `components/mujammaa/lib/autoDistrict.ts` */
+  neighborhoodAuto?: boolean;
 }
 
 /**
@@ -318,6 +322,7 @@ export function makePlateEntry(input: {
   vehicleType?: string;
   neighborhood?: string;
   note?: string;
+  recorderName?: string;
 }): PlateEntry {
   idCounter += 1;
   return {
@@ -332,6 +337,7 @@ export function makePlateEntry(input: {
     vehicleType: input.vehicleType,
     neighborhood: input.neighborhood,
     note: input.note,
+    ...(input.recorderName ? { recorderName: input.recorderName } : {}),
   };
 }
 

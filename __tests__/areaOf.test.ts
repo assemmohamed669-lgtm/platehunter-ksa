@@ -50,3 +50,15 @@ describe("قراية «الحي - الشارع» بتفهم الاسمين", () 
     expect(AREA_COLUMN).not.toBe(AREA_KEY);
   });
 });
+
+describe("🏘️ «اسم الحي» بتاع المجمّع (١٨ أكتوبر ٢٠٢٦)", () => {
+  it("⛔ areaOf مابيقراش «اسم الحي» — ملف بنك فيه العمود ده (عنوان صاحب العربية) مايظهرش كأنه مكان المندوب", () => {
+    expect(areaOf({ "اسم الحي": "عنوان البنك" })).toBe("");
+  });
+  it("سجلات المجمّع بتتقري بدالتها (mujammaaDistrictOf) — وبترجع للعادي لو مافيش", async () => {
+    const { mujammaaDistrictOf } = await import("@/lib/mujammaaRecords");
+    expect(mujammaaDistrictOf({ "اسم الحي": "النرجس" })).toBe("النرجس");
+    expect(mujammaaDistrictOf({ "الحي-الشارع": "قديم" })).toBe("قديم");
+    expect(mujammaaDistrictOf(null)).toBe("");
+  });
+});

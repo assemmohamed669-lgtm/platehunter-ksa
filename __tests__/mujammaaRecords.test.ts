@@ -44,7 +44,8 @@ function entry(over: Partial<PlateEntry> = {}, plate = "ابح1234"): PlateEntry
     capturedAt: T + 5000,
     source: "batch",
     vehicleType: "ونيت",
-    neighborhood: "النرجس - شارع ١٢",
+    neighborhood: "النرجس",
+    recorderName: "عاصم",
     note: "مصدومة",
     ...over,
   } as PlateEntry;
@@ -73,7 +74,7 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
   });
 
   it("اللوحة والموقع ووقت النطق والحقول اللي المندوب قالها", () => {
-    const r = mujammaaRecordOf(entry(), { uid: "u1", clipKey: "c9", recorder: "عاصم" });
+    const r = mujammaaRecordOf(entry(), { uid: "u1", clipKey: "c9" });
     expect(r.agentId).toBe("u1");
     expect(r.plate).toBe("ابح1234");
     expect(r.lat).toBe(24.7123456);
@@ -84,7 +85,9 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
     expect(r.row["رقم اللوحة"]).toBeUndefined();
     expect(r.row["النوع"]).toBe("ونيت");                  // عمود النوع بتاع السجلات (TYPE_KEY)
     expect(r.row["ملاحظة المندوب"]).toBe("مصدومة");        // بيتقري كملاحظات (/ملاح/)
-    expect(r.row["اسم الحي - الشارع"]).toBe("النرجس - شارع ١٢");
+    // 🏘️ المالك (١٨ أكتوبر): «اسم الحي … يظهر في عمود لوحده»
+    expect(r.row["اسم الحي"]).toBe("النرجس");
+    expect(r.row["اسم الحي - الشارع"]).toBeUndefined();
     expect(r.row["الحالة"]).toBe("مؤكّدة");
     expect(r.row["دقة الموقع (م)"]).toBe("8");
     expect(r.row["اسم المسجّل"]).toBe("عاصم");
@@ -120,7 +123,7 @@ describe("mujammaaRecordOf — لوحة المجمّع ⇒ سجل في «دات�
   });
 
   it("من غير موقع ⇒ من غير إحداثيات (مابنخترعش)، والحقول الفاضية مابتتكتبش", () => {
-    const r = mujammaaRecordOf(entry({ pin: null, vehicleType: undefined, note: "  ", neighborhood: undefined }), {
+    const r = mujammaaRecordOf(entry({ pin: null, vehicleType: undefined, note: "  ", neighborhood: undefined, recorderName: undefined }), {
       uid: "u1",
       clipKey: "c9",
     });
@@ -179,5 +182,38 @@ describe("saveMujammaaRecords — الحفظ والرفع", () => {
     const res = await saveMujammaaRecords([], { uid: "u1", clipKey: "c" }, { save: vi.fn(), upload });
     expect(res).toEqual({ savedEntryIds: [], failed: 0 });
     expect(upload).not.toHaveBeenCalled();
+  });
+});
+
+describe("🧾 مربعات المجمّع في السجل (١٨ أكتوبر ٢٠٢٦)", () => {
+  it("«اسم المسجّل» من المربع (لحظة النطق) — ولو المربع فاضي ماينزلش (العمود مايظهرش)", () => {
+    expect(mujammaaRecordOf(entry(), { uid: "u1", clipKey: "c" }).row["اسم المسجّل"]).toBe("عاصم");
+    const none = mujammaaRecordOf(entry({ recorderName: undefined }), { uid: "u1", clipKey: "c" });
+    expect("اسم المسجّل" in none.row).toBe(false);
+  });
+
+  it("«اسم أو رقم الجراج» في الملاحظات — مع اللي اتقال للعربية", () => {
+    const r = mujammaaRecordOf(entry({ note: "اول جراج يمين · مركونه" }), { uid: "u1", clipKey: "c" });
+    expect(r.row["ملاحظة المندوب"]).toBe("اول جراج يمين · مركونه");
+  });
+
+  it("الحي التلقائي من الموقع بينزل في نفس العمود", () => {
+    const r = mujammaaRecordOf(entry({ neighborhood: "الياسمين", neighborhoodAuto: true }), { uid: "u1", clipKey: "c" });
+    expect(r.row["اسم الحي"]).toBe("الياسمين");
+  });
+});
+
+describe("⛔ أعمدة ملف البنك مابتبانش كأنها كلام المندوب", () => {
+  it("«اسم الحي»/«اسم المسجّل» في ملف التشييك مابيتنسخوش — حتى لو المندوب ماكتبش", () => {
+    const sheet = { plateColumn: "رقم اللوحة", headers: ["رقم اللوحة", "اسم الحي", "اسم المسجّل", "البنك"] } as unknown as BankSheet;
+    const e = entry({
+      neighborhood: undefined,
+      recorderName: undefined,
+      match: { kind: "exact", similarity: 100, row: { "رقم اللوحة": "ابح1234", "اسم الحي": "عنوان صاحبها", "اسم المسجّل": "موظف البنك", "البنك": "الراجحي" } } as never,
+    });
+    const r = mujammaaRecordOf(e, { uid: "u1", clipKey: "c", sheet });
+    expect("اسم الحي" in r.row).toBe(false);
+    expect("اسم المسجّل" in r.row).toBe(false);
+    expect(r.row["البنك"]).toBe("الراجحي");
   });
 });
