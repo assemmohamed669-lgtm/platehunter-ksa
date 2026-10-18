@@ -1306,9 +1306,11 @@ export async function shareExcelBlob(
   blob: Blob,
   filename: string,
   title: string,
-  opts: { keepName?: boolean; fallbackName?: string } = {},
+  opts: { keepName?: boolean; fallbackName?: string; rtlDone?: boolean } = {},
 ): Promise<void> {
-  blob = await rtlAlignBlob(blob, filename);   // يفتح من اليمين + كل الخلايا محاذاة يمين
+  // يفتح من اليمين + كل الخلايا محاذاة يمين. `rtlDone` = الملف متظبط جوّه نفسه (xlsx «حتة حتة») — فكّه تاني كان
+  // هيحمّل الورقة كلها (مئات الميجات) في الذاكرة ويقفل الموبايل.
+  if (!opts.rtlDone) blob = await rtlAlignBlob(blob, filename);
   const { Capacitor } = await import("@capacitor/core");
   if (Capacitor.isNativePlatform()) {
     const names = [toSafeCacheFilename(opts.fallbackName ?? filename)];

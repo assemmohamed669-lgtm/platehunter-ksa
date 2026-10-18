@@ -105,7 +105,8 @@ describe("② 🔒 جلسة قديمة ماتوقّفش جلسة أحدث — ل
   });
   it("🩺 الكود بيتسجّل في المراقبة (tel للسوبر أدمن بس) — ومن غير كود نفس الحدث القديم", () => {
     expect(startFn).toMatch(/tel\?\.event\("fatal", code === undefined \? \{ reason \} : \{ reason, code \}\);/);
-    expect(src).toMatch(/telRef\.current = !isSuper \? null : startTelemetrySession\(/);
+    // السوبر أدمن + المندوب اللي في قايمة الصندوق الأسود بس (١٨ أكتوبر — `lib/deviceDiag.ts`)
+    expect(src).toMatch(/telRef\.current = !\(isSuper \|\| diagEnabledFor\(telAgentId\)\) \? null : startTelemetrySession\(/);
   });
   it("🔴 startingRef بيتحط **جوّه** الـtry اللي finally بتاعه بيرجّعه (رمية في النص ماتعلّقش الهيكل)", () => {
     expect(startFn).toMatch(/try \{\s*(?:\/\/[^\n]*\n\s*)*startingRef\.current = true;\s*(?:\/\/[^\n]*\n\s*)*const \{ startVoicexEngine \} = await import\("@\/lib\/voicexEngine"\);/);
@@ -178,7 +179,8 @@ describe("④ 🎚️ المؤشّر مايعيدش رسم الصفحة كلها
   it("وقت الصف بمنسّق واحد للكل، والمقارنات التقيلة محسوبة مرة لكل تغيير للكل", () => {
     expect(src).toMatch(/\{formatRowTime\(r\.shownAt\)\}/);
     expect(src).not.toMatch(/isSuper \? formatRowTime\(r\.shownAt\)/);
-    expect(src).toMatch(/useMemo\(\s*\(\) => \(\{ missed: heardNotShown\(reads, rows\), lost: blockedNotShown\(reads, rows\) \}\),\s*\[reads, rows\]/);
+    // 🪶 ١٨ أكتوبر: في الخفيف بيتحسب لو حد هيشوفه بس (`lostNeeded`) — برضه مرة لكل تغيير
+    expect(src).toMatch(/useMemo\(\s*\(\) => \(lostNeeded \? \{ missed: heardNotShown\(reads, rows\), lost: blockedNotShown\(reads, rows\) \} : NO_LOST\),\s*\[reads, rows, lostNeeded\]/);
   });
   it("التقرير الشامل (لحد ٤٠٠ قراية) مابيترسمش خالص عند المناديب — كان مستخبّي بالـCSS بس", () => {
     expect(src).toMatch(/\{isSuper && showReport && \(/);

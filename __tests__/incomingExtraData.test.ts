@@ -203,7 +203,7 @@ describe("🔴 التوصيل", () => {
   });
   it("صفحة الفرز ونافذة الملف بيستخدموا نفس عدّاد أماكن الملفات الكبيرة", () => {
     const page = read("app/(app)/sorting/page.tsx");
-    expect(page).toMatch(/import \{ nextStreamSlot \} from "@\/lib\/extraDataSlot"/);
+    expect(page).toMatch(/import \{ [^}]*\bnextStreamSlot\b[^}]*\} from "@\/lib\/extraDataSlot"/);
     expect(page).not.toMatch(/function nextStreamSlot\(/);
     expect(read("components/IncomingExcelHandler.tsx")).toMatch(/nextStreamSlot/);
   });

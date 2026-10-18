@@ -118,6 +118,10 @@ import type { VoicexEngineController, VoicexPlateMeta } from "@/lib/voicexEngine
 import { startTelemetrySession, sharedTelemetryQueue, type TelBatch } from "@/lib/voiceTelemetry";
 import { getDevicePlatform } from "@/lib/devicePlatform";
 import { BUILD_ID } from "@/lib/appVersion";
+// 🩺 الصندوق الأسود (مندوب واحد في القايمة — `lib/deviceDiag.ts`): مابيعملش حاجة لأي حد تاني
+import { diagEnabledFor, diagNote } from "@/lib/deviceDiag";
+import { createCoalescedSaver } from "@/lib/coalescedSave";
+import { LIGHT_TABLE_ROWS, LIGHT_WARN_ROWS, VOICEPRO_LIGHT_FOR_ALL } from "@/lib/voiceProLight";
 
 /**
  * 🩺 **مراقبة الصوت** (٣ أكتوبر ٢٠٢٦) — ملخّص كل دقيقتين لـ`voice_telemetry`
@@ -195,6 +199,20 @@ interface ReadLog {
 
 const WELL = /^[ء-ي]{3}\d{4}$/;
 
+/**
+ * 🪶 **«خفيف» مع الجداول الكبيرة** (١٨ أكتوبر ٢٠٢٦). الصندوق الأسود (مندوب آيفون): جدول ~١٬٨٠٠ لوحة
+ * + ملف تشييك ٤٩ ألف ⇒ الشاشة بتعلّق ٦–٧ث كل ~٩ث وiOS بيقفل البرنامج (٣ مرات في ربع ساعة) ⇒ بيفتح من
+ * الأول على «يدوي». ولما الجدول اتفضّى: ٣٠ دقيقة و٢٠٧ لوحة من غير ولا تعليقة. المالك: «يلا ابدأ».
+ *  · الجدول بيرسم آخر `LIGHT_TABLE_ROWS` بس (كل صف فيه منسدلتين ~٤٠ اختيار ⇒ ١٤٤ ألف عنصر مع ١٬٨٠٠)
+ *    + «اعرض كل اللوحات». الباقي موجود وبيتصدّر كله.
+ *  · «اتسمعت وماظهرتش» (كل قراية × كل لوحة) بيتحسب لو حد هيشوفه بس.
+ *  · الحفظ بيتجمّع (`createCoalescedSaver`) — آخر نسخة دايماً بتتكتب.
+ *  · تنبيه «صدّر» فوق `LIGHT_WARN_ROWS`.
+ * السوبر أدمن + المندوب اللي في قايمة الصندوق الأسود الأول؛ الكل لما المالك يقول (`VOICEPRO_LIGHT_FOR_ALL`).
+ */
+const NO_LOST: { missed: string[]; lost: string[] } = { missed: [], lost: [] };
+const saveRowsDraftCoalesced = createCoalescedSaver((full: unknown[]) => saveDraft("trial", "rv2-rows", full as never));
+
 /* 🏷️ ثوابت نافذة النوع وقرارها في `lib/typeForPlate.ts` — مغطّاة باختبار. */
 
 /**
@@ -247,6 +265,9 @@ export default function RegistrationV2Page() {
   const [sirenOn, setSirenOn] = useState(false);
   const [reads, setReads] = useState<ReadLog[]>([]);
   const [showReport, setShowReport] = useState(true);
+  /** 🪶 الحساب ده (للصندوق الأسود/الخفيف) و«اعرض كل اللوحات» */
+  const [meId, setMeId] = useState<string | null>(null);
+  const [showAllRows, setShowAllRows] = useState(false);
   const [reportCopied, setReportCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -475,6 +496,13 @@ export default function RegistrationV2Page() {
   const checkIndexRef = useRef(checkIndex);
 
   useEffect(() => { checkIndexRef.current = checkIndex; }, [checkIndex]);
+  // 🩺 حجم ملف التشييك (الذاكرة) وحالة سيرفر الصوت — للصندوق الأسود بس
+  useEffect(() => {
+    diagNote("rv2-sheet", { plates: (checkIndex as unknown as { size?: number } | null)?.size ?? null, files: checkSources.length });
+  }, [checkIndex, checkSources.length]);
+  useEffect(() => {
+    if (probe) diagNote("rv2-probe", { ok: probe.ok, msg: String(probe.msg ?? "").slice(0, 80) });
+  }, [probe]);
   const checkPlateCol = checkTable ? detectPlateColumn(checkTable.headers, checkTable.rows) : null;
   /**
    * 🏷️ أعمدة نوع السيارة والشركة (البنك) — بتتحل بالاسم من رؤوس كل
@@ -508,9 +536,14 @@ export default function RegistrationV2Page() {
    * كانت بتتحسب مع **كل** رسمة للصفحة (عدّاد الثواني، المؤشّر…) والنتيجة نفسها.
    * للكل (المالك ٤ أكتوبر): مرة لكل تغيير في القرايات أو الصفوف — نفس الأرقام بالظبط.
    */
+  // 🪶 الخفيف: «اتسمعت وماظهرتش» (كل قراية × كل لوحة) بيتحسب لو حد هيشوفه بس — التقرير بيحسبه وقتها
+  const lightOn = VOICEPRO_LIGHT_FOR_ALL || isSuper || diagEnabledFor(meId);
+  const lightOnRef = useRef(lightOn);
+  lightOnRef.current = lightOn;
+  const lostNeeded = !lightOn || (isSuper && showReport);
   const superLost = useMemo(
-    () => ({ missed: heardNotShown(reads, rows), lost: blockedNotShown(reads, rows) }),
-    [reads, rows],
+    () => (lostNeeded ? { missed: heardNotShown(reads, rows), lost: blockedNotShown(reads, rows) } : NO_LOST),
+    [reads, rows, lostNeeded],
   );
 
   /* ─── الصلاحية ────────────────────────────────────────────────────── */
@@ -557,6 +590,7 @@ export default function RegistrationV2Page() {
       if (!alive) return;
       if (!userId) { setDenied("مش مسجّل دخول — ادخل الأول وبعدين افتح الصفحة دي تاني."); return; }
       agentRef.current = userId;
+      setMeId(userId);
       /** 🔒 السوبر أدمن: لوحات الحسابات التانية على الموبايل تتخبّى (مابتتمسحش). */
       const uidForSplit = userId;
       const applySplit = (sup: boolean) => {
@@ -848,7 +882,9 @@ export default function RegistrationV2Page() {
     // 🔒 المستخبية بتتحفظ مع الظاهرة — مسح/تصدير المندوب ده مايلمسش لوحات غيره
     const full = stripForDraft([...rows, ...othersRef.current]);
     rv2DraftCache = full;   // 🛡️ آخر نسخة — الحفظ الآمن بيبني عليها لو لوحة وصلت بعد الخروج
-    void saveDraft("trial", "rv2-rows", full);
+    // 🪶 الخفيف: الحفظ بيتجمّع (واحدة شغّالة + آخر نسخة بعدها) بدل كتابة الجدول كله مع كل تغيير
+    if (lightOnRef.current) saveRowsDraftCoalesced(full);
+    else void saveDraft("trial", "rv2-rows", full);
   }, [rows]);
   /** أول ما شيت التشييك يجهز، الصفوف المحمّلة تاخد «مطلوبة» بتاعتها. */
   useEffect(() => {
@@ -1201,6 +1237,7 @@ export default function RegistrationV2Page() {
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
+    diagNote("rv2-rec", { on: true, rows: rowsRef.current.length });
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
     setWaitKind("net");
@@ -1252,7 +1289,8 @@ export default function RegistrationV2Page() {
     // ⚠️ متغيّر منفصل عن قصد: `voiceProAttribution.test` بيعدّ ختم الصفوف بالحرف
     const telAgentId = agentRef.current;
     try {
-      telRef.current = !isSuper ? null : startTelemetrySession({
+      // 🩺 سجل الصوت: السوبر أدمن + المندوب اللي في قايمة الصندوق الأسود بس (طلب المالك ١٨ أكتوبر)
+      telRef.current = !(isSuper || diagEnabledFor(telAgentId)) ? null : startTelemetrySession({
         enabled: true,
         agentId: telAgentId,
         server: hostOf(modelUrl),
@@ -1613,6 +1651,7 @@ export default function RegistrationV2Page() {
    * مع كل تغيير، والمحرك بيكمّل آخر النوافذ من ذاكرة الميك بعد ما يسيبه.
    */
   function stop(why: "manual" | "fatal" | AutoStopReason = "manual") {
+    diagNote("rv2-rec", { on: false, why, rows: rowsRef.current.length });
     const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
     levelStoreRef.current!.set(0);
@@ -1984,9 +2023,11 @@ export default function RegistrationV2Page() {
     L.push("");
     L.push("── الهلوسة والفقد ──");
     L.push("اتحجبت كاختراع: " + blocked + " · السيرفر رفضها: " + refused);
-    L.push("لوحة اتسمعت وماظهرتش: " + missed.length + (missed.length ? "  [" + missed.join(" ") + "]" : ""));
-    L.push("اتحجبت بثقة ≥٨٦٪ وماظهرتش (غالباً لوحة ضاعت): " + lostToGuard.length
-      + (lostToGuard.length ? "  [" + lostToGuard.join(" ") + "]" : ""));
+    // 🪶 الخفيف مابيحسبهاش مع كل نافذة — التقرير بيحسبها دلوقتي (نفس الأرقام)
+    const lostNow = lostNeeded ? superLost : { missed: heardNotShown(reads, rows), lost: blockedNotShown(reads, rows) };
+    L.push("لوحة اتسمعت وماظهرتش: " + lostNow.missed.length + (lostNow.missed.length ? "  [" + lostNow.missed.join(" ") + "]" : ""));
+    L.push("اتحجبت بثقة ≥٨٦٪ وماظهرتش (غالباً لوحة ضاعت): " + lostNow.lost.length
+      + (lostNow.lost.length ? "  [" + lostNow.lost.join(" ") + "]" : ""));
     L.push("نص فيه أرقام والشكل مش لوحة: " + malformed.length);
     for (const m of malformed) L.push("   • «" + m.rawText + "» → «" + m.plate + "»");
     L.push("");
@@ -2051,6 +2092,8 @@ export default function RegistrationV2Page() {
   const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
   const mmss = pad(seconds / 60) + ":" + pad(seconds % 60);
   const hits = rows.filter((r) => r.match).length;
+  /** 🪶 الخفيف: الجدول بيرسم آخر ٢٠٠ لوحة بس (الأحدث فوق) — الباقي موجود وبيتصدّر كله */
+  const tableRows = lightOn && !showAllRows && rows.length > LIGHT_TABLE_ROWS ? rows.slice(0, LIGHT_TABLE_ROWS) : rows;
   /**
    * العمود بيبان لو **أي لوحة** عندها ختم — مش لو المربّع مكتوب فيه.
    * لو المندوب فضّى المربّع، لوحاته القديمة لسه عندها شارعها ولازم يبان.
@@ -2408,6 +2451,12 @@ export default function RegistrationV2Page() {
         </div>
 
         {renderActions(true)}
+        {/* 🪶 الجدول كبر ⇒ البرنامج بيتقل على الموبايل — المندوب يصدّر أول بأول */}
+        {lightOn && rows.length > LIGHT_WARN_ROWS && (
+          <p className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+            📤 الجدول فيه {rows.length} لوحة — صدّرهم للسجلات عشان البرنامج يفضل سريع ومايقفلش.
+          </p>
+        )}
 
         {/* 🔒 تصدير السوبر أدمن شغّال — المندوب يعرف ليه التعديل والمسح مقفولين */}
         {rowsLocked && (
@@ -2482,7 +2531,7 @@ export default function RegistrationV2Page() {
                 </tr>
               </thead>
               <tbody>
-                {rows.flatMap((r, i) => {
+                {tableRows.flatMap((r, i) => {
                   /*
                    * 🎨 المكرر: لون المجموعة على الصف + شارة «مكررة ×N».
                    * المطلوبة بتفضل حمرا (أهم) والشارة بتقول إنها مكررة.
@@ -2623,6 +2672,16 @@ export default function RegistrationV2Page() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {/* 🪶 الخفيف: آخر ٢٠٠ بس قدامه — القديم موجود وبيتصدّر كله */}
+        {lightOn && rows.length > LIGHT_TABLE_ROWS && (
+          <button type="button" onClick={() => setShowAllRows((v) => !v)}
+            className="mt-2 w-full rounded-xl border border-slate-300 py-2 text-xs font-bold text-slate-600">
+            {showAllRows
+              ? `اعرض آخر ${LIGHT_TABLE_ROWS} لوحة بس (البرنامج أسرع)`
+              : `اعرض كل اللوحات (${rows.length}) — ظاهر آخر ${LIGHT_TABLE_ROWS}`}
+          </button>
         )}
 
         {/*
