@@ -46,15 +46,26 @@ export default function DataEditPage() {
 
   const [files, setFiles] = useState<FileItem[] | null>(null);
   const [fileIdx, setFileIdx] = useState(0);
-  const file = files?.[fileIdx] ?? null;
+  /**
+   * ✏️ المربع اللي اتفتح منه «تعديل» — الصفحة بتفضل على **ملفه هو بس** (المالك ١٨ أكتوبر ٢٠٢٦: «عايز كل واحده تبقي خاصه
+   * ب مربعها والتعديل فيها ل وحدها»). ملفه مش موجود ⇒ بنقول كده، مش بنفتح ملف تاني (كانت بتفتح الداتا الأساسية).
+   */
+  const [boxSlot, setBoxSlot] = useState<string | null>(null);
+  const [boxLabel, setBoxLabel] = useState<string | null>(null);
+  const [boxMissing, setBoxMissing] = useState(false);
+  const file = boxMissing ? null : (files?.[fileIdx] ?? null);
   const [headers, setHeaders] = useState<string[]>([]);
   useEffect(() => {
     (async () => {
       const list = await listEditableDataFiles().catch(() => []);
+      const qs = new URLSearchParams(window.location.search);
+      const want = qs.get("slot");
+      setBoxSlot(want);
+      setBoxLabel(qs.get("box"));
+      const i = want ? list.findIndex((f) => f.ref.slot === want) : 0;
+      if (want && i < 0) setBoxMissing(true);
+      else setFileIdx(Math.max(0, i));
       setFiles(list);
-      const want = new URLSearchParams(window.location.search).get("slot") ?? "data";
-      const i = list.findIndex((f) => f.ref.slot === want);
-      setFileIdx(i >= 0 ? i : 0);
     })();
   }, []);
   useEffect(() => {
@@ -204,17 +215,22 @@ export default function DataEditPage() {
       <div className="flex items-center justify-between gap-2">
         <div>
           <h1 className="text-lg font-bold text-ink">تعديل ملف الداتا</h1>
-          {file && <p className="text-[11px] text-muted">{file.fileName} · {ar(file.rowCount)} صف</p>}
+          {file && <p className="text-[11px] text-muted">{boxLabel ? `${boxLabel} · ` : ""}{file.fileName} · {ar(file.rowCount)} صف</p>}
         </div>
         <Link href="/sorting" className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-bold text-muted hover:text-ink">
           <ArrowRight size={13} /> الفرز
         </Link>
       </div>
 
-      {files && files.length === 0 && (
+      {boxMissing && (
+        <p className="rounded-xl border border-border bg-surface p-4 text-center text-sm text-muted">
+          الملف بتاع المربع ده مش موجود — ارجع للفرز واتأكد إن المربع فيه ملف، وبعدين دوس «تعديل» اللي تحته.
+        </p>
+      )}
+      {files && files.length === 0 && !boxMissing && (
         <p className="rounded-xl border border-border bg-surface p-4 text-center text-sm text-muted">مفيش ملف داتا — ارفعه الأول من صفحة الفرز.</p>
       )}
-      {files && files.length > 1 && (
+      {files && files.length > 1 && !boxSlot && (
         <select value={fileIdx} disabled={hasPending}
           onChange={(e) => { setFileIdx(Number(e.target.value)); setResult(null); resetPending(); }}
           className="rounded-lg border border-border bg-surface-2 px-2.5 py-2 text-xs font-bold text-ink">
