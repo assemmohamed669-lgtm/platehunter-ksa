@@ -44,6 +44,7 @@ import dynamic from "next/dynamic";
 // 🚨 بيتحمّل وقت ما يظهر بس — جوّاه شارة الشهادة (بحث على النت)، مالهاش لازمة لحد ما تطلع عربية مطلوبة
 const WantedBatchModal = dynamic(() => import("../components/WantedBatchModal"), { ssr: false });
 import { mergeWanted, newlyWanted, rematchEntries, wantedOf } from "../lib/wantedBatch";
+import { pickNextJob } from "../lib/clipQueue";
 import ReadingSheetBox, { loadReadingSheet } from "../components/ReadingSheetBox";
 import { parseReadingSheet } from "../lib/batchReport";
 import { saveReportFrom } from "../lib/reportStore";
@@ -194,6 +195,8 @@ export interface ClipJob {
    * بتتحفظ معاه فتفضل بعد التحديث.
    */
   clipId?: string;
+  /** 🧮 رقم الدوسة على «تفريغ» — الطابور بالترتيب ده (`lib/clipQueue.ts`) مش بترتيب ما الصوت اتقري */
+  order?: number;
   /**
    * 📍 مسار موقع المقطع بتوقيت نسبي لبداية صوته — لو موجود، الدبوس بيتحط
    * بعد التفريغ بقواعد `platePin` الصارمة (≤١٠٠م · ≤٢ث · مافيش قراءة واحدة على لوحتين جيران)
@@ -756,6 +759,12 @@ export default function BatchPage({
   }, []);
   /** حارس الدوسة المزدوجة على «تفريغ» لنفس المقطع */
   const queuingRef = useRef(new Set<string>());
+  /**
+   * 🧮 الترتيب (١٨ أكتوبر — المالك: «داس قدام كل واحد علي كلمه تفريغ يتفرغو بالترتيب»): كل دوسة بتاخد رقم
+   * **لحظتها**، واللي لسه بيتقري من التخزين (`preparingRef`) بيوقّف اللي بعده لحد ما يجهز.
+   */
+  const queueSeqRef = useRef(0);
+  const preparingRef = useRef(new Map<string, number>());
   const [clipAudio, setClipAudio] = useState<{ id: string; url: string } | null>(null);
   const clipAudioUrlRef = useRef<string | null>(null);
   /**
@@ -1941,6 +1950,8 @@ export default function BatchPage({
     )
       return;
     queuingRef.current.add(id);
+    const seq = ++queueSeqRef.current;
+    preparingRef.current.set(id, seq);
     try {
       const store = await getClipStore();
       const clip = await store.get(id);
@@ -1981,6 +1992,7 @@ export default function BatchPage({
         clipId: id,
         blob,
         status: "waiting",
+        order: seq,
         chunks,
         mime: blob.type || clip.mime,
         ...clipJobFields(clip),
@@ -2006,8 +2018,9 @@ export default function BatchPage({
       return;
     } finally {
       queuingRef.current.delete(id);
+      preparingRef.current.delete(id);
+      void runQueue();
     }
-    void runQueue();
   };
 
   /** ▶ اسمع المقطع المحفوظ (دوسة تانية تقفله) */
@@ -2123,7 +2136,8 @@ export default function BatchPage({
       for (;;) {
         // 🧮 الصفحة اتقفلت ⇒ الباقي يفضل «في الدور» على الجهاز ويرجع «جاهز» لما تفتحها
         if (unmountedRef.current) break;
-        const next = clipsRef.current.find((c) => c.status === "waiting");
+        // بالترتيب اللي المندوب داس بيه — واللي اتداس عليه قبله ولسه بيتقري بيتستنى
+        const next = pickNextJob(clipsRef.current, preparingRef.current.values());
         if (!next) break;
 
         const mark = (patch: Partial<ClipJob>) => {
@@ -2510,11 +2524,17 @@ export default function BatchPage({
         // saveSession بترفض القايمة الفاضية عن قصد ⇒ لازم مسح صريح وإلا ترجع مع أول فتح
         clearSession("batch");
         setTableClip(null);
+        /**
+         * 🧹 المالك (١٨ أكتوبر): «بعد مايتعمل تصدير للوحات دي تتمسح مباشرة» — كل لوحات المقطع اتحفظت في
+         * السجلات (وبتترفع للسيرفر) ⇒ صوت المقطع ولوحاته بيتمسحوا من الموبايل (ساعة التسجيل ≈ ٥٨ ميجا).
+         * اللي فشل يتحفظ ⇒ المقطع بيفضل (`left.length > 0`). نسخة الصوت على السيرفر ٧ أيام والتقارير للأبد.
+         */
+        if (exportClipId) await deleteClip(exportClipId);
       }
       setExportMsg(
         res.failed > 0
           ? `⚠️ اتصدّر ${saved.size} لوحة — ${res.failed} ماتحفظوش وفاضلين في الجدول، دوس «تصدير للسجلات» تاني.`
-          : `✅ اتصدّر ${saved.size} لوحة لـ«داتا التسجيلات» في صفحة السجلات.`
+          : `✅ اتصدّر ${saved.size} لوحة لـ«داتا التسجيلات» في صفحة السجلات${exportClipId ? " — والتسجيل اتمسح من الموبايل" : ""}.`
       );
     } catch (err) {
       const m = (err as Error)?.message ?? String(err);
