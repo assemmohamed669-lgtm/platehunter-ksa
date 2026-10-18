@@ -43,7 +43,7 @@ import ClipList from "../components/ClipList";
 import dynamic from "next/dynamic";
 // 🚨 بيتحمّل وقت ما يظهر بس — جوّاه شارة الشهادة (بحث على النت)، مالهاش لازمة لحد ما تطلع عربية مطلوبة
 const WantedBatchModal = dynamic(() => import("../components/WantedBatchModal"), { ssr: false });
-import { mergeWanted, wantedOf } from "../lib/wantedBatch";
+import { mergeWanted, newlyWanted, rematchEntries, wantedOf } from "../lib/wantedBatch";
 import ReadingSheetBox, { loadReadingSheet } from "../components/ReadingSheetBox";
 import { parseReadingSheet } from "../lib/batchReport";
 import { saveReportFrom } from "../lib/reportStore";
@@ -456,6 +456,8 @@ export default function BatchPage({
   onBusyChange,
   visible = true,
   onExportToRecords,
+  hideCheckBox = false,
+  onCheckInfo,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -481,6 +483,13 @@ export default function BatchPage({
     entries: PlateEntry[],
     ctx: { sheet: BankSheet | null; clipKey: string }
   ) => Promise<{ savedEntryIds: string[]; failed: number }>;
+  /**
+   * 📥 «التسجيل» بيعرض مربع ملف التشييك نفسه (رفع/تغيير/مسح — `components/SharedCheckFileBox.tsx`) ⇒
+   * مربع القراية بتاع المجمّع بيستخبى (مايبقاش فيه مربعين لنفس الملف).
+   */
+  hideCheckBox?: boolean;
+  /** عدد لوحات ملفات التشييك (اللي المجمّع قراها) — المربع اللي برّه بيعرضه من غير مايبني فهرس تاني */
+  onCheckInfo?: (info: { plates: number | null; files: number }) => void;
 }) {
   const bank = useAppCheckSheet(errorLog);
   const gps = useGps(visible);
@@ -497,6 +506,11 @@ export default function BatchPage({
    */
   const sheetRef = useRef(bank.sheet);
   sheetRef.current = bank.sheet;
+  const onCheckInfoRef = useRef(onCheckInfo);
+  onCheckInfoRef.current = onCheckInfo;
+  useEffect(() => {
+    onCheckInfoRef.current?.({ plates: bank.sheet ? bank.sheet.plates.length : null, files: bank.files });
+  }, [bank.sheet, bank.files]);
   /**
    * 🧮 الصفحة اتقفلت (السوبر أدمن راح تاب تاني) ⇒ عامل الطابور مايكمّلش يبعت مقاطع للسيرفر
    * في الخلفية — المعمل عمره ما كان بيقفل الصفحة (`<div hidden>`)، قناص بيقفلها.
@@ -577,6 +591,30 @@ export default function BatchPage({
       /* مش موجود في الجدول (التسجيل اللي بعده فضّاه) */
     }
   };
+  /**
+   * 📥 ملف التشييك اتغيّر (من أي صفحة) ⇒ لوحات الجدول بتتقارن تاني بالملف الجديد. المالك (١٨ أكتوبر):
+   * «يظهر في باقي الصفحات والبرنامج يعتمدة في كل حاجه». اللي بقت مطلوبة بسبب **التغيير** ⇒ المربع بصوت؛
+   * أول قراية للملف (الصفحة لسه فاتحة واللوحات راجعة من الجلسة) ⇒ الألوان بس من غير صوت.
+   * ماتعتبرش تعديل من المندوب (`tableDirtyRef` مابيتلمسش).
+   */
+  const entriesLatestRef = useRef(entries);
+  entriesLatestRef.current = entries;
+  const prevSheetRef = useRef<BankSheet | null>(null);
+  useEffect(() => {
+    const sheet = bank.sheet;
+    const prev = prevSheetRef.current;
+    prevSheetRef.current = sheet;
+    if (sheet === prev) return;
+    const before = entriesLatestRef.current;
+    const r = rematchEntries(entriesLatestRef.current, (p) => matchInCheckSheet(sheet, p));
+    if (!r.changed) return;
+    if (entriesRef.current === before) entriesRef.current = r.entries;
+    setEntries(r.entries);
+    if (prev) {
+      const w = newlyWanted(before, r.entries);
+      if (w.length) setWantedBatch((cur) => mergeWanted(cur, w));
+    }
+  }, [bank.sheet]);
 
   /**
    * مرحلة محرك الـVAD الحالية — «قراءة المقاطع» / «دمج الناقص» / «مسح
@@ -2032,8 +2070,10 @@ export default function BatchPage({
       return;
     }
     entriesBaseRef.current = [];
-    entriesRef.current = c.result.entries;
-    setEntries(c.result.entries);
+    // 📥 بحالتها على ملف التشييك **الحالي** (الملف ممكن يكون اتغيّر من ساعة التفريغ)
+    const fresh = rematchEntries(c.result.entries, (p) => matchInCheckSheet(sheetRef.current, p)).entries;
+    entriesRef.current = fresh;
+    setEntries(fresh);
     setTableClip(id);
     setExportMsg(null);
     setEditing(null);
@@ -2525,7 +2565,7 @@ export default function BatchPage({
 
       {/* ============================================ الإعداد */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <CheckSheetBox bank={bank} />
+        {!hideCheckBox && <CheckSheetBox bank={bank} />}
         {/* ورقة القراية = أداة تجربة المالك (تقارير الدقة) — للسوبر أدمن بس */}
         {advanced && <ReadingSheetBox value={readingSheet} onChange={setReadingSheet} />}
       </div>

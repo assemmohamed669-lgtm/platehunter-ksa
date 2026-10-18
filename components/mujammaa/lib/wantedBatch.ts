@@ -62,6 +62,31 @@ export function wantedOf(entries: PlateEntry[] | null | undefined): PlateEntry[]
   return Array.isArray(entries) ? entries.filter((e) => e?.match?.kind === "exact") : [];
 }
 
+/**
+ * ملف التشييك اتغيّر (من أي صفحة) ⇒ كل لوحة في الجدول بتاخد حالتها من الملف الجديد. المالك (١٨ أكتوبر):
+ * «يظهر في باقي الصفحات والبرنامج يعتمدة في كل حاجه». `changed=false` ⇒ نفس المرجع (مافيش رندر زيادة).
+ */
+export function rematchEntries(
+  entries: PlateEntry[],
+  match: (plate: string) => PlateEntry["match"]
+): { entries: PlateEntry[]; changed: boolean } {
+  let changed = false;
+  const out = entries.map((e) => {
+    const m = match(e.review.plate);
+    const same = m.kind === e.match?.kind && (m.kind !== "exact" || m.row === e.match?.row);
+    if (same) return e;
+    changed = true;
+    return { ...e, match: m };
+  });
+  return changed ? { entries: out, changed } : { entries, changed };
+}
+
+/** اللي بقت مطلوبة بعد التغيير ومكانتش قبله — دي بس اللي تطلّع المربع بصوت */
+export function newlyWanted(before: PlateEntry[], after: PlateEntry[]): PlateEntry[] {
+  const was = new Set(before.filter((e) => e.match?.kind === "exact").map((e) => e.id));
+  return after.filter((e) => e.match?.kind === "exact" && !was.has(e.id));
+}
+
 /** مقطع تاني خلص والمربع لسه مفتوح ⇒ الجديد يتضاف في الآخر من غير تكرار */
 export function mergeWanted(prev: PlateEntry[], next: PlateEntry[]): PlateEntry[] {
   const seen = new Set(prev.map((e) => e.review?.plate));
