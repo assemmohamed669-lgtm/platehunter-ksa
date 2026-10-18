@@ -338,13 +338,16 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
 
   // 🧊 التهنيج: مؤقّت كل ثانية — لو اتأخّر أكتر من ٣ث والصفحة قدامه ⇒ كانت معلّقة المدة دي
   let lastTick = Date.now();
+  // آخر مرة راح الخلفية — المؤقّت بيقف هناك، فالفجوة دي مش تهنيج (كانت بتطلع «علّق ٥٦٠ث» غلط)
+  let hiddenAt = 0;
   const freeze = setInterval(() => {
     const n = Date.now();
     const g = freezeGap(lastTick, n);
-    if (g && document.visibilityState === "visible") push({ k: "freeze", ms: g, path: location.pathname });
+    if (g && document.visibilityState === "visible" && !(hiddenAt >= lastTick)) push({ k: "freeze", ms: g, path: location.pathname });
     lastTick = n;
   }, 1000);
   const resetTick = () => {
+    if (document.visibilityState === "hidden") hiddenAt = Date.now();
     lastTick = Date.now();
   };
   document.addEventListener("visibilitychange", resetTick);
@@ -407,7 +410,10 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   let removeApp: (() => void) | undefined;
   void import("@capacitor/app")
     .then(async ({ App }) => {
-      const h = await App.addListener("appStateChange", (s) => push({ k: "app", active: !!s.isActive }));
+      const h = await App.addListener("appStateChange", (s) => {
+        if (!s.isActive) hiddenAt = Date.now();   // التطبيق راح الخلفية ⇒ الفجوة الجاية مش تهنيج
+        push({ k: "app", active: !!s.isActive });
+      });
       removeApp = () => void h.remove();
     })
     .catch(() => {});

@@ -22,7 +22,8 @@ describe("🔴 Voice PRO — كل لوحة لاسم صاحبها", () => {
   });
   it("🔴 المستخبية بتتحفظ مع الظاهرة — مابتضيعش لما المندوب التاني يمسح أو يصدّر", () => {
     // (🛡️ نفس النسخة بتتحفظ كمان في الذاكرة — الحفظ الآمن للوحات اللي بتوصل بعد الخروج من الصفحة)
-    expect(src.replace(/\r\n/g, "\n")).toMatch(/const full = stripForDraft\(\[\.\.\.rows, \.\.\.othersRef\.current\]\);\n\s+rv2DraftCache = full;[^\n]*\n\s+void saveDraft\("trial", "rv2-rows", full\);/);
+    // 🪶 ١٨ أكتوبر: في الخفيف نفس `full` بيتحفظ بالتجميع — الاتنين فيهم المستخبية
+    expect(src.replace(/\r\n/g, "\n")).toMatch(/const full = stripForDraft\(\[\.\.\.rows, \.\.\.othersRef\.current\]\);\n\s+rv2DraftCache = full;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s+if \(lightOnRef\.current\) saveRowsDraftCoalesced\(full\);\n\s+else void saveDraft\("trial", "rv2-rows", full\);/);
   });
   it("🔴 مفيش تصدير من غير حساب", () => {
     const guard = exportFn.indexOf("if (!uid)");
