@@ -48,7 +48,7 @@ import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, rest
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
-import { isMujammaaRecord } from "@/lib/mujammaaRecords";
+import { isMujammaaRecord, mujammaaDistrictOf } from "@/lib/mujammaaRecords";
 /** 🧾 عمود «اسم المسجّل» في سجلات المجمّع (`lib/mujammaaRecords.ts`) */
 const RECORDER_KEY = "اسم المسجّل";
 import { canUseMujammaa } from "@/lib/mujammaaAccess";
@@ -2723,7 +2723,8 @@ export default function InstantCheckPage() {
       obj["النوع"] = typeToCode(entryType(e)) || entryType(e);
       // ملاحظات المندوب — لازم تطلع في التصدير والمشاركة زي ما هي قدام السيارة
       obj[NOTES_KEY] = entryNotes(e);
-      obj[recTab === "mjdata" ? "اسم الحي" : "الحي-الشارع"] = areaOf(e.row);
+      if (recTab === "mjdata") obj["اسم الحي"] = mujammaaDistrictOf(e.row);
+      else obj["الحي-الشارع"] = areaOf(e.row);
       if (showRecorderCol) obj[RECORDER_KEY] = String(e.row?.[RECORDER_KEY] ?? "");
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
@@ -6685,7 +6686,7 @@ export default function InstantCheckPage() {
                             ? <span>{entryNotes(e) || "—"}</span>
                             : <EditableCell value={entryNotes(e)} placeholder="ملاحظة…" onSave={(v) => void editFieldEntry(e.id, { notes: v })} />}
                         </td>
-                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(e.row) || "—"}</td>
+                        <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{(recTab === "mjdata" ? mujammaaDistrictOf(e.row) : areaOf(e.row)) || "—"}</td>
                         {showRecorderCol && <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{String(e.row?.[RECORDER_KEY] ?? "") || "—"}</td>}
                         {dynCols.map((h) => (
                           <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>

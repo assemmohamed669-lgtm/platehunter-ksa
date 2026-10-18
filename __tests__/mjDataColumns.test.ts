@@ -13,6 +13,7 @@ const SRC = readFileSync(join(__dirname, "..", "app", "(app)", "instant-check", 
 describe("داتا التسجيلات — الأعمدة", () => {
   it("عمود الحي اسمه «اسم الحي» في داتا التسجيلات و«الحي-الشارع» زي ما هو في سجل التشييك", () => {
     expect(SRC).toMatch(/\{recTab === "mjdata" \? "اسم الحي" : "الحي-الشارع"\}<\/th>/);
+    expect(SRC).toMatch(/\{\(recTab === "mjdata" \? mujammaaDistrictOf\(e\.row\) : areaOf\(e\.row\)\) \|\| "—"\}<\/td>/);
   });
 
   it("«اسم المسجّل» بيظهر بس في داتا التسجيلات ولو فيه سجل ليه اسم مسجّل", () => {
@@ -24,7 +25,7 @@ describe("داتا التسجيلات — الأعمدة", () => {
   it("التصدير والمشاركة بنفس الأعمدة — وسجل التشييك زي ما هو", () => {
     const i = SRC.indexOf("function buildFieldRows()");
     const body = SRC.slice(i, i + 1600);
-    expect(body).toMatch(/obj\[recTab === "mjdata" \? "اسم الحي" : "الحي-الشارع"\] = areaOf\(e\.row\);/);
+    expect(body).toMatch(/if \(recTab === "mjdata"\) obj\["اسم الحي"\] = mujammaaDistrictOf\(e\.row\);\s*else obj\["الحي-الشارع"\] = areaOf\(e\.row\);/);
     expect(body).toMatch(/if \(showRecorderCol\) obj\[RECORDER_KEY\] = String\(e\.row\?\.\[RECORDER_KEY\] \?\? ""\);/);
   });
 });

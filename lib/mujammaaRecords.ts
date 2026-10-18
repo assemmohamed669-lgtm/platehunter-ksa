@@ -17,12 +17,25 @@
  */
 import type { FieldCheckEntry } from "@/lib/idb";
 import { toMapsLink } from "@/lib/gps";
+import { areaOf } from "@/lib/fieldCheckView";
 import type { PlateEntry } from "@/components/mujammaa/lib/plateEntry";
 import type { BankSheet } from "@/components/mujammaa/lib/bankSheet";
 
 export const MUJAMMAA_RECORD_PREFIX = "fc-mj-";
 /** نفس طريقة سجلات الصوت (`TRIAL_EXPORT_METHOD` · «صوتي» في التشييك) */
 export const MUJAMMAA_RECORD_METHOD = "متشيكة بالصوت";
+
+/** 🏘️ عمود «اسم الحي» في سجلات المجمّع (١٨ أكتوبر ٢٠٢٦) */
+export const MUJAMMAA_DISTRICT_KEY = "اسم الحي";
+
+/**
+ * «اسم الحي» لسجل من المجمّع — وإلا عمود الحي العادي (`areaOf`). ⚠️ **لسجلات المجمّع بس**: `areaOf` نفسه
+ * مابيقراش «اسم الحي» بالقصد — السجلات بتاخد أعمدة ملف التشييك، وملف بنك فيه «اسم الحي» (عنوان صاحب العربية)
+ * كان هيظهر عند المناديب كأنه مكان ما المندوب لقاها.
+ */
+export function mujammaaDistrictOf(row?: Record<string, unknown> | null): string {
+  return String(row?.[MUJAMMAA_DISTRICT_KEY] ?? "").trim() || areaOf(row);
+}
 
 /** السجل جاي من المجمّع؟ (البادئة بتتحفظ على السيرفر في `local_id` ⇒ بترجع زي ما هي) */
 export function isMujammaaRecord(e: { id?: string | null } | null | undefined): boolean {
@@ -51,7 +64,7 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
   put("النوع", entry.vehicleType);
   put("ملاحظة المندوب", entry.note);
   // 🏘️ «اسم الحي» في عمود لوحده (المالك ١٨ أكتوبر) — اللي المندوب كتبه، وإلا من موقع اللوحة
-  put("اسم الحي", entry.neighborhood);
+  put(MUJAMMAA_DISTRICT_KEY, entry.neighborhood);
   if (entry.match?.kind === "exact") row["مطلوبة"] = "نعم";
   row["الحالة"] = entry.review.status === "solid" ? "مؤكّدة" : "محتاجة نظرة";
   const pin = entry.pin;
@@ -63,7 +76,9 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
   const sheetRow = entry.match?.kind === "exact" ? entry.match.row : undefined;
   if (ctx.sheet && sheetRow) {
     for (const h of ctx.sheet.headers) {
-      if (h === ctx.sheet.plateColumn || h in row || /ملاح/.test(h) || h === "النوع") continue;
+      // ⛔ و«اسم الحي»/«اسم المسجّل» بتوع الملف (عنوان صاحب العربية عند البنك) مايبانوش كأنهم كلام المندوب
+      if (h === ctx.sheet.plateColumn || h in row || /ملاح/.test(h) || h === "النوع"
+        || h === MUJAMMAA_DISTRICT_KEY || h === "اسم المسجّل") continue;
       put(h, sheetRow[h]);
     }
   }

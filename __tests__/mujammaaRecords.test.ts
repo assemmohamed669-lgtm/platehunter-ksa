@@ -202,3 +202,18 @@ describe("🧾 مربعات المجمّع في السجل (١٨ أكتوبر ٢
     expect(r.row["اسم الحي"]).toBe("الياسمين");
   });
 });
+
+describe("⛔ أعمدة ملف البنك مابتبانش كأنها كلام المندوب", () => {
+  it("«اسم الحي»/«اسم المسجّل» في ملف التشييك مابيتنسخوش — حتى لو المندوب ماكتبش", () => {
+    const sheet = { plateColumn: "رقم اللوحة", headers: ["رقم اللوحة", "اسم الحي", "اسم المسجّل", "البنك"] } as unknown as BankSheet;
+    const e = entry({
+      neighborhood: undefined,
+      recorderName: undefined,
+      match: { kind: "exact", similarity: 100, row: { "رقم اللوحة": "ابح1234", "اسم الحي": "عنوان صاحبها", "اسم المسجّل": "موظف البنك", "البنك": "الراجحي" } } as never,
+    });
+    const r = mujammaaRecordOf(e, { uid: "u1", clipKey: "c", sheet });
+    expect("اسم الحي" in r.row).toBe(false);
+    expect("اسم المسجّل" in r.row).toBe(false);
+    expect(r.row["البنك"]).toBe("الراجحي");
+  });
+});

@@ -99,15 +99,10 @@ export const AREA_COLUMN = "الحي-الشارع";
 /** الاسم اللي صفحة «الجديد» بتكتب بيه — مكرر هنا عشان مانجيبش دورة استيراد. */
 const AREA_COLUMN_ALT = "اسم الحي - الشارع";
 
-/** 🏘️ «اسم الحي» بتاع المجمّع (١٨ أكتوبر ٢٠٢٦ — `lib/mujammaaRecords.ts`) — بعد الاسمين القدام */
-const AREA_COLUMN_DISTRICT = "اسم الحي";
-
-/** الحي والشارع من صف السجل، بأي اسم من التلاتة. "" لو مفيش. */
+/** الحي والشارع من صف السجل، بأي اسم من الاتنين. "" لو مفيش. */
 export function areaOf(row?: Record<string, unknown> | null): string {
   if (!row) return "";
   const primary = String(row[AREA_COLUMN] ?? "").trim();
   if (primary) return primary;
-  const alt = String(row[AREA_COLUMN_ALT] ?? "").trim();
-  if (alt) return alt;
-  return String(row[AREA_COLUMN_DISTRICT] ?? "").trim();
+  return String(row[AREA_COLUMN_ALT] ?? "").trim();
 }
