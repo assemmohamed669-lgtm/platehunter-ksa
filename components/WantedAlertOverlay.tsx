@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
 import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked, preloadAlertTone } from "@/lib/alertSiren";
+import { installMicCaptureWatch } from "@/lib/micCapture";
 import { WANTED_ALERT_EVENT, type WantedAlertDetail } from "@/lib/wantedAlert";
 import { pushAlert, dropCurrent, type QueuedAlert } from "@/lib/wantedAlertQueue";
 
@@ -35,6 +36,8 @@ export default function WantedAlertOverlay() {
     // 🔔 «نغمة التحصيل» المختارة بتتحمّل من أول ما التطبيق يفتح (والنت شغّال) — أول تنبيه يرن بيها على طول.
     //    لو ماتحمّلتش، التنبيه بالصفّارة العادية (`lib/alertSiren.ts`).
     void preloadAlertTone();
+    // 🎙️ يعرف لوحده لو فيه مايك مفتوح في أي صفحة (عشان «يرن حتى لو صامت» مايلمسش التسجيل)
+    installMicCaptureWatch();
 
     // فكّ قفل الصوت من **أول لمسة** في التطبيق (وأي لمسة بعدها — تكراره آمن).
     // ضغطة زر الصوت نفسها لمسة، فبمجرد ما المندوب يبدأ التشييك الصوتي يبقى الـ
@@ -45,12 +48,16 @@ export default function WantedAlertOverlay() {
     window.addEventListener("pointerdown", unlock, passive);
     window.addEventListener("touchstart", unlock, passive);
     window.addEventListener("keydown", unlock);
+    // 🔕 البرنامج رجع من الخلفية (بعد مكالمة مثلاً) ⇒ نصحّي الصوت على طول — من غير ما نستنى لمسة.
+    const onVisible = () => { if (document.visibilityState === "visible") ensureSirenAudioUnlocked(); };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       window.removeEventListener(WANTED_ALERT_EVENT, handler);
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("touchstart", unlock);
       window.removeEventListener("keydown", unlock);
+      document.removeEventListener("visibilitychange", onVisible);
       stopAlertSiren();
     };
   }, []);
