@@ -179,7 +179,8 @@ describe("④ 🎚️ المؤشّر مايعيدش رسم الصفحة كلها
   it("وقت الصف بمنسّق واحد للكل، والمقارنات التقيلة محسوبة مرة لكل تغيير للكل", () => {
     expect(src).toMatch(/\{formatRowTime\(r\.shownAt\)\}/);
     expect(src).not.toMatch(/isSuper \? formatRowTime\(r\.shownAt\)/);
-    expect(src).toMatch(/useMemo\(\s*\(\) => \(\{ missed: heardNotShown\(reads, rows\), lost: blockedNotShown\(reads, rows\) \}\),\s*\[reads, rows\]/);
+    // 🪶 ١٨ أكتوبر: في الخفيف بيتحسب لو حد هيشوفه بس (`lostNeeded`) — برضه مرة لكل تغيير
+    expect(src).toMatch(/useMemo\(\s*\(\) => \(lostNeeded \? \{ missed: heardNotShown\(reads, rows\), lost: blockedNotShown\(reads, rows\) \} : NO_LOST\),\s*\[reads, rows, lostNeeded\]/);
   });
   it("التقرير الشامل (لحد ٤٠٠ قراية) مابيترسمش خالص عند المناديب — كان مستخبّي بالـCSS بس", () => {
     expect(src).toMatch(/\{isSuper && showReport && \(/);
