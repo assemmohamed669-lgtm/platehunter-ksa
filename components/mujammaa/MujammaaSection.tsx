@@ -15,9 +15,14 @@
  *
  *  ⚠️ بيتعرض بس بعد ما الصفحة تتأكّد إن الحساب سوبر أدمن (`superOk` في
  *  registration/page.tsx) — والتوكن مابيتطلبش غير هنا.
+ *
+ *  🧮➡️ ١٨ أكتوبر: بقى للمشترك في **كل** الخدمات كمان (`canUseMujammaa`) — `advanced=false`:
+ *  المالك: «الشروحات عايزك تشيلها كلها هيا تظهر بس للسوبر ادمن فقط وكمان اخفي عنهم نسخ التقارير
+ *  والحاجات اللي انا ببعتلك منها تقارير لما بعمل تجربه». فالمندوب مابيشوفش العنوان/الموديل/العنوان
+ *  البديل (وبيكلّم السيرفر الأساسي دايماً) — بس سطر «السيرفر مش جاهز» لو فيه مشكلة.
  */
 import "./mujammaa.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import BatchPage from "./pages/BatchPage";
 import { ErrorLog } from "./lib/errorLog";
 import {
@@ -38,15 +43,22 @@ export default function MujammaaSection({
   agentName,
   onBusyChange,
   visible = true,
+  advanced = true,
+  onExportToRecords,
 }: {
   agentName: string;
   /** بيسجّل أو بيقفل المقطع — «التسجيل» بتقفل المفتاح وقتها */
   onBusyChange?: (busy: boolean) => void;
   /** 📍 ظاهر؟ — المجمّع بيفضل متحمّل ورا «التسجيل القديم»، والموقع كل ثانية بيتقفل وقتها */
   visible?: boolean;
+  /** true = السوبر أدمن (الشروحات والتقارير والتشخيص) · false = المندوب */
+  advanced?: boolean;
+  /** 📋 «تصدير للسجلات» ⇒ «داتا التسجيلات» (من صفحة التسجيل — الحفظ برّه المجمّع) */
+  onExportToRecords?: ComponentProps<typeof BatchPage>["onExportToRecords"];
 }) {
   const errorLog = useMemo(() => (sessionLog ??= new ErrorLog()), []);
-  const [base, setBase] = useState<string>(() => readBatchBase());
+  // المندوب بيكلّم السيرفر الأساسي دايماً — العنوان البديل (للتجربة) للسوبر أدمن بس
+  const [base, setBase] = useState<string>(() => (advanced ? readBatchBase() : BATCH_BASE));
   const [token, setToken] = useState<string | null>(null);
   const [tokenLoaded, setTokenLoaded] = useState(false);
   const [probe, setProbe] = useState<BatchProbe | null>(null);
@@ -76,17 +88,33 @@ export default function MujammaaSection({
       if (!alive) return;
       setToken(t);
       setTokenLoaded(true);
-      void recheck(readBatchBase(), t);
+      void recheck(advanced ? readBatchBase() : BATCH_BASE, t);
     })();
     return () => {
       alive = false;
     };
-  }, [recheck]);
+  }, [recheck, advanced]);
 
   const ok = !!probe && probe.ready && probe.tokenOk;
 
   return (
     <div className="mj-root space-y-4" dir="rtl">
+      {/* المندوب: ولا كلمة لو السيرفر تمام — سطر واحد بس لو فيه مشكلة */}
+      {!advanced && ((probe && !ok && !checking) || (tokenLoaded && !token)) && (
+        <div className="card border-red-400/40 bg-red-500/[0.08]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-red-100">
+            <span>
+              🔴 {tokenLoaded && !token
+                ? "مش قادرين نوصل لحسابك دلوقتي — اقفل الصفحة وافتحها تاني."
+                : "سيرفر التسجيل مش جاهز دلوقتي — جرّب كمان شوية (تسجيلاتك محفوظة على الموبايل)."}
+            </span>
+            <button className="btn-ghost btn-sm" disabled={checking || !tokenLoaded} onClick={() => void recheck(base, token)}>
+              افحص تاني
+            </button>
+          </div>
+        </div>
+      )}
+      {advanced && (
       <div className="card">
         <div className="card-title justify-between">
           <span className="flex items-center gap-2">🧮 سيرفر المجمّع</span>
@@ -164,14 +192,16 @@ export default function MujammaaSection({
           {urlMsg && <div className="mt-1 text-red-200">{urlMsg}</div>}
         </details>
       </div>
+      )}
 
       <BatchPage
         errorLog={errorLog}
-        advanced
+        advanced={advanced}
         server={{ base, token, probe }}
         agentName={agentName}
         onBusyChange={onBusyChange}
         visible={visible}
+        onExportToRecords={onExportToRecords}
       />
     </div>
   );

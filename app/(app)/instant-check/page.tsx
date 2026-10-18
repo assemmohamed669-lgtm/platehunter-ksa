@@ -48,6 +48,8 @@ import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, rest
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
+import { isMujammaaRecord } from "@/lib/mujammaaRecords";
+import { canUseMujammaa } from "@/lib/mujammaaAccess";
 import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyForWhatsApp } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { readDeepgramWords, type DgWord, type DgFinal } from "@/lib/deepgramWords";
@@ -567,6 +569,24 @@ export default function InstantCheckPage() {
   // تبويب «السجلات»: سجلاتي ولا سجلات المجموعة كلها. اللي مش في مجموعة
   // مايشوفش الزرّين أصلاً.
   const [recordsScope, setRecordsScope] = useState<"mine" | "group">("mine");
+  /**
+   * 📋 تابين في «السجلات» (١٨ أكتوبر ٢٠٢٦) — المالك: «تاب جديد في صفحه السجلات هنسميه داتا
+   * التسجيلات … والتاب التاني الخاص بالتشييك الفوري اللي بيتصدر من فويس برو دة هتسميه سجل التشييك
+   * … كل واحد يظهر في التاب بتاعه». «داتا التسجيلات» = اللي اتصدّر من المجمّع (`fc-mj-`).
+   * التابين بيظهروا بس لو فيه لوحات من المجمّع أو المندوب يقدر يستخدمه — غير كده الشكل القديم بالحرف.
+   */
+  const [recordsTab, setRecordsTabState] = useState<"check" | "mjdata">("check");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("ph:records:tab") === "mjdata") setRecordsTabState("mjdata");
+    } catch { /* تخزين مقفول — الافتراضي */ }
+  }, []);
+  const setRecordsTab = (t: "check" | "mjdata") => {
+    setRecordsTabState(t);
+    try { localStorage.setItem("ph:records:tab", t); } catch { /* ignore */ }
+  };
+  /** يقدر يستخدم المجمّع (كل الخدمات / سوبر أدمن) ⇒ تاب «داتا التسجيلات» ظاهر حتى لو فاضي */
+  const [mjAllowed, setMjAllowed] = useState(false);
   const [hasTeam, setHasTeam] = useState(false);
   // تبويب «صوتي» بيظهر للمفعّل عنده الصوت بس. `null` = لسه بنقرا.
   const [voiceAllowed, setVoiceAllowed] = useState<boolean | null>(null);
@@ -591,6 +611,7 @@ export default function InstantCheckPage() {
         setVoiceOnly(row ? !restAvailable : false);
         const allowed = voiceTabVisible(row, loadCachedVoiceAccess());
         setVoiceAllowed(allowed);
+        setMjAllowed(canUseMujammaa(row));
         if (row) saveCachedVoiceAccess(allowed);   // مرجع الأوفلاين المرة الجاية
       } catch {
         setVoiceOnly(false);
@@ -2220,9 +2241,26 @@ export default function InstantCheckPage() {
     (e: FieldCheckEntry) => checkIndex.has(normalizePlate(bankPlateToArabic(e.plate))),
     [checkIndex],
   );
+  /** 📋 عدد لوحات المجمّع في السجلات — التابين بيظهروا لو فيه */
+  const mjRecordsCount = useMemo(
+    () => fieldEntries.reduce((n, e) => n + (isMujammaaRecord(e) ? 1 : 0), 0),
+    [fieldEntries],
+  );
+  const showRecordsTabs = mjRecordsCount > 0 || mjAllowed;
+  const recTab: "check" | "mjdata" = showRecordsTabs ? recordsTab : "check";
+  /**
+   * سجلات التاب المفتوح — الشيت والعدّادات والمحرّر والتصدير/المشاركة على التاب ده بس.
+   * من غير تابات ⇒ نفس القايمة (نفس المرجع) — مافيش ولا نسخة زيادة في الذاكرة (iOS · ١٦ ألف سجل).
+   */
+  const tabEntries = useMemo(
+    () => (showRecordsTabs ? fieldEntries.filter((e) => isMujammaaRecord(e) === (recTab === "mjdata")) : fieldEntries),
+    [fieldEntries, showRecordsTabs, recTab],
+  );
+  /** «سجلاتي» — وفي «داتا التسجيلات» دايماً سجلاتي (المجموعة في «سجل التشييك») */
+  const scopeMine = recTab === "mjdata" || recordsScope === "mine";
   const fieldCounts = useMemo(
-    () => fieldCategoryCounts(fieldEntries, isWantedEntry),
-    [fieldEntries, isWantedEntry],
+    () => fieldCategoryCounts(tabEntries, isWantedEntry),
+    [tabEntries, isWantedEntry],
   );
   // ⚠️ الشريحة بتتحسب من غير الكلام المكتوب — عن قصد.
   // دمج المكرر بيبني قائمة الـ١٦ ألف سجل من الأول، ومالوش أي علاقة بالبحث. لما
@@ -2232,8 +2270,8 @@ export default function InstantCheckPage() {
   // كان بيحصل من تاني حرف، ومع أي كلام، ومع المندوب ده لوحده (اللي سجلاته أقل
   // ماكانش بيحصل معاه). فصل الحسبتين بيخلّي الكتابة فلترة رخيصة على قائمة جاهزة.
   const fieldCategory = useMemo(
-    () => fieldCategoryList(fieldEntries, fieldFilter as FieldFilter, isWantedEntry),
-    [fieldEntries, fieldFilter, isWantedEntry],
+    () => fieldCategoryList(tabEntries, fieldFilter as FieldFilter, isWantedEntry),
+    [tabEntries, fieldFilter, isWantedEntry],
   );
   const fieldVisible = useMemo(
     () => filterFieldEntries(fieldCategory, fieldSearch),
@@ -2241,7 +2279,7 @@ export default function InstantCheckPage() {
   );
 
   /** مسح صف من السجلات لازم يشيل إخواته المخفيين، وإلا يطلع أخوه مكانه. */
-  const fieldDupGroups = useMemo(() => duplicateCheckIds(fieldEntries), [fieldEntries]);
+  const fieldDupGroups = useMemo(() => duplicateCheckIds(tabEntries), [tabEntries]);
 
   // ── مشتقّات نافذة «إظهار وتعديل اللوحات» ──
   // محفوظة في useMemo: كانت بتتحسب جوّه الـJSX فبتتعاد على **كل** رندر للصفحة
@@ -2578,7 +2616,7 @@ export default function InstantCheckPage() {
   // ── «إظهار اللوحات»: نافذة تعديل/حذف بتأكيد حفظ ──────────────────────────
   function openPlatesEditor() {
     // نسخة عميقة من الصفوف (نسخ row كمان) عشان التعديل يفضل معزول لحد الحفظ.
-    setDraftFieldEntries(fieldEntries.map((e) => ({ ...e, row: { ...e.row } })));
+    setDraftFieldEntries(tabEntries.map((e) => ({ ...e, row: { ...e.row } })));
     setPeShown(PAGE_STEP);   // نبدأ من أول دفعة كل مرة تتفتح النافذة
     // كل الأعمدة المتاحة تظهر افتراضياً، والبحث يبدأ فاضي.
     const dyn = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h)) ?? [];
@@ -2586,7 +2624,7 @@ export default function InstantCheckPage() {
     setPeSearch("");
     setPeSel(new Set());
     setPeDay("");
-    peBaseIdsRef.current = new Set(fieldEntries.map((e) => e.id));
+    peBaseIdsRef.current = new Set(tabEntries.map((e) => e.id));
     setPlatesEditorOpen(true);
   }
   function peUpdatePlate(id: string, value: string) {
@@ -2673,7 +2711,7 @@ export default function InstantCheckPage() {
   function buildFieldRows() {
     // النوع والملاحظات ليهم أعمدة خاصة تحت — نستبعدهم عشان مايتكرروش
     const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
-    return fieldEntries.map((e) => {
+    return tabEntries.map((e) => {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
       obj["النوع"] = typeToCode(entryType(e)) || entryType(e);
       // ملاحظات المندوب — لازم تطلع في التصدير والمشاركة زي ما هي قدام السيارة
@@ -5030,7 +5068,7 @@ export default function InstantCheckPage() {
       {checkTable && mode !== "sort" && mode !== "cert" && (
         <>
           {/* «مزامنة» + «أضف لخانة الداتا» — يظهروا في تبويب السجلات فقط */}
-          {mode === "sheet" && recordsScope === "mine" && (
+          {mode === "sheet" && scopeMine && (
             <div className="flex flex-wrap justify-end gap-2">
               {(memberLocks.sort || memberLocks.download) ? null : recordsLinkedUi ? (
                 <button onClick={() => { unlinkRecords(); setRecordsLinkedUi(false); }}
@@ -6357,7 +6395,23 @@ export default function InstantCheckPage() {
         </div>
       )}
 
-      {mode === "sheet" && hasTeam && (
+      {mode === "sheet" && showRecordsTabs && (
+        <div className="mb-3 flex gap-1.5" data-testid="records-tabs">
+          {([["check", "سجل التشييك"], ["mjdata", "داتا التسجيلات"]] as Array<["check" | "mjdata", string]>).map(([k, label]) => (
+            <button key={k} onClick={() => setRecordsTab(k)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-sm font-bold transition ${
+                recTab === k ? "border-brand bg-brand/15 text-brand" : "border-border text-muted"
+              }`}>
+              {label}
+              {k === "mjdata" && mjRecordsCount > 0 && (
+                <span className="mr-1.5 rounded-full bg-brand/20 px-1.5 text-[11px]">{mjRecordsCount}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === "sheet" && hasTeam && recTab === "check" && (
         <div className="mb-3 flex gap-1.5">
           {([["mine", "سجلاتي"], ["group", "سجلات المجموعة"]] as Array<["mine" | "group", string]>).map(([k, label]) => (
             <button key={k} onClick={() => setRecordsScope(k)}
@@ -6370,12 +6424,12 @@ export default function InstantCheckPage() {
         </div>
       )}
 
-      {mode === "sheet" && recordsScope === "group" && (
-        <div className="mb-3"><GroupRecordsView embedded /></div>
+      {mode === "sheet" && recTab === "check" && recordsScope === "group" && (
+        <div className="mb-3"><GroupRecordsView embedded excludeMujammaa={showRecordsTabs} /></div>
       )}
 
       {/* شيت رقم الشاص المنفصل — يظهر في السجلات مستقل عن اللوحات (قابل للتعديل + مشاركة/تصدير) */}
-      {mode === "sheet" && recordsScope === "mine" && chassisRecords.length > 0 && (
+      {mode === "sheet" && recTab === "check" && recordsScope === "mine" && chassisRecords.length > 0 && (
         <div className="mb-3 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center gap-2">
             <Barcode size={16} className="text-brand shrink-0" />
@@ -6462,7 +6516,7 @@ export default function InstantCheckPage() {
       {/* ── تبويب «السجلات»: شيت التسجيلات (صوتي+يدوي) ── */}
       {/* لسه بنسترجع من السيرفر → مانقولش «مفيش تسجيلات» (المندوب كان بيفتكرها
           ضاعت وهي لسه بتحمّل من حسابه). */}
-      {mode === "sheet" && recordsScope === "mine" && restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
+      {mode === "sheet" && scopeMine && restoringChecks && tabEntries.length === 0 && (recTab === "mjdata" || chassisRecords.length === 0) && (
         <div className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-8 text-center text-sm font-bold text-primary">
           <span className="animate-pulse">
             جاري استرجاع سجلاتك…
@@ -6471,12 +6525,14 @@ export default function InstantCheckPage() {
           <p className="mt-1 text-[11px] font-normal text-muted">سجلاتك محفوظة على حسابك وبترجع على أي جهاز تدخل منه</p>
         </div>
       )}
-      {mode === "sheet" && recordsScope === "mine" && !restoringChecks && fieldEntries.length === 0 && chassisRecords.length === 0 && (
+      {mode === "sheet" && scopeMine && !restoringChecks && tabEntries.length === 0 && (recTab === "mjdata" || chassisRecords.length === 0) && (
         <div className="rounded-xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
-          لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا.
+          {recTab === "mjdata"
+            ? "لسه مفيش لوحات هنا — سجّل من «التسجيل» وبعد التفريغ دوس «تصدير للسجلات» وهتظهر هنا."
+            : "لسه مفيش تسجيلات — صدّر لوحات من التشييك (يدوي/كاميرا/صوت) وهتظهر هنا."}
         </div>
       )}
-      {mode === "sheet" && recordsScope === "mine" && fieldEntries.length > 0 && (() => {
+      {mode === "sheet" && scopeMine && tabEntries.length > 0 && (() => {
         const scale = HIT_ZOOM_LEVELS[fieldZoom];
         // النوع والملاحظات ليهم أعمدة تعديل خاصة فوق — نستبعدهم من الأعمدة العادية
         const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
@@ -6490,14 +6546,14 @@ export default function InstantCheckPage() {
           <div className="flex flex-col gap-2 pt-3 mt-2 border-t-2 border-brand/30">
             <div className="flex items-center gap-1.5 min-w-0">
               <ClipboardCheck size={15} className="text-brand shrink-0" />
-              <h2 className="text-sm font-bold text-ink truncate">شيت التسجيلات (صوتي+يدوي)</h2>
-              <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{fieldEntries.length}</span>
+              <h2 className="text-sm font-bold text-ink truncate">{showRecordsTabs ? (recTab === "mjdata" ? "داتا التسجيلات" : "سجل التشييك") : "شيت التسجيلات (صوتي+يدوي)"}</h2>
+              <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{tabEntries.length}</span>
             </div>
 
             {/* عدادات قابلة للضغط — الكل / صوتي / يدوي / مطلوب. الضغط يفلتر العرض للفئة. */}
             <div className="flex flex-wrap gap-2" dir="rtl">
               {([
-                { key: "all", label: "الكل", n: fieldEntries.length },
+                { key: "all", label: "الكل", n: tabEntries.length },
                 { key: "voice", label: "صوتي", n: cVoice },
                 { key: "manual", label: "يدوي", n: cManual },
                 { key: "wanted", label: "مطلوب", n: cWanted },
@@ -6541,7 +6597,7 @@ export default function InstantCheckPage() {
                       : `اللوحة دي اتشيّكت ${visible.length} مرات`}
                 </p>
               ) : (
-                <p className="text-[11px] text-muted">{visible.length} من {fieldEntries.length}</p>
+                <p className="text-[11px] text-muted">{visible.length} من {tabEntries.length}</p>
               )
             )}
 

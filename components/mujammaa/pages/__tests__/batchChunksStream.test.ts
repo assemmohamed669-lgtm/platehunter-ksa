@@ -118,6 +118,43 @@ describe("readChunksResponse — NDJSON", () => {
   });
 });
 
+/**
+ * 🚦 طابور المجمّع وقت الزحمة بس (١٨ أكتوبر) — الوسيط بيبعت {"phase":"queued","position":n}
+ * وبعدين {"phase":"admitted"} لما ييجي الدور. المندوب لازم يشوف «في الطابور» بدل «بيفرّغ» الساكتة،
+ * والسطرين مايأثّروش على النتيجة.
+ */
+describe("readChunksResponse — الطابور", () => {
+  it("سطور الطابور بتوصل للصفحة بالترتيب، والنتيجة زي ما هي", async () => {
+    const q: Array<number | null> = [];
+    const res = streamed([
+      JSON.stringify({ phase: "queued", ok: true, position: 2, running: 1 }) + "\n",
+      JSON.stringify({ hb: 1 }) + "\n",
+      JSON.stringify({ phase: "queued", ok: true, position: 1, running: 1 }) + "\n",
+      JSON.stringify({ phase: "admitted", ok: true }) + "\n",
+      JSON.stringify(PLATES) + "\n" + JSON.stringify(DONE) + "\n",
+    ]);
+    let plates = 0;
+    const data = await readChunksResponse(res, () => plates++, (p) => q.push(p));
+    expect(q).toEqual([2, 1, null]);
+    expect(plates).toBe(1);
+    expect(data.ok).toBe(true);
+    expect((data.plates as unknown[]).length).toBe(2);
+  });
+
+  it("اتقطع وهو في الطابور ⇒ ok:false «اتقطع» (مش خلص)", async () => {
+    const res = streamed([JSON.stringify({ phase: "queued", ok: true, position: 1 }) + "\n"]);
+    const data = await readChunksResponse(res, () => {}, () => {});
+    expect(data.ok).toBe(false);
+    expect(String((data.error as { message: string }).message)).toContain("اتقطع");
+  });
+
+  it("من غير متابع للطابور (الشكل القديم) ⇒ مابيرميش", async () => {
+    const res = streamed([JSON.stringify({ phase: "queued", ok: true, position: 1 }) + "\n" + JSON.stringify(PLATES) + "\n" + JSON.stringify(DONE) + "\n"]);
+    const data = await readChunksResponse(res, () => {});
+    expect(data.ok).toBe(true);
+  });
+});
+
 describe("readChunksResponse — السيرفر القديم (JSON واحد)", () => {
   it("بيرجّع الرد زي ما هو ومافيش سطر لوحات", async () => {
     const old = { ok: true, plates: DONE.plates, calls: 6, run: "20261003-145922-135" };

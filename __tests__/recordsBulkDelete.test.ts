@@ -85,7 +85,7 @@ describe("🔴 الحفظ بيمسح اللي اتشال من المسوّدة �
 describe("🔴 التوصيل في «إظهار وتعديل اللوحات» — للكل (المالك: «انشر للكل» ٨ أكتوبر ٢٠٢٦)", () => {
   it("🔴 الحفظ: لقطة وقت الفتح + مفيش توسيع لإخوات المكرر — للكل", () => {
     const s = readFileSync(path.resolve(__dirname, "../app/(app)/instant-check/page.tsx"), "utf8").replace(/\r\n/g, "\n");
-    expect(s).toMatch(/function openPlatesEditor\(\) \{[\s\S]{0,1000}peBaseIdsRef\.current = new Set\(fieldEntries\.map\(\(e\) => e\.id\)\);/);
+    expect(s).toMatch(/function openPlatesEditor\(\) \{[\s\S]{0,1000}peBaseIdsRef\.current = new Set\((?:fieldEntries|tabEntries)\.map\(\(e\) => e\.id\)\);/);
     const save = s.slice(s.indexOf("async function savePlatesEditor()"), s.indexOf("function buildFieldRows()"));
     expect(save).toMatch(/const removedIds = editorDeleteIds\(fieldEntries, draftFieldEntries, peBaseIdsRef\.current\);/);
     expect(save).toMatch(/await deleteFieldCheckEntries\(removedIds\);/);

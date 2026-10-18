@@ -67,6 +67,11 @@ import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 import dynamic from "next/dynamic";
+import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { loadAgentPreview, saveAgentPreview } from "@/lib/mujammaaPreview";
+import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
+import type { PlateEntry } from "@/components/mujammaa/lib/plateEntry";
+import type { BankSheet } from "@/components/mujammaa/lib/bankSheet";
 
 /**
  * 🧮 المجمّع (صفحة المعمل «كامل ⚡» بالحرف — `components/mujammaa`) — للسوبر أدمن بس.
@@ -87,6 +92,54 @@ const LS_ANALYSIS_MODE = "ph:registration:analysisMode";
 const LS_PACER = "ph:registration:pacer";
 /** 🧮 «المجمّع» / «التسجيل القديم» — آخر اختيار للسوبر أدمن */
 const LS_REG_MODE = "ph:registration:mode";
+/**
+ * 📴 آخر صلاحية متأكدة للحساب ده على الجهاز ده (super | agent | none) — مراجعة ١٨ أكتوبر: من غير نت
+ * (أو نت بطيء) فحص الحساب بيفشل، والمندوب كان بيلاقي «التسجيل القديم» بتاع السوبر أدمن بدل المجمّع.
+ * المجمّع بيسجّل ويحفظ على الموبايل من غير نت، فالمندوب لازم يفضل عليه. بالحساب (`uid`) مش بالجهاز.
+ */
+const LS_MJ_ACCESS = "ph:mj:access:";
+type MjAccess = "super" | "agent" | "none";
+function readMjAccess(uid: string): MjAccess | null {
+  try {
+    const v = localStorage.getItem(LS_MJ_ACCESS + uid);
+    return v === "super" || v === "agent" || v === "none" ? v : null;
+  } catch {
+    return null;
+  }
+}
+function writeMjAccess(uid: string, a: MjAccess) {
+  try {
+    localStorage.setItem(LS_MJ_ACCESS + uid, a);
+    localStorage.setItem(LS_MJ_LAST, JSON.stringify({ uid, a }));
+  } catch {
+    /* تخزين مقفول */
+  }
+}
+/**
+ * آخر حساب اتأكد على الجهاز — من غير نت أكتر من ساعة الجلسة بتنتهي و`getSession` بترجع فاضية
+ * **بغلط** (مش خروج) ⇒ نفس الحساب اللي كان شغّال. مراجعة ١٨ أكتوبر (جولة ٢).
+ */
+const LS_MJ_LAST = "ph:mj:access:last";
+function readLastMjAccess(): { uid: string; a: MjAccess } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(LS_MJ_LAST) || "null");
+    if (v && typeof v.uid === "string" && (v.a === "super" || v.a === "agent" || v.a === "none")) return v;
+  } catch {
+    /* مافيش */
+  }
+  return null;
+}
+/** الحساب الشغّال: الجلسة، ولو انتهت من غير نت (غلط مش خروج) ⇒ آخر حساب اتأكد */
+async function currentUidForMujammaa(): Promise<string> {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (data.session?.user?.id) return data.session.user.id;
+    if (error) return readLastMjAccess()?.uid ?? "";
+  } catch {
+    return readLastMjAccess()?.uid ?? "";
+  }
+  return "";
+}
 
 // Vercel rejects any serverless function request over 4.5MB — at this
 // recorder's fixed 96kbps bitrate that's roughly 5 minutes of audio, so 180s
@@ -490,6 +543,14 @@ export default function RegistrationPage() {
    */
   const [superOk, setSuperOk] = useState(false);
   /**
+   * 🧮➡️ المندوب المشترك في **كل** الخدمات (١٨ أكتوبر ٢٠٢٦ — `canUseMujammaa`): المجمّع بس، من غير
+   * «التسجيل القديم» ولا الشروحات ولا التقارير. المالك: «متاح مبدأيا ل اللي مشترك في كل خدمات
+   * البرنامج يظهر معاه تلقائي لكن اللي مشترك صوت بس واللي مشترك فرز بس ميظهرش معاهم».
+   */
+  const [mjAgentOk, setMjAgentOk] = useState(false);
+  /** آخر صلاحية متأكدة على الجهاز (قبل ما الفحص يرجع) — `null` = مافيش */
+  const [cachedAccess, setCachedAccess] = useState<MjAccess | null>(null);
+  /**
    * الفحص خلص (أو عدّى ٤ث)؟ — قبله مافيش محتوى خالص: لو التسجيل القديم ظهر الأول
    * والمندوب بدأ يسجّل، أول ما `superOk` يرجع المجمّع كان هيغطّيه والميك شغّال ورا.
    */
@@ -508,23 +569,68 @@ export default function RegistrationPage() {
     setRegModeState(m);
     try { localStorage.setItem(LS_REG_MODE, m); } catch { /* ignore */ }
   }
+  /**
+   * 👁️ «زي المندوب» (١٨ أكتوبر ٢٠٢٦ — `lib/mujammaaPreview.ts`): السوبر أدمن بيشوف «التسجيل» بنفس مسار
+   * المندوب بالظبط (المجمّع على طول · من غير المفتاح ولا الشروحات ولا التقارير). المالك: «اظهر ليا انا بس
+   * اللي هيظهر للمناديب وبعدين ابقي رجع تاني التقارير وكل حاجه». بيتقري بعد التحميل (مش وقت SSR).
+   */
+  const [agentPreview, setAgentPreviewState] = useState(false);
   useEffect(() => {
-    if (superOk && regMode === "mujammaa") setMjOpened(true);
-  }, [superOk, regMode]);
+    setAgentPreviewState(loadAgentPreview());
+  }, []);
+  function setAgentPreview(on: boolean) {
+    setAgentPreviewState(on);
+    saveAgentPreview(on);
+  }
+  const asAgent = superOk && agentPreview;
+  /** الصفحة بتتعرض زي المندوب (مندوب فعلاً أو السوبر أدمن في «زي المندوب») */
+  const agentView = mjAgentOk || asAgent;
+  useEffect(() => {
+    if ((superOk && (asAgent || regMode === "mujammaa")) || mjAgentOk) setMjOpened(true);
+  }, [superOk, regMode, mjAgentOk, asAgent]);
+  /** المجمّع ظاهر دلوقتي؟ — السوبر أدمن بالمفتاح (أو «زي المندوب»)، والمندوب دايماً */
+  const mjShown = superOk ? asAgent || regMode === "mujammaa" : mjAgentOk;
   useEffect(() => {
     // النت بطيء/معلّق ⇒ التسجيل القديم يظهر بعد ٤ث بالكتير (زي ما كان قبل كده: الحارس بيعدّي)
     const t = setTimeout(() => setSuperChecked(true), 4000);
+    let alive = true;
     (async () => {
+      // 📴 الجلسة على الجهاز (من غير نت) ⇒ آخر صلاحية متأكدة لنفس الحساب، قبل الفحص
+      try {
+        const sid = await currentUidForMujammaa();
+        const c = sid ? readMjAccess(sid) : null;
+        if (alive && c) {
+          setCachedAccess(c);
+          if (c === "agent") setMjAgentOk(true);
+        }
+      } catch { /* مافيش جلسة محفوظة */ }
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof } = await supabase.from("profiles").select("is_super").eq("id", data.user.id).single();
-        if (!prof?.is_super) router.replace("/instant-check");
-        if (prof?.is_super === true) setSuperOk(true);
+        const { data: prof, error } = await supabase
+          .from("profiles")
+          .select("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until")
+          .eq("id", data.user.id)
+          .single();
+        // غلط عابر في القراية ⇒ نفضل على آخر صلاحية متأكدة (مانطردش مندوب مشترك بسبب النت)
+        if (error || !prof) return;
+        const mjAllowed = canUseMujammaa(prof);
+        writeMjAccess(data.user.id, prof.is_super === true ? "super" : mjAllowed ? "agent" : "none");
+        if (!prof?.is_super && !mjAllowed) {
+          setMjAgentOk(false);
+          router.replace("/instant-check");
+        }
+        if (prof?.is_super === true) {
+          setSuperOk(true);
+          setMjAgentOk(false);   // كان محفوظ «مندوب» واترقّى ⇒ السوبر أدمن بأدواته كلها
+        } else if (mjAllowed) setMjAgentOk(true);
       } catch { /* غير متاح — نسيبها */ }
-      finally { setSuperChecked(true); }
+      finally { if (alive) setSuperChecked(true); }
     })();
-    return () => clearTimeout(t);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
   }, [router]);
 
   // Recording state
@@ -2736,6 +2842,25 @@ export default function RegistrationPage() {
     setRecordings(updated);
   }
 
+  /**
+   * 📋 «تصدير للسجلات» من المجمّع ⇒ تاب «داتا التسجيلات» في صفحة السجلات (١٨ أكتوبر ٢٠٢٦).
+   * نفس شيت السجلات بمعرّف `fc-mj-` (`lib/mujammaaRecords.ts`) — بيترفع على طول وبيتطابق في الفرز.
+   * المالك عايز آخر رسالة: «اول ما تتصدر وتتحفظ تلقائي تتمسح» — المجمّع بيشيل اللي اتحفظ فعلاً بس.
+   */
+  const exportMujammaa = useCallback(
+    async (entries: PlateEntry[], ctx: { sheet: BankSheet | null; clipKey: string }) => {
+      // من غير نت والجلسة انتهت ⇒ آخر حساب اتأكد (السجل بيتحفظ على الجهاز ويترفع لما النت يرجع)
+      const uid = await currentUidForMujammaa();
+      return saveMujammaaRecords(entries, {
+        uid,
+        clipKey: ctx.clipKey,
+        sheet: ctx.sheet,
+        recorder: recorderName.trim() || agentEmail || null,
+      });
+    },
+    [recorderName, agentEmail]
+  );
+
   // Push the given recordings onto شيت التسجيلات (field_check) — the same sheet
   // the التشييك «السجلات» tab shows and the sort reads from. Scoped to the
   // section's own recordings (manual button → manual, voice button → voice).
@@ -2796,7 +2921,7 @@ export default function RegistrationPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-black text-ink">التسجيل</h1>
-          <p className="text-xs text-muted">{recordings.length} سجل</p>
+          {!agentView && <p className="text-xs text-muted">{recordings.length} سجل</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {isOnline ? (
@@ -2808,7 +2933,7 @@ export default function RegistrationPage() {
               <WifiOff size={13} /> غير متصل
             </span>
           )}
-          {pendingCount > 0 && (
+          {!agentView && pendingCount > 0 && (
             <button
               onClick={handleSync}
               className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-1 text-xs text-primary"
@@ -2820,9 +2945,28 @@ export default function RegistrationPage() {
         </div>
       </div>
 
+      {/* 👁️ «زي المندوب» — الشريط ده للسوبر أدمن بس (المندوب مابيشوفوش)، ومقفول وفيه تسجيل/تفريغ شغّال */}
+      {superOk && (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800" data-testid="mj-agent-preview" dir="rtl">
+          <span>
+            {asAgent
+              ? "👁️ بتشوف «التسجيل» زي المندوب بالظبط — الشريط ده ليك انت بس"
+              : "👁️ عايز تشوف «التسجيل» زي ما المندوب هيشوفه؟"}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAgentPreview(!agentPreview)}
+            disabled={isRecording || isTranscribing || reAnalyzing || mjBusy}
+            className="shrink-0 rounded-lg border border-amber-400 bg-white px-2 py-1 disabled:opacity-50"
+          >
+            {asAgent ? "رجّع أدواتي" : "زي المندوب"}
+          </button>
+        </div>
+      )}
+
       {/* 🧮 «المجمّع» / «التسجيل القديم» — للسوبر أدمن بس، ومقفول وفيه تسجيل شغّال في القديم
           (الميك والتفريغ بتوعه مايفضلوش شغّالين ورا الشاشة). */}
-      {superOk && (
+      {superOk && !asAgent && (
         <div className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface p-1" data-testid="reg-mode-switch" dir="rtl">
           {([["mujammaa", "🧮 المجمّع"], ["classic", "التسجيل القديم"]] as const).map(([m, label]) => (
             <button
@@ -2840,13 +2984,29 @@ export default function RegistrationPage() {
         </div>
       )}
 
-      {superOk && mjOpened && (
-        <div hidden={regMode !== "mujammaa"}>
-          <MujammaaSection agentName={recorderName.trim() || agentEmail || agentId || ""} onBusyChange={setMjBusy} visible={regMode === "mujammaa"} />
+      {(superOk || mjAgentOk) && mjOpened && (
+        <div hidden={!mjShown}>
+          <MujammaaSection
+            agentName={recorderName.trim() || agentEmail || agentId || ""}
+            onBusyChange={setMjBusy}
+            visible={mjShown}
+            advanced={superOk && !asAgent}
+            onExportToRecords={exportMujammaa}
+          />
         </div>
       )}
 
-      {superChecked && !(superOk && regMode === "mujammaa") && (<>
+      {/*
+        📴 الفحص ماوصلش (من غير نت أول مرة) ⇒ رسالة بس — «التسجيل القديم» للسوبر أدمن بس (المتأكد أو
+        المحفوظ على الجهاز)، ماينفعش يظهر لمندوب وبعدين يختفي وهو بيسجّل فيه.
+      */}
+      {superChecked && !superOk && !mjAgentOk && cachedAccess !== "super" && (
+        <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+          مش قادرين نتأكد من حسابك دلوقتي — اتأكد إن النت شغّال وافتح الصفحة تاني.
+        </p>
+      )}
+
+      {superChecked && !mjShown && !mjAgentOk && (superOk || cachedAccess === "super") && (<>
       {/* ملف التشييك المشترك (local:check) — يُقرأ عند التحميل للمقارنة فقط.
           الرفع/التغيير/الحذف من صفحة «تشييك» — مفيش مربع رفع هنا. */}
 
@@ -3358,7 +3518,7 @@ export default function RegistrationPage() {
 
       {/* PIN gate for the Groq key — reveal/clear both need it; a key saved
           with no PIN yet (mid-setup app close) forces setup again on load. */}
-      {pinPrompt && (
+      {pinPrompt && !agentView && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" dir="rtl">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5">
             {pinPrompt.mode === "setup" && (
