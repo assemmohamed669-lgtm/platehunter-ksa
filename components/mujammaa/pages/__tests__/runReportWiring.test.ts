@@ -38,6 +38,13 @@ describe("📋 تقرير التسجيل — الربط", () => {
     expect(runQueueBody).toMatch(/errors: sinceJob\.map\(/);
   });
 
+  it("📍 مسار الموقع بتاع المقطع نفسه بيتبعت مع التقرير (كل قراءة بوقتها ودقتها — ١٩ أكتوبر)", () => {
+    const i = runQueueBody.indexOf("queueRunReport(");
+    const call = runQueueBody.slice(i, runQueueBody.indexOf("});", i));
+    expect(call).toMatch(/fixes: next\.fixes\?\.length/);
+    expect(call).toMatch(/track: next\.fixes,/);
+  });
+
   it("التوقيتات: الرفع (أول رد) وأول لوحات والكل — ومعرّف الأرشيف", () => {
     expect(SRC).toMatch(/runInfoRef\.current = \{ responded: false \}/);
     expect(SRC).toMatch(/uploadMs: performance\.now\(\) - startedAt/);

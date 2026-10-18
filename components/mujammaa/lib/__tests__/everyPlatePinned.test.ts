@@ -14,7 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { FixCollector } from "../clipStore";
-import { PIN_MAX_ACCURACY_M, stampEntriesWithTrack, trackFromRaw } from "../platePin";
+import { NEIGHBOR_PIN, PIN_MAX_ACCURACY_M, stampEntriesWithTrack, trackFromRaw } from "../platePin";
 import { FIX_LATE_MS, recordGpsWarning } from "../gps";
 import type { PlateEntry } from "../plateEntry";
 import { GPS_STAMP_MAX_ACCURACY_M } from "@/lib/gpsWarning";
@@ -119,6 +119,18 @@ describe("السلسلة كلها — من القراءات وهو بيسجّل 
     const missing = PLATE_TIMES.filter((_, i) => !out[i].pin);
     expect(missing.length).toBeGreaterThan(0);
     expect(missing.every((s) => s > 42 && s < 50)).toBe(true);
+  });
+
+  it("📍 واقف في مكانه والموقع وقف ٦ث ⇒ اللوحات اللي جوّه بتاخد «نفس موقع اللوحة اللي قبلها» (١٩ أكتوبر)", () => {
+    const col = new FixCollector();
+    for (let t = 1000; t <= 104_000; t += 1000) {
+      if (t > 40_000 && t < 48_000) continue;
+      col.add({ lat: 24.7, lng: 46.7, accuracy: 8, at: START + t }, START + t + 250);
+    }
+    const out = stamp(trackFromRaw(col.list(), START));
+    expect(out.every((e) => e.pin)).toBe(true);
+    const copied = out.filter((e) => e.review.notes.some((n) => n.startsWith(NEIGHBOR_PIN)));
+    expect(copied.map((e) => e.review.timeStart)).toEqual([43.2]);
   });
 });
 

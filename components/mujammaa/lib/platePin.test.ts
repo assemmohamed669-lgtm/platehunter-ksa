@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  NEIGHBOR_MAX_GAP_MS,
+  NEIGHBOR_PIN,
   NO_PRECISE_PIN,
   PIN_MAX_ACCURACY_M,
+  neighborPinOf,
   PIN_MAX_SNAP_MS,
   resolvePlatePin,
   resolvePlatePins,
@@ -454,5 +457,142 @@ describe("stampEntriesWithTrack — الدبوس على اللوحات بعد ا
     const out = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 2)], [], START);
     expect(out.every((e) => e.pin === null)).toBe(true);
     expect(out.every((e) => e.review.notes.some((n) => n.startsWith(NO_PRECISE_PIN)))).toBe(true);
+  });
+});
+
+/**
+ * 📍 **«نفس موقع اللوحة اللي قبلها»** (١٩ أكتوبر ٢٠٢٦). المالك بعد لوحة اتفرّغت من غير موقع:
+ * «لو قريبه من لوحه متاخده ليها موقع يتاخد نفس موقع اللوحه اللي قبلها مدام في نفس الموقع».
+ *  · لحد **١٠ث** (بوقت النطق) من لوحة ليها دبوس حقيقي — اللي قبلها الأول، وإلا اللي بعدها.
+ *  · «مدام في نفس الموقع» = **لازم دليل** إنه ماتحرّكش: قراءة بعد اللوحة (ناحيتها) قريبة من الدبوس، ولو
+ *    مافيش ⇒ قراءات على الناحية التانية بتقول إنه فضل ثابت مدة قد الفرق. أي قراءة في النص على بعد
+ *    أكتر من ٥٠م ⇒ اتحرّك ⇒ مابننسخش (ماشي بالعربية ١٠م/ث يبقى ٩٠م غلط — دبوس غلط أسوأ من مافيش).
+ *  · متعلّمة «📍 نفس موقع اللوحة اللي قبلها (فرق Xث)» — باينة في الملاحظات والتصدير.
+ *  · المنسوخ مابيتنسخش منه تاني (مافيش سلسلة تمدّ نقطة واحدة دقيقة كاملة).
+ */
+describe("stampEntriesWithTrack — نفس موقع اللوحة اللي قبلها", () => {
+  const notesOf = (e: PlateEntry) => e.review.notes.join(" ");
+
+  it("الموقع وقف ٥ث والقراءة اللي بعدها لسه في نفس المكان ⇒ نفس دبوس اللي قبلها + العلامة", () => {
+    const track = [fx(1000, 24.5), fx(11000, 24.5001)]; // ≈١١م
+    const [a, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(a.pin).not.toBeNull();
+    expect(b.pin).not.toBeNull();
+    expect(b.pin!.lat).toBe(a.pin!.lat);
+    expect(b.pin!.lng).toBe(a.pin!.lng);
+    expect(b.pin!.accuracy).toBe(a.pin!.accuracy);
+    expect(notesOf(b)).toContain(`${NEIGHBOR_PIN} قبلها (فرق 5ث)`);
+    expect(notesOf(b)).not.toContain(NO_PRECISE_PIN);
+    expect(neighborPinOf(b)).toBe("before");
+    expect(neighborPinOf(a)).toBeNull();
+    expect(notesOf(a)).not.toContain(NEIGHBOR_PIN);
+  });
+
+  it("قراءة واحدة بس ومافيش أي دليل إنه واقف ⇒ مابتتنسخش (ممكن يكون ماشي)", () => {
+    const track = [fx(1000, 24.5)];
+    const [a, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(a.pin).not.toBeNull();
+    expect(b.pin).toBeNull();
+    expect(notesOf(b)).toContain(NO_PRECISE_PIN);
+  });
+
+  it("أول لوحة (الموقع لسه بيصحى) ⇒ بتاخد اللي بعدها لو القراءات بعدها ثابتة مدة قد الفرق", () => {
+    const track = [5000, 6000, 7000, 8000, 9000, 10000].map((t) => fx(t, 24.5));
+    const [a, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 5)], track, START);
+    expect(b.pin).not.toBeNull();
+    expect(a.pin).not.toBeNull();
+    expect(a.pin!.lat).toBe(24.5);
+    expect(notesOf(a)).toContain(`${NEIGHBOR_PIN} بعدها (فرق 4ث)`);
+    expect(neighborPinOf(a)).toBe("after");
+  });
+
+  it("أول لوحة والقراءات بعدها بتتحرّك (عربية ~٥٥ كم/س) ⇒ مابتتنسخش", () => {
+    // ٠.٠٠٠١٤ درجة/ث ≈ ١٥.٥م/ث ⇒ في ٤ث (الفرق) ≈ ٦٢م > ٥٠م
+    const track = [5000, 6000, 7000, 8000, 9000, 10000].map((t) => fx(t, 24.5 + ((t - 5000) / 1000) * 0.00014));
+    const [a] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 5)], track, START);
+    expect(a.pin).toBeNull();
+  });
+
+  it("اللي قبلها أولى من اللي بعدها", () => {
+    const track = [fx(1000, 24.5), fx(9000, 24.5001), fx(12000, 24.5001)];
+    const [, b] = stampEntriesWithTrack(
+      [entry("ابح1234", 1), entry("حطس5678", 6), entry("دعو9012", 9)],
+      track,
+      START
+    );
+    expect(b.pin!.lat).toBe(24.5);
+    expect(notesOf(b)).toContain("قبلها");
+  });
+
+  it(`أبعد من ${NEIGHBOR_MAX_GAP_MS / 1000}ث ⇒ مابتتنسخش (من غير موقع دقيق زي الأول)`, () => {
+    const track = [fx(1000, 24.5), fx(14500, 24.5)];
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 12)], track, START);
+    expect(b.pin).toBeNull();
+    expect(notesOf(b)).toContain(NO_PRECISE_PIN);
+    expect(notesOf(b)).not.toContain(NEIGHBOR_PIN);
+  });
+
+  it("قراءة في النص بتقول إنه اتحرّك أكتر من ٥٠م ⇒ مابتتنسخش حتى لو رجع", () => {
+    // ٠.٠٠١ درجة ≈ ١١١م — على بعد ٣ث من اللوحة التانية (أبعد من حد الالتقاط) بس جوّه الفترة
+    const track = [fx(1000, 24.5), fx(3000, 24.501), fx(11000, 24.5)];
+    const [a, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(a.pin).not.toBeNull();
+    expect(b.pin).toBeNull();
+    expect(notesOf(b)).toContain(NO_PRECISE_PIN);
+  });
+
+  it("القراءة اللي بعدها بعيدة (اتحرّك) ⇒ مابتتنسخش", () => {
+    const track = [fx(1000, 24.5), fx(11000, 24.501)];
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(b.pin).toBeNull();
+  });
+
+  it("حركة صغيرة (أقل من ٥٠م) ⇒ لسه نفس المكان وبتتنسخ", () => {
+    const track = [fx(1000, 24.5), fx(3000, 24.5002), fx(11000, 24.5002)]; // ≈٢٢م
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(b.pin).not.toBeNull();
+  });
+
+  it("قراءة أوسع من ١٠٠م مابتتحسبش (لا حركة ولا دليل)", () => {
+    const track = [fx(1000, 24.5), fx(3000, 24.51, 46.7, 500), fx(11000, 24.5001)];
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(b.pin).not.toBeNull();
+  });
+
+  it("المنسوخ مابيتنسخش منه تاني — سلسلة ٠ث/٨ث/١٦ث: التالتة من غير موقع", () => {
+    const track = [fx(-9000, 24.5), fx(-5000, 24.5), fx(0, 24.5)];
+    const out = stampEntriesWithTrack(
+      [entry("ابح1234", 0), entry("حطس5678", 8), entry("دعو9012", 16)],
+      track,
+      START
+    );
+    expect(out[1].pin).not.toBeNull();
+    expect(out[2].pin).toBeNull();
+    expect(notesOf(out[2])).toContain(NO_PRECISE_PIN);
+  });
+
+  it("الدبابيس الحقيقية مابتتلمسش", () => {
+    const track = Array.from({ length: 10 }, (_, i) => fx(i * 1000, 24 + i * 0.0001));
+    const plain = stampEntriesWithTrack([entry("ابح1234", 2.5), entry("حطس5678", 6)], track, START);
+    expect(plain[0].pin!.lat).toBeCloseTo(24.00025, 9);
+    expect(plain[1].pin!.lat).toBeCloseTo(24.0006, 9);
+    expect(plain.every((e) => neighborPinOf(e) === null)).toBe(true);
+  });
+
+  it("لوحة مالهاش لحظة نطق ⇒ مابتتنسخش (مانعرفش هي قريبة ولا لأ)", () => {
+    const track = [fx(1000, 24.5), fx(11000, 24.5)];
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", undefined)], track, START);
+    expect(b.pin).toBeNull();
+  });
+
+  it("إعادة التفريغ مابتكرّرش العلامة — ولو بقى ليها دبوس حقيقي العلامة بتتشال", () => {
+    const track = [fx(1000, 24.5), fx(11000, 24.5001)];
+    const once = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(once[1].pin).not.toBeNull();
+    const twice = stampEntriesWithTrack(once, track, START);
+    expect(twice[1].review.notes.filter((n) => n.startsWith(NEIGHBOR_PIN))).toHaveLength(1);
+    const real = stampEntriesWithTrack(once, [...track, fx(6000, 24.5003)], START);
+    expect(real[1].review.notes.some((n) => n.startsWith(NEIGHBOR_PIN))).toBe(false);
+    expect(real[1].pin!.lat).toBe(24.5003);
   });
 });

@@ -385,6 +385,58 @@ export function recordGpsWarning(
   return null;
 }
 
+/* ------------------------------------------- جاهز قبل ما يسجّل */
+
+/**
+ * 📍 **الموقع جاهز؟ — العلامة اللي جنب زرار التسجيل** (١٩ أكتوبر ٢٠٢٦).
+ *
+ * لوحة المالك اتفرّغت من غير موقع: داس «بدء التسجيل» على طول بعد ما فتح، وفي الـ٥ث بتوع المقطع
+ * مافيش ولا قراءة جديدة — بس القراءة القديمة المخزّنة. فـ«جاهز» = قراءة **حيّة** (`recvAt` معروف — مش
+ * المخزّنة اللي بتيجي مع الاشتراك) وصلت في آخر `GPS_READY_FRESH_MS` ودقتها لحد ١٠٠م (نفس حد دبوس اللوحة).
+ * ٥ث مش ٣ث زي تحذير التسجيل: العلامة ظاهرة طول الوقت، فماتنطّش أحمر/أخضر مع كل تأخير ثانية.
+ */
+export const GPS_READY_FRESH_MS = 5_000;
+
+export interface GpsReadiness {
+  state: "ready" | "weak" | "waiting" | "off";
+  label: string;
+  acc?: number;
+}
+
+export function gpsReadiness(
+  fix: GpsFix | null | undefined,
+  recvAt: number | null | undefined,
+  now = Date.now(),
+  status?: GpsStatus
+): GpsReadiness {
+  if (status === "denied" || status === "unavailable") {
+    return { state: "off", label: "📍 الموقع مقفول — افتح إذن الموقع للتطبيق" };
+  }
+  const live = typeof recvAt === "number" && Number.isFinite(recvAt) && now - recvAt <= GPS_READY_FRESH_MS;
+  if (!fix || !live || !Number.isFinite(fix.accuracy) || fix.accuracy <= 0) {
+    return { state: "waiting", label: "📍 بيجيب الموقع…" };
+  }
+  const acc = Math.round(fix.accuracy);
+  if (fix.accuracy > GPS_STAMP_MAX_ACCURACY_M) {
+    return { state: "weak", acc, label: `📍 الموقع ضعيف ±${acc}م — اطلع لمكان مكشوف` };
+  }
+  return { state: "ready", acc, label: `📍 الموقع جاهز ±${acc}م` };
+}
+
+/** التحذير الكبير لما يدوس «بدء التسجيل» والعلامة لسه مش خضرا — `null` لو جاهز */
+export function gpsStartWarning(r: GpsReadiness): string | null {
+  switch (r.state) {
+    case "ready":
+      return null;
+    case "off":
+      return "🚨 الموقع مقفول — اللوحات اللي هتقولها هتطلع من غير موقع. افتح إذن الموقع للتطبيق من إعدادات الموبايل.";
+    case "weak":
+      return `🚨 الموقع ضعيف (±${r.acc}م) — اللوحات اللي هتقولها دلوقتي ممكن تطلع من غير موقع. اطلع لمكان مكشوف واستنى العلامة الخضرا «📍 الموقع جاهز».`;
+    default:
+      return "🚨 الموقع لسه مش جاهز — اللوحات اللي هتقولها دلوقتي ممكن تطلع من غير موقع. استنى لحد ما العلامة تبقى خضرا «📍 الموقع جاهز» وبعدين قول اللوحات.";
+  }
+}
+
 /**
  * يختم آخر قراءة متاحة — دي اللي بننادي عليها لحظة ظهور اللوحة.
  * فورية تماماً: مافيش أي انتظار.

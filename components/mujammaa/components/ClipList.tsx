@@ -25,7 +25,7 @@ import {
   type StoredClip,
 } from "../lib/clipStore";
 import { pinLink } from "../lib/gps";
-import { NO_PRECISE_PIN, PIN_MAX_ACCURACY_M } from "../lib/platePin";
+import { NO_PRECISE_PIN, PIN_MAX_ACCURACY_M, neighborPinOf } from "../lib/platePin";
 
 export interface ClipListProps {
   clips: StoredClip[];
@@ -306,6 +306,7 @@ export default function ClipList({
                             title={`±${Math.round(e.pin!.accuracy)}م`}
                           >
                             <MapPin className="h-3 w-3" /> الموقع (±{Math.round(e.pin!.accuracy)}م)
+                            {neighborPinOf(e) === "before" ? " · نفس اللي قبلها" : neighborPinOf(e) === "after" ? " · نفس اللي بعدها" : ""}
                           </a>
                         ) : (
                           <span className="text-[11px] text-amber-300" title={miss}>

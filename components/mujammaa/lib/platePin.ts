@@ -61,6 +61,42 @@ export const CLOCK_TOLERANCE_MS = 5000;
 /** العلامة اللي بتتكتب في ملاحظات اللوحة اللي مالهاش موقع دقيق */
 export const NO_PRECISE_PIN = "من غير موقع دقيق";
 
+/**
+ * 📍 **«نفس موقع اللوحة اللي قبلها»** (١٩ أكتوبر ٢٠٢٦). المالك بعد لوحة اتفرّغت من غير موقع:
+ * «لو قريبه من لوحه متاخده ليها موقع يتاخد نفس موقع اللوحه اللي قبلها مدام في نفس الموقع».
+ *  · لحد `NEIGHBOR_MAX_GAP_MS` (بوقت النطق) من لوحة ليها دبوس **حقيقي** — اللي قبلها الأول، وإلا اللي بعدها.
+ *  · «مدام في نفس الموقع» = **لازم دليل** من القراءات إنه فضل جوّه `NEIGHBOR_MAX_MOVE_M` (`stayed` تحت) —
+ *    مافيش دليل (قراءة واحدة بس) ⇒ مابننسخش؛ ماشي بالعربية والموقع وقف ثواني كان هيبقى ٩٠م غلط.
+ *  · المنسوخ مابيتنسخش منه (مافيش سلسلة تمدّ نقطة واحدة)، ومتعلّم في الملاحظات والتصدير.
+ */
+export const NEIGHBOR_MAX_GAP_MS = 10_000;
+export const NEIGHBOR_MAX_MOVE_M = 50;
+export const NEIGHBOR_PIN = "📍 نفس موقع اللوحة اللي";
+
+const neighborNote = (side: "before" | "after", gapMs: number) =>
+  `${NEIGHBOR_PIN} ${side === "before" ? "قبلها" : "بعدها"} (فرق ${Math.round(gapMs / 1000)}ث)`;
+
+/** الدبوس ده منسوخ من اللوحة اللي قبلها/بعدها؟ (`null` = دبوس حقيقي أو مافيش) */
+export function neighborPinOf(e: PlateEntry): "before" | "after" | null {
+  const n = (e?.review?.notes || []).find((x) => String(x).startsWith(NEIGHBOR_PIN));
+  if (!n || !e.pin) return null;
+  return String(n).startsWith(`${NEIGHBOR_PIN} بعدها`) ? "after" : "before";
+}
+
+/** علامات الموقع اللي بتتحسب من جديد مع كل ختم */
+export const isPinMark = (n: unknown) => {
+  const s = String(n);
+  return s.startsWith(NO_PRECISE_PIN) || s.startsWith(NEIGHBOR_PIN);
+};
+
+function metersBetween(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
 /** قراءة زي ما وصلت من المتصفح — بتتحفظ مع المقطع */
 export interface RawFix {
   lat: number;
@@ -350,24 +386,90 @@ export function stampEntriesWithTrack(
     return finite(t) ? Math.round(t * 1000) : undefined;
   });
   const res = resolvePlatePins(track, times);
+  const real: Array<GpsPin | null> = res.map((r, i) => {
+    if (!r.pin) return null;
+    const atRel = r.kind === "snap" ? track[r.fixIdx[0]].tMs : (times[i] as number);
+    return {
+      lat: r.pin.lat,
+      lng: r.pin.lng,
+      accuracy: r.pin.acc,
+      at: startEpoch + atRel,
+      ageMs: r.pin.ageMs,
+      stale: false,
+    };
+  });
+  const copies = neighborCopies(track, times, real);
   return entries.map((e, i) => {
-    const r = res[i];
-    const notes = (e.review.notes || []).filter((n) => !String(n).startsWith(NO_PRECISE_PIN));
-    let pin: GpsPin | null = null;
-    if (r.pin) {
-      const atRel = r.kind === "snap" ? track[r.fixIdx[0]].tMs : (times[i] as number);
-      pin = {
-        lat: r.pin.lat,
-        lng: r.pin.lng,
-        accuracy: r.pin.acc,
-        at: startEpoch + atRel,
-        ageMs: r.pin.ageMs,
-        stale: false,
-      };
-    } else {
-      notes.push(`${NO_PRECISE_PIN} — ${pinMissLabel(r.reason)}`);
+    const notes = (e.review.notes || []).filter((n) => !isPinMark(n));
+    let pin = real[i];
+    const copy = copies[i];
+    if (!pin && copy) {
+      pin = copy.pin;
+      notes.push(neighborNote(copy.side, copy.gapMs));
+    } else if (!pin) {
+      notes.push(`${NO_PRECISE_PIN} — ${pinMissLabel(res[i].reason)}`);
     }
     return { ...e, pin, review: { ...e.review, notes } };
+  });
+}
+
+/**
+ * «نفس موقع اللوحة اللي قبلها» — لكل لوحة من غير دبوس حقيقي: أقرب لوحة **قبلها** ليها دبوس حقيقي في
+ * حدود ١٠ث، وإلا أقرب واحدة **بعدها** — بشرط «مدام في نفس الموقع» (`stayed`).
+ */
+function neighborCopies(
+  track: TrackFix[],
+  times: Array<number | undefined>,
+  real: Array<GpsPin | null>
+): Array<{ pin: GpsPin; side: "before" | "after"; gapMs: number } | null> {
+  const reliable = track.filter((f) => f.acc <= PIN_MAX_ACCURACY_M);
+  const near = (src: GpsPin, f: TrackFix) => metersBetween(src.lat, src.lng, f.lat, f.lng) <= NEIGHBOR_MAX_MOVE_M;
+  /**
+   * المندوب كان لسه عند الدبوس `src` (لحظة `tj`) لحظة اللوحة `t`؟ **لازم دليل** — مش «مافيش دليل إنه اتحرّك»
+   * (ماشي بالعربية ١٠م/ث والموقع وقف ٩ث = ٩٠م غلط):
+   *  ١. ولا قراءة موثوقة (≤١٠٠م) بين اللوحتين (± ثانيتين) أبعد من ٥٠م عن الدبوس.
+   *  ٢. أقرب قراءة **ورا اللوحة** (ناحيتها) في حدود ١٠ث هي الدليل: قريبة ⇒ ماتحرّكش، بعيدة ⇒ اتحرّك.
+   *  ٣. مافيش (الموقع لسه بيصحى في أول التسجيل) ⇒ القراءات على **الناحية التانية** من الدبوس لازم تقول
+   *     إنه فضل جوّه ٥٠م مدة قد الفرق على الأقل — نفس السرعة يبقى نفس المسافة.
+   */
+  const stayed = (src: GpsPin, tj: number, t: number) => {
+    const gap = Math.abs(t - tj);
+    const dir = t >= tj ? 1 : -1;
+    const lo = Math.min(t, tj) - PIN_MAX_SNAP_MS;
+    const hi = Math.max(t, tj) + PIN_MAX_SNAP_MS;
+    if (reliable.some((f) => f.tMs >= lo && f.tMs <= hi && !near(src, f))) return false;
+    let beyond: TrackFix | null = null;
+    for (const f of reliable) {
+      const d = dir * (f.tMs - t);
+      if (d > 0 && d <= NEIGHBOR_MAX_GAP_MS && (!beyond || d < dir * (beyond.tMs - t))) beyond = f;
+    }
+    if (beyond) return near(src, beyond);
+    const far = reliable.filter((f) => {
+      const d = -dir * (f.tMs - tj);
+      return d > 0 && d <= gap + PIN_MAX_SNAP_MS;
+    });
+    return far.some((f) => -dir * (f.tMs - tj) >= gap) && far.every((f) => near(src, f));
+  };
+  return times.map((t, i) => {
+    if (real[i] || !finite(t)) return null;
+    let before = -1;
+    let after = -1;
+    for (let j = 0; j < times.length; j++) {
+      const tj = times[j];
+      if (j === i || !real[j] || !finite(tj) || Math.abs(tj - t) > NEIGHBOR_MAX_GAP_MS) continue;
+      if (tj <= t) {
+        if (before < 0 || tj > (times[before] as number)) before = j;
+      } else if (after < 0 || tj < (times[after] as number)) after = j;
+    }
+    for (const [j, side] of [[before, "before"], [after, "after"]] as const) {
+      if (j < 0) continue;
+      const src = real[j]!;
+      const tj = times[j] as number;
+      if (!stayed(src, tj, t)) continue;
+      const gapMs = Math.abs(t - tj);
+      return { pin: { ...src, ageMs: src.ageMs + gapMs }, side, gapMs };
+    }
+    return null;
   });
 }
 

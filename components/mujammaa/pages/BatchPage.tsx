@@ -62,7 +62,18 @@ import { chunksHeaders, chunksUrl, httpFailure, type BatchProbe } from "../lib/b
 import { buildRunReport, sendRunReport, type RunReportInput } from "../lib/runTelemetry";
 import { currentSession } from "@/lib/authSession";
 import { ErrorLog } from "../lib/errorLog";
-import { GpsTrack, currentFix, lastFixRecvAt, pinLink, recordGpsWarning, subscribeGps } from "../lib/gps";
+import {
+  GpsTrack,
+  currentFix,
+  gpsReadiness,
+  gpsStartWarning,
+  gpsStatus,
+  lastFixRecvAt,
+  pinLink,
+  recordGpsWarning,
+  subscribeGps,
+} from "../lib/gps";
+import { GpsReadyChip, GpsStartWarning } from "../components/GpsReadiness";
 import {
   FixCollector,
   MEM_ONLY_WARNING,
@@ -783,6 +794,9 @@ export default function BatchPage({
   /** المقطع اللي اتقفل لسه بيتحفظ — «بدء التسجيل» مقفول لحد ما يخلص */
   const finalizingRef = useRef(false);
   const [finalizing, setFinalizing] = useState(false);
+  /** 📍 داس تسجيل والموقع لسه مش جاهز ⇒ التحذير الكبير لحد ما يجهز (`GpsStartWarning` — ١٩ أكتوبر) */
+  const [gpsWarnArmed, setGpsWarnArmed] = useState(false);
+  const disarmGpsWarn = useCallback(() => setGpsWarnArmed(false), []);
   /** أجزاء آخر تسجيل (٢٥٠ms) بمقطعها — للمحركات اللي بتقصّ ببادئة */
   const lastRecRef = useRef<{ clipId: string; chunks: Blob[] } | null>(null);
   /** آخر مقطع اتسجّل ولسه مادخلش الطابور — زرار «تفريغ واستخراج اللوحات» الكبير */
@@ -1381,6 +1395,15 @@ export default function BatchPage({
     setPendingClipId(null);
     setPhase("recording");
     setSeconds(0);
+    // 📍 داس تسجيل والعلامة لسه مش خضرا ⇒ تحذير كبير (وهزّة) لحد ما الموقع يجهز — التسجيل نفسه ماشي
+    if (gpsStartWarning(gpsReadiness(currentFix(), lastFixRecvAt(), Date.now(), gpsStatus()))) {
+      setGpsWarnArmed(true);
+      try {
+        navigator.vibrate?.([200, 100, 200]);
+      } catch {
+        /* مافيش هزّاز */
+      }
+    }
   };
 
 
@@ -1410,6 +1433,7 @@ export default function BatchPage({
 
       recorderRef.current = null;
       gpsTrackRef.current.stop();
+      setGpsWarnArmed(false);
 
       setWaveform(null);
       setLevel(0);
@@ -2351,6 +2375,7 @@ export default function BatchPage({
             result: info?.result,
             entries: ok ? outcome.entries : entriesRef.current,
             fixes: next.fixes?.length,
+            track: next.fixes,
             errors: sinceJob.map((e) => `${e.source}: ${e.message}`),
           });
         } catch {
@@ -2707,6 +2732,8 @@ export default function BatchPage({
             كود المعالجة سايبينه شغّال (`pickAudioFile`) عشان مانكسرش حاجة،
             بس **مافيش مدخل ليه في الواجهة**.
           */}
+          {/* 📍 حمرا «بيجيب الموقع…» ⇒ خضرا «الموقع جاهز ±Xم» — يشوفها قبل ما يدوس (١٩ أكتوبر) */}
+          <GpsReadyChip />
           <span className="text-xs text-slate-500">
             التسجيل لحد {Math.floor(MAX_BATCH_SECONDS / 60)} دقيقة
           </span>
@@ -2724,8 +2751,9 @@ export default function BatchPage({
           بيقولها هتطلع من غير موقع — مش بعد التفريغ (`recordGpsWarning`). العدّاد
           بيحدّث الصفحة كل ثانية وهو بيسجّل، فـ«واقف من كام ثانية» بيتحدّث معاه.
         */}
+        {phase === "recording" && gpsWarnArmed && <GpsStartWarning onReady={disarmGpsWarn} />}
         {(() => {
-          const warn = recordGpsWarning(gps.fix, phase === "recording", Date.now(), lastFixRecvAt());
+          const warn = gpsWarnArmed ? null : recordGpsWarning(gps.fix, phase === "recording", Date.now(), lastFixRecvAt());
           return warn ? (
             <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
               {warn}

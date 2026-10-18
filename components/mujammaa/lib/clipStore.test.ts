@@ -36,7 +36,7 @@ import {
   type ClipBackend,
   type StoredClip,
 } from "./clipStore";
-import { NO_PRECISE_PIN } from "./platePin";
+import { NEIGHBOR_PIN, NO_PRECISE_PIN } from "./platePin";
 import type { PlateEntry } from "./plateEntry";
 
 /**
@@ -1148,6 +1148,18 @@ describe("سطر اللوحات (أوقات مبدئية) ⇒ مافيش دبو�
     expect(out[0].review.notes.filter((n) => n === PIN_PENDING)).toHaveLength(1);
     expect(out[0].review.notes.some((n) => n.startsWith(NO_PRECISE_PIN))).toBe(false);
     expect(PIN_PENDING).toBe("📍 بيتحدّد…");
+  });
+
+  it("📍 علامة «نفس موقع اللوحة اللي قبلها» بتتشال مع الدبوس (الدبوس المنسوخ مش من أوقات نهائية)", () => {
+    const copied = {
+      ...pinned("ابح1234"),
+      review: { plate: "ابح1234", notes: [`${NEIGHBOR_PIN} قبلها (فرق 3ث)`, "مركونه"], timeStart: 3 },
+    } as unknown as PlateEntry;
+    const pre = preliminaryEntries([copied]);
+    expect(pre[0].pin).toBeNull();
+    expect(pre[0].review.notes).toEqual(["مركونه", PIN_PENDING]);
+    const only = platesOnlyEntries([copied]);
+    expect(only[0].review.notes.some((n) => n.startsWith(NEIGHBOR_PIN))).toBe(false);
   });
 
   it("platesOnlyEntries: الرد ماكملش ⇒ اللوحات تفضل بلا دبوس، ومتعلّمة «من غير موقع دقيق — الأنواع ماوصلتش»", () => {

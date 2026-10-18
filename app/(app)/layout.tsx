@@ -19,6 +19,8 @@ import NoticeBanner from "@/components/NoticeBanner";
 import AgentNoticeBanner from "@/components/AgentNoticeBanner";
 import PollBanner from "@/components/PollBanner";
 import AgentPresenceReporter from "@/components/AgentPresenceReporter";
+import MujammaaGpsWarmup from "@/components/MujammaaGpsWarmup";
+import { canUseMujammaa } from "@/lib/mujammaaAccess";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
 import { applyServiceKeys } from "@/lib/voiceKeys";
@@ -81,6 +83,8 @@ export default function AppShellLayout({
   // «باقي صفحات البرنامج» — مفتوح افتراضياً. لو المالك قفله لمشترك (VoiceX فقط)
   // بيتحبس على صفحة الصوت. يبدأ true فمحدش يتأثر لحد ما البروفايل يرجع.
   const [restPagesEnabled, setRestPagesEnabled] = useState(true);
+  // 📍 المجمّع: الموقع يصحى من أول الفتح للي يقدر يستخدمه بس (`MujammaaGpsWarmup` — ١٩ أكتوبر)
+  const [mjGpsWarm, setMjGpsWarm] = useState(false);
   const isHome = pathname === "/sorting";
 
   // Apply the saved appearance (font size / colours) app-wide on every load.
@@ -142,6 +146,8 @@ export default function AppShellLayout({
       setRestPagesEnabled(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));
       // 🔕 «يرن حتى لو صامت» على الآيفون — السوبر أدمن الأول (`lib/alertSiren.ts`)
       setSilentRingSuper(rp?.is_super === true);
+      // 📍 نفس قفل المجمّع (دلوقتي السوبر أدمن بس) — المناديب موقعهم شغّال أصلاً من `AgentPresenceReporter`
+      setMjGpsWarm(canUseMujammaa(rp));
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).
       if (profile && profile.service_keys != null) {
         applyServiceKeys(profile.service_keys);
@@ -298,6 +304,7 @@ export default function AppShellLayout({
         {/* استطلاع رأي الأدمن — بيظهر في كل صفحات المندوب */}
         <PollBanner />
         <AgentPresenceReporter />
+        <MujammaaGpsWarmup enabled={mjGpsWarm} />
 
         {(() => {
           // آخر يوم / يوم السماح ياخدوا تحذير عاجل بنص واضح + طمأنة عن السجلات.
