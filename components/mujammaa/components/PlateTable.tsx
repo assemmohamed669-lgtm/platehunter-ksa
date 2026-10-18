@@ -171,9 +171,12 @@ export default function PlateTable({
 
             return (
               <Fragment key={entry.id}>
+                {/* 🚨 المالك (١٨ أكتوبر): «الصف بتاع اللوحه دي كله متظلل ومكتوب ان اللوحه دي مطلوبه» —
+                    `id` عشان «وريني في الجدول» في مربع المطلوبة ينزل للصف */}
                 <tr
-                  className={`border-b border-white/5 align-middle ${
-                    wanted ? "bg-red-500/10" : "hover:bg-white/[0.03]"
+                  id={`mj-row-${entry.id}`}
+                  className={`border-b align-middle ${
+                    wanted ? "border-red-500/40 bg-red-500/25" : "border-white/5 hover:bg-white/[0.03]"
                   }`}
                 >
                   <td className="p-2">
@@ -190,6 +193,9 @@ export default function PlateTable({
                         </button>
                       )}
                     </span>
+                    {wanted && (
+                      <span className="mt-1 block whitespace-nowrap text-[11px] font-black text-red-200">🚨 اللوحة دي مطلوبة</span>
+                    )}
                   </td>
                   <td className="whitespace-nowrap p-2">
                     <span className="flex flex-wrap items-center gap-1">

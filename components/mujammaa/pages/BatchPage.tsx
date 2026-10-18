@@ -40,6 +40,10 @@ import {
 import BatchReports from "../components/BatchReports";
 import CheckSheetBox from "../components/CheckSheetBox";
 import ClipList from "../components/ClipList";
+import dynamic from "next/dynamic";
+// 🚨 بيتحمّل وقت ما يظهر بس — جوّاه شارة الشهادة (بحث على النت)، مالهاش لازمة لحد ما تطلع عربية مطلوبة
+const WantedBatchModal = dynamic(() => import("../components/WantedBatchModal"), { ssr: false });
+import { mergeWanted, wantedOf } from "../lib/wantedBatch";
 import ReadingSheetBox, { loadReadingSheet } from "../components/ReadingSheetBox";
 import { parseReadingSheet } from "../lib/batchReport";
 import { saveReportFrom } from "../lib/reportStore";
@@ -559,6 +563,20 @@ export default function BatchPage({
    */
   const [confirmClear, setConfirmClear] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  /**
+   * 🚨 مربع «سيارات مطلوبة» بعد التفريغ (١٨ أكتوبر ٢٠٢٦ — `components/WantedBatchModal.tsx`). المالك: «لو اتفرغ
+   * وطلع مطلوبه اكتر من لوحه اولا يظهر في مربع وبصوت … ولما يسحب من اليمين لليسار او العكس يلاقي اللوحات
+   * التانيه بكل بياناتهم». مقطع تاني خلص والمربع مفتوح ⇒ عربياته بتتضاف من غير تكرار.
+   */
+  const [wantedBatch, setWantedBatch] = useState<PlateEntry[]>([]);
+  /** «وريني في الجدول» — ينزل لصف اللوحة (متظلل ومكتوب عليه «اللوحة دي مطلوبة») */
+  const showWantedRow = (id: string) => {
+    try {
+      document.getElementById(`mj-row-${id}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    } catch {
+      /* مش موجود في الجدول (التسجيل اللي بعده فضّاه) */
+    }
+  };
 
   /**
    * مرحلة محرك الـVAD الحالية — «قراءة المقاطع» / «دمج الناقص» / «مسح
@@ -2174,6 +2192,11 @@ export default function BatchPage({
           entriesRef.current = outcome.entries;
           setEntries(outcome.entries);
         }
+        // 🚨 المطلوبة من المقطع ده (بموقعها النهائي) ⇒ المربع بصوت — وحتى لو الأنواع ماوصلتش (اللوحات طلعت)
+        {
+          const w = wantedOf(ok ? outcome.entries : platesOnlyRef.current ? entriesRef.current : []);
+          if (w.length) setWantedBatch((prev) => mergeWanted(prev, w));
+        }
         // اللوحات اللي في الجدول من المقطع ده — حتى لو الرد اتقطع بعد اللوحات (من غير أنواع/موقع):
         // تعديلها وتصديرها لازم يتسجّلوا على مقطعها (وإلا «فرّغ تاني» بيكرّرها في السجلات من غير سؤال)
         if (next.clipId && (ok || platesOnlyRef.current)) {
@@ -2495,6 +2518,11 @@ export default function BatchPage({
 
   return (
     <div className="space-y-4">
+      {/* 🚨 مربع المطلوبة — والمجمّع ظاهر بس (مستخبي ورا «التسجيل القديم» ⇒ يستنى لحد ما يظهر، الصوت مايطلعش في الخلفية) */}
+      {visible && wantedBatch.length > 0 && (
+        <WantedBatchModal items={wantedBatch} onClose={() => setWantedBatch([])} onShowRow={showWantedRow} />
+      )}
+
       {/* ============================================ الإعداد */}
       <div className="grid gap-4 lg:grid-cols-2">
         <CheckSheetBox bank={bank} />
