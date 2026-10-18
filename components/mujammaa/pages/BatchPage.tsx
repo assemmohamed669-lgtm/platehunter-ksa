@@ -51,6 +51,8 @@ import Waveform from "../components/Waveform";
 
 import { matchInCheckSheet } from "../lib/checkSheetAdapter";
 import { chunksHeaders, chunksUrl, httpFailure, type BatchProbe } from "../lib/batchServer";
+import { buildRunReport, sendRunReport, type RunReportInput } from "../lib/runTelemetry";
+import { currentSession } from "@/lib/authSession";
 import { ErrorLog } from "../lib/errorLog";
 import { GpsTrack, currentFix, lastFixRecvAt, pinLink, recordGpsWarning, subscribeGps } from "../lib/gps";
 import {
@@ -133,6 +135,20 @@ type Phase =
   | "done";
 
 /** مقطع في الطابور — لسه مستني، أو بيتفرّغ، أو خلص */
+/** 📋 توقيتات التفريغ الشغّال — للتقرير (`responded` = السيرفر رد أصلاً) */
+type RunInfo = {
+  responded: boolean;
+  run?: string;
+  uploadMs?: number;
+  platesMs?: number;
+  totalMs?: number;
+  /** 🚦 دخل الطابور إمتى (performance.now) · استنى قد إيه · أطول رقم */
+  queuedAt?: number;
+  queuedMs?: number;
+  queuePosMax?: number;
+  result?: RunReportInput["result"];
+};
+
 export interface ClipJob {
   id: string;
   blob: Blob;
@@ -648,6 +664,9 @@ export default function BatchPage({
   /** وهو بيصدّر الجدول مقفول — تعديل في النص كان هيضيع مع تفضية اللي اتحفظ */
   const exportingRef = useRef(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  /** 📋 للتقرير: المندوب عدّل/مسح كام لوحة من آخر تصدير */
+  const editCountRef = useRef(0);
+  const deleteCountRef = useRef(0);
   const advancedRef = useRef(advanced);
   advancedRef.current = advanced;
   const onExportToRecordsRef = useRef(onExportToRecords);
@@ -719,6 +738,22 @@ export default function BatchPage({
   };
   /** معرّف التقرير اللي آخر تفريغ حفظه — بيتربط بالمقطع */
   const lastReportIdRef = useRef<string | undefined>(undefined);
+  /**
+   * 📋 **تقرير التسجيل للسيرفر** (١٨ أكتوبر — المالك: «أهم حاجه عايزين نعرف كل التقارير عن
+   * التسجيل»): توقيتات التفريغ اللي شغّال (`responded` = السيرفر رد أصلاً — من غيره التسجيل
+   * ماوصلش) ⇐ `runQueue` بيبعتها بعد ما المقطع يخلص بالموقع النهائي (`lib/runTelemetry.ts`).
+   */
+  const runInfoRef = useRef<RunInfo | null>(null);
+  /** في الخلفية — مافيش await: النت الضعيف أو السيرفر الواقع مايأخّروش الطابور ولا المندوب */
+  const queueRunReport = (i: Omit<RunReportInput, "agent" | "uid">) => {
+    const srv = serverRef.current;
+    const agent = agentNameRef.current;
+    void currentSession()
+      .then((s) => sendRunReport(srv.base, srv.token, buildRunReport({ ...i, agent, uid: s.userId })))
+      .catch(() => {
+        /* التقرير عمره ما يوقّف التفريغ */
+      });
+  };
 
   const getClipStore = useCallback((): Promise<ClipStore> => {
     if (!clipStoreP.current) {
@@ -1474,6 +1509,7 @@ export default function BatchPage({
     }
     cancelScanRef.current = false;
     const startedAt = performance.now();
+    runInfoRef.current = { responded: false };
     setScanTiming(null);
     setConfirmClear(false);
     setPhase("transcribing");
@@ -1545,6 +1581,19 @@ export default function BatchPage({
      * «في الطابور» بدل «بيفرّغ» الساكتة، ولما دوره ييجي الرسالة بترجع لوحدها.
      */
     const onQueue = (pos: number | null) => {
+      // 📋 للتقرير — حتى لو المندوب داس «وقّف» وهو مستني
+      const qi = runInfoRef.current;
+      if (qi) {
+        if (pos !== null) {
+          runInfoRef.current = {
+            ...qi,
+            queuedAt: qi.queuedAt ?? performance.now(),
+            queuePosMax: Math.max(qi.queuePosMax ?? 0, pos),
+          };
+        } else if (qi.queuedAt !== undefined) {
+          runInfoRef.current = { ...qi, queuedMs: performance.now() - qi.queuedAt };
+        }
+      }
       if (cancelScanRef.current) return;
       setVadStage(
         pos === null
@@ -1553,6 +1602,8 @@ export default function BatchPage({
       );
     };
     const onPlates = (msg: Record<string, unknown>) => {
+      if (runInfoRef.current && runInfoRef.current.platesMs === undefined)
+        runInfoRef.current.platesMs = performance.now() - startedAt;
       if (cancelScanRef.current) return;
       try {
         const rows = (Array.isArray(msg.plates) ? msg.plates : []) as ChunkRow[];
@@ -1596,7 +1647,22 @@ export default function BatchPage({
         body: blob,
         signal: ac.signal,
       });
+      // 📋 الوسيط بيرد بالهيدرز أول ما الصوت يوصله كله ⇒ ده تقريباً وقت الرفع
+      runInfoRef.current = { ...runInfoRef.current, responded: true, uploadMs: performance.now() - startedAt };
       data = await readChunksResponse(r, onPlates, onQueue);
+      runInfoRef.current = {
+        ...runInfoRef.current,
+        run: typeof data?.run === "string" ? data.run : undefined,
+        totalMs: performance.now() - startedAt,
+        result: {
+          n: Number(data?.n_plates) || (Array.isArray(data?.plates) ? data.plates.length : undefined),
+          durS: Number(data?.dur_s) || undefined,
+          serverMs: Number(data?.ms) || undefined,
+          fieldsFrom: typeof data?.fields_from === "string" ? data.fields_from : undefined,
+          cohereCalls: Number.isFinite(Number(data?.cohere_calls)) ? Number(data?.cohere_calls) : undefined,
+          dropped: Array.isArray(data?.dropped) ? data.dropped.length : undefined,
+        },
+      };
     } catch (err) {
       const aborted = (err as Error)?.name === "AbortError" || cancelScanRef.current;
       errorLog.add(
@@ -2013,6 +2079,9 @@ export default function BatchPage({
         // المحرّكات بتقرا من ‎audioBlobRef‎، والعامل هو **الوحيد** اللي
         // بيكتب فيه دلوقتي — فمافيش تصادم مع تسجيل جديد ماشي بالتوازي.
         audioBlobRef.current = next.blob;
+        // 📋 للتقرير — الصوت بيتشال من الذاكرة بعد ما المقطع يخلص
+        const clipBytes = next.blob.size;
+        runInfoRef.current = null;
         // سياق المقطع ده — ‎buildEntry‎ بتقرا منه بدل الـrefs الحيّة
         jobCtxRef.current = {
           startedAtMs: next.startedAtMs,
@@ -2111,6 +2180,41 @@ export default function BatchPage({
           setTableClip(next.clipId);
           setExportMsg(null);
         }
+        /**
+         * 📋 تقرير المقطع ده للسيرفر — **نجح أو فشل** (أهمه اللي ماوصلش السيرفر أصلاً: السيرفر
+         * مايعرفش عنه حاجة). بالموقع النهائي لكل لوحة. في الخلفية — الطابور مايستناش.
+         */
+        try {
+          // (as: الـref اتصفّر فوق في نفس الدالة — TS فاكره لسه null)
+          const info = runInfoRef.current as RunInfo | null;
+          queueRunReport({
+            kind: info?.responded ? "run" : "fail",
+            ok,
+            error: verdict.ok ? undefined : verdict.error,
+            run: info?.run,
+            clip: {
+              id: next.clipId,
+              label: next.label,
+              source: next.source,
+              sec: next.sec,
+              bytes: clipBytes,
+              mime: next.mime || next.blob.type || undefined,
+              startedAtMs: next.startedAtMs,
+            },
+            timing: {
+              totalMs: info?.totalMs,
+              uploadMs: info?.uploadMs,
+              platesMs: info?.platesMs,
+              queuedMs: info?.queuedMs, queuePosMax: info?.queuePosMax,
+            },
+            result: info?.result,
+            entries: ok ? outcome.entries : entriesRef.current,
+            fixes: next.fixes?.length,
+            errors: sinceJob.map((e) => `${e.source}: ${e.message}`),
+          });
+        } catch {
+          /* التقرير عمره ما يوقّف الطابور */
+        }
         // 💾 النتيجة بتتحفظ مع المقطع — بعد التحديث الصف بيقول «N لوحة» ويعرضها
         if (next.clipId) {
           // «فرّغ تاني» لمقطع اتصدّر منه قبل كده ⇒ العدّ يفضل (التحذير من التكرار يفضل شغّال)
@@ -2182,6 +2286,7 @@ export default function BatchPage({
   ) => {
     if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
+    editCountRef.current += 1;
     setEntries((prev) => {
       const next = prev.map((e) => (e.id === id ? { ...e, ...patch } : e));
       entriesRef.current = next;
@@ -2192,6 +2297,7 @@ export default function BatchPage({
   const editEntry = (id: string, next: { letters?: string[]; digits?: string }) => {
     if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
+    editCountRef.current += 1;
     setEntries((prev) =>
       prev.map((entry) => {
         if (entry.id !== id) return entry;
@@ -2218,6 +2324,7 @@ export default function BatchPage({
   const removeEntry = (id: string) => {
     if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
+    deleteCountRef.current += 1;
     setEntries((prev) => prev.filter((e) => e.id !== id));
   };
 
@@ -2319,6 +2426,18 @@ export default function BatchPage({
       const res = await run(list, { sheet: bank.sheet, clipKey });
       const saved = new Set(res.savedEntryIds);
       const left = list.filter((e) => !saved.has(e.id));
+      // 📋 تقرير التصدير للسيرفر (في الخلفية): اتحفظ كام · فشل كام · من غير موقع · عدّل/مسح كام قبله
+      queueRunReport({
+        kind: "export",
+        clip: { id: exportClipId ?? undefined },
+        entries: list.filter((e) => saved.has(e.id)),
+        export: { saved: saved.size, failed: res.failed, total: list.length, no_pin: noPin,
+          edited: editCountRef.current, deleted: deleteCountRef.current },
+      });
+      if (saved.size > 0) {
+        editCountRef.current = 0;
+        deleteCountRef.current = 0;
+      }
       entriesRef.current = left;
       setEntries(left);
       setEditing(null);
@@ -2337,6 +2456,14 @@ export default function BatchPage({
     } catch (err) {
       const m = (err as Error)?.message ?? String(err);
       errorLog.add("التصدير", `ماتصدّرش للسجلات: ${m}`);
+      queueRunReport({
+        kind: "export",
+        ok: false,
+        error: `ماتصدّرش للسجلات: ${m}`,
+        clip: { id: exportClipId ?? undefined },
+        export: { saved: 0, failed: list.length, total: list.length, no_pin: noPin,
+          edited: editCountRef.current, deleted: deleteCountRef.current },
+      });
       setExportMsg(`⚠️ ماتصدّرش للسجلات: ${m} — اللوحات زي ما هي، جرّب تاني.`);
     } finally {
       exportingRef.current = false;
