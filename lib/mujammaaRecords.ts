@@ -36,7 +36,6 @@ export interface MujammaaRecordCtx {
   clipKey: string;
   /** ملف التشييك وقت المطابقة — أعمدته بتتنسخ جنب اللوحة المطلوبة */
   sheet?: BankSheet | null;
-  recorder?: string | null;
 }
 
 export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): FieldCheckEntry {
@@ -51,12 +50,14 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
   // حقول المندوب **الأول**: السجلات بتقرا أول عمود «ملاح…» كملاحظة المندوب.
   put("النوع", entry.vehicleType);
   put("ملاحظة المندوب", entry.note);
-  put("اسم الحي - الشارع", entry.neighborhood);
+  // 🏘️ «اسم الحي» في عمود لوحده (المالك ١٨ أكتوبر) — اللي المندوب كتبه، وإلا من موقع اللوحة
+  put("اسم الحي", entry.neighborhood);
   if (entry.match?.kind === "exact") row["مطلوبة"] = "نعم";
   row["الحالة"] = entry.review.status === "solid" ? "مؤكّدة" : "محتاجة نظرة";
   const pin = entry.pin;
   if (pin) put("دقة الموقع (م)", Math.round(pin.accuracy));
-  put("اسم المسجّل", ctx.recorder);
+  // 🧾 من مربع «اسم المسجّل» لحظة النطق — فاضي ⇒ ماينزلش (العمود مايظهرش)
+  put("اسم المسجّل", entry.recorderName);
   // أعمدة ملف التشييك للوحة المطلوبة — زي سجلات التشييك (الجدول بيعرضها كأعمدة). من غير ملاحظات
   // الشيت ولا نوعه: كانوا بيتعرضوا كأنهم كلام المندوب (أول «ملاح…» / عمود «النوع»).
   const sheetRow = entry.match?.kind === "exact" ? entry.match.row : undefined;

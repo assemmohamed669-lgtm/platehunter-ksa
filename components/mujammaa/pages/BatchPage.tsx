@@ -45,6 +45,9 @@ import dynamic from "next/dynamic";
 const WantedBatchModal = dynamic(() => import("../components/WantedBatchModal"), { ssr: false });
 import { mergeWanted, newlyWanted, rematchEntries, wantedOf } from "../lib/wantedBatch";
 import { pickNextJob } from "../lib/clipQueue";
+import { joinNotes, loadBoxes, saveBoxes, type StampBoxes } from "../lib/stampBoxes";
+import { DistrictResolver, fillDistricts } from "../lib/autoDistrict";
+import { reverseGeocode } from "@/lib/geocoding";
 import ReadingSheetBox, { loadReadingSheet } from "../components/ReadingSheetBox";
 import { parseReadingSheet } from "../lib/batchReport";
 import { saveReportFrom } from "../lib/reportStore";
@@ -586,6 +589,38 @@ export default function BatchPage({
    * التانيه بكل بياناتهم». مقطع تاني خلص والمربع مفتوح ⇒ عربياته بتتضاف من غير تكرار.
    */
   const [wantedBatch, setWantedBatch] = useState<PlateEntry[]>([]);
+  /**
+   * 🏘️ الحي التلقائي وصل ⇒ يتحط على اللوحات اللي لسه **فاضية** بس (المندوب ممكن يكون كتب/عدّل في النص) — في
+   * الجدول لو لسه بيعرض المقطع ده، وفي المقطع المحفوظ. مابيعتبرش تعديل من المندوب.
+   */
+  const applyAutoDistricts = async (clipId: string, filled: PlateEntry[]) => {
+    const auto = new Map(filled.filter((e) => e.neighborhoodAuto && e.neighborhood).map((e) => [e.id, e.neighborhood as string]));
+    if (!auto.size) return;
+    const merge = (list: PlateEntry[]): PlateEntry[] => {
+      let ch = false;
+      const out = list.map((e) => {
+        const d = auto.get(e.id);
+        if (!d || String(e.neighborhood ?? "").trim()) return e;
+        ch = true;
+        return { ...e, neighborhood: d, neighborhoodAuto: true };
+      });
+      return ch ? out : list;
+    };
+    setEntries((prev) => {
+      const m = merge(prev);
+      if (m !== prev && entriesRef.current === prev) entriesRef.current = m;
+      return m;
+    });
+    try {
+      const c = await (await getClipStore()).get(clipId);
+      if (c?.result) {
+        const m = merge(c.result.entries);
+        if (m !== c.result.entries) await markClip(clipId, { result: { ...c.result, entries: m } });
+      }
+    } catch {
+      /* المقطع اتمسح (اتصدّر) أو التخزين مابيردّش — الجدول اتحدّث خلاص */
+    }
+  };
   /** «وريني في الجدول» — ينزل لصف اللوحة (متظلل ومكتوب عليه «اللوحة دي مطلوبة») */
   const showWantedRow = (id: string) => {
     try {
@@ -1018,10 +1053,30 @@ export default function BatchPage({
    * اللي المندوب يكتبه قبل ما يبدأ بيسري من أول التسجيل، وده المطلوب.
    */
   const recStartRef = useRef(0);
-  const elapsedMsRef = useRef(() => (recStartRef.current ? Date.now() - recStartRef.current : 0));
-  const [street, setStreet] = useState("");
-  const [note, setNote] = useState("");
-  const [vType, setVType] = useState("");
+  /**
+   * 🔴 وقت الكتابة في المربعات **بنفس ساعة اللوحات**: من لحظة ما الميك اشتغل فعلاً (`recordingStartedAtRef`
+   * = بداية الصوت اللي الموديل بيحسب منها ثانية كل لوحة) — مش من دوسة «سجّل» (`recStartRef`، قبل إذن الميك).
+   * الفرق كان بيوصل لثواني لو الإذن اتسأل، فكلمة الجراج كانت بتبدأ وتخلص متأخرة عن اللوحات.
+   */
+  const elapsedMsRef = useRef(() =>
+    recorderRef.current && recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0
+  );
+  /**
+   * 🧾 مربعات المجمّع (١٨ أكتوبر ٢٠٢٦ — `lib/stampBoxes.ts`): «اسم الحي» · «اسم المسجّل» · «اسم أو رقم الجراج»
+   * (⇒ الملاحظات). اللي يتكتب بيسري على اللوحات اللي اتقالت **بعده** بس، و«مسح» بيوقفه من لحظته — حتى في نفس
+   * التسجيل. محفوظ على الجهاز (الآيفون بيقفل البرنامج).
+   */
+  const [boxes, setBoxesState] = useState<StampBoxes>(() => loadBoxes());
+  const setBox = (k: keyof StampBoxes, v: string) => {
+    setBoxesState((b) => {
+      const next = { ...b, [k]: v };
+      saveBoxes(next);
+      return next;
+    });
+  };
+  /** 🏘️ اسم الحي من موقع اللوحة لو المندوب ماكتبوش (`lib/autoDistrict.ts`) — واحد للصفحة (الكاش بيعيش) */
+  const districtRef = useRef<DistrictResolver>(null as unknown as DistrictResolver);
+  if (!districtRef.current) districtRef.current = new DistrictResolver(reverseGeocode);
   const recordingStartedAtRef = useRef(0);
   /**
    * آخر لحظة نطق عرفناها من مدى مُثبَت.
@@ -1259,9 +1314,9 @@ export default function BatchPage({
      * `tMs = 0` يعني «ساري من أول التسجيل».
      */
     stampRef.current = new SessionStamp({ startedAt: Date.now() });
-    if (street.trim()) stampRef.current.setStreet(street, 0);
-    if (note.trim()) stampRef.current.setNote(note, 0);
-    if (vType.trim()) stampRef.current.setType(vType, 0);
+    if (boxes.district.trim()) stampRef.current.setStreet(boxes.district, 0);
+    if (boxes.recorder.trim()) stampRef.current.setRecorder(boxes.recorder, 0);
+    if (boxes.garage.trim()) stampRef.current.setNote(boxes.garage, 0);
     recStartRef.current = Date.now();
     setSource("record");
     setPlayback(null);
@@ -1528,6 +1583,7 @@ export default function BatchPage({
         vehicleType: stamp.type ?? undefined,
         note: stamp.note ?? undefined,
         neighborhood: stamp.street ?? undefined,
+        recorderName: stamp.recorder ?? undefined,
       });
     },
     // 🧮 الملف من `sheetRef` (آخر نسخة) — مش من الـclosure
@@ -1624,7 +1680,8 @@ export default function BatchPage({
         return {
           ...e,
           vehicleType: fields[i]?.vehicleType || e.vehicleType,
-          note: fields[i]?.note || e.note,
+          // 🧾 كلمة الجراج (المربع) + اللي اتقال للعربية (كوهير) — كانت ملاحظة كوهير بتمسح كلمة الجراج
+          note: joinNotes(e.note, fields[i]?.note),
         };
       });
     };
@@ -2246,6 +2303,13 @@ export default function BatchPage({
           entriesRef.current = outcome.entries;
           setEntries(outcome.entries);
         }
+        // 🏘️ «اسم الحي» من موقع كل لوحة للي المندوب ماكتبلهاش — في الخلفية (الطابور مايستناش)
+        if (ok && next.clipId) {
+          const clipId = next.clipId;
+          void fillDistricts(outcome.entries, districtRef.current).then((filled) => {
+            if (filled !== outcome.entries) void applyAutoDistricts(clipId, filled);
+          }).catch(() => {});
+        }
         // 🚨 المطلوبة من المقطع ده (بموقعها النهائي) ⇒ المربع بصوت — وحتى لو الأنواع ماوصلتش (اللوحات طلعت)
         {
           const w = wantedOf(ok ? outcome.entries : platesOnlyRef.current ? entriesRef.current : []);
@@ -2476,18 +2540,17 @@ export default function BatchPage({
    */
   const exportToRecords = async () => {
     const run = onExportToRecordsRef.current;
-    const list = entries;
-    if (!run || exportingRef.current || list.length === 0) return;
+    if (!run || exportingRef.current || entries.length === 0) return;
     // تفريغ شغّال ⇒ لوحاته لسه من غير موقع ومش مربوطة بمقطعها — استنى يخلص
     if (canStopTranscription(clipsRef.current)) {
       setExportMsg("⏳ استنى التفريغ اللي شغّال يخلص وبعدين صدّر — اللوحات لسه بتاخد مواقعها.");
       return;
     }
-    const noPin = list.filter((e) => !e.pin).length;
+    const noPin = entries.filter((e) => !e.pin).length;
     if (
       noPin > 0 &&
       !window.confirm(
-        noPin === list.length
+        noPin === entries.length
           ? `اللوحات (${noPin}) من غير موقع — هتتصدّر من غير موقع. تكمّل؟`
           : `فيه ${noPin} لوحة من غير موقع — هتتصدّر من غير موقع. تكمّل؟`
       )
@@ -2498,6 +2561,8 @@ export default function BatchPage({
     setExportMsg(null);
     // المقطع اللي الجدول بيعرضه **دلوقتي** — تفريغ يبدأ وإحنا بنحفظ مايغيّرش هو اتعلّم على أنهي مقطع
     const exportClipId = tableClipIdRef.current;
+    // 🏘️ «اسم الحي» للي لسه فاضي (الخلفية ماخلصتش) — بحد أقصى ٨ث، والباقي بيتصدّر من غيره
+    const list = await fillDistricts(entries, districtRef.current, { timeoutMs: 8000 });
     try {
       const clipKey = exportClipId ?? "restored";
       const res = await run(list, { sheet: bank.sheet, clipKey });
@@ -2677,40 +2742,45 @@ export default function BatchPage({
           كانت اللوحة تاخد شارع غلط.
         */}
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <input
-            className="input"
-            placeholder="اسم الشارع"
-            value={street}
-            onChange={(e) => {
-              setStreet(e.target.value);
-              stampRef.current.setStreet(e.target.value, elapsedMsRef.current());
-            }}
-          />
-          <input
-            className="input"
-            placeholder="ملاحظة"
-            value={note}
-            onChange={(e) => {
-              setNote(e.target.value);
-              stampRef.current.setNote(e.target.value, elapsedMsRef.current());
-            }}
-          />
-          <select
-            className="input"
-            value={vType}
-            onChange={(e) => {
-              setVType(e.target.value);
-              stampRef.current.setType(e.target.value, elapsedMsRef.current());
-            }}
-          >
-            {/* قاموس مقفول — مافيش كتابة حرة عشان مايتكتبش تخمين.
-                🔴 **الأنواع بس** (طلب المالك ٩ سبتمبر ٢٠٢٦: «كل واحدة في
-                عمودها») — الحالة والمكان مكانهم عمود «ملاحظة». */}
-            <option value="">النوع (اختياري)</option>
-            {VEHICLE_TYPE_KINDS.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
+          {(
+            [
+              ["district", "street", "اسم الحي"],
+              ["recorder", "recorder", "اسم المسجّل"],
+              ["garage", "note", "اسم أو رقم الجراج"],
+            ] as const
+          ).map(([k, field, label]) => (
+            <div key={k} className="flex flex-col gap-1">
+              <div className="flex items-center justify-between px-0.5 text-[11px] text-slate-400">
+                <span>{label}</span>
+                {/* «مسح» — بيوقف الكلام ده من اللحظة دي (اللوحات اللي قبله بتفضل بيه) */}
+                <button
+                  type="button"
+                  disabled={!boxes[k]}
+                  onClick={() => {
+                    setBox(k, "");
+                    if (field === "street") stampRef.current.setStreet("", elapsedMsRef.current());
+                    else if (field === "recorder") stampRef.current.setRecorder("", elapsedMsRef.current());
+                    else stampRef.current.setNote("", elapsedMsRef.current());
+                  }}
+                  className="rounded-md px-2 py-0.5 font-bold text-rose-300 disabled:opacity-30"
+                >
+                  مسح
+                </button>
+              </div>
+              <input
+                className="input"
+                placeholder={label}
+                value={boxes[k]}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setBox(k, v);
+                  if (field === "street") stampRef.current.typeInto("street", v, elapsedMsRef.current());
+                  else if (field === "recorder") stampRef.current.typeInto("recorder", v, elapsedMsRef.current());
+                  else stampRef.current.typeInto("note", v, elapsedMsRef.current());
+                }}
+              />
+            </div>
+          ))}
         </div>
 
 

@@ -49,6 +49,8 @@ import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
 import { isMujammaaRecord } from "@/lib/mujammaaRecords";
+/** 🧾 عمود «اسم المسجّل» في سجلات المجمّع (`lib/mujammaaRecords.ts`) */
+const RECORDER_KEY = "اسم المسجّل";
 import { canUseMujammaa } from "@/lib/mujammaaAccess";
 import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyForWhatsApp } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -2256,6 +2258,11 @@ export default function InstantCheckPage() {
     () => (showRecordsTabs ? fieldEntries.filter((e) => isMujammaaRecord(e) === (recTab === "mjdata")) : fieldEntries),
     [fieldEntries, showRecordsTabs, recTab],
   );
+  /**
+   * 🧾 «اسم المسجّل» في «داتا التسجيلات» بس، ولو فيه سجل ليه اسم مسجّل (المالك ١٨ أكتوبر: «يظهر العمود دة فقط لما
+   * المربع دة يتكتب فيه»). «سجل التشييك» زي ما هو.
+   */
+  const showRecorderCol = recTab === "mjdata" && tabEntries.some((e) => !!String(e.row?.[RECORDER_KEY] ?? "").trim());
   /** «سجلاتي» — وفي «داتا التسجيلات» دايماً سجلاتي (المجموعة في «سجل التشييك») */
   const scopeMine = recTab === "mjdata" || recordsScope === "mine";
   const fieldCounts = useMemo(
@@ -2716,7 +2723,8 @@ export default function InstantCheckPage() {
       obj["النوع"] = typeToCode(entryType(e)) || entryType(e);
       // ملاحظات المندوب — لازم تطلع في التصدير والمشاركة زي ما هي قدام السيارة
       obj[NOTES_KEY] = entryNotes(e);
-      obj["الحي-الشارع"] = areaOf(e.row);
+      obj[recTab === "mjdata" ? "اسم الحي" : "الحي-الشارع"] = areaOf(e.row);
+      if (showRecorderCol) obj[RECORDER_KEY] = String(e.row?.[RECORDER_KEY] ?? "");
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
       obj["GPS"] = e.mapsLink ?? "";
@@ -6624,7 +6632,8 @@ export default function InstantCheckPage() {
                       {/* النوع والملاحظات بيتعدّلوا من هنا وبيتحفظوا على طول */}
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">النوع</th>
                       <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">ملاحظات</th>
-                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">الحي-الشارع</th>
+                      <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{recTab === "mjdata" ? "اسم الحي" : "الحي-الشارع"}</th>
+                      {showRecorderCol && <th className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">اسم المسجّل</th>}
                       {dynCols.map((h) => (
                         <th key={h} className="border-b border-l border-border px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>
                       ))}
@@ -6677,6 +6686,7 @@ export default function InstantCheckPage() {
                             : <EditableCell value={entryNotes(e)} placeholder="ملاحظة…" onSave={(v) => void editFieldEntry(e.id, { notes: v })} />}
                         </td>
                         <td className="border-l border-border px-3 py-2 whitespace-nowrap text-muted">{areaOf(e.row) || "—"}</td>
+                        {showRecorderCol && <td className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{String(e.row?.[RECORDER_KEY] ?? "") || "—"}</td>}
                         {dynCols.map((h) => (
                           <td key={h} className="border-l border-border px-3 py-2 whitespace-nowrap text-ink">{e.row[h] || "—"}</td>
                         ))}
