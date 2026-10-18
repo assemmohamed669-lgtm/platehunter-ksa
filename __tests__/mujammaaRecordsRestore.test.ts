@@ -59,3 +59,26 @@ describe("الاسترجاع على موبايل جديد", () => {
     expect(page).toMatch(/fieldEntries\.filter\(\(e\) => isMujammaaRecord\(e\) === \(recTab === "mjdata"\)\)/);
   });
 });
+
+/**
+ * 🔎 الفرز على كل السجلات — المجمّع زي Voice PRO (١٨ أكتوبر ٢٠٢٦). المالك: «لو المندوب مصدر من صفحه المجمع
+ * لوحات دلوقتي لما ينزل احاله وفرز هل بردو بيفرز علي اللي متصدر للمجمع» ⇒ أيوه: شيت السجلات في الفرز = كل
+ * سجلات الموبايل (من غير فلتر بالتاب)، وسجلات المجموعة من السيرفر كمان من غير فلتر.
+ */
+describe("الفرز بيشمل سجلات المجمّع", () => {
+  const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n");
+
+  it("شيت السجلات في الفرز = كل سجلات الموبايل — مافيش استبعاد للمجمّع", () => {
+    const page = read("app/(app)/sorting/page.tsx");
+    expect(page).toMatch(/collapseDuplicateChecks\(await getAllFieldCheckEntries\(\)\)/);
+    expect(page).not.toMatch(/isMujammaaRecord|fc-mj-/);
+  });
+
+  it("سجلات المجموعة في الفرز (match_group_plates) من غير فلتر على نوع السجل", () => {
+    const sql = read("docs/sql/multi-group-6-legacy-pin.sql");
+    const fn = sql.slice(sql.indexOf("create function public.match_group_plates"), sql.indexOf("grant execute on function public.match_group_plates"));
+    const where = fn.slice(fn.indexOf("where"));
+    expect(where.length).toBeGreaterThan(10);
+    expect(where).not.toMatch(/local_id|method/);
+  });
+});
