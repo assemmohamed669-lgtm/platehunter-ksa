@@ -30,6 +30,7 @@ import { readCachedRole, saveCachedRole } from "@/lib/roleCache";
 import { subStatus, isCutOff, GRACE_DAYS, serviceActive, subscriptionNotice, type SubInfo } from "@/lib/subscription";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
 import { getDevicePlatform } from "@/lib/devicePlatform";
+import { setSilentRingSuper } from "@/lib/alertSiren";
 import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 import { isRouteLockedForMember } from "@/lib/groupLocks";
 import { useMemberLocks } from "@/lib/groupLocksClient";
@@ -139,6 +140,8 @@ export default function AppShellLayout({
       // false فقط (يدوي) أو انتهاء الأيام = «صوت VoiceX فقط». undefined → مفتوح.
       const rp = profile;
       setRestPagesEnabled(rp?.is_super === true || (rp?.rest_pages_enabled !== false && serviceActive(rp?.rest_until)));
+      // 🔕 «يرن حتى لو صامت» على الآيفون — السوبر أدمن الأول (`lib/alertSiren.ts`)
+      setSilentRingSuper(rp?.is_super === true);
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).
       if (profile && profile.service_keys != null) {
         applyServiceKeys(profile.service_keys);

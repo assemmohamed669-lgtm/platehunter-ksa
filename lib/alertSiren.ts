@@ -16,8 +16,19 @@
  * 🔔 «نغمة التحصيل» (المالك ١٤ أكتوبر ٢٠٢٦ — `lib/alertTones.ts`): لو المندوب اختار نغمة، بتلف بدل الصفّارة لحد «تم»
  * على **نفس الـcontext المفكوك** (ملف متحمّل ومتفكوك في الذاكرة ⇒ بيشتغل من رد الشبكة زي الصفّارة بالظبط). لو ملفها
  * لسه ماتحمّلش (نت ضعيف/أوفلاين) ⇒ الصفّارة العادية فوراً — التنبيه عمره ما يسكت — وبيبدأ يحمّلها للمرة الجاية.
+ *
+ * 🔕 «المربع بيطلع إن اللوحة مطلوبة بس صوت النغمة مش بترن» (المالك ١٨ أكتوبر ٢٠٢٦: «اعملهم»):
+ *  ① الآيفون بعد مكالمة/سيري/فيديو بيحط الصوت في حالة «interrupted» — كنا بنصحّي «suspended» بس، فالتنبيه كان يفضل ساكت
+ *     لحد ما البرنامج يتقفل. دلوقتي أي حالة غير «running» بتتصحّى، والـcontext المقفول بيتعمل من جديد.
+ *  ② **اهتزاز** مع كل تنبيه بيلف لحد «تم» (الأندرويد — الآيفون مابيسمحش بيه من الصفحة).
+ *  ③ الآيفون يرن **حتى لو صامت** (`navigator.audioSession.type = "playback"` وقت التنبيه بس) — **إلا والمايك شغّال** في أي
+ *     صفحة (`micBusy` + `lib/micCapture.ts`): تغيير نوع الصوت وقت التسجيل ممكن يوقفه. ولو المايك اتفتح والتنبيه بيرن،
+ *     نوع الصوت بيرجع زي ما كان **قبل** ما المايك يشتغل. 🛑 للسوبر أدمن الأول (`SILENT_RING_FOR_ALL`) لحد ما يتجرّب على
+ *     آيفون حقيقي.
  */
 import { alertToneById, loadAlertToneId, type AlertTone } from "./alertTones";
+import { isMicBusy, onMicBusyChange } from "./micBusy";
+import { isCapturingAudio, onBeforeCapture } from "./micCapture";
 
 type AC = AudioContext;
 
@@ -40,9 +51,10 @@ const MAX_BUFFERS = 2;
 const buffers = new Map<string, AudioBuffer>();
 const loading = new Map<string, Promise<AudioBuffer | null>>();
 
-/** الـcontext الثابت (بيتعمل مرة واحدة). null لو المتصفّح مافيهوش Web Audio. */
+/** الـcontext الثابت (بيتعمل مرة واحدة — ولو اتقفل بيتعمل تاني). null لو المتصفّح مافيهوش Web Audio. */
 function getCtx(): AC | null {
   if (typeof window === "undefined") return null;
+  if (ctx && (ctx.state as string) === "closed") ctx = null;
   if (ctx) return ctx;
   const Ctor: typeof AudioContext =
     window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -58,7 +70,69 @@ function getCtx(): AC | null {
  */
 export function ensureSirenAudioUnlocked(): void {
   const c = getCtx();
-  if (c && c.state === "suspended") c.resume?.().catch(() => {});
+  // 🔴 أي حالة غير «running» — مش «suspended» بس: الآيفون بعد مكالمة/سيري بيحطه «interrupted».
+  if (c && (c.state as string) !== "running") c.resume?.().catch(() => {});
+}
+
+// ── ② الاهتزاز ─────────────────────────────────────────────────────────────────
+/** نبضتين في كل لفّة (٢ ثانية) — بيتعاد لحد «تم»، وأقصاه دقيقة (البطارية). */
+const VIBRATE_PATTERN = [700, 300, 700, 300];
+const VIBRATE_EVERY_MS = 2000;
+const VIBRATE_MAX_MS = 60_000;
+let vibTimer: ReturnType<typeof setInterval> | null = null;
+
+function vibrateOnce(p: number | number[]): void {
+  try { (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate?.(p); } catch { /* مش مدعوم */ }
+}
+function startVibration(): void {
+  stopVibration();
+  if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
+  vibrateOnce(VIBRATE_PATTERN);
+  const started = Date.now();
+  vibTimer = setInterval(() => {
+    if (Date.now() - started >= VIBRATE_MAX_MS) { stopVibration(); return; }
+    vibrateOnce(VIBRATE_PATTERN);
+  }, VIBRATE_EVERY_MS);
+}
+function stopVibration(): void {
+  if (!vibTimer) return;
+  clearInterval(vibTimer);
+  vibTimer = null;
+  vibrateOnce(0);
+}
+
+// ── ③ الآيفون يرن حتى لو صامت ──────────────────────────────────────────────────
+type AudioSessionLike = { type: string };
+/** نوع الصوت قبل التنبيه — بيرجع له بعد «تم». null = مالمسناهوش. */
+let prevSessionType: string | null = null;
+
+/** 🛑 السوبر أدمن الأول — `true` = «يرن حتى لو صامت» لكل المناديب (بعد التجربة على آيفون حقيقي). */
+export const SILENT_RING_FOR_ALL = false;
+let silentRingSuper = false;
+/** شِلّ التطبيق بيندهها أول ما يعرف البروفايل (`is_super`). */
+export function setSilentRingSuper(on: boolean): void { silentRingSuper = on; }
+const silentRingOn = () => SILENT_RING_FOR_ALL || silentRingSuper;
+
+// المايك اتفتح والتنبيه بيرن ⇒ نوع الصوت يرجع زي ما كان قبل ما المايك يشتغل
+onMicBusyChange((busy) => { if (busy) restoreSession(); });
+onBeforeCapture(() => restoreSession());
+
+function audioSession(): AudioSessionLike | null {
+  if (typeof navigator === "undefined") return null;
+  return (navigator as Navigator & { audioSession?: AudioSessionLike }).audioSession ?? null;
+}
+function playThroughSilent(): void {
+  if (!silentRingOn()) return;
+  const as = audioSession();
+  if (!as || prevSessionType !== null) return;
+  if (isMicBusy() || isCapturingAudio()) return;   // 🎙️ التسجيل شغّال — تغيير نوع الصوت ممكن يوقفه
+  try { prevSessionType = as.type; as.type = "playback"; } catch { prevSessionType = null; }
+}
+function restoreSession(): void {
+  const as = audioSession();
+  if (!as || prevSessionType === null) return;
+  try { as.type = prevSessionType; } catch { /* ignore */ }
+  prevSessionType = null;
 }
 
 /**
@@ -69,8 +143,10 @@ export function startAlertSiren(): void {
   stopNodes();
   const c = getCtx();
   if (!c) return;
+  playThroughSilent();
   // احتياطي — الأصل إنه اتفكّ بلمسة قبل كده؛ ده بيلحق الحالات اللي فيها لمسة حيّة.
   c.resume?.().catch(() => {});
+  startVibration();
   const tone = alertToneById(loadAlertToneId());
   if (tone.file) {
     const buf = buffers.get(tone.id);
@@ -100,6 +176,7 @@ export async function previewAlertTone(id: string): Promise<boolean> {
   const my = ++previewSeq;
   const c = getCtx();
   if (!c) return false;
+  playThroughSilent();   // «اسمع» يبقى زي التنبيه الحقيقي بالظبط (من غير اهتزاز)
   c.resume?.().catch(() => {});
   const tone = alertToneById(id);
   if (!tone.file) {
@@ -110,7 +187,10 @@ export async function previewAlertTone(id: string): Promise<boolean> {
     return true;
   }
   const buf = await loadToneBuffer(tone);
-  if (!buf || my !== previewSeq || playing) return false;
+  if (!buf || my !== previewSeq || playing) {
+    if (!playing) restoreSession();   // المعاينة ماشتغلتش ⇒ نوع الصوت يرجع (التنبيه الحقيقي لو شغّال محتاجه)
+    return false;
+  }
   if (!playBuffer(c, buf, false)) return false;
   kind = "preview";
   return true;
@@ -213,6 +293,8 @@ function stopNodes(): void {
   osc = null; lfo = null; lfoGain = null; gain = null; srcGain = null;
   playing = false;
   kind = null;
+  stopVibration();
+  restoreSession();
 }
 
 /** يوقف التنبيه (صفّارة أو نغمة أو معاينة) فوراً — الـcontext بيفضل حيّ (مفكوك) للمرة الجاية. */
