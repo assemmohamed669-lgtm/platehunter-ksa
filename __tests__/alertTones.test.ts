@@ -14,10 +14,10 @@ const ROOT = path.resolve(__dirname, "..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
 
 describe("🔴 قايمة النغمات", () => {
-  it("الافتراضي = صفّارة البرنامج (من غير ملف) + نغمات المالك الـ١٢", () => {
+  it("الافتراضي = صفّارة البرنامج (من غير ملف) + نغمات المالك الـ١٣", () => {
     expect(DEFAULT_ALERT_TONE).toBe("siren");
     expect(ALERT_TONES[0]).toMatchObject({ id: "siren", file: null });
-    expect(ALERT_TONES.filter((t) => t.file).length).toBe(12);
+    expect(ALERT_TONES.filter((t) => t.file).length).toBe(13);
     expect(new Set(ALERT_TONES.map((t) => t.id)).size).toBe(ALERT_TONES.length);
     for (const t of ALERT_TONES) expect(t.name.trim()).not.toBe("");
   });
@@ -28,6 +28,15 @@ describe("🔴 قايمة النغمات", () => {
       expect(existsSync(p), p).toBe(true);
       expect(statSync(p).size).toBeLessThan(400_000);
     }
+  });
+});
+
+describe("🔴 «قناص 13» — خيار بس مش للكل", () => {
+  // المالك (١٨ أكتوبر ٢٠٢٦): «ضيفها علي النغمات ممكن المندوب يختارها بس متثبتهاش للكل خليها ك خيار اللي حابب يختارها»
+  it("موجودة في القايمة والافتراضي فاضل الصفّارة", () => {
+    expect(alertToneById("gemini-music")).toMatchObject({ name: "قناص 13", file: "/tones/gemini-music.mp3" });
+    expect(ALERT_TONES[ALERT_TONES.length - 1].id).toBe("gemini-music");
+    expect(DEFAULT_ALERT_TONE).toBe("siren");
   });
 });
 
