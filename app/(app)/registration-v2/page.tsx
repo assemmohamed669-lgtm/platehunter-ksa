@@ -48,6 +48,7 @@ import {
   type AudioWindow,
 } from "@/lib/typeForPlate";
 import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
+import { onWantedAlertsCleared } from "@/lib/wantedAlert";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
@@ -1238,6 +1239,7 @@ export default function RegistrationV2Page() {
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
   async function start() {
     diagNote("rv2-rec", { on: true, rows: rowsRef.current.length });
+    pausedForWantedRef.current = false;
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
     setWaitKind("net");
@@ -1650,7 +1652,7 @@ export default function RegistrationV2Page() {
    * غير لو المندوب مسحها بإيده أو صدّرها». الصفوف في المسودّة (IndexedDB)
    * مع كل تغيير، والمحرك بيكمّل آخر النوافذ من ذاكرة الميك بعد ما يسيبه.
    */
-  function stop(why: "manual" | "fatal" | AutoStopReason = "manual") {
+  function stop(why: "manual" | "fatal" | "wanted" | AutoStopReason = "manual") {
     diagNote("rv2-rec", { on: false, why, rows: rowsRef.current.length });
     const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
@@ -1666,7 +1668,10 @@ export default function RegistrationV2Page() {
     telRef.current = null;
     let done: Promise<void> = Promise.resolve();
     try { if (ctrl) done = ctrl.stop() ?? Promise.resolve(); } catch { /* ignore */ }
-    if (why !== "manual" && why !== "fatal") setNotice(micLostNotice(why));
+    if (why === "manual") pausedForWantedRef.current = false;
+    if (why === "wanted") {
+      setNotice("⏸️ التسجيل وقف عشان تسمع صفّارة العربية المطلوبة — لوحاتك كلها محفوظة، وهيرجع لوحده أول ما تدوس «تم».");
+    } else if (why !== "manual" && why !== "fatal") setNotice(micLostNotice(why));
     void (async () => {
       try {
         // ⏳ آخر اللوحات توصل الأول (بحد أقصى — عطل مايأجّلش التحديث للأبد)
@@ -1710,6 +1715,19 @@ export default function RegistrationV2Page() {
   /** آخر نسخة من `stop` — الكولباكس (المكالمة/الخلفية) بتتربط مرة واحدة. */
   const stopRef = useRef(stop);
   stopRef.current = stop;
+  /** آخر نسخة من `start` — «تم» على العربية المطلوبة بيرجّع التسجيل بيها. */
+  const startRef = useRef(start);
+  startRef.current = start;
+  /**
+   * 🔕 التسجيل واقف عشان صفّارة العربية المطلوبة تتسمع — المالك (١٨ أكتوبر ٢٠٢٦): «وقت مايحصل سيارة عادي المايك يقف مفيش
+   * مشكله المهم الرنه تظهر معاه». آخر «تم» ⇒ بيرجع لوحده. المندوب وقّف بإيده/بدأ تاني ⇒ بيتلغي.
+   */
+  const pausedForWantedRef = useRef(false);
+  useEffect(() => onWantedAlertsCleared(() => {
+    if (!pausedForWantedRef.current || engineRef.current || startingRef.current) return;
+    pausedForWantedRef.current = false;
+    void startRef.current();
+  }), []);
   /** آخر نسخة من الصفوف والتصدير — الإيقاف بيستنى آخر لوحات قبل ما يسأل. */
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -1791,6 +1809,15 @@ export default function RegistrationV2Page() {
           : [],
       });
       setSirenOn(true);
+      /**
+       * 🔕 المايك مفتوح بـ«إلغاء الصدى» ⇒ الموبايل (الآيفون خصوصاً) بيوطّي الصفّارة لحد ما يتقفل، فالمندوب كان بيشوف المربع
+       * من غير صوت (ولما يخرج للواتس اب والتسجيل يقف كانت ترن). ⇒ بنوقّف التسجيل (اللوحات محفوظة)، و«تم» بيرجّعه لوحده.
+       */
+      if (engineRef.current) {
+        pausedForWantedRef.current = true;
+        // بعد ما القراية دي تخلص — مانوقّفش المحرّك من جوّه ردّه
+        setTimeout(() => { if (engineRef.current && pausedForWantedRef.current) stopRef.current("wanted"); }, 0);
+      }
     } catch { /* التنبيه إضافة — مايوقّفش التسجيل */ }
   }, []);
 
