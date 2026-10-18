@@ -70,7 +70,8 @@ describe("🔴 الجدول", () => {
 describe("🔴 التوصيل", () => {
   const read = (p: string) => readFileSync(path.resolve(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n");
   it("🛑 السوبر أدمن الأول — الشرط في الزرار والصفحة (صفحة الفرز نفسها مافيهاش شرط سوبر أدمن)", () => {
-    expect(DATA_EDIT_FOR_ALL).toBe(false);
+    // 🔓 المالك (١٨ أكتوبر ٢٠٢٦): «راجع كل حاجه … وانشر للكل» — الشرط نفسه فاضل في الزرار والصفحة
+    expect(DATA_EDIT_FOR_ALL).toBe(true);
     expect(read("app/(app)/data-edit/page.tsx")).toMatch(/DATA_EDIT_FOR_ALL \|\| isSuper/);
     expect(read("components/DataEditLink.tsx")).toMatch(/if \(!show \|\| !\(DATA_EDIT_FOR_ALL \|\| isSuper\)\) return null;/);
     expect(read("app/(app)/sorting/page.tsx")).not.toMatch(/isSuper|is_super/);
@@ -86,7 +87,7 @@ describe("🔴 التوصيل", () => {
     expect(p).toMatch(/searchDataFile\(/);
     expect(p).toMatch(/saveDataEdits\(file\.ref, \{ edits, deletes: \[\.\.\.deletes\] \}, result\?\.stamp\)/);
     expect(p).toMatch(/editSummary\(pending\)/);
-    expect(p).toMatch(/exportDataFile\(file\.ref\)/);
+    expect(p).toMatch(/exportDataFile\(file\.ref, \{ format, /);
     expect(p).toMatch(/ph:sorting:dataLocked/);
   });
   it("🔒 عضو مقفول عليه الفرز ⇒ صفحة التعديل مقفولة كمان", () => {

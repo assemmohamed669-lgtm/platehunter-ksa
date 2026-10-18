@@ -19,6 +19,7 @@ import { getDataMeta, type DataMeta } from "./dataStore";
 import { openDataDB, CHUNKS, META } from "./dataStoreDb";
 import { decodeChunk, encodeChunk } from "./chunkCodec";
 import { buildBigExcelBlob } from "./excel";
+import { buildXlsxStream, xlsxStreamSupported } from "./xlsxStreamWriter";
 
 export type DataFileRef =
   | { kind: "small"; slot: string }
@@ -374,31 +375,105 @@ const csvEsc = (v: unknown) => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
+export interface DataExport {
+  blob: Blob;
+  name: string;
+  ext: "xlsx" | "csv";
+  /** الملف متظبط من اليمين جوّه نفسه ⇒ المشاركة ماتفتحهوش تاني في الذاكرة (`shareExcelBlob` `rtlDone`). */
+  rtlDone?: boolean;
+  /** طلب Excel والموبايل مافيهوش أداة الضغط والملف كبير ⇒ اتعمل CSV. */
+  fellBack?: boolean;
+}
+
+export interface ExportOptions {
+  /**
+   * 📗 المالك (١٨ أكتوبر ٢٠٢٦): «خليها يبقي فيها الاخيارين انه يختار يصدر الملف باي صيغه». من غيرها ⇒ زي الأول بالظبط
+   * (صغير/لحد `csvAbove` ⇒ إكسيل · أكبر ⇒ CSV) — «فتح» في الفرز بيستعملها كده.
+   */
+  format?: "xlsx" | "csv";
+  csvAbove?: number;
+  /** إجمالي الصفوف اللي اتكتبت لحد دلوقتي (لمؤشر التقدّم — الملف الكبير بس). */
+  onRows?: (done: number) => void;
+}
+
+function csvBlob(headers: string[], chunks: string[]): Blob {
+  return new Blob(["\uFEFF" + headers.map(csvEsc).join(","), ...chunks], { type: "text/csv;charset=utf-8" });
+}
+const csvRows = (headers: string[], rows: Record<string, string>[]) =>
+  "\r\n" + rows.map((r) => headers.map((h) => csvEsc(r[h])).join(",")).join("\r\n");
+
 /**
- * تصدير الشيت بعد التعديل. صغير ⇒ إكسيل. كبير (أكتر من `csvAbove` صف) ⇒ CSV متجمّع دفعة دفعة — بيفتح في الإكسيل
- * عادي، ومن غير ما الملف كله يتحمّل في الذاكرة (إكسيل بالحجم ده بيقفل الآيفون).
+ * تصدير الشيت بعد التعديل.
+ * · **Excel** للملف الكبير ⇒ «حتة حتة» (`lib/xlsxStreamWriter.ts`): دفعة دفعة، كل الخانات نص، ومن غير ما الملف كله يتحمّل
+ *   في الذاكرة. لو الموبايل مافيهوش أداة الضغط ⇒ زي الأول (إكسيل عادي لحد `csvAbove`، أكبر ⇒ CSV و`fellBack`).
+ * · **CSV** ⇒ دفعة دفعة — بيفتح في الإكسيل عادي.
  */
-export async function exportDataFile(ref: DataFileRef, opts: { csvAbove?: number } = {}): Promise<{ blob: Blob; name: string; ext: "xlsx" | "csv" }> {
+export async function exportDataFile(ref: DataFileRef, opts: ExportOptions = {}): Promise<DataExport> {
   const csvAbove = opts.csvAbove ?? 100_000;
   if (ref.kind === "small") {
     const rec = await readSmall(ref.slot);
+    if (opts.format === "csv") {
+      return { blob: csvBlob(rec.headers, rec.rows.length ? [csvRows(rec.headers, rec.rows)] : []), name: exportName(rec.fileName, "csv"), ext: "csv" };
+    }
     return { blob: buildBigExcelBlob(rec.rows, rec.headers, "داتا"), name: exportName(rec.fileName, "xlsx"), ext: "xlsx" };
   }
   const meta = await readMeta(ref.store);
-  if (meta.rowCount <= csvAbove) {
+  if (opts.format === "xlsx" && xlsxStreamSupported()) {
+    const store = ref.store;
+    async function* rowsOnly() { for await (const b of largeBatches(store, meta)) yield b.rows; }
+    const blob = await buildXlsxStream({ headers: meta.headers, batches: rowsOnly(), sheetName: "داتا", onRows: opts.onRows });
+    return { blob, name: exportName(meta.fileName, "xlsx"), ext: "xlsx", rtlDone: true };
+  }
+  if (opts.format !== "csv" && meta.rowCount <= csvAbove) {
     const rows: Record<string, string>[] = [];
     for await (const b of largeBatches(ref.store, meta)) rows.push(...b.rows);
     return { blob: buildBigExcelBlob(rows, meta.headers, "داتا"), name: exportName(meta.fileName, "xlsx"), ext: "xlsx" };
   }
-  const parts: string[] = ["﻿" + meta.headers.map(csvEsc).join(",")];
+  const chunks: string[] = [];
+  let done = 0;
   for await (const b of largeBatches(ref.store, meta)) {
-    parts.push("\r\n" + b.rows.map((r) => meta.headers.map((h) => csvEsc(r[h])).join(",")).join("\r\n"));
+    chunks.push(csvRows(meta.headers, b.rows));
+    done += b.rows.length;
+    opts.onRows?.(done);
   }
-  return { blob: new Blob(parts, { type: "text/csv;charset=utf-8" }), name: exportName(meta.fileName, "csv"), ext: "csv" };
+  return {
+    blob: csvBlob(meta.headers, chunks), name: exportName(meta.fileName, "csv"), ext: "csv",
+    ...(opts.format === "xlsx" ? { fellBack: true } : {}),
+  };
 }
 
-/** 🛑 السوبر أدمن الأول — `true` = زرار «تعديل» يظهر لكل المناديب («انشر للكل»). */
-export const DATA_EDIT_FOR_ALL = false;
+/** تجهيز Excel في الخلفية — واحد بس في نفس الوقت (الملف المتجهّز ممكن يبقى عشرات الميجات). */
+export interface XlsxJob {
+  key: string;
+  /** وصل لكام صف. */
+  done: number;
+  promise: Promise<DataExport>;
+  onProgress(cb: (done: number) => void): () => void;
+}
+let xlsxJob: XlsxJob | null = null;
+
+/**
+ * ⚡ «لو تقدر تخليه يبقي اسرع» (المالك ١٨ أكتوبر ٢٠٢٦): بعد «حفظ التغييرات» الإكسيل بيبدأ يتجهّز **في الخلفية**، فلما يدوس
+ * «تصدير Excel» يلاقيه جاهز (أو بيكمّل من مكانه). `stamp` = نسخة الملف — اتحفظ تعديل تاني ⇒ تجهيز جديد.
+ */
+export function startXlsxExport(ref: DataFileRef, stamp: string): XlsxJob {
+  const key = `${ref.kind}:${ref.slot}:${stamp}`;
+  if (xlsxJob && xlsxJob.key === key) return xlsxJob;
+  const listeners = new Set<(done: number) => void>();
+  const job: XlsxJob = {
+    key, done: 0,
+    promise: Promise.resolve(null as unknown as DataExport),
+    onProgress(cb) { listeners.add(cb); return () => { listeners.delete(cb); }; },
+  };
+  job.promise = exportDataFile(ref, { format: "xlsx", onRows: (n) => { job.done = n; for (const l of listeners) l(n); } });
+  // فشل ⇒ الدوسة الجاية تبني من الأول
+  job.promise.catch(() => { if (xlsxJob === job) xlsxJob = null; });
+  xlsxJob = job;
+  return job;
+}
+
+/** `true` = زرار «تعديل» يظهر لكل المناديب — المالك (١٨ أكتوبر ٢٠٢٦): «راجع كل حاجه … وانشر للكل». */
+export const DATA_EDIT_FOR_ALL = true;
 
 /** عمود موقع/GPS (يظهر جنبه زرار «📍 موقعي»). */
 export function isGpsHeader(h: string): boolean {
