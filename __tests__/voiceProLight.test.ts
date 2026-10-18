@@ -45,7 +45,7 @@ describe("createCoalescedSaver — الحفظ بيتجمّع ومابيضيّع�
 
 describe("Voice PRO — التوصيل", () => {
   it("شغّال للسوبر أدمن + المندوب اللي في قايمة الصندوق بس (والكل لما المفتاح يتفتح)", () => {
-    expect(readFileSync(join(__dirname, "..", "lib", "voiceProLight.ts"), "utf8")).toMatch(/export const VOICEPRO_LIGHT_FOR_ALL = false;/);
+    expect(readFileSync(join(__dirname, "..", "lib", "voiceProLight.ts"), "utf8")).toMatch(/export const VOICEPRO_LIGHT_FOR_ALL = true;/);
     expect(SRC).toMatch(/const lightOn = VOICEPRO_LIGHT_FOR_ALL \|\| isSuper \|\| diagEnabledFor\(meId\);/);
   });
 
