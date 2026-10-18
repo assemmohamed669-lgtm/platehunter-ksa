@@ -58,7 +58,7 @@ import { groupRecordsByPlate, collapseGroupRecordRepeats } from "@/lib/recordRes
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { fileIdentity } from "@/lib/fileIdentity";
 import { loadExtraDataLocks, saveExtraDataLocks, isLockedAt, toggleLockAt, removeLockAt } from "@/lib/dataLocks";
-import { nextStreamSlot } from "@/lib/extraDataSlot";
+import { nextStreamSlot, savedExtraDataSlot } from "@/lib/extraDataSlot";
 import {
   fetchTeamDataState, uploadTeamData, deleteTeamData, downloadTeamData,
   needsTeamDataRefresh, teamIngestMode, setTeamDataOpen, TEAM_DATA_SLOT, type TeamDataState,
@@ -3563,7 +3563,7 @@ export default function SortingPage() {
         onOpen={dataStreamed && !dataFile?.size ? () => openStoredData("data") : undefined}
       />
       {/* ✏️ «تعديل» — بحث عن لوحة في الشيت وتعديل/مسح صفوفها وحفظها (المالك ١٤ أكتوبر ٢٠٢٦ — `lib/dataEdit.ts`) */}
-      <DataEditLink slot="data" show={!!dataTable} />
+      <DataEditLink slot="data" show={!!dataTable} label="الداتا الأساسية" />
       {/* ملف داتا فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه */}
       <ReferralSheetPicker
         ordered
@@ -3754,7 +3754,8 @@ export default function SortingPage() {
             locked={isLockedAt(extraLocks, i)}
             onOpen={ed.streamed && ed.streamSlot && !ed.file?.size ? () => openStoredData(ed.streamSlot!) : undefined}
           />
-          <DataEditLink slot={`data-${i + 2}`} show={!!ed.table} />
+          {/* الملف المحفوظ للمربع ده بالظبط (مربع فاضي قبله مابياخدش رقم) — من غيره كان بيفتح الداتا الأساسية */}
+          <DataEditLink slot={savedExtraDataSlot(extraData, i) ?? ""} show={!!savedExtraDataSlot(extraData, i)} label={`داتا إضافية ${i + 2}`} />
           {/* ملف إضافي فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه (زي الأساسي) */}
           {(ed.streamMeta?.sheets?.length ?? 0) > 1 && (
             <ReferralSheetPicker

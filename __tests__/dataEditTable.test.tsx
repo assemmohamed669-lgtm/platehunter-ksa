@@ -78,9 +78,10 @@ describe("🔴 التوصيل", () => {
   });
   it("زرار «تعديل» تحت كل ملف داتا بيفتح صفحة التعديل على نفس الملف", () => {
     const s = read("app/(app)/sorting/page.tsx");
-    expect(s).toMatch(/<DataEditLink slot="data" show=\{!!dataTable\} \/>/);
-    expect(s).toMatch(/<DataEditLink slot=\{`data-\$\{i \+ 2\}`\} show=\{!!ed\.table\} \/>/);
-    expect(read("components/DataEditLink.tsx")).toMatch(/href=\{`\/data-edit\?slot=\$\{slot\}`\}/);
+    expect(s).toMatch(/<DataEditLink slot="data" show=\{!!dataTable\} label="الداتا الأساسية" \/>/);
+    // ✏️ الملف المحفوظ للمربع بالظبط (١٨ أكتوبر — `__tests__/dataEditPerBox.test.ts`)
+    expect(s).toMatch(/<DataEditLink slot=\{savedExtraDataSlot\(extraData, i\) \?\? ""\}/);
+    expect(read("components/DataEditLink.tsx")).toMatch(/href=\{`\/data-edit\?slot=\$\{slot\}/);
   });
   it("الصفحة: بحث + حفظ بتأكيد + تصدير + احترام قفل الداتا", () => {
     const p = read("app/(app)/data-edit/page.tsx");
