@@ -90,14 +90,15 @@ describe("② اهتزاز مع التنبيه", () => {
   });
 });
 
-describe("③ الآيفون يرن حتى لو صامت (السوبر أدمن الأول)", () => {
-  it("🛑 مش سوبر أدمن ⇒ مابنلمسش نوع الصوت (لحد التجربة على آيفون حقيقي)", async () => {
+describe("③ الآيفون يرن حتى لو صامت", () => {
+  it("🔓 «انشر لكله» (المالك ١٨ أكتوبر ٢٠٢٦) ⇒ لكل المناديب مش السوبر أدمن بس", async () => {
     const { s } = await load();
     const as = (navigator as unknown as { audioSession: { type: string } }).audioSession;
-    expect(s.SILENT_RING_FOR_ALL).toBe(false);
+    expect(s.SILENT_RING_FOR_ALL).toBe(true);
     s.startAlertSiren();
-    expect(as.type).toBe("auto");
+    expect(as.type).toBe("playback");
     s.stopAlertSiren();
+    expect(as.type).toBe("auto");
   });
   it("وقت التنبيه «playback» وبعد «تم» يرجع زي ما كان", async () => {
     const { s } = await load();

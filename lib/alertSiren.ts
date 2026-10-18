@@ -23,7 +23,7 @@
  *  ② **اهتزاز** مع كل تنبيه بيلف لحد «تم» (الأندرويد — الآيفون مابيسمحش بيه من الصفحة).
  *  ③ الآيفون يرن **حتى لو صامت** (`navigator.audioSession.type = "playback"` وقت التنبيه بس) — **إلا والمايك شغّال** في أي
  *     صفحة (`micBusy` + `lib/micCapture.ts`): تغيير نوع الصوت وقت التسجيل ممكن يوقفه. ولو المايك اتفتح والتنبيه بيرن،
- *     نوع الصوت بيرجع زي ما كان **قبل** ما المايك يشتغل. 🛑 للسوبر أدمن الأول (`SILENT_RING_FOR_ALL`) لحد ما يتجرّب على
+ *     نوع الصوت بيرجع زي ما كان **قبل** ما المايك يشتغل. 🔓 للكل من ١٨ أكتوبر (`SILENT_RING_FOR_ALL`) — كان سوبر أدمن الأول، ومااتجرّبش على
  *     آيفون حقيقي.
  */
 import { alertToneById, loadAlertToneId, type AlertTone } from "./alertTones";
@@ -106,8 +106,8 @@ type AudioSessionLike = { type: string };
 /** نوع الصوت قبل التنبيه — بيرجع له بعد «تم». null = مالمسناهوش. */
 let prevSessionType: string | null = null;
 
-/** 🛑 السوبر أدمن الأول — `true` = «يرن حتى لو صامت» لكل المناديب (بعد التجربة على آيفون حقيقي). */
-export const SILENT_RING_FOR_ALL = false;
+/** 🔓 «يرن حتى لو صامت» لكل المناديب — المالك (١٨ أكتوبر ٢٠٢٦): «انشر لكله انا عايز مع كل لوحه يظهر للمندوب صوت الرنه واهتزاز». `false` = يرجع للسوبر أدمن بس. */
+export const SILENT_RING_FOR_ALL = true;
 let silentRingSuper = false;
 /** شِلّ التطبيق بيندهها أول ما يعرف البروفايل (`is_super`). */
 export function setSilentRingSuper(on: boolean): void { silentRingSuper = on; }
