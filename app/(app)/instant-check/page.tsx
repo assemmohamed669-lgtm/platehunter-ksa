@@ -51,7 +51,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { isMujammaaRecord, mujammaaDistrictOf } from "@/lib/mujammaaRecords";
 /** 🧾 عمود «اسم المسجّل» في سجلات المجمّع (`lib/mujammaaRecords.ts`) */
 const RECORDER_KEY = "اسم المسجّل";
-import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { MJ_FLAG_COL, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
 import { shareImageWithText, buildPlateShareText, shareTextViaChooser, copyForWhatsApp } from "@/lib/share";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { readDeepgramWords, type DgWord, type DgFinal } from "@/lib/deepgramWords";
@@ -603,9 +603,14 @@ export default function InstantCheckPage() {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
         // العلمين في استعلام واحد — رحلة شبكة واحدة بدل اتنين على شبكة الموبايل.
-        const { data: prof } = await supabase.from("profiles")
-          .select("rest_pages_enabled, voicex_enabled, is_super, voicex_until, rest_until, team").eq("id", data.user.id).single();
-        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean; voicex_until?: string | null; rest_until?: string | null; team?: string | null } | null;
+        // 🔘 `mujammaa_enabled` (زرار الأدمن ⇒ تاب «داتا التسجيلات») — لو الـSQL لسه ماتشغّلش بنقرا من غيره
+        const uid = data.user.id;
+        const { data: prof } = await selectWithOptional<Record<string, unknown>>(
+          (cols) => supabase.from("profiles").select(cols).eq("id", uid).single(),
+          "rest_pages_enabled, voicex_enabled, is_super, voicex_until, rest_until, team",
+          MJ_FLAG_COL,
+        );
+        const row = prof as { rest_pages_enabled?: boolean; voicex_enabled?: boolean; is_super?: boolean; voicex_until?: string | null; rest_until?: string | null; team?: string | null; mujammaa_enabled?: boolean | null } | null;
         setHasTeam(!!row?.team);
         // «صوت فقط» = باقي البرنامج مش متاح (مقفول يدويًا أو أيامه خلصت). السوبر
         // أدمن مالوش انتهاء. voiceTabVisible بياخد في حسابه انتهاء أيام الصوت.

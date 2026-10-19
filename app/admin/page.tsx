@@ -5,7 +5,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus, Search, Users, ShieldCheck, ArrowRight, X, AlertCircle,
-  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Activity, Pencil } from "lucide-react";
+  ChevronLeft, CalendarClock, CircleUserRound, Gem, Clock, MapPin, MessageCircle, Megaphone, ShieldAlert, Lock, LockOpen, Mic, LayoutGrid, Activity, Pencil, AudioWaveform } from "lucide-react";
+import { canUseMujammaa } from "@/lib/mujammaaAccess";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import { subStatus, type SubStatus } from "@/lib/subscription";
@@ -29,6 +30,10 @@ interface AgentProfile {
   is_active: boolean;
   voicex_enabled?: boolean;      // صوت VoiceX مفعّل (افتراضي: مقفول → ديبجرام)
   rest_pages_enabled?: boolean;  // باقي صفحات البرنامج مفتوحة (افتراضي: مفتوحة)
+  voicex_until?: string | null;
+  rest_until?: string | null;
+  /** 🔘 «التسجيل» (المجمّع) لهذا المندوب — null = القاعدة (كل الخدمات) · docs/sql/mujammaa-per-agent.sql */
+  mujammaa_enabled?: boolean | null;
   device_fingerprint: string | null;
   device_lock_exempt: boolean;
   last_seen: string | null;
@@ -271,7 +276,7 @@ export default function AdminDashboard() {
   // #25 — تبديل سريع لعلم مندوب من القائمة (صوت VoiceX / باقي الصفحات).
   async function toggleAgentFlag(
     a: AgentProfile,
-    action: "setVoicexEnabled" | "setRestPages",
+    action: "setVoicexEnabled" | "setRestPages" | "setMujammaa",
     value: boolean,
     e: React.MouseEvent,
   ) {
@@ -859,6 +864,19 @@ export default function AdminDashboard() {
                         <LayoutGrid size={14} />
                       </button>
                     </>
+                  );
+                })()}
+                {/* 🔘 «التسجيل» (المجمّع) للمندوب ده — السوبر أدمن بس (١٩ أكتوبر). المالك: «عايز زر قدام كل اسم لما ادوس
+                    عليه افتح صفحه التسجيل عند المشترك». اللون = اللي المندوب شايفه فعلاً (الزرار أو القاعدة). */}
+                {isSuper && a.role === "agent" && (() => {
+                  const mj = canUseMujammaa(a);
+                  return (
+                    <button
+                      onClick={(e) => toggleAgentFlag(a, "setMujammaa", !mj, e)}
+                      title={mj ? "«التسجيل» ظاهر عنده — دوس لقفله" : "«التسجيل» مش ظاهر عنده — دوس لفتحه"}
+                      className={`flex h-7 w-7 items-center justify-center rounded-full transition ${mj ? "bg-green-500/15 text-green-600 hover:bg-green-500/30" : "bg-danger/15 text-danger hover:bg-danger/30"}`}>
+                      <AudioWaveform size={14} />
+                    </button>
                   );
                 })()}
                 {waLink(a.phone) && (

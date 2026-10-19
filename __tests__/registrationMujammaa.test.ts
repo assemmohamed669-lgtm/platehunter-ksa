@@ -56,7 +56,8 @@ describe("🧮 المجمّع في «التسجيل»", () => {
     // مرتين بس: الفحص المتأكد + آخر صلاحية متأكدة لنفس الحساب (من غير نت)
     expect((SRC.match(/setMjAgentOk\(true\)/g) ?? []).length).toBe(2);
     // الاشتراك من نفس أعمدة الشريط والتشييك
-    expect(SRC).toMatch(/\.select\("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until"\)/);
+    // (+ زرار الأدمن `mujammaa_enabled` بـselectWithOptional — ١٩ أكتوبر)
+    expect(SRC).toMatch(/"is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until",\s*MJ_FLAG_COL,/);
     expect(SRC).toMatch(/advanced=\{superOk && !asAgent\}/);
     expect(SRC).toMatch(/const mjShown = superOk \? asAgent \|\| regMode === "mujammaa" : mjAgentOk;/);
     // التصدير للسجلات من صفحة التسجيل (الحفظ برّه المجمّع)

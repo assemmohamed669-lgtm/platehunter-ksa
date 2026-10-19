@@ -67,7 +67,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 import dynamic from "next/dynamic";
-import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { MJ_FLAG_COL, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
 import { loadAgentPreview, saveAgentPreview } from "@/lib/mujammaaPreview";
 import SharedCheckFileBox from "@/components/SharedCheckFileBox";
 import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
@@ -613,11 +613,16 @@ export default function RegistrationPage() {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;
-        const { data: prof, error } = await supabase
-          .from("profiles")
-          .select("is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until")
-          .eq("id", data.user.id)
-          .single();
+        // 🔘 `mujammaa_enabled` (زرار الأدمن) — لو الـSQL لسه ماتشغّلش بنقرا من غيره
+        const uid = data.user.id;
+        const { data: prof, error } = await selectWithOptional<{
+          is_super?: boolean | null; voicex_enabled?: boolean | null; voicex_until?: string | null;
+          rest_pages_enabled?: boolean | null; rest_until?: string | null; mujammaa_enabled?: boolean | null;
+        }>(
+          (cols) => supabase.from("profiles").select(cols).eq("id", uid).single(),
+          "is_super, voicex_enabled, voicex_until, rest_pages_enabled, rest_until",
+          MJ_FLAG_COL,
+        );
         // غلط عابر في القراية ⇒ نفضل على آخر صلاحية متأكدة (مانطردش مندوب مشترك بسبب النت)
         if (error || !prof) return;
         const mjAllowed = canUseMujammaa(prof);

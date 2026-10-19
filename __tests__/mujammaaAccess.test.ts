@@ -8,7 +8,7 @@
  *  · السوبر أدمن دايماً.
  */
 import { describe, expect, it } from "vitest";
-import { canUseMujammaa, hasAllServices, MUJAMMAA_FOR_DELEGATES } from "@/lib/mujammaaAccess";
+import { canUseMujammaa, hasAllServices, MUJAMMAA_FOR_DELEGATES, selectWithOptional } from "@/lib/mujammaaAccess";
 import { canSeeTab, visibleTabs } from "@/lib/navTabs";
 
 const FUTURE = "2999-12-31";
@@ -65,5 +65,58 @@ describe("تبويب «التسجيل» في الشريط — needsAll", () => {
     // مش معروف لسه ⇒ مقفول (مايظهرش ويتشال قدامه)
     expect(canSeeTab(TABS[1], { isSuper: false, isAdmin: false })).toBe(false);
     expect(visibleTabs(TABS, { isSuper: false, isAdmin: false, hasAll: false }).map((t) => t.href)).toEqual(["/instant-check"]);
+  });
+});
+
+/**
+ * 🔘 زرار الأدمن قدام كل مندوب (١٩ أكتوبر ٢٠٢٦) — المالك: «عايز زر قدام كل اسم لما ادوس عليه افتح صفحه
+ * التسجيل عند المشترك». `mujammaa_enabled`: true ⇒ يظهر مهما كان اشتراكه · false ⇒ مخفي · فاضي ⇒ القاعدة.
+ */
+describe("canUseMujammaa — زرار الأدمن لكل مندوب", () => {
+  const voiceOnly = { voicex_enabled: true, voicex_until: FUTURE, rest_pages_enabled: false, rest_until: FUTURE };
+  const sortOnly = { voicex_enabled: false, rest_pages_enabled: true, rest_until: FUTURE };
+
+  it("مفتوح من الزرار ⇒ يظهر حتى للي مشترك صوت بس أو فرز بس", () => {
+    expect(canUseMujammaa({ ...voiceOnly, mujammaa_enabled: true })).toBe(true);
+    expect(canUseMujammaa({ ...sortOnly, mujammaa_enabled: true })).toBe(true);
+  });
+
+  it("مقفول من الزرار ⇒ مخفي حتى لو مشترك في كل الخدمات", () => {
+    expect(canUseMujammaa({ ...all, mujammaa_enabled: false })).toBe(false);
+  });
+
+  it("الزرار مااتلمسش (فاضي/العمود لسه مااتضافش) ⇒ القاعدة زي ما هي", () => {
+    expect(canUseMujammaa({ ...all, mujammaa_enabled: null })).toBe(true);
+    expect(canUseMujammaa({ ...voiceOnly, mujammaa_enabled: null })).toBe(false);
+    expect(canUseMujammaa(voiceOnly)).toBe(false);
+  });
+
+  it("السوبر أدمن دايماً", () => {
+    expect(canUseMujammaa({ is_super: true, mujammaa_enabled: false })).toBe(true);
+  });
+});
+
+describe("selectWithOptional — العمود الجديد مايوقّعش البرنامج لو الـSQL لسه ماتشغّلش", () => {
+  it("العمود موجود ⇒ استعلام واحد بيه", async () => {
+    const calls: string[] = [];
+    const r = await selectWithOptional(async (cols) => {
+      calls.push(cols);
+      return { data: { a: 1, mujammaa_enabled: true }, error: null };
+    }, "a, b", "mujammaa_enabled");
+    expect(calls).toEqual(["a, b, mujammaa_enabled"]);
+    expect(r.data).toEqual({ a: 1, mujammaa_enabled: true });
+  });
+
+  it("العمود مش موجود (غلط) ⇒ نفس الاستعلام من غيره", async () => {
+    const calls: string[] = [];
+    const r = await selectWithOptional(async (cols) => {
+      calls.push(cols);
+      return cols.includes("mujammaa_enabled")
+        ? { data: null, error: { message: "column profiles.mujammaa_enabled does not exist" } }
+        : { data: { a: 1 }, error: null };
+    }, "a, b", "mujammaa_enabled");
+    expect(calls).toEqual(["a, b, mujammaa_enabled", "a, b"]);
+    expect(r.data).toEqual({ a: 1 });
+    expect(r.error).toBeNull();
   });
 });

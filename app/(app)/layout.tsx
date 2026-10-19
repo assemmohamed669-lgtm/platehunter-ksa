@@ -20,7 +20,8 @@ import AgentNoticeBanner from "@/components/AgentNoticeBanner";
 import PollBanner from "@/components/PollBanner";
 import AgentPresenceReporter from "@/components/AgentPresenceReporter";
 import MujammaaGpsWarmup from "@/components/MujammaaGpsWarmup";
-import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { MJ_FLAG_COL, canUseMujammaa } from "@/lib/mujammaaAccess";
+import { isTabActive } from "@/lib/navTabs";
 import { logoutAgent } from "@/lib/auth";
 import { initAppearance } from "@/lib/appSettings";
 import { applyServiceKeys } from "@/lib/voiceKeys";
@@ -126,9 +127,16 @@ export default function AppShellLayout({
         role?: string | null; is_active?: boolean | null; subscription_end?: string | null;
         is_trial?: boolean | null; service_keys?: unknown; rest_pages_enabled?: boolean | null;
         rest_until?: string | null; is_super?: boolean | null; wheel_spin_at?: string | null;
+        mujammaa_enabled?: boolean | null;
       };
+      // 🔘 `mujammaa_enabled` (زرار الأدمن — docs/sql/mujammaa-per-agent.sql): لو لسه ماتشغّلش الاستعلام بيفشل ⇒
+      //    نفس الرجوع اللي فوق (من غيره ⇒ من غير wheel_spin_at كمان).
       let profile = (await supabase.from("profiles")
-        .select(`${BASE_COLS}, wheel_spin_at`).eq("id", userId).single()).data as ProfileRow | null;
+        .select(`${BASE_COLS}, wheel_spin_at, ${MJ_FLAG_COL}`).eq("id", userId).single()).data as ProfileRow | null;
+      if (!profile) {
+        profile = (await supabase.from("profiles")
+          .select(`${BASE_COLS}, wheel_spin_at`).eq("id", userId).single()).data as ProfileRow | null;
+      }
       if (!profile) {
         profile = (await supabase.from("profiles")
           .select(BASE_COLS).eq("id", userId).single()).data as ProfileRow | null;
@@ -186,10 +194,11 @@ export default function AppShellLayout({
   // ده الحارس الفعلي اللي بيمنع الوصول بالرابط المباشر.) /admin في مجموعة
   // مسارات منفصلة فمش متأثّر، والمالك يقدر يرجّع العلم من هناك.
   useEffect(() => {
-    if (!restPagesEnabled && pathname && !isAllowedForVoiceOnly(pathname)) {
+    // 🔘 مشترك «صوت فقط» الأدمن فتحله «التسجيل» (`mujammaa_enabled`) ⇒ مايترجّعش منها
+    if (!restPagesEnabled && pathname && !isAllowedForVoiceOnly(pathname) && !(mjGpsWarm && isTabActive(pathname, "/registration"))) {
       router.replace("/instant-check");
     }
-  }, [restPagesEnabled, pathname, router]);
+  }, [restPagesEnabled, pathname, router, mjGpsWarm]);
 
   // 🔒 حارس صلاحيات أعضاء المجموعة (المالك ١١ أكتوبر ٢٠٢٦ — `lib/groupLocks.ts`): صفحة مقفولة على العضو
   //    (الفرز/السجلات/التحميل) ⇒ صفحة التشييك. المسئول ومن غير مجموعة مابيتأثروش (أقفالهم فاضية).

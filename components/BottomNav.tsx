@@ -10,7 +10,7 @@ import { voiceProNames } from "@/lib/voiceProName";
 import { serviceActive } from "@/lib/subscription";
 import { getCheckTab, setCheckTab, onCheckTabChange, type CheckTab } from "@/lib/checkTab";
 import { canOpenTrialPage } from "@/lib/trialModelGate";
-import { canUseMujammaa } from "@/lib/mujammaaAccess";
+import { MJ_FLAG_COL, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
 import { loadDraft } from "@/lib/checkDrafts";
 import { sawtiHiddenFor, sawtiTabVisible } from "@/lib/sawtiHidden";
 import { isRouteLockedForMember, lockedCheckTabs } from "@/lib/groupLocks";
@@ -127,8 +127,13 @@ export default function BottomNav() {
       try {
         const { data } = await supabase.auth.getUser();
         if (!data.user) return;   // الجلسة لسه بتترجّع — المستمعين تحت هيعيدوا لما تجهز
-        const { data: prof } = await supabase.from("profiles")
-          .select("is_super, role, rest_pages_enabled, rest_until, voicex_enabled, voicex_until").eq("id", data.user.id).single();
+        // 🔘 `mujammaa_enabled` (زرار الأدمن) — لو الـSQL لسه ماتشغّلش بنقرا من غيره (البرنامج مايقعش)
+        const uid = data.user.id;
+        const { data: prof } = await selectWithOptional<Record<string, unknown>>(
+          (cols) => supabase.from("profiles").select(cols).eq("id", uid).single(),
+          "is_super, role, rest_pages_enabled, rest_until, voicex_enabled, voicex_until",
+          MJ_FLAG_COL,
+        );
         if (!alive || !prof) return;
         setIsSuper(!!prof.is_super);
         setIsAdmin(prof.role === "admin");
@@ -169,6 +174,8 @@ export default function BottomNav() {
   const sawtiShown = sawtiTabVisible({ hidden: sawtiHiddenFor(isSuper), leftover: pttLeft });
   /** إحنا على صفحة «الجديد» دلوقتي؟ (عشان تبويبات التشييك ماتبانش نشطة غلط) */
   const onNew = !!pathname?.startsWith("/registration-v2");
+  /** على «التسجيل» (المجمّع) — تبويبات التشييك في شريط «صوت فقط» ماتبانش نشطة */
+  const onMj = isTabActive(pathname, "/registration");
 
   return (
     // الشريط أسود ثابت في الوضعين (فاتح/غامق) بطلب المندوب — والكلام أبيض.
@@ -181,11 +188,12 @@ export default function BottomNav() {
     >
       <div className="mx-auto flex max-w-md justify-between px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
         {!restPages ? (
-          // المشترك صوت-فقط: خيارات التشييك (صوتي/يدوي/شاص/شهايد/السجلات/فرز)
-          // في الشريط التحتي زي قناص — بتبدّل الخيار من مخزن checkTab.
-          VOICE_TABS.filter((t) => t.tab !== "ptt" || sawtiShown).filter((t) => !lockedTabs.has(t.tab as "sheet" | "sort")).flatMap(({ tab, label, icon: Icon }, i) => {
+          <>
+          {/* المشترك صوت-فقط: خيارات التشييك (صوتي/يدوي/شاص/شهايد/السجلات/فرز)
+              في الشريط التحتي زي قناص — بتبدّل الخيار من مخزن checkTab. */}
+          {VOICE_TABS.filter((t) => t.tab !== "ptt" || sawtiShown).filter((t) => !lockedTabs.has(t.tab as "sheet" | "sort")).flatMap(({ tab, label, icon: Icon }, i) => {
             // على «الجديد» تبويبات التشييك مابتبانش نشطة — المندوب مش فيها.
-            const active = !onNew && activeTab === tab;
+            const active = !onNew && !onMj && activeTab === tab;
             const btn = (
               <button
                 key={tab}
@@ -234,7 +242,25 @@ export default function BottomNav() {
               </button>
             );
             return sawtiShown ? [btn, pro] : [pro, btn];
-          })
+          })}
+          {/* 🔘 «التسجيل» (المجمّع) لمشترك «صوت فقط» الأدمن فتحهوله من قايمته (١٩ أكتوبر — `mujammaa_enabled`) */}
+          {hasAll && (
+            <button
+              key="mujammaa"
+              onClick={() => { if (!onMj) router.push("/registration"); }}
+              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] transition ${
+                onMj ? "text-white" : "text-white/60 hover:text-white"
+              }`}
+            >
+              <Mic
+                size={22}
+                strokeWidth={onMj ? 2.5 : 2}
+                className={onMj ? "drop-shadow-[0_0_7px_rgba(255,255,255,0.75)]" : ""}
+              />
+              <span className={`w-full truncate text-center ${onMj ? "font-bold" : ""}`}>التسجيل</span>
+            </button>
+          )}
+          </>
         ) : (
           tabs.map(({ href, label, icon: Icon }) => {
             // 🔴 مش `startsWith` — «الجديد» (/registration-v2) كانت بتنوّر «التسجيل» معاها.
