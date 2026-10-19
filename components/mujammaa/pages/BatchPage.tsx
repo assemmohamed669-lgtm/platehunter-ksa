@@ -59,7 +59,7 @@ import Waveform from "../components/Waveform";
 
 import { matchInCheckSheet } from "../lib/checkSheetAdapter";
 import { chunksHeaders, chunksUrl, httpFailure, type BatchProbe } from "../lib/batchServer";
-import { buildRunReport, sendRunReport, type RunReportInput } from "../lib/runTelemetry";
+import { buildRunReport, issueBatch, sendRunReport, type RunReportInput } from "../lib/runTelemetry";
 import { currentSession } from "@/lib/authSession";
 import { ErrorLog } from "../lib/errorLog";
 import {
@@ -442,6 +442,12 @@ export function canStopTranscription(jobs: ReadonlyArray<{ status: string }>): b
  * أصلاً (أسوأ حالة ~٤ث)؛ ده حد أمان فوقها — بعده الصوت الكامل بيتحجز في
  * الذاكرة والحفظ بيكمّل ورا (عيب ١).
  */
+/**
+ * 🧯 أغلاط الموبايل اللي اتبعتت «issue» (أو اتسابت لتقرير التفريغ) — على مستوى الصفحة كلها مش المكوّن:
+ * سجل الأغلاط واحد للجلسة (`MujammaaSection`)، فالرجوع للصفحة مايبعتش نفس الغلط تاني.
+ */
+const ISSUE_SEEN = new Set<string>();
+
 const FINALIZE_MAX_MS = 6000;
 /** كل قد إيه نجرّب نحفظ الصوت المحجوز في الذاكرة لو المساحة فضيت (عيب ٧) */
 const RETRY_SAVE_MS = 20_000;
@@ -772,6 +778,8 @@ export default function BatchPage({
   /** 📋 للتقرير: المندوب عدّل/مسح كام لوحة من آخر تصدير */
   const editCountRef = useRef(0);
   const deleteCountRef = useRef(0);
+  /** ✍️ اللوحات اللي المندوب مسحها من الجدول من آخر تصدير (بثانية نطقها) — تقرير التصدير */
+  const removedRef = useRef<Array<{ p: string; t: number | null }>>([]);
   const advancedRef = useRef(advanced);
   advancedRef.current = advanced;
   const onExportToRecordsRef = useRef(onExportToRecords);
@@ -868,6 +876,34 @@ export default function BatchPage({
         /* التقرير عمره ما يوقّف التفريغ */
       });
   };
+
+  /**
+   * 🧯 مشاكل الموبايل **برّه** أي تفريغ (الميكروفون مارضيش · التخزين · …) ⇒ تقرير «issue» للسيرفر — المندوب اللي
+   * ماعرفش يسجّل أصلاً كان مالوش أي أثر. اللي وقت تفريغ بيروح مع تقرير التفريغ نفسه. دفعة كل ٥ث بالكتير.
+   */
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pending: string[] = [];
+    const flush = () => {
+      timer = null;
+      const errors = pending.splice(0);
+      if (errors.length) queueRunReport({ kind: "issue", errors });
+    };
+    const onLog = () => {
+      pending.push(...issueBatch(errorLog.getSnapshot(), ISSUE_SEEN, jobCtxRef.current !== null));
+      if (pending.length && !timer) timer = setTimeout(flush, 5000);
+    };
+    onLog();
+    const unsub = errorLog.subscribe(onLog);
+    return () => {
+      unsub();
+      if (timer) {
+        clearTimeout(timer);
+        flush();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- queueRunReport بيقرا من refs
+  }, [errorLog]);
 
   const getClipStore = useCallback((): Promise<ClipStore> => {
     if (!clipStoreP.current) {
@@ -2454,7 +2490,16 @@ export default function BatchPage({
     tableDirtyRef.current = true;
     editCountRef.current += 1;
     setEntries((prev) => {
-      const next = prev.map((e) => (e.id === id ? { ...e, ...patch } : e));
+      const next = prev.map((e) =>
+        e.id !== id
+          ? e
+          : {
+              ...e,
+              // ✍️ النوع اللي البرنامج طلّعه قبل أول تغيير — التقرير بيقول «طلع X والمندوب خلّاه Y»
+              ...("vehicleType" in patch && e.typeHeard === undefined ? { typeHeard: e.vehicleType ?? "" } : {}),
+              ...patch,
+            }
+      );
       entriesRef.current = next;
       return next;
     });
@@ -2491,6 +2536,12 @@ export default function BatchPage({
     if (exportingRef.current || canStopTranscription(clipsRef.current)) return;
     tableDirtyRef.current = true;
     deleteCountRef.current += 1;
+    // ✍️ اللوحة اللي المندوب شالها (غالباً زيادة/مكررة) — بتروح مع تقرير التصدير
+    const gone = entries.find((e) => e.id === id);
+    if (gone) {
+      const t = gone.review?.timeStart;
+      removedRef.current.push({ p: gone.review.plate, t: typeof t === "number" ? Math.round(t * 10) / 10 : null });
+    }
     setEntries((prev) => prev.filter((e) => e.id !== id));
   };
 
@@ -2599,11 +2650,13 @@ export default function BatchPage({
         clip: { id: exportClipId ?? undefined },
         entries: list.filter((e) => saved.has(e.id)),
         export: { saved: saved.size, failed: res.failed, total: list.length, no_pin: noPin,
-          edited: editCountRef.current, deleted: deleteCountRef.current },
+          edited: editCountRef.current, deleted: deleteCountRef.current,
+          removed: removedRef.current.slice() },
       });
       if (saved.size > 0) {
         editCountRef.current = 0;
         deleteCountRef.current = 0;
+        removedRef.current = [];
       }
       entriesRef.current = left;
       setEntries(left);
@@ -2635,7 +2688,8 @@ export default function BatchPage({
         error: `ماتصدّرش للسجلات: ${m}`,
         clip: { id: exportClipId ?? undefined },
         export: { saved: 0, failed: list.length, total: list.length, no_pin: noPin,
-          edited: editCountRef.current, deleted: deleteCountRef.current },
+          edited: editCountRef.current, deleted: deleteCountRef.current,
+          removed: removedRef.current.slice() },
       });
       setExportMsg(`⚠️ ماتصدّرش للسجلات: ${m} — اللوحات زي ما هي، جرّب تاني.`);
     } finally {

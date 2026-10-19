@@ -38,6 +38,24 @@ describe("📋 تقرير التسجيل — الربط", () => {
     expect(runQueueBody).toMatch(/errors: sinceJob\.map\(/);
   });
 
+  it("✍️ تصحيحات المندوب بتتسجّل: النوع اللي طلع قبل ما يغيّره (أول مرة بس) + اللوحات اللي مسحها", () => {
+    const annotate = SRC.slice(SRC.indexOf("const annotateEntry = ("), SRC.indexOf("const editEntry = ("));
+    expect(annotate).toMatch(/"vehicleType" in patch && e\.typeHeard === undefined/);
+    expect(annotate).toMatch(/typeHeard: e\.vehicleType \?\? ""/);
+    const remove = SRC.slice(SRC.indexOf("const removeEntry = ("), SRC.indexOf("const saveTableToClip"));
+    expect(remove).toMatch(/removedRef\.current\.push\(/);
+    const exp = SRC.slice(SRC.indexOf("const exportToRecords = async"), SRC.indexOf("const copyAll = async"));
+    expect(exp.match(/removed: removedRef\.current\.slice\(\)/g)?.length).toBe(2);
+    expect(exp).toMatch(/removedRef\.current = \[\]/);
+  });
+
+  it("🧯 مشاكل الموبايل برّه التفريغ (الميكروفون/التخزين…) بتتبعت «issue» — مرة لكل غلط", () => {
+    expect(SRC).toMatch(/const ISSUE_SEEN = new Set<string>\(\)/);
+    expect(SRC).toMatch(/issueBatch\(errorLog\.getSnapshot\(\), ISSUE_SEEN, jobCtxRef\.current !== null\)/);
+    expect(SRC).toMatch(/queueRunReport\(\{ kind: "issue", errors \}\)/);
+    expect(SRC).toMatch(/errorLog\.subscribe\(onLog\)/);
+  });
+
   it("📍 مسار الموقع بتاع المقطع نفسه بيتبعت مع التقرير (كل قراءة بوقتها ودقتها — ١٩ أكتوبر)", () => {
     const i = runQueueBody.indexOf("queueRunReport(");
     const call = runQueueBody.slice(i, runQueueBody.indexOf("});", i));
