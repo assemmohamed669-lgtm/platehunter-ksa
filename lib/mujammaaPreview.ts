@@ -8,7 +8,7 @@
  * `AGENT_PREVIEW_DEFAULT = false`.
  */
 export const AGENT_PREVIEW_KEY = "ph:mj:previewAgent";
-export const AGENT_PREVIEW_DEFAULT = true;
+export const AGENT_PREVIEW_DEFAULT = false;
 
 export function loadAgentPreview(): boolean {
   try {

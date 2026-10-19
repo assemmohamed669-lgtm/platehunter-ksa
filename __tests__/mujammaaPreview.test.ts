@@ -8,9 +8,9 @@ import { AGENT_PREVIEW_DEFAULT, AGENT_PREVIEW_KEY, loadAgentPreview, saveAgentPr
 describe("mujammaaPreview", () => {
   beforeEach(() => localStorage.clear());
 
-  it("الافتراضي «زي المندوب» دلوقتي", () => {
-    expect(AGENT_PREVIEW_DEFAULT).toBe(true);
-    expect(loadAgentPreview()).toBe(true);
+  it("بعد الفتح (١٩ أكتوبر) الافتراضي رجع أدوات السوبر أدمن كلها — «وبعدين ابقي رجع تاني التقارير وكل حاجه»", () => {
+    expect(AGENT_PREVIEW_DEFAULT).toBe(false);
+    expect(loadAgentPreview()).toBe(false);
   });
 
   it("الاختيار بيتحفظ", () => {
