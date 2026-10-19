@@ -18,7 +18,7 @@ describe("🔘 الزرارين", () => {
   it("صفحة الـID للسوبر أدمن بس", () => {
     const src = read("app/admin/area-fill/page.tsx");
     expect(src).toMatch(/prof\?\.role !== "admin" \|\| !prof\?\.is_super/);
-    expect(src).toMatch(/<AreaFillPanel mode="admin" \/>/);
+    expect(src).toMatch(/<AreaFillPanel mode="admin" accounts=\{accounts\} \/>/);
   });
   it("سجلات المندوب: سجلاتي بس + (للكل أو السوبر أدمن)", () => {
     const src = read("app/(app)/instant-check/page.tsx");

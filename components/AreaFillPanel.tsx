@@ -2,12 +2,14 @@
 
 /**
  * 📍 «املأ الحي والشارع» — نفس المربع في مكانين (`lib/areaBackfill.ts`):
- *  · الأدمن (`/admin/area-fill`): السوبر أدمن يحط الـID بتاع المندوب ⇒ كل سجلاته من زمان.
+ *  · الأدمن (`/admin/area-fill`): السوبر أدمن يختار الحساب (مشترك أو أدمن) بالاسم من القايمة ⇒ كل سجلاته من زمان.
+ *    المالك (١٩ أكتوبر ٢٠٢٦): «خلي الخيار اني اختار اسم المشترك او الادمن اللي هعمل معاه كدة».
  *  · سجلات المندوب (صفحة التشييك): زرار لسجلاته هو.
  * الصفحة لازم تفضل مفتوحة (خدمة العناوين طلب في الثانية)، وأي وقفة بتكمّل من الناقص.
  */
-import { useEffect, useRef, useState } from "react";
-import { MapPin, Square } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { MapPin, Search, Square } from "lucide-react";
+import { accountRoleLabel, pickAccounts, type PickAccount } from "@/lib/accountPicker";
 import { reverseGeocode } from "@/lib/geocoding";
 import {
   runAreaFill, areaFillStatusText, type AreaFillCall, type AreaFillProgress,
@@ -38,11 +40,13 @@ function makeCall(agentId: string | null, onName?: (n: string | null) => void): 
 type WakeLockLike = { release: () => Promise<void> };
 
 export default function AreaFillPanel({
-  mode, agentId, missingCount, beforeRun, afterRun,
+  mode, agentId, accounts, missingCount, beforeRun, afterRun,
 }: {
   mode: "admin" | "self";
-  /** المندوب (self: أنا). الأدمن بيكتبه في المربع. */
+  /** المندوب (self: أنا). الأدمن بيختاره من القايمة. */
   agentId?: string | null;
+  /** الأدمن: كل الحسابات (مشتركين وأدمنز) للاختيار بالاسم. */
+  accounts?: PickAccount[];
   /** self: كام لوحة على الموبايل ليها موقع ومن غير حي (للعنوان بس). */
   missingCount?: number;
   /** self: ارفع اللي على الموبايل الأول (عشان كله يبقى على السيرفر). */
@@ -50,7 +54,12 @@ export default function AreaFillPanel({
   /** self: نزّل الحي اللي اتكتب للموبايل. */
   afterRun?: () => Promise<void>;
 }) {
-  const [idText, setIdText] = useState("");
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<PickAccount | null>(null);
+  const matches = useMemo(() => pickAccounts(accounts ?? [], query), [accounts, query]);
+  /** ID كامل اتلصق ومش في القايمة ⇒ نقدر نشتغل عليه برضه (السيرفر بيتأكد إنه موجود). */
+  const rawId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(query.trim()) && !matches.length
+    ? query.trim() : null;
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<AreaFillProgress | null>(null);
   const [name, setName] = useState<string | null>(null);
@@ -60,8 +69,8 @@ export default function AreaFillPanel({
   useEffect(() => () => { mounted.current = false; abortRef.current?.abort(); }, []);
 
   async function start() {
-    const target = mode === "admin" ? idText.trim() : (agentId ?? "");
-    if (mode === "admin" && !target) { setProgress({ phase: "error", scanned: 0, total: 0, done: 0, filled: 0, reused: 0, failed: 0, etaSec: null, error: "حط الـID بتاع المندوب الأول" }); return; }
+    const target = mode === "admin" ? (picked?.id ?? "") : (agentId ?? "");
+    if (mode === "admin" && !target) { setProgress({ phase: "error", scanned: 0, total: 0, done: 0, filled: 0, reused: 0, failed: 0, etaSec: null, error: "اختار الحساب الأول" }); return; }
     const ac = new AbortController();
     abortRef.current = ac;
     setRunning(true);
@@ -115,17 +124,50 @@ export default function AreaFillPanel({
         {" "}خلّي الصفحة مفتوحة لحد ما يخلص (حوالي لوحة في الثانية، واللوحات اللي جنب بعض أسرع). لو وقف، دوس «ابدأ» تاني وهيكمّل من الناقص.
       </p>
 
-      {mode === "admin" && (
-        <input dir="ltr" value={idText} onChange={(e) => setIdText(e.target.value)} disabled={running}
-          placeholder="ID المندوب — مثال: 56627d4f-1e8c-4f74-bf1e-8e75077d5143"
-          className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
-      )}
+      {mode === "admin" && (picked ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/40 bg-surface px-3 py-2">
+          <div className="min-w-0">
+            <p className="truncate text-xs font-bold text-ink">المختار: {picked.username || name || picked.id}</p>
+            <p className="text-[10px] text-muted">{picked.username ? accountRoleLabel(picked) : "بالـID"}</p>
+          </div>
+          <button onClick={() => { setPicked(null); setProgress(null); setName(null); }} disabled={running}
+            className="shrink-0 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted disabled:opacity-40">تغيير</button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="relative">
+            <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder="ابحث بالاسم أو الإيميل أو الرقم (أو الصق الـID)"
+              className="w-full rounded-lg border border-border bg-surface-2 py-2 pr-9 pl-3 text-xs text-ink placeholder:text-muted focus:border-primary focus:outline-none" />
+          </div>
+          <div className="max-h-64 overflow-auto rounded-lg border border-border bg-surface">
+            {matches.map((a) => (
+              <button key={a.id} onClick={() => { setPicked(a); setProgress(null); setName(null); }}
+                className="flex w-full items-center justify-between gap-2 border-b border-border px-3 py-2 text-right last:border-b-0 hover:bg-primary/10">
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-bold text-ink">{a.username || "بدون اسم"}</span>
+                  {(a.email || a.phone) && <span className="block truncate text-[10px] text-muted" dir="ltr">{[a.email, a.phone].filter(Boolean).join(" · ")}</span>}
+                </span>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${a.role === "admin" ? "bg-alert/15 text-alert" : "bg-primary/15 text-primary"}`}>{accountRoleLabel(a)}</span>
+              </button>
+            ))}
+            {rawId && (
+              <button onClick={() => { setPicked({ id: rawId, username: null, email: null, phone: null, role: "agent" }); setProgress(null); setName(null); }}
+                className="w-full px-3 py-2 text-right text-xs font-bold text-primary hover:bg-primary/10">اشتغل على الـID ده</button>
+            )}
+            {!matches.length && !rawId && (
+              <p className="px-3 py-3 text-center text-[11px] text-muted">{(accounts ?? []).length ? "مفيش حساب بالاسم ده" : "جارٍ تحميل الحسابات…"}</p>
+            )}
+          </div>
+        </div>
+      ))}
       {name && <p className="text-[11px] font-bold text-ink">المندوب: {name}</p>}
 
       <div className="flex gap-2">
         {!running ? (
-          <button onClick={() => void start()}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-night transition active:scale-[0.99]">
+          <button onClick={() => void start()} disabled={mode === "admin" && !picked}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-night transition active:scale-[0.99] disabled:opacity-40">
             <MapPin size={14} /> ابدأ
           </button>
         ) : (
