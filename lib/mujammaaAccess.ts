@@ -23,6 +23,29 @@ export interface AccessProfile {
   voicex_until?: string | null;
   rest_pages_enabled?: boolean | null;
   rest_until?: string | null;
+  /**
+   * 🔘 زرار الأدمن قدام المندوب (١٩ أكتوبر ٢٠٢٦ — `docs/sql/mujammaa-per-agent.sql`). المالك: «عايز زر قدام كل
+   * اسم لما ادوس عليه افتح صفحه التسجيل عند المشترك». true ⇒ يظهر مهما كان اشتراكه · false ⇒ مخفي ·
+   * فاضي (أو العمود لسه مااتضافش) ⇒ القاعدة (كل الخدمات).
+   */
+  mujammaa_enabled?: boolean | null;
+}
+
+/** العمود اللي الزرار بيكتبه — بيتقري بـ`selectWithOptional` عشان لو الـSQL لسه ماتشغّلش البرنامج مايقعش */
+export const MJ_FLAG_COL = "mujammaa_enabled";
+
+/**
+ * استعلام بعمود ممكن يكون لسه مااتضافش: بيجرّب بيه، ولو رجع غلط (العمود مش موجود) بيعيد من غيره.
+ * من غيرها نشر الكود قبل الـSQL كان هيوقّع قراية الصلاحيات (الشريط اللي تحت · «التسجيل» · التشييك).
+ */
+export async function selectWithOptional<T>(
+  run: (cols: string) => PromiseLike<{ data: T | null; error: unknown }>,
+  base: string,
+  optional: string
+): Promise<{ data: T | null; error: unknown }> {
+  const first = await run(`${base}, ${optional}`);
+  if (!first.error) return first;
+  return run(base);
 }
 
 export function hasAllServices(p: AccessProfile | null | undefined): boolean {
@@ -35,5 +58,8 @@ export function hasAllServices(p: AccessProfile | null | undefined): boolean {
 
 export function canUseMujammaa(p: AccessProfile | null | undefined): boolean {
   if (p?.is_super === true) return true;
+  // 🔘 زرار الأدمن بيغلب القاعدة — في الاتجاهين
+  if (p?.mujammaa_enabled === true) return true;
+  if (p?.mujammaa_enabled === false) return false;
   return MUJAMMAA_FOR_DELEGATES && hasAllServices(p);
 }
