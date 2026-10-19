@@ -15,6 +15,7 @@
 const VALUE_OF: Record<string, (b: Record<string, unknown>) => string | null> = {
   setVoicexEnabled: (b) => (b.enabled ? "on" : "off"),
   setRestPages: (b) => (b.enabled ? "on" : "off"),
+  setMujammaa: (b) => (b.enabled ? "on" : "off"),
   setActive: (b) => (b.active ? "on" : "off"),
   setDeviceExempt: (b) => (b.exempt ? "on" : "off"),
   setRole: (b) => (typeof b.role === "string" ? b.role : null),
@@ -45,6 +46,8 @@ const ON_OFF: Record<string, EventDescription> = {
   "setVoicexEnabled=off": { action: "قفل صوت VoiceX (رجّعه لديبجرام)" },
   "setRestPages=on": { action: "فتح باقي صفحات البرنامج للمندوب" },
   "setRestPages=off": { action: "قفل باقي الصفحات (صوت فقط)" },
+  "setMujammaa=on": { action: "فتح «التسجيل» (المجمّع) للمندوب" },
+  "setMujammaa=off": { action: "قفل «التسجيل» (المجمّع) عن المندوب" },
   "setActive=on": { action: "فتح الحساب تاني" },
   "setActive=off": { action: "قفل الحساب مؤقتاً" },
   "setDeviceExempt=on": { action: "إعفاء المندوب من ربط الجهاز" },

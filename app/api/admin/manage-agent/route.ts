@@ -9,6 +9,7 @@
  *  - setActive        { active }
  *  - setVoicexEnabled { enabled }   (VoiceX voice engine on/off for this agent)
  *  - setRestPages     { enabled }   (rest-of-app pages on/off for this agent)
+ *  - setMujammaa      { enabled }   («التسجيل»/المجمّع لهذا المندوب — السوبر أدمن بس)
  *  - setAgentNotice   { notice }    (رسالة خاصة تظهر لهذا المندوب وحده)
  *  - setAdminNote     { note }      (ملاحظة الأدمن على المندوب — بتظهر في مربعه في قايمة الأدمن بس)
  *  - grantWheelSpin                (🎡 يفعّل لفّة عجلة حظ — مرة لكل تجديد)
@@ -32,7 +33,8 @@ import { randomUUID } from "node:crypto";
 // setTeam للسوبر أدمن بس — صفحة المجموعات نفسها سوبر-only، وبدون القفل ده أي
 // أدمن يقدر ينقل مندوب بين المجموعات بنداء مباشر على الـAPI.
 // setTeam مبقاش سوبر-أونلي: المالك طلب إن الأدمنز يديروا المجموعات زيه.
-const SUPER_ONLY = new Set(["delete", "setRole"]);
+// setMujammaa (🔘 «التسجيل» لمندوب بعينه — ١٩ أكتوبر) للسوبر أدمن بس: القاعدة «السوبر أدمن الأول».
+const SUPER_ONLY = new Set(["delete", "setRole", "setMujammaa"]);
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -244,6 +246,21 @@ export async function POST(req: NextRequest) {
         const { error } = await supabaseAdmin.from("profiles")
           .update({ rest_pages_enabled: !!body.enabled }).eq("id", agentId);
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      case "setMujammaa": {
+        // 🔘 «التسجيل» (المجمّع) لهذا المندوب (١٩ أكتوبر ٢٠٢٦) — بيغلب قاعدة «كل الخدمات» في الاتجاهين
+        // (`canUseMujammaa`). السوبر أدمن بس (SUPER_ONLY). العمود من docs/sql/mujammaa-per-agent.sql.
+        const { error } = await supabaseAdmin.from("profiles")
+          .update({ mujammaa_enabled: !!body.enabled }).eq("id", agentId);
+        if (error) {
+          const missing = /mujammaa_enabled/.test(error.message);
+          return NextResponse.json(
+            { error: missing ? "شغّل docs/sql/mujammaa-per-agent.sql في Supabase الأول (العمود لسه مااتضافش)." : error.message },
+            { status: 400 },
+          );
+        }
         return NextResponse.json({ ok: true });
       }
 
