@@ -50,6 +50,8 @@ import { AREA_FILL_FOR_ALL, needsAreaFill } from "@/lib/areaBackfill";
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
+import { diagEnabledFor, diagNote } from "@/lib/deviceDiag";
+import { localRecordStats, pickAreaProbeIds, areaProbeRow } from "@/lib/recordsSyncDiag";
 import { isMujammaaRecord, mujammaaDistrictOf } from "@/lib/mujammaaRecords";
 /** 🧾 عمود «اسم المسجّل» في سجلات المجمّع (`lib/mujammaaRecords.ts`) */
 const RECORDER_KEY = "اسم المسجّل";
@@ -1496,8 +1498,16 @@ export default function InstantCheckPage() {
       // شبكة الموبايل فالاسترجاع مايحصلش والمندوب يلاقي سجلاته فاضية.
       try { uid = (await supabase.auth.getSession()).data.session?.user?.id; } catch { /* offline */ }
       agentIdRef.current = uid ?? null;
-      setFieldEntries(await getAllFieldCheckEntries(uid).catch(() => []));
+      const initialEntries = await getAllFieldCheckEntries(uid).catch(() => [] as FieldCheckEntry[]);
+      setFieldEntries(initialEntries);
       if (!uid) return;
+      // 🩺 الصندوق الأسود (حساب واحد — «الحي مانزلش على الموبايل»): أرقام قبل ونتيجة التنزيل (`lib/recordsSyncDiag.ts`)
+      const diagOn = diagEnabledFor(uid);
+      const sinceKey = `ph:recordsEditsSince:${uid}`;
+      const readSince = () => { try { return localStorage.getItem(sinceKey); } catch { return null; } };
+      const diagSinceBefore = diagOn ? readSince() : null;
+      const diagT0 = Date.now();
+      let diagRes: Record<string, unknown> | null = null;
       try {
         setRestoringChecks(true);
         // **قبل** الاسترجاع: نفّذ أي مسح لسه ماوصلش السيرفر. لو اتأخّر عن
@@ -1507,20 +1517,47 @@ export default function InstantCheckPage() {
         // يفضل قدام شاشة فاضية لحد ما الكل يخلص.
         // 📥 السوبر أدمن الأول: **الناقص بس** وسجلات الموبايل مايتكتبش فوقها (`restoreMissingFieldChecks`) —
         //    كانت كل فتحة بتنزّل كل السجلات من الأول. المناديب زي الأول لحد «انشر للكل».
-        await (safeDraftsOn() ? restoreMissingFieldChecks : restoreFieldChecks)(uid, (done, total) => {
+        const restoreRes = await (safeDraftsOn() ? restoreMissingFieldChecks : restoreFieldChecks)(uid, (done, total) => {
           setRestoreProgress({ done, total });
           if (done > 0) void getAllFieldCheckEntries(uid).then(setFieldEntries).catch(() => {});
         });
+        if (diagOn) diagRes = { ...restoreRes, ms: Date.now() - diagT0 };
         // تدريجي — يعلّم المرفوع عشان الزر يبقى سريع. ولو فشل، **يبان** مش يتبلع.
         void pushPendingFieldChecks(uid)
           .then((r) => setSyncWarning(syncFailureMessage(r)))
           .catch(() => {});
-        setFieldEntries(await getAllFieldCheckEntries(uid));
+        const afterEntries = await getAllFieldCheckEntries(uid);
+        setFieldEntries(afterEntries);
+        if (diagOn) {
+          // 🩺 أرقام بس + كام لوحة ناقصة حي مقارنة بنسختها على السيرفر — من غير لوحات ولا أماكن
+          void (async () => {
+            try {
+              const sinceAfter = readSince();
+              diagNote("records-sync", {
+                before: localRecordStats(initialEntries), after: localRecordStats(afterEntries),
+                res: diagRes, sinceBefore: diagSinceBefore, sinceAfter,
+              });
+              const ids = pickAreaProbeIds(afterEntries, 6);
+              if (!ids.length) return;
+              const { data, error } = await supabase.from("field_checks")
+                .select("local_id, updated_at, extra").eq("agent_id", uid).in("local_id", ids);
+              if (error) { diagNote("records-probe", { error: error.message }); return; }
+              const byId = new Map(((data ?? []) as { local_id: string; updated_at: string | null; extra: unknown }[]).map((r) => [r.local_id, r]));
+              const local = new Map(afterEntries.map((e) => [e.id, e]));
+              diagNote("records-probe", {
+                rows: ids.map((id) => areaProbeRow({ id, synced: local.get(id)?.synced }, byId.get(id), sinceAfter)),
+              });
+            } catch (e) { diagNote("records-probe", { error: e instanceof Error ? e.message : String(e) }); }
+          })();
+        }
         // سجلات الشاص: استرجاع من السيرفر + رفع المحلي (نفس فكرة اللوحات).
         await restoreChassisRecords(uid);
         pushChassisRecords(uid).catch(() => {});
         setChassisRecords(getChassisRecords());
-      } catch { /* offline / no session */ }
+      } catch (e) {
+        /* offline / no session */
+        if (diagOn) diagNote("records-sync", { failed: e instanceof Error ? e.message : String(e), res: diagRes, ms: Date.now() - diagT0 });
+      }
       finally { setRestoringChecks(false); }
     })();
   }, []);
