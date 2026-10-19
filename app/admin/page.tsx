@@ -469,6 +469,14 @@ export default function AdminDashboard() {
           </button>
         )}
 
+        {/* 📍 الحي والشارع لسجلات مندوب اتصدّرت من غيره — بالـID (سوبر أدمن فقط، ١٩ أكتوبر ٢٠٢٦) */}
+        {isSuper && (
+          <button onClick={() => router.push("/admin/area-fill")}
+            className="flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 py-3 text-sm font-bold text-primary transition hover:bg-primary/20 active:scale-[0.99]">
+            <MapPin size={16} /> املأ الحي والشارع لسجلات مندوب (بالـID)
+          </button>
+        )}
+
         {/* بث للمناديب — «رسالة للمناديب» لأي أدمن (المالك ٦ أكتوبر ٢٠٢٦: «خلي الادمن يقدر يبعت رساله
             … ل كل المناديب»). الاستطلاع وإشعار الهاتف للسوبر أدمن بس زي ما كانوا. */}
         <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">

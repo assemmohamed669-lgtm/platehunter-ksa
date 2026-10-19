@@ -44,7 +44,9 @@ import { areaOf, fieldCategoryCounts, fieldCategoryList, fieldCategoryOnly, type
 import { dayKeyOf, recordDays, dayLabel, entriesOfDay, toggleSel, toggleAll, withoutSelected, editorDeleteIds } from "@/lib/recordsSelection";
 import { buildScopedDupeColorMap } from "@/lib/dupeColors";
 import { authHeader } from "@/lib/authHeader";
-import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, restoreMissingFieldChecks, scheduleFieldChecksUpload } from "@/lib/syncFieldCheck";
+import { pushPendingFieldChecks, pushFieldCheckDeletes, restoreFieldChecks, restoreMissingFieldChecks, scheduleFieldChecksUpload, pullEditedFieldChecks } from "@/lib/syncFieldCheck";
+import AreaFillPanel from "@/components/AreaFillPanel";
+import { AREA_FILL_FOR_ALL, needsAreaFill } from "@/lib/areaBackfill";
 import { syncFailureMessage } from "@/lib/syncStatus";
 import { pushOneChassis, pushChassisRecords, restoreChassisRecords } from "@/lib/syncChassis";
 import { supabase } from "@/lib/supabaseClient";
@@ -2270,6 +2272,13 @@ export default function InstantCheckPage() {
   const showRecorderCol = recTab === "mjdata" && tabEntries.some((e) => !!String(e.row?.[RECORDER_KEY] ?? "").trim());
   /** «سجلاتي» — وفي «داتا التسجيلات» دايماً سجلاتي (المجموعة في «سجل التشييك») */
   const scopeMine = recTab === "mjdata" || recordsScope === "mine";
+  /** 📍 لوحاتي اللي ليها موقع ومن غير حي (لزرار «املأ الحي والشارع») — بس لما الزرار ظاهر */
+  const missingAreaCount = useMemo(
+    () => (AREA_FILL_FOR_ALL || isSuper)
+      ? fieldEntries.reduce((n, e) => n + (needsAreaFill({ local_id: e.id, lat: e.lat ?? null, lng: e.lng ?? null, extra: e.row }) ? 1 : 0), 0)
+      : 0,
+    [fieldEntries, isSuper],
+  );
   const fieldCounts = useMemo(
     () => fieldCategoryCounts(tabEntries, isWantedEntry),
     [tabEntries, isWantedEntry],
@@ -6563,6 +6572,18 @@ export default function InstantCheckPage() {
               <h2 className="text-sm font-bold text-ink truncate">{showRecordsTabs ? (recTab === "mjdata" ? "داتا التسجيلات" : "سجل التشييك") : "شيت التسجيلات (صوتي+يدوي)"}</h2>
               <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[11px] font-bold text-brand shrink-0">{tabEntries.length}</span>
             </div>
+
+            {/* 📍 «املأ الحي والشارع» من موقع كل لوحة — للوحات اللي اتصدّرت والتلقائي مقفول (السوبر أدمن الأول — `lib/areaBackfill.ts`) */}
+            {scopeMine && (AREA_FILL_FOR_ALL || isSuper) && (
+              <AreaFillPanel mode="self" agentId={agentIdRef.current} missingCount={missingAreaCount}
+                beforeRun={async () => { const uid = agentIdRef.current; if (uid) await pushPendingFieldChecks(uid); }}
+                afterRun={async () => {
+                  const uid = agentIdRef.current;
+                  if (!uid) return;
+                  await pullEditedFieldChecks(uid);
+                  setFieldEntries(await getAllFieldCheckEntries(uid).catch(() => []));
+                }} />
+            )}
 
             {/* عدادات قابلة للضغط — الكل / صوتي / يدوي / مطلوب. الضغط يفلتر العرض للفئة. */}
             <div className="flex flex-wrap gap-2" dir="rtl">
