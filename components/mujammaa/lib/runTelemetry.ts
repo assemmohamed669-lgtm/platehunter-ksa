@@ -27,7 +27,12 @@ const ERRORS_MAX = 10;
 const ERROR_CHARS = 200;
 const SEND_TIMEOUT_MS = 15_000;
 
+/** «مسح» من الجدول قبل التصدير — كل واحدة لوحة البرنامج طلّعها والمندوب شالها (غالباً زيادة/مكررة) */
+export const REMOVED_MAX = 200;
+
 export interface DeviceInfo {
+  /** معرّف البناء اللي شغّال على الموبايل — نسخة قديمة مكاشة بتبان هنا */
+  app?: string;
   platform?: string;
   ua?: string;
   online?: boolean;
@@ -38,7 +43,8 @@ export interface DeviceInfo {
 
 export interface RunReport {
   v: 1;
-  kind: "run" | "fail" | "export";
+  /** `issue` = مشاكل الموبايل اللي حصلت برّه أي تفريغ (الميكروفون · التخزين · السيرفر مش جاهز …) */
+  kind: "run" | "fail" | "export" | "issue";
   at: string;
   uid: string | null;
   agent: string;
@@ -51,8 +57,21 @@ export interface RunReport {
   n_plates: number;
   pinned: number;
   wanted: number;
-  /** `ts` = ثانية النطق من السيرفر (اللي الدبوس بيتحط بيها) · `pm` = ليه مالهاش موقع / إنه منسوخ */
-  plates: Array<{ p: string; t: number | null; ts?: number; ty?: string; w?: 1; acc: number | null; pm?: string }>;
+  /**
+   * `ts` = ثانية النطق من السيرفر (اللي الدبوس بيتحط بيها) · `pm` = ليه مالهاش موقع / إنه منسوخ ·
+   * `h` = اللوحة زي ما البرنامج سمعها لو المندوب صلّحها بإيده · `th` = النوع اللي طلع لو المندوب غيّره.
+   */
+  plates: Array<{
+    p: string;
+    t: number | null;
+    ts?: number;
+    ty?: string;
+    w?: 1;
+    acc: number | null;
+    pm?: string;
+    h?: string;
+    th?: string;
+  }>;
   fixes?: number;
   /**
    * 📍 الموقع وقت التسجيل (١٩ أكتوبر): `f` = كل قراءة [ثانيتها من بداية الصوت (سالب = قبل البداية), دقتها م] ·
@@ -71,7 +90,16 @@ export interface RunReport {
     acc_max?: number;
   };
   errors?: string[];
-  export?: { saved: number; failed: number; total: number; no_pin: number; edited?: number; deleted?: number };
+  export?: {
+    saved: number;
+    failed: number;
+    total: number;
+    no_pin: number;
+    edited?: number;
+    deleted?: number;
+    /** اللوحات اللي المندوب مسحها من الجدول (بثانية نطقها) */
+    removed?: Array<{ p: string; t: number | null }>;
+  };
   dev?: DeviceInfo;
 }
 
@@ -116,6 +144,10 @@ export function buildRunReport(i: RunReportInput): RunReport {
     o.acc = e.pin && num(e.pin.accuracy) !== undefined ? Math.round(e.pin.accuracy) : null;
     const pm = pinNote(e);
     if (pm) o.pm = pm;
+    // ✍️ تصحيح المندوب بإيده = الحقيقة: «طلع X وصلّحها Y» من غير ما نسأله
+    const heard = e.review?.heardPlate;
+    if (e.review?.manuallyEdited && heard && heard !== o.p) o.h = String(heard);
+    if (typeof e.typeHeard === "string" && e.typeHeard !== (e.vehicleType ?? "")) o.th = e.typeHeard;
     return o;
   });
   const clip = i.clip
@@ -165,7 +197,10 @@ export function buildRunReport(i: RunReportInput): RunReport {
   if (num(i.fixes) !== undefined) r.fixes = i.fixes;
   if (Array.isArray(i.track)) r.gps = gpsSummary(i.track, num(i.clip?.sec));
   if (i.errors?.length) r.errors = i.errors.slice(0, ERRORS_MAX).map((e) => String(e).slice(0, ERROR_CHARS));
-  if (i.export) r.export = i.export;
+  if (i.export) {
+    r.export = { ...i.export };
+    if (Array.isArray(i.export.removed)) r.export.removed = i.export.removed.slice(0, REMOVED_MAX);
+  }
   r.dev = i.dev ?? deviceInfo();
   return r;
 }
@@ -215,8 +250,27 @@ function gpsSummary(track: TrackFix[], sec: number | undefined): NonNullable<Run
   return g;
 }
 
+/**
+ * 🧯 مشاكل الموبايل اللي حصلت **برّه** أي تفريغ (الميكروفون مارضيش · التخزين · السيرفر مش جاهز …) — من غيرها
+ * المندوب اللي ماعرفش يسجّل أصلاً مالوش أي أثر على السيرفر. كل غلط مرة واحدة (`seen`)، والأقدم الأول.
+ * اللي حصل وقت تفريغ (`jobActive`) بيتعلّم بس — تقرير التفريغ نفسه بيبعته (`errors`).
+ */
+export function issueBatch(
+  snapshot: ReadonlyArray<{ id: string; source: string; message: string }>,
+  seen: Set<string>,
+  jobActive: boolean
+): string[] {
+  const out: string[] = [];
+  for (const e of snapshot) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    if (!jobActive) out.push(`${e.source}: ${e.message}`.slice(0, ERROR_CHARS));
+  }
+  return out.reverse();
+}
+
 export function deviceInfo(): DeviceInfo {
-  const d: DeviceInfo = {};
+  const d: DeviceInfo = { app: process.env.NEXT_PUBLIC_BUILD_ID || "dev" };
   try {
     const cap = (globalThis as { Capacitor?: { getPlatform?: () => string } }).Capacitor;
     d.platform = cap?.getPlatform?.() || "web";

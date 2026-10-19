@@ -156,6 +156,17 @@ describe("التعديل اليدوي", () => {
     const edited = applyManualEdit(p, { digits: "9a8b7c6d5" });
     expect(edited.digits).toBe("9876");
   });
+
+  it("📍 علامة الموقع («نفس موقع اللوحة اللي قبلها» / «من غير موقع دقيق») بتفضل بعد تعديل اللوحة — الموقع ماتغيّرش", () => {
+    const [p] = extractPlates("أ ب ح 1234");
+    const marked = { ...p, notes: ["🟡 للمراجعة", "📍 نفس موقع اللوحة اللي قبلها (فرق 3ث)"] };
+    expect(applyManualEdit(marked, { digits: "1235" }).notes).toEqual([
+      "تعديل يدوي من المندوب",
+      "📍 نفس موقع اللوحة اللي قبلها (فرق 3ث)",
+    ]);
+    const missing = { ...p, notes: ["من غير موقع دقيق — مافيش قراءة GPS وقت التسجيل"] };
+    expect(applyManualEdit(missing, { digits: "1235" }).notes).toContain("من غير موقع دقيق — مافيش قراءة GPS وقت التسجيل");
+  });
 });
 
 describe("pickBestTranscript — اختيار أفضل احتمال", () => {
