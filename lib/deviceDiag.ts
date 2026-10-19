@@ -22,7 +22,11 @@
  * ١٨ أكتوبر ٢٠٢٦: مندوب الآيفون اللي Voice PRO بيرجّعه لـ«يدوي» (طلب المالك — هو بس).
  * شيل الرقم أول ما السبب يبان.
  */
-export const DIAG_AGENT_IDS: string[] = ["fbe0486e-e979-4427-ba0e-c33572f1d7be"];
+export const DIAG_AGENT_IDS: string[] = [
+  "fbe0486e-e979-4427-ba0e-c33572f1d7be",
+  // ١٩ أكتوبر ٢٠٢٦: آيفون ١٦ برو ماكس — «موقع واحد على كل اللوحات» (سطر موقع لكل لوحة — `lib/gpsDiag.ts`)
+  "56627d4f-1e8c-4f74-bf1e-8e75077d5143",
+];
 
 export const DIAG_MAX_EVENTS = 600;
 const STATE_KEY = "ph:diag:state";
@@ -242,6 +246,11 @@ export function diagNote(k: string, data: Record<string, unknown> = {}) {
   } catch {
     /* التشخيص عمره ما يوقّع البرنامج */
   }
+}
+
+/** الصندوق شغّال على الموبايل ده؟ (عشان الصفحة ماتحسبش حاجة على الفاضي لباقي المناديب) */
+export function diagActive(): boolean {
+  return started;
 }
 
 /** الانتقال بين الصفحات — بتتنده من الـlayout مع كل تغيير مسار */
