@@ -39,6 +39,7 @@ import {
   findNearestInVocabulary,
   isWellFormedPlate,
 } from "./plateMatch";
+import { isPinMark } from "./platePin";
 
 /* ============================================================== الأنواع */
 
@@ -520,7 +521,8 @@ export function applyManualEdit(
     status: "solid",
     needsAudioReview: false,
     manuallyEdited: true,
-    notes: ["تعديل يدوي من المندوب"],
+    // 📍 علامة الموقع بتفضل — تعديل اللوحة مابيغيّرش مكانها («نفس موقع اللوحة اللي قبلها» لازم يفضل باين)
+    notes: ["تعديل يدوي من المندوب", ...(plate.notes || []).filter(isPinMark)],
     corrections: plate.corrections,
   };
 }

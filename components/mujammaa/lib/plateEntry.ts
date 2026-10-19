@@ -127,6 +127,11 @@ export interface PlateEntry {
   recorderName?: string;
   /** 🏘️ «اسم الحي» جه من موقع اللوحة (المندوب ماكتبوش) — `components/mujammaa/lib/autoDistrict.ts` */
   neighborhoodAuto?: boolean;
+  /**
+   * ✍️ النوع اللي البرنامج طلّعه **قبل** ما المندوب يغيّره من المنسدلة (`""` = ماكانش فيه نوع) — للتقرير بس
+   * («قال ونيت وطلع فان»)، مابيتصدّرش. بيتحفظ أول تغيير بس (١٩ أكتوبر ٢٠٢٦).
+   */
+  typeHeard?: string;
 }
 
 /**

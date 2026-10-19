@@ -5,8 +5,10 @@ import {
   OUTBOX_KEY,
   OUTBOX_MAX,
   PLATES_MAX,
+  REMOVED_MAX,
   buildRunReport,
   deviceInfo,
+  issueBatch,
   loadOutbox,
   sendRunReport,
 } from "./runTelemetry";
@@ -231,5 +233,77 @@ describe("buildRunReport — 📍 تفاصيل الموقع", () => {
     const r = buildRunReport({ kind: "run", agent: "x", uid: null, clip: { sec: 2000 }, entries: [], track, now: T0, dev: {} });
     expect(r.gps!.n).toBe(GPS_FIXES_MAX + 300);
     expect(r.gps!.f.length).toBe(GPS_FIXES_MAX);
+  });
+});
+
+/**
+ * 🧾 التقرير الكامل لكل مندوب في التجربة المفتوحة (١٩ أكتوبر ٢٠٢٦). المالك: «تقرير مفصل كامل … قال ايه
+ * وطلع ايه ومطلعش ايه وايه السبب … من غير ما نطلب من كل واحد يبعتلنا». تصحيح المندوب بإيده هو الحقيقة:
+ * «طلع X وصلّحها Y» — من غير ما نسأله.
+ */
+describe("buildRunReport — اللي المندوب صلّحه بإيده", () => {
+  it("لوحة اتعدّلت ⇒ `h` = اللي البرنامج سمعه · نوع اتغيّر ⇒ `th` = النوع اللي طلع", () => {
+    const r = buildRunReport({
+      kind: "export",
+      agent: "x",
+      uid: null,
+      entries: [
+        entry("ابح1234", 1, { review: { plate: "ابح1234", heardPlate: "ابج1234", manuallyEdited: true }, typeHeard: "" }),
+        entry("حطس5678", 2, { review: { plate: "حطس5678", heardPlate: "حطس5678" }, vehicleType: "ونيت", typeHeard: "فان" }),
+        entry("دعو9012", 3, { review: { plate: "دعو9012", heardPlate: "دعو9012", manuallyEdited: true }, vehicleType: "فان", typeHeard: "فان" }),
+      ],
+      export: { saved: 3, failed: 0, total: 3, no_pin: 0, edited: 3, deleted: 1, removed: [{ p: "رسس1111", t: 9.2 }] },
+      now: T0,
+      dev: {},
+    });
+    expect(r.plates[0]).toMatchObject({ p: "ابح1234", h: "ابج1234", th: "" });
+    expect(r.plates[1]).toMatchObject({ p: "حطس5678", ty: "ونيت", th: "فان" });
+    expect(r.plates[1].h).toBeUndefined();
+    expect(r.plates[2].h).toBeUndefined();
+    expect(r.plates[2].th).toBeUndefined();
+    expect(r.export!.removed).toEqual([{ p: "رسس1111", t: 9.2 }]);
+  });
+
+  it("مسح كتير ⇒ القايمة ليها حد", () => {
+    const removed = Array.from({ length: REMOVED_MAX + 40 }, (_, i) => ({ p: `ابح${1000 + i}`, t: i }));
+    const r = buildRunReport({
+      kind: "export",
+      agent: "x",
+      uid: null,
+      export: { saved: 0, failed: 0, total: 0, no_pin: 0, removed },
+      dev: {},
+    });
+    expect(r.export!.removed).toHaveLength(REMOVED_MAX);
+  });
+});
+
+describe("buildRunReport — 🧯 مشاكل الموبايل برّه التفريغ (الميكروفون · التخزين · السيرفر)", () => {
+  it("`issue` بيتبعت بأغلاطه", () => {
+    const r = buildRunReport({ kind: "issue", agent: "x", uid: "u", errors: ["الميكروفون: الإذن مرفوض"], dev: {} });
+    expect(r.kind).toBe("issue");
+    expect(r.errors).toEqual(["الميكروفون: الإذن مرفوض"]);
+  });
+});
+
+describe("deviceInfo — نسخة البرنامج اللي على الموبايل", () => {
+  it("`app` = معرّف البناء (يكشف الموبايل اللي شغّال نسخة قديمة)", () => {
+    expect(typeof deviceInfo().app).toBe("string");
+  });
+});
+
+describe("issueBatch — مشاكل الموبايل اللي حصلت برّه أي تفريغ", () => {
+  const e = (id: string, source: string, message: string) => ({ id, at: 0, source, message }) as never;
+
+  it("الجديد بس (مرة واحدة لكل غلط) ومن غير اللي وقت التفريغ (التفريغ بيبعتها في تقريره)", () => {
+    const seen = new Set<string>();
+    expect(issueBatch([e("2", "الميكروفون", "الإذن مرفوض"), e("1", "السيرفر", "مش جاهز")], seen, false)).toEqual([
+      "السيرفر: مش جاهز",
+      "الميكروفون: الإذن مرفوض",
+    ]);
+    expect(issueBatch([e("3", "التخزين", "مليان"), e("2", "الميكروفون", "الإذن مرفوض")], seen, false)).toEqual([
+      "التخزين: مليان",
+    ]);
+    expect(issueBatch([e("4", "التفريغ", "اتقطع")], seen, true)).toEqual([]);
+    expect(issueBatch([e("4", "التفريغ", "اتقطع")], seen, false)).toEqual([]);
   });
 });
