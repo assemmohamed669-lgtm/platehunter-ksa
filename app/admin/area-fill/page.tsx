@@ -4,7 +4,8 @@
  * لوحة الأدمن — 📍 «املأ الحي والشارع لسجلات مندوب» (سوبر أدمن فقط — `lib/areaBackfill.ts`).
  *
  * المالك (١٩ أكتوبر ٢٠٢٦): «ينفع لو جبتله ال يوزر اي دي بتاع المندوب دة نحطله اسم الشارع والحي بس عايز دة
- * يحصل ل كل الداتا بتاعته حتي اللي مصدرها من زمان». الحماية الحقيقية في السيرفر (`/api/area-fill`).
+ * يحصل ل كل الداتا بتاعته حتي اللي مصدرها من زمان» · «خلي الخيار اني اختار اسم المشترك او الادمن اللي هعمل معاه
+ * كدة» ⇒ قايمة كل الحسابات بالاسم. الحماية الحقيقية في السيرفر (`/api/area-fill`).
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -12,10 +13,12 @@ import { ChevronLeft } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import AreaFillPanel from "@/components/AreaFillPanel";
+import type { PickAccount } from "@/lib/accountPicker";
 
 export default function AreaFillAdminPage() {
   const router = useRouter();
   const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [accounts, setAccounts] = useState<PickAccount[]>([]);
 
   // السوبر أدمن فقط (مش أي أدمن عادي).
   useEffect(() => {
@@ -25,6 +28,11 @@ export default function AreaFillAdminPage() {
       const { data: prof } = await supabase.from("profiles").select("role, is_super").eq("id", userId).single();
       if (prof?.role !== "admin" || !prof?.is_super) { router.replace("/admin"); return; }
       setAuthorized(true);
+      // كل الحسابات (مشتركين وأدمنز) للاختيار بالاسم — نفس قراية لوحة الأدمن (RLS للأدمن)
+      const { data } = await supabase.from("profiles")
+        .select("id, username, email, phone, role, is_super, is_active")
+        .order("username", { ascending: true });
+      setAccounts((data ?? []) as PickAccount[]);
     })();
   }, [router]);
 
@@ -41,7 +49,7 @@ export default function AreaFillAdminPage() {
           رجوع <ChevronLeft size={15} />
         </button>
       </div>
-      <AreaFillPanel mode="admin" />
+      <AreaFillPanel mode="admin" accounts={accounts} />
     </div>
   );
 }
