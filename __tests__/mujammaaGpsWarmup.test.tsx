@@ -43,7 +43,7 @@ describe("الربط في اللياوت", () => {
 
   it("بيشتغل بـ`canUseMujammaa` بس (نفس قفل المجمّع) — مش لكل المناديب", () => {
     expect(SRC).toMatch(/import MujammaaGpsWarmup from "@\/components\/MujammaaGpsWarmup"/);
-    expect(SRC).toMatch(/import \{ canUseMujammaa \} from "@\/lib\/mujammaaAccess"/);
+    expect(SRC).toMatch(/import \{[^}]*\bcanUseMujammaa\b[^}]*\} from "@\/lib\/mujammaaAccess"/);
     expect(SRC).toMatch(/setMjGpsWarm\(canUseMujammaa\(rp\)\)/);
     expect(SRC).toMatch(/<MujammaaGpsWarmup enabled=\{mjGpsWarm\} \/>/);
   });

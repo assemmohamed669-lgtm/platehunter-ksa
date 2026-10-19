@@ -25,7 +25,7 @@ describe("🔘 «التسجيل» لمندوب بعينه — الربط", () =>
 
   it("الشريط اللي تحت: بيقرا العمود من غير ما يوقّع، و«صوت فقط» اللي اتفتحله بيشوف «التسجيل»", () => {
     const s = read("components", "BottomNav.tsx");
-    expect(s).toMatch(/selectWithOptional\(/);
+    expect(s).toMatch(/selectWithOptional[<(]/);
     expect(s).toMatch(/MJ_FLAG_COL/);
     // شريط «صوت فقط»: زرار التسجيل لما hasAll
     const voice = s.slice(s.indexOf("{!restPages ? ("), s.indexOf("tabs.map(({ href, label, icon: Icon })"));
@@ -36,7 +36,7 @@ describe("🔘 «التسجيل» لمندوب بعينه — الربط", () =>
   it("صفحة «التسجيل» والتشييك بيقروا العمود بنفس الطريقة", () => {
     for (const f of [["app", "(app)", "registration", "page.tsx"], ["app", "(app)", "instant-check", "page.tsx"]]) {
       const s = read(...f);
-      expect(s, f.join("/")).toMatch(/selectWithOptional\(/);
+      expect(s, f.join("/")).toMatch(/selectWithOptional[<(]/);
       expect(s, f.join("/")).toMatch(/MJ_FLAG_COL/);
     }
   });
