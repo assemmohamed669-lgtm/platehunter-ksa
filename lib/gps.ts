@@ -1,3 +1,5 @@
+import { diagNote } from "./deviceDiag";
+
 export interface GpsCoords {
   lat: number;
   lng: number;
@@ -108,6 +110,19 @@ export function freshestOf(
   return b.timestamp > a.timestamp ? b : a;   // التعادل ⇒ الأول (سلوك ثابت)
 }
 
+/**
+ * 📍 **حارس الموقع على الآيفون** — تقرير الصندوق الأسود (١٩ أكتوبر ٢٠٢٦، آيفون ١٦ برو ماكس): ٦ دقايق الموقع بيتحدّث ~مرة ونص في
+ * الثانية وكل لوحة بمكانها، وبعدين الآيفون **وقف يبعت خالص** (صفر تحديثات ١٤٦ ثانية والبرنامج قدامه) والقراية الجديدة بترجع
+ * نفس القديمة بوقتها ⇒ كل اللوحات بنقطة واحدة. الآيفون بيوقّف الموقع لوحده لما يحس إن صاحبه واقف (ووضع الطاقة المنخفضة
+ * بيسرّعه) ومابيرجعش لوحده — Apple: البرنامج هو اللي يعيد التشغيل. ⇒ المراقب واقف ⇒ نقفله ونشغّل واحد جديد.
+ * **الآيفون بس، والبرنامج قدامه، والموقع واقف** — شغّال كويس ⇒ ولا حاجة بتتغيّر؛ الأندرويد والمتصفّح مايتلمسوش.
+ */
+const IOS_WATCH_STALE_MS = 6_000;
+/** أول تشغيل ولسه ماجاش ولا موقع — قفلة الأقمار بتاخد وقت. */
+const IOS_WATCH_FIRST_FIX_MS = 30_000;
+/** أقل مسافة بين إعادتين (لو لسه واقف) — مانفضلش نقفل ونفتح كل ثانية. */
+const IOS_WATCH_RESTART_GAP_MS = 15_000;
+
 class GpsService {
   private watchId: number | null = null;
   private capWatchId: string | null = null;
@@ -120,6 +135,64 @@ class GpsService {
   private lastWatchAt = 0;
   private lastWatchAcc: number | null = null;
   private countWatch(accuracy: number) { this.watchUpdates++; this.lastWatchAt = Date.now(); this.lastWatchAcc = accuracy; }
+  /** 📍 حارس الآيفون (فوق الكلاس). */
+  private isIos = false;
+  private watchStartedAt = 0;
+  private lastRestartAt = 0;
+  private restarting = false;
+
+  /** تحديث من مراقب الجهاز (الأصلي). نفس الدالة للمراقب الجديد بعد إعادة التشغيل. */
+  private onCapWatch = (pos: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number } | null, err?: unknown) => {
+    // A transient watch error must NOT wipe an already-good fix.
+    if (err || !pos) { if (!this.lastCoords) this.notifyListeners(null); return; }
+    this.countWatch(pos.coords.accuracy);
+    this.lastCoords = pickBetterFix(this.lastCoords, {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+      timestamp: pos.timestamp,
+    });
+    this.notifyListeners(this.lastCoords);
+  };
+
+  private iosWatchStale(now: number): boolean {
+    return this.lastWatchAt
+      ? now - this.lastWatchAt >= IOS_WATCH_STALE_MS
+      : now - this.watchStartedAt >= IOS_WATCH_FIRST_FIX_MS;
+  }
+
+  private iosWatchNeedsRestart(now: number): boolean {
+    if (!this.isIos || this.capWatchId === null || this.startCount <= 0 || this.restarting) return false;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return false;
+    return this.iosWatchStale(now);
+  }
+
+  /** يقفل مراقب الآيفون الواقف ويشغّل واحد جديد (Apple: بعد ما الموقع يقف، البرنامج هو اللي يرجّعه). */
+  private async restartIosWatch(reason: "stale" | "plate"): Promise<void> {
+    const now = Date.now();
+    if (!this.iosWatchNeedsRestart(now)) return;
+    if (this.lastRestartAt && now - this.lastRestartAt < IOS_WATCH_RESTART_GAP_MS) return;
+    this.restarting = true;
+    this.lastRestartAt = now;
+    const staleMs = this.lastWatchAt ? now - this.lastWatchAt : null;
+    try {
+      const { Geolocation } = await import("@capacitor/geolocation");
+      const old = this.capWatchId;
+      if (old !== null) { try { await Geolocation.clearWatch({ id: old }); } catch { /* ignore */ } }
+      if (this.startCount <= 0) { this.capWatchId = null; return; }   // التتبّع اتقفل في النص
+      const id = await Geolocation.watchPosition({ enableHighAccuracy: true, timeout: 20000 }, this.onCapWatch);
+      if (this.startCount <= 0) {
+        try { await Geolocation.clearWatch({ id }); } catch { /* ignore */ }
+        this.capWatchId = null;
+        return;
+      }
+      this.capWatchId = id;
+      this.watchStartedAt = Date.now();
+      diagNote("gps-restart", { reason, staleMs });
+    } catch { /* المرة الجاية */ } finally {
+      this.restarting = false;
+    }
+  }
 
   watchStats(): { updates: number; lastAt: number; lastAcc: number | null; running: boolean } {
     return { updates: this.watchUpdates, lastAt: this.lastWatchAt, lastAcc: this.lastWatchAcc, running: this.startCount > 0 };
@@ -138,6 +211,10 @@ class GpsService {
     if (await isNativeApp()) {
       try {
         const { Geolocation } = await import("@capacitor/geolocation");
+        try {
+          const { Capacitor } = await import("@capacitor/core");
+          this.isIos = Capacitor.getPlatform?.() === "ios";
+        } catch { this.isIos = false; }
         await Geolocation.requestPermissions();
 
         // Phase 1 — a FAST, coarse fix (network/wi-fi, no satellite lock) so a
@@ -157,22 +234,16 @@ class GpsService {
           .catch(() => {});
 
         // Phase 2 — keep refining with high accuracy in the background.
+        this.watchStartedAt = Date.now();
         this.capWatchId = await Geolocation.watchPosition(
           { enableHighAccuracy: true, timeout: 20000 },
-          (pos, err) => {
-            // A transient watch error must NOT wipe an already-good fix.
-            if (err || !pos) { if (!this.lastCoords) this.notifyListeners(null); return; }
-            this.countWatch(pos.coords.accuracy);
-            this.lastCoords = pickBetterFix(this.lastCoords, {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              accuracy: pos.coords.accuracy,
-              timestamp: pos.timestamp,
-            });
-            this.notifyListeners(this.lastCoords);
-          }
+          this.onCapWatch,
         );
-        this.intervalId = setInterval(() => this.notifyListeners(this.lastCoords), 1000);
+        this.intervalId = setInterval(() => {
+          this.notifyListeners(this.lastCoords);
+          // 📍 الآيفون والموقع واقف ⇒ نعيد تشغيله (غير كده ولا حاجة)
+          if (this.iosWatchNeedsRestart(Date.now())) void this.restartIosWatch("stale");
+        }, 1000);
       } catch (e) {
         // ⚠️ **بلا سقوط على الويب** — ده كان بيطلّع رسالة إذن الموقع للموقع
         //    الإلكتروني وسط شغل المندوب. التتبّع بيفضل على آخر موقع مخزّن.
@@ -371,6 +442,8 @@ class GpsService {
      * ⇒ مصدر تمييز كل لوحة هو **المراقب الحي** (الفحص الدافي فوق)، مش نداءات
      *   متوازية. والمشاركة هنا بتمنع طوفان الطلبات لما المندوب ينطق بسرعة.
      */
+    // 📍 الآيفون والموقع واقف ⇒ نعيد تشغيله دلوقتي — اللوحات اللي بعدها تاخد مكانها هي
+    if (this.iosWatchNeedsRestart(Date.now())) void this.restartIosWatch("plate");
     if (this.freshInFlight) return this.freshInFlight;
 
     const applyRaw = (p: { coords: { latitude: number; longitude: number; accuracy: number }; timestamp: number }): GpsCoords => {
