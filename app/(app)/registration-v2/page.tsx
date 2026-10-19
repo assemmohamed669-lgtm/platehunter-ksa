@@ -120,7 +120,8 @@ import { startTelemetrySession, sharedTelemetryQueue, type TelBatch } from "@/li
 import { getDevicePlatform } from "@/lib/devicePlatform";
 import { BUILD_ID } from "@/lib/appVersion";
 // 🩺 الصندوق الأسود (مندوب واحد في القايمة — `lib/deviceDiag.ts`): مابيعملش حاجة لأي حد تاني
-import { diagEnabledFor, diagNote } from "@/lib/deviceDiag";
+import { diagEnabledFor, diagNote, diagActive } from "@/lib/deviceDiag";
+import { gpsPlateDiag, gpsWatchDiag, type PrevStamp } from "@/lib/gpsDiag";
 import { createCoalescedSaver } from "@/lib/coalescedSave";
 import { LIGHT_TABLE_ROWS, LIGHT_WARN_ROWS, VOICEPRO_LIGHT_FOR_ALL } from "@/lib/voiceProLight";
 
@@ -1487,8 +1488,16 @@ export default function RegistrationV2Page() {
            */
           if (!noGpsRef.current) {
             const rowId = fresh.id;
+            const askedAt = Date.now();
             void gpsService.getFreshReading({ timeoutMs: 8000 }).then((fx) => {
               if (fx) setRowsSafe((prev) => stampRowGps(prev, rowId, fx) as LiveRow[]);
+              // 🩺 الصندوق الأسود (مندوب واحد — «موقع واحد على كل اللوحات»): الموقع اتاخد إزاي، من غير المكان نفسه
+              if (diagActive()) {
+                const now = Date.now();
+                const w = gpsService.watchStats();
+                diagNote("gps-plate", gpsPlateDiag(diagPrevStampRef.current, fx, now, now - askedAt, w, document.visibilityState));
+                if (fx) diagPrevStampRef.current = { fix: fx, at: now, watchUpdates: w.updates };
+              }
             }).catch(() => { /* الموقع فشل — الصف بيفضل بختمه المبدئي */ });
           }
         },
@@ -1618,6 +1627,16 @@ export default function RegistrationV2Page() {
       marks.push({ label: "المايك", at: Date.now() });
       engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
+      // 🩺 الصندوق الأسود: نبضة المراقب كل ١٥ ثانية والتسجيل شغّال (الآيفون بيبعت تحديثات موقع قد إيه)
+      if (diagActive()) {
+        if (diagGpsTimerRef.current) clearInterval(diagGpsTimerRef.current);
+        let lastN = gpsService.watchStats().updates;
+        diagGpsTimerRef.current = setInterval(() => {
+          const w = gpsService.watchStats();
+          diagNote("gps-watch", gpsWatchDiag(w, lastN, Date.now()));
+          lastN = w.updates;
+        }, 15_000);
+      }
       // 📞 التطبيق راح للخلفية وهو بيفتح الميك (مكالمة جت في النص) ⇒ نقفل على طول
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         stopRef.current("background");
@@ -1642,7 +1661,13 @@ export default function RegistrationV2Page() {
     }
   }
 
-  function stopTimer() { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } }
+  function stopTimer() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (diagGpsTimerRef.current) { clearInterval(diagGpsTimerRef.current); diagGpsTimerRef.current = null; }
+  }
+  /** 🩺 الصندوق الأسود: آخر لوحة اتختمت (للمقارنة باللي بعدها) + نبضة المراقب. */
+  const diagPrevStampRef = useRef<PrevStamp | null>(null);
+  const diagGpsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * ⏹️ إيقاف التسجيل — بإيد المندوب (`manual`) أو **لوحده** (مكالمة/خلفية/
    * الميك اتاخد) أو عطل (`fatal`).

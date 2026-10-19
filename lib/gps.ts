@@ -115,6 +115,15 @@ class GpsService {
   private listeners: Set<GpsCallback> = new Set();
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private startCount = 0;
+  /** 🩺 للتشخيص بس (`lib/gpsDiag.ts`): الآيفون بعت للمراقب كام تحديث وآخرهم إمتى — مابيغيّرش أي موقع. */
+  private watchUpdates = 0;
+  private lastWatchAt = 0;
+  private lastWatchAcc: number | null = null;
+  private countWatch(accuracy: number) { this.watchUpdates++; this.lastWatchAt = Date.now(); this.lastWatchAcc = accuracy; }
+
+  watchStats(): { updates: number; lastAt: number; lastAcc: number | null; running: boolean } {
+    return { updates: this.watchUpdates, lastAt: this.lastWatchAt, lastAcc: this.lastWatchAcc, running: this.startCount > 0 };
+  }
 
   async startTracking() {
     if (typeof window === "undefined") return;
@@ -153,6 +162,7 @@ class GpsService {
           (pos, err) => {
             // A transient watch error must NOT wipe an already-good fix.
             if (err || !pos) { if (!this.lastCoords) this.notifyListeners(null); return; }
+            this.countWatch(pos.coords.accuracy);
             this.lastCoords = pickBetterFix(this.lastCoords, {
               lat: pos.coords.latitude,
               lng: pos.coords.longitude,
@@ -196,6 +206,7 @@ class GpsService {
     // Phase 2 — high-accuracy watch refines it in the background.
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        this.countWatch(pos.coords.accuracy);
         this.lastCoords = pickBetterFix(this.lastCoords, {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
