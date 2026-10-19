@@ -21,10 +21,13 @@ describe("hasAllServices / canUseMujammaa", () => {
     expect(canUseMujammaa(all)).toBe(MUJAMMAA_FOR_DELEGATES);
   });
 
-  it("⛔ مقفول على المناديب لحد ما المالك يقول (١٨ أكتوبر: «المهم متفتحش للمناديب دلوقتي»)", () => {
-    expect(MUJAMMAA_FOR_DELEGATES).toBe(false);
-    expect(canUseMujammaa(all)).toBe(false);
+  it("✅ مفتوح للمناديب المشتركين في كل الخدمات — تجربة (المالك ١٩ أكتوبر: «انا هفتح للكل علشان نشوف كل حاجه»)", () => {
+    expect(MUJAMMAA_FOR_DELEGATES).toBe(true);
+    expect(canUseMujammaa(all)).toBe(true);
     expect(canUseMujammaa({ is_super: true })).toBe(true);
+    // اللي مش مشترك في كل الخدمات لسه لأ
+    expect(canUseMujammaa({ ...all, rest_until: PAST })).toBe(false);
+    expect(canUseMujammaa(null)).toBe(false);
   });
 
   it("صوت بس ⇒ لأ (باقي البرنامج مقفول أو أيامه خلصت)", () => {

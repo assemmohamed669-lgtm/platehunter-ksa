@@ -13,9 +13,9 @@
 import { serviceActive } from "@/lib/subscription";
 import { voiceTabVisible } from "@/lib/voiceAccess";
 
-// ⛔ مقفول على المناديب — المالك (١٨ أكتوبر): «المهم متفتحش للمناديب دلوقتي». السوبر أدمن بيشوفه «زي المندوب»
-// (`lib/mujammaaPreview.ts`) لحد ما يقول نفتح ⇒ `true`.
-export const MUJAMMAA_FOR_DELEGATES = false;
+// ✅ مفتوح للمناديب المشتركين في كل الخدمات — **تجربة** (المالك ١٩ أكتوبر: «انا هفتح للكل علشان نشوف كل حاجه وناخد
+// تقرير كامل»). كل تسجيل بتقريره على السيرفر (`mujammaa_report.py`). الرجوع السريع ⇒ `false` (السوبر أدمن بس).
+export const MUJAMMAA_FOR_DELEGATES = true;
 
 export interface AccessProfile {
   is_super?: boolean | null;
