@@ -27,6 +27,8 @@ import { withLocationLink, buildSelectedShareText, pickMapsLink, pickRowCoords }
 import { matchesPreferred, guessDefaultColumns, isMandatory } from "@/lib/sortingCols";
 import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, defaultDataCols, recordDateOf, hasDateColumn, RECORD_DATE_LABEL, type ResultColumnSource, type MergedResultColumn } from "@/lib/resultColumns";
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
+import { AREA_COLUMN } from "@/lib/fieldCheckView";
+import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
 import { shareTextViaChooser, copyForWhatsApp, hasSharePartsSheet, splitShareText, isIosDevice } from "@/lib/share";
@@ -610,15 +612,17 @@ export default function SortingPage() {
           // 🔒 عضو مجموعة مقفول عليه السجلات (`lib/groupLocks.ts`) ⇒ السجلات مابتدخلش الفرز (كانت هتظهر في نتيجته).
           const fieldEntries = recordsLockedNow() ? [] : collapseDuplicateChecks(await getAllFieldCheckEntries());
           if (fieldEntries.length > 0) {
+            // 📍 حي المندوب (بأي اسم من التلاتة) ⇐ عمود واحد «الحي-الشارع» (`lib/recordArea.ts`)
+            const recRows = fieldEntries.map((e) => recordAreaRow(e));
             const keys = new Set<string>(["رقم اللوحة"]);
-            for (const e of fieldEntries) for (const k of Object.keys(e.row)) keys.add(k);
+            for (const r of recRows) for (const k of Object.keys(r)) keys.add(k);
             keys.add("GPS");
             keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
             keys.add("المندوب");   // مين سجّلها — بيفرق لما سجلات المجموعة تتلم مع بتاعته
             const headers = [...keys];
-            const rows = fieldEntries.map((e) => ({
+            const rows = fieldEntries.map((e, i) => ({
               "رقم اللوحة": e.plate,
-              ...e.row,
+              ...recRows[i],
               // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
               // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
               "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
@@ -1283,8 +1287,9 @@ export default function SortingPage() {
   // لو الصف موجود — فكانت النتيجة بتطلع لوحة وتاريخ وموقع وخلاص.
   const tashyeekResultCols = useMemo<MergedResultColumn[]>(() => {
     if (!tashyeekTable) return [];
+    // 📍 «الحي-الشارع» (حي المندوب) مابيتحلّش زي أي عمود — بيبقى «العنوان» بنفسه تحت (`withRecordAreaColumn`)
     const sources: ResultColumnSource[] = [
-      { kind: "data", headers: tashyeekTable.headers, rows: tashyeekTable.rows, plateCol: tashyeekPlateCol },
+      { kind: "data", headers: tashyeekTable.headers.filter((h) => h !== AREA_COLUMN), rows: tashyeekTable.rows, plateCol: tashyeekPlateCol },
     ];
     if (referralTable) {
       sources.push({ kind: "referral", headers: referralTable.headers, rows: referralTable.rows, plateCol: effectiveReferralPlateCol });
@@ -1294,7 +1299,13 @@ export default function SortingPage() {
       const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows) ?? detectPlateColumn(er.table.headers, er.table.rows);
       sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
     }
-    const fixed = resolveMergedResultColumns(sources);
+    const fixedRaw = resolveMergedResultColumns(sources);
+    /**
+     * 📍 **حي المندوب في نتيجة السجلات ومشاركتها** — المالك (٢٠ أكتوبر ٢٠٢٦): «لما بيفرز مش بيطلعو في نتيجه الفرز».
+     * «العنوان» بيقرا حي المندوب **الأول** — كان عمود من ملف التشييك (عنوان صاحب العربية عند البنك) بياخد مكانه.
+     */
+    const recordsHaveArea = tashyeekTable.rows.some((r) => String(r[AREA_COLUMN] ?? "").trim());
+    const fixed = recordsHaveArea ? withRecordAreaColumn(fixedRaw) : fixedRaw;
     // أي عمود في شيت السجلات ما اتستخدمش في الأعمدة الثابتة (زي «الحالة») بيتلحق
     // بعدها — عشان ما نفقدش أي بيانات كانت بتظهر قبل كده.
     const used = new Set(fixed.filter((c) => c.source === "data").flatMap((c) => c.sourceCols));
@@ -1351,6 +1362,16 @@ export default function SortingPage() {
   function toggleOrderCol(label: string) {
     setColOrder((prev) => { const next = toggleColumn(prev, label); saveColumnOrder(next); return next; });
   }
+  /**
+   * 📍 «تخصيص»: «العنوان» (حي المندوب في نتيجة السجلات) بيتضاف لاختياره **مرة واحدة** — كان مش موجود لما رتّب
+   * أعمدته فمكانش بيبان ولا بيتشارك (المالك ٢٠ أكتوبر ٢٠٢٦). لو شاله بعدها مايرجعش (`lib/recordArea.ts`).
+   */
+  const recordsAreaCol = useMemo(() => tashyeekResultCols.some((c) => c.sourceCols.includes(AREA_COLUMN)), [tashyeekResultCols]);
+  useEffect(() => {
+    if (orderMode !== "custom" || !recordsAreaCol) return;
+    const next = addColumnOnce(colOrder, RECORD_AREA_RESULT_LABEL, "ph:sorting:areaColAdded");
+    if (next) { setColOrder(next); saveColumnOrder(next); }
+  }, [orderMode, recordsAreaCol, colOrder]);
 
   // كل الأعمدة اللي البرنامج قدر يطلّعها (قبل اختيار/ترتيب المندوب).
   const allResultColsRaw = useMemo(
@@ -2484,7 +2505,7 @@ export default function SortingPage() {
         referralRow: hit.row,
         refPlateNorm: hit.norm,
         tashyeekRow: {
-          ...(g.extra ?? {}),
+          ...recordAreaRow({ row: g.extra ?? {} }),
           "رقم اللوحة": String(g.plate ?? ""),
           "GPS": g.maps_link ?? "",
           "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",

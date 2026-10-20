@@ -7,6 +7,7 @@
  * المكوّن من غير أي اختبار، فأي تعديل كان ممكن يحوّل مصدر الفرز في صمت.
  */
 import type { FieldCheckEntry } from "./idb";
+import { recordAreaRow } from "./recordArea";
 
 /** اسم عمود اللوحة اللي محرّك المطابقة بيقرا منه. */
 export const REC_PLATE_COL = "رقم اللوحة";
@@ -29,7 +30,7 @@ function arDate(iso: string): string {
 /** يحوّل سجلات المندوب لصفوف جدول عشان تعدّي على نفس محرّك المطابقة. */
 export function recordsToRows(entries: FieldCheckEntry[]): Record<string, string>[] {
   return entries.map((e) => ({
-    ...e.row,                                   // الأعمدة المرجعية اللي اتحفظت مع السجل
+    ...recordAreaRow(e),                        // الأعمدة المرجعية اللي اتحفظت مع السجل (📍 حي المندوب ⇐ «الحي-الشارع»)
     [REC_PLATE_COL]: e.plate,                   // لوحة السجل بتكسب أي عمود لوحة قديم جوه row
     "الطريقة": e.method ?? "",
     "التاريخ": e.checkedAt ? arDate(e.checkedAt) : "",
@@ -55,7 +56,7 @@ export function groupRecordsToRows(
   rows: GroupPlateRow[], myId: string, names: Record<string, string>,
 ): Record<string, string>[] {
   return rows.filter((r) => r.agent_id !== myId).map((r) => ({
-    ...(r.extra ?? {}),
+    ...recordAreaRow({ row: r.extra ?? {} }),   // 📍 حي الزميل ⇐ «الحي-الشارع»
     [REC_PLATE_COL]: String(r.plate ?? ""),
     "الطريقة": r.method ?? "",
     "التاريخ": r.checked_at ? arDate(r.checked_at) : "",
