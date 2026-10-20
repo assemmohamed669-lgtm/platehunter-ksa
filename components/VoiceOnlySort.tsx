@@ -48,6 +48,7 @@ import {
 } from "@/lib/idb";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, fetchGroupRecordRows, createGroupRowsCache, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
+import { addColumnOnce } from "@/lib/recordArea";
 import { supabase } from "@/lib/supabaseClient";
 import { fetchMyGroupsNames } from "@/lib/groupNames";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
@@ -369,6 +370,19 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   function toggleOrderCol(label: string) {
     setColOrder((prev) => { const next = toggleColumn(prev, label); saveVoiceSortOrder(next); return next; });
   }
+  /**
+   * 📍 «تخصيص»: حي المندوب («الحي-الشارع») بيتضاف لاختياره **مرة واحدة** أول ما يظهر في النتيجة — كان مش موجود
+   * لما رتّب أعمدته فمكانش بيبان ولا بيتشارك (المالك ٢٠ أكتوبر ٢٠٢٦). لو شاله بعدها مايرجعش (`lib/recordArea.ts`).
+   */
+  const resultsHaveArea = useMemo(
+    () => [...results, ...pasteResults].some((m) => !!String(m.dataRow?.["الحي-الشارع"] ?? m.referralRow?.["الحي-الشارع"] ?? "").trim()),
+    [results, pasteResults],
+  );
+  useEffect(() => {
+    if (orderMode !== "custom" || !resultsHaveArea) return;
+    const next = addColumnOnce(colOrder, "الحي-الشارع", "ph:voiceSort:areaColAdded");
+    if (next) { setColOrder(next); saveVoiceSortOrder(next); }
+  }, [orderMode, resultsHaveArea, colOrder]);
   const [rowCopied, setRowCopied] = useState<number | null>(null);
 
   // 📄 عمود «شهايد» (المالك ٤ أكتوبر ٢٠٢٦) — لوحات النتيجتين بتتسأل مرة واحدة في درايف

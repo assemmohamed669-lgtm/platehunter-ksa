@@ -77,6 +77,9 @@ export function recordRowForSort(row: Record<string, string>): Record<string, st
   if (VS_PLATE_COL in row) out[VS_PLATE_COL] = row[VS_PLATE_COL];
   if (text(row["التاريخ"])) out["تاريخ التسجيل"] = row["التاريخ"];
   if (text(row["الموقع"])) out["GPS"] = row["الموقع"];
+  // 📍 حي المندوب (`recordAreaRow` ⇐ «الحي-الشارع») قبل أعمدة الملف — وإلا عمود زي «العنوان» من ملف البنك بياخد
+  //    خانة «الحي-الشارع» في المشاركة مكانه (المالك ٢٠ أكتوبر ٢٠٢٦)
+  if (text(row["الحي-الشارع"])) out["الحي-الشارع"] = row["الحي-الشارع"];
   for (const [k, v] of Object.entries(row)) {
     if (k === "التاريخ" || k === "الموقع" || k in out) continue;
     out[k] = v;
