@@ -29,6 +29,7 @@ import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, default
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
+import { awaitRecords, fillOwnName } from "@/lib/recordsReady";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
 import { shareTextViaChooser, copyForWhatsApp, hasSharePartsSheet, splitShareText, isIosDevice } from "@/lib/share";
@@ -340,6 +341,22 @@ export default function SortingPage() {
 
   // ── Tashyeek file (manual entries from registration page) ──
   const [tashyeekTable, setTashyeekTable] = useState<ExcelTable | null>(null);
+  /**
+   * ⏳ **الفرز بيستنى سجلات المندوب** (`lib/recordsReady.ts`) — المالك (٢٠ أكتوبر ٢٠٢٦): «نتيجة فرز السجلات مش بتظهر
+   * معاه علي طول يعني لازم يفرز كذا مرة». الجدول كان بيتبني في آخر التحميل في الخلفية (بعد طلبات نت)، والفرز بيقرا
+   * الحالة **لحظة الدوسة** ⇒ لو لسه ماخلصش، الفرز يكمّل من غير السجلات في صمت. دلوقتي:
+   *  · `recordsReadyRef`: تحميل السجلات من الجهاز (بيبدأ على طول، من غير ما يستنى النت) — الفرز بيستناه.
+   *  · `tashyeekTableRef`: آخر جدول — الفرز بيقرا منه (الحالة اللي في الدالة ممكن تكون قديمة).
+   *  · `builtRecordsTableRef`: الجدول اللي البرنامج بناه من السجلات (مش ملف اترفع) — «المندوب» بيتملي فيه بس.
+   */
+  const recordsReadyRef = useRef<Promise<void> | null>(null);
+  const tashyeekTableRef = useRef<ExcelTable | null>(null);
+  const builtRecordsTableRef = useRef<ExcelTable | null>(null);
+  function applyTashyeekTable(t: ExcelTable | null) { tashyeekTableRef.current = t; setTashyeekTable(t); }
+  /** الفرز استنى السجلات ومالحقتش ⇒ رسالة للمندوب بدل الصمت */
+  const [recordsLate, setRecordsLate] = useState(false);
+  const [waitingRecords, setWaitingRecords] = useState(false);
+  const recordsLoadedRef = useRef(false);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
   const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
   const [tashyeekSelected, setTashyeekSelected] = useState<Set<number>>(new Set());
@@ -524,6 +541,42 @@ export default function SortingPage() {
         if (checkRec) {
           setCheckTable({ headers: checkRec.headers, rows: checkRec.rows });
         }
+        // ⏳ سجلات المندوب **أول حاجة** ومن الجهاز بس — الفرز بيستناها (`recordsReadyRef`). كانت في آخر الشغل اللي
+        //    تحت (بعد طلبات النت) فالفرز اللي بيتداس بدري كان بيطلع من غير السجلات في صمت (المالك ٢٠ أكتوبر ٢٠٢٦).
+        const recordsReady = (async () => {
+        // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
+        // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
+        try {
+          // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
+          // 🔒 عضو مجموعة مقفول عليه السجلات (`lib/groupLocks.ts`) ⇒ السجلات مابتدخلش الفرز (كانت هتظهر في نتيجته).
+          const fieldEntries = recordsLockedNow() ? [] : collapseDuplicateChecks(await getAllFieldCheckEntries());
+          if (fieldEntries.length > 0) {
+            // 📍 حي المندوب (بأي اسم من التلاتة) ⇐ عمود واحد «الحي-الشارع» (`lib/recordArea.ts`)
+            const recRows = fieldEntries.map((e) => recordAreaRow(e));
+            const keys = new Set<string>(["رقم اللوحة"]);
+            for (const r of recRows) for (const k of Object.keys(r)) keys.add(k);
+            keys.add("GPS");
+            keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
+            keys.add("المندوب");   // مين سجّلها — بيفرق لما سجلات المجموعة تتلم مع بتاعته
+            const headers = [...keys];
+            const rows = fieldEntries.map((e, i) => ({
+              "رقم اللوحة": e.plate,
+              ...recRows[i],
+              // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
+              // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
+              "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
+              // وقت التشييك الفعلي (مش عمود من الشيت) — بيغلب أي «تاريخ» جوه e.row.
+              "التاريخ": e.checkedAt ? fmtCheckDate(e.checkedAt) : (e.row?.["التاريخ"] ?? ""),
+              "المندوب": myNameRef.current,
+            } as Record<string, string>));
+            const t = { headers, rows };
+            builtRecordsTableRef.current = t;
+            applyTashyeekTable(t);
+            setTashyeekFile(null);
+          }
+        } catch { /* no field sheet yet */ }
+        })().finally(() => { recordsLoadedRef.current = true; });
+        recordsReadyRef.current = recordsReady;
         // ── الشغل التقيل بيتعمل في الخلفية، مش قبل ما الصفحة تظهر ──────────
         // ومعاه المربعات الإضافية: كانت بتتقري **واحد ورا التاني** (كل ملف رحلة
         // لوحده للتخزين) قبل ما الصفحة تظهر — والمندوب اللي عنده ٣ أو ٤ ملفات
@@ -597,6 +650,13 @@ export default function SortingPage() {
             const pr = prof as { username?: string; team?: string | null } | null;
             myNameRef.current = pr?.username ?? "";
             myIdRef.current = au.user.id;
+            // 👤 السجلات بقت بتتحمّل قبل الاسم ⇒ «المندوب» الفاضي بيتملي دلوقتي (الجدول اللي البرنامج بناه بس)
+            void recordsReady.then(() => {
+              const t = builtRecordsTableRef.current;
+              if (!t || tashyeekTableRef.current !== t) return;
+              const f = fillOwnName(t, myNameRef.current);
+              if (f !== t) { builtRecordsTableRef.current = f; applyTashyeekTable(f); }
+            });
             if (pr?.team) {
               hasTeamRef.current = true;
               setHasTeam(true);
@@ -605,35 +665,6 @@ export default function SortingPage() {
             }
           }
         } catch { /* أوفلاين — الفرز المحلي شغّال عادي */ }
-        // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
-        // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
-        try {
-          // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
-          // 🔒 عضو مجموعة مقفول عليه السجلات (`lib/groupLocks.ts`) ⇒ السجلات مابتدخلش الفرز (كانت هتظهر في نتيجته).
-          const fieldEntries = recordsLockedNow() ? [] : collapseDuplicateChecks(await getAllFieldCheckEntries());
-          if (fieldEntries.length > 0) {
-            // 📍 حي المندوب (بأي اسم من التلاتة) ⇐ عمود واحد «الحي-الشارع» (`lib/recordArea.ts`)
-            const recRows = fieldEntries.map((e) => recordAreaRow(e));
-            const keys = new Set<string>(["رقم اللوحة"]);
-            for (const r of recRows) for (const k of Object.keys(r)) keys.add(k);
-            keys.add("GPS");
-            keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
-            keys.add("المندوب");   // مين سجّلها — بيفرق لما سجلات المجموعة تتلم مع بتاعته
-            const headers = [...keys];
-            const rows = fieldEntries.map((e, i) => ({
-              "رقم اللوحة": e.plate,
-              ...recRows[i],
-              // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
-              // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
-              "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
-              // وقت التشييك الفعلي (مش عمود من الشيت) — بيغلب أي «تاريخ» جوه e.row.
-              "التاريخ": e.checkedAt ? fmtCheckDate(e.checkedAt) : (e.row?.["التاريخ"] ?? ""),
-              "المندوب": myNameRef.current,
-            } as Record<string, string>));
-            setTashyeekTable({ headers, rows });
-            setTashyeekFile(null);
-          }
-        } catch { /* no field sheet yet */ }
         })();
         teamReadyRef.current = teamReady;
         try {
@@ -2138,7 +2169,10 @@ export default function SortingPage() {
   // isRecords: مصدره سجلات المندوب مش ملف داتا مرفوع — اللصق النصّي بيفصلها
   // في ويندو لوحدها بأعمدتها هي (GPS · الحي · التاريخ).
   type DataSource = { rows: Record<string, string>[]; plateCol: string; slot?: string; rowCount?: number; sheets?: Set<string> | null; isRecords?: boolean };
-  function collectDataSources(): DataSource[] {
+  /** `rec` = السجلات بعد ما الفرز استناها (`recordsForSort`) — من غيره الحالة الحالية زي الأول. */
+  function collectDataSources(rec?: { table: ExcelTable | null; plateCol: string | null }): DataSource[] {
+    const recTable = rec ? rec.table : tashyeekTable;
+    const recPlate = rec ? rec.plateCol : tashyeekPlateCol;
     const srcs: DataSource[] = [];
     if (dataTable && effectiveDataPlateCol) {
       srcs.push({ rows: dataTable.rows, plateCol: effectiveDataPlateCol });
@@ -2191,8 +2225,8 @@ export default function SortingPage() {
     // سجلات المندوب كخانة داتا — بزر «أضف لخانة الداتا» زي الأول. (دخولها
     // تلقائيًا كان بيقسّم النتيجة ويندوهات كتير ويشتّت المناديب — اترجع.)
     // `isRecords` باقية عشان اللصق النصّي يفصلها في ويندو بأعمدتها هي.
-    if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
-      srcs.push({ rows: tashyeekTable.rows, plateCol: tashyeekPlateCol, isRecords: true });
+    if (recordsLinked && recTable && recPlate) {
+      srcs.push({ rows: recTable.rows, plateCol: recPlate, isRecords: true });
     }
     return srcs;
   }
@@ -2416,12 +2450,12 @@ export default function SortingPage() {
       fileName: file.name, headers: table.headers, rows: table.rows,
       uploadedAt: new Date().toISOString(), fileBlob: blob,
     });
-    setTashyeekTable(table); setTashyeekFile(file); setTashyeekResults(null);
+    applyTashyeekTable(table); setTashyeekFile(file); setTashyeekResults(null);
   }, []);
 
   async function clearTashyeekSlot() {
     await deleteUploadedFile("local", "tashyeek");
-    setTashyeekTable(null); setTashyeekFile(null); setTashyeekResults(null);
+    applyTashyeekTable(null); setTashyeekFile(null); setTashyeekResults(null);
   }
 
   async function shareTashyeekFile() {
@@ -2516,6 +2550,18 @@ export default function SortingPage() {
     return out;
   }
 
+  /**
+   * ⏳ السجلات للفرز: بيستنى تحميلها (من الجهاز — ثواني) وبيقرا **آخر نسخة** — مش اللي كانت وقت الدوسة.
+   * اتأخّرت أكتر من الحد ⇒ الفرز بيكمّل باللي موجود ورسالة بتظهر للمندوب (بدل الصمت).
+   */
+  async function recordsForSort(): Promise<{ table: ExcelTable | null; plateCol: string | null }> {
+    if (!recordsLoadedRef.current) setWaitingRecords(true);
+    const { value: table, late } = await awaitRecords(recordsReadyRef.current, () => tashyeekTableRef.current);
+    setWaitingRecords(false);
+    setRecordsLate(late);
+    return { table, plateCol: table ? detectPlateColumn(table.headers, table.rows) : null };
+  }
+
   // ── Full sort ──
   // كل شيتات الإحالة (الأساسية + الإضافية) بتتدمج في فهرس واحد ويتطابقوا على
   // ملف الداتا → نتيجة واحدة مجمّعة.
@@ -2525,6 +2571,9 @@ export default function SortingPage() {
     if (!(hasUploadedData || hasRecordsData || memberDataReady || teamDataReady) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
+    // ⏳ السجلات خلصت تحميل؟ — الفرز بيستناها وبيقرا آخر نسخة (`recordsForSort`)
+    const rec = await recordsForSort();
+    const recInData = recordsLinked && !!rec.table && !!rec.plateCol;
     try {
       const refIndex = new Map<string, { row: Record<string, string>; norm: string }>();
       const refEntries = collectReferralEntries(collectRefSources());
@@ -2581,7 +2630,7 @@ export default function SortingPage() {
       // نتخطّى الأساسي (لأنه عيّنة فقط) ونطابق الإضافية بس.
       // srcBase: في وضع streamed الملف الأول اتطابق فوق (srcIdx=0) فالباقي يبدأ من ١.
       const srcBase = dataStreamed ? 1 : 0;
-      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      const memSources = dataStreamed ? collectDataSources(rec).slice(1) : collectDataSources(rec);
       for (let si = 0; si < memSources.length; si++) {
         const src = memSources[si];
         const pc = src.plateCol;
@@ -2621,10 +2670,10 @@ export default function SortingPage() {
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // لو السجلات مربوطة كخانة داتا، بتظهر في نتيجة الداتا فوق — فمانعملش قسم
       // «فرز السجلات» المنفصل عشان ماتتكررش نفس السيارات مرتين.
-      if (!recordsInData && tashyeekTable && tashyeekPlateCol) {
+      if (!recInData && rec.table && rec.plateCol) {
         const tashyeekMatches: TashyeekResultRow[] = [];
-        for (const row of tashyeekTable.rows) {
-          const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
+        for (const row of rec.table.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(row[rec.plateCol] ?? "")));
           if (!n) continue;
           const hit = refIndex.get(n);
           if (hit) tashyeekMatches.push({ tashyeekRow: row, referralRow: hit.row, refPlateNorm: n });
@@ -2656,6 +2705,9 @@ export default function SortingPage() {
     if ((!dataTable && !memberDataReady && !teamDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady && !teamDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true);
     await new Promise<void>((r) => setTimeout(r, 10));
+    // ⏳ السجلات خلصت تحميل؟ — الفرز بيستناها وبيقرا آخر نسخة (`recordsForSort`)
+    const rec = await recordsForSort();
+    const recInData = recordsLinked && !!rec.table && !!rec.plateCol;
     try {
       // ملفات التشييك الإضافية (زر «+» في صفحة التشييك) بتتحسب زي الأساسي —
       // وإلا إحالة المندوب رافعها كملف تشييك إضافي تفضل تطلع «جديدة» كل مرة.
@@ -2680,7 +2732,7 @@ export default function SortingPage() {
       // عدد صفوف الداتا الكبيرة اللي **فعلاً** اتلفّ عليها (الورقات المختارة بس في
       // ملف متعدد الورقات) — يبقى أساس dataIdx لملفات الذاكرة اللي بعدها.
       const srcBase = dataStreamed ? 1 : 0;
-      const memSources = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      const memSources = dataStreamed ? collectDataSources(rec).slice(1) : collectDataSources(rec);
       // فهرس اللوحات الجديدة (صغير) — نبنيه لو فيه أي مصدر داتا كبير (streamed،
       // أساسي أو إضافي) عشان نطابق كل صف من القرص عليه بدل بناء فهرس ملايين الصفوف.
       const anyStreamed = (dataStreamed && dataStreamMeta) || memSources.some((s) => s.slot);
@@ -2764,14 +2816,14 @@ export default function SortingPage() {
       // شيت السجلات (الميداني): طابق اللوحات الجديدة عليه كمان.
       let finalTashyeek: TashyeekResultRow[] | null = null;
       // مربوطة كداتا → بتظهر فوق في نتيجة الداتا، فمافيش قسم سجلات منفصل (منع التكرار).
-      if (!recordsInData && tashyeekTable && tashyeekPlateCol) {
+      if (!recInData && rec.table && rec.plateCol) {
         const tashyeekRefIndex = new Map<string, Record<string, string>>();
         for (const e of newEntries) {   // تام فقط
           if (!tashyeekRefIndex.has(e.norm)) tashyeekRefIndex.set(e.norm, e.row);
         }
         const tashyeekMatches: TashyeekResultRow[] = [];
-        for (const row of tashyeekTable.rows) {
-          const n = normalizePlate(bankPlateToArabic(String(row[tashyeekPlateCol] ?? "")));
+        for (const row of rec.table.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(row[rec.plateCol] ?? "")));
           if (!n) continue;
           const refRow = tashyeekRefIndex.get(n);
           if (refRow) tashyeekMatches.push({ tashyeekRow: row, referralRow: refRow, refPlateNorm: n });
@@ -3237,6 +3289,8 @@ export default function SortingPage() {
     let base = 0;
     const pasteSheetOrder = new Map<number, string[]>();
     setPasteBusy(true);
+    // ⏳ السجلات خلصت تحميل؟ — اللصق بيستناها وبيقرا آخر نسخة (`recordsForSort`)
+    const rec = await recordsForSort();
     try {
       // الداتا الكبيرة (streamed): لفّ على الدفعات من القرص وطابق كل دفعة — بدل
       // ما نطابق على عيّنة العرض بس (كانت بتخلّي اللصق مايطلّعش نتايج).
@@ -3261,7 +3315,7 @@ export default function SortingPage() {
       }
       // ملفات الداتا في الذاكرة: الأساسي (لو مش streamed) + الإضافية.
       // السجلات ليها ويندو لوحدها تحت — فمابتدخلش لفّة الداتا هنا.
-      const allMem = dataStreamed ? collectDataSources().slice(1) : collectDataSources();
+      const allMem = dataStreamed ? collectDataSources(rec).slice(1) : collectDataSources(rec);
       const memSources = allMem.filter((x) => !x.isRecords);
       // 📑 ترتيب ورقات كل ملف داتا زي ما المندوب رتّبها في المنتقي (الأول فوق).
       if (dataStreamed && selectedDataSheetFilter && selectedDataSheetFilter.size > 1) {
@@ -3303,8 +3357,8 @@ export default function SortingPage() {
     // نفس اللوحات الملصوقة، بس ضد شيت السجلات (تشييك سابق صوت/يدوي) — لو موجود.
     // لو السجلات مربوطة كداتا، بتتطابق فوق مع الداتا فمانعملش قسم منفصل (منع التكرار).
     // السجلات دايمًا في ويندو منفصلة — بأعمدتها هي (GPS · الحي · التاريخ).
-    const recordMatches = tashyeekTable && tashyeekPlateCol
-      ? matchTokensAgainstRows(tokens, tashyeekTable.rows, tashyeekPlateCol, 88, false)   // تام فقط
+    const recordMatches = rec.table && rec.plateCol
+      ? matchTokensAgainstRows(tokens, rec.table.rows, rec.plateCol, 88, false)   // تام فقط
       : [];
     recordMatches.sort((a, b) => a.dataIdx - b.dataIdx);
 
@@ -3928,8 +3982,14 @@ export default function SortingPage() {
       <button onClick={handleSort} disabled={sorting || !canSort}
         className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-50">
         <ListFilter size={18} />
-        {sorting ? "جارٍ الفرز..." : "فرز"}
+        {sorting ? (waitingRecords ? "بستنى السجلات تخلص تحميل..." : "جارٍ الفرز...") : "فرز"}
       </button>
+      {/* ⏳ السجلات اتأخّرت أكتر من الحد — النتيجة طلعت من غيرها: المندوب لازم يعرف (كان بيحصل في صمت) */}
+      {recordsLate && !sorting && (
+        <p className="rounded-xl border border-alert/40 bg-alert/10 px-3 py-2 text-center text-[12px] font-bold text-alert">
+          ⚠️ سجلاتك لسه بتتحمّل — نتيجة السجلات ممكن تكون ناقصة. استنى ثواني ودوس «فرز» تاني.
+        </p>
+      )}
 
       {/* زر «مسح نتايج الفرز» العام اتشال — بقى فيه زر مسح خاص جوه كل نافذة نتائج */}
 
