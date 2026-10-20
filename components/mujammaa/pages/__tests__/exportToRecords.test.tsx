@@ -169,7 +169,9 @@ describe("BatchPage — وصلة التصدير (حرّاس على الكود)",
 
   it("مقطع اتصدّر قبل كده ⇒ «فرّغ تاني» بيسأل الأول (اللوحات هتتكرر)", () => {
     const t = SRC.slice(SRC.indexOf("const transcribeClip = async"), SRC.indexOf("const transcribeClip = async") + 1200);
-    expect(t).toMatch(/result\?\.exportedCount/);
+    // (٢٠ أكتوبر) الرسالة بقت في `retranscribeWarning` — بتسأل لأي مقطع متفرّغ، وتحذير التكرار لو اتصدّر منه
+    // (اختبارها في clipStore.test.ts)
+    expect(t).toMatch(/retranscribeWarning\(stored\)/);
     expect(t).toMatch(/window\.confirm\(/);
   });
 

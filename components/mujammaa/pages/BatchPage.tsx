@@ -84,6 +84,7 @@ import {
   SaveErrorOnce,
   clipJobFields,
   clipRunOutcome,
+  retranscribeWarning,
   closeRecordedClip,
   formatBytes,
   matchingChunks,
@@ -2057,15 +2058,11 @@ export default function BatchPage({
       errorLog.add("التفريغ", "استنى التصدير للسجلات يخلص وبعدين فرّغ.");
       return;
     }
-    // 📋 المقطع اتصدّر للسجلات قبل كده ⇒ التفريغ تاني بيطلّع لوحاته تاني (لو اتصدّرت هتتكرر)
-    const exportedBefore = storedClipsRef.current.find((c) => c.id === id)?.result?.exportedCount ?? 0;
-    if (
-      exportedBefore > 0 &&
-      !window.confirm(
-        `المقطع ده اتصدّر منه ${exportedBefore} لوحة للسجلات قبل كده — التفريغ تاني هيطلّع لوحاته تاني، ولو صدّرتها هتتكرر في السجلات. تكمّل؟`
-      )
-    )
-      return;
+    // 🔁 المقطع متفرّغ قبل كده ⇒ رسالة «المقطع ده متفرّغ» (المالك ٢٠ أكتوبر — مهند فرّغ نفس المقطع ٤ مرات)، ولو اتصدّر
+    //    منه كمان تحذير التكرار في السجلات (`retranscribeWarning`)
+    const stored = storedClipsRef.current.find((c) => c.id === id);
+    const again = stored ? retranscribeWarning(stored) : null;
+    if (again && !window.confirm(again)) return;
     queuingRef.current.add(id);
     const seq = ++queueSeqRef.current;
     preparingRef.current.set(id, seq);
