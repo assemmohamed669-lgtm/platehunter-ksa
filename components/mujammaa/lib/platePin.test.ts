@@ -596,3 +596,46 @@ describe("stampEntriesWithTrack — نفس موقع اللوحة اللي قبل
     expect(real[1].pin!.lat).toBe(24.5003);
   });
 });
+
+/**
+ * 📍 **الموقع «بالكيلو»** (٢٠ أكتوبر ٢٠٢٦) — المالك: «لما دقه الموقع بالكيلو قدام سيارة بلاش ياخد من نفس الموقع دة
+ * ياخد موقع اللي قبلها او اللي بعدها لانها اقرب لوحات ليها». القراءات حوالين اللوحة كلها أوسع من ١٠٠م (مش موقع) ⇒
+ * مافيش دليل على حركة ولا على وقوف ⇒ بتاخد دبوس اللوحة اللي قبلها (وإلا اللي بعدها) في حدود ١٠ث — طالما
+ * مافيش قراءة دقيقة بتقول إنه اتحرّك.
+ */
+describe("stampEntriesWithTrack — الموقع بالكيلو ⇒ موقع اللوحة اللي جنبها", () => {
+  const notesOf = (e: PlateEntry) => e.review.notes.join(" ");
+
+  it("القراءة وقت اللوحة ±١٤١٤م ⇒ نفس دبوس اللي قبلها (مش القراءة دي)", () => {
+    const track = [fx(1000, 24.5), fx(5000, 24.61, 46.7, 1414), fx(6200, 24.62, 46.7, 1414)];
+    const [a, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(a.pin).not.toBeNull();
+    expect(b.pin).not.toBeNull();
+    expect(b.pin!.lat).toBe(24.5);
+    expect(notesOf(b)).toContain(`${NEIGHBOR_PIN} قبلها (فرق 5ث)`);
+  });
+
+  it("أول لوحة والقراءة وقتها بالكيلو ⇒ اللي بعدها", () => {
+    const track = [fx(500, 24.61, 46.7, 2000), fx(5000, 24.5)];
+    const [a] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 5)], track, START);
+    expect(a.pin!.lat).toBe(24.5);
+    expect(notesOf(a)).toContain(`${NEIGHBOR_PIN} بعدها`);
+  });
+
+  it("التسجيل كله بالكيلو (الموقع الدقيق مقفول على الآيفون) ⇒ مافيش لوحة ليها دبوس تتنسخ منها", () => {
+    const track = [fx(-3000, 24.6, 46.7, 1414), fx(12300, 24.6, 46.7, 1414)];
+    const out = stampEntriesWithTrack([entry("ابح1234", 2.4), entry("حطس5678", 5.7)], track, START);
+    expect(out.every((e) => e.pin === null)).toBe(true);
+  });
+
+  it("قراءة دقيقة في النص بتقول إنه اتحرّك أكتر من ٥٠م ⇒ مابتتنسخش حتى لو الباقي بالكيلو", () => {
+    const track = [fx(1000, 24.5), fx(3000, 24.501), fx(5500, 24.61, 46.7, 1414)];
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], track, START);
+    expect(b.pin).toBeNull();
+  });
+
+  it("الموقع ساكت خالص (مش بالكيلو) ⇒ زي الأول: من غير دليل مابتتنسخش", () => {
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 6)], [fx(1000, 24.5)], START);
+    expect(b.pin).toBeNull();
+  });
+});

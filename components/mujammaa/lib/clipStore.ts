@@ -1386,6 +1386,21 @@ export function transcribeAction(c: Pick<StoredClip, "status">): { label: string
   return { label: "تفريغ", enabled };
 }
 
+/**
+ * 🔁 رسالة قبل «فرّغ تاني» لمقطع متفرّغ (٢٠ أكتوبر ٢٠٢٦ — المالك: «زرار فرغ تاني لو هو مفرغ يجيبلو رساله يقولو المقطع
+ * دة متفرغ»). مهند فرّغ نفس المقطع لحد ٤ مرات في دقيقتين. اتصدّر منه ⇒ كمان تحذير التكرار في السجلات. `null` = عادي.
+ */
+export function retranscribeWarning(c: Pick<StoredClip, "status" | "result">): string | null {
+  if (c.status !== "done" && !c.result) return null;
+  const n = c.result?.plates ?? 0;
+  const head = `المقطع ده متفرّغ قبل كده (${n} لوحة) — لوحاته موجودة في «اعرض لوحاته في الجدول».`;
+  const exported = c.result?.exportedCount ?? 0;
+  if (exported > 0) {
+    return `${head}\nواتصدّر منه ${exported} لوحة للسجلات — التفريغ تاني هيطلّع لوحاته تاني، ولو صدّرتها هتتكرر في السجلات.\nتفرّغه تاني؟`;
+  }
+  return `${head}\nتفرّغه تاني؟`;
+}
+
 /** نص تأكيد المسح — بيحذّر لو الصوت لسه ماتفرّغش */
 export function deleteWarning(c: Pick<StoredClip, "result" | "memOnly">): string {
   if (c.memOnly && !c.result) {

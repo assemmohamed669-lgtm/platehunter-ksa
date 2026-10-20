@@ -26,6 +26,7 @@ import {
   platesOnlyEntries,
   preliminaryEntries,
   replaceTableWarning,
+  retranscribeWarning,
   runFailureLog,
   runVerdict,
   saveErrorKind,
@@ -1372,5 +1373,32 @@ describe("idbClipBackend — مهلة الفتح والمعاملة، وإعاد
     await be.allClips();
     await new Promise((r) => setTimeout(r, 120));
     expect(f.stats.closed).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * 🔁 «فرّغ تاني» لمقطع متفرّغ (٢٠ أكتوبر ٢٠٢٦) — المالك: «زرار فرغ تاني لو هو مفرغ يجيبلو رساله يقولو المقطع دة
+ * متفرغ». مهند فرّغ نفس المقطع لحد ٤ مرات في دقيقتين (إيطاليا ١٩ أكتوبر ١٠:٥٥–١٠:٥٧م).
+ */
+describe("retranscribeWarning — رسالة قبل «فرّغ تاني»", () => {
+  it("لسه ماتفرّغش ⇒ مافيش رسالة", () => {
+    expect(retranscribeWarning({ status: "ready" })).toBeNull();
+    expect(retranscribeWarning({ status: "failed" })).toBeNull();
+  });
+
+  it("متفرّغ ⇒ «المقطع ده متفرّغ» بعدد لوحاته", () => {
+    const w = retranscribeWarning({ status: "done", result: { at: 1, plates: 7, pinned: 7, entries: [] } })!;
+    expect(w).toMatch(/المقطع ده متفرّغ/);
+    expect(w).toMatch(/7 لوحة/);
+  });
+
+  it("اتصدّر منه ⇒ نفس رسالة التكرار في السجلات زي الأول", () => {
+    const w = retranscribeWarning({
+      status: "done",
+      result: { at: 1, plates: 7, pinned: 7, entries: [], exportedCount: 5 },
+    })!;
+    expect(w).toMatch(/المقطع ده متفرّغ/);
+    expect(w).toMatch(/اتصدّر منه 5 لوحة/);
+    expect(w).toMatch(/هتتكرر في السجلات/);
   });
 });

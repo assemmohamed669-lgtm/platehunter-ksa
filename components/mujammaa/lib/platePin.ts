@@ -448,7 +448,13 @@ function neighborCopies(
       const d = -dir * (f.tMs - tj);
       return d > 0 && d <= gap + PIN_MAX_SNAP_MS;
     });
-    return far.some((f) => -dir * (f.tMs - tj) >= gap) && far.every((f) => near(src, f));
+    if (far.some((f) => !near(src, f))) return false;
+    if (far.some((f) => -dir * (f.tMs - tj) >= gap)) return true;
+    // ٤. 📍 (٢٠ أكتوبر) الموقع وقت اللوحة كان **أوسع من ١٠٠م** («بالكيلو») ⇒ القراية دي مش موقع، ومافيش قراءة
+    //    دقيقة بتقول إنه اتحرّك ⇒ دبوس اللي جنبها. المالك: «لما دقه الموقع بالكيلو قدام سيارة بلاش ياخد من نفس
+    //    الموقع دة ياخد موقع اللي قبلها او اللي بعدها لانها اقرب لوحات ليها». الموقع الساكت خالص (مش بالكيلو)
+    //    لسه محتاج دليل — ماشي بالعربية والموقع وقف = ٩٠م غلط.
+    return track.some((f) => !(f.acc <= PIN_MAX_ACCURACY_M) && Number.isFinite(f.acc) && Math.abs(f.tMs - t) <= NEIGHBOR_MAX_GAP_MS);
   };
   return times.map((t, i) => {
     if (real[i] || !finite(t)) return null;
