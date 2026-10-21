@@ -11,6 +11,8 @@
  *    ⇒ يتخفى. البرنامج فاكر اختياره (على الموبايل).
  *  · الشيت = سجلات المندوب نفسه (`lib/recordsSheet.ts`) — بيتحدّث لوحده مع كل تصدير. **فتح ومشاركة بس**: مفيش رفع ولا
  *    تغيير ولا مسح.
+ *  · `summary` (٢١ أكتوبر — «يقرأ كل السجلات ويفرز علي كل السجلات صوتي ويدوي وشاص»): كام سجل تشييك (زي «الكل» في
+ *    السجلات) + داتا التسجيلات + أرقام الشاص اللي بيتفرز عليها — عشان «٥٤٩ لوحة» ماتتفهمش إن الفرز مش بيقرا كله.
  */
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, ClipboardList, Share2 } from "lucide-react";
@@ -30,10 +32,12 @@ function buildFile(table: RecordsTable): { blob: Blob; name: string } {
   return { blob, name: `شيت السجلات ${stamp}.${ext}` };
 }
 
-export default function RecordsSheetBox({ table, loading }: {
+export default function RecordsSheetBox({ table, loading, summary }: {
   /** شيت السجلات — `null` = مفيش سجلات (أو لسه بيتحمّل) */
   table: RecordsTable | null;
   loading: boolean;
+  /** خام: سجل التشييك · داتا التسجيلات · أرقام الشاص (اللي بيتفرزوا برقم الشاص) */
+  summary?: { check: number; mj: number; chassis: number } | null;
 }) {
   const [open, setOpen] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -74,6 +78,7 @@ export default function RecordsSheetBox({ table, loading }: {
         <span className="text-xs font-bold text-ink">شيت السجلات</span>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${statusCls}`}>{status}</span>
         {!loading && table && <span className="text-[11px] font-bold text-ink">{ar(st.plates)} لوحة</span>}
+        {!loading && !!summary?.chassis && <span className="text-[11px] font-bold text-ink">· {ar(summary.chassis)} شاص</span>}
         <span className="mr-auto text-muted">{open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
       </button>
 
@@ -83,8 +88,20 @@ export default function RecordsSheetBox({ table, loading }: {
             <p className="text-[11px] text-muted">سجلاتك بتتحمّل من الموبايل — ثانية واحدة.</p>
           ) : table ? (
             <>
-              <p className="text-[12px] font-bold text-ink">{ar(st.rows)} صف · {ar(st.plates)} لوحة</p>
-              <p className="text-[11px] text-muted">كل سجلاتك بيدخل في الفرز — وبيتحدّث لوحده مع كل تصدير.</p>
+              {summary ? (
+                <p className="text-[12px] font-bold text-ink">
+                  بيفرز على: {ar(summary.check)} سجل تشييك
+                  {summary.mj > 0 && <> + {ar(summary.mj)} من داتا التسجيلات</>}
+                  {summary.chassis > 0 && <> + {ar(summary.chassis)} رقم شاص</>}
+                </p>
+              ) : (
+                <p className="text-[12px] font-bold text-ink">{ar(st.rows)} صف · {ar(st.plates)} لوحة</p>
+              )}
+              <p className="text-[11px] text-muted">
+                {ar(st.plates)} لوحة مختلفة — الإرسال المكرر لنفس التشييك (نفس اللوحة في نفس الدقيقة) بيتحسب مرة، واللوحة اللي
+                اتشيّكت في أيام مختلفة بتطلع بكل مراتها.
+              </p>
+              <p className="text-[11px] text-muted">كل سجلاتك بيدخل في الفرز: الصوتي واليدوي برقم اللوحة، والشاص برقم الشاص — وبيتحدّث لوحده مع كل تصدير.</p>
               <div className="flex gap-2">
                 <OpenDownloadButton build={() => buildFile(table)}
                   className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 py-2 text-xs font-bold text-ink transition hover:border-primary hover:text-primary disabled:opacity-60" />

@@ -19,8 +19,12 @@ describe("🔴 صفحة الفرز بتسجّل", () => {
     expect(S).toMatch(/<div className="rtl-text flex flex-col gap-4 w-full min-w-0" dir="rtl" onClickCapture=\{onResultsClick\}>/);
     expect(S).toMatch(/if \(!a \|\| !isMapsHref\(a\.href\)\) return;/);
     expect(S).toMatch(/logAgentEvent\("open_location", \{ plate, link: a\.href\.slice\(0, 300\) \}, \{ withLocation: true \}\);/);
-    // اللوحة على صف كل جدول نتيجة (الداتا/السجلات/اللصق/سجلات اللصق/الشاص)
-    expect(S.match(/data-plate=\{/g)?.length).toBeGreaterThanOrEqual(5);
+    // اللوحة على صف كل جدول نتيجة (الداتا/السجلات/اللصق/سجلات اللصق/الشاص) — جدول الشاص بقى مكوّن
+    // (`ChassisResultsBox`) بيترسم جوّه نفس الحاوية اللي بتمسك الدوسة
+    const chassisBox = read("components/ChassisResultsBox.tsx");
+    expect(chassisBox).toMatch(/data-plate=\{plate\}/);
+    expect(S).toMatch(/<ChassisResultsBox matches=\{chassisResults \?\? \[\]\} \/>/);
+    expect((S.match(/data-plate=\{/g)?.length ?? 0) + 1).toBeGreaterThanOrEqual(5);
   });
   it("🔴 المشاركة (صورة/إكسيل) من زرار المشاركة + نص واتساب", () => {
     expect(S.match(/onShared=\{onSortShared\}/g)?.length).toBeGreaterThanOrEqual(3);
