@@ -44,11 +44,12 @@ import {
   saveUploadedFile,
   getUploadedFile,
   deleteUploadedFile,
-  getAllFieldCheckEntries,
 } from "@/lib/idb";
-import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { recordsToRows, fetchGroupRecordRows, createGroupRowsCache, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
 import { addColumnOnce } from "@/lib/recordArea";
+import { getRecordsEntries, buildRecordsTableFromCollapsed } from "@/lib/recordsSheet";
+import { onFieldChecksChanged } from "@/lib/idb";
+import RecordsSheetBox from "@/components/RecordsSheetBox";
 import { supabase } from "@/lib/supabaseClient";
 import { fetchMyGroupsNames } from "@/lib/groupNames";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
@@ -186,6 +187,22 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const sortRemovedRef = useRef<Set<object>>(new Set());
   const pasteRemovedRef = useRef<Set<object>>(new Set());
 
+  /**
+   * 🗂️ مربع «شيت السجلات» (`components/RecordsSheetBox.tsx`) — المالك (٢١ أكتوبر ٢٠٢٦): «المستخدم يشوف ان فيه شيت
+   * سجلات قدامه وبيفرز عليه وعدد اللوحات … يقدر يفتحو او يشاركه عادي بس ميستبدلوش». نفس السجلات اللي الفرز بيقراها،
+   * وبيتحدّث لوحده مع أي تصدير/مسح (`onFieldChecksChanged`).
+   */
+  const [recEntries, setRecEntries] = useState<Awaited<ReturnType<typeof getRecordsEntries>> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const load = () => { void getRecordsEntries().then((e) => { if (alive) setRecEntries(e); }).catch(() => { if (alive) setRecEntries([]); }); };
+    load();
+    const off = onFieldChecksChanged(() => { if (t) clearTimeout(t); t = setTimeout(load, 600); });
+    return () => { alive = false; off(); if (t) clearTimeout(t); };
+  }, []);
+  const recSheet = useMemo(() => (recEntries ? buildRecordsTableFromCollapsed(recEntries, me.name) : null), [recEntries, me.name]);
+
   /** سجلاتي — وعليها اسمي لو أنا في مجموعة (عشان تتفرّق عن سجلات زمايلي في النتيجة). */
   const myRows = useCallback((entries: Parameters<typeof recordsToRows>[0]) => {
     const rows = recordsToRows(entries);
@@ -270,8 +287,9 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     const run = ++sortRunRef.current;
     sortRemovedRef.current = new Set();
     try {
-      // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
-      const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
+      // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨. (⚡ من السجلات الجاهزة في الذاكرة — `lib/recordsSheet.ts`)
+      const entries = await getRecordsEntries();
+      setRecEntries(entries);
 
       // وضع «جديد»: نشيل من الإحالة أي لوحة موجودة أصلاً في ملف التشييك.
       const pool = sortMode === "new"
@@ -321,8 +339,9 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
     const run = ++pasteRunRef.current;
     pasteRemovedRef.current = new Set();
     try {
-      // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨.
-      const entries = collapseDuplicateChecks(await getAllFieldCheckEntries());
+      // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة واحدة مش ٨. (⚡ من السجلات الجاهزة في الذاكرة — `lib/recordsSheet.ts`)
+      const entries = await getRecordsEntries();
+      setRecEntries(entries);
       const mine = myRows(entries);
       const teamDataRows = teamRows && teamPlateCol
         ? teamRows.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[teamPlateCol] ?? "") }))
@@ -801,6 +820,9 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         showReplaceButtons
         loadedAccent="referral"
       />
+
+      {/* 🗂️ شيت السجلات — قاري وبيدخل الفرز؛ فتح ومشاركة بس (مايتبدّلش) */}
+      <RecordsSheetBox table={recSheet} loading={recEntries === null} />
 
       {refTable && !refPlateCol && (
         <p className="rounded-2xl border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-bold text-danger">

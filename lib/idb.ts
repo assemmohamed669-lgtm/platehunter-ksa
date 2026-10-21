@@ -526,12 +526,24 @@ export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): P
 let fcMirror: Map<string, FieldCheckEntry> | null = null;
 let fcVersion = 0;
 
+const fcListeners = new Set<() => void>();
+
+/** 🔔 السجلات اتغيّرت (حفظ/تصدير/مسح/مزامنة) — مربع «شيت السجلات» بيتحدّث لوحده. بيرجّع دالة الإلغاء. */
+export function onFieldChecksChanged(cb: () => void): () => void {
+  fcListeners.add(cb);
+  return () => { fcListeners.delete(cb); };
+}
+
 function mirrorApply(put: readonly FieldCheckEntry[], del: readonly string[] = [], opts: { clear?: boolean; bump?: boolean } = {}): void {
-  if (opts.bump !== false) fcVersion++;
-  if (!fcMirror) return;
-  if (opts.clear) fcMirror.clear();
-  for (const id of del) fcMirror.delete(id);
-  for (const e of put) fcMirror.set(e.id, e);
+  const bump = opts.bump !== false;
+  if (bump) fcVersion++;
+  if (fcMirror) {
+    if (opts.clear) fcMirror.clear();
+    for (const id of del) fcMirror.delete(id);
+    for (const e of put) fcMirror.set(e.id, e);
+  }
+  // بعد ما النسخة اتعدّلت — اللي بيسمع يلاقيها جاهزة
+  if (bump) for (const cb of fcListeners) { try { cb(); } catch { /* المستمع مايوقّعش الحفظ */ } }
 }
 
 /** نسخة السجلات الحالية — بتزيد مع أي حفظ/تعديل/مسح. */

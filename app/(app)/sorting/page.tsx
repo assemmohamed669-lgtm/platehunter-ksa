@@ -30,7 +30,9 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
 import { awaitRecords } from "@/lib/recordsReady";
-import { getRecordsSheet, recordsSheetStats, fmtCheckDate } from "@/lib/recordsSheet";
+import { getRecordsSheet, fmtCheckDate } from "@/lib/recordsSheet";
+import { onFieldChecksChanged } from "@/lib/idb";
+import RecordsSheetBox from "@/components/RecordsSheetBox";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
 import { shareTextViaChooser, copyForWhatsApp, hasSharePartsSheet, splitShareText, isIosDevice } from "@/lib/share";
@@ -355,6 +357,22 @@ export default function SortingPage() {
    */
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [boxesLoaded, setBoxesLoaded] = useState(false);
+  // 🔔 السجلات اتغيّرت (تصدير/مسح/مزامنة) ⇒ الشيت (والمربع) يتحدّث لوحده — من الذاكرة في لحظة
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const off = onFieldChecksChanged(() => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        const cur = tashyeekTableRef.current;
+        if (cur && cur !== builtRecordsTableRef.current) return;   // ملف اترفع بإيده — مايتلمسش
+        void getRecordsSheet(myNameRef.current).then(({ table }) => {
+          if (tashyeekTableRef.current !== cur) return;
+          if (table !== cur) { builtRecordsTableRef.current = table; applyTashyeekTable(table); }
+        }).catch(() => {});
+      }, 600);
+    });
+    return () => { off(); if (t) clearTimeout(t); };
+  }, []);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
   const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
   const [tashyeekSelected, setTashyeekSelected] = useState<Set<number>>(new Set());
@@ -3971,21 +3989,16 @@ export default function SortingPage() {
       </button>
       </>)}
 
+      {/* 🗂️ شيت السجلات — قاري وبيدخل الفرز كله؛ فتح ومشاركة بس (مايتبدّلش) — المالك ٢١ أكتوبر ٢٠٢٦ */}
+      <RecordsSheetBox table={tashyeekTable === builtRecordsTableRef.current ? tashyeekTable : null} loading={!recordsLoaded} />
+
       {/* ⑤ SORT BUTTON */}
       <button onClick={handleSort} disabled={sorting || !canSort}
         className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-50">
         <ListFilter size={18} />
         {sorting ? (waitingRecords ? "بستنى السجلات تخلص تحميل..." : "جارٍ الفرز...") : (canSortFiles && !allLoaded ? "جارٍ تحميل السجلات والملفات..." : "فرز")}
       </button>
-      {/* 🗂️ شيت السجلات قاري — كام صف وكام لوحة (بيدخل الفرز كله) */}
-      {recordsLoaded && tashyeekTable && tashyeekTable === builtRecordsTableRef.current && (() => {
-        const st = recordsSheetStats(tashyeekTable);
-        return (
-          <p className="text-center text-[11px] font-bold text-emerald-600" dir="rtl">
-            ✅ شيت السجلات قاري — {st.rows.toLocaleString("ar-EG")} صف · {st.plates.toLocaleString("ar-EG")} لوحة
-          </p>
-        );
-      })()}
+
       {/* ⏳ السجلات اتأخّرت أكتر من الحد — النتيجة طلعت من غيرها: المندوب لازم يعرف (كان بيحصل في صمت) */}
       {recordsLate && !sorting && (
         <p className="rounded-xl border border-alert/40 bg-alert/10 px-3 py-2 text-center text-[12px] font-bold text-alert">
