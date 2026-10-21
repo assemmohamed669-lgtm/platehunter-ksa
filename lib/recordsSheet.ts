@@ -18,6 +18,7 @@ import { withoutHiddenTeams } from "./activeTeam";
 import { recordsLockedNow } from "./groupLocks";
 import { collapseDuplicateChecks } from "./fieldCheck";
 import { recordAreaRow } from "./recordArea";
+import { MUJAMMAA_RECORD_PREFIX } from "./mujammaaRecords";
 import { toMapsLink } from "./gps";
 import { normalizePlate, bankPlateToArabic } from "./plateParser";
 
@@ -99,6 +100,21 @@ export async function getRecordsSheet(ownName: string): Promise<{ table: Records
   const table = buildRecordsTableFromCollapsed(await getRecordsEntries(), ownName);
   if (version >= 0) cache = { key, table };
   return { table };
+}
+
+/**
+ * 🔢 كام سجل الفرز بيقراه — **خام** زي «الكل» في صفحة السجلات (الإرسال المكرر لنفس التشييك جوّاه)، مقسوم «سجل التشييك»
+ * و«داتا التسجيلات» (المجمّع)، من غير المجموعات المستخبية. المالك (٢١ أكتوبر ٢٠٢٦) شاف «سجل التشييك ١٠٣٧» و«قاري ٥٤٩
+ * لوحة» وافتكر إن الفرز مش بيقرا كله — ٥٤٩ دول لوحات **مختلفة**.
+ */
+export async function getRecordsSummary(): Promise<{ check: number; mj: number }> {
+  const { entries } = await getFieldCheckMirror();
+  let check = 0, mj = 0;
+  for (const e of withoutHiddenTeams(entries)) {
+    if (e.id.startsWith(MUJAMMAA_RECORD_PREFIX)) mj++;
+    else check++;
+  }
+  return { check, mj };
 }
 
 /** «قاري — X صف · Y لوحة» */

@@ -30,9 +30,10 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
 import { awaitRecords } from "@/lib/recordsReady";
-import { getRecordsSheet, fmtCheckDate } from "@/lib/recordsSheet";
+import { getRecordsSheet, getRecordsSummary, fmtCheckDate } from "@/lib/recordsSheet";
 import { onFieldChecksChanged } from "@/lib/idb";
 import RecordsSheetBox from "@/components/RecordsSheetBox";
+import ChassisResultsBox from "@/components/ChassisResultsBox";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
 import { haversineKm, gpsCellCoords, gpsCellToLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
 import { shareTextViaChooser, copyForWhatsApp, hasSharePartsSheet, splitShareText, isIosDevice } from "@/lib/share";
@@ -146,21 +147,6 @@ let refSheetsCache: { key: string; infos: SheetInfo[] } | null = null;
 let chassisSortCache: ChassisSortMatch[] | null = null;
 
 // يجيب قيمة عمود من صف الإحالة بالكلمات المفتاحية (لوحة/نوع سيارة...).
-function pickReferralCol(row: Record<string, string>, keywords: string[]): string {
-  for (const k of Object.keys(row)) {
-    const low = k.toLowerCase();
-    if (keywords.some((kw) => low.includes(kw)) && String(row[k] ?? "").trim()) return String(row[k]).trim();
-  }
-  return "";
-}
-
-function fmtChassisDate(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`;
-}
-
 function persistSortCache() {
   try {
     localStorage.setItem(SORT_RESULTS_KEY, JSON.stringify({ byMode: sortCacheByMode, activeMode: sortActiveMode }));
@@ -357,6 +343,12 @@ export default function SortingPage() {
    */
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [boxesLoaded, setBoxesLoaded] = useState(false);
+  /** 🔢 المربع بيقول بيفرز على كام: سجل التشييك (زي «الكل» في السجلات) · داتا التسجيلات · أرقام الشاص */
+  const [recSummary, setRecSummary] = useState<{ check: number; mj: number; chassis: number } | null>(null);
+  const loadRecSummary = useCallback(() => {
+    void getRecordsSummary().then((sm) => setRecSummary({ ...sm, chassis: getChassisRecords().length })).catch(() => {});
+  }, []);
+  useEffect(() => { loadRecSummary(); return onFieldChecksChanged(loadRecSummary); }, [loadRecSummary]);
   // 🔔 السجلات اتغيّرت (تصدير/مسح/مزامنة) ⇒ الشيت (والمربع) يتحدّث لوحده — من الذاكرة في لحظة
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
@@ -2879,6 +2871,7 @@ export default function SortingPage() {
     const chMatches = matchChassisRecordsAgainstReferrals(getChassisRecords(), refSheets);
     chassisSortCache = chMatches;
     setChassisResults(chMatches);
+    loadRecSummary();
     if (sortMode === "new") runNewSort(); else runFullSort();
   }
 
@@ -3990,7 +3983,7 @@ export default function SortingPage() {
       </>)}
 
       {/* 🗂️ شيت السجلات — قاري وبيدخل الفرز كله؛ فتح ومشاركة بس (مايتبدّلش) — المالك ٢١ أكتوبر ٢٠٢٦ */}
-      <RecordsSheetBox table={tashyeekTable === builtRecordsTableRef.current ? tashyeekTable : null} loading={!recordsLoaded} />
+      <RecordsSheetBox table={tashyeekTable === builtRecordsTableRef.current ? tashyeekTable : null} loading={!recordsLoaded} summary={recSummary} />
 
       {/* ⑤ SORT BUTTON */}
       <button onClick={handleSort} disabled={sorting || !canSort}
@@ -4666,50 +4659,8 @@ export default function SortingPage() {
         );
       })()}
 
-      {/* ⑥.٥ مطلوب من أرقام الشاص — فرز شيت الشاص على عمود الشاص في الإحالة */}
-      {chassisResults && chassisResults.length > 0 && (
-        <div className="rounded-2xl border border-danger/30 bg-surface p-3" dir="rtl">
-          <div className="mb-2 flex items-center gap-2">
-            <ScanLine size={18} className="shrink-0 text-danger" />
-            <h2 className="text-sm font-bold text-ink">مطلوب من أرقام الشاص</h2>
-            <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-bold text-danger">{chassisResults.length}</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs" dir="rtl">
-              <thead>
-                <tr className="text-muted">
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم الشاص</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">رقم اللوحة</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">نوع السيارة</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-right font-bold">التاريخ</th>
-                  <th className="whitespace-nowrap px-2 py-1.5 text-center font-bold">الموقع</th>
-                </tr>
-              </thead>
-              <tbody>
-                {chassisResults.map((m, i) => {
-                  const plate = pickReferralCol(m.referralRow, ["لوحة", "plate"]);
-                  const vtype = pickReferralCol(m.referralRow, ["نوع السيارة", "نوع المركبة", "vehicle name", "vehicle type", "طراز", "صانع", "موديل", "make", "model"]) || m.record.vehicleType || "";
-                  const link = m.record.mapsLink || (m.record.lat != null && m.record.lng != null ? `https://www.google.com/maps?q=${m.record.lat},${m.record.lng}` : "");
-                  return (
-                    <tr key={m.record.id || i} data-plate={plate} className="border-t border-border bg-danger/5">
-                      <td className="whitespace-nowrap px-2 py-1.5 font-mono font-bold text-ink" dir="ltr">{m.record.chassis}{m.matchType !== "exact" ? " ⚠️" : ""}</td>
-                      <td className="whitespace-nowrap px-2 py-1.5 font-bold text-ink">{plate || "—"}</td>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-ink">{vtype || "—"}</td>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">{fmtChassisDate(m.record.checkedAt)}</td>
-                      <td className="px-2 py-1.5 text-center">
-                        {link ? (
-                          <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary" aria-label="الموقع"><Navigation size={15} /></a>
-                        ) : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-[11px] text-muted">اللوحة والنوع من ملف الإحالة، والموقع والتاريخ من سجل الشاص المحفوظ. (⚠️ = تطابق تقريبي)</p>
-        </div>
-      )}
+      {/* ⑥.٥ مطلوب من أرقام الشاص — فرز شيت الشاص **برقم الشاص** على عمود الشاص في الإحالة (`ChassisResultsBox`) */}
+      <ChassisResultsBox matches={chassisResults ?? []} />
 
       {/* ══════════════════════════════════════════════ */}
       {/* ⑦ PASTE SECTION — always at bottom */}

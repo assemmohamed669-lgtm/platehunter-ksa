@@ -47,7 +47,9 @@ import {
 } from "@/lib/idb";
 import { recordsToRows, fetchGroupRecordRows, createGroupRowsCache, REC_PLATE_COL, type GroupPlateRow } from "@/lib/voiceOnlyRecords";
 import { addColumnOnce } from "@/lib/recordArea";
-import { getRecordsEntries, buildRecordsTableFromCollapsed } from "@/lib/recordsSheet";
+import { getRecordsEntries, buildRecordsTableFromCollapsed, getRecordsSummary } from "@/lib/recordsSheet";
+import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
+import ChassisResultsBox from "@/components/ChassisResultsBox";
 import { onFieldChecksChanged } from "@/lib/idb";
 import RecordsSheetBox from "@/components/RecordsSheetBox";
 import { supabase } from "@/lib/supabaseClient";
@@ -196,12 +198,21 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   useEffect(() => {
     let alive = true;
     let t: ReturnType<typeof setTimeout> | null = null;
-    const load = () => { void getRecordsEntries().then((e) => { if (alive) setRecEntries(e); }).catch(() => { if (alive) setRecEntries([]); }); };
+    const load = () => {
+      void getRecordsEntries().then((e) => { if (alive) setRecEntries(e); }).catch(() => { if (alive) setRecEntries([]); });
+      void getRecordsSummary().then((sm) => { if (alive) setRecSummary({ ...sm, chassis: getChassisRecords().length }); }).catch(() => {});
+    };
     load();
     const off = onFieldChecksChanged(() => { if (t) clearTimeout(t); t = setTimeout(load, 600); });
     return () => { alive = false; off(); if (t) clearTimeout(t); };
   }, []);
   const recSheet = useMemo(() => (recEntries ? buildRecordsTableFromCollapsed(recEntries, me.name) : null), [recEntries, me.name]);
+  const [recSummary, setRecSummary] = useState<{ check: number; mj: number; chassis: number } | null>(null);
+  /**
+   * 🔩 **الشاص برقم الشاص** — المالك (٢١ أكتوبر ٢٠٢٦): «يفرز علي كل السجلات صوتي ويدوي وشاص والشاص يفرز برقم الشاص
+   * والصوتي واليدوي يفرز برقم اللوحه». نفس صفحة الفرز: شيت الشاص على عمود الشاص في الإحالة (`ChassisResultsBox`).
+   */
+  const [chassisMatches, setChassisMatches] = useState<ChassisSortMatch[]>([]);
 
   /** سجلاتي — وعليها اسمي لو أنا في مجموعة (عشان تتفرّق عن سجلات زمايلي في النتيجة). */
   const myRows = useCallback((entries: Parameters<typeof recordsToRows>[0]) => {
@@ -257,7 +268,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   async function handleParsed(table: ExcelTable, file: File) {
     setRefTable(table);
     setRefFile(file);
-    setResults([]); setRan(false); setScanned(null);
+    setResults([]); setRan(false); setScanned(null); setChassisMatches([]);
     try {
       await saveUploadedFile({
         key: `${AGENT}:${REF_SLOT}`, agentId: AGENT, slot: REF_SLOT,
@@ -269,7 +280,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
   async function handleClearFile() {
     setRefTable(null); setRefFile(null);
-    setResults([]); setRan(false); setScanned(null);
+    setResults([]); setRan(false); setScanned(null); setChassisMatches([]);
     try { await deleteUploadedFile(AGENT, REF_SLOT); } catch { /* ignore */ }
   }
 
@@ -310,6 +321,9 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       // ⚡ نتيجة سجلاتي (وداتا المجموعة) **على طول** — من غير ما نستنى السيرفر.
       //    **تام بس** (88, false) زي صفحة الفرز الأساسية — التقريبي كان ١٩ ثانية.
       setResults(matchChunkAgainstIndex([...mine, ...teamDataRows], REC_PLATE_COL, index, 88, false));
+      // 🔩 الشاص برقم الشاص — على الإحالة كلها (زي صفحة الفرز في «جديد» و«كلي»)
+      setChassisMatches(matchChassisRecordsAgainstReferrals(getChassisRecords(), [{ headers: refTable.headers, rows: refTable.rows }]));
+      setRecSummary((sm) => (sm ? { ...sm, chassis: getChassisRecords().length } : sm));
       setRan(true);
       setBusy(false);
       if (!me.inTeam) return;
@@ -822,7 +836,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       />
 
       {/* 🗂️ شيت السجلات — قاري وبيدخل الفرز؛ فتح ومشاركة بس (مايتبدّلش) */}
-      <RecordsSheetBox table={recSheet} loading={recEntries === null} />
+      <RecordsSheetBox table={recSheet} loading={recEntries === null} summary={recSummary} />
 
       {refTable && !refPlateCol && (
         <p className="rounded-2xl border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-bold text-danger">
@@ -834,7 +848,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       <div className="flex flex-col gap-2">
         <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1.5">
           {([["new", "فرز جديد"], ["full", "فرز كلي"]] as const).map(([key, label]) => (
-            <button key={key} onClick={() => { setSortMode(key); setResults([]); setRan(false); setScanned(null); }}
+            <button key={key} onClick={() => { setSortMode(key); setResults([]); setRan(false); setScanned(null); setChassisMatches([]); }}
               className={`rounded-xl py-2.5 text-xs font-bold transition ${
                 sortMode === key ? "bg-primary text-night shadow" : "text-muted"
               }`}>
@@ -871,7 +885,7 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
           )}
           <ResultsBlock
             rows={results}
-            onClear={() => { sortRunRef.current++; setGroupPending(false); setResults([]); setRan(false); setScanned(null); }}
+            onClear={() => { sortRunRef.current++; setGroupPending(false); setResults([]); setRan(false); setScanned(null); setChassisMatches([]); }}
             onRemoveRow={(i) => setResults((rs) => {
               const gone = rs[i];
               if (gone?.dataRow) sortRemovedRef.current.add(gone.dataRow);
@@ -881,6 +895,9 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
           />
         </div>
       )}
+
+      {/* 🔩 مطلوب من أرقام الشاص — الشاص بيتفرز برقم الشاص (نفس جدول صفحة الفرز) */}
+      <ChassisResultsBox matches={chassisMatches} />
 
       {/* ── مربع اللصق النصّي ─────────────────────────────────────────────── */}
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface-2 p-3">
