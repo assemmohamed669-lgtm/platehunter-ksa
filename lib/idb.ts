@@ -516,6 +516,64 @@ export async function deleteUploadedFile(agentId: string, slot: UploadedSlot): P
 // gated behind the password in lib/fieldCheckLock.ts at the UI layer.
 // =====================================================================
 
+/**
+ * 🪞 **نسخة سجلات الجهاز في الذاكرة** — لشيت السجلات في الفرز (`lib/recordsSheet.ts`). المالك (٢١ أكتوبر ٢٠٢٦): «باقصي
+ * سرعه تكون السجلات … قاريه علي البرنامج … مش كل شوي يحمل من جديد اللي يحمل من جديد بس اللوحات الجديدة».
+ *  · بتتقري من الجهاز **مرة واحدة** (أو بتتاخد من قراية صفحة التشييك لكل السجلات — من غير قراية زيادة).
+ *  · **كل** كتابة في السجلات (الدوال اللي تحت بس — مفيش حد تاني بيكتب في المخزن ده) بتعدّلها بعد ما المعاملة تنجح.
+ *  · `fcVersion` بيزيد مع أي تغيير في السجلات ⇒ الشيت اللي اتبنى قبله مايتستخدمش (علامة «اترفع» مش تغيير).
+ */
+let fcMirror: Map<string, FieldCheckEntry> | null = null;
+let fcVersion = 0;
+
+function mirrorApply(put: readonly FieldCheckEntry[], del: readonly string[] = [], opts: { clear?: boolean; bump?: boolean } = {}): void {
+  if (opts.bump !== false) fcVersion++;
+  if (!fcMirror) return;
+  if (opts.clear) fcMirror.clear();
+  for (const id of del) fcMirror.delete(id);
+  for (const e of put) fcMirror.set(e.id, e);
+}
+
+/** نسخة السجلات الحالية — بتزيد مع أي حفظ/تعديل/مسح. */
+export function fieldChecksVersion(): number {
+  return fcVersion;
+}
+
+/** كل سجلات الجهاز (من غير فلترة) + نسختها. `version` = -1 ⇒ ماتتخزّنش (السجلات كانت بتتغيّر وإحنا بنقرا). */
+export async function getFieldCheckMirror(): Promise<{ entries: FieldCheckEntry[]; version: number }> {
+  for (let i = 0; i < 5 && !fcMirror; i++) {
+    const v = fcVersion;
+    const all = await readAllFieldChecks();
+    if (!fcMirror && v === fcVersion) fcMirror = new Map(all.map((e) => [e.id, e]));
+    if (!fcMirror && i === 4) return { entries: all, version: -1 };
+  }
+  return { entries: [...(fcMirror as Map<string, FieldCheckEntry>).values()], version: fcVersion };
+}
+
+/** للاختبارات بس — كأن البرنامج لسه فاتح (النسخة في الذاكرة فاضية). */
+export function __resetFieldCheckMirrorForTest(): void {
+  fcMirror = null;
+}
+
+/** قراية كل السجلات من الجهاز — ولو المرآة فاضية والسجلات ماتغيّرتش وإحنا بنقرا، بتتجهّز منها ببلاش. */
+function readAllFieldChecks(): Promise<FieldCheckEntry[]> {
+  return withFreshRetry<FieldCheckEntry[]>(async () => {
+    const db = await openDB();
+    const v = fcVersion;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
+      const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
+      req.onsuccess = () => {
+        const all = req.result as FieldCheckEntry[];
+        if (!fcMirror && v === fcVersion) fcMirror = new Map(all.map((e) => [e.id, e]));
+        resolve(all);
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
+    });
+  });
+}
+
 /** Add or overwrite one field-check entry (put by id). */
 async function putFieldChecksOnce(entries: FieldCheckEntry[], stampTeam: string | null = null): Promise<void> {
   const db = await openDB();
@@ -523,18 +581,23 @@ async function putFieldChecksOnce(entries: FieldCheckEntry[], stampTeam: string 
     // `db.transaction` على اتصال ميت بيرمي على طول — جوّه الوعد فبيتحوّل لرفض
     const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
     const store = tx.objectStore(FIELD_CHECK_STORE);
+    // 🪞 اللي اتكتب فعلاً (نسخة — المتصل ممكن يعدّل الكائن بتاعه بعدين) ⇒ المرآة بعد ما المعاملة تنجح
+    const written: FieldCheckEntry[] = [];
+    const copy = (e: FieldCheckEntry): FieldCheckEntry => ({ ...e, row: { ...(e.row ?? {}) } });
     for (const e of entries) {
       // الحفظ بالجملة (الاسترجاع) ومن غير مجموعة حالية ⇒ زي الأول بالحرف (put بس).
-      if (e.team !== undefined || stampTeam === null) { store.put(e); continue; }
+      if (e.team !== undefined || stampTeam === null) { store.put(e); written.push(copy(e)); continue; }
       // 👥 من غير مجموعة في الطلب: تعديل سجل موجود ⇒ مجموعته زي ما هي؛ سجل **جديد** ⇒ المجموعة اللي شغّال لها.
       const g = store.get(e.id);
       g.onsuccess = () => {
         const prev = g.result as FieldCheckEntry | undefined;
         const team = prev ? prev.team : (stampTeam ?? undefined);
-        store.put(team ? { ...e, team } : e);
+        const val = team ? { ...e, team } : e;
+        store.put(val);
+        written.push(copy(val));
       };
     }
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => { mirrorApply(written); resolve(); };
     tx.onerror = () => reject(tx.error);
     // الحصّة خلصت أو الاتصال اتقطع في النص ⇒ `abort` — كان بيعلّق للأبد
     tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
@@ -635,11 +698,15 @@ export async function getAllFieldCheckEntries(agentId?: string): Promise<FieldCh
 export async function getAllFieldCheckEntriesRaw(agentId?: string): Promise<FieldCheckEntry[]> {
   return withFreshRetry<FieldCheckEntry[]>(async () => {
     const db = await openDB();
+    const v = fcVersion;
     return new Promise((resolve, reject) => {
       const tx = db.transaction(FIELD_CHECK_STORE, "readonly");
       const req = tx.objectStore(FIELD_CHECK_STORE).getAll();
       req.onsuccess = () => {
         let rows = req.result as FieldCheckEntry[];
+        // 🪞 قرينا الكل أصلاً ⇒ المرآة تتجهّز من غير قراية تانية (لو السجلات ماتغيّرتش وإحنا بنقرا). نفس الكائنات من غير
+        //    نسخ (ذاكرة الآيفون) — مفيش مكان بيعدّل سجل في مكانه، التعديل دايماً سجل جديد بيتحفظ (وبيوصل المرآة نسخة).
+        if (!fcMirror && v === fcVersion) fcMirror = new Map(rows.map((e) => [e.id, e]));
         if (agentId) rows = rows.filter((e) => !e.agentId || e.agentId === agentId);
         resolve(rows.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime()));
       };
@@ -665,12 +732,13 @@ export async function markFieldChecksSynced(ids: string[]): Promise<void> {
       const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
       const store = tx.objectStore(FIELD_CHECK_STORE);
       const req = store.getAll();
+      const marked: FieldCheckEntry[] = [];
       req.onsuccess = () => {
         for (const e of req.result as FieldCheckEntry[]) {
-          if (idSet.has(e.id) && !e.synced) store.put({ ...e, synced: true });
+          if (idSet.has(e.id) && !e.synced) { const val = { ...e, synced: true }; store.put(val); marked.push(val); }
         }
       };
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => { mirrorApply(marked, [], { bump: false }); resolve(); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
     });
@@ -691,14 +759,15 @@ export async function markFieldChecksSyncedByIds(ids: readonly string[]): Promis
     return new Promise((resolve, reject) => {
       const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
       const store = tx.objectStore(FIELD_CHECK_STORE);
+      const marked: FieldCheckEntry[] = [];
       for (const id of new Set(ids)) {
         const req = store.get(id);
         req.onsuccess = () => {
           const e = req.result as FieldCheckEntry | undefined;
-          if (e && !e.synced) store.put({ ...e, synced: true });
+          if (e && !e.synced) { const val = { ...e, synced: true }; store.put(val); marked.push(val); }
         };
       }
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => { mirrorApply(marked, [], { bump: false }); resolve(); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
     });
@@ -738,7 +807,7 @@ export async function deleteFieldCheckEntries(ids: string[]): Promise<void> {
         };
         store.delete(id);
       }
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => { mirrorApply([], ids); resolve(); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
     });
@@ -789,7 +858,7 @@ export async function clearFieldCheck(): Promise<void> {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(FIELD_CHECK_STORE, "readwrite");
       tx.objectStore(FIELD_CHECK_STORE).clear();
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => { mirrorApply([], [], { clear: true }); resolve(); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new DOMException("aborted", "AbortError"));
     });

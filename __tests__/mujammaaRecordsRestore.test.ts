@@ -70,7 +70,11 @@ describe("الفرز بيشمل سجلات المجمّع", () => {
 
   it("شيت السجلات في الفرز = كل سجلات الموبايل — مافيش استبعاد للمجمّع", () => {
     const page = read("app/(app)/sorting/page.tsx");
-    expect(page).toMatch(/collapseDuplicateChecks\(await getAllFieldCheckEntries\(\)\)/);
+    // الشيت بقى بيتبني في `lib/recordsSheet.ts` من كل سجلات الموبايل (من غير فلتر غير المجموعات المستخبية)
+    const sheet = read("lib/recordsSheet.ts");
+    expect(sheet).toMatch(/const visible = withoutHiddenTeams\(entries\.slice\(\)\.sort\(newestFirst\)\);/);
+    expect(sheet).not.toMatch(/isMujammaaRecord|fc-mj-/);
+    expect(page).toMatch(/await getRecordsSheet\(myNameRef\.current\)/);
     expect(page).not.toMatch(/isMujammaaRecord|fc-mj-/);
   });
 

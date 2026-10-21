@@ -29,9 +29,10 @@ import { resolveMergedResultColumns, joinDupValues, isHiddenTashyeekCol, default
 import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrderMode, saveOrderMode, type OrderMode } from "@/lib/columnOrder";
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
-import { awaitRecords, fillOwnName } from "@/lib/recordsReady";
+import { awaitRecords } from "@/lib/recordsReady";
+import { getRecordsSheet, recordsSheetStats, fmtCheckDate } from "@/lib/recordsSheet";
 import { getChassisRecords, matchChassisRecordsAgainstReferrals, type ChassisSortMatch } from "@/lib/chassisRecords";
-import { haversineKm, gpsCellCoords, gpsCellToLink, toMapsLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
+import { haversineKm, gpsCellCoords, gpsCellToLink, extractLatLngFromMapsLink, estimateDriveMinutes, formatDistanceKm, formatDurationMin, gpsService } from "@/lib/gps";
 import { shareTextViaChooser, copyForWhatsApp, hasSharePartsSheet, splitShareText, isIosDevice } from "@/lib/share";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { analyzeWorkbook, totalPlates, defaultSelection, type SheetInfo , visibleSheets } from "@/lib/referralSheets";
@@ -54,9 +55,7 @@ import LocationNeighborsModal, { type NeighborsView } from "@/components/Locatio
 import { usePinchZoom, usePinchZoomMulti } from "@/components/usePinchZoom";
 import {
   saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord,
-  getAllFieldCheckEntries, type FieldCheckEntry,
 } from "@/lib/idb";
-import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { groupRecordsByPlate, collapseGroupRecordRepeats } from "@/lib/recordResultDedupe";
 import { resolveDataPlateCol } from "@/lib/dataSources";
 import { fileIdentity } from "@/lib/fileIdentity";
@@ -158,14 +157,6 @@ function fmtChassisDate(iso: string): string {
   if (isNaN(d.getTime())) return "";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`;
-}
-
-/** تاريخ تشييك المندوب بنفس شكل صفحة التشييك (يوم-شهر-سنة ساعة:دقيقة). */
-function fmtCheckDate(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function persistSortCache() {
@@ -357,6 +348,13 @@ export default function SortingPage() {
   const [recordsLate, setRecordsLate] = useState(false);
   const [waitingRecords, setWaitingRecords] = useState(false);
   const recordsLoadedRef = useRef(false);
+  /**
+   * ✅ **«فرز» مابيشتغلش إلا لما كل حاجة تبقى قارية** — المالك (٢١ أكتوبر ٢٠٢٦): «يفرز علي كامل شيت الداتا اللي رافعه
+   * وكامل السجلات». السجلات (`lib/recordsSheet.ts`) والداتا/الإحالات الإضافية بتتحمّل من الجهاز في الخلفية، والفرز
+   * اللي بيتداس قبلها كان بيطلع من غيرها في صمت ⇒ الزرار بيستناهم (من الجهاز بس — في لحظة).
+   */
+  const [recordsLoaded, setRecordsLoaded] = useState(false);
+  const [boxesLoaded, setBoxesLoaded] = useState(false);
   const [tashyeekFile, setTashyeekFile] = useState<File | null>(null);
   const [tashyeekResults, setTashyeekResults] = useState<TashyeekResultRow[] | null>(null);
   const [tashyeekSelected, setTashyeekSelected] = useState<Set<number>>(new Set());
@@ -506,6 +504,79 @@ export default function SortingPage() {
 
   // ── Bootstrap ──
   useEffect(() => {
+    // ⏳ السجلات والملفات الإضافية **مستقلين** عن قراية الملفات الأساسية (اللي تحت) — بيبدأوا على طول ومع بعض، ولو
+    //    قراية الأساسي وقعت مايفضلش «فرز» مستني للأبد.
+    // 🗂️ شيت السجلات **جاهز** (`lib/recordsSheet.ts`): من النسخة اللي في الذاكرة — اتقرت من الجهاز مرة، وأي تصدير/مسح
+    //    بيعدّلها على طول (الجديد بس). نفس الجدول بالحرف اللي كان بيتبني هنا كل فتحة (١٨ ألف سجل عند مندوب).
+    const recordsReady = (async () => {
+      try {
+        const { table } = await getRecordsSheet(myNameRef.current);
+        if (table) {
+          builtRecordsTableRef.current = table;
+          applyTashyeekTable(table);
+          setTashyeekFile(null);
+        }
+      } catch { /* no field sheet yet */ }
+    })().finally(() => { recordsLoadedRef.current = true; setRecordsLoaded(true); });
+    recordsReadyRef.current = recordsReady;
+    // 📎 الإحالات والداتا الإضافية — من الجهاز بس، على طول (كانت قبل طلبات النت في نفس السلسلة). «فرز» بيستناها.
+    void (async () => {
+    // شيتات الإحالة الإضافية: نبحث في slots متتابعة (referral-2, referral-3, ...)
+    // لحد أول slot فاضي — كده تفضل بعد إعادة فتح التطبيق.
+    try {
+      const extras: ExtraReferral[] = [];
+      for (let n = 2; n < 100; n++) {
+        const rec = await getUploadedFile("local", `referral-${n}`);
+        if (!rec) break;
+        extras.push({
+          id: `ref-b${n}`,
+          table: { headers: rec.headers, rows: rec.rows },
+          file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+        });
+        extraHighWaterRef.current = n;
+      }
+      if (extras.length > 0) {
+        setExtraReferrals(extras);
+        const sel: Record<string, Set<string>> = {};
+        for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("referral", e.table);
+        setExtraColsSel((cs) => ({ ...cs, ...sel }));
+      }
+    } catch { /* no extra referrals */ }
+    // ملفات الداتا الإضافية: slots متتابعة (data-2, data-3, ...).
+    try {
+      const extras: ExtraDataFile[] = [];
+      for (let n = 2; n < 100; n++) {
+        const rec = await getUploadedFile("local", `data-${n}`);
+        if (!rec) break;
+        if (rec.streamed && rec.streamSlot) {
+          // ملف إضافي كبير: الصفوف على الجهاز في dataStore — نسترجع الميتا +
+          // عيّنة معاينة بس (مايتحملش في الذاكرة). لو قاعدته اختفت نتخطّاه.
+          const meta = await getDataMeta(rec.streamSlot);
+          if (!meta) continue;
+          const sample = await getSampleRows(50, rec.streamSlot);
+          extras.push({
+            id: `data-b${n}`,
+            table: { headers: meta.headers, rows: sample, sheetName: meta.sheetName },
+            file: new File([meta.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+            streamed: true, streamSlot: rec.streamSlot, streamMeta: meta,
+          });
+        } else {
+          extras.push({
+            id: `data-b${n}`,
+            table: { headers: rec.headers, rows: rec.rows },
+            file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+          });
+        }
+        extraDataHighWaterRef.current = n;
+      }
+      if (extras.length > 0) {
+        setExtraData(extras);
+        const sel: Record<string, Set<string>> = {};
+        for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("data", e.table);
+        setExtraColsSel((cs) => ({ ...cs, ...sel }));
+      }
+    } catch { /* no extra data files */ }
+    })().finally(() => setBoxesLoaded(true));
     Promise.all([
       getUploadedFile("local", "data"),
       getUploadedFile("local", "referral"),
@@ -543,40 +614,6 @@ export default function SortingPage() {
         }
         // ⏳ سجلات المندوب **أول حاجة** ومن الجهاز بس — الفرز بيستناها (`recordsReadyRef`). كانت في آخر الشغل اللي
         //    تحت (بعد طلبات النت) فالفرز اللي بيتداس بدري كان بيطلع من غير السجلات في صمت (المالك ٢٠ أكتوبر ٢٠٢٦).
-        const recordsReady = (async () => {
-        // شيت التسجيلات (الميداني) يغذّي الفرز تلقائياً — يُبنى من السجلات المحفوظة
-        // في التطبيق، ويحل محل رفع ملف تشييك يدوي.
-        try {
-          // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
-          // 🔒 عضو مجموعة مقفول عليه السجلات (`lib/groupLocks.ts`) ⇒ السجلات مابتدخلش الفرز (كانت هتظهر في نتيجته).
-          const fieldEntries = recordsLockedNow() ? [] : collapseDuplicateChecks(await getAllFieldCheckEntries());
-          if (fieldEntries.length > 0) {
-            // 📍 حي المندوب (بأي اسم من التلاتة) ⇐ عمود واحد «الحي-الشارع» (`lib/recordArea.ts`)
-            const recRows = fieldEntries.map((e) => recordAreaRow(e));
-            const keys = new Set<string>(["رقم اللوحة"]);
-            for (const r of recRows) for (const k of Object.keys(r)) keys.add(k);
-            keys.add("GPS");
-            keys.add("التاريخ");   // تاريخ تشييك المندوب — لازم يبان في نتيجة السجلات ومشاركتها
-            keys.add("المندوب");   // مين سجّلها — بيفرق لما سجلات المجموعة تتلم مع بتاعته
-            const headers = [...keys];
-            const rows = fieldEntries.map((e, i) => ({
-              "رقم اللوحة": e.plate,
-              ...recRows[i],
-              // موقع وقت التشييك: نفضّل الرابط المحفوظ، وإلا نبنيه من الإحداثيات
-              // (بعض السجلات عندها lat/lng بدون mapsLink) — عشان «خريطة» تفتح صح.
-              "GPS": e.mapsLink || (typeof e.lat === "number" && typeof e.lng === "number" ? toMapsLink(e.lat, e.lng) : ""),
-              // وقت التشييك الفعلي (مش عمود من الشيت) — بيغلب أي «تاريخ» جوه e.row.
-              "التاريخ": e.checkedAt ? fmtCheckDate(e.checkedAt) : (e.row?.["التاريخ"] ?? ""),
-              "المندوب": myNameRef.current,
-            } as Record<string, string>));
-            const t = { headers, rows };
-            builtRecordsTableRef.current = t;
-            applyTashyeekTable(t);
-            setTashyeekFile(null);
-          }
-        } catch { /* no field sheet yet */ }
-        })().finally(() => { recordsLoadedRef.current = true; });
-        recordsReadyRef.current = recordsReady;
         // ── الشغل التقيل بيتعمل في الخلفية، مش قبل ما الصفحة تظهر ──────────
         // ومعاه المربعات الإضافية: كانت بتتقري **واحد ورا التاني** (كل ملف رحلة
         // لوحده للتخزين) قبل ما الصفحة تظهر — والمندوب اللي عنده ٣ أو ٤ ملفات
@@ -586,61 +623,6 @@ export default function SortingPage() {
         // لجدول (عشرات الآلاف من الصفوف) — وده بيتعاد كل مرة يرجع للفرز.
         // دلوقتي الصفحة بتظهر بملفاتها المحفوظة على طول، والباقي بيلحق.
         const teamReady = (async () => {
-        // شيتات الإحالة الإضافية: نبحث في slots متتابعة (referral-2, referral-3, ...)
-        // لحد أول slot فاضي — كده تفضل بعد إعادة فتح التطبيق.
-        try {
-          const extras: ExtraReferral[] = [];
-          for (let n = 2; n < 100; n++) {
-            const rec = await getUploadedFile("local", `referral-${n}`);
-            if (!rec) break;
-            extras.push({
-              id: `ref-b${n}`,
-              table: { headers: rec.headers, rows: rec.rows },
-              file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-            });
-            extraHighWaterRef.current = n;
-          }
-          if (extras.length > 0) {
-            setExtraReferrals(extras);
-            const sel: Record<string, Set<string>> = {};
-            for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("referral", e.table);
-            setExtraColsSel((cs) => ({ ...cs, ...sel }));
-          }
-        } catch { /* no extra referrals */ }
-        // ملفات الداتا الإضافية: slots متتابعة (data-2, data-3, ...).
-        try {
-          const extras: ExtraDataFile[] = [];
-          for (let n = 2; n < 100; n++) {
-            const rec = await getUploadedFile("local", `data-${n}`);
-            if (!rec) break;
-            if (rec.streamed && rec.streamSlot) {
-              // ملف إضافي كبير: الصفوف على الجهاز في dataStore — نسترجع الميتا +
-              // عيّنة معاينة بس (مايتحملش في الذاكرة). لو قاعدته اختفت نتخطّاه.
-              const meta = await getDataMeta(rec.streamSlot);
-              if (!meta) continue;
-              const sample = await getSampleRows(50, rec.streamSlot);
-              extras.push({
-                id: `data-b${n}`,
-                table: { headers: meta.headers, rows: sample, sheetName: meta.sheetName },
-                file: new File([meta.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-                streamed: true, streamSlot: rec.streamSlot, streamMeta: meta,
-              });
-            } else {
-              extras.push({
-                id: `data-b${n}`,
-                table: { headers: rec.headers, rows: rec.rows },
-                file: new File([rec.fileBlob ?? new Blob()], rec.fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-              });
-            }
-            extraDataHighWaterRef.current = n;
-          }
-          if (extras.length > 0) {
-            setExtraData(extras);
-            const sel: Record<string, Set<string>> = {};
-            for (const e of extras) if (e.table) sel[e.id] = defaultExtraCols("data", e.table);
-            setExtraColsSel((cs) => ({ ...cs, ...sel }));
-          }
-        } catch { /* no extra data files */ }
         // مين أنا + مجموعتي (لو فيه) — عشان عمود «المندوب» ومطابقة سجلات المجموعة.
         try {
           const { data: au } = await supabase.auth.getUser();
@@ -650,12 +632,12 @@ export default function SortingPage() {
             const pr = prof as { username?: string; team?: string | null } | null;
             myNameRef.current = pr?.username ?? "";
             myIdRef.current = au.user.id;
-            // 👤 السجلات بقت بتتحمّل قبل الاسم ⇒ «المندوب» الفاضي بيتملي دلوقتي (الجدول اللي البرنامج بناه بس)
-            void recordsReady.then(() => {
+            // 👤 السجلات بقت بتتحمّل قبل الاسم ⇒ «المندوب» بيتملي دلوقتي (الشيت من الذاكرة — في لحظة)
+            void recordsReady.then(async () => {
               const t = builtRecordsTableRef.current;
               if (!t || tashyeekTableRef.current !== t) return;
-              const f = fillOwnName(t, myNameRef.current);
-              if (f !== t) { builtRecordsTableRef.current = f; applyTashyeekTable(f); }
+              const { table } = await getRecordsSheet(myNameRef.current);
+              if (table && table !== t && tashyeekTableRef.current === t) { builtRecordsTableRef.current = table; applyTashyeekTable(table); }
             });
             if (pr?.team) {
               hasTeamRef.current = true;
@@ -1880,9 +1862,12 @@ export default function SortingPage() {
   // العضو بيفرز على **داتا المجموعة** (مش ملف داتا بتاعه) — فوجودها بيكفي لتفعيل
   // الفرز زي ما ملف الداتا العادي بيكفّي. عمود اللوحة بييجي من مصدر المجموعة.
   const teamDataReady = teamData.role === "member" && ((teamStreamed && !!teamStreamMeta) || !!teamTable);
-  const canSort = sortMode === "new"
+  const canSortFiles = sortMode === "new"
     ? (!!dataTable || teamDataReady || memberDataReady) && referralReady && !!checkTable && (!!effectiveDataPlateCol || teamDataReady || memberDataReady) && !!effectiveCheckPlateCol && dataSheetsReady
     : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || teamDataReady || memberDataReady || recordsAsDataReady);
+  // ✅ وكمان السجلات والمربعات الإضافية قارية (من الجهاز — في لحظة) ⇒ الفرز على **كل** الداتا و**كل** السجلات
+  const allLoaded = recordsLoaded && boxesLoaded;
+  const canSort = canSortFiles && allLoaded;
 
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
@@ -2556,7 +2541,15 @@ export default function SortingPage() {
    */
   async function recordsForSort(): Promise<{ table: ExcelTable | null; plateCol: string | null }> {
     if (!recordsLoadedRef.current) setWaitingRecords(true);
-    const { value: table, late } = await awaitRecords(recordsReadyRef.current, () => tashyeekTableRef.current);
+    const { value: loaded, late } = await awaitRecords(recordsReadyRef.current, () => tashyeekTableRef.current);
+    let table = loaded;
+    // 🗂️ شيت السجلات (مش ملف اترفع) ⇒ **آخر نسخة**: لو اتصدّرت/اتمسحت لوحات بعد ما الصفحة فتحت بتدخل — من الذاكرة في لحظة
+    if (!late && (!table || table === builtRecordsTableRef.current)) {
+      try {
+        const fresh = (await getRecordsSheet(myNameRef.current)).table;
+        if (fresh !== table) { builtRecordsTableRef.current = fresh; applyTashyeekTable(fresh); table = fresh; }
+      } catch { /* باللي موجود */ }
+    }
     setWaitingRecords(false);
     setRecordsLate(late);
     return { table, plateCol: table ? detectPlateColumn(table.headers, table.rows) : null };
@@ -3982,8 +3975,17 @@ export default function SortingPage() {
       <button onClick={handleSort} disabled={sorting || !canSort}
         className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-50">
         <ListFilter size={18} />
-        {sorting ? (waitingRecords ? "بستنى السجلات تخلص تحميل..." : "جارٍ الفرز...") : "فرز"}
+        {sorting ? (waitingRecords ? "بستنى السجلات تخلص تحميل..." : "جارٍ الفرز...") : (canSortFiles && !allLoaded ? "جارٍ تحميل السجلات والملفات..." : "فرز")}
       </button>
+      {/* 🗂️ شيت السجلات قاري — كام صف وكام لوحة (بيدخل الفرز كله) */}
+      {recordsLoaded && tashyeekTable && tashyeekTable === builtRecordsTableRef.current && (() => {
+        const st = recordsSheetStats(tashyeekTable);
+        return (
+          <p className="text-center text-[11px] font-bold text-emerald-600" dir="rtl">
+            ✅ شيت السجلات قاري — {st.rows.toLocaleString("ar-EG")} صف · {st.plates.toLocaleString("ar-EG")} لوحة
+          </p>
+        );
+      })()}
       {/* ⏳ السجلات اتأخّرت أكتر من الحد — النتيجة طلعت من غيرها: المندوب لازم يعرف (كان بيحصل في صمت) */}
       {recordsLate && !sorting && (
         <p className="rounded-xl border border-alert/40 bg-alert/10 px-3 py-2 text-center text-[12px] font-bold text-alert">
