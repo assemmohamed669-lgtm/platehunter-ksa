@@ -164,7 +164,9 @@ describe("🔴 التوصيل", () => {
   });
   it("🔴 الفرز والمطلوب مابيقروش السجلات لما تكون مقفولة", () => {
     const s = read("app/(app)/sorting/page.tsx");
-    expect(s).toMatch(/const fieldEntries = recordsLockedNow\(\) \? \[\] :/);
+    // سجلاتي في الفرز بقت من شيت السجلات الجاهز (`lib/recordsSheet.ts`) — والقفل هناك
+    expect(read("lib/recordsSheet.ts")).toMatch(/if \(recordsLockedNow\(\)\) return \{ table: null \};/);
+    expect(s).toMatch(/await getRecordsSheet\(myNameRef\.current\)/);
     expect(s).toMatch(/if \(!hasTeamRef\.current \|\| recordsLockedNow\(\)\) return \[\];/);
     expect(s).toMatch(/if \(hasTeamRef\.current && !recordsLockedNow\(\)\)/);
     expect(read("app/(app)/wanted/page.tsx")).toMatch(/recordsLockedNow\(\) \? Promise\.resolve\(\[\] as FieldCheckEntry\[\]\)/);

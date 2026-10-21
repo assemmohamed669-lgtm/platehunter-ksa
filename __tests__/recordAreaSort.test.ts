@@ -119,7 +119,10 @@ describe("🔌 التوصيل", () => {
   it("صفحة الفرز: صفوف السجلات + سجلات الزمايل + عمود العنوان + «تخصيص» مرة واحدة", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("app/(app)/sorting/page.tsx", "utf8");
-    expect(src).toMatch(/const recRows = fieldEntries\.map\(\(e\) => recordAreaRow\(e\)\);/);
+    // صفوف سجلاتي بقت بتتبني في شيت السجلات الجاهز (`lib/recordsSheet.ts`) — الصفحة بتاخده منه
+    const sheetSrc = readFileSync("lib/recordsSheet.ts", "utf8");
+    expect(sheetSrc).toMatch(/const recRows = fieldEntries\.map\(\(e\) => recordAreaRow\(e\)\);/);
+    expect(src).toMatch(/await getRecordsSheet\(myNameRef\.current\)/);
     expect(src).toMatch(/\.\.\.recordAreaRow\(\{ row: g\.extra \?\? \{\} \}\),/);
     expect(src).toMatch(/withRecordAreaColumn\(fixedRaw\)/);
     expect(src).toMatch(/addColumnOnce\(colOrder, RECORD_AREA_RESULT_LABEL, "ph:sorting:areaColAdded"\)/);
