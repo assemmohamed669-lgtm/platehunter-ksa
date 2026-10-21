@@ -77,8 +77,17 @@ export default function RecordsSheetBox({ table, loading, summary }: {
         <ClipboardList size={15} className="shrink-0 text-emerald-600" />
         <span className="text-xs font-bold text-ink">شيت السجلات</span>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${statusCls}`}>{status}</span>
-        {!loading && table && <span className="text-[11px] font-bold text-ink">{ar(st.plates)} لوحة</span>}
-        {!loading && !!summary?.chassis && <span className="text-[11px] font-bold text-ink">· {ar(summary.chassis)} شاص</span>}
+        {/* 🔢 نفس أرقام صفحة السجلات بالحرف («سجل التشييك ١٬٠٣٧») — المالك: «مش كاتب انه قاري ١٬٠٣٧ كاتب انه قاري فقط
+            549» (٥٤٩ = لوحات مختلفة — بقت في التفاصيل). من غير العدّ (لسه) ⇒ عدد اللوحات زي الأول. */}
+        {!loading && table && summary ? (
+          <span className="flex flex-wrap items-center gap-x-1.5 text-[11px] font-bold text-ink">
+            <span>سجل التشييك {ar(summary.check)}</span>
+            {summary.mj > 0 && <span>· التسجيلات {ar(summary.mj)}</span>}
+            {summary.chassis > 0 && <span>· شاص {ar(summary.chassis)}</span>}
+          </span>
+        ) : !loading && table ? (
+          <span className="text-[11px] font-bold text-ink">{ar(st.plates)} لوحة</span>
+        ) : null}
         <span className="mr-auto text-muted">{open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
       </button>
 

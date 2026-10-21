@@ -37,11 +37,26 @@ describe("🔩 نتيجة الشاص (نفس جدول صفحة الفرز)", () 
 
 describe("🔢 المربع بيقول هو بيفرز على إيه بالظبط", () => {
   const table = { headers: ["رقم اللوحة"], rows: [{ "رقم اللوحة": "ابح1234" }, { "رقم اللوحة": "ابح1234" }, { "رقم اللوحة": "دده4444" }] };
-  it("السطر الصغير: اللوحات + الشاص", async () => {
+  it("السطر الصغير = نفس أرقام صفحة السجلات: «سجل التشييك ١٬٠٣٧ · شاص ٦» (المالك: «مش كاتب انه قاري ١٬٠٣٧»)", async () => {
     const { default: RecordsSheetBox } = await import("@/components/RecordsSheetBox");
     render(<RecordsSheetBox table={table} loading={false} summary={{ check: 1037, mj: 0, chassis: 6 }} />);
-    expect(screen.getByText(/٢ لوحة/)).toBeTruthy();
-    expect(screen.getByText(/٦ شاص/)).toBeTruthy();
+    const line = screen.getByRole("button", { name: /شيت السجلات/ });
+    expect(line.textContent).toMatch(/سجل التشييك ١٬٠٣٧/);
+    expect(line.textContent).toMatch(/شاص ٦/);
+    expect(line.textContent).not.toMatch(/التسجيلات/);           // مفيش داتا تسجيلات ⇒ مابتظهرش
+    expect(line.textContent).not.toMatch(/لوحة/);                // عدد اللوحات المختلفة في التفاصيل بس
+  });
+  it("فيه داتا تسجيلات ⇒ عددها في السطر كمان", async () => {
+    const { default: RecordsSheetBox } = await import("@/components/RecordsSheetBox");
+    render(<RecordsSheetBox table={table} loading={false} summary={{ check: 1037, mj: 12, chassis: 0 }} />);
+    const line = screen.getByRole("button", { name: /شيت السجلات/ });
+    expect(line.textContent).toMatch(/التسجيلات ١٢/);
+    expect(line.textContent).not.toMatch(/شاص/);
+  });
+  it("من غير العدّ (لسه) ⇒ عدد اللوحات زي الأول", async () => {
+    const { default: RecordsSheetBox } = await import("@/components/RecordsSheetBox");
+    render(<RecordsSheetBox table={table} loading={false} />);
+    expect(screen.getByRole("button", { name: /شيت السجلات/ }).textContent).toMatch(/٢ لوحة/);
   });
   it("التفاصيل: كل السجلات + داتا التسجيلات + الشاص، والمكرر بيتحسب مرة، والشاص برقم الشاص", async () => {
     const { default: RecordsSheetBox } = await import("@/components/RecordsSheetBox");
