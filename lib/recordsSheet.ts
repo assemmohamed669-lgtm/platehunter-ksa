@@ -34,7 +34,11 @@ export function fmtCheckDate(iso: string): string {
 /** جدول السجلات للفرز من السجلات (الأحدث الأول) — `null` لو مفيش. */
 export function buildRecordsTable(entries: FieldCheckEntry[], ownName: string): RecordsTable | null {
   // نفس اللوحة في نفس الدقيقة = تشييك واحد ⇒ نتيجة فرز واحدة.
-  const fieldEntries = collapseDuplicateChecks(entries);
+  return buildRecordsTableFromCollapsed(collapseDuplicateChecks(entries), ownName);
+}
+
+/** نفس `buildRecordsTable` من سجلات **اتلمّ مكررها** خلاص (`getRecordsEntries`) — مابنلمّش مرتين. */
+export function buildRecordsTableFromCollapsed(fieldEntries: FieldCheckEntry[], ownName: string): RecordsTable | null {
   if (fieldEntries.length === 0) return null;
   // 📍 حي المندوب (بأي اسم من التلاتة) ⇐ عمود واحد «الحي-الشارع» (`lib/recordArea.ts`)
   const recRows = fieldEntries.map((e) => recordAreaRow(e));
@@ -67,6 +71,21 @@ function newestFirst(a: FieldCheckEntry, b: FieldCheckEntry): number {
 const raw = (k: string) => { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } };
 
 let cache: { key: string; table: RecordsTable | null } | null = null;
+let entriesCache: { key: string; entries: FieldCheckEntry[] } | null = null;
+
+/**
+ * سجلات الفرز (المكرر في نفس الدقيقة واحد، الأحدث الأول، من غير المجموعات المستخبية) — **نفس**
+ * `collapseDuplicateChecks(await getAllFieldCheckEntries())` بالحرف، بس من الذاكرة ومخزّنة لحد ما حاجة تتغيّر.
+ * «صوت فقط» ومربع «شيت السجلات» بيفرزوا ويعدّوا منها.
+ */
+export async function getRecordsEntries(): Promise<FieldCheckEntry[]> {
+  const { entries, version } = await getFieldCheckMirror();
+  const key = [version, raw("ph:hiddenRecordTeams"), raw("ph:hideLegacyRecords")].join("|");
+  if (version >= 0 && entriesCache?.key === key) return entriesCache.entries;
+  const out = collapseDuplicateChecks(withoutHiddenTeams(entries.slice().sort(newestFirst)));
+  if (version >= 0) entriesCache = { key, entries: out };
+  return out;
+}
 
 /**
  * 🗂️ شيت السجلات للفرز — من الذاكرة، ومابيتبنيش تاني إلا لو حاجة اتغيّرت. **عمره ما بيرجّع شيت أقدم من السجلات.**
@@ -74,11 +93,10 @@ let cache: { key: string; table: RecordsTable | null } | null = null;
  */
 export async function getRecordsSheet(ownName: string): Promise<{ table: RecordsTable | null }> {
   if (recordsLockedNow()) return { table: null };   // 🔒 عضو مقفول عليه السجلات ⇒ مابتدخلش الفرز
-  const { entries, version } = await getFieldCheckMirror();
+  const { version } = await getFieldCheckMirror();
   const key = [version, raw("ph:hiddenRecordTeams"), raw("ph:hideLegacyRecords"), ownName].join("|");
   if (version >= 0 && cache?.key === key) return { table: cache.table };
-  const visible = withoutHiddenTeams(entries.slice().sort(newestFirst));
-  const table = buildRecordsTable(visible, ownName);
+  const table = buildRecordsTableFromCollapsed(await getRecordsEntries(), ownName);
   if (version >= 0) cache = { key, table };
   return { table };
 }
@@ -97,4 +115,5 @@ export function recordsSheetStats(t: RecordsTable | null): { rows: number; plate
 /** للاختبارات بس */
 export function __resetRecordsSheetForTest(): void {
   cache = null;
+  entriesCache = null;
 }

@@ -177,3 +177,20 @@ describe("🧮 كل مصادر السجلات", () => {
     spy.mockRestore();
   });
 });
+
+describe("🔔 المربع بيتحدّث لوحده", () => {
+  it("حفظ/مسح ⇒ إشعار (والنسخة جاهزة وقتها)، وعلامة «اترفع» لأ", async () => {
+    const { onFieldChecksChanged } = await import("@/lib/idb");
+    await getRecordsSheet("");                       // النسخة في الذاكرة جاهزة
+    const seen: number[] = [];
+    const off = onFieldChecksChanged(() => { void getRecordsSheet("").then((s) => seen.push(s.table?.rows.length ?? 0)); });
+    const e = mk({ synced: false });
+    await saveFieldCheckEntry(e);
+    await new Promise((r) => setTimeout(r, 0));
+    await markFieldChecksSyncedByIds([e.id]);
+    await deleteFieldCheckEntries([e.id]);
+    await new Promise((r) => setTimeout(r, 0));
+    off();
+    expect(seen).toEqual([1, 0]);
+  });
+});
