@@ -639,3 +639,40 @@ describe("stampEntriesWithTrack — الموقع بالكيلو ⇒ موقع ا�
     expect(b.pin).toBeNull();
   });
 });
+
+/**
+ * ⏸️ **«وقف مؤقت» في نفس التسجيل** (المالك ٢٢ أكتوبر ٢٠٢٦): «اللوحات اللي قبل كدة تبقي متاخد ليها موقعها قدام كل
+ * لوحه بالظبط وقت ما قالها … ولما ييستأنف … كل لوحه بعدها يتاخدل ليها الموقع وقت ماقالها المندوب».
+ * الصوت مافيهوش الوقفة ⇒ ثانية اللوحة في الصوت بتترجع لوقتها الحقيقي قبل ما تدوّر على قراءة الموقع.
+ */
+describe("stampEntriesWithTrack — وقف مؤقت وكمّل في نفس التسجيل", () => {
+  // قبل الوقفة واقف عند ٢٤٫٠ — الوقفة ١٠ دقايق بعد ٢٠ث صوت — بعدها في مكان تاني خالص (٢٥٫٠)
+  const before = Array.from({ length: 21 }, (_, i) => fx(i * 1000, 24 + i * 0.0001));
+  const after = Array.from({ length: 21 }, (_, i) => fx(620_000 + i * 1000, 25 + i * 0.0001));
+  const track = [...before, ...after];
+  const pauses = [{ atAudioMs: 20_000, durMs: 600_000 }];
+
+  it("لوحة قبل الوقفة ⇒ موقع لحظة نطقها", () => {
+    const [a] = stampEntriesWithTrack([entry("ابح1234", 5)], track, START, pauses);
+    expect(a.pin!.lat).toBeCloseTo(24.0005, 9);
+    expect(a.pin!.at).toBe(START + 5000);
+  });
+
+  it("لوحة بعد ما كمّل ⇒ موقع لحظة نطقها بعد الوقفة (مش مكانه قبل ما يقف)", () => {
+    // ث ٢٥ في الصوت = ٥ث بعد ما كمّل = ٦٢٥ث من بداية التسجيل
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 5), entry("حطس5678", 25)], track, START, pauses);
+    expect(b.pin!.lat).toBeCloseTo(25.0005, 9);
+    expect(b.pin!.at).toBe(START + 625_000);
+  });
+
+  it("من غير الوقفات كانت هتاخد موقع غلط (ده اللي بنمنعه)", () => {
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 5), entry("حطس5678", 25)], track, START);
+    expect(b.pin).toBeNull(); // ث ٢٥ من غير ما نرجّعها مافيهاش قراءة — والقراية الغلط كانت ممكن تبقى مكان تاني
+  });
+
+  it("وقفة ⇒ اللوحتين اللي على جنبيها مابيتنسخش موقع واحدة على التانية (بينهم ١٠ دقايق)", () => {
+    const sparse = [fx(5000, 24), fx(625_000, 25, 46.7, 2000)]; // بعد الوقفة الموقع بالكيلو
+    const [, b] = stampEntriesWithTrack([entry("ابح1234", 5), entry("حطس5678", 25)], sparse, START, pauses);
+    expect(b.pin).toBeNull();
+  });
+});
