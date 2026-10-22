@@ -14,6 +14,7 @@
  */
 import type { PlateEntry } from "./plateEntry";
 import { NO_PRECISE_PIN, neighborPinOf, type TrackFix } from "./platePin";
+import { pausedTotalMs, pausesForReport, type RecPause } from "./recPauses";
 
 export const OUTBOX_KEY = "mj:reports:outbox";
 /** الصندوق مايكبرش للأبد — الأقدم بيتشال */
@@ -51,7 +52,17 @@ export interface RunReport {
   run?: string;
   ok?: boolean;
   error?: string;
-  clip?: { id?: string; label?: string; source?: string; sec?: number; bytes?: number; mime?: string };
+  /** `pz` = ⏸️ الوقفات [ثانيتها في الصوت, مدتها] · `paused_s` مجموعها (٢٢ أكتوبر ٢٠٢٦) — `sec` = الصوت بس */
+  clip?: {
+    id?: string;
+    label?: string;
+    source?: string;
+    sec?: number;
+    bytes?: number;
+    mime?: string;
+    pz?: Array<[number, number]>;
+    paused_s?: number;
+  };
   t?: { total_ms?: number; upload_ms?: number; plates_ms?: number; queued_ms?: number; queue_pos_max?: number };
   res?: { n?: number; dur_s?: number; server_ms?: number; fields_from?: string; cohere_calls?: number; dropped?: number };
   n_plates: number;
@@ -110,7 +121,7 @@ export interface RunReportInput {
   run?: string;
   ok?: boolean;
   error?: string;
-  clip?: RunReport["clip"] & { startedAtMs?: number };
+  clip?: RunReport["clip"] & { startedAtMs?: number; pauses?: RecPause[] };
   timing?: { totalMs?: number; uploadMs?: number; platesMs?: number; queuedMs?: number; queuePosMax?: number };
   result?: { n?: number; durS?: number; serverMs?: number; fieldsFrom?: string; cohereCalls?: number; dropped?: number };
   entries?: PlateEntry[];
@@ -150,6 +161,7 @@ export function buildRunReport(i: RunReportInput): RunReport {
     if (typeof e.typeHeard === "string" && e.typeHeard !== (e.vehicleType ?? "")) o.th = e.typeHeard;
     return o;
   });
+  const pz = pausesForReport(i.clip?.pauses);
   const clip = i.clip
     ? {
         ...(i.clip.id ? { id: i.clip.id } : {}),
@@ -158,6 +170,7 @@ export function buildRunReport(i: RunReportInput): RunReport {
         ...(num(i.clip.sec) !== undefined ? { sec: Math.round((i.clip.sec as number) * 100) / 100 } : {}),
         ...(num(i.clip.bytes) !== undefined ? { bytes: i.clip.bytes } : {}),
         ...(i.clip.mime ? { mime: i.clip.mime } : {}),
+        ...(pz ? { pz, paused_s: round1(pausedTotalMs(i.clip.pauses) / 1000) } : {}),
       }
     : undefined;
   const r: RunReport = {
@@ -195,7 +208,10 @@ export function buildRunReport(i: RunReportInput): RunReport {
     };
   }
   if (num(i.fixes) !== undefined) r.fixes = i.fixes;
-  if (Array.isArray(i.track)) r.gps = gpsSummary(i.track, num(i.clip?.sec));
+  // ⏸️ المسار بوقت الساعة ⇒ آخر التسجيل = الصوت + الوقفات
+  const sec = num(i.clip?.sec);
+  const wallSec = sec !== undefined ? sec + pausedTotalMs(i.clip?.pauses) / 1000 : undefined;
+  if (Array.isArray(i.track)) r.gps = gpsSummary(i.track, wallSec);
   if (i.errors?.length) r.errors = i.errors.slice(0, ERRORS_MAX).map((e) => String(e).slice(0, ERROR_CHARS));
   if (i.export) {
     r.export = { ...i.export };

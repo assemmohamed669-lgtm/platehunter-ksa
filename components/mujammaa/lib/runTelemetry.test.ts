@@ -307,3 +307,28 @@ describe("issueBatch — مشاكل الموبايل اللي حصلت برّه 
     expect(issueBatch([e("4", "التفريغ", "اتقطع")], seen, false)).toEqual([]);
   });
 });
+
+/** ⏸️ «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦): التقرير بيقول التسجيل كان فيه وقفات فين وقد إيه، والموقع على طول الوقت الحقيقي */
+describe("buildRunReport — ⏸️ الوقفات", () => {
+  const fix = (tMs: number) => ({ tMs, lat: 24.7, lng: 46.7, acc: 5 });
+
+  it("مكان كل وقفة في الصوت ومدتها + مجموعها، وقراءات الموقع بعد الوقفة محسوبة جوّه التسجيل", () => {
+    const r = buildRunReport({
+      kind: "run",
+      agent: "x",
+      uid: null,
+      clip: { sec: 10, startedAtMs: T0, pauses: [{ atAudioMs: 5_000, durMs: 60_000 }] },
+      entries: [],
+      track: [fix(2_000), fix(64_000), fix(69_000)],
+      now: T0,
+      dev: {},
+    });
+    expect(r.clip).toMatchObject({ sec: 10, pz: [[5, 60]], paused_s: 60 });
+    expect(r.gps).toMatchObject({ n: 3, in_clip: 3 });
+  });
+
+  it("من غير وقفات ⇒ مافيش حقول جديدة (التقارير القديمة زي ما هي)", () => {
+    const r = buildRunReport({ kind: "run", agent: "x", uid: null, clip: { sec: 10, pauses: [] }, entries: [], now: T0, dev: {} });
+    expect(r.clip).toEqual({ sec: 10 });
+  });
+});
