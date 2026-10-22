@@ -67,7 +67,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 import dynamic from "next/dynamic";
-import { MJ_FLAG_COL, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
+import { MJ_FLAG_COL, MJ_PAUSE_FOR_DELEGATES, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
 import { loadAgentPreview, saveAgentPreview } from "@/lib/mujammaaPreview";
 import SharedCheckFileBox from "@/components/SharedCheckFileBox";
 import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
@@ -3009,6 +3009,8 @@ export default function RegistrationPage() {
             onExportToRecords={exportMujammaa}
             hideCheckBox
             onCheckInfo={setMjCheckInfo}
+            // ⏸️ «وقف مؤقت» — السوبر أدمن الأول (حتى في «زي المندوب»)، والمناديب لما المالك يفتحه
+            canPause={superOk || MJ_PAUSE_FOR_DELEGATES}
           />
         </div>
       )}
