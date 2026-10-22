@@ -1402,3 +1402,82 @@ describe("retranscribeWarning — رسالة قبل «فرّغ تاني»", () =
     expect(w).toMatch(/هتتكرر في السجلات/);
   });
 });
+
+/**
+ * ⏸️ «وقف مؤقت» في نفس التسجيل (المالك ٢٢ أكتوبر ٢٠٢٦): الوقفات بتتحفظ مع المقطع — فالتفريغ (حتى بعد تحديث الصفحة
+ * أو «فرّغ تاني») بيدّي كل لوحة موقع **لحظة نطقها**، ومدة المقطع = الصوت بس (من غير الوقفات).
+ */
+describe("المقطع والوقفات", () => {
+  const PAUSES = [{ atAudioMs: 20_000, durMs: 600_000 }];
+  const clip: StoredClip = {
+    id: "c7",
+    seqNo: 7,
+    label: "مقطع 7",
+    createdAt: START,
+    startEpoch: START,
+    durationSec: 40,
+    mime: "audio/webm",
+    source: "record",
+    status: "ready",
+    parts: 3,
+    bytes: 100,
+    updatedAt: START + 640_000,
+    stamp: STAMP,
+    rawFixes: [
+      { lat: 24.1, lng: 46.7, acc: 5, fixEpoch: START + 5000, recvEpoch: START + 5100 },
+      { lat: 25.1, lng: 46.7, acc: 5, fixEpoch: START + 625_000, recvEpoch: START + 625_100 },
+    ],
+    pauses: PAUSES,
+  };
+  const entry = (plate: string, t?: number) =>
+    ({
+      id: plate,
+      review: { plate, notes: [], timeStart: t },
+      pin: null,
+      match: { kind: "none" },
+      capturedAt: START,
+      source: "batch",
+    }) as unknown as PlateEntry;
+
+  it("المهمة بتاخد وقفات المقطع", () => {
+    expect(clipJobFields(clip).pauses).toEqual(PAUSES);
+    expect(clipJobFields({ ...clip, pauses: undefined }).pauses).toEqual([]);
+  });
+
+  it("بعد التفريغ: اللي قبل الوقفة بموقعه، واللي بعدها بموقع لحظة نطقها بعد ما كمّل", () => {
+    const f = clipJobFields(clip);
+    const out = clipRunOutcome({
+      ok: true,
+      entries: [entry("ابح1234", 5), entry("حطس5678", 25)],
+      fixes: f.fixes,
+      pauses: f.pauses,
+      startEpoch: START,
+      tookSec: 1,
+      now: START,
+    });
+    expect(out.entries[0].pin!.lat).toBeCloseTo(24.1, 9);
+    expect(out.entries[1].pin!.lat).toBeCloseTo(25.1, 9);
+  });
+
+  it("اتقطع وهو واقف/بعد ما كمّل ⇒ المدة = الصوت بس (من غير الوقفات)", () => {
+    const rec = { ...clip, status: "recording" as const, durationSec: 0, updatedAt: START + 631_000 };
+    expect(recoverClip(rec)!.durationSec).toBe(31);
+    expect(clipDurationSec({ ...rec, durationSec: 0 })).toBe(31);
+  });
+
+  it("قفل المقطع بيحفظ الوقفات معاه", async () => {
+    const { store } = newStore();
+    const out = await closeRecordedClip(store, {
+      clipId: null,
+      writer: null,
+      blob: new Blob(["ABC"], { type: "audio/webm" }),
+      durationSec: 40,
+      rawFixes: [],
+      stamp: STAMP,
+      startEpoch: START,
+      mime: "audio/webm",
+      pauses: PAUSES,
+    });
+    expect((await store.get(out.id!))!.pauses).toEqual(PAUSES);
+  });
+});

@@ -23,6 +23,7 @@
 
 import type { GpsPin } from "./gps";
 import type { PlateEntry } from "./plateEntry";
+import { audioToWallMs, type RecPause } from "./recPauses";
 import { GPS_STAMP_MAX_ACCURACY_M } from "@/lib/gpsWarning";
 
 /**
@@ -379,11 +380,13 @@ export function pinMissLabel(reason: PinMiss | undefined): string {
 export function stampEntriesWithTrack(
   entries: PlateEntry[],
   track: TrackFix[],
-  startEpoch: number
+  startEpoch: number,
+  /** ⏸️ وقفات التسجيل — ثانية اللوحة في الصوت بترجع لوقت نطقها الحقيقي (`recPauses.ts`) */
+  pauses?: readonly RecPause[] | null
 ): PlateEntry[] {
   const times = entries.map((e) => {
     const t = e?.review?.timeStart;
-    return finite(t) ? Math.round(t * 1000) : undefined;
+    return finite(t) ? Math.round(audioToWallMs(t * 1000, pauses)) : undefined;
   });
   const res = resolvePlatePins(track, times);
   const real: Array<GpsPin | null> = res.map((r, i) => {

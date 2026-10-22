@@ -30,6 +30,7 @@ import {
   Loader2,
   ClipboardCheck,
   Mic,
+  Pause,
   Play,
   Share2,
   Square,
@@ -74,6 +75,8 @@ import {
   subscribeGps,
 } from "../lib/gps";
 import { GpsReadyChip, GpsStartWarning } from "../components/GpsReadiness";
+import { PauseBanner } from "../components/PauseBanner";
+import type { RecPause } from "../lib/recPauses";
 import {
   FixCollector,
   MEM_ONLY_WARNING,
@@ -218,6 +221,8 @@ export interface ClipJob {
    * بدل `GpsTrack.pinAt` الواسعة.
    */
   fixes?: TrackFix[];
+  /** ⏸️ وقفات المقطع (`clipJobFields`) — وقت نطق كل لوحة بيترجع بيها */
+  pauses?: RecPause[];
   /** مصدر الصوت — محفوظ مع المهمة بدل قراية `source` الحيّة */
   source?: "record" | "upload";
   /**
@@ -482,6 +487,7 @@ export default function BatchPage({
   onExportToRecords,
   hideCheckBox = false,
   onCheckInfo,
+  canPause = false,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -514,6 +520,11 @@ export default function BatchPage({
   hideCheckBox?: boolean;
   /** عدد لوحات ملفات التشييك (اللي المجمّع قراها) — المربع اللي برّه بيعرضه من غير مايبني فهرس تاني */
   onCheckInfo?: (info: { plates: number | null; files: number }) => void;
+  /**
+   * ⏸️ زرار «وقف مؤقت» / «كمّل التسجيل» (المالك ٢٢ أكتوبر ٢٠٢٦) — السوبر أدمن الأول
+   * (`MJ_PAUSE_FOR_DELEGATES` في `lib/mujammaaAccess.ts`).
+   */
+  canPause?: boolean;
 }) {
   const bank = useAppCheckSheet(errorLog);
   const gps = useGps(visible);
@@ -563,6 +574,8 @@ export default function BatchPage({
     setPhaseRaw(recorderRef.current && p !== "recording" ? "recording" : p);
   }, []);
   const [seconds, setSeconds] = useState(0);
+  /** ⏸️ واقف مؤقت من إمتى (epoch) — `null` = مش واقف (الميك مفتوح والملف لسه ماتقفلش) */
+  const [pausedSince, setPausedSince] = useState<number | null>(null);
   const [level, setLevel] = useState(0);
   const [waveform, setWaveform] = useState<Uint8Array | null>(null);
 
@@ -726,6 +739,8 @@ export default function BatchPage({
     stamp: SessionStamp;
     clipId?: string;
     fixes?: TrackFix[];
+    /** ⏸️ وقفات المقطع — وقت نطق كل لوحة (الموقع/الوقت/المربعات) بيترجع بيها */
+    pauses?: RecPause[];
     source?: "record" | "upload";
     /** أجزاء تسجيل المقطع ده (لو في الذاكرة ونفس صوته) — `activeChunks()` */
     chunks?: Blob[];
@@ -1197,6 +1212,7 @@ export default function BatchPage({
             durationSec: s.rec.durationSec,
             rawFixes: s.col.list(),
             stamp: s.stamp.toJSON(),
+            pauses: s.rec.pauses,
           })
         );
         if (!s.closing) {
@@ -1274,6 +1290,7 @@ export default function BatchPage({
           stamp: s.stamp.toJSON(),
           startEpoch: s.startEpoch,
           mime: blob?.type || s.rec.mime || "audio/webm",
+          pauses: s.rec.pauses,
         });
         const report = (out: Awaited<typeof closing>) => {
           logCloseErrors(out.id, out.errors);
@@ -1432,6 +1449,7 @@ export default function BatchPage({
     setPendingClipId(null);
     setPhase("recording");
     setSeconds(0);
+    setPausedSince(null);
     // 📍 داس تسجيل والعلامة لسه مش خضرا ⇒ تحذير كبير (وهزّة) لحد ما الموقع يجهز — التسجيل نفسه ماشي
     if (gpsStartWarning(gpsReadiness(currentFix(), lastFixRecvAt(), Date.now(), gpsStatus()))) {
       setGpsWarnArmed(true);
@@ -1460,6 +1478,7 @@ export default function BatchPage({
     try {
       stopTimer();
       releaseScreenAwake();
+      setPausedSince(null);
       const seconds = rec.durationSec;
 
       // ‎stop()‎ بتستنى آخر جزء يوصل — بلا الانتظار ده آخر لوحة بتضيع
@@ -1498,6 +1517,38 @@ export default function BatchPage({
     setPlayback(URL.createObjectURL(blob));
     setPhase("recorded");
   }, [errorLog, setPhase, setPendingClipId, setPlayback]);
+
+  /**
+   * ⏸️ «وقف مؤقت» / ▶️ «كمّل التسجيل» — **نفس الملف** (المالك ٢٢ أكتوبر ٢٠٢٦: «يوقف التسجيل دة مؤقت الي حين ما يطلع
+   * من مكان مفيهوش لوحات … ويرجع … يكمل ويقول لوحات علي نفس الملف»). الميك بيفضل مفتوح، والوقفة بتتحفظ مع المقطع
+   * على طول (`flush`) ⇒ كل لوحة بعد ما يكمّل بموقع ووقت لحظة نطقها (`recPauses.ts`).
+   */
+  const pauseRecording = () => {
+    const rec = recorderRef.current;
+    if (!rec || rec.isPaused) return;
+    if (!rec.pause()) {
+      errorLog.add(
+        "الميكروفون",
+        "الموبايل ده مابيعرفش يوقف التسجيل مؤقت — التسجيل لسه شغّال؛ لو عايز تقف دوس «إيقاف التسجيل» وابدأ تسجيل جديد بعدين."
+      );
+      return;
+    }
+    setPausedSince(Date.now());
+    void recSessionRef.current?.writer?.flush().catch(() => {});
+  };
+  const resumeRecording = () => {
+    const rec = recorderRef.current;
+    if (!rec || !rec.isPaused) return;
+    if (!rec.resume()) {
+      errorLog.add(
+        "الميكروفون",
+        "التسجيل ماكمّلش — دوس «إيقاف التسجيل» وابدأ تسجيل جديد (اللي اتسجّل لحد الوقفة محفوظ)."
+      );
+      return;
+    }
+    setPausedSince(null);
+    void recSessionRef.current?.writer?.flush().catch(() => {});
+  };
 
   // 🧮 مفتاح «التسجيل القديم» يتقفل طول ما الميك هنا مفتوح أو المقطع بيتقفل
   useEffect(() => {
@@ -1594,6 +1645,7 @@ export default function BatchPage({
         timeStartS: review.timeStart,
         baseMs: jobCtxRef.current?.startedAtMs ?? recordingStartedAtRef.current,
         lastKnownAbsMs: lastKnownSpokenAtRef.current,
+        pauses: jobCtxRef.current?.pauses,
       });
       const spokenAtMs = when.absMs;
 
@@ -2275,6 +2327,7 @@ export default function BatchPage({
           stamp: SessionStamp.fromJSON(next.stamp),
           clipId: next.clipId,
           fixes: next.fixes,
+          pauses: next.pauses,
           source: next.source,
           // 🔴 أجزاء **المقطع ده** بس (عيب ٣) — `activeChunks()` بتقرا منها
           chunks: next.chunks,
@@ -2350,6 +2403,7 @@ export default function BatchPage({
           error: verdict.ok ? undefined : verdict.error,
           entries: entriesRef.current,
           fixes: next.fixes,
+          pauses: next.pauses,
           startEpoch: next.startedAtMs,
           tookSec: (performance.now() - startedAt) / 1000,
           reportId: lastReportIdRef.current,
@@ -2398,6 +2452,7 @@ export default function BatchPage({
               bytes: clipBytes,
               mime: next.mime || next.blob.type || undefined,
               startedAtMs: next.startedAtMs,
+              pauses: next.pauses,
             },
             timing: {
               totalMs: info?.totalMs,
@@ -2739,7 +2794,9 @@ export default function BatchPage({
             التسجيل الممتد
           </span>
           <span className="flex items-center gap-2 text-xs font-normal">
-            <span className="chip bg-white/10 text-slate-300">{PHASE_LABEL[phase]}</span>
+            <span className="chip bg-white/10 text-slate-300">
+              {phase === "recording" && pausedSince !== null ? "⏸️ واقف مؤقت" : PHASE_LABEL[phase]}
+            </span>
             <span className="chip bg-white/10 text-slate-300">
               {gps.status === "active" ? "📍 الموقع شغّال" : `📍 ${gpsShort(gps.status)}`}
             </span>
@@ -2774,6 +2831,21 @@ export default function BatchPage({
             </button>
           )}
 
+          {/* ⏸️ وقف مؤقت / ▶️ كمّل في نفس الملف (٢٢ أكتوبر) — السوبر أدمن الأول (`canPause`) */}
+          {phase === "recording" && canPause && (
+            pausedSince === null ? (
+              <button className="btn-ghost" onClick={pauseRecording}>
+                <Pause className="h-4 w-4" />
+                وقف مؤقت
+              </button>
+            ) : (
+              <button className="btn-primary" onClick={resumeRecording}>
+                <Play className="h-4 w-4" />
+                كمّل التسجيل
+              </button>
+            )
+          )}
+
           {/*
             🔴 **رفع المقاطع الصوتية اتشال بطلب المالك.**
             المجمّع بقى للتسجيل من الصفحة بس — عشان كل لوحة يبقى ليها **توقيت
@@ -2802,9 +2874,10 @@ export default function BatchPage({
           بيقولها هتطلع من غير موقع — مش بعد التفريغ (`recordGpsWarning`). العدّاد
           بيحدّث الصفحة كل ثانية وهو بيسجّل، فـ«واقف من كام ثانية» بيتحدّث معاه.
         */}
+        {phase === "recording" && pausedSince !== null && <PauseBanner since={pausedSince} />}
         {phase === "recording" && gpsWarnArmed && <GpsStartWarning onReady={disarmGpsWarn} />}
         {(() => {
-          const warn = gpsWarnArmed ? null : recordGpsWarning(gps.fix, phase === "recording", Date.now(), lastFixRecvAt());
+          const warn = gpsWarnArmed ? null : recordGpsWarning(gps.fix, phase === "recording" && pausedSince === null, Date.now(), lastFixRecvAt());
           return warn ? (
             <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
               {warn}

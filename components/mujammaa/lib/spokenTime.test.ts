@@ -93,3 +93,28 @@ describe("spokenTimes", () => {
     expect(t.relMs).toBe(0);
   });
 });
+
+/** ⏸️ «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦): ثانية اللوحة في الصوت ⇐ وقت نطقها الحقيقي (الموقع والوقت والحي والجراج) */
+describe("spokenTimes — وقف مؤقت وكمّل", () => {
+  const BASE = 1_757_500_000_000;
+  const pauses = [{ atAudioMs: 60_000, durMs: 600_000 }];
+
+  it("قبل الوقفة ⇒ زي ما هو", () => {
+    const t = spokenTimes({ timeStartS: 30, baseMs: BASE, lastKnownAbsMs: 0, pauses });
+    expect(t.absMs).toBe(BASE + 30_000);
+    expect(t.relMs).toBe(30_000);
+  });
+
+  it("بعد الوقفة ⇒ وقتها الحقيقي (مطلق ونسبي الاتنين)", () => {
+    const t = spokenTimes({ timeStartS: 70, baseMs: BASE, lastKnownAbsMs: 0, pauses });
+    expect(t.absMs).toBe(BASE + 670_000);
+    expect(t.relMs).toBe(670_000);
+    expect(t.known).toBe(true);
+  });
+
+  it("من غير وقفات ⇒ نفس النتيجة القديمة بالظبط", () => {
+    expect(spokenTimes({ timeStartS: 70, baseMs: BASE, lastKnownAbsMs: 0, pauses: [] })).toEqual(
+      spokenTimes({ timeStartS: 70, baseMs: BASE, lastKnownAbsMs: 0 })
+    );
+  });
+});

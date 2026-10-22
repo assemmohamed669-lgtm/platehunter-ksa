@@ -38,6 +38,7 @@ import {
   type TrackFix,
 } from "./platePin";
 import type { SessionStampJSON } from "./sessionStamp";
+import { pausedTotalMs, sanitizePauses, type RecPause } from "./recPauses";
 
 export type ClipStatus =
   | "recording"
@@ -86,6 +87,11 @@ export interface StoredClip {
   stamp: SessionStampJSON;
   /** مسار الموقع وقت التسجيل */
   rawFixes: RawFix[];
+  /**
+   * ⏸️ وقفات «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦ — `recPauses.ts`): الصوت مافيهوش الوقفة ⇒ وقت نطق كل لوحة بيترجع بيها
+   * (الموقع/الوقت/المربعات). مش موجودة = مافيش وقفات (المقاطع القديمة).
+   */
+  pauses?: RecPause[];
   result?: ClipResult;
   error?: string;
   /**
@@ -427,7 +433,8 @@ function toBuffer(data: ArrayBuffer | Blob): Promise<ArrayBuffer> {
  */
 export function recoverClip(c: StoredClip): StoredClip | null {
   if (c.status === "recording") {
-    const est = Math.max(0, (c.updatedAt - c.startEpoch) / 1000);
+    // ⏸️ الوقفات مالهاش صوت ⇒ مش من المدة
+    const est = Math.max(0, (c.updatedAt - c.startEpoch - pausedTotalMs(sanitizePauses(c.pauses))) / 1000);
     return { ...c, status: "interrupted", durationSec: Math.max(c.durationSec || 0, est) };
   }
   if (c.status === "queued" || c.status === "working") {
@@ -775,13 +782,14 @@ export class ClipStore {
 
   finish(
     id: string,
-    info: { durationSec: number; rawFixes: RawFix[]; stamp?: SessionStampJSON }
+    info: { durationSec: number; rawFixes: RawFix[]; stamp?: SessionStampJSON; pauses?: RecPause[] }
   ): Promise<StoredClip | undefined> {
     return this.update(id, {
       status: "ready",
       durationSec: info.durationSec,
       rawFixes: info.rawFixes,
       ...(info.stamp ? { stamp: info.stamp } : {}),
+      ...(info.pauses?.length ? { pauses: info.pauses } : {}),
     });
   }
 
@@ -1031,6 +1039,8 @@ export async function closeRecordedClip(
     stamp: SessionStampJSON;
     startEpoch: number;
     mime: string;
+    /** ⏸️ وقفات التسجيل — بتتحفظ مع المقطع */
+    pauses?: RecPause[];
   }
 ): Promise<{ id: string | null; memOnly: boolean; errors: SaveError[] }> {
   const errors: SaveError[] = [];
@@ -1053,6 +1063,7 @@ export async function closeRecordedClip(
       durationSec: input.durationSec,
       rawFixes: input.rawFixes,
       stamp: input.stamp,
+      ...(input.pauses?.length ? { pauses: input.pauses } : {}),
     });
   };
 
@@ -1182,6 +1193,8 @@ export function clipJobFields(c: StoredClip): {
   label: string;
   sec: number;
   fixes: TrackFix[];
+  /** ⏸️ وقفات المقطع — الدبوس ووقت النطق بيترجعوا بيها */
+  pauses: RecPause[];
 } {
   return {
     startedAtMs: c.startEpoch,
@@ -1190,6 +1203,7 @@ export function clipJobFields(c: StoredClip): {
     label: c.label,
     sec: Math.round(clipDurationSec(c)),
     fixes: trackFromRaw(c.rawFixes || [], c.startEpoch),
+    pauses: sanitizePauses(c.pauses),
   };
 }
 
@@ -1202,6 +1216,8 @@ export function clipRunOutcome(input: {
   error?: string;
   entries: PlateEntry[];
   fixes?: TrackFix[];
+  /** ⏸️ وقفات المقطع (`clipJobFields`) */
+  pauses?: RecPause[];
   startEpoch: number;
   tookSec: number;
   reportId?: string;
@@ -1212,7 +1228,7 @@ export function clipRunOutcome(input: {
     return { entries: input.entries, patch: { status: "failed", error: input.error || "التفريغ ماكملش" } };
   }
   const entries = input.fixes
-    ? stampEntriesWithTrack(input.entries, input.fixes, input.startEpoch)
+    ? stampEntriesWithTrack(input.entries, input.fixes, input.startEpoch, input.pauses)
     : input.entries;
   return {
     entries,
@@ -1241,9 +1257,9 @@ export function formatBytes(n: number): string {
 }
 
 /** مدة المقطع — ولو مش متسجّلة (اتقطع) من آخر حفظ */
-export function clipDurationSec(c: Pick<StoredClip, "durationSec" | "startEpoch" | "updatedAt">): number {
+export function clipDurationSec(c: Pick<StoredClip, "durationSec" | "startEpoch" | "updatedAt" | "pauses">): number {
   if (c.durationSec > 0) return c.durationSec;
-  return Math.max(0, (c.updatedAt - c.startEpoch) / 1000);
+  return Math.max(0, (c.updatedAt - c.startEpoch - pausedTotalMs(sanitizePauses(c.pauses))) / 1000);
 }
 
 /**

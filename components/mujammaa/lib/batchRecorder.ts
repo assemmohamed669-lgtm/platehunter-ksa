@@ -21,6 +21,7 @@
  */
 
 import { createSpeechGate, type SpeechGate } from "./ph/audioGate";
+import type { RecPause } from "./recPauses";
 
 /**
  * ترتيب الصيغ المدعومة — Opus في WebM هو المطلوب.
@@ -65,6 +66,14 @@ export class BatchRecorder {
   private startedAt = 0;
   private running = false;
   /**
+   * ⏸️ «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦): `MediaRecorder.pause/resume` ⇒ نفس الملف من غير الوقفة. `pausedAt` = لحظة
+   * الوقفة الشغّالة (٠ = مش واقف) · `pausedTotal` = مجموع اللي خلصوا · `pauseList` = مكان كل وقفة في الصوت ومدتها
+   * (`recPauses.ts` بيرجّع بيها كل لوحة لوقت نطقها الحقيقي).
+   */
+  private pausedAt = 0;
+  private pausedTotal = 0;
+  private pauseList: RecPause[] = [];
+  /**
    * محلّل منفصل لعرض الموجة.
    * ‎createSpeechGate‎ بيبني محلّل جوّاه بس مابيعرضش الـ buffer، وإحنا
    * عايزين نرسم الموجة — فمحلّل تاني على نفس التيار. ده تحليل موازي
@@ -91,9 +100,70 @@ export class BatchRecorder {
     return this.chunks;
   }
 
+  /** مدة **الصوت** (من غير الوقفات) */
   get durationSec(): number {
     if (!this.startedAt) return 0;
-    return (performance.now() - this.startedAt) / 1000;
+    return this.audioMsAt(performance.now()) / 1000;
+  }
+
+  /** واقف مؤقت دلوقتي؟ */
+  get isPaused(): boolean {
+    return this.pausedAt > 0;
+  }
+
+  /** الوقفات لحد دلوقتي — الشغّالة بمدتها لحد اللحظة دي */
+  get pauses(): RecPause[] {
+    const out = this.pauseList.map((p) => ({ ...p }));
+    if (this.pausedAt && out.length) out[out.length - 1].durMs = Math.round(performance.now() - this.pausedAt);
+    return out;
+  }
+
+  /** مكان اللحظة دي في الصوت (ms) — الوقفات مش منه */
+  private audioMsAt(t: number): number {
+    const open = this.pausedAt ? t - this.pausedAt : 0;
+    return Math.max(0, t - this.startedAt - this.pausedTotal - open);
+  }
+
+  /**
+   * ⏸️ وقف مؤقت — الميك بيفضل مفتوح والملف مابيتقفلش. `false` = الجهاز مابيعرفش (`pause` مش موجودة/رمت/الحالة
+   * ماتغيّرتش) أو مش بيسجّل أو واقف أصلاً ⇒ التسجيل شغّال زي ما هو.
+   */
+  pause(): boolean {
+    const rec = this.recorder;
+    if (!this.running || !rec || this.pausedAt || typeof rec.pause !== "function") return false;
+    try {
+      rec.pause();
+    } catch {
+      return false;
+    }
+    if (rec.state !== "paused") return false;
+    const t = performance.now();
+    this.pauseList.push({ atAudioMs: Math.round(this.audioMsAt(t)), durMs: 0 });
+    this.pausedAt = t;
+    return true;
+  }
+
+  /** ▶️ كمّل في نفس الملف. `false` = مش واقف، أو الجهاز رفض (الوقفة بتفضل — المندوب يقفل ويبدأ تسجيل جديد). */
+  resume(): boolean {
+    const rec = this.recorder;
+    if (!this.pausedAt || !rec) return false;
+    try {
+      rec.resume();
+    } catch {
+      return false;
+    }
+    if (rec.state !== "recording") return false;
+    this.closePause(performance.now());
+    return true;
+  }
+
+  private closePause(t: number): void {
+    if (!this.pausedAt) return;
+    const dur = t - this.pausedAt;
+    this.pausedTotal += dur;
+    const last = this.pauseList[this.pauseList.length - 1];
+    if (last) last.durMs = Math.round(dur);
+    this.pausedAt = 0;
   }
 
   /** الملف كامل — للتفريغ والاستماع */
@@ -181,6 +251,9 @@ export class BatchRecorder {
     }
 
     this.startedAt = performance.now();
+    this.pausedAt = 0;
+    this.pausedTotal = 0;
+    this.pauseList = [];
     this.running = true;
     try {
       rec.start(BATCH_TIMESLICE_MS);
@@ -199,6 +272,12 @@ export class BatchRecorder {
       if (!this.running) return;
       const secs = this.durationSec;
       this.o.onTick?.(secs);
+      // ⏸️ واقف: العدّاد واقف ومافيش صوت يتقاس — والحد الأقصى على الصوت بس (مابيقفلش التسجيل وهو واقف)
+      if (this.pausedAt) {
+        this.o.onLevel?.(0, null);
+        this.o.onSpeaking?.(false);
+        return;
+      }
       let wave: Uint8Array | null = null;
       if (this.analyser && this.waveBuf) {
         this.analyser.getByteTimeDomainData(this.waveBuf);
@@ -212,6 +291,8 @@ export class BatchRecorder {
 
   /** يوقف التسجيل ويستنى آخر جزء يوصل */
   async stop(): Promise<Blob> {
+    // ⏸️ «إيقاف» وهو واقف ⇒ الوقفة بتتقفل بمدتها (`MediaRecorder.stop` من «paused» بيقفل الملف عادي)
+    this.closePause(performance.now());
     this.running = false;
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;

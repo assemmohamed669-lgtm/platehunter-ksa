@@ -21,6 +21,8 @@
  *    والفرق بينهم دقايق والمندوب ماشي.
  */
 
+import { audioToWallMs, type RecPause } from "./recPauses";
+
 /** ٢٤ ساعة بالمللي — أي وقت «نسبي» أكبر من كده هو epoch اتسرّب. */
 export const DAY_MS = 86_400_000;
 
@@ -31,6 +33,11 @@ export interface SpokenTimeInput {
   baseMs: number;
   /** لحظة آخر لوحة عرفنا وقتها (epoch) — احتياطي يحافظ على الترتيب */
   lastKnownAbsMs: number;
+  /**
+   * ⏸️ وقفات التسجيل (٢٢ أكتوبر ٢٠٢٦ — `recPauses.ts`): الصوت مافيهوش الوقفة، فثانية اللوحة فيه بترجع لوقت
+   * نطقها الحقيقي قبل ما المطلق والنسبي يتحسبوا. فاضية/مش موجودة ⇒ زي الأول بالظبط.
+   */
+  pauses?: readonly RecPause[] | null;
 }
 
 export interface SpokenTime {
@@ -56,7 +63,7 @@ export function spokenTimes(input: SpokenTimeInput): SpokenTime {
   const last = num(input?.lastKnownAbsMs) ?? 0;
 
   if (t !== null) {
-    const relMs = Math.round(t * 1000);
+    const relMs = Math.round(audioToWallMs(t * 1000, input.pauses));
     return { absMs: base + relMs, relMs: Math.max(0, relMs), known: true };
   }
   if (last > 0) {

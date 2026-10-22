@@ -17,6 +17,12 @@ import { voiceTabVisible } from "@/lib/voiceAccess";
 // تقرير كامل»). كل تسجيل بتقريره على السيرفر (`mujammaa_report.py`). الرجوع السريع ⇒ `false` (السوبر أدمن بس).
 export const MUJAMMAA_FOR_DELEGATES = true;
 
+/**
+ * ⏸️ زرار «وقف مؤقت» / «كمّل التسجيل» في المجمّع (المالك ٢٢ أكتوبر ٢٠٢٦: «يوقف التسجيل دة مؤقت الي حين ما يطلع من مكان
+ * مفيهوش لوحات … ويكمل ويقول لوحات علي نفس الملف»). السوبر أدمن الأول — `true` ⇒ لكل اللي بيشوفوا «التسجيل» بعد تجربة المالك.
+ */
+export const MJ_PAUSE_FOR_DELEGATES = false;
+
 export interface AccessProfile {
   is_super?: boolean | null;
   voicex_enabled?: boolean | null;
