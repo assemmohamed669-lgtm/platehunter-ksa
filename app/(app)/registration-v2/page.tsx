@@ -484,7 +484,7 @@ export default function RegistrationV2Page() {
    */
   const typeFollowRef = useRef<TypeFollow[]>([]);
   /**
-   * 🎙️ خدمة «قناص بيسجّل» شغّالة (أندرويد 1.7 — `lib/backgroundRecording.ts`، ٢٤ أكتوبر ٢٠٢٦) ⇒ التسجيل **مايقفلش**
+   * 🎙️ خدمة «قناص بيسجّل» شغّالة (أندرويد 1.8 — `lib/backgroundRecording.ts`، ٢٤ أكتوبر ٢٠٢٦) ⇒ التسجيل **مايقفلش**
    * لما المندوب يفتح واتساب/الخريطة/أي برنامج. المكالمة بتقفله برضه (`phNativeCall`).
    */
   const bgActiveRef = useRef(false);
@@ -1716,7 +1716,7 @@ export default function RegistrationV2Page() {
       marks.push({ label: "المايك", at: Date.now() });
       engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
-      // 🎙️ أندرويد 1.7: إشعار «قناص بيسجّل» ⇒ يكمّل والمندوب في واتساب/الخريطة (السوبر أدمن الأول)
+      // 🎙️ أندرويد 1.8: إشعار «قناص بيسجّل» ⇒ يكمّل والمندوب في واتساب/الخريطة (السوبر أدمن الأول)
       bgActiveRef.current = canRecordInBackground(isSuperRef.current) && startBackgroundRecording();
       // 🩺 الصندوق الأسود: نبضة المراقب كل ١٥ ثانية والتسجيل شغّال (الآيفون بيبعت تحديثات موقع قد إيه)
       if (diagActive()) {

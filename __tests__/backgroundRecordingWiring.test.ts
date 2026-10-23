@@ -44,7 +44,7 @@ describe("التسجيل (المجمّع)", () => {
   });
 });
 
-describe("أندرويد 1.7", () => {
+describe("أندرويد 1.8 (build 8)", () => {
   it("الخدمة متسجّلة بنوعها (ميك + موقع) والصلاحيات", () => {
     expect(MANIFEST).toMatch(/android:name="\.BackgroundRecordingService"[\s\S]*?android:foregroundServiceType="microphone\|location"/);
     for (const perm of ["FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MICROPHONE", "FOREGROUND_SERVICE_LOCATION", "WAKE_LOCK"]) {

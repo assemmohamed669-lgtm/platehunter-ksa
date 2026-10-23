@@ -3011,7 +3011,7 @@ export default function RegistrationPage() {
             onCheckInfo={setMjCheckInfo}
             // ⏸️ «وقف مؤقت» — السوبر أدمن الأول (حتى في «زي المندوب»)، والمناديب لما المالك يفتحه
             canPause={superOk || MJ_PAUSE_FOR_DELEGATES}
-            // 🎙️ يكمّل والمندوب في واتساب/الخريطة (أندرويد 1.7) — السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`)
+            // 🎙️ يكمّل والمندوب في واتساب/الخريطة (أندرويد 1.8) — السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`)
             bgAllowed={superOk}
           />
         </div>

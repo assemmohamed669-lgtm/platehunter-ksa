@@ -28,7 +28,7 @@ describe("🔴 الإعداد في النسخة الجديدة", () => {
   it("بلجن الإشعارات بيعرض الإشعار والتطبيق مفتوح (alert)", () => {
     expect(read("capacitor.config.ts")).toMatch(/PushNotifications: \{\s*presentationOptions: \[[^\]]*"alert"[^\]]*\]/);
   });
-  it("versionCode ≥ 7 — الإعداد من 1.6 وكل نسخة بعدها فيها (1.7 = build 8: التسجيل في الخلفية، ٢٤ أكتوبر)", () => {
+  it("versionCode ≥ 7 — الإعداد من 1.6 وكل نسخة بعدها فيها (1.8 = build 8: التسجيل في الخلفية، ٢٤ أكتوبر)", () => {
     const gradle = read("android/app/build.gradle");
     const v = Number(gradle.match(/versionCode (\d+)/)?.[1]);
     expect(v).toBeGreaterThanOrEqual(NATIVE_FOREGROUND_BUILD);
