@@ -44,9 +44,13 @@ import {
   pruneTypeQueue,
   nearestWindow,
   pruneWindows,
+  followUpAsks,
+  fillTypeNote,
   type TypeWindow,
   type AudioWindow,
+  type TypeFollow,
 } from "@/lib/typeForPlate";
+import { scanTypeAndNote } from "@/lib/vehicleTypeScan";
 import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { onWantedAlertsCleared } from "@/lib/wantedAlert";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -469,6 +473,11 @@ export default function RegistrationV2Page() {
    *   اللي بيمنع الكتابة فوق بعضها هو إن الصف اللي عنده نوع بيتخطّى.
    */
   const typeQueueRef = useRef<TypeWindow[]>([]);
+  /**
+   * ⏩ لوحات اتأكّدت ومستنية النوافذ اللي **بعدها** (+١.٥ث دايماً · +٣ث لو لسه مافيش نوع) — النوع بيتقال بعد
+   * اللوحة وكان بيقع برّه النافذة الأولى (المالك ٢٣ أكتوبر: «مش بيطلع كل الانواع» — قياس ٦٣٪ ⇐ ٨٨٪، `followUpAsks`).
+   */
+  const typeFollowRef = useRef<TypeFollow[]>([]);
   /**
    * 🎯 **مخزن آخر نوافذ الصوت** — بنسأل سيرفر النوع **لكل لوحة** مش لكل
    * نافذة.
@@ -1171,7 +1180,7 @@ export default function RegistrationV2Page() {
    * بيمسح النافذة كلها بلا ما يعرف لوحتنا، والقصّ عند أرقامها هو اللي
    * بيمنع نوع الجارة. شوف تعليق `typeQueueRef`.
    */
-  const askType = useCallback(async (wav: Blob, tMs: number) => {
+  const askType = useCallback(async (wav: Blob, tMs: number, forPlates: readonly string[] = []) => {
     /**
      * 🔴 **سيرفر النوع مقفول ⇒ ماننداهوش.** النداء بيرفع **الصوت كامل**
      * (~١٦٠ كيلو للنافذة) قبل ما ياخد 502، يعني ~٦ ميجا/دقيقة من داتا
@@ -1214,17 +1223,41 @@ export default function RegistrationV2Page() {
         let touched = false;
         const one = [{ text, tMs }];
         const next = prev.map((r) => {
-          if (r.type || r.note) return r;
-          // نفس القرار المغطّى باختبار — بنافذة واحدة (اللي لسه وصلت).
-          const sc = pickTypeForPlate(one, r.plate, r.atMs);
-          if (!sc) return r;
+          if (r.type && r.note) return r;
+          /**
+           * ⏩ النافذة دي اتسألت **عشان اللوحة دي** (اللي بعدها بـ١.٥/٣ث — `followUpAsks`) ⇒ القصّ عند أرقامها هي
+           * مباشرةً (البُعد مش شرط). غير كده نفس القرار المغطّى باختبار — بالقرب (`pickTypeForPlate`).
+           */
+          let pick = null as ReturnType<typeof pickTypeForPlate>;
+          if (forPlates.includes(r.plate)) {
+            const sc = scanTypeAndNote(text, { afterPlate: r.plate });
+            if (sc.type || sc.note) pick = { type: sc.type, note: sc.note };
+          }
+          pick ??= pickTypeForPlate(one, r.plate, r.atMs);
+          // ✍️ الناقص بس (النوع والملاحظة كل واحد لوحده) — واللي المندوب اختاره بإيده مايتلمسش
+          const f = fillTypeNote(r, pick);
+          if (!f) return r;
           touched = true;
-          return { ...r, type: sc.type, note: sc.note };
+          return { ...r, ...f };
         });
         return touched ? next : prev;
       });
     } catch { /* النوع إضافة — مايوقّفش اللوحات */ }
   }, [modelToken]);
+
+  /**
+   * ⏩ نافذة جديدة (أو وصلت قبل تأكيد اللوحة) ⇒ اللوحات المستنية اللي ميعادها جه بتتسأل بيها (`followUpAsks`).
+   * مرة واحدة لكل نافذة (`askedWinRef`) — لو كانت اتسألت لِلوحة تانية، ردّها اتوزّع بالقرب أصلاً.
+   * بيتنده من غلاف المحرّك ⇒ كله refs (من غير state).
+   */
+  const followWindow = (wav: Blob, tMs: number) => {
+    if (!typeFollowRef.current.length) return;
+    const plan = followUpAsks(typeFollowRef.current, tMs, (p) => rowsRef.current.some((r) => r.plate === p && !!r.type));
+    typeFollowRef.current = plan.pending;
+    if (!plan.plates.length || askedWinRef.current.has(tMs)) return;
+    askedWinRef.current.add(tMs);
+    void askType(wav, tMs, plan.plates);
+  };
 
   /**
    * ① ⏱️ **«ظهرت بعد» من آخر كلام المندوب** — مش من نص النافذة.
@@ -1253,7 +1286,7 @@ export default function RegistrationV2Page() {
     wantedSeenRef.current = new Map();
     // 🚚 التسلسل الفوري للكل — المالك جرّبه (٢٤ سبتمبر): «شغّال زي الفل، ارفعوه للكل»
     fleetRef.current = new FleetMemory({ sequence: true, firstCar: true });   // 🚚 أول عربية: للكل (المالك جرّبه ٢٤ سبتمبر)
-    typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set();
+    typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set(); typeFollowRef.current = [];
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }
@@ -1401,6 +1434,14 @@ export default function RegistrationV2Page() {
           if (w && !askedWinRef.current.has(w.tMs)) {
             askedWinRef.current.add(w.tMs);
             void askType(w.wav, w.tMs);
+          }
+          /**
+           * ⏩ والنوافذ اللي **بعدها** (+١.٥ث دايماً · +٣ث لو لسه مافيش نوع) — النوع بيتقال بعد اللوحة. اللي وصلت قبل
+           * التأكيد (التأكيد بييجي من التانية) بتتسأل على طول؛ والباقي مع كل نافذة جديدة (`followWindow`).
+           */
+          if (canAskTypeServer(isSuperRef.current) && !typeFollowRef.current.some((p) => p.plate === plate)) {
+            typeFollowRef.current = [...typeFollowRef.current, { plate, tMs: meta.tMs, step: 0 }];
+            for (const bw of winBufRef.current.filter((x) => x.tMs > meta.tMs).sort((a, b) => a.tMs - b.tMs)) followWindow(bw.wav, bw.tMs);
           }
           const ty = pickTypeForPlate(typeQueueRef.current, plate, meta.tMs);
           const now = Date.now();
@@ -1590,6 +1631,7 @@ export default function RegistrationV2Page() {
         // 🎯 نخزّن بس — السؤال بيحصل لما لوحة تتأكّد (شوف `winBufRef`).
         onAudioWindow: (wav, tMs) => {
           winBufRef.current = pruneWindows([...winBufRef.current, { tMs, wav }], tMs);
+          followWindow(wav, tMs);
         },
         onSpeech: (active: boolean) => setSpeaking(active),
         /**

@@ -151,3 +151,61 @@ export function pruneWindows<T>(
 ): AudioWindow<T>[] {
   return (windows ?? []).filter((w) => nowMs - w.tMs <= TYPE_BUF_KEEP_MS);
 }
+
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  ⏩ النوع اللي بيتقال **بعد** اللوحة — النوافذ اللي بعدها (٢٣ أكتوبر ٢٠٢٦)
+ * ══════════════════════════════════════════════════════════════════════
+ * المالك: «مش بيطلع كل الانواع والملاحظات اللي بقولها». السؤال كان بالنافذة اللي اللوحة اتقرت فيها أول مرة بس —
+ * وهي بتخلص بعد آخر رقم بشوية، فالنوع اللي بيتقال بعدها بيقع برّه. قياس على ٤٠٠ لوحة من صوت المجمّع الحقيقي
+ * (٢٤٠ بنوع): الأولى بس ٦٣٪ ⇐ + اللي بعدها دايماً + التالتة لو لسه مافيش نوع **٨٨٪** — ٠ غلط و٠ نوع زيادة
+ * (القصّ عند أرقام اللوحة هو الحارس) · الملاحظات ٨ ⇐ ١٣ من ١٥. التمن: ~٢.٥ سؤال للوحة بدل ١.
+ */
+export const TYPE_FOLLOW_MS = [1500, 3000] as const;
+/** النوافذ كل ١.٥ث — سماح عشان المركز مايبقاش بالمللي */
+const TYPE_FOLLOW_TOL_MS = 300;
+/** أبعد من كده النافذة مافيهاش أرقام اللوحة أصلاً (القصّ هيفشل) ⇒ تتشال */
+export const TYPE_FOLLOW_GIVEUP_MS = 6000;
+
+/** لوحة اتأكّدت ومستنية النوافذ اللي بعدها: `step` ٠ = مستنية +١.٥ث · ١ = مستنية +٣ث */
+export interface TypeFollow {
+  plate: string;
+  tMs: number;
+  step: number;
+}
+
+/**
+ * نافذة جديدة وصلت (مركزها `winMs`) ⇒ مين من اللوحات المستنية نسأل كوهير عنها بيها.
+ * +١.٥ث **دايماً** (الملاحظة بتيجي بعد النوع كتير) · +٣ث **بس لو لسه مافيش نوع** · وبعدها اللوحة بتخلص.
+ */
+export function followUpAsks(
+  pending: readonly TypeFollow[],
+  winMs: number,
+  hasType: (plate: string) => boolean,
+): { plates: string[]; pending: TypeFollow[] } {
+  const plates: string[] = [];
+  const keep: TypeFollow[] = [];
+  for (const p of pending ?? []) {
+    if (winMs - p.tMs > TYPE_FOLLOW_GIVEUP_MS) continue;
+    const due = p.tMs + (TYPE_FOLLOW_MS[p.step] ?? Infinity) - TYPE_FOLLOW_TOL_MS;
+    if (winMs < due) { keep.push(p); continue; }
+    if (p.step === 0) { plates.push(p.plate); keep.push({ ...p, step: 1 }); continue; }
+    if (!hasType(p.plate)) plates.push(p.plate);
+  }
+  return { plates, pending: keep };
+}
+
+/**
+ * ✍️ يملا **الناقص بس** — النوع والملاحظة كل واحد لوحده (كان الصف اللي خد ملاحظة مابياخدش نوع بعدها). اللي
+ * المندوب اختاره أو مسحه بإيده (`edited`) مايتلمسش. `null` = مافيش جديد.
+ */
+export function fillTypeNote(
+  row: { type: string | null; note: string | null; edited?: { type?: boolean; note?: boolean } },
+  pick: TypePick | null,
+): { type: string | null; note: string | null } | null {
+  if (!pick) return null;
+  const type = row.type ?? (row.edited?.type ? row.type : pick.type ?? null);
+  const note = row.note ?? (row.edited?.note ? row.note : pick.note ?? null);
+  if (type === row.type && note === row.note) return null;
+  return { type, note };
+}
