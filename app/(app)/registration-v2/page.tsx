@@ -51,6 +51,10 @@ import {
   type TypeFollow,
 } from "@/lib/typeForPlate";
 import { scanTypeAndNote } from "@/lib/vehicleTypeScan";
+import { TypeAskQueue, TYPE_ASK_TIMEOUT_MS, type TypeAskResult } from "@/lib/typeAskQueue";
+
+/** 🏷️ سؤال كوهير واحد — `primary` = نافذة اللوحة نفسها (مش النوافذ اللي بعدها) */
+type TypeAskJob = { wav: Blob; tMs: number; forPlates: readonly string[]; primary: boolean };
 import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { onWantedAlertsCleared } from "@/lib/wantedAlert";
 import { fireWantedAlert } from "@/lib/wantedAlert";
@@ -478,6 +482,10 @@ export default function RegistrationV2Page() {
    * اللوحة وكان بيقع برّه النافذة الأولى (المالك ٢٣ أكتوبر: «مش بيطلع كل الانواع» — قياس ٦٣٪ ⇐ ٨٨٪، `followUpAsks`).
    */
   const typeFollowRef = useRef<TypeFollow[]>([]);
+  /** 🛡️ طابور أسئلة كوهير (سؤال واحد في المرة — `lib/typeAskQueue.ts`) + السؤال نفسه (ref ⇒ مافيش closure قديم) */
+  const runTypeAskRef = useRef<(j: TypeAskJob) => Promise<TypeAskResult>>(async () => "ok");
+  const typeAskQRef = useRef<TypeAskQueue<TypeAskJob> | null>(null);
+  if (!typeAskQRef.current) typeAskQRef.current = new TypeAskQueue<TypeAskJob>((j) => runTypeAskRef.current(j));
   /**
    * 🎯 **مخزن آخر نوافذ الصوت** — بنسأل سيرفر النوع **لكل لوحة** مش لكل
    * نافذة.
@@ -1192,17 +1200,30 @@ export default function RegistrationV2Page() {
      * مايبعتوش صوت كل لوحة لحد ما المالك يجرّب ونقيس الحمل على ظهور اللوحات.
      */
     if (!canAskTypeServer(isSuperRef.current)) return;
+    /**
+     * 🛡️ **الطابور** (`lib/typeAskQueue.ts` — ٢٣ أكتوبر، الفتح للكل): سؤال واحد في المرة، والإضافيين (النوافذ اللي
+     * بعد اللوحة) بيتسابوا وقت زحمة كوهير/النت الوحش ⇒ رفع كوهير مايزاحمش رفع نوافذ اللوحات نفسها.
+     */
+    typeAskQRef.current?.push({ wav, tMs, forPlates, primary: forPlates.length === 0 });
+  }, [modelToken]);
+
+  /** 🏷️ السؤال نفسه — بيتنده من الطابور بس (`typeAskQRef`). بيرجّع «مزحوم/فشل» عشان الطابور يهدّي. */
+  runTypeAskRef.current = async ({ wav, tMs, forPlates }: TypeAskJob): Promise<TypeAskResult> => {
+    const ac = new AbortController();
+    const kill = setTimeout(() => ac.abort(), TYPE_ASK_TIMEOUT_MS);
     try {
       const res = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
         method: "POST",
         headers: { "Content-Type": "audio/wav", "Authorization": "Bearer " + modelToken.trim() },
         body: wav,
+        signal: ac.signal,
       });
-      if (!res.ok) return;
+      if (res.status === 503) return "busy";
+      if (!res.ok) return "fail";
       const j = await res.json() as { ok?: boolean; text?: string | null };
-      if (!j?.ok) return;
+      if (!j?.ok) return "ok";
       const text = String(j.text ?? "").trim();
-      if (!text) return;
+      if (!text) return "ok";
       /**
        * 🔴 **مافيش إلغاء تكرار بالنص هنا بعد دلوقتي.**
        *
@@ -1242,8 +1263,14 @@ export default function RegistrationV2Page() {
         });
         return touched ? next : prev;
       });
-    } catch { /* النوع إضافة — مايوقّفش اللوحات */ }
-  }, [modelToken]);
+      return "ok";
+    } catch {
+      /* النوع إضافة — مايوقّفش اللوحات */
+      return "fail";
+    } finally {
+      clearTimeout(kill);
+    }
+  };
 
   /**
    * ⏩ نافذة جديدة (أو وصلت قبل تأكيد اللوحة) ⇒ اللوحات المستنية اللي ميعادها جه بتتسأل بيها (`followUpAsks`).
@@ -1286,7 +1313,7 @@ export default function RegistrationV2Page() {
     wantedSeenRef.current = new Map();
     // 🚚 التسلسل الفوري للكل — المالك جرّبه (٢٤ سبتمبر): «شغّال زي الفل، ارفعوه للكل»
     fleetRef.current = new FleetMemory({ sequence: true, firstCar: true });   // 🚚 أول عربية: للكل (المالك جرّبه ٢٤ سبتمبر)
-    typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set(); typeFollowRef.current = [];
+    typeQueueRef.current = []; winBufRef.current = []; askedWinRef.current = new Set(); typeFollowRef.current = []; typeAskQRef.current?.clear();
     const plan = planTrialRun({ base: modelUrl, token: modelToken });
     if (!plan.ok) { setError(plan.message); return; }
     try { ensureSirenAudioUnlocked(); } catch { /* ignore */ }

@@ -222,8 +222,12 @@ export interface TypeProbe {
  * … زي صفحه التسجيل». الطريق (`TRIAL_TYPE_BASE`) كان واقع من ساعة ماليزيا؛ قبل ما يرجع لإيطاليا القفل ده لازم يبقى
  * منشور — من غيره كل المناديب كانوا هيبعتوا صوت كل لوحة لكوهير (نت الموبايل + حمل على كارت لوحاتهم).
  * السوبر أدمن الأول؛ `true` ⇒ للكل بعد تجربة المالك و**بعد قياس الحمل** على ظهور اللوحات.
+ *
+ * ✅ **مفتوح للكل** (المالك ٢٣ أكتوبر ٢٠٢٦: «اة ابدأ اعمل كدة») — بعد ما Voice PRO بقى ليه كوهيره هو (٣ نسخ
+ * 8773–8775، المجمّع فضل على 8772) وقياس الذروة: ١٠ أسئلة/ث كلها اترد عليها ~٠.٤ث ولوحات المناديب +٥٠ms، وطابور
+ * الموبايل (`lib/typeAskQueue.ts`). الرجوع السريع ⇒ `false` (أو `rm /root/type-fwd.on` على السيرفر).
  */
-export const VOICEPRO_TYPE_FOR_DELEGATES = false;
+export const VOICEPRO_TYPE_FOR_DELEGATES = true;
 
 export function canAskTypeServer(isSuper: boolean): boolean {
   return isSuper === true || VOICEPRO_TYPE_FOR_DELEGATES;

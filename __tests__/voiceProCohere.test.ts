@@ -16,10 +16,16 @@ import { scanTypeAndNote } from "@/lib/vehicleTypeScan";
 const PAGE = readFileSync(path.join(process.cwd(), "app/(app)/registration-v2/page.tsx"), "utf8");
 
 describe("🔒 مين يسأل كوهير من Voice PRO", () => {
-  it("السوبر أدمن بس دلوقتي", () => {
-    expect(VOICEPRO_TYPE_FOR_DELEGATES).toBe(false);
+  it("🛡️ كل سؤال بيعدّي على طابور الموبايل (سؤال واحد في المرة) — مش fetch على طول", () => {
+    expect(PAGE).toMatch(/typeAskQRef\.current\?\.push\(\{ wav, tMs, forPlates, primary: forPlates\.length === 0 \}\);/);
+    expect(PAGE).toMatch(/if \(res\.status === 503\) return "busy";/);
+    expect(PAGE).toMatch(/typeAskQRef\.current\?\.clear\(\);/);
+  });
+
+  it("✅ مفتوح للكل (المالك ٢٣ أكتوبر) — والمفتاح لسه موجود للرجوع السريع", () => {
+    expect(VOICEPRO_TYPE_FOR_DELEGATES).toBe(true);
     expect(canAskTypeServer(true)).toBe(true);
-    expect(canAskTypeServer(false)).toBe(false);
+    expect(canAskTypeServer(false)).toBe(true);
   });
 
   it("النداء نفسه مقفول على غيره (حتى لو الطريق شغّال) — والفحص كمان", () => {
