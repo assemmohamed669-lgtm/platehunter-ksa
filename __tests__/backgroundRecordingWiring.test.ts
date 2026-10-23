@@ -18,8 +18,13 @@ const SERVICE = read("android/app/src/main/java/com/platehunter/ksa/BackgroundRe
 
 describe("Voice PRO", () => {
   it("الخدمة بتبدأ مع المحرّك وبتقف مع «إيقاف»", () => {
-    expect(VP).toMatch(/engineRef\.current = ctrl; clockRef\.current = ctrl;\s*setListening\(true\); setSeconds\(0\);[\s\S]{0,200}?bgActiveRef\.current = canRecordInBackground\(isSuperRef\.current\) && startBackgroundRecording\(\);/);
+    expect(VP).toMatch(/engineRef\.current = ctrl; clockRef\.current = ctrl;\s*setListening\(true\); setSeconds\(0\);[\s\S]{0,300}?bgActiveRef\.current = canRecordInBackground\(isSuperRef\.current, meEmailRef\.current\) && startBackgroundRecording\(\);/);
     expect(VP).toMatch(/engineRef\.current = null; stopTimer\(\);[^\n]*\n\s*if \(bgActiveRef\.current\) \{ bgActiveRef\.current = false; stopBackgroundRecording\(\); \}/);
+  });
+
+  it("🧪 إيميل الحساب بيتقرا مع البروفايل (حساب مراجعين جوجل)", () => {
+    expect(VP).toMatch(/\.from\("profiles"\)\.select\("role, is_super, voicex_enabled, voicex_until, email"\)\.eq\("id", userId\)/);
+    expect(VP).toMatch(/meEmailRef\.current = typeof prof\?\.email === "string" \? prof\.email : null;/);
   });
 
   it("الخلفية مابتقفلش والخدمة شغّالة — ومن غيرها زي الأول", () => {

@@ -488,6 +488,8 @@ export default function RegistrationV2Page() {
    * لما المندوب يفتح واتساب/الخريطة/أي برنامج. المكالمة بتقفله برضه (`phNativeCall`).
    */
   const bgActiveRef = useRef(false);
+  /** إيميل الحساب (من البروفايل) — `BG_RECORDING_EMAILS`: حساب مراجعين جوجل بيشتغل عنده قبل الفتح للكل. */
+  const meEmailRef = useRef<string | null>(null);
   /** 🛡️ طابور أسئلة كوهير (سؤال واحد في المرة — `lib/typeAskQueue.ts`) + السؤال نفسه (ref ⇒ مافيش closure قديم) */
   const runTypeAskRef = useRef<(j: TypeAskJob) => Promise<TypeAskResult>>(async () => "ok");
   const typeAskQRef = useRef<TypeAskQueue<TypeAskJob> | null>(null);
@@ -633,7 +635,7 @@ export default function RegistrationV2Page() {
       if (hit) { openWith(hit.isSuper, hit.token); applySplit(hit.isSuper); }
 
       const [profRes, dbToken] = await Promise.all([
-        supabase.from("profiles").select("role, is_super, voicex_enabled, voicex_until").eq("id", userId).single(),
+        supabase.from("profiles").select("role, is_super, voicex_enabled, voicex_until, email").eq("id", userId).single(),
         fetchTrialToken(),
       ]);
       if (!alive) return;
@@ -656,6 +658,7 @@ export default function RegistrationV2Page() {
         return;
       }
       const sup = prof?.is_super === true;
+      meEmailRef.current = typeof prof?.email === "string" ? prof.email : null;   // 🧪 حساب مراجعين جوجل (الخلفية)
       rememberSafeDrafts(sup);   // 🛡️ الحماية الجديدة للوحات (السوبر أدمن الأول)
       // فشل قراية التوكن والكاش فيه توكن من الداتابيز ⇒ نكمّل بيه
       const token = dbToken || hit?.token || null;
@@ -1717,7 +1720,7 @@ export default function RegistrationV2Page() {
       engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
       // 🎙️ أندرويد 1.8: إشعار «قناص بيسجّل» ⇒ يكمّل والمندوب في واتساب/الخريطة (السوبر أدمن الأول)
-      bgActiveRef.current = canRecordInBackground(isSuperRef.current) && startBackgroundRecording();
+      bgActiveRef.current = canRecordInBackground(isSuperRef.current, meEmailRef.current) && startBackgroundRecording();
       // 🩺 الصندوق الأسود: نبضة المراقب كل ١٥ ثانية والتسجيل شغّال (الآيفون بيبعت تحديثات موقع قد إيه)
       if (diagActive()) {
         if (diagGpsTimerRef.current) clearInterval(diagGpsTimerRef.current);

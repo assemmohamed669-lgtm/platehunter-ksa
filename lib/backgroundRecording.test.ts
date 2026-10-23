@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  BG_RECORDING_EMAILS,
   BG_RECORDING_FOR_ALL,
   BG_RECORDING_TEXT,
   canRecordInBackground,
@@ -30,6 +31,22 @@ describe("canRecordInBackground", () => {
     expect(BG_RECORDING_FOR_ALL).toBe(false);
     expect(canRecordInBackground(true)).toBe(true);
     expect(canRecordInBackground(false)).toBe(false);
+  });
+
+  it("🧪 حساب مراجعين جوجل (Play Console «App access») بيشتغل عنده — عشان يكرّروا فيديو الإقرار", () => {
+    (window as W).PlateHunterBg = { start: () => true, stop: () => {} };
+    expect(BG_RECORDING_EMAILS).toEqual(["google.review@qannas-ksa.com"]);
+    expect(canRecordInBackground(false, "google.review@qannas-ksa.com")).toBe(true);
+    expect(canRecordInBackground(false, "  Google.Review@Qannas-KSA.com ")).toBe(true);
+  });
+
+  it("🧪 أي إيميل تاني (أو من غير إيميل) ⇒ زي الأول بالحرف، ومن غير الجسر ⇒ لأ", () => {
+    (window as W).PlateHunterBg = { start: () => true, stop: () => {} };
+    expect(canRecordInBackground(false, "agent@qannas-ksa.com")).toBe(false);
+    expect(canRecordInBackground(false, "")).toBe(false);
+    expect(canRecordInBackground(false, null)).toBe(false);
+    delete (window as W).PlateHunterBg;
+    expect(canRecordInBackground(false, "google.review@qannas-ksa.com")).toBe(false);
   });
 });
 
