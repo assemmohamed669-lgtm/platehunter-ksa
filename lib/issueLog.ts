@@ -12,20 +12,26 @@
  *  · **الموبايل:** مشاكل النهارده بس (حد `ISSUE_MAX_EVENTS`)، واليوم الجديد بيبدأ من الأول.
  *  · **السيرفر:** صف صغير في `voice_telemetry` (server = «issues») **لما يحصل حاجة بس** — بعد دقيقتين من أول مشكلة؛
  *    يوم من غير مشاكل = ولا طلب. الكرون بيمسحه بعد `ISSUE_RETENTION_DAYS` (النهارده وامبارح).
- *  · أي غلط جوّاه بيسكت — عمره ما يوقّع البرنامج. السوبر أدمن الأول (`ISSUE_LOG_FOR_ALL`). الحساب اللي عليه الصندوق
- *    الكامل مابيشتغلش عنده (مفيش تكرار).
+ *  · أي غلط جوّاه بيسكت — عمره ما يوقّع البرنامج. **للكل** (`ISSUE_LOG_FOR_ALL` — المالك: «حطه ل كله ويتمسح كل
+ *    يومين»)، و`ISSUE_MAX_UPLOADS_PER_DAY` رفعة في اليوم بالكتير. الحساب اللي عليه الصندوق الكامل مابيشتغلش عنده.
  */
 
-/** 🔒 للكل بعد تجربة المالك — قبلها السوبر أدمن بس. */
-export const ISSUE_LOG_FOR_ALL = false;
+/** 🟢 للكل — المالك (٢٣ أكتوبر ٢٠٢٦): «حطه ل كله ويتمسح كل يومين». */
+export const ISSUE_LOG_FOR_ALL = true;
 export const ISSUE_LOG_SERVER = "issues";
 /** أقصى سطور مشاكل في اليوم على الموبايل (كل سطر بضع عشرات من البايتات). */
 export const ISSUE_MAX_EVENTS = 50;
 /** النهارده وامبارح — شكوى بالليل تتشاف الصبح. */
 export const ISSUE_RETENTION_DAYS = 2;
+/**
+ * 🛡️ أقصى رفعات في اليوم لكل موبايل — غلط بيتكرر طول اليوم مايبعتش مئات الطلبات للسيرفر (السطور بتفضل على الموبايل
+ * لحد الحد بتاعها، والرفع بيرجع اليوم اللي بعده).
+ */
+export const ISSUE_MAX_UPLOADS_PER_DAY = 20;
 
 const STATE_KEY = "ph:issues:state";
 const BUF_KEY = "ph:issues:buf";
+const UPLOADS_KEY = "ph:issues:uploads";
 const TICK_MS = 2_000;
 const FREEZE_MS = 5_000;
 const BEAT_MS = 30_000;
@@ -117,6 +123,10 @@ export function startIssueLog(
     if (flushing) return;
     const buf = readIssueBuffer();
     if (!buf || !buf.events.length) return;
+    const today = issueDayKey(Date.now());
+    const up = readJson<{ day: string; n: number }>(UPLOADS_KEY);
+    const usedToday = up && up.day === today ? up.n : 0;
+    if (usedToday >= ISSUE_MAX_UPLOADS_PER_DAY) return;   // 🛡️ وصل حد النهارده
     flushing = true;
     try {
       const evs = buf.events;
@@ -131,6 +141,7 @@ export function startIssueLog(
         events: evs,
       });
       if (!error) {
+        writeJson(UPLOADS_KEY, { day: today, n: usedToday + 1 });
         // اللي اترفع بس — اللي وصل وإحنا بنرفع يفضل للمرة الجاية
         const now = readIssueBuffer();
         if (now && now.day === buf.day) writeJson(BUF_KEY, { day: now.day, events: now.events.slice(evs.length) });

@@ -32,11 +32,18 @@ describe("📦 الحد والتكرار واليوم", () => {
 });
 
 describe("🔒 مين بيشتغل عنده", () => {
-  it("مش سوبر أدمن (والمفتاح للكل مقفول) ⇒ ولا مستمع ولا مؤقّت", async () => {
+  it("🟢 للكل (المالك: «حطه ل كله ويتمسح كل يومين») ⇒ مندوب عادي (مش سوبر أدمن) بيتسجّل عنده", async () => {
+    const { startIssueLog, readIssueBuffer } = await load();
+    const stop = startIssueLog(UID, { isSuper: false, insert: vi.fn(async () => ({ error: null })) });
+    window.dispatchEvent(new ErrorEvent("error", { message: "boom" }));
+    expect(readIssueBuffer()!.events.length).toBe(1);
+    stop();
+  });
+  it("من غير حساب ⇒ ولا مستمع ولا مؤقّت", async () => {
     const { startIssueLog } = await load();
     const add = vi.spyOn(window, "addEventListener");
     const timers = vi.getTimerCount();
-    startIssueLog(UID, { isSuper: false, insert: vi.fn() });
+    startIssueLog(null, { isSuper: false, insert: vi.fn() });
     expect(add).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(timers);
     add.mockRestore();
@@ -120,6 +127,20 @@ describe("☁️ الرفع", () => {
     expect(readIssueBuffer()!.events.length).toBe(1);
     stop();
   });
+  it("🛡️ حد ٢٠ رفعة في اليوم لكل موبايل — غلط بيتكرر طول اليوم مايبعتش مئات الطلبات (والسطور بتفضل)", async () => {
+    const { startIssueLog, readIssueBuffer, ISSUE_MAX_UPLOADS_PER_DAY } = await load();
+    const insert = vi.fn(async () => ({ error: null }));
+    const stop = startIssueLog(UID, { isSuper: false, insert });
+    // تهنيج كل دقيقتين طول اليوم (أغلاط الكود ليها حد ٢٠ في الفتحة لوحدها)
+    for (let i = 0; i < ISSUE_MAX_UPLOADS_PER_DAY + 5; i++) {
+      vi.setSystemTime(Date.now() + 6000);
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(121_000);
+    }
+    expect(insert).toHaveBeenCalledTimes(ISSUE_MAX_UPLOADS_PER_DAY);
+    expect((readIssueBuffer()?.events ?? []).length).toBeGreaterThan(0);   // اللي مااترفعش لسه على الموبايل
+    stop();
+  });
   it("مفيش مشاكل ⇒ مفيش رفع خالص", async () => {
     const { startIssueLog } = await load();
     const insert = vi.fn(async () => ({ error: null }));
@@ -141,8 +162,9 @@ describe("🔌 التوصيل", () => {
     expect(vm.match(/server\.not\.in\.\(diag,issues\)/g)?.length).toBe(2);
     expect(vm).not.toMatch(/server\.neq\.diag/);
   });
-  it("🔒 لسه للسوبر أدمن بس", async () => {
-    const { ISSUE_LOG_FOR_ALL } = await load();
-    expect(ISSUE_LOG_FOR_ALL).toBe(false);
+  it("🟢 للكل، وبيتمسح بعد يومين", async () => {
+    const { ISSUE_LOG_FOR_ALL, ISSUE_RETENTION_DAYS } = await load();
+    expect(ISSUE_LOG_FOR_ALL).toBe(true);
+    expect(ISSUE_RETENTION_DAYS).toBe(2);
   });
 });
