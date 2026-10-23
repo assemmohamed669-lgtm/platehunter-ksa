@@ -28,6 +28,8 @@ export const DIAG_AGENT_IDS: string[] = [
   "56627d4f-1e8c-4f74-bf1e-8e75077d5143",
   // ١٩ أكتوبر ٢٠٢٦: «الحي اتكتب على السيرفر ومانزلش على الموبايل» (سطر مزامنة السجلات — `lib/recordsSyncDiag.ts`)
   "7b4bc404-50e7-46ad-935f-aa65e293d6b8",
+  // ٢٣ أكتوبر ٢٠٢٦: آيفون — «صفحة المطلوب كانت بتقفل البرنامج» وهو بيفرز (خطوات الفرز — wanted-sort / cert-sort)
+  "3f220bb5-aa99-44b2-a384-72c3279d5478",
 ];
 
 export const DIAG_MAX_EVENTS = 600;

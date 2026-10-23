@@ -30,6 +30,7 @@ import {
 import { getUploadedFile, getAllFieldCheckEntries, saveUploadedFile, type FieldCheckEntry } from "@/lib/idb";
 import { getDataMeta, getSampleRows, iterateRows } from "@/lib/dataStore";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
+import { diagActive, diagNote } from "@/lib/deviceDiag";
 import { getChassisRecords } from "@/lib/chassisRecords";
 import { loadAllCheckSources, combinedCheckPlates } from "@/lib/checkSheets";
 import { detectChassisColumn, normalizeChassis } from "@/lib/chassis";
@@ -225,6 +226,9 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
 
   /** الفرز نفسه — true لو النتيجة اتحفظت. */
   async function doSortDay(off: number, silent: boolean): Promise<boolean> {
+    // 🩺 الصندوق الأسود (حساب واحد — «المطلوب كانت بتقفل البرنامج» ٢٣ أكتوبر ٢٠٢٦): خطوات فرز الشهايد وأرقامها
+    const dn = (step: string, d: Record<string, unknown> = {}) => { if (diagActive()) diagNote("cert-sort", { step, ...d }); };
+    const t0 = Date.now();
     try {
       const d = await fetchDailyCerts(false, off).catch(() => null);
       if (!d) { if (!silent) setError("تعذّر جلب الشهايد — جرّب تاني."); return false; }
@@ -238,11 +242,17 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
         }
         return false;
       }
+      dn("start", { certs: certs.length, silent, variant });
       const [sources, fieldEntries, checkSources] = await Promise.all([
         collectCertDataSources(variant, sourceDeps),
         getAllFieldCheckEntries().catch(() => [] as FieldCheckEntry[]).then(collapseDuplicateChecks),
         loadAllCheckSources().catch(() => []),
       ]);
+      dn("loaded", {
+        ms: Date.now() - t0, records: fieldEntries.length,
+        sources: sources.map((s) => ({ kind: s.kind, rows: (s as { rows?: unknown[] }).rows?.length ?? null })),
+        checkRows: checkSources.reduce((n, s) => n + s.rows.length, 0),
+      });
       // «مطلوبة» = اللوحة أو الشاص في أي ملف تشييك
       const checkPlates = combinedCheckPlates(checkSources);
       const checkVins = new Set<string>();
@@ -255,6 +265,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
         certs, sources, fieldEntries, chassisRecords: getChassisRecords(), checkPlates, checkVins, fmtDate: fmtCheckDate,
         iterate: (slot, onBatch) => iterateRows((rows, base) => onBatch(rows, base), { slot }),
       });
+      dn("done", { ms: Date.now() - t0, dataResults: out.dataRows.length, recordResults: out.recordRows.length });
       const prev = resultsRef.current[d.day];
       const deleted = new Set(prev?.deleted ?? []);
       const dataRows = out.dataRows.filter((r) => !deleted.has(r.id));
@@ -272,6 +283,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
       });
       return true;
     } catch (err) {
+      dn("error", { ms: Date.now() - t0, msg: err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160) });
       if (!silent) setError(`تعذّر الفرز: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
