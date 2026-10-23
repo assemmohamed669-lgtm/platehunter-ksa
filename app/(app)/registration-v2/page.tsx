@@ -64,7 +64,7 @@ function uniqueById<T extends { id: string }>(xs: readonly T[]): T[] {
 }
 import { readJudgeEndpoint, saveJudgeEndpoint, clearJudgeEndpoint } from "@/lib/plateJudgeGate";
 import {
-  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken,
+  canOpenTrialPage, planTrialRun, resolveTrialEndpoint, TRIAL_TYPE_BASE, shouldAskType, fetchTrialToken, canAskTypeServer,
   tokenProbeVerdict,
 } from "@/lib/trialModelGate";
 import { heardNotShown, blockedNotShown } from "@/lib/trialTwin";
@@ -1122,7 +1122,8 @@ export default function RegistrationV2Page() {
       setProbe({ ok: false, msg: "مافيش رد — السيرفر مقفول أو عنوان النفق اتغيّر." });
     } finally { setProbing(false); }
     // 🏷️ سيرفر النوع منفصل — فشله **مايمنعش** اللوحات، بس لازم يبان.
-    try {
+    // 🔒 (٢٢ أكتوبر) السوبر أدمن بس بيسأل كوهير (`canAskTypeServer`) ⇒ الباقي مابيفحصهوش أصلاً
+    if (canAskTypeServer(isSuperRef.current)) try {
       const r2 = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/health", { signal: to() });
       if (!r2.ok) { const v = { ok: false, msg: "كود " + r2.status }; setTypeProbe(v); typeProbeRef.current = v; }
       else {
@@ -1177,6 +1178,11 @@ export default function RegistrationV2Page() {
      * موبايل المندوب على الفاضي. الفحص متعمل أصلاً عند فتح الصفحة.
      */
     if (!shouldAskType(typeProbeRef.current)) return;
+    /**
+     * 🔒 **السوبر أدمن بس** (المالك ٢٢ أكتوبر ٢٠٢٦ — `canAskTypeServer`): الطريق لكوهير رجع على إيطاليا، والمناديب
+     * مايبعتوش صوت كل لوحة لحد ما المالك يجرّب ونقيس الحمل على ظهور اللوحات.
+     */
+    if (!canAskTypeServer(isSuperRef.current)) return;
     try {
       const res = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
         method: "POST",

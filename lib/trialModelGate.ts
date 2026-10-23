@@ -217,6 +217,18 @@ export interface TypeProbe {
  * (`null`) = بنسأل عادي؛ القفل على **رد صريح بالفشل** بس، عشان عطل لحظة
  * في الفحص مايلغيش النوع لبقية الجلسة.
  */
+/**
+ * 🔒 **مين يسأل كوهير (النوع والملاحظة) من «Voice PRO»** — المالك ٢٢ أكتوبر ٢٠٢٦: «كوهير … نشغله مع صفحه فويس برو
+ * … زي صفحه التسجيل». الطريق (`TRIAL_TYPE_BASE`) كان واقع من ساعة ماليزيا؛ قبل ما يرجع لإيطاليا القفل ده لازم يبقى
+ * منشور — من غيره كل المناديب كانوا هيبعتوا صوت كل لوحة لكوهير (نت الموبايل + حمل على كارت لوحاتهم).
+ * السوبر أدمن الأول؛ `true` ⇒ للكل بعد تجربة المالك و**بعد قياس الحمل** على ظهور اللوحات.
+ */
+export const VOICEPRO_TYPE_FOR_DELEGATES = false;
+
+export function canAskTypeServer(isSuper: boolean): boolean {
+  return isSuper === true || VOICEPRO_TYPE_FOR_DELEGATES;
+}
+
 export function shouldAskType(probe: TypeProbe | null | undefined): boolean {
   if (!probe || typeof probe !== "object") return true;
   return probe.ok !== false;
