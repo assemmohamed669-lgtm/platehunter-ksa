@@ -23,6 +23,7 @@ import ShareSortButton from "@/components/ShareSortButton";
 import { getUploadedFile, getAllFieldCheckEntries, type FieldCheckEntry } from "@/lib/idb";
 import { recordsLockedNow } from "@/lib/groupLocks";
 import { getDataMeta, getSampleRows, iterateRows } from "@/lib/dataStore";
+import { diagActive, diagNote } from "@/lib/deviceDiag";
 import { collapseDuplicateChecks } from "@/lib/fieldCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 import { resolveDataPlateCol } from "@/lib/dataSources";
@@ -165,6 +166,13 @@ export default function WantedPage() {
     if (sorting) return;
     playSortBeep();   // تأكيد صوتي إن الفرز بدأ
     setSorting(true); setError(null);
+    /**
+     * 🩺 الصندوق الأسود (حساب واحد — «المطلوب كانت بتقفل البرنامج» على آيفون ٢٣ أكتوبر ٢٠٢٦): كل خطوة وأرقامها بتتحفظ
+     * على الموبايل لحظتها — لو البرنامج اتقفل، آخر خطوة اتكتبت هي اللي وقع عندها. باقي المناديب: ولا حاجة.
+     */
+    const dn = (step: string, d: Record<string, unknown> = {}) => { if (diagActive()) diagNote("wanted-sort", { step, ...d }); };
+    const t0 = Date.now();
+    dn("start");
     try {
       const [checkRec, dataRec, fieldEntries] = await Promise.all([
         getUploadedFile("local", "check"),
@@ -173,6 +181,10 @@ export default function WantedPage() {
         recordsLockedNow() ? Promise.resolve([] as FieldCheckEntry[])
           : getAllFieldCheckEntries().catch(() => [] as FieldCheckEntry[]).then(collapseDuplicateChecks),
       ]);
+      dn("loaded", {
+        ms: Date.now() - t0, checkRows: checkRec?.rows.length ?? 0, checkCols: checkRec?.headers.length ?? 0,
+        dataRows: dataRec?.rows.length ?? 0, dataStreamed: !!dataRec?.streamed, records: fieldEntries.length,
+      });
       // ملفات الداتا الإضافية (data-2, data-3...) — بتتدمج مع الأساسي في الفرز.
       const extraDataRecs: NonNullable<typeof dataRec>[] = [];
       for (let n = 2; n < 100; n++) {
@@ -180,6 +192,7 @@ export default function WantedPage() {
         if (!rec) break;
         extraDataRecs.push(rec);
       }
+      dn("extras", { ms: Date.now() - t0, extras: extraDataRecs.map((r) => ({ rows: r.rows.length, streamed: !!r.streamed })) });
 
       if (!checkRec) { setError("مفيش ملف تشييك (المطلوبين). ارفعه من صفحة التشييك الأول."); setSorting(false); return; }
       const checkCol = detectPlateColumn(checkRec.headers, checkRec.rows);
@@ -209,6 +222,7 @@ export default function WantedPage() {
       const typeOfCheck = (norm: string) => (checkTypeCol ? String(checkRowByNorm.get(norm)?.[checkTypeCol] ?? "").trim() : "");
       const colorOf = (norm: string) => (colorCheckCol ? String(checkRowByNorm.get(norm)?.[colorCheckCol] ?? "").trim() : "");
       const yearOf = (norm: string) => (yearCheckCol ? String(checkRowByNorm.get(norm)?.[yearCheckCol] ?? "").trim() : "");
+      dn("index", { ms: Date.now() - t0, wanted: wanted.size });
 
       // (١) مطابقة على كل ملفات الداتا (الأساسي + الإضافية) — بترتيب الملفات ثم
       // الداتا (مناطق تحت بعضها). الملف الأساسي الكبير (>3MB) بيكون متخزّن في
@@ -284,11 +298,14 @@ export default function WantedPage() {
           setupNeighbors(bigMeta.headers, dataCol);
           const srcs = srcsOf(bigMeta.headers, sample, dataCol);
           let gj = 0;
+          dn("data-stream", { ms: Date.now() - t0, rows: bigMeta.rowCount });
+          let nextMark = 100_000;
           await iterateRows(async (batch) => {
             for (const row of batch) {
               const wr = buildFromRow(row, dataCol, srcs, gj++);
               if (wr) dRows.push(wr);
             }
+            if (gj >= nextMark) { nextMark += 100_000; dn("data-progress", { ms: Date.now() - t0, scanned: gj, matches: dRows.length }); }
             await new Promise<void>((r) => setTimeout(r, 0)); // yield — مايجمّدش الواجهة
           }, { slot: "data" });
         }
@@ -299,6 +316,7 @@ export default function WantedPage() {
           baseDataCol ??= dataCol;
           setupNeighbors(dataRec.headers, dataCol);
           const srcs = srcsOf(dataRec.headers, dataRec.rows, dataCol);
+          dn("data-mem", { ms: Date.now() - t0, rows: dataRec.rows.length });
           for (const row of dataRec.rows) {
             const gIdx = orderedData.length;
             orderedData.push(row);
@@ -345,6 +363,7 @@ export default function WantedPage() {
         }
       }
       wantedNeighborData = { orderedData, locCol: neighborLocCol, plateCol: neighborPlateCol, detailCols: neighborDetailCols };
+      dn("data-done", { ms: Date.now() - t0, matches: dRows.length, ordered: orderedData.length });
 
       // (٢) مطابقة على شيت السجلات (field_check).
       const rRows: WantedRow[] = [];
@@ -380,9 +399,14 @@ export default function WantedPage() {
         });
       }
 
+      dn("records-done", { ms: Date.now() - t0, matches: rRows.length });
       setDataRows(dRows); setRecordRows(rRows); setSorted(true);
       persist(dRows, rRows, true);
+      dn("done", { ms: Date.now() - t0, dataResults: dRows.length, recordResults: rRows.length });
+      // الجدول اترسم؟ (لو البرنامج اتقفل وهو بيرسم النتيجة، الخطوة دي مش هتتكتب)
+      if (diagActive()) setTimeout(() => dn("rendered", { ms: Date.now() - t0 }), 1500);
     } catch (err) {
+      dn("error", { ms: Date.now() - t0, msg: err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160) });
       setError(`تعذّر الفرز: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSorting(false);
