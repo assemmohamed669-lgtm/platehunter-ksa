@@ -23,7 +23,7 @@ describe("🔒 مين يسأل كوهير من Voice PRO", () => {
   });
 
   it("النداء نفسه مقفول على غيره (حتى لو الطريق شغّال) — والفحص كمان", () => {
-    expect(PAGE).toMatch(/const askType = useCallback\(async \(wav: Blob, tMs: number\) => \{[\s\S]{0,900}?if \(!canAskTypeServer\(isSuperRef\.current\)\) return;/);
+    expect(PAGE).toMatch(/const askType = useCallback\(async \(wav: Blob, tMs: number[^)]*\) => \{[\s\S]{0,900}?if \(!canAskTypeServer\(isSuperRef\.current\)\) return;/);
     expect(PAGE).toMatch(/if \(canAskTypeServer\(isSuperRef\.current\)\) try \{\s*const r2 = await fetch\(TRIAL_TYPE_BASE/);
   });
 });
