@@ -77,6 +77,7 @@ import {
 import { GpsReadyChip, GpsStartWarning } from "../components/GpsReadiness";
 import { PauseBanner } from "../components/PauseBanner";
 import type { RecPause } from "../lib/recPauses";
+import { canRecordInBackground, startBackgroundRecording, stopBackgroundRecording } from "@/lib/backgroundRecording";
 import {
   FixCollector,
   MEM_ONLY_WARNING,
@@ -488,6 +489,7 @@ export default function BatchPage({
   hideCheckBox = false,
   onCheckInfo,
   canPause = false,
+  bgAllowed = false,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -525,6 +527,11 @@ export default function BatchPage({
    * (`MJ_PAUSE_FOR_DELEGATES` في `lib/mujammaaAccess.ts`).
    */
   canPause?: boolean;
+  /**
+   * 🎙️ التسجيل يكمّل والمندوب في واتساب/الخريطة — أندرويد 1.7 (`lib/backgroundRecording.ts`، ٢٤ أكتوبر ٢٠٢٦).
+   * السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`).
+   */
+  bgAllowed?: boolean;
 }) {
   const bank = useAppCheckSheet(errorLog);
   const gps = useGps(visible);
@@ -576,6 +583,8 @@ export default function BatchPage({
   const [seconds, setSeconds] = useState(0);
   /** ⏸️ واقف مؤقت من إمتى (epoch) — `null` = مش واقف (الميك مفتوح والملف لسه ماتقفلش) */
   const [pausedSince, setPausedSince] = useState<number | null>(null);
+  /** 🎙️ خدمة «قناص بيسجّل» شغّالة (أندرويد 1.7) — بتقف مع «إيقاف التسجيل» أو الخروج من الصفحة */
+  const bgActiveRef = useRef(false);
   const [level, setLevel] = useState(0);
   const [waveform, setWaveform] = useState<Uint8Array | null>(null);
 
@@ -1450,6 +1459,8 @@ export default function BatchPage({
     setPhase("recording");
     setSeconds(0);
     setPausedSince(null);
+    // 🎙️ أندرويد 1.7: إشعار «قناص بيسجّل» ⇒ التسجيل يكمّل والمندوب في واتساب/الخريطة
+    bgActiveRef.current = canRecordInBackground(bgAllowed) && startBackgroundRecording();
     // 📍 داس تسجيل والعلامة لسه مش خضرا ⇒ تحذير كبير (وهزّة) لحد ما الموقع يجهز — التسجيل نفسه ماشي
     if (gpsStartWarning(gpsReadiness(currentFix(), lastFixRecvAt(), Date.now(), gpsStatus()))) {
       setGpsWarnArmed(true);
@@ -1479,6 +1490,7 @@ export default function BatchPage({
       stopTimer();
       releaseScreenAwake();
       setPausedSince(null);
+      if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
       const seconds = rec.durationSec;
 
       // ‎stop()‎ بتستنى آخر جزء يوصل — بلا الانتظار ده آخر لوحة بتضيع
@@ -1569,6 +1581,7 @@ export default function BatchPage({
     return () => {
       unmountedRef.current = true;
       busyRef.current.reset();
+      if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
       stopTimer();
       releaseScreenAwake();
       // المسح بياخد عشرات الثواني — لازم يقف لما المندوب يخرج من الصفحة،

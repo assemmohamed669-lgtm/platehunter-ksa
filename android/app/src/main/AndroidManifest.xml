@@ -89,6 +89,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- 🎙️ التسجيل/التشييك يفضل شغّال والمندوب في واتساب أو الخريطة (٢٤ أكتوبر ٢٠٢٦ — BackgroundRecordingService) -->
+        <service
+            android:name=".BackgroundRecordingService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|location" />
     </application>
 
     <!-- Permissions -->
@@ -102,4 +108,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- إشعارات الهاتف — أندرويد ١٣+ بيطلب الإذن ده وقت التشغيل. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 🎙️ التسجيل في الخلفية: خدمة في المقدمة (ميك + موقع) + المعالج يفضل صاحي — ٢٤ أكتوبر ٢٠٢٦ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>

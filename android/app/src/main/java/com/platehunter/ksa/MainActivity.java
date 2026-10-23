@@ -4,6 +4,9 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.View;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
@@ -42,6 +45,19 @@ public class MainActivity extends BridgeActivity {
         // والدالة المعروضة واحدة بلا أي وصول لبيانات — بتمسح وتعيد التحميل.
         getBridge().getWebView().addJavascriptInterface(new CacheBridge(), "PlateHunterNative");
 
+        // 🎙️ التسجيل في الخلفية (٢٤ أكتوبر ٢٠٢٦): الصفحة بتنده `window.PlateHunterBg.start(نص)` لما المندوب يدوس تسجيل
+        // و`stop()` لما يقف. النسخ القديمة من التطبيق مافيهاش الجسر ده ⇒ الصفحة بتشتغل زي الأول بالظبط.
+        getBridge().getWebView().addJavascriptInterface(new BgBridge(), "PlateHunterBg");
+        // 📞 مكالمة بدأت والتسجيل شغّال ⇒ الصفحة تقفل الميك (المكالمة ليها الأولوية — قرار المالك)
+        BackgroundRecordingService.callListener = () -> runOnUiThread(() -> {
+            try {
+                getBridge().getWebView().evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('phNativeCall'));", null);
+            } catch (Exception e) {
+                Log.e(TAG, "call event failed", e);
+            }
+        });
+
         processIntent(getIntent());
     }
 
@@ -68,6 +84,58 @@ public class MainActivity extends BridgeActivity {
                 }
             });
         }
+    }
+
+    /** جسر «التسجيل في الخلفية» — `window.PlateHunterBg` */
+    public class BgBridge {
+        @JavascriptInterface
+        public boolean start(String text) {
+            return BackgroundRecordingService.start(MainActivity.this, text);
+        }
+
+        @JavascriptInterface
+        public void stop() {
+            BackgroundRecordingService.stop(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean active() {
+            return BackgroundRecordingService.running;
+        }
+    }
+
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    /**
+     * 🎙️ البرنامج راح الخلفية (واتساب / الخريطة / أي برنامج) والتسجيل شغّال ⇒ الصفحة **تفضل شغّالة**: الويب-ڤيو
+     * بيعتبر الصفحة مستخبية فيبطّأ مؤقّتاتها (نوافذ الصوت كل ١.٥ث كانت هتقف). بنقوله إنها ظاهرة (نفس حيلة إضافات
+     * «الخلفية» المعروفة) — بس طول ما خدمة التسجيل شغّالة.
+     */
+    private void keepWebViewRunning() {
+        if (!BackgroundRecordingService.running) return;
+        ui.postDelayed(() -> {
+            if (!BackgroundRecordingService.running || getBridge() == null) return;
+            try {
+                WebView wv = getBridge().getWebView();
+                wv.onResume();
+                wv.resumeTimers();
+                wv.dispatchWindowVisibilityChanged(View.VISIBLE);
+            } catch (Exception e) {
+                Log.e(TAG, "keepWebViewRunning failed", e);
+            }
+        }, 400);
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        keepWebViewRunning();
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        keepWebViewRunning();
     }
 
     /** Called when app is already running and another intent arrives */
