@@ -528,7 +528,7 @@ export default function BatchPage({
    */
   canPause?: boolean;
   /**
-   * 🎙️ التسجيل يكمّل والمندوب في واتساب/الخريطة — أندرويد 1.7 (`lib/backgroundRecording.ts`، ٢٤ أكتوبر ٢٠٢٦).
+   * 🎙️ التسجيل يكمّل والمندوب في واتساب/الخريطة — أندرويد 1.8 (`lib/backgroundRecording.ts`، ٢٤ أكتوبر ٢٠٢٦).
    * السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`).
    */
   bgAllowed?: boolean;
@@ -583,7 +583,7 @@ export default function BatchPage({
   const [seconds, setSeconds] = useState(0);
   /** ⏸️ واقف مؤقت من إمتى (epoch) — `null` = مش واقف (الميك مفتوح والملف لسه ماتقفلش) */
   const [pausedSince, setPausedSince] = useState<number | null>(null);
-  /** 🎙️ خدمة «قناص بيسجّل» شغّالة (أندرويد 1.7) — بتقف مع «إيقاف التسجيل» أو الخروج من الصفحة */
+  /** 🎙️ خدمة «قناص بيسجّل» شغّالة (أندرويد 1.8) — بتقف مع «إيقاف التسجيل» أو الخروج من الصفحة */
   const bgActiveRef = useRef(false);
   const [level, setLevel] = useState(0);
   const [waveform, setWaveform] = useState<Uint8Array | null>(null);
@@ -1459,7 +1459,7 @@ export default function BatchPage({
     setPhase("recording");
     setSeconds(0);
     setPausedSince(null);
-    // 🎙️ أندرويد 1.7: إشعار «قناص بيسجّل» ⇒ التسجيل يكمّل والمندوب في واتساب/الخريطة
+    // 🎙️ أندرويد 1.8: إشعار «قناص بيسجّل» ⇒ التسجيل يكمّل والمندوب في واتساب/الخريطة
     bgActiveRef.current = canRecordInBackground(bgAllowed) && startBackgroundRecording();
     // 📍 داس تسجيل والعلامة لسه مش خضرا ⇒ تحذير كبير (وهزّة) لحد ما الموقع يجهز — التسجيل نفسه ماشي
     if (gpsStartWarning(gpsReadiness(currentFix(), lastFixRecvAt(), Date.now(), gpsStatus()))) {

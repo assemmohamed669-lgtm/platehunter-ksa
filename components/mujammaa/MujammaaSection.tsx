@@ -64,7 +64,7 @@ export default function MujammaaSection({
   onCheckInfo?: ComponentProps<typeof BatchPage>["onCheckInfo"];
   /** ⏸️ زرار «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_PAUSE_FOR_DELEGATES`) */
   canPause?: boolean;
-  /** 🎙️ التسجيل يكمّل في الخلفية (أندرويد 1.7) — السوبر أدمن الأول */
+  /** 🎙️ التسجيل يكمّل في الخلفية (أندرويد 1.8) — السوبر أدمن الأول */
   bgAllowed?: boolean;
 }) {
   const errorLog = useMemo(() => (sessionLog ??= new ErrorLog()), []);
