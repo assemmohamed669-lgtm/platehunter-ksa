@@ -191,7 +191,7 @@ export default function VoiceMonitorPage() {
     const [h, t] = await Promise.all([
       supabase.from("voice_health").select("checked_at, ok, ms, error, status, inflight")
         .gte("checked_at", from).lt("checked_at", to).order("checked_at", { ascending: true }).limit(1600),
-      supabase.from("voice_telemetry").select("agent_id, session_id").or("server.is.null,server.neq.diag")
+      supabase.from("voice_telemetry").select("agent_id, session_id").or("server.is.null,server.not.in.(diag,issues)")
         .gte("started_at", from).lt("started_at", to).limit(5000),
     ]);
     if (h.error || t.error) {
@@ -221,7 +221,7 @@ export default function VoiceMonitorPage() {
   const loadAgent = useCallback(async () => {
     if (!agentId) { setRows([]); return; }
     const { from, to } = dayRange(day);
-    const { data, error } = await supabase.from("voice_telemetry").select("*").or("server.is.null,server.neq.diag")
+    const { data, error } = await supabase.from("voice_telemetry").select("*").or("server.is.null,server.not.in.(diag,issues)")
       .eq("agent_id", agentId).gte("started_at", from).lt("started_at", to)
       .order("started_at", { ascending: true }).limit(1000);
     if (error) { setErr(tableErr(error.message)); setRows([]); return; }

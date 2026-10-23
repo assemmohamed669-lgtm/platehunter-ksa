@@ -123,7 +123,8 @@ describe("التوصيل — مرة واحدة في الـlayout، ومراقب�
 
   it("صفحة «مراقبة الصوت» بتستبعد صفوف الصندوق (server = diag)", () => {
     const V = read("app/admin/voice-monitor/page.tsx");
-    expect((V.match(/\.or\("server\.is\.null,server\.neq\.diag"\)/g) ?? []).length).toBe(2);
+    // ومن ٢٣ أكتوبر سجل المشاكل («issues» — `lib/issueLog.ts`) كمان
+    expect((V.match(/\.or\("server\.is\.null,server\.not\.in\.\(diag,issues\)"\)/g) ?? []).length).toBe(2);
   });
 
   it("من غير الحساب في القايمة ⇒ مافيش تشغيل خالص", () => {
