@@ -48,6 +48,7 @@ export default function MujammaaSection({
   hideCheckBox = false,
   onCheckInfo,
   canPause = false,
+  bgAllowed = false,
 }: {
   agentName: string;
   /** بيسجّل أو بيقفل المقطع — «التسجيل» بتقفل المفتاح وقتها */
@@ -63,6 +64,8 @@ export default function MujammaaSection({
   onCheckInfo?: ComponentProps<typeof BatchPage>["onCheckInfo"];
   /** ⏸️ زرار «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_PAUSE_FOR_DELEGATES`) */
   canPause?: boolean;
+  /** 🎙️ التسجيل يكمّل في الخلفية (أندرويد 1.7) — السوبر أدمن الأول */
+  bgAllowed?: boolean;
 }) {
   const errorLog = useMemo(() => (sessionLog ??= new ErrorLog()), []);
   // المندوب بيكلّم السيرفر الأساسي دايماً — العنوان البديل (للتجربة) للسوبر أدمن بس
@@ -213,6 +216,7 @@ export default function MujammaaSection({
         hideCheckBox={hideCheckBox}
         onCheckInfo={onCheckInfo}
         canPause={canPause}
+        bgAllowed={bgAllowed}
       />
     </div>
   );

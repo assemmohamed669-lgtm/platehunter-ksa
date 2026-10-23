@@ -51,6 +51,7 @@ import {
   type TypeFollow,
 } from "@/lib/typeForPlate";
 import { scanTypeAndNote } from "@/lib/vehicleTypeScan";
+import { canRecordInBackground, onNativeCall, startBackgroundRecording, stopBackgroundRecording } from "@/lib/backgroundRecording";
 import { TypeAskQueue, TYPE_ASK_TIMEOUT_MS, type TypeAskResult } from "@/lib/typeAskQueue";
 
 /** 🏷️ سؤال كوهير واحد — `primary` = نافذة اللوحة نفسها (مش النوافذ اللي بعدها) */
@@ -482,6 +483,11 @@ export default function RegistrationV2Page() {
    * اللوحة وكان بيقع برّه النافذة الأولى (المالك ٢٣ أكتوبر: «مش بيطلع كل الانواع» — قياس ٦٣٪ ⇐ ٨٨٪، `followUpAsks`).
    */
   const typeFollowRef = useRef<TypeFollow[]>([]);
+  /**
+   * 🎙️ خدمة «قناص بيسجّل» شغّالة (أندرويد 1.7 — `lib/backgroundRecording.ts`، ٢٤ أكتوبر ٢٠٢٦) ⇒ التسجيل **مايقفلش**
+   * لما المندوب يفتح واتساب/الخريطة/أي برنامج. المكالمة بتقفله برضه (`phNativeCall`).
+   */
+  const bgActiveRef = useRef(false);
   /** 🛡️ طابور أسئلة كوهير (سؤال واحد في المرة — `lib/typeAskQueue.ts`) + السؤال نفسه (ref ⇒ مافيش closure قديم) */
   const runTypeAskRef = useRef<(j: TypeAskJob) => Promise<TypeAskResult>>(async () => "ok");
   const typeAskQRef = useRef<TypeAskQueue<TypeAskJob> | null>(null);
@@ -774,13 +780,21 @@ export default function RegistrationV2Page() {
    * والمكالمة أخدت الميك برضه بيتكشف من المحرك (`onMicLost`).
    */
   useEffect(() => {
+    /**
+     * 🎙️ (٢٤ أكتوبر ٢٠٢٦) المالك: «عايز المندوب لما يحب يشوف الواتس اب او يتصفح التليفون والتسجيل شغال او التشييك
+     * يفضل شغال». خدمة «قناص بيسجّل» شغّالة (`bgActiveRef`) ⇒ الخروج من البرنامج **مابيقفلش** — والمكالمة بتقفل
+     * (أندرويد بيبعت `phNativeCall`). من غير الخدمة (آيفون · تطبيق قديم) ⇒ زي الأول بالحرف.
+     */
     const onVis = () => {
-      if (document.visibilityState === "hidden" && engineRef.current) stopRef.current("background");
+      if (document.visibilityState === "hidden" && engineRef.current && !bgActiveRef.current) stopRef.current("background");
     };
-    const onHide = () => { if (engineRef.current) stopRef.current("background"); };
+    const onHide = () => { if (engineRef.current && !bgActiveRef.current) stopRef.current("background"); };
+    const offCall = onNativeCall(() => { if (engineRef.current) stopRef.current("background"); });
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onHide);
     return () => {
+      offCall();
+      if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("pagehide", onHide);
       // الصفحة اتقفلت ⇒ «الميك مشغول» يتشال (وإلا التحديث يفضل مستني للأبد)
@@ -1702,6 +1716,8 @@ export default function RegistrationV2Page() {
       marks.push({ label: "المايك", at: Date.now() });
       engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
+      // 🎙️ أندرويد 1.7: إشعار «قناص بيسجّل» ⇒ يكمّل والمندوب في واتساب/الخريطة (السوبر أدمن الأول)
+      bgActiveRef.current = canRecordInBackground(isSuperRef.current) && startBackgroundRecording();
       // 🩺 الصندوق الأسود: نبضة المراقب كل ١٥ ثانية والتسجيل شغّال (الآيفون بيبعت تحديثات موقع قد إيه)
       if (diagActive()) {
         if (diagGpsTimerRef.current) clearInterval(diagGpsTimerRef.current);
@@ -1756,6 +1772,7 @@ export default function RegistrationV2Page() {
     diagNote("rv2-rec", { on: false, why, rows: rowsRef.current.length });
     const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
+    if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
     levelStoreRef.current!.set(0);
     // 🔒 الجلسة دي خلصت — أي نداء متأخّر منها بيتجاهل (السوبر أدمن)، والشريط يتشال
     sessionRef.current.end();
