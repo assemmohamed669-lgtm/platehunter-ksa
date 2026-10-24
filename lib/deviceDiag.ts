@@ -30,6 +30,8 @@ export const DIAG_AGENT_IDS: string[] = [
   "7b4bc404-50e7-46ad-935f-aa65e293d6b8",
   // ٢٣ أكتوبر ٢٠٢٦: آيفون — «صفحة المطلوب كانت بتقفل البرنامج» وهو بيفرز (خطوات الفرز — wanted-sort / cert-sort)
   "3f220bb5-aa99-44b2-a384-72c3279d5478",
+  // ٢٤ أكتوبر ٢٠٢٦: آيفون (العبيدي) — «الشاشة بتنام وهو بيسجّل» و«المطلوبة ساعات مابتصفّرش» (wake / rv2-wanted / siren)
+  "db903add-ebc1-4b1e-96e8-8cacd87dc13b",
 ];
 
 export const DIAG_MAX_EVENTS = 600;
@@ -333,8 +335,13 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
     push({ k: "pagehide", persisted: !!e.persisted, path: location.pathname });
     saveState({ reload: true, vis: "hidden", beat: Date.now() });
   };
+  // 🔎 أول سطرين من مكان الغلط (`stk`) — غلط من غير ملف («EmptyRanges» على آيفون ٢٤ أكتوبر) نعرف جاي منين
   const onErr = (e: ErrorEvent) =>
-    push({ k: "err", msg: String(e.message ?? "").slice(0, 200), src: String(e.filename ?? "").split("/").pop()?.slice(0, 60), line: e.lineno });
+    push({
+      k: "err", msg: String(e.message ?? "").slice(0, 200), src: String(e.filename ?? "").split("/").pop()?.slice(0, 60),
+      line: e.lineno, col: e.colno,
+      stk: safeMsg(String((e.error as { stack?: unknown } | null)?.stack ?? "").split("\n").slice(0, 2).join(" | ")) || undefined,
+    });
   const onRej = (e: PromiseRejectionEvent) =>
     push({ k: "rej", msg: String((e.reason as { message?: string })?.message ?? e.reason ?? "").slice(0, 200) });
   const onTap = (e: Event) => {

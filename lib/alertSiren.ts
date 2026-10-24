@@ -340,3 +340,22 @@ export function stopAlertTonePreview(): void {
 export function isAlertSirenPlaying(): boolean {
   return playing;
 }
+
+/**
+ * 🩺 لقطة للصندوق الأسود بس (٢٤ أكتوبر ٢٠٢٦ — «الإنذار ساعات مابيطلعش» على آيفون): الصوت صاحي ولا نايم، الصفّارة شغّالة،
+ * نوع الصوت (يرن والآيفون صامت؟)، المايك مفتوح، والنغمة متحمّلة. **قراية بس** — مابتغيّرش حاجة.
+ */
+export function sirenDiagState(): { ctx: string | null; playing: boolean; kind: string | null; session: string | null; micOn: boolean; tone: string } {
+  let session: string | null = null;
+  try { session = audioSession()?.type ?? null; } catch { session = null; }
+  const toneId = loadAlertToneId();
+  const tone = alertToneById(toneId);
+  return {
+    ctx: ctx ? String(ctx.state) : null,
+    playing,
+    kind,
+    session,
+    micOn: isMicBusy() || isCapturingAudio(),
+    tone: tone.file ? (buffers.has(tone.id) ? "ready" : "loading") : "siren",
+  };
+}

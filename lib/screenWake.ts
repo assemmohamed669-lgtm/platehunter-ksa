@@ -33,15 +33,26 @@ export interface ScreenWake {
   isHeld(): boolean;
 }
 
-export function createScreenWake(getApi: () => WakeLockLike | undefined): ScreenWake {
+/**
+ * 🩺 للصندوق الأسود بس (٢٤ أكتوبر ٢٠٢٦ — «الشاشة بتنام وهو بيسجّل» على آيفون): الطلب نجح ولا لأ وليه، والنظام سحب
+ * القفل لوحده إمتى. من غيرهم = زي الأول بالحرف.
+ */
+export interface ScreenWakeHooks {
+  onAcquire?: (ok: boolean, why?: string) => void;
+  /** النظام سحب القفل لوحده (مش إحنا اللي سبناه) */
+  onRelease?: () => void;
+}
+
+export function createScreenWake(getApi: () => WakeLockLike | undefined, hooks: ScreenWakeHooks = {}): ScreenWake {
   let sentinel: WakeLockSentinelLike | null = null;
   let pending = false;
+  const note = (fn: () => void) => { try { fn(); } catch { /* التشخيص عمره ما يوقّف القفل */ } };
 
   return {
     async acquire() {
       if (sentinel || pending) return;
       const api = getApi();
-      if (!api) return;                 // ويب-ڤيو قديم — نكمّل من غير قفل
+      if (!api) { note(() => hooks.onAcquire?.(false, "no-api")); return; }   // ويب-ڤيو قديم — نكمّل من غير قفل
       pending = true;
       try {
         const s = await api.request("screen");
@@ -49,9 +60,15 @@ export function createScreenWake(getApi: () => WakeLockLike | undefined): Screen
         // النظام بيسحب القفل لوحده أحياناً (الشاشة اتقفلت بالزرار، بطارية
         // منخفضة). لازم نعرف عشان أي `acquire` بعدها تاخد قفل جديد بدل ما
         // تفتكر إنها لسه ماسكة.
-        s.addEventListener?.("release", () => { sentinel = null; });
-      } catch {
+        s.addEventListener?.("release", () => {
+          if (sentinel !== s) return;   // إحنا اللي سبناه (`release`)
+          sentinel = null;
+          note(() => hooks.onRelease?.());
+        });
+        note(() => hooks.onAcquire?.(true, undefined));
+      } catch (e) {
         sentinel = null;                // مرفوض — التسجيل بيكمّل عادي
+        note(() => hooks.onAcquire?.(false, String((e as { name?: string })?.name || "error").slice(0, 40)));
       } finally {
         pending = false;
       }
@@ -71,9 +88,9 @@ export function createScreenWake(getApi: () => WakeLockLike | undefined): Screen
 }
 
 /** المدير الافتراضي للمتصفح — بيقرا `navigator.wakeLock` وقت الطلب. */
-export function browserScreenWake(): ScreenWake {
+export function browserScreenWake(hooks?: ScreenWakeHooks): ScreenWake {
   return createScreenWake(() => {
     if (typeof navigator === "undefined") return undefined;
     return (navigator as Navigator & { wakeLock?: WakeLockLike }).wakeLock;
-  });
+  }, hooks);
 }
