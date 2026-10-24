@@ -35,6 +35,51 @@ export const DIAG_AGENT_IDS: string[] = [
 ];
 
 export const DIAG_MAX_EVENTS = 600;
+
+/**
+ * 🩺 **الصندوق الخفيف للكل** — المالك (٢٤ أكتوبر ٢٠٢٦): «شغل الصندوق الاسود علي كل المناديب» ⇒ بعد شرح الأثر: «يلا اعمله».
+ * القياس على الـ٤ حسابات اللي عليها الكامل: **٨٥٪ من حجمه سطور الموقع** (`gps-plate` ٧٣٪ · `gps-watch` ١١٪) اتعملت لشكوى
+ * «موقع واحد على كل اللوحات» بس. الخفيف:
+ *  · نفس البداية (الفتحة جات بعد وقعة؟) والتنقّل والخلفية والأغلاط والتهنيج والنت — وملاحظات الصفحات **المهمة بس**
+ *    (`lightKeepsNote`): التسجيل بدأ/وقف، المطلوبة اتأكدت والصفّارة رنّت، الشاشة نامت، التصدير.
+ *  · بيترفع بعلامة `diag-lite` والكرون بيمسحه بعد يومين (نفس «سجل المشاكل»).
+ *  · حد في اليوم لكل موبايل (سطور ورفعات) ورفع كل ٣ دقايق — موبايل بيكتب كتير مايملاش القاعدة.
+ * ~٢٠ مرة أصغر من الكامل. الحساب اللي في `DIAG_AGENT_IDS` بياخد الكامل زي ما هو.
+ * 🔒 السوبر أدمن الأول — يومين نقيس الحجم الحقيقي وبعدين للمناديب.
+ */
+export const DIAG_LIGHT_FOR_ALL = false;
+export const DIAG_LIGHT_SERVER = "diag-lite";
+/** أقصى سطور في اليوم لكل موبايل (كل سطر ~١٥٠ بايت) */
+export const LIGHT_MAX_EVENTS_PER_DAY = 400;
+/** أقصى رفعات في اليوم لكل موبايل */
+export const LIGHT_MAX_UPLOADS_PER_DAY = 30;
+const LIGHT_FLUSH_MS = 180_000;
+const LIGHT_BUDGET_KEY = "ph:diag:lite:budget";
+const LIGHT_NOTES = new Set([
+  "rv2-rec", "rv2-wanted", "rv2-alert", "rv2-export",
+  "siren", "siren-2s", "siren-stop",
+  "wake", "wake-lost",
+]);
+
+export function diagLightFor(isSuper: boolean): boolean {
+  return isSuper === true || DIAG_LIGHT_FOR_ALL;
+}
+
+/** ملاحظة الصفحة دي تتكتب في الخفيف؟ (سطور الموقع وخطوات المزامنة/الفرز لأ) */
+export function lightKeepsNote(k: string): boolean {
+  return LIGHT_NOTES.has(k);
+}
+
+export interface LightBudget { day: string; events: number; uploads: number }
+
+/** عدّاد النهارده (يوم جديد ⇒ من الصفر) */
+export function lightBudget(prev: LightBudget | null, day: string): LightBudget {
+  return prev && prev.day === day ? { ...prev } : { day, events: 0, uploads: 0 };
+}
+
+function riyadhDay(t: number): string {
+  return new Date(t).toLocaleDateString("en-CA", { timeZone: "Asia/Riyadh" });
+}
 const STATE_KEY = "ph:diag:state";
 const BUF_KEY = "ph:diag:buf";
 const BEAT_MS = 5_000;
@@ -177,6 +222,8 @@ function writeJson(key: string, v: unknown) {
 }
 
 let started = false;
+/** الكامل (القايمة) ولا الخفيف */
+let mode: "full" | "light" | null = null;
 let uidRef = "";
 let sidRef = "";
 let lastPath = "";
@@ -184,6 +231,12 @@ let lastTap: { label: string; t: number } | null = null;
 
 function push(ev: Omit<DiagEvent, "t"> & { t?: number }) {
   if (!started) return;
+  if (mode === "light") {
+    const b = lightBudget(readJson<LightBudget>(LIGHT_BUDGET_KEY), riyadhDay(Date.now()));
+    if (b.events >= LIGHT_MAX_EVENTS_PER_DAY) return;
+    b.events += 1;
+    writeJson(LIGHT_BUDGET_KEY, b);
+  }
   const buf = readJson<DiagEvent[]>(BUF_KEY) ?? [];
   writeJson(BUF_KEY, appendEvent(buf, { t: Date.now(), ...ev } as DiagEvent));
 }
@@ -213,7 +266,11 @@ async function flush() {
       import("@/lib/devicePlatform"),
     ]);
     let sent = 0;
+    const light = mode === "light";
     for (const chunk of chunkForUpload(buf)) {
+      // 🩺 الخفيف: حد الرفعات في اليوم — الباقي بيستنى على الموبايل (حد ٦٠٠ سطر)
+      const b = light ? lightBudget(readJson<LightBudget>(LIGHT_BUDGET_KEY), riyadhDay(Date.now())) : null;
+      if (b && b.uploads >= LIGHT_MAX_UPLOADS_PER_DAY) break;
       const { error } = await supabase.from("voice_telemetry").insert({
         agent_id: uidRef,
         session_id: "diag-" + sidRef,
@@ -221,12 +278,13 @@ async function flush() {
         ended_at: new Date(chunk[chunk.length - 1].t).toISOString(),
         platform: getDevicePlatform(),
         build: BUILD_ID,
-        server: "diag",
+        server: light ? DIAG_LIGHT_SERVER : "diag",
         counts: { n: chunk.length },
         latency: {},
         events: chunk,
       });
       if (error) break;
+      if (b) { b.uploads += 1; writeJson(LIGHT_BUDGET_KEY, b); }
       sent += chunk.length;
     }
     if (sent) {
@@ -247,6 +305,7 @@ async function flush() {
  */
 export function diagNote(k: string, data: Record<string, unknown> = {}) {
   if (!started) return;
+  if (mode === "light" && !lightKeepsNote(k)) return;
   try {
     push({ k, path: location.pathname, ...data });
   } catch {
@@ -272,8 +331,23 @@ export function diagNav(path: string) {
  * يشغّل الصندوق للحساب ده لو في القايمة (مرة واحدة لكل تحميل صفحة). بيرجّع دالة إيقاف.
  */
 export function startDeviceDiag(uid: string | null | undefined): () => void {
-  if (started || typeof window === "undefined" || !diagEnabledFor(uid)) return () => {};
+  if (!diagEnabledFor(uid)) return () => {};
+  return startDiag(uid as string, "full");
+}
+
+/**
+ * 🩺 الصندوق **الخفيف** (`DIAG_LIGHT_FOR_ALL` — السوبر أدمن الأول). بيتنده بعد البروفايل؛ لو الكامل شغّال (الحساب في
+ * القايمة) ولا حاجة.
+ */
+export function startDeviceDiagLight(uid: string | null | undefined, opts: { isSuper: boolean }): () => void {
+  if (!uid || !diagLightFor(opts.isSuper)) return () => {};
+  return startDiag(uid, "light");
+}
+
+function startDiag(uid: string, m: "full" | "light"): () => void {
+  if (started || typeof window === "undefined") return () => {};
   started = true;
+  mode = m;
   uidRef = uid as string;
   sidRef = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const now = Date.now();
@@ -324,7 +398,7 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   writeJson(STATE_KEY, { sid: sidRef, path: lastPath, beat: now, vis: document.visibilityState });
 
   const beat = setInterval(() => saveState({ beat: Date.now(), path: location.pathname, vis: document.visibilityState }), BEAT_MS);
-  const tick = setInterval(() => void flush(), FLUSH_MS);
+  const tick = setInterval(() => void flush(), m === "light" ? LIGHT_FLUSH_MS : FLUSH_MS);
   const onVis = () => {
     push({ k: "vis", s: document.visibilityState, path: location.pathname });
     // رجع قدامه من غير إعادة تحميل (الصفحة اتحفظت في الذاكرة) ⇒ علامة «إعادة تحميل» تتشال
@@ -383,7 +457,7 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   window.addEventListener("pageshow", onShow);
 
   // 📝 رسايل الغلط اللي البرنامج نفسه بيكتبها (التخزين/السيرفر/الصوت…) — من غير أرقام لوحات، وبحد
-  let consoleLeft = 80;
+  let consoleLeft = m === "light" ? 20 : 80;
   const origError = console.error;
   const origWarn = console.warn;
   const wrapConsole = (level: "error" | "warn", orig: (...a: unknown[]) => void) =>
@@ -402,7 +476,7 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
   console.warn = wrapConsole("warn", origWarn);
 
   // 🌐 الطلبات اللي فشلت أو ردّت بغلط سيرفر أو خدت أكتر من ٨ث — الرابط من غير استعلام (مافيش توكن)
-  let netLeft = 150;
+  let netLeft = m === "light" ? 30 : 150;
   const origFetch = window.fetch;
   const wrappedFetch: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
@@ -459,5 +533,6 @@ export function startDeviceDiag(uid: string | null | undefined): () => void {
     console.warn = origWarn;
     removeApp?.();
     started = false;
+    mode = null;
   };
 }

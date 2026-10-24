@@ -38,7 +38,7 @@ import { isAllowedForVoiceOnly } from "@/lib/voiceOnlyRoutes";
 import { isRouteLockedForMember } from "@/lib/groupLocks";
 import { useMemberLocks } from "@/lib/groupLocksClient";
 import { rememberPage } from "@/lib/lastPage";
-import { diagNav, startDeviceDiag, diagActive } from "@/lib/deviceDiag";
+import { diagNav, startDeviceDiag, startDeviceDiagLight, diagActive } from "@/lib/deviceDiag";
 import { startIssueLog } from "@/lib/issueLog";
 import { markBootStable, takeBootGuardHit, pageLabel, BOOT_STABLE_MS } from "@/lib/bootGuard";
 
@@ -157,6 +157,9 @@ export default function AppShellLayout({
       setSilentRingSuper(rp?.is_super === true);
       // 🧯 سجل المشاكل الخفيف (الوقعات/الأغلاط/التهنيج بس — `lib/issueLog.ts`): السوبر أدمن الأول، ومش مع الصندوق الكامل
       startIssueLog(userId, { isSuper: rp?.is_super === true, diagOn: diagActive() });
+      // 🩺 الصندوق الأسود **الخفيف** (`lib/deviceDiag.ts` — `DIAG_LIGHT_FOR_ALL`): السوبر أدمن الأول، وبعد سجل المشاكل
+      //    عشان مايقفلوش. الحساب اللي عليه الكامل ولا حاجة.
+      startDeviceDiagLight(userId, { isSuper: rp?.is_super === true });
       // 📍 نفس قفل المجمّع (دلوقتي السوبر أدمن بس) — المناديب موقعهم شغّال أصلاً من `AgentPresenceReporter`
       setMjGpsWarm(canUseMujammaa(rp));
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).

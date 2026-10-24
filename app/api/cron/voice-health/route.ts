@@ -15,6 +15,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TRIAL_MODEL_BASE } from "@/lib/trialModelGate";
 import { probeVoiceHealth, probeVoiceTranscribe, mergeHealth, isCleanupMinute, cronAuthorized, retentionCutoff } from "@/lib/voiceHealth";
 import { ISSUE_LOG_SERVER, issuesCutoff } from "@/lib/issueLog";
+import { DIAG_LIGHT_SERVER } from "@/lib/deviceDiag";
 import { voiceProbeClip, VOICE_PROBE_PLATE } from "@/lib/voiceProbeClip";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,8 @@ export async function GET(req: Request) {
     await supabaseAdmin.from("voice_telemetry").delete().lt("started_at", cutoff);
     // 🧯 سجل المشاكل «كل يوم بيومه» (المالك ٢٣ أكتوبر ٢٠٢٦) — النهارده وامبارح بس (`lib/issueLog.ts`)
     await supabaseAdmin.from("voice_telemetry").delete().eq("server", ISSUE_LOG_SERVER).lt("started_at", issuesCutoff(new Date()));
+    // 🩺 الصندوق الأسود الخفيف (المالك ٢٤ أكتوبر ٢٠٢٦) — يومين بس زي سجل المشاكل (`lib/deviceDiag.ts`)
+    await supabaseAdmin.from("voice_telemetry").delete().eq("server", DIAG_LIGHT_SERVER).lt("started_at", issuesCutoff(new Date()));
   }
 
   return NextResponse.json(
