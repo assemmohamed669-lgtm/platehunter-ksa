@@ -115,6 +115,7 @@ import { startupBreakdown, type Mark } from "@/lib/startupMarks";
 import { type Edited } from "@/lib/trialRowMerge";
 import { speechEndLatencyMs } from "@/lib/trialLatency";
 import { wantedHits, shouldAlertNow, sweepKeeps, confirmWanted, wantedReadCount } from "@/lib/wantedFastPath";
+import { canConfirmNow, sheetReadyAlerts } from "@/lib/wantedConfirmNow";
 import { setMicBusy } from "@/lib/micBusy";
 import { createBusyHold, type BusyHold } from "@/lib/busyHold";
 import { micLostNotice, type AutoStopReason } from "@/lib/micLoss";
@@ -1402,6 +1403,8 @@ export default function RegistrationV2Page() {
         // صفحة الموديل الجديد فقط لحد ما أجرّب». صفحة التشييك على السلوك
         // القديم بالحرف لحد ما يتأكّد على جهاز حقيقي.
         fixes: true,
+        // ⚡ نافذة التأكيد الفورية للعربية المطلوبة (`lib/wantedConfirmNow.ts`) — السوبر أدمن الأول
+        wantedConfirm: canConfirmNow(sup),
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
         fleetSequence: true,
@@ -1625,9 +1628,22 @@ export default function RegistrationV2Page() {
            * صفّرت على عربية مش مطلوبة. دلوقتي: نافذتين بنفس اللوحة بالظبط
            * (~١.٥ث زيادة، مش ~٦ث بتوع الإجماع).
            */
-          const hits = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)))
-            .filter((h) => confirmWanted(wantedSeenRef.current, normalizePlate(bankPlateToArabic(h.plate)), r.tMs));
+          const raw = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)));
+          const hits = raw.filter((h) => confirmWanted(wantedSeenRef.current, normalizePlate(bankPlateToArabic(h.plate)), r.tMs));
           for (const h of hits) alertWanted(h.plate, h.row);
+          /**
+           * ⚡ **نافذة التأكيد الفورية** (المالك ٢٤ أكتوبر ٢٠٢٦: «نقلل الوقت المستغرق في المراجعة … بس مراجعة
+           * موثوقة»). القراية دي لاقت لوحة في الشيت ولسه ماتأكّدتش ⇒ المحرّك يبعت النافذة التانية **دلوقتي** بدل ما
+           * تستنى دورها (~١٫٣ث). التأكيد نفسه زي ما هو فوق (`confirmWanted` — نافذتين بالحرف). microtask مش
+           * setTimeout: التايمر بيتخنق لثانية لما البرنامج في الخلفية. السوبر أدمن الأول — `lib/wantedConfirmNow.ts`.
+           */
+          if (canConfirmNow(sup) && raw.length > hits.length) {
+            const tMs = r.tMs;
+            queueMicrotask(() => {
+              const sent = engineRef.current?.confirmNow?.(tMs) ?? false;
+              tel?.event("confirm_now", { sent });
+            });
+          }
           const wantedMap = new Map(hits.map((h) => [h.plate, h.row]));
 
           // المطلوبة **المتأكّدة** بتطلع صف حتى لو ثقتها أقل من بوابة الظهور.
@@ -1940,6 +1956,18 @@ export default function RegistrationV2Page() {
       }
     } catch { /* التنبيه إضافة — مايوقّفش التسجيل */ }
   }, []);
+
+  /**
+   * ⚡ **الشيت جهز وسط التسجيل** — المندوب بدأ قبل ما الشيت يخلص تحميل، واللوحة المطلوبة اتأكّدت (نافذتين) قبله:
+   * `rehydrateMatch` فوق بيعلّمها «مطلوبة» في الجدول **من غير صفّارة**. هنا بتصفّر (الجلسة دي، آخر دقيقة، المتأكّدة
+   * بس). السوبر أدمن الأول — `lib/wantedConfirmNow.ts`.
+   */
+  useEffect(() => {
+    if (!canConfirmNow(isSuperRef.current) || checkIndex.size === 0) return;
+    if (!engineRef.current) return;
+    const hits = sheetReadyAlerts(rowsRef.current, checkIndex, (pl) => normalizePlate(bankPlateToArabic(pl)), startedAtRef.current, Date.now());
+    for (const h of hits) alertWanted(h.plate, h.row);
+  }, [checkIndex, alertWanted]);
 
   const saveCell = useCallback((id: string, field: "type" | "note", value: string) => {
     // 🔒 تصدير السوبر أدمن شغّال ⇒ مقفول (المناديب: العدّاد دايماً صفر)

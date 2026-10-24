@@ -21,6 +21,7 @@ import { MicLossDetector, stopsRecording, type MicLossReason } from "./micLoss";
 import { Vad } from "./vad";
 import { audioPregate } from "./audioPregate";
 import { planVoicexAdmission } from "./voicexAdmission";
+import { planConfirmWindow, type SecWindow } from "./wantedConfirmNow";
 
 const WELL = /^[ء-ي]{3}\d{4}$/;
 
@@ -344,6 +345,12 @@ export interface VoicexEngineOpts {
    * ⚠️ أي تغيير هنا بيمسّ ٤٠-٨٠ مندوب بيدفعوا — مايتفتحش إلا بإثبات جهاز حقيقي.
    */
   fixes?: boolean;
+  /**
+   * ⚡ **نافذة التأكيد الفورية** (`fixes` بس) — مقفولة افتراضياً. Voice PRO بيبعتها للسوبر أدمن لحد ما المالك يجرّب
+   * (`lib/wantedConfirmNow.ts`). بالعلم المحرّك بيفتكر حدود النوافذ الزاحفة، و`confirmNow` بتبعت النافذة التانية
+   * **دلوقتي** بدل ما تستنى دورها. من غيره: ولا حاجة بتتسجّل و`confirmNow` بترجّع `false` — زي النهارده بالحرف.
+   */
+  wantedConfirm?: boolean;
   onSkip?: (reason: string) => void;
   /**
    * نافذة فايتة اتبعتت **تاني** بعد ما الشبكة رجعت (`fixes` بس). للعدّ في
@@ -499,6 +506,11 @@ export interface VoicexEngineController {
   readonly audioNowMs: number;
   /** آخر لحظة الكاشف سمع فيها صوت (مللي، نفس الساعة)، أو `null`. */
   readonly lastVoiceEndMs: number | null;
+  /**
+   * ⚡ قراية النافذة `tMs` لاقت لوحة في الشيت ولسه ماتأكّدتش ⇒ ابعت نافذة التأكيد **دلوقتي** (`wantedConfirm` بس).
+   * `true` = اتبعتت. `false` = مالهاش لازمة/مش مسموح ⇒ النوافذ العادية بتأكّد زي ما هي.
+   */
+  confirmNow?: (tMs: number) => boolean;
 }
 
 export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexEngineController | null> {
@@ -510,6 +522,21 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   /** 🔒 الإصلاحات المعزولة — شوف `VoicexEngineOpts.fixes`. */
   const FIXES = opts.fixes === true;
+  /** ⚡ نافذة التأكيد الفورية — شوف `VoicexEngineOpts.wantedConfirm`. */
+  const CONFIRM = FIXES && opts.wantedConfirm === true;
+  /** حدود النوافذ الزاحفة اللي اتبعتت (بمفتاح `tMs` بتاعها) — بالعلم بس. */
+  const slideWins = new Map<number, SecWindow>();
+  /** نهاية آخر نافذة زاحفة عادية اتبعتت (ثواني). */
+  let lastSlideTo = 0;
+  /** نوافذ اتطلبلها تأكيد خلاص — مرة واحدة لكل نافذة. */
+  const confirmAsked = new Set<number>();
+  /** نوافذ تأكيد طايرة — واحدة في المرة. */
+  let confirmInflight = 0;
+  const noteSlide = (from: number, to: number) => {
+    slideWins.set(((from + to) / 2) * 1000, { from, to });
+    lastSlideTo = to;
+    for (const [k, v] of slideWins) if (v.to < to - 20) { slideWins.delete(k); confirmAsked.delete(k); }
+  };
 
   /**
    * 🐢 وضع النت الضعيف — شوف `VoicexEngineOpts.netResilience`. `weak` عمره
@@ -1044,18 +1071,18 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     fromSec: number, toSec: number, isReplay = false,
     /** 🐢 جسّة وضع النت الضعيف؟ — نتيجتها بتحدّد الجسّة الجاية (`probeDone`). */
     probe = false,
-  ): void {
+  ): Promise<void> | null {
     // 🔴 التلات رجعات دي كانت **صامتة تماماً**: المندوب بيتكلّم، الشاشة بتقول
     // «بيسمع صوتك» (الكاشف محلي)، و**ولا بايت بيخرج من الجهاز** — ومحدش يعرف
     // ليه. دلوقتي كل واحدة بتتبلّغ باسمها.
-    if (toSec - fromSec < 0.6) { opts.onSkip?.("too_short"); return; }
+    if (toSec - fromSec < 0.6) { opts.onSkip?.("too_short"); return null; }
     // 🔇 بوابة السكوت على الصوت الخام قبل التعلية (زي المعمل).
     const q = mic.sliceQuality(fromSec, toSec, 0.2);
-    if (q && !audioPregate(q).accept) { opts.onSkip?.("silence_gate"); return; }
+    if (q && !audioPregate(q).accept) { opts.onSkip?.("silence_gate"); return null; }
     const wav = mic.sliceWav(fromSec, toSec, 0.2, true);   // خام معلّى
-    if (!wav) { opts.onSkip?.("slice_failed"); return; }
+    if (!wav) { opts.onSkip?.("slice_failed"); return null; }
     // مقطع فاضي بيعدّي الحارس فوق (Blob بترويسة بس) وبيترفض بعدين من غير سبب.
-    if (wav.size < 2048) { opts.onSkip?.(("empty_slice:" + wav.size)); return; }
+    if (wav.size < 2048) { opts.onSkip?.(("empty_slice:" + wav.size)); return null; }
     const tMs = ((fromSec + toSec) / 2) * 1000;
     inflight += 1;
     if (probe) { probing = true; probeStartedAt = Date.now(); probeFailCode = null; }
@@ -1080,6 +1107,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       drainReplay();           // وبعدها الفايتة — بس لو الشبكة رجعت
       if (!stopped) opts.onStatus?.("listening");
     });
+    return pr;
   }
 
   /**
@@ -1238,7 +1266,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       }
       return;
     }
-    sliceAndSend(Math.max(0, elapsed - WIN_S), elapsed);
+    const slideFrom = Math.max(0, elapsed - WIN_S);
+    if (CONFIRM) noteSlide(slideFrom, elapsed);
+    sliceAndSend(slideFrom, elapsed);
   }, STEP_MS);
 
   const drainTimer = setInterval(() => {
@@ -1330,6 +1360,25 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     get lastVoiceEndMs() {
       const v = vad?.lastVoiceEndSec ?? 0;
       return v > 0 ? v * 1000 : null;
+    },
+    /**
+     * ⚡ نافذة التأكيد الفورية — **نفس بداية** النافذة الزاحفة الجاية ونهايتها دلوقتي (`planConfirmWindow`). نافذة
+     * تانية بـ`tMs` تاني ⇒ الصفحة بتحسبها تأكيد بنفس القاعدة (`confirmWanted`). بتعدّي السقف عن قصد (واحدة في المرة،
+     * ولعربية في الشيت بس): لو استنت دورها تبقى زي النافذة العادية بالظبط ومفيش مكسب.
+     */
+    confirmNow(tMs: number): boolean {
+      if (!CONFIRM || stopped || weak || gaveUp || fatalFired) return false;
+      if (confirmAsked.has(tMs) || confirmInflight >= 1) return false;
+      const w = slideWins.get(tMs);
+      if (!w) return false;
+      const plan = planConfirmWindow(w, mic.elapsedSec, lastSlideTo, STEP_MS / 1000, WIN_S);
+      if (!plan) return false;
+      confirmAsked.add(tMs);
+      const pr = sliceAndSend(plan.from, plan.to);
+      if (!pr) return false;
+      confirmInflight += 1;
+      void pr.finally(() => { confirmInflight -= 1; });
+      return true;
     },
     stop() {
       if (stopped) return finalizing ?? Promise.resolve();
