@@ -38,8 +38,9 @@ describe("صفحة Voice PRO", () => {
   });
 
   it("قراية لاقت لوحة في الشيت ولسه ماتأكّدتش ⇒ اطلب نافذة التأكيد (microtask مش setTimeout — التايمر بيتخنق في الخلفية)", () => {
-    expect(VP).toMatch(/const raw = wantedHits\(r, checkIndexRef\.current, \(x\) => normalizePlate\(bankPlateToArabic\(x\)\)\);/);
-    expect(VP).toMatch(/const hits = raw\.filter\(\(h\) => confirmWanted\(wantedSeenRef\.current, normalizePlate\(bankPlateToArabic\(h\.plate\)\), r\.tMs\)\);/);
+    expect(VP).toMatch(/const heard = wantedHits\(r, checkIndexRef\.current, \(x\) => normalizePlate\(bankPlateToArabic\(x\)\)\);/);
+    expect(VP).toMatch(/const hits = heard\s*\.filter\(\(h\) => confirmWanted\(wantedSeenRef\.current, normalizePlate\(bankPlateToArabic\(h\.plate\)\), r\.tMs\)\);/);
+    expect(VP).toMatch(/if \(canConfirmNow\(sup\) && heard\.length > hits\.length\) \{/);
     expect(VP).toMatch(/queueMicrotask\(\(\) => \{[\s\S]{0,200}engineRef\.current\?\.confirmNow\?\.\(tMs\)/);
   });
 

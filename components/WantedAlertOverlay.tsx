@@ -9,7 +9,8 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import PlateBadge from "@/components/PlateBadge";
-import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked, preloadAlertTone } from "@/lib/alertSiren";
+import { startAlertSiren, stopAlertSiren, ensureSirenAudioUnlocked, preloadAlertTone, sirenDiagState } from "@/lib/alertSiren";
+import { diagActive, diagNote } from "@/lib/deviceDiag";
 import { installMicCaptureWatch } from "@/lib/micCapture";
 import { WANTED_ALERT_EVENT, type WantedAlertDetail, fireWantedAlertsCleared } from "@/lib/wantedAlert";
 import { pushAlert, dropCurrent, type QueuedAlert } from "@/lib/wantedAlertQueue";
@@ -30,6 +31,11 @@ export default function WantedAlertOverlay() {
       if (!detail?.plate) return;
       setQueue((q) => pushAlert(q, detail));
       startAlertSiren();
+      // 🩺 الصندوق بس: الصفّارة رنّت فعلاً؟ (لحظتها وبعد ثانيتين — بعد ما Voice PRO يقفل المايك) — ٢٤ أكتوبر
+      if (diagActive()) {
+        diagNote("siren", sirenDiagState());
+        setTimeout(() => diagNote("siren-2s", sirenDiagState()), 2000);
+      }
     };
     window.addEventListener(WANTED_ALERT_EVENT, handler);
 
@@ -68,6 +74,7 @@ export default function WantedAlertOverlay() {
    */
   function dismiss() {
     stopAlertSiren();
+    diagNote("siren-stop", { left: queue.length - 1 });
     // 🔕 آخر تنبيه ⇒ Voice PRO يرجّع التسجيل اللي وقّفه عشان الصفّارة تتسمع (جوّه الضغطة نفسها)
     if (queue.length <= 1) fireWantedAlertsCleared();
     setQueue((q) => {
