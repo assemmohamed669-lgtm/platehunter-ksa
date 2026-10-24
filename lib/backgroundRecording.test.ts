@@ -35,9 +35,15 @@ describe("canRecordInBackground", () => {
 
   it("🧪 حساب مراجعين جوجل (Play Console «App access») بيشتغل عنده — عشان يكرّروا فيديو الإقرار", () => {
     (window as W).PlateHunterBg = { start: () => true, stop: () => {} };
-    expect(BG_RECORDING_EMAILS).toEqual(["google.review@qannas-ksa.com"]);
+    expect(BG_RECORDING_EMAILS).toEqual(["google.review@qannas-ksa.com", "asemafify40@gmail.com"]);
     expect(canRecordInBackground(false, "google.review@qannas-ksa.com")).toBe(true);
     expect(canRecordInBackground(false, "  Google.Review@Qannas-KSA.com ")).toBe(true);
+  });
+
+  it("🧪 حساب «Test apple» اللي في Play Console «Sign in details» دلوقتي (المالك ٢٤ أكتوبر: «سيب دة») ⇒ شغّال", () => {
+    (window as W).PlateHunterBg = { start: () => true, stop: () => {} };
+    expect(canRecordInBackground(false, "asemafify40@gmail.com")).toBe(true);
+    expect(canRecordInBackground(false, " AsemAfify40@Gmail.com ")).toBe(true);
   });
 
   it("🧪 أي إيميل تاني (أو من غير إيميل) ⇒ زي الأول بالحرف، ومن غير الجسر ⇒ لأ", () => {

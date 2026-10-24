@@ -16,8 +16,10 @@ export const BG_RECORDING_FOR_ALL = false;
 /**
  * 🧪 حسابات بعينها شغّالة قبل الفتح للكل — حساب مراجعين جوجل (Play Console «App access»: المالك ٢٤ أكتوبر ٢٠٢٦)
  * عشان المراجع يكرّر فيديو إقرار «الخدمة في المقدمة» بنفس الحساب. حروف صغيرة.
+ * + `asemafify40@gmail.com` («Test apple») — ده اللي في Play Console «Sign in details» فعلاً؛ المالك: «سيب دة» بدل ما
+ *   نغيّره وسط المراجعة (٢٤ أكتوبر).
  */
-export const BG_RECORDING_EMAILS: readonly string[] = ["google.review@qannas-ksa.com"];
+export const BG_RECORDING_EMAILS: readonly string[] = ["google.review@qannas-ksa.com", "asemafify40@gmail.com"];
 
 /** نص الإشعار الثابت وقت التسجيل */
 export const BG_RECORDING_TEXT = "التسجيل شغّال — قول اللوحات عادي حتى وانت في واتساب أو الخريطة";
