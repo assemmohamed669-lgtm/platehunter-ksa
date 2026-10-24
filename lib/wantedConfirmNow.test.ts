@@ -47,11 +47,11 @@ describe("planConfirmWindow — نفس بداية النافذة الجاية ب
   });
 });
 
-describe("canConfirmNow — السوبر أدمن الأول", () => {
-  it("المناديب لأ لحد ما المالك يجرّب", () => {
-    expect(WANTED_CONFIRM_NOW_FOR_ALL).toBe(false);
+describe("canConfirmNow — للكل (المالك ٢٤ أكتوبر ٢٠٢٦: «يلا انشرها للكل»)", () => {
+  it("المناديب والسوبر أدمن الاتنين", () => {
+    expect(WANTED_CONFIRM_NOW_FOR_ALL).toBe(true);
     expect(canConfirmNow(true)).toBe(true);
-    expect(canConfirmNow(false)).toBe(false);
+    expect(canConfirmNow(false)).toBe(true);
   });
 });
 

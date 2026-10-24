@@ -1407,7 +1407,7 @@ export default function RegistrationV2Page() {
         // صفحة الموديل الجديد فقط لحد ما أجرّب». صفحة التشييك على السلوك
         // القديم بالحرف لحد ما يتأكّد على جهاز حقيقي.
         fixes: true,
-        // ⚡ نافذة التأكيد الفورية للعربية المطلوبة (`lib/wantedConfirmNow.ts`) — السوبر أدمن الأول
+        // ⚡ نافذة التأكيد الفورية للعربية المطلوبة (`lib/wantedConfirmNow.ts`) — للكل
         wantedConfirm: canConfirmNow(sup),
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
@@ -1643,7 +1643,7 @@ export default function RegistrationV2Page() {
            * ⚡ **نافذة التأكيد الفورية** (المالك ٢٤ أكتوبر ٢٠٢٦: «نقلل الوقت المستغرق في المراجعة … بس مراجعة
            * موثوقة»). القراية دي لاقت لوحة في الشيت ولسه ماتأكّدتش ⇒ المحرّك يبعت النافذة التانية **دلوقتي** بدل ما
            * تستنى دورها (~١٫٣ث). التأكيد نفسه زي ما هو فوق (`confirmWanted` — نافذتين بالحرف). microtask مش
-           * setTimeout: التايمر بيتخنق لثانية لما البرنامج في الخلفية. السوبر أدمن الأول — `lib/wantedConfirmNow.ts`.
+           * setTimeout: التايمر بيتخنق لثانية لما البرنامج في الخلفية. للكل — `lib/wantedConfirmNow.ts`.
            */
           if (canConfirmNow(sup) && heard.length > hits.length) {
             const tMs = r.tMs;
@@ -1969,7 +1969,7 @@ export default function RegistrationV2Page() {
   /**
    * ⚡ **الشيت جهز وسط التسجيل** — المندوب بدأ قبل ما الشيت يخلص تحميل، واللوحة المطلوبة اتأكّدت (نافذتين) قبله:
    * `rehydrateMatch` فوق بيعلّمها «مطلوبة» في الجدول **من غير صفّارة**. هنا بتصفّر (الجلسة دي، آخر دقيقة، المتأكّدة
-   * بس). السوبر أدمن الأول — `lib/wantedConfirmNow.ts`.
+   * بس). للكل — `lib/wantedConfirmNow.ts`.
    */
   useEffect(() => {
     if (!canConfirmNow(isSuperRef.current) || checkIndex.size === 0) return;
