@@ -16,6 +16,7 @@ import { TRIAL_MODEL_BASE } from "@/lib/trialModelGate";
 import { probeVoiceHealth, probeVoiceTranscribe, mergeHealth, isCleanupMinute, cronAuthorized, retentionCutoff } from "@/lib/voiceHealth";
 import { ISSUE_LOG_SERVER, issuesCutoff } from "@/lib/issueLog";
 import { voiceProbeClip, VOICE_PROBE_PLATE } from "@/lib/voiceProbeClip";
+import { fetchServerVitals } from "@/lib/serverVitals";
 
 export const dynamic = "force-dynamic";
 /**
@@ -46,22 +47,35 @@ export async function GET(req: Request) {
     return NextResponse.json({ skipped: "too_soon" });
   }
 
-  const health = await probeVoiceHealth({ url: TRIAL_MODEL_BASE + "/health", timeoutMs: 5000 });
-  // 🎙️ التفريغ الحقيقي — بس لو السيرفر صاحي. التوكن = نفس توكن المناديب (app_settings بصلاحية
-  //   الخدمة)، عمره ما يتكتب في الرد ولا في الصف.
-  let deep = null;
-  if (health.ok) {
-    const { data: s } = await supabaseAdmin.from("app_settings").select("trial_token").eq("id", true).maybeSingle();
-    deep = await probeVoiceTranscribe({
-      url: TRIAL_MODEL_BASE + "/transcribe",
-      token: String((s as { trial_token?: string } | null)?.trial_token ?? "").trim(),
-      clip: voiceProbeClip(),
-      expectPlate: VOICE_PROBE_PLATE,
-      timeoutMs: 10000,
-    });
-  }
-  const row = mergeHealth(health, deep, VOICE_PROBE_PLATE);
-  const { error } = await supabaseAdmin.from("voice_health").insert(row);
+  // التوكن = نفس توكن المناديب (app_settings بصلاحية الخدمة)، عمره ما يتكتب في الرد ولا في الصف.
+  const { data: s } = await supabaseAdmin.from("app_settings").select("trial_token").eq("id", true).maybeSingle();
+  const token = String((s as { trial_token?: string } | null)?.trial_token ?? "").trim();
+  const probe = (async () => {
+    const health = await probeVoiceHealth({ url: TRIAL_MODEL_BASE + "/health", timeoutMs: 5000 });
+    // 🎙️ التفريغ الحقيقي — بس لو السيرفر صاحي.
+    let deep = null;
+    if (health.ok) {
+      deep = await probeVoiceTranscribe({
+        url: TRIAL_MODEL_BASE + "/transcribe",
+        token,
+        clip: voiceProbeClip(),
+        expectPlate: VOICE_PROBE_PLATE,
+        timeoutMs: 10000,
+      });
+    }
+    return { health, deep };
+  })();
+  // 🗃️ «الصندوق الأسود» (١٧ أكتوبر): آخر سطر حالة الجهاز — بالتوازي (مابيطوّلش النبضة)، ٣ث
+  //   بالكتير، ومابيرميش ⇒ أي فشل فيه بيتكتب `{error}` ونتيجة الفحص زي ما هي.
+  const [{ health, deep }, vitals] = await Promise.all([
+    probe,
+    fetchServerVitals({ token, timeoutMs: 3000 }),
+  ]);
+  const merged = mergeHealth(health, deep, VOICE_PROBE_PLATE);
+  const row = { ...merged, detail: { ...(merged.detail ?? {}), vitals } };
+  let { error } = await supabaseAdmin.from("voice_health").insert(row);
+  // الصف بالحالة اترفض لأي سبب ⇒ نبضة الفحص نفسها ماتضيعش (تتكتب من غير الحالة)
+  if (error) ({ error } = await supabaseAdmin.from("voice_health").insert(merged));
 
   if (isCleanupMinute(new Date())) {
     const cutoff = retentionCutoff(new Date());
