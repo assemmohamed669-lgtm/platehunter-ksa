@@ -762,7 +762,11 @@ export default function RegistrationV2Page() {
    */
   useEffect(() => {
     if (!listening) return;
-    const wake = browserScreenWake();
+    // 🩺 الصندوق بس: الطلب نجح؟ والآيفون سحبه إمتى؟ («الشاشة بتنام وهو بيسجّل» — ٢٤ أكتوبر)
+    const wake = browserScreenWake(diagActive() ? {
+      onAcquire: (ok, why) => diagNote("wake", { ok, why: why ?? null, vis: document.visibilityState }),
+      onRelease: () => diagNote("wake-lost", { vis: document.visibilityState }),
+    } : undefined);
     void wake.acquire();
     // النظام بيسحب القفل لما الصفحة تتخفي — نمسكه تاني لما المندوب يرجع.
     const onVis = () => { if (document.visibilityState === "visible") void wake.acquire(); };
@@ -1455,6 +1459,8 @@ export default function RegistrationV2Page() {
           const inSheet = checkIndexRef.current.get(key) ?? null;
           const hit = inSheet && (meta.mult >= 2 || wantedReadCount(wantedSeenRef.current, key, meta.tMs) >= 2)
             ? inSheet : null;
+          // 🩺 الصندوق بس (من غير لوحة): المطلوبة اتأكدت ولا اتسمعت مرة واحدة؟ — «ساعات مابتصفّرش» (٢٤ أكتوبر)
+          if (inSheet && diagActive()) diagNote("rv2-wanted", { via: "plate", ok: !!hit, mult: meta.mult, reads: wantedReadCount(wantedSeenRef.current, key, meta.tMs) });
           /**
            * ⑩أ 🚫 **قفل أخد الموقع** — بطلب المالك. لما يبقى مفعّل،
            * اللوحة بتتسجّل **بلا موقع** (واللي اتسجّل قبله مايتلمسش).
@@ -1625,8 +1631,10 @@ export default function RegistrationV2Page() {
            * صفّرت على عربية مش مطلوبة. دلوقتي: نافذتين بنفس اللوحة بالظبط
            * (~١.٥ث زيادة، مش ~٦ث بتوع الإجماع).
            */
-          const hits = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)))
+          const heard = wantedHits(r, checkIndexRef.current, (x) => normalizePlate(bankPlateToArabic(x)));
+          const hits = heard
             .filter((h) => confirmWanted(wantedSeenRef.current, normalizePlate(bankPlateToArabic(h.plate)), r.tMs));
+          if (heard.length && diagActive()) diagNote("rv2-wanted", { via: "fast", heard: heard.length, ok: hits.length });
           for (const h of hits) alertWanted(h.plate, h.row);
           const wantedMap = new Map(hits.map((h) => [h.plate, h.row]));
 
@@ -1915,7 +1923,7 @@ export default function RegistrationV2Page() {
      */
     const key = normalizePlate(bankPlateToArabic(plate));
     const now = Date.now();
-    if (!shouldAlertNow(alertedRef.current, key, now)) return;
+    if (!shouldAlertNow(alertedRef.current, key, now)) { diagNote("rv2-alert", { skip: "repeat" }); return; }
     alertedRef.current.set(key, now);
     try {
       fireWantedAlert({
@@ -1929,6 +1937,7 @@ export default function RegistrationV2Page() {
           : [],
       });
       setSirenOn(true);
+      diagNote("rv2-alert", { fire: true, rec: !!engineRef.current });
       /**
        * 🔕 المايك مفتوح بـ«إلغاء الصدى» ⇒ الموبايل (الآيفون خصوصاً) بيوطّي الصفّارة لحد ما يتقفل، فالمندوب كان بيشوف المربع
        * من غير صوت (ولما يخرج للواتس اب والتسجيل يقف كانت ترن). ⇒ بنوقّف التسجيل (اللوحات محفوظة)، و«تم» بيرجّعه لوحده.
@@ -2092,6 +2101,7 @@ export default function RegistrationV2Page() {
         ? await saveFieldCheckEntriesChunked(entries, { onProgress: (d, t) => progress([d, t]) })
         : await Promise.allSettled(entries.map((e) => saveFieldCheckEntry(e)));
       const okIds = savedIds(entries.map((e) => e.id), settled);
+      diagNote("rv2-export", { ok: okIds.length, total: entries.length, why: okIds.length < entries.length ? firstFailureReason(settled) : null });
       if (!okIds.length) {
         // 🔎 السبب في آخر الرسالة — من غيره صورة الشاشة ماكانتش بتقول حاجة
         const why = firstFailureReason(settled);
