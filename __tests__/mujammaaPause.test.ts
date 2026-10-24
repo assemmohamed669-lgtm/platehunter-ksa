@@ -18,8 +18,8 @@ const SECTION = read("components/mujammaa/MujammaaSection.tsx");
 const REG = read("app/(app)/registration/page.tsx");
 
 describe("⏸️ وقف مؤقت — مين يشوفه", () => {
-  it("للسوبر أدمن بس دلوقتي (المفتاح للمناديب مقفول لحد ما المالك يجرّب)", () => {
-    expect(MJ_PAUSE_FOR_DELEGATES).toBe(false);
+  it("لكل اللي بيشوفوا «التسجيل» — المالك ٢٤ أكتوبر: «الوقف المؤقت عايزة لكل المناديب»", () => {
+    expect(MJ_PAUSE_FOR_DELEGATES).toBe(true);
     expect(REG).toMatch(/canPause=\{superOk \|\| MJ_PAUSE_FOR_DELEGATES\}/);
     expect(SECTION).toMatch(/canPause=\{canPause\}/);
   });

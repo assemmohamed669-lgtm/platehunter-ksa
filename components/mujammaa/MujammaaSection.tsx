@@ -62,7 +62,7 @@ export default function MujammaaSection({
   /** 📥 «التسجيل» بيعرض مربع ملف التشييك (رفع/تغيير/مسح) ⇒ مربع القراية بتاع المجمّع يستخبى */
   hideCheckBox?: boolean;
   onCheckInfo?: ComponentProps<typeof BatchPage>["onCheckInfo"];
-  /** ⏸️ زرار «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_PAUSE_FOR_DELEGATES`) */
+  /** ⏸️ زرار «وقف مؤقت» (٢٢ أكتوبر ٢٠٢٦) — للكل من ٢٤ أكتوبر (`MJ_PAUSE_FOR_DELEGATES`) */
   canPause?: boolean;
   /** 🎙️ التسجيل يكمّل في الخلفية (أندرويد 1.8) — السوبر أدمن الأول */
   bgAllowed?: boolean;
