@@ -26,11 +26,11 @@ describe("canRecordInBackground", () => {
     expect(canRecordInBackground(false)).toBe(false);
   });
 
-  it("بالجسر: السوبر أدمن الأول", () => {
+  it("🟢 بالجسر (أندرويد 1.8): **للكل** — المالك ٢٥ أكتوبر: «افتح التسجيل في الخلفيه للكل»", () => {
     (window as W).PlateHunterBg = { start: () => true, stop: () => {} };
-    expect(BG_RECORDING_FOR_ALL).toBe(false);
+    expect(BG_RECORDING_FOR_ALL).toBe(true);
     expect(canRecordInBackground(true)).toBe(true);
-    expect(canRecordInBackground(false)).toBe(false);
+    expect(canRecordInBackground(false)).toBe(true);
   });
 
   it("🧪 حساب مراجعين جوجل (Play Console «App access») بيشتغل عنده — عشان يكرّروا فيديو الإقرار", () => {
@@ -46,11 +46,11 @@ describe("canRecordInBackground", () => {
     expect(canRecordInBackground(false, " AsemAfify40@Gmail.com ")).toBe(true);
   });
 
-  it("🧪 أي إيميل تاني (أو من غير إيميل) ⇒ زي الأول بالحرف، ومن غير الجسر ⇒ لأ", () => {
+  it("🟢 أي مندوب (أي إيميل أو من غيره) بالجسر ⇒ بيكمّل · من غير الجسر (تطبيق أقدم من 1.8 / آيفون) ⇒ لأ زي الأول", () => {
     (window as W).PlateHunterBg = { start: () => true, stop: () => {} };
-    expect(canRecordInBackground(false, "agent@qannas-ksa.com")).toBe(false);
-    expect(canRecordInBackground(false, "")).toBe(false);
-    expect(canRecordInBackground(false, null)).toBe(false);
+    expect(canRecordInBackground(false, "agent@qannas-ksa.com")).toBe(true);
+    expect(canRecordInBackground(false, "")).toBe(true);
+    expect(canRecordInBackground(false, null)).toBe(true);
     delete (window as W).PlateHunterBg;
     expect(canRecordInBackground(false, "google.review@qannas-ksa.com")).toBe(false);
   });
