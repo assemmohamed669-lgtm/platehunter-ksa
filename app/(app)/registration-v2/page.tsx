@@ -133,6 +133,7 @@ import { getDevicePlatform } from "@/lib/devicePlatform";
 import { BUILD_ID } from "@/lib/appVersion";
 // 🩺 الصندوق الأسود (مندوب واحد في القايمة — `lib/deviceDiag.ts`): مابيعملش حاجة لأي حد تاني
 import { diagEnabledFor, diagNote, diagActive } from "@/lib/deviceDiag";
+import { micDiag } from "@/lib/micDiag";
 import { gpsPlateDiag, gpsWatchDiag, type PrevStamp } from "@/lib/gpsDiag";
 import { createCoalescedSaver } from "@/lib/coalescedSave";
 import { LIGHT_TABLE_ROWS, LIGHT_WARN_ROWS, VOICEPRO_LIGHT_FOR_ALL } from "@/lib/voiceProLight";
@@ -1722,6 +1723,8 @@ export default function RegistrationV2Page() {
          * «المكالمة يبقى ليها الأولوية، وتلقائي المسجّل يفصل لو جه مكالمة».
          * اللوحات **كلها بتفضل** — الإيقاف مابيمسحش حاجة.
          */
+        // 🩺 حالة الصوت قبل أي وقف — الصندوق الأسود بس («المايك بيقفل بعد ٣ ثواني» ٢٥ أكتوبر — `lib/micDiag.ts`)
+        onAudioState: (st: string) => { if (diagActive()) diagNote("rv2-mic", micDiag(st, startedAtRef.current)); },
         onMicLost: (reason) => {
           if (!live()) return;   // 🔒 جلسة قديمة ماتوقّفش جلسة أحدث (السوبر أدمن)
           tel?.event("mic_lost", { reason }); stopRef.current(reason);

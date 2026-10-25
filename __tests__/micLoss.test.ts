@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MicLossDetector, SILENCED_MS, MUTED_MS, micLostNotice, stopsRecording } from "@/lib/micLoss";
+import { MicLossDetector, SILENCED_MS, MUTED_MS, CONTEXT_SUSPEND_GRACE_MS, micLostNotice, stopsRecording } from "@/lib/micLoss";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -82,17 +82,38 @@ describe("MicLossDetector — التراك وسياق الصوت", () => {
     expect(d.tick(1000 + MUTED_MS * 5)).toBeNull();
   });
 
-  it("الآيفون علّق الصوت ⇒ «interrupted»؛ والإيقاف العادي (closed) ⇒ ولا حاجة", () => {
-    expect(new MicLossDetector(16000).contextState("interrupted")).toBe("interrupted");
-    expect(new MicLossDetector(16000).contextState("suspended")).toBe("interrupted");
-    expect(new MicLossDetector(16000).contextState("closed")).toBeNull();
-    expect(new MicLossDetector(16000).contextState("running")).toBeNull();
+  it("الآيفون علّق الصوت ⇒ «interrupted» على طول؛ والإيقاف العادي (closed) ⇒ ولا حاجة", () => {
+    expect(new MicLossDetector(16000).contextState("interrupted", 0)).toBe("interrupted");
+    expect(new MicLossDetector(16000).contextState("closed", 0)).toBeNull();
+    expect(new MicLossDetector(16000).contextState("running", 0)).toBeNull();
+  });
+
+  /**
+   * 🔵 بلاغ مندوب (٢٥ أكتوبر ٢٠٢٦، فيديو): «المايك بيقفل تلقائي بعد ٣ ثواني» — «(السبب: الصوت اتعلّق)» من غير مكالمة،
+   * وكان شغّال قبلها بساعة (٣٥١ لوحة) والبلوتوث مفتوح عنده. أندرويد بيعلّق سياق الصوت **لحظة** لما المايك بيتنقل
+   * (بلوتوث العربية/السماعة) — مش مكالمة. ⇒ `suspended` بيستنى `CONTEXT_SUSPEND_GRACE_MS`: رجع ⇒ ولا حاجة · فضل ⇒ وقف.
+   */
+  it(`🔵 «suspended» لحظة ورجع ⇒ ولا حاجة · فضل ${CONTEXT_SUSPEND_GRACE_MS} مللي ⇒ «interrupted»`, () => {
+    const a = new MicLossDetector(16000);
+    expect(a.contextState("suspended", 1000)).toBeNull();
+    expect(a.tick(1000 + CONTEXT_SUSPEND_GRACE_MS - 1)).toBeNull();
+    expect(a.contextState("running", 1000 + 800)).toBeNull();
+    expect(a.tick(1000 + CONTEXT_SUSPEND_GRACE_MS + 5000)).toBeNull();
+
+    const b = new MicLossDetector(16000);
+    expect(b.contextState("suspended", 1000)).toBeNull();
+    expect(b.tick(1000 + CONTEXT_SUSPEND_GRACE_MS)).toBe("interrupted");
+  });
+
+  it("🔵 المهلة مش طويلة (المكالمة الحقيقية بتتمسك برضه)", () => {
+    expect(CONTEXT_SUSPEND_GRACE_MS).toBeGreaterThanOrEqual(1500);
+    expect(CONTEXT_SUSPEND_GRACE_MS).toBeLessThanOrEqual(4000);
   });
 
   it("أول سبب بس — بعده كله ساكت", () => {
     const d = new MicLossDetector(16000);
     expect(d.trackEnded()).toBe("ended");
-    expect(d.contextState("interrupted")).toBeNull();
+    expect(d.contextState("interrupted", 0)).toBeNull();
     d.trackMuted(0);
     expect(d.tick(MUTED_MS * 2)).toBeNull();
   });
@@ -144,5 +165,17 @@ describe("micLostNotice — السبب مكتوب عشان صورة الشاشة
     const names = (["background", "ended", "muted", "interrupted"] as const).map((r) => micLostNotice(r));
     expect(new Set(names).size).toBe(4);
     for (const m of names) expect(m).toContain("السبب:");
+  });
+});
+
+describe("🔵 المحرّك: «suspended» ⇒ يحاول يرجّع الصوت قبل ما المهلة توقف", () => {
+  it("Voice PRO (اللي بيطلب كاشف الميك) بس — «صوتي» من غيره زي ما هو", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const ENGINE = readFileSync(join(process.cwd(), "lib/voicexEngine.ts"), "utf8").replace(/\r\n/g, "\n");
+    const MIC = readFileSync(join(process.cwd(), "lib/micEngine.ts"), "utf8").replace(/\r\n/g, "\n");
+    expect(ENGINE).toMatch(/onContextState: \(st: string\) => \{\n(?:\s*try \{ opts\.onAudioState[^\n]*\n)?\s*if \(!loss\) return;\n\s*if \(st === "suspended"\) mic\.resumeContext\(\);\n\s*reportLoss\(loss\.contextState\(st, Date\.now\(\)\)\);/);
+    expect(ENGINE).toMatch(/if \(loss\) reportLoss\(loss\.tick\(Date\.now\(\)\)\);/);
+    expect(MIC).toMatch(/resumeContext\(\): void \{\n\s*try \{ void this\.ctx\?\.resume\(\)\.catch/);
   });
 });

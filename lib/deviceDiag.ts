@@ -32,6 +32,8 @@ export const DIAG_AGENT_IDS: string[] = [
   "3f220bb5-aa99-44b2-a384-72c3279d5478",
   // ٢٤ أكتوبر ٢٠٢٦: آيفون (العبيدي) — «الشاشة بتنام وهو بيسجّل» و«المطلوبة ساعات مابتصفّرش» (wake / rv2-wanted / siren)
   "db903add-ebc1-4b1e-96e8-8cacd87dc13b",
+  // ٢٥ أكتوبر ٢٠٢٦: أندرويد (احمد سلام) — «المايك بيقفل بعد ٣ ثواني» في Voice PRO من غير بلوتوث ولا مكالمة (`rv2-mic` — `lib/micDiag.ts`)
+  "050c0795-c21d-4ce5-8ee7-b2d2deb4d644",
 ];
 
 export const DIAG_MAX_EVENTS = 600;
@@ -56,7 +58,7 @@ export const LIGHT_MAX_UPLOADS_PER_DAY = 30;
 const LIGHT_FLUSH_MS = 180_000;
 const LIGHT_BUDGET_KEY = "ph:diag:lite:budget";
 const LIGHT_NOTES = new Set([
-  "rv2-rec", "rv2-wanted", "rv2-alert", "rv2-export",
+  "rv2-rec", "rv2-wanted", "rv2-alert", "rv2-export", "rv2-mic",
   "siren", "siren-2s", "siren-stop",
   "wake", "wake-lost",
 ]);

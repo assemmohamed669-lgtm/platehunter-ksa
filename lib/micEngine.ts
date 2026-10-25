@@ -181,6 +181,14 @@ export class MicEngine {
     this.running = true;
   }
 
+  /**
+   * 🔵 رجّع سياق الصوت لو اتعلّق (أندرويد بيعلّقه لحظة لما المايك بيتنقل للبلوتوث) — مابيرميش أبداً. الصفحة اتلمست قبل
+   * كده («ابدأ التسجيل») فالموبايل بيسمح بيه.
+   */
+  resumeContext(): void {
+    try { void this.ctx?.resume().catch(() => { /* هيفضل متعلّق ⇒ المهلة بتوقف */ }); } catch { /* ignore */ }
+  }
+
   /** 📞 مستمعين المكالمة — بيتربطوا بس لو الصفحة طلبتهم (شوف `onTrackState`). */
   private unwatch: (() => void) | null = null;
   private watchInterruptions(): void {

@@ -442,6 +442,11 @@ export interface VoicexEngineOpts {
    */
   onMicLost?: (reason: MicLossReason) => void;
   /**
+   * 🩺 كل تغيير في حالة الصوت (سياق الصوت: `suspended`/`running`… · تراك المايك: `track-muted`/`track-ended`…) **قبل** قرار
+   * الوقف — للصندوق الأسود بس (`lib/micDiag.ts`). بيشتغل مع `onMicLost` بس (Voice PRO).
+   */
+  onAudioState?: (st: string) => void;
+  /**
    * 🚚 **أسطول متسلسل** (`حبل1234 حبل1235 حبل1236`) — لوحتين بنفس الحروف
    * وأرقام متسلسلة **اتسمعوا في نافذة واحدة** = عربيتين، فالإجماع مابيلمّهمش
    * في لوحة واحدة. «الجديد» بس اللي بيبعته — «صوتي» زي ما هي بالحرف.
@@ -840,12 +845,19 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       // ومش بنغذّي الكاشف بيه كمان — لإن الكاشف بيبلّغ **مرة واحدة**، فلو
       // «سكوت» سبق كان هيقفل الباب قدام سبب حقيقي (الميك اتقفل) بعده.
       onTrackState: (st: "ended" | "muted" | "unmuted") => {
+        try { opts.onAudioState?.("track-" + st); } catch { /* ignore */ }
         if (!loss) return;
         if (st === "ended") reportLoss(loss.trackEnded());
         else if (st === "muted") loss.trackMuted(Date.now());
         else loss.trackUnmuted();
       },
-      onContextState: (st: string) => { if (loss) reportLoss(loss.contextState(st)); },
+      // 🔵 `suspended` (أندرويد — المايك بيتنقل للبلوتوث) ⇒ نحاول نرجّعه، والكاشف بيستنى مهلته (`CONTEXT_SUSPEND_GRACE_MS`)
+      onContextState: (st: string) => {
+        try { opts.onAudioState?.(st); } catch { /* ignore */ }
+        if (!loss) return;
+        if (st === "suspended") mic.resumeContext();
+        reportLoss(loss.contextState(st, Date.now()));
+      },
     } : {}),
   });
 
