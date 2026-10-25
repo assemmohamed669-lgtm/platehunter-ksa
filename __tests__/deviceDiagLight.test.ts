@@ -32,10 +32,10 @@ afterEach(() => {
 });
 
 describe("مين ياخد الخفيف", () => {
-  it("السوبر أدمن الأول — المناديب لأ لحد ما المالك يوافق بعد يومين", () => {
-    expect(DIAG_LIGHT_FOR_ALL).toBe(false);
+  it("للكل — المالك ٢٥ أكتوبر «يلا اعمل الاتنين» (حجمه عند السوبر أدمن: ١٨ كيلو في ~٢٠ ساعة)", () => {
+    expect(DIAG_LIGHT_FOR_ALL).toBe(true);
     expect(diagLightFor(true)).toBe(true);
-    expect(diagLightFor(false)).toBe(false);
+    expect(diagLightFor(false)).toBe(true);
   });
 
   it("بيترفع بعلامة لوحده (`diag-lite`) عشان يتمسح بعد يومين من غير ما يلمس الكامل", () => {
@@ -65,10 +65,11 @@ describe("بيسجّل المهم بس", () => {
     expect(buf.some((e) => e.k === "gps-plate")).toBe(false);
   });
 
-  it("مندوب (مش سوبر أدمن) ⇒ ولا سطر", () => {
+  it("مندوب (مش سوبر أدمن) ⇒ بيتسجّل عنده كمان (للكل)", () => {
     stop = startDeviceDiagLight("22222222-2222-4222-8222-222222222222", { isSuper: false });
     diagNote("siren", { ok: true });
-    expect(localStorage.getItem(BUF)).toBeNull();
+    const buf = JSON.parse(localStorage.getItem(BUF) || "[]") as Array<{ k: string }>;
+    expect(buf.some((e) => e.k === "siren")).toBe(true);
   });
 });
 
