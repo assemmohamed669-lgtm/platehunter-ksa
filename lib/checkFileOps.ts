@@ -14,6 +14,7 @@
 import type { ExcelTable } from "./excel";
 import type { TeamShareResult } from "./teamCheck";
 import { bankPlateToArabic, detectPlateColumn, normalizePlate } from "./plateParser";
+import { onUserCheckChanged } from "./appCheck";
 
 /** بيرجّع نتيجة الإرسال للمجموعة (null = مش مسئول / مافيش مجموعة / وقع) — الحفظ نفسه مابيفشلش بسببها. */
 export async function saveMainCheckFile(table: ExcelTable, file: File): Promise<TeamShareResult> {
@@ -25,6 +26,8 @@ export async function saveMainCheckFile(table: ExcelTable, file: File): Promise<
     uploadedAt: new Date().toISOString(), fileBlob: file,
   });
   notifyCheckSheetChanged();
+  // 📢 تشييك البرنامج: الأدمن ⇒ بيتبعت لكل المناديب · المندوب ⇒ بيشتغل على بتاعه (`lib/appCheck.ts`)
+  void onUserCheckChanged();
   try {
     const { shareCheckToTeamIfLeader } = await import("./teamCheck");
     return await shareCheckToTeamIfLeader(file, table.rows.length, () => {
@@ -43,4 +46,6 @@ export async function clearMainCheckFile(): Promise<void> {
   const { notifyCheckSheetChanged } = await import("./checkSheetSync");
   await deleteUploadedFile("local", "check").catch(() => {});
   notifyCheckSheetChanged();
+  // 📢 المندوب مسح بتاعه ⇒ تشييك البرنامج بيرجع لوحده · الأدمن ⇒ بيتمسح عند الكل
+  void onUserCheckChanged();
 }

@@ -30,6 +30,7 @@ import {
 import { readCacheFileBlob, base64ToBlob, FAST_SHARE_FOR_ALL } from "@/lib/incomingFileRead";
 import { shareDataFileToTeamIfLeader, teamDataShareMessage } from "@/lib/teamData";
 import { shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
+import { onUserCheckChanged } from "@/lib/appCheck";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
 
 interface PendingFile {
@@ -73,6 +74,8 @@ export default function IncomingExcelHandler() {
     if (slot === "data") {
       job = shareDataFileToTeamIfLeader(file, rowCount).then(teamDataShareMessage);
     } else if (slot === "check") {
+      // 📢 تشييك البرنامج: الأدمن فتح الملف من واتساب ⇒ بيتبعت لكل المناديب · المندوب ⇒ بيشتغل على بتاعه
+      void onUserCheckChanged();
       job = shareCheckToTeamIfLeader(file, rowCount, () => {
         if (!table) return 0;
         const pcol = detectPlateColumn(table.headers, table.rows);

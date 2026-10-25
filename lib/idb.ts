@@ -69,6 +69,10 @@ export interface UploadedFileRecord {
   rows: Record<string, string>[];
   uploadedAt: string;
   fileBlob?: Blob;                   // original bytes, so "download" still works after a refresh
+  /** 📢 «تشييك البرنامج» (`lib/appCheck.ts`): "app" = نزل من الأدمن · من غيرها = المندوب رفعه بنفسه. */
+  source?: "app" | (string & {});
+  /** نسخة تشييك البرنامج اللي الملف ده منها */
+  appVersion?: string;
   /**
    * ملف داتا إضافي **كبير** متخزّن على دفعات (streamed) في قاعدة dataStore
    * المنفصلة بدل ما صفوفه كلها هنا في الذاكرة — عشان مايعملش crash على iOS.
