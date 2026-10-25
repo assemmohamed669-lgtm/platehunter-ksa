@@ -31,11 +31,19 @@ export type AutoStopReason = MicLossReason | "background";
 export const SILENCED_MS = 3000;
 /** كتم التراك قد كده = مش لحظة عابرة. */
 export const MUTED_MS = 1500;
+/**
+ * 🔵 سياق الصوت `suspended` (أندرويد) قد كده = الميك اتاخد فعلاً — أقل من كده = **لحظة نقل المايك** (بلوتوث العربية أو
+ * السماعة اتوصل). بلاغ مندوب (٢٥ أكتوبر ٢٠٢٦، فيديو): «المايك بيقفل تلقائي بعد ٣ ثواني» بـ«(السبب: الصوت اتعلّق)» من
+ * غير مكالمة، وكان شغّال قبلها بساعة (٣٥١ لوحة) والبلوتوث مفتوح عنده. المحرّك بيحاول يرجّع الصوت في المهلة دي.
+ * `interrupted` (الآيفون — مكالمة) زي ما هو: على طول.
+ */
+export const CONTEXT_SUSPEND_GRACE_MS = 2500;
 
 export class MicLossDetector {
   private readonly rate: number;
   private zeroRun = 0;
   private mutedSince: number | null = null;
+  private suspendedSince: number | null = null;
   private fired = false;
 
   constructor(sampleRate: number) {
@@ -68,15 +76,24 @@ export class MicLossDetector {
 
   trackUnmuted(): void { this.mutedSince = null; }
 
-  /** بيتنده دورياً — الكتم لو طوّل. */
+  /** بيتنده دورياً — الكتم أو تعليق الصوت لو طوّل. */
   tick(nowMs: number): MicLossReason | null {
-    if (this.mutedSince === null) return null;
-    return nowMs - this.mutedSince >= MUTED_MS ? this.fire("muted") : null;
+    if (this.mutedSince !== null && nowMs - this.mutedSince >= MUTED_MS) return this.fire("muted");
+    if (this.suspendedSince !== null && nowMs - this.suspendedSince >= CONTEXT_SUSPEND_GRACE_MS) return this.fire("interrupted");
+    return null;
   }
 
-  /** `closed` = إيقاف عادي؛ `running` = شغّال. الباقي = الصوت اتعلّق. */
-  contextState(state: string): MicLossReason | null {
-    if (state === "interrupted" || state === "suspended") return this.fire("interrupted");
+  /**
+   * `closed` = إيقاف عادي؛ `running` = شغّال (ورجع من تعليق). `interrupted` (الآيفون) = الصوت اتعلّق على طول.
+   * `suspended` (أندرويد) = بيستنى `CONTEXT_SUSPEND_GRACE_MS` في `tick` — لحظة نقل المايك مابتقفلش التسجيل.
+   */
+  contextState(state: string, nowMs: number = Date.now()): MicLossReason | null {
+    if (state === "interrupted") return this.fire("interrupted");
+    if (state === "suspended") {
+      if (this.suspendedSince === null) this.suspendedSince = nowMs;
+      return null;
+    }
+    if (state === "running") this.suspendedSince = null;
     return null;
   }
 }

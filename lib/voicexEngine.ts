@@ -845,7 +845,12 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
         else if (st === "muted") loss.trackMuted(Date.now());
         else loss.trackUnmuted();
       },
-      onContextState: (st: string) => { if (loss) reportLoss(loss.contextState(st)); },
+      // 🔵 `suspended` (أندرويد — المايك بيتنقل للبلوتوث) ⇒ نحاول نرجّعه، والكاشف بيستنى مهلته (`CONTEXT_SUSPEND_GRACE_MS`)
+      onContextState: (st: string) => {
+        if (!loss) return;
+        if (st === "suspended") mic.resumeContext();
+        reportLoss(loss.contextState(st, Date.now()));
+      },
     } : {}),
   });
 
