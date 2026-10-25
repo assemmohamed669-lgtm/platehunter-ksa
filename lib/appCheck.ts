@@ -14,13 +14,13 @@
  *  · السيرفر (`docs/sql/app-check.sql`): `app_check_set` صف واحد (النسخة + الملفات) + مخزن `app-check` +
  *    `app_check_status` (حالة كل مندوب للأدمن) + إشعار فوري (realtime) أول ما الأدمن ينشر.
  *  · المزامنة نفسها **مابتنشرش** — النشر بس من `onUserCheckChanged` (المستخدم رفع/مسح بإيده).
- *  · ينشر السوبر أدمن + `APP_CHECK_PUBLISHER_IDS` بس. 🔒 `APP_CHECK_FOR_ALL = false`: الاستقبال للسوبر أدمن + حسابات التجربة بس لحد الفتح للكل.
+ *  · ينشر السوبر أدمن + `APP_CHECK_PUBLISHER_IDS` بس. 🟢 `APP_CHECK_FOR_ALL = true`: كل الناس بتستقبل (المالك: «افتحه للكل»).
  */
 import type { UploadedFileRecord } from "./idb";
 import { bankPlateToArabic, detectPlateColumn, normalizePlate } from "./plateParser";
 
-/** 🔒 الاستقبال للكل بعد تجربة المالك — قبلها السوبر أدمن + `APP_CHECK_TEST_EMAILS` بس. */
-export const APP_CHECK_FOR_ALL = false;
+/** 🟢 **الكل** بيستقبل — المالك جرّبه (Google Review استلم في ٥ ثواني) وقال «افتحه للكل» (٢٥ أكتوبر ٢٠٢٦). الرجوع = false. */
+export const APP_CHECK_FOR_ALL = true;
 /** حسابات المالك للتجربة (بيدخل بيها كمندوب ويشوف الملف نزل) — حروف صغيرة. */
 export const APP_CHECK_TEST_EMAILS: readonly string[] = ["google.review@qannas-ksa.com", "asemafify40@gmail.com"];
 export const APP_SOURCE = "app";

@@ -113,9 +113,9 @@ beforeEach(() => {
   __resetAppCheckForTest();
 });
 
-describe("🔒 مين ينشر ومين يستقبل (السوبر أدمن الأول)", () => {
-  it("السوبر أدمن + أدمن واحد معيّن بس ينشروا (المالك: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا») — والاستقبال لسه للسوبر أدمن + حسابات التجربة بس", () => {
-    expect(APP_CHECK_FOR_ALL).toBe(false);
+describe("🔒 مين ينشر ومين يستقبل", () => {
+  it("السوبر أدمن + أدمن واحد معيّن بس ينشروا (المالك: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا») — و🟢 **الكل** بيستقبل (المالك ٢٥ أكتوبر: «افتحه للكل»)", () => {
+    expect(APP_CHECK_FOR_ALL).toBe(true);
     expect(canPublishAppCheck({ isSuper: true, role: "admin" })).toBe(true);
     // المالك: «انا عايزها ل ادمن واحد معين» · «وانا» ⇒ السوبر أدمن + محمد عفيفي بس
     expect(APP_CHECK_PUBLISHER_IDS).toEqual(["5659243d-8298-4e6d-88ef-42571491d162"]);
@@ -126,7 +126,8 @@ describe("🔒 مين ينشر ومين يستقبل (السوبر أدمن ال
     expect(canReceiveAppCheck({ isSuper: true })).toBe(true);
     expect(APP_CHECK_TEST_EMAILS).toContain("google.review@qannas-ksa.com");
     expect(canReceiveAppCheck({ isSuper: false, email: " Google.Review@Qannas-KSA.com" })).toBe(true);
-    expect(canReceiveAppCheck({ isSuper: false, email: "agent@x.com" })).toBe(false);
+    expect(canReceiveAppCheck({ isSuper: false, email: "agent@x.com" })).toBe(true);
+    expect(canReceiveAppCheck({ isSuper: false, email: null })).toBe(true);
   });
 });
 
@@ -265,11 +266,15 @@ describe("📥 الاستقبال عند المندوب", () => {
     m.tables.set("ادمن ٢.xlsx", T2);
   });
 
-  it("مش في التجربة ⇒ مفيش أي استقبال ولا لمس لملفاته", async () => {
+  it("🟢 للكل: أي مندوب ملفه أقدم من النشر ⇒ بيتبدّل · رفع بعد النشر ⇒ مابيتلمسش", async () => {
     await adminPublishes(["ادمن ١.xlsx"]);
     m.state.uid = "u-agent"; m.state.profile = { role: "agent", is_super: false, email: "agent@x.com" };
     __resetAppCheckForTest();
     put("check", "بتاعي.xlsx", { uploadedAt: "2026-01-01T00:00:00Z" });
+    expect(await syncAppCheck()).toBe(true);
+    expect(slots()).toEqual(["check:ادمن ١.xlsx:app"]);
+    m.files.clear();
+    put("check", "بتاعي.xlsx", { uploadedAt: "2099-01-01T00:00:00Z" });
     expect(await syncAppCheck()).toBe(false);
     expect(slots()).toEqual(["check:بتاعي.xlsx:own"]);
   });
