@@ -174,7 +174,7 @@ describe("🔵 المحرّك: «suspended» ⇒ يحاول يرجّع الصو�
     const { join } = await import("node:path");
     const ENGINE = readFileSync(join(process.cwd(), "lib/voicexEngine.ts"), "utf8").replace(/\r\n/g, "\n");
     const MIC = readFileSync(join(process.cwd(), "lib/micEngine.ts"), "utf8").replace(/\r\n/g, "\n");
-    expect(ENGINE).toMatch(/onContextState: \(st: string\) => \{\n\s*if \(!loss\) return;\n\s*if \(st === "suspended"\) mic\.resumeContext\(\);\n\s*reportLoss\(loss\.contextState\(st, Date\.now\(\)\)\);/);
+    expect(ENGINE).toMatch(/onContextState: \(st: string\) => \{\n(?:\s*try \{ opts\.onAudioState[^\n]*\n)?\s*if \(!loss\) return;\n\s*if \(st === "suspended"\) mic\.resumeContext\(\);\n\s*reportLoss\(loss\.contextState\(st, Date\.now\(\)\)\);/);
     expect(ENGINE).toMatch(/if \(loss\) reportLoss\(loss\.tick\(Date\.now\(\)\)\);/);
     expect(MIC).toMatch(/resumeContext\(\): void \{\n\s*try \{ void this\.ctx\?\.resume\(\)\.catch/);
   });
