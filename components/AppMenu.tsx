@@ -21,6 +21,7 @@ import { subStatus } from "@/lib/subscription";
 import { pushBackHandler } from "@/lib/backStack";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_VERSION, refreshAppNow } from "@/lib/appVersion";
+import { getNativeAppInfo, nativeVersionLabel } from "@/lib/nativeAppVersion";
 import { voiceProNames } from "@/lib/voiceProName";
 import ActiveTeamSwitcher from "@/components/ActiveTeamSwitcher";
 
@@ -86,6 +87,9 @@ export default function AppMenu({
   }, [open]);
   // إيميل المندوب — بيظهر فوق في القائمة عشان كل مندوب يعرف هو داخل بأنهي حساب.
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  /** 📱 رقم التطبيق الحقيقي (1.8 مش رقم الصفحات) — المتصفح ⇒ null */
+  const [nativeVer, setNativeVer] = useState<string | null>(null);
+  useEffect(() => { void getNativeAppInfo().then((i) => setNativeVer(nativeVersionLabel(i))); }, []);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   const fracRef = useRef(1);
@@ -438,7 +442,7 @@ export default function AppMenu({
         {/* ── عن التطبيق ── (footer ثابت أسفل الدرج — بياخد مسافة المنطقة الآمنة
             السفلى على iOS عشان الإصدار ما يتغطّاش تحت مؤشّر الهوم/شريط التنقّل) */}
         <div className="flex items-center gap-1.5 border-t border-border px-4 pt-3 pb-[max(0.75rem,var(--safe-bottom))] text-[11px] text-muted">
-          <Info size={12} /> قناص اللوحات — الإصدار {APP_VERSION}
+          <Info size={12} /> قناص اللوحات — {nativeVer ? <>التطبيق {nativeVer} · الصفحات {APP_VERSION}</> : <>الإصدار {APP_VERSION}</>}
         </div>
       </div>
     </>
