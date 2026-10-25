@@ -138,6 +138,9 @@ export async function downloadTeamCheck(path: string): Promise<Blob | null> {
  */
 export async function syncTeamCheckToLocal(): Promise<boolean> {
   try {
+    // 📢 «تشييك البرنامج» شغّال على الحساب ده ⇒ ملف المجموعة القديم مايتخانقش معاه على نفس المربع (`lib/appCheck.ts`)
+    const { appCheckReceivingNow } = await import("./appCheck");
+    if (await appCheckReceivingNow()) return false;
     const state = await fetchTeamCheckState();
     // المسئول عنده الشيت في مربعه أصلاً؛ off = الميزة مقفولة ⇒ مانلمسش شيت المندوب.
     if (state.role !== "member" || !state.file) return false;
@@ -181,6 +184,9 @@ export type TeamShareResult = null | { ok: true } | { ok: false; error: string }
 export async function shareCheckToTeamIfLeader(
   file: File, rowCount: number, countPlates: () => number,
 ): Promise<TeamShareResult> {
+  // 📢 «تشييك البرنامج» مفتوح للكل ⇒ الأدمن بينشر لكل المناديب، والمجموعة مالهاش لازمة
+  const { APP_CHECK_FOR_ALL } = await import("./appCheck");
+  if (APP_CHECK_FOR_ALL) return null;
   const s = await fetchTeamCheckState();
   if (s.role !== "leader" || !s.team) return null;
   return uploadTeamCheck(s.team, file, rowCount, countPlates());

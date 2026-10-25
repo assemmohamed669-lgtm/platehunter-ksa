@@ -8,6 +8,9 @@ import { summarizeSkips } from "@/lib/skipLabels";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged } from "@/lib/checkSheetSync";
 import { syncTeamCheckToLocal, shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
+import { onUserCheckChanged } from "@/lib/appCheck";
+import AppCheckBadge from "@/components/AppCheckBadge";
+import AppCheckReportCard from "@/components/AppCheckReportCard";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, deleteFieldCheckEntries } from "@/lib/idb";
 import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
@@ -1684,13 +1687,18 @@ export default function InstantCheckPage() {
             }));
             const plate = detectPlateColumn(rec.headers);
             setSelectedCheckCols(new Set(rec.headers.filter((h) => h !== plate))); // كل الأعمدة تلقائياً
+          } else {
+            // 📢 اتشال من تحت الصفحة (تشييك البرنامج اتمسح أو المندوب رجع لبتاعه) ⇒ مايفضلش القديم في الشاشة
+            setCheckTable(null);
+            setCheckFile(null);
           }
         })
         .catch(() => {});
     };
     loadCheck();
     // الملفات الإضافية (`check-2`, `check-3`…) — بتتقري بالتتابع لحد أول سلوت فاضي.
-    (async () => {
+    // 📢 بتتعاد كمان لما «تشييك البرنامج» ينزل أو يتشال (`idbFileUpdated` بـ`all`).
+    const loadExtraChecks = async () => {
       const loaded: { id: number; table: ExcelTable | null; file: File | null }[] = [];
       for (let n = 2; n < 100; n++) {
         const rec = await getUploadedFile("local", `check-${n}`).catch(() => null);
@@ -1703,8 +1711,8 @@ export default function InstantCheckPage() {
           }),
         });
       }
+      setExtraChecks(loaded);
       if (loaded.length) {
-        setExtraChecks(loaded);
         // أعمدة الملفات الإضافية لازم تدخل أعمدة العرض، وإلا تفاصيل الصف
         // المطابق من ملف إضافي مابتظهرش للمندوب.
         setSelectedCheckCols((prev) => {
@@ -1716,13 +1724,16 @@ export default function InstantCheckPage() {
           return next;
         });
       }
-    })();
+    };
+    void loadExtraChecks();
     // لو ملف التشييك اتضاف من نافذة «الإكسيل الوارد من واتساب» والصفحة مفتوحة
     // بالفعل (router.push لنفس الصفحة مابيعملش remount)، نعيد قراءته فور ما
     // الحدث ييجي — بدل ما المندوب يضطر يطلع من الصفحة ويرجع عشان الملف يبان.
     const onIdbUpdate = (e: Event) => {
-      const slot = (e as CustomEvent<{ slot?: string }>).detail?.slot;
+      const detail = (e as CustomEvent<{ slot?: string; all?: boolean }>).detail;
+      const slot = detail?.slot;
       if (!slot || slot === "check") loadCheck();
+      if (detail?.all) void loadExtraChecks();
     };
     window.addEventListener("idbFileUpdated", onIdbUpdate);
     return () => window.removeEventListener("idbFileUpdated", onIdbUpdate);
@@ -4842,6 +4853,8 @@ export default function InstantCheckPage() {
     await saveUploadedFile(record);
     // 📣 «الشيت اتغيّر» — صفحة «الجديد» بتقراها تلقائي. شوف lib/checkSheetSync.ts
     notifyCheckSheetChanged();
+    // 📢 تشييك البرنامج: الأدمن ⇒ بيتبعت لكل المناديب · المندوب ⇒ بيشتغل على بتاعه (`lib/appCheck.ts`)
+    void onUserCheckChanged();
     // المسئول: شيت التشييك ده لازم يوصل باقي المجموعة (لو خدمة «تشييك المجموعة»
     // مفتوحة). العضو مايرفعش من هنا للمجموعة — بيستقبل بس.
     // الدور بيتسأل وقت الرفع، والنتيجة بتبان للمسئول (نجح/فشل).
@@ -4875,6 +4888,7 @@ export default function InstantCheckPage() {
       uploadedAt: new Date().toISOString(), fileBlob: file,
     });
     notifyCheckSheetChanged();
+    void onUserCheckChanged();
     setExtraChecks((prev) => prev.map((e) => (e.id === id ? { ...e, table, file } : e)));
     const plate = detectPlateColumn(table.headers);
     setSelectedCheckCols((prev) => {
@@ -4887,27 +4901,37 @@ export default function InstantCheckPage() {
 
   /** مسح ملف إضافي — بيشيل المربع كمان (مش بيسيبه فاضي). */
   async function handleExtraClear(id: number) {
+    // 📢 أصل كل ملف (من البرنامج ولا بتاعه) ووقت رفعه بيفضلوا مع إعادة الترقيم — وإلا ملف الأدمن كان هيتحسب «بتاعه»
+    const origRecs = new Map<number, UploadedFileRecord | null>();
+    for (const e of extraChecks) origRecs.set(e.id, await getUploadedFile("local", `check-${e.id}`).catch(() => null));
+    const kept = extraChecks.filter((e) => e.id !== id);
     await deleteUploadedFile("local", `check-${id}`).catch(() => {});
     // السلوتات لازم تفضل متتابعة (`check-2`, `check-3`…) عشان قراءتها وقت
     // الفتح بتقف عند أول سلوت فاضي — فبنعيد كتابة اللي بعده بأرقام جديدة.
     for (const e of extraChecks) await deleteUploadedFile("local", `check-${e.id}`).catch(() => {});
     const renumbered = renumberCheckSlots(extraChecks, id);
-    for (const e of renumbered) {
+    for (let i = 0; i < renumbered.length; i++) {
+      const e = renumbered[i];
       if (!e.table || !e.file) continue;
+      const orig = origRecs.get(kept[i]?.id ?? -1) ?? null;
       await saveUploadedFile({
+        ...(orig ?? {}),
         key: `local:check-${e.id}`, agentId: "local", slot: `check-${e.id}`,
         fileName: e.file.name, headers: e.table.headers, rows: e.table.rows,
-        uploadedAt: new Date().toISOString(), fileBlob: e.file,
+        uploadedAt: orig?.uploadedAt ?? new Date().toISOString(), fileBlob: e.file,
       });
     }
     setExtraChecks(renumbered);
     notifyCheckSheetChanged();
+    void onUserCheckChanged();
     clearAutoCheck();
   }
 
   async function handleClear() {
     await deleteUploadedFile("local", "check");
     notifyCheckSheetChanged();
+    // 📢 المندوب مسح بتاعه ⇒ تشييك البرنامج بيرجع لوحده · الأدمن ⇒ بيتمسح عند الكل
+    void onUserCheckChanged();
     setCheckTable(null);
     setCheckFile(null);
     setSelectedCheckCols(new Set());
@@ -4980,6 +5004,8 @@ export default function InstantCheckPage() {
         showReplaceButtons
         sky
       />
+      {/* 📢 «شغّال على تشييك البرنامج» / «على تشييكك» — للي الميزة شغّالة عندهم بس */}
+      <AppCheckBadge />
       {teamCheckMsg && (
         <p className={`px-0.5 text-[11px] font-bold ${teamCheckMsg.startsWith("✅") ? "text-primary" : "text-danger"}`}>
           {teamCheckMsg}
@@ -5022,6 +5048,9 @@ export default function InstantCheckPage() {
           <Plus size={15} /> إضافة ملف تشييك
         </button>
       )}
+
+      {/* 📢 الأدمن: كام مندوب قاري تشييك البرنامج وكام مش شغّال بيه */}
+      <AppCheckReportCard />
 
       {/* ── حالة الـ GPS — ثابتة فوق (sticky) واللوحات بتعدّي تحتها. بتظهر في كل
              التبويبات ما عدا «السجلات» و«فرز». المربع كله ملوّن حسب قوة الإشارة

@@ -40,6 +40,7 @@ import { useMemberLocks } from "@/lib/groupLocksClient";
 import { rememberPage } from "@/lib/lastPage";
 import { diagNav, startDeviceDiag, startDeviceDiagLight, diagActive } from "@/lib/deviceDiag";
 import { startIssueLog } from "@/lib/issueLog";
+import { startAppCheckSync } from "@/lib/appCheck";
 import { markBootStable, takeBootGuardHit, pageLabel, BOOT_STABLE_MS } from "@/lib/bootGuard";
 
 const ADMIN_WHATSAPP = "971542482545";
@@ -160,6 +161,8 @@ export default function AppShellLayout({
       // 🩺 الصندوق الأسود **الخفيف** (`lib/deviceDiag.ts` — `DIAG_LIGHT_FOR_ALL`): السوبر أدمن الأول، وبعد سجل المشاكل
       //    عشان مايقفلوش. الحساب اللي عليه الكامل ولا حاجة.
       startDeviceDiagLight(userId, { isSuper: rp?.is_super === true });
+      // 📢 «تشييك البرنامج» (`lib/appCheck.ts`): ملفات الأدمن بتنزل أول ما البرنامج يفتح + أول ما الأدمن ينشر
+      startAppCheckSync(userId);
       // 📍 نفس قفل المجمّع (دلوقتي السوبر أدمن بس) — المناديب موقعهم شغّال أصلاً من `AgentPresenceReporter`
       setMjGpsWarm(canUseMujammaa(rp));
       // مفاتيح الصوت اللي حطّها الأدمن للمندوب تنزل للجهاز (البروفايل مصدر الحقيقة).

@@ -94,6 +94,8 @@ import VehicleTypeSelect from "@/components/VehicleTypeSelect";
 import FileUploadBox from "@/components/FileUploadBox";
 import { notifyCheckSheetChanged, onCheckSheetChanged, lastCheckSheetStamp } from "@/lib/checkSheetSync";
 import { syncTeamCheckToLocal, shareCheckToTeamIfLeader, teamCheckShareMessage } from "@/lib/teamCheck";
+import { onUserCheckChanged } from "@/lib/appCheck";
+import AppCheckBadge from "@/components/AppCheckBadge";
 import { backfillMissingGps, stampRowGps } from "@/lib/gpsBackfill";
 import { checkFingerprint } from "@/lib/chassisCache";
 import { loadChassisMap, quickChassisMap, type LoadChassisOptions } from "@/lib/chassisLoad";
@@ -1085,6 +1087,8 @@ export default function RegistrationV2Page() {
     };
     await saveUploadedFile(record);
     notifyCheckSheetChanged();
+    // 📢 تشييك البرنامج: الأدمن ⇒ بيتبعت لكل المناديب · المندوب ⇒ بيشتغل على بتاعه (`lib/appCheck.ts`)
+    void onUserCheckChanged();
     // المسئول: يوصل شيت التشييك لباقي المجموعة (لو الخدمة مفتوحة). العضو يستقبل بس.
     // الدور بيتسأل وقت الرفع، والنتيجة بتبان للمسئول (نجح/فشل).
     setTeamCheckMsg(null);
@@ -1100,6 +1104,8 @@ export default function RegistrationV2Page() {
   const onCheckClear = useCallback(async () => {
     await deleteUploadedFile("local", "check").catch(() => {});
     notifyCheckSheetChanged();
+    // 📢 المندوب مسح بتاعه ⇒ تشييك البرنامج بيرجع لوحده
+    void onUserCheckChanged();
     loadCheck();
   }, [loadCheck]);
 
@@ -2423,6 +2429,7 @@ export default function RegistrationV2Page() {
           showReplaceButtons
           sky
         />
+        <AppCheckBadge />
         {teamCheckMsg && (
           <p className={`px-0.5 text-[11px] font-bold ${teamCheckMsg.startsWith("✅") ? "text-primary" : "text-danger"}`}>
             {teamCheckMsg}
