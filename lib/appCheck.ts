@@ -14,12 +14,12 @@
  *  · السيرفر (`docs/sql/app-check.sql`): `app_check_set` صف واحد (النسخة + الملفات) + مخزن `app-check` +
  *    `app_check_status` (حالة كل مندوب للأدمن) + إشعار فوري (realtime) أول ما الأدمن ينشر.
  *  · المزامنة نفسها **مابتنشرش** — النشر بس من `onUserCheckChanged` (المستخدم رفع/مسح بإيده).
- *  · 🔒 `APP_CHECK_FOR_ALL = false`: السوبر أدمن بس اللي ينشر، والاستقبال للسوبر أدمن + حسابات التجربة.
+ *  · 🔒 `APP_CHECK_FOR_ALL = false`: أي أدمن ينشر، والاستقبال للسوبر أدمن + حسابات التجربة بس لحد الفتح للكل.
  */
 import type { UploadedFileRecord } from "./idb";
 import { bankPlateToArabic, detectPlateColumn, normalizePlate } from "./plateParser";
 
-/** 🔒 للكل بعد تجربة المالك — قبلها السوبر أدمن ينشر، والسوبر أدمن + `APP_CHECK_TEST_EMAILS` يستقبلوا. */
+/** 🔒 الاستقبال للكل بعد تجربة المالك — قبلها السوبر أدمن + `APP_CHECK_TEST_EMAILS` بس (النشر لأي أدمن من الأول). */
 export const APP_CHECK_FOR_ALL = false;
 /** حسابات المالك للتجربة (بيدخل بيها كمندوب ويشوف الملف نزل) — حروف صغيرة. */
 export const APP_CHECK_TEST_EMAILS: readonly string[] = ["google.review@qannas-ksa.com", "asemafify40@gmail.com"];
@@ -43,8 +43,9 @@ export function slotForIndex(i: number): string {
   return i === 0 ? "check" : `check-${i + 1}`;
 }
 
+/** أي أدمن ينشر — حتى في التجربة (المالك ٢٥ أكتوبر: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا»). */
 export function canPublishAppCheck(p: { isSuper?: boolean; role?: string | null }): boolean {
-  return p.isSuper === true || (APP_CHECK_FOR_ALL && p.role === "admin");
+  return p.isSuper === true || p.role === "admin";
 }
 
 export function canReceiveAppCheck(p: { isSuper?: boolean; email?: string | null }): boolean {

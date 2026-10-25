@@ -114,10 +114,10 @@ beforeEach(() => {
 });
 
 describe("🔒 مين ينشر ومين يستقبل (السوبر أدمن الأول)", () => {
-  it("قبل الفتح للكل: السوبر أدمن بس ينشر، والسوبر أدمن + حسابات التجربة بس يستقبلوا", () => {
+  it("أي أدمن ينشر من دلوقتي (المالك: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا») — والاستقبال لسه للسوبر أدمن + حسابات التجربة بس", () => {
     expect(APP_CHECK_FOR_ALL).toBe(false);
     expect(canPublishAppCheck({ isSuper: true, role: "admin" })).toBe(true);
-    expect(canPublishAppCheck({ isSuper: false, role: "admin" })).toBe(false);
+    expect(canPublishAppCheck({ isSuper: false, role: "admin" })).toBe(true);
     expect(canPublishAppCheck({ isSuper: false, role: "agent" })).toBe(false);
     expect(canReceiveAppCheck({ isSuper: true })).toBe(true);
     expect(APP_CHECK_TEST_EMAILS).toContain("google.review@qannas-ksa.com");
