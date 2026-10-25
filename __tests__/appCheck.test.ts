@@ -86,7 +86,7 @@ vi.mock("@/lib/supabaseClient", () => {
 });
 
 import {
-  APP_CHECK_FOR_ALL, APP_CHECK_TEST_EMAILS, appCheckMode, canPublishAppCheck, canReceiveAppCheck, planAppCheckSync,
+  APP_CHECK_FOR_ALL, APP_CHECK_TEST_EMAILS, APP_CHECK_PUBLISHER_IDS, appCheckMode, canPublishAppCheck, canReceiveAppCheck, planAppCheckSync,
   slotForIndex, publishAppCheck, syncAppCheck, onUserCheckChanged, __resetAppCheckForTest,
 } from "@/lib/appCheck";
 
@@ -114,10 +114,14 @@ beforeEach(() => {
 });
 
 describe("🔒 مين ينشر ومين يستقبل (السوبر أدمن الأول)", () => {
-  it("أي أدمن ينشر من دلوقتي (المالك: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا») — والاستقبال لسه للسوبر أدمن + حسابات التجربة بس", () => {
+  it("السوبر أدمن + أدمن واحد معيّن بس ينشروا (المالك: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا») — والاستقبال لسه للسوبر أدمن + حسابات التجربة بس", () => {
     expect(APP_CHECK_FOR_ALL).toBe(false);
     expect(canPublishAppCheck({ isSuper: true, role: "admin" })).toBe(true);
-    expect(canPublishAppCheck({ isSuper: false, role: "admin" })).toBe(true);
+    // المالك: «انا عايزها ل ادمن واحد معين» · «وانا» ⇒ السوبر أدمن + محمد عفيفي بس
+    expect(APP_CHECK_PUBLISHER_IDS).toEqual(["5659243d-8298-4e6d-88ef-42571491d162"]);
+    expect(canPublishAppCheck({ isSuper: false, uid: "5659243d-8298-4e6d-88ef-42571491d162" })).toBe(true);
+    expect(canPublishAppCheck({ isSuper: false, uid: "7b4bc404-50e7-46ad-935f-aa65e293d6b8" })).toBe(false);   // أدمن تاني
+    expect(canPublishAppCheck({ isSuper: false, uid: null })).toBe(false);
     expect(canPublishAppCheck({ isSuper: false, role: "agent" })).toBe(false);
     expect(canReceiveAppCheck({ isSuper: true })).toBe(true);
     expect(APP_CHECK_TEST_EMAILS).toContain("google.review@qannas-ksa.com");

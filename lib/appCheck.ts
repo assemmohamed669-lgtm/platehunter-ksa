@@ -14,12 +14,12 @@
  *  · السيرفر (`docs/sql/app-check.sql`): `app_check_set` صف واحد (النسخة + الملفات) + مخزن `app-check` +
  *    `app_check_status` (حالة كل مندوب للأدمن) + إشعار فوري (realtime) أول ما الأدمن ينشر.
  *  · المزامنة نفسها **مابتنشرش** — النشر بس من `onUserCheckChanged` (المستخدم رفع/مسح بإيده).
- *  · 🔒 `APP_CHECK_FOR_ALL = false`: أي أدمن ينشر، والاستقبال للسوبر أدمن + حسابات التجربة بس لحد الفتح للكل.
+ *  · ينشر السوبر أدمن + `APP_CHECK_PUBLISHER_IDS` بس. 🔒 `APP_CHECK_FOR_ALL = false`: الاستقبال للسوبر أدمن + حسابات التجربة بس لحد الفتح للكل.
  */
 import type { UploadedFileRecord } from "./idb";
 import { bankPlateToArabic, detectPlateColumn, normalizePlate } from "./plateParser";
 
-/** 🔒 الاستقبال للكل بعد تجربة المالك — قبلها السوبر أدمن + `APP_CHECK_TEST_EMAILS` بس (النشر لأي أدمن من الأول). */
+/** 🔒 الاستقبال للكل بعد تجربة المالك — قبلها السوبر أدمن + `APP_CHECK_TEST_EMAILS` بس. */
 export const APP_CHECK_FOR_ALL = false;
 /** حسابات المالك للتجربة (بيدخل بيها كمندوب ويشوف الملف نزل) — حروف صغيرة. */
 export const APP_CHECK_TEST_EMAILS: readonly string[] = ["google.review@qannas-ksa.com", "asemafify40@gmail.com"];
@@ -43,9 +43,14 @@ export function slotForIndex(i: number): string {
   return i === 0 ? "check" : `check-${i + 1}`;
 }
 
-/** أي أدمن ينشر — حتى في التجربة (المالك ٢٥ أكتوبر: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا»). */
-export function canPublishAppCheck(p: { isSuper?: boolean; role?: string | null }): boolean {
-  return p.isSuper === true || p.role === "admin";
+/**
+ * اللي ينشروا تشييك البرنامج: **السوبر أدمن + الأدمن ده بس** (المالك ٢٥ أكتوبر: «مش السوبر ادمن هو اللي هيرفع الملف دة
+ * يوميا دة ادمن معايا» · «انا عايزها ل ادمن واحد معين» · «وانا» ⇒ محمد عفيفي). أي أدمن تاني يرفع ⇒ عنده هو بس.
+ */
+export const APP_CHECK_PUBLISHER_IDS: readonly string[] = ["5659243d-8298-4e6d-88ef-42571491d162"];
+
+export function canPublishAppCheck(p: { isSuper?: boolean; uid?: string | null }): boolean {
+  return p.isSuper === true || (!!p.uid && APP_CHECK_PUBLISHER_IDS.includes(p.uid));
 }
 
 export function canReceiveAppCheck(p: { isSuper?: boolean; email?: string | null }): boolean {
