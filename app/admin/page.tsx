@@ -12,6 +12,7 @@ import { currentSession } from "@/lib/authSession";
 import { subStatus, type SubStatus } from "@/lib/subscription";
 import { ADMIN_RETURN_KEY, packAdminReturn, unpackAdminReturn, type AdminReturn } from "@/lib/adminListRestore";
 import { APP_VERSION } from "@/lib/appVersion";
+import { parseAgentVersion } from "@/lib/nativeAppVersion";
 import { fetchAppNotice, setAppNotice, NOTICE_DURATIONS, type AppNotice } from "@/lib/appNotice";
 import { fetchActivePoll, createPoll, closePoll, fetchPollResults, type Poll, type PollVote } from "@/lib/polls";
 import { BarChart3, BellRing } from "lucide-react";
@@ -800,11 +801,22 @@ export default function AdminDashboard() {
                 )}
                 {/* السطر ٢: النسخة + الجهاز + حالة الاشتراك */}
                 <div className="mt-1 flex flex-wrap items-center gap-1">
-                  {a.app_version
-                    ? (a.app_version === APP_VERSION
-                        ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-500">أحدث نسخة</span>
-                        : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[9px] font-bold text-orange-500" title={`المندوب على ${a.app_version} — الأحدث ${APP_VERSION}`}>نسخة {a.app_version}</span>)
-                    : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[9px] text-muted">نسخة غير معروفة</span>}
+                  {(() => {
+                    // 📱 «الصفحات|التطبيق» — «أحدث نسخة» من الصفحات زي الأول + رقم التطبيق الحقيقي جنبها
+                    const av = parseAgentVersion(a.app_version);
+                    return (
+                      <>
+                        {av.web
+                          ? (av.web === APP_VERSION
+                              ? <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[9px] font-bold text-green-500">أحدث نسخة</span>
+                              : <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[9px] font-bold text-orange-500" title={`المندوب على ${av.web} — الأحدث ${APP_VERSION}`}>نسخة {av.web}</span>)
+                          : <span className="rounded-full bg-muted/15 px-1.5 py-0.5 text-[9px] text-muted">نسخة غير معروفة</span>}
+                        {av.native && (
+                          <span className="rounded-full bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-bold text-indigo-600 dark:text-indigo-400" title="رقم التطبيق اللي على موبايله (من البلاي/آب ستور)">📱 {av.native}</span>
+                        )}
+                      </>
+                    );
+                  })()}
                   {(() => {
                     const pi = platformInfo(a.platform);
                     return pi

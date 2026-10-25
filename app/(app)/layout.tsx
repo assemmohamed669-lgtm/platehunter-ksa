@@ -41,6 +41,7 @@ import { rememberPage } from "@/lib/lastPage";
 import { diagNav, startDeviceDiag, startDeviceDiagLight, diagActive } from "@/lib/deviceDiag";
 import { startIssueLog } from "@/lib/issueLog";
 import { startAppCheckSync } from "@/lib/appCheck";
+import { getNativeAppInfo, heartbeatVersion } from "@/lib/nativeAppVersion";
 import { markBootStable, takeBootGuardHit, pageLabel, BOOT_STABLE_MS } from "@/lib/bootGuard";
 
 const ADMIN_WHATSAPP = "971542482545";
@@ -182,14 +183,16 @@ export default function AppShellLayout({
         setCutOff(isCutOff(profile.subscription_end, !!profile.is_active, grace));
       }
       // heartbeat — «آخر ظهور» + نسخة البرنامج + نظام الجهاز (آيفون/أندرويد) للأدمن.
+      // 📱 النسخة = «الصفحات|التطبيق» (رقم التطبيق الحقيقي من الموبايل — `lib/nativeAppVersion.ts`)
+      const hbVersion = heartbeatVersion(APP_VERSION, await getNativeAppInfo());
       // لو نسخة الـ RPC اللي بتاخد النظام لسه ماتّشغّلتش (SQL)، بنرجع للنداء
       // اللي بالنسخة بس، وبعده للنداء القديم بدون بارامتر عشان «آخر ظهور» مايوقفش.
       supabase
-        .rpc("touch_last_seen", { p_version: APP_VERSION, p_platform: getDevicePlatform() })
+        .rpc("touch_last_seen", { p_version: hbVersion, p_platform: getDevicePlatform() })
         .then(
           () => {},
           () => {
-            supabase.rpc("touch_last_seen", { p_version: APP_VERSION }).then(
+            supabase.rpc("touch_last_seen", { p_version: hbVersion }).then(
               () => {},
               () => { supabase.rpc("touch_last_seen").then(() => {}, () => {}); }
             );
