@@ -72,7 +72,7 @@ import { fetchMyMemberData, downloadMyMemberData, MEMBER_DATA_SLOT } from "@/lib
 import { ingestRemoteData, loadLocalRemoteData, clearRemoteData, type RemoteDataState } from "@/lib/remoteDataSlot";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import { splitReferralByCheck, checkSourcesSignature, isNewCacheFresh, resultBelongsOnScreen } from "@/lib/newSortCheck";
-import { newPlatesFromReferral, newPlatesConfirmText, newPlatesShareName } from "@/lib/newPlatesShare";
+import { newPlatesSheet, newPlatesConfirmText, newPlatesShareName } from "@/lib/newPlatesShare";
 import ShareSortButton from "@/components/ShareSortButton";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
@@ -2473,10 +2473,10 @@ export default function SortingPage() {
         }
       }
       if (!checkSet.size) { alert("ارفع ملف التشييك الأول — من غيره البرنامج مايعرفش إيه الجديد."); return; }
-      const rows = newPlatesFromReferral(collectRefSources(), checkSet);
+      const { rows, headers } = newPlatesSheet(collectRefSources(), checkSet);
       if (!rows.length) { alert("مفيش لوحات جديدة — كل لوحات الإحالة موجودة في ملف التشييك."); return; }
       if (!confirm(newPlatesConfirmText(rows.length))) return;
-      const { blob, ext } = buildSpreadsheetBlob(rows, "لوحات جديدة");
+      const { blob, ext } = buildSpreadsheetBlob(rows, "لوحات جديدة", headers);
       await shareExcelBlob(blob, newPlatesShareName(referralFile?.name, ext, new Date()), "لوحات السيارات الجديدة", { keepName: true });
       onSortShared("excel", rows.length, "لوحات جديدة");
     } catch (err: unknown) {
