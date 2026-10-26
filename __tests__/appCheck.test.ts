@@ -103,7 +103,10 @@ function put(slot: string, fileName: string, extra: Partial<Rec> = {}) {
 }
 const slots = () => [...m.files.values()].sort((a, b) => (a.slot < b.slot ? -1 : 1)).map((r) => `${r.slot}:${r.fileName}:${r.source ?? "own"}`);
 
-function asSuper() { m.state.uid = "u-super"; m.state.profile = { role: "admin", is_super: true, email: "boss@x.com" }; }
+const AFIFI = "5659243d-8298-4e6d-88ef-42571491d162";
+/** الناشر الوحيد (المالك ٢٦ أكتوبر: «محمد عفيفي بس ينشر») */
+function asSuper() { m.state.uid = AFIFI; m.state.profile = { role: "admin", is_super: false, email: "afifi@x.com" }; }
+function asOwner() { m.state.uid = "u-super"; m.state.profile = { role: "admin", is_super: true, email: "boss@x.com" }; }
 function asTester() { m.state.uid = "u-tester"; m.state.profile = { role: "agent", is_super: false, email: "Google.Review@qannas-ksa.com " }; }
 
 beforeEach(() => {
@@ -116,7 +119,9 @@ beforeEach(() => {
 describe("🔒 مين ينشر ومين يستقبل", () => {
   it("السوبر أدمن + أدمن واحد معيّن بس ينشروا (المالك: «مش السوبر ادمن هو اللي هيرفع الملف دة يوميا دة ادمن معايا») — و🟢 **الكل** بيستقبل (المالك ٢٥ أكتوبر: «افتحه للكل»)", () => {
     expect(APP_CHECK_FOR_ALL).toBe(true);
-    expect(canPublishAppCheck({ isSuper: true, role: "admin" })).toBe(true);
+    // المالك (٢٦ أكتوبر): رفع ملف لنفسه من حسابه استبدل ملفين محمد عفيفي عند الكل ⇒ «محمد عفيفي بس ينشر»
+    expect(canPublishAppCheck({ isSuper: true, role: "admin" })).toBe(false);
+    expect(canPublishAppCheck({ isSuper: true, uid: "u-super" })).toBe(false);
     // المالك: «انا عايزها ل ادمن واحد معين» · «وانا» ⇒ السوبر أدمن + محمد عفيفي بس
     expect(APP_CHECK_PUBLISHER_IDS).toEqual(["5659243d-8298-4e6d-88ef-42571491d162"]);
     expect(canPublishAppCheck({ isSuper: false, uid: "5659243d-8298-4e6d-88ef-42571491d162" })).toBe(true);
@@ -161,7 +166,7 @@ describe("📐 القواعد", () => {
 });
 
 describe("📤 النشر (الأدمن رفع)", () => {
-  it("السوبر أدمن: الملفين بيترفعوا، والنسخة بتتسجّل، وملفاته بتتعلّم «من البرنامج» (مايتنزّلوش عنده تاني)", async () => {
+  it("محمد عفيفي: الملفين بيترفعوا، والنسخة بتتسجّل، وملفاته بتتعلّم «من البرنامج» (مايتنزّلوش عنده تاني)", async () => {
     asSuper();
     put("check", "ادمن ١.xlsx");
     put("check-2", "ادمن ٢.xlsx");
@@ -174,6 +179,19 @@ describe("📤 النشر (الأدمن رفع)", () => {
     expect(slots()).toEqual(["check:ادمن ١.xlsx:app", "check-2:ادمن ٢.xlsx:app"]);
     expect([...m.files.values()].every((f) => f.appVersion === call.args.p_version)).toBe(true);
     expect(await syncAppCheck()).toBe(false);   // عنده نفس النسخة
+  });
+
+  it("🛑 السوبر أدمن رفع ملف لنفسه ⇒ مابينشرش (بيفضل عنده بس) — بس بيشوف كارت «كام قاري»", async () => {
+    asOwner();
+    put("check", "بتاعي.xlsx");
+    expect(await publishAppCheck()).toBeNull();
+    await onUserCheckChanged();
+    expect(m.objects.size).toBe(0);
+    expect(m.state.rpcCalls.some((c) => (c as { fn: string }).fn === "publish_app_check")).toBe(false);
+    const { canSeeAppCheckReport } = await import("@/lib/appCheck");
+    expect(canSeeAppCheckReport({ isSuper: true, uid: "u-super" })).toBe(true);
+    expect(canSeeAppCheckReport({ isSuper: false, uid: AFIFI })).toBe(true);
+    expect(canSeeAppCheckReport({ isSuper: false, uid: "u-agent" })).toBe(false);
   });
 
   it("مندوب عادي ⇒ مابينشرش ولا بيرفع حاجة", async () => {

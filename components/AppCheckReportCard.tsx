@@ -36,9 +36,10 @@ export default function AppCheckReportCard() {
   }, []);
 
   // بيتحمّل أول ما الكارت يظهر، وبعد كل نشر
-  useEffect(() => { if (s.publisher) void load(); }, [s.publisher, s.lastPublish, load]);
+  useEffect(() => { if (s.reporter) void load(); }, [s.reporter, s.lastPublish, load]);
 
-  if (!s.publisher) return null;
+  // الناشر (محمد عفيفي) + السوبر أدمن (بيتابع من غير ما ينشر)
+  if (!s.reporter) return null;
 
   const box = (key: "reading" | "own" | "notReading", label: string, rows: AppCheckReportRow[], cls: string) => (
     <button
