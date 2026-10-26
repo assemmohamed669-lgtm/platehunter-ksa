@@ -1041,9 +1041,12 @@ export function buildBigExcelBlob(
 export function buildExcelBlob(
   rows: Record<string, unknown>[],
   sheetName: string,
-  watermark?: WatermarkInfo
+  watermark?: WatermarkInfo,
+  // ترتيب الأعمدة لما اللي بينده يعرفه (مثلاً «مشاركة اللوحات الجديدة»: اللوحة ثم الطراز … ثم الباقي) —
+  // من غيره ⇒ ترتيب مفاتيح الصفوف زي الأول.
+  headerOrder?: string[],
 ): Blob {
-  const ws = XLSX.utils.json_to_sheet(rows);
+  const ws = XLSX.utils.json_to_sheet(rows, headerOrder ? { header: headerOrder } : undefined);
 
   // Make URL cells proper hyperlinks — روابط الخرائط تظهر ككلمة «خريطة»
   const ref = ws["!ref"];
@@ -1070,7 +1073,7 @@ export function buildExcelBlob(
   }
 
   // عمود الروابط بيتضيّق — الرابط جوّه الخانة كامل (للنسخ) بس معروض صغير.
-  const headerNames = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const headerNames = headerOrder ?? (rows.length > 0 ? Object.keys(rows[0]) : []);
   const cols: XLSX.ColInfo[] = [];
   let anyLinkCol = false;
   headerNames.forEach((h, i) => {
@@ -1130,11 +1133,12 @@ export function buildCsvBlob(
 export function buildSpreadsheetBlob(
   rows: Record<string, unknown>[],
   sheetName: string,
+  headerOrder?: string[],
 ): { blob: Blob; ext: "xlsx" | "csv" } {
   try {
-    return { blob: buildExcelBlob(rows, sheetName), ext: "xlsx" };
+    return { blob: buildExcelBlob(rows, sheetName, undefined, headerOrder), ext: "xlsx" };
   } catch {
-    return { blob: buildCsvBlob(rows), ext: "csv" };
+    return { blob: buildCsvBlob(rows, headerOrder), ext: "csv" };
   }
 }
 
