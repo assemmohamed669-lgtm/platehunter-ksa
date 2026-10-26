@@ -185,8 +185,8 @@ export async function shareCheckToTeamIfLeader(
   file: File, rowCount: number, countPlates: () => number,
 ): Promise<TeamShareResult> {
   // 📢 «تشييك البرنامج» مفتوح للكل ⇒ الأدمن بينشر لكل المناديب، والمجموعة مالهاش لازمة
-  const { APP_CHECK_FOR_ALL } = await import("./appCheck");
-  if (APP_CHECK_FOR_ALL) return null;
+  const { appCheckForAllActive } = await import("./appCheck");
+  if (appCheckForAllActive()) return null;
   const s = await fetchTeamCheckState();
   if (s.role !== "leader" || !s.team) return null;
   return uploadTeamCheck(s.team, file, rowCount, countPlates());

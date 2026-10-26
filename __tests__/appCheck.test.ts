@@ -88,6 +88,7 @@ vi.mock("@/lib/supabaseClient", () => {
 import {
   APP_CHECK_FOR_ALL, APP_CHECK_TEST_EMAILS, APP_CHECK_PUBLISHER_IDS, appCheckMode, canPublishAppCheck, canReceiveAppCheck, planAppCheckSync,
   slotForIndex, publishAppCheck, syncAppCheck, onUserCheckChanged, __resetAppCheckForTest,
+  APP_CHECK_ENABLED, __setAppCheckEnabledForTest, appCheckForAllActive, canSeeAppCheckReport, startAppCheckSync, getAppCheckState,
 } from "@/lib/appCheck";
 
 const T1 = { headers: ["رقم اللوحة"], rows: [{ "رقم اللوحة": "ابح1234" }, { "رقم اللوحة": "دهل5231" }] };
@@ -114,6 +115,8 @@ beforeEach(() => {
   m.state.set = null; m.state.setError = null; m.state.status.clear(); m.state.rpcCalls = [];
   m.state.clock = Date.parse("2026-10-25T10:00:00Z");
   __resetAppCheckForTest();
+  // القواعد نفسها بتتقاس والميزة مفتوحة — والحالة الحقيقية (مقفولة) ليها اختبار لوحدها تحت
+  __setAppCheckEnabledForTest(true);
 });
 
 describe("🔒 مين ينشر ومين يستقبل", () => {
@@ -322,7 +325,7 @@ describe("🔌 التوصيل", () => {
   it("ملف المجموعة القديم مابيتخانقش مع تشييك البرنامج", () => {
     const tc = read("lib/teamCheck.ts");
     expect(tc).toMatch(/if \(await appCheckReceivingNow\(\)\) return false;/);
-    expect(tc).toMatch(/if \(APP_CHECK_FOR_ALL\) return null;/);
+    expect(tc).toMatch(/if \(appCheckForAllActive\(\)\) return null;/);
   });
 
   it("المندوب بيشوف «شغّال على تشييك البرنامج» والأدمن بيشوف كام قاري تحت صفحة التشييك", () => {
@@ -363,5 +366,37 @@ describe("🧮 كارت الأدمن: كام قاري وكام لأ", () => {
     const ic = readFileSync(join(__dirname, "..", "app", "(app)", "instant-check", "page.tsx"), "utf8").replace(/\r\n/g, "\n");
     expect(ic).toMatch(/const orig = origRecs\.get\(kept\[i\]\?\.id \?\? -1\) \?\? null;\s*await saveUploadedFile\(\{\s*\.\.\.\(orig \?\? \{\}\),/);
     expect(ic).toMatch(/uploadedAt: orig\?\.uploadedAt \?\? new Date\(\)\.toISOString\(\), fileBlob: e\.file,/);
+  });
+});
+
+describe("⛔ الميزة مقفولة (المالك ٢٦ أكتوبر: «اقفل الميزة دي خالص خليها زي الاول كل واحد يرفع تشييكه بأيدة»)", () => {
+  it("محدش بينشر (ولا محمد عفيفي) ولا بيستقبل ولا بيشوف الكارت — وملف المجموعة القديم راجع", () => {
+    __setAppCheckEnabledForTest(null);
+    expect(APP_CHECK_ENABLED).toBe(false);
+    expect(canPublishAppCheck({ uid: "5659243d-8298-4e6d-88ef-42571491d162" })).toBe(false);
+    expect(canReceiveAppCheck({ isSuper: true, email: "google.review@qannas-ksa.com" })).toBe(false);
+    expect(canSeeAppCheckReport({ isSuper: true })).toBe(false);
+    expect(appCheckForAllActive()).toBe(false);
+  });
+
+  it("محمد عفيفي رفع ⇒ عنده هو بس (مفيش رفع للسيرفر) · مندوب عنده ملف ⇒ ماحدش بيلمسه · مفيش علامة ولا realtime", async () => {
+    __setAppCheckEnabledForTest(null);
+    m.state.uid = "5659243d-8298-4e6d-88ef-42571491d162"; m.state.profile = { role: "admin", is_super: false, email: "afifi@x.com" };
+    put("check", "ادمن ١.xlsx");
+    expect(await onUserCheckChanged()).toBeNull();
+    expect(await publishAppCheck()).toBeNull();
+    expect(m.objects.size).toBe(0);
+    expect(m.state.rpcCalls.length).toBe(0);
+    __resetAppCheckForTest(); __setAppCheckEnabledForTest(null);
+    m.state.set = { version: "v-old", files: [{ slot: "check", path: "v-old/check", fileName: "ادمن ٢.xlsx" }], updated_at: "2099-01-01T00:00:00Z" };
+    m.state.uid = "u-agent"; m.state.profile = { role: "agent", is_super: false, email: "agent@x.com" };
+    m.files.clear(); put("check", "بتاعي.xlsx", { uploadedAt: "2026-01-01T00:00:00Z" });
+    expect(await syncAppCheck()).toBe(false);
+    expect(slots()).toEqual(["check:بتاعي.xlsx:own"]);
+    expect(m.state.status.size).toBe(0);
+    const stop = startAppCheckSync("u-agent");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getAppCheckState().enabled).toBe(false);
+    stop();
   });
 });
