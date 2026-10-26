@@ -21,6 +21,20 @@ import { bankPlateToArabic, detectPlateColumn, normalizePlate } from "./platePar
 
 /** 🟢 **الكل** بيستقبل — المالك جرّبه (Google Review استلم في ٥ ثواني) وقال «افتحه للكل» (٢٥ أكتوبر ٢٠٢٦). الرجوع = false. */
 export const APP_CHECK_FOR_ALL = true;
+
+/**
+ * ⛔ **الميزة كلها مقفولة** — المالك (٢٦ أكتوبر ٢٠٢٦): «اقفل الميزة دي خالص خليها زي الاول كل واحد يرفع تشييكه بأيدة لان
+ * فيه ناس اشتكت ومتخليش لا محمد ولا غيرة لما يرفع تشييك يظهر عنده هو بس». ⇒ محدش بينشر ولا بيستقبل ولا بيشوف العلامة
+ * أو الكارت، وملف المجموعة القديم (`lib/teamCheck.ts`) راجع زي الأول. الملفات اللي نزلت قبل كده بتفضل عند المندوب
+ * زي ملفه (ماحدش بيمسحها). الفتح = true.
+ */
+export const APP_CHECK_ENABLED = false;
+let enabledForTest: boolean | null = null;
+const featureOn = (): boolean => enabledForTest ?? APP_CHECK_ENABLED;
+/** 🧪 الاختبارات بس: تقيس القواعد والميزة مفتوحة (null = الحقيقي). */
+export function __setAppCheckEnabledForTest(on: boolean | null): void { enabledForTest = on; }
+/** النشر لكل الناس شغّال؟ (ملف المجموعة القديم بيسكت بس وقتها) */
+export function appCheckForAllActive(): boolean { return featureOn() && APP_CHECK_FOR_ALL; }
 /** حسابات المالك للتجربة (بيدخل بيها كمندوب ويشوف الملف نزل) — حروف صغيرة. */
 export const APP_CHECK_TEST_EMAILS: readonly string[] = ["google.review@qannas-ksa.com", "asemafify40@gmail.com"];
 export const APP_SOURCE = "app";
@@ -51,15 +65,16 @@ export const APP_CHECK_PUBLISHER_IDS: readonly string[] = ["5659243d-8298-4e6d-8
 
 export function canPublishAppCheck(p: { isSuper?: boolean; uid?: string | null }): boolean {
   // 🛑 السوبر أدمن **مابينشرش** (المالك ٢٦ أكتوبر: ملف رفعه لنفسه استبدل ملفين محمد عفيفي عند الكل ⇒ «محمد عفيفي بس ينشر»)
-  return !!p.uid && APP_CHECK_PUBLISHER_IDS.includes(p.uid);
+  return featureOn() && !!p.uid && APP_CHECK_PUBLISHER_IDS.includes(p.uid);
 }
 
 /** كارت «كام قاري وكام لأ»: الناشر + السوبر أدمن (بيتابع من غير ما ينشر). */
 export function canSeeAppCheckReport(p: { isSuper?: boolean; uid?: string | null }): boolean {
-  return p.isSuper === true || canPublishAppCheck(p);
+  return featureOn() && (p.isSuper === true || canPublishAppCheck(p));
 }
 
 export function canReceiveAppCheck(p: { isSuper?: boolean; email?: string | null }): boolean {
+  if (!featureOn()) return false;
   if (APP_CHECK_FOR_ALL || p.isSuper === true) return true;
   const e = String(p.email ?? "").trim().toLowerCase();
   return !!e && APP_CHECK_TEST_EMAILS.includes(e);
