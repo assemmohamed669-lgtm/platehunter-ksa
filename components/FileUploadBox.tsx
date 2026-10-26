@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download, ExternalLink } from "lucide-react";
+import { Upload, FileSpreadsheet, Trash2, Lock, AlertCircle, Download, ExternalLink, Share2 } from "lucide-react";
 import { parseExcelFile, decryptExcelFile, openExcelBlob, type ExcelTable } from "@/lib/excel";
 import { isPasswordErrorMessage } from "@/lib/passwordError";
 
@@ -46,6 +46,14 @@ interface Props {
    * هو يفرز فقط عليها»). مع `fixed` كمان: من غير تغيير ولا مسح.
    */
   noOpen?: boolean;
+  /**
+   * 📤 زرار مشاركة صغير **جوّه** المربع على اليمين (المالك ٢٦ أكتوبر ٢٠٢٦: «خليه جوة المربع زر مشاركه علي اليمين») —
+   * مربع الإحالة في «فرز جديد» بيشارك اللوحات الجديدة. من غيره ⇒ المربع زي الأول بالحرف.
+   */
+  onShare?: () => void;
+  shareLabel?: string;
+  /** بيجهّز المشاركة ⇒ الزرار مقفول (مايتداسش مرتين). */
+  sharing?: boolean;
 }
 
 export default function FileUploadBox({
@@ -65,6 +73,9 @@ export default function FileUploadBox({
   locked = false,
   onOpen,
   noOpen = false,
+  onShare,
+  shareLabel = "مشاركة",
+  sharing = false,
 }: Props) {
   // إطار المربع: سماوي بظل واضح لو sky. بنستخدم صبغة سماوية فوق سطح الثيم (مش لون
   // ثابت) عشان النص يفضل مقروء في الوضع الفاتح والغامق.
@@ -210,6 +221,18 @@ export default function FileUploadBox({
       <div className={`p-3 flex flex-col gap-2 ${sky ? skyBox : loadedBox}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
+            {onShare && (
+              <button
+                type="button"
+                onClick={onShare}
+                disabled={sharing}
+                aria-label={shareLabel}
+                title={shareLabel}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/40 text-primary transition hover:bg-primary/10 disabled:opacity-50"
+              >
+                <Share2 size={14} className={sharing ? "animate-pulse" : ""} />
+              </button>
+            )}
             <FileSpreadsheet size={18} className="shrink-0 text-primary" />
             <div className="min-w-0">
               <p className="rtl-text truncate text-sm font-medium text-ink">{parsedFile.name}</p>
