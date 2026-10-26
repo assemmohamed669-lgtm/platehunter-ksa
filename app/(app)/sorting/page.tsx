@@ -72,6 +72,7 @@ import { fetchMyMemberData, downloadMyMemberData, MEMBER_DATA_SLOT } from "@/lib
 import { ingestRemoteData, loadLocalRemoteData, clearRemoteData, type RemoteDataState } from "@/lib/remoteDataSlot";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import { splitReferralByCheck, checkSourcesSignature, isNewCacheFresh, resultBelongsOnScreen } from "@/lib/newSortCheck";
+import { newPlatesFromReferral, newPlatesConfirmText, newPlatesShareName } from "@/lib/newPlatesShare";
 import ShareSortButton from "@/components/ShareSortButton";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
@@ -2453,6 +2454,38 @@ export default function SortingPage() {
     applyTashyeekTable(null); setTashyeekFile(null); setTashyeekResults(null);
   }
 
+  /**
+   * 📤 «مشاركة اللوحات الجديدة» (المالك ٢٦ أكتوبر ٢٠٢٦: «لما المندوب يختار فرز جديد يظهر تحت شيت الاحاله علامه مشاركه
+   * صغيرة … يشارك الملف اكسيل وفيه لوحات السيارات الجديدة في الشيت بكل بياناتها اللي نازله في المحفظه»).
+   * نفس حساب «فرز جديد» بالحرف: كل ملفات التشييك (الأساسي + الإضافية + اللي في الشاشة) وكل شيتات الإحالة ⇒ رسالة ⇒
+   * إكسيل بكل أعمدة المحفظة ⇒ مشاركة. مش محتاج ملف داتا.
+   */
+  const [sharingNew, setSharingNew] = useState(false);
+  async function shareNewPlates() {
+    if (sharingNew || !referralTable) return;
+    setSharingNew(true);
+    try {
+      const checkSet = combinedCheckPlates(await loadAllCheckSources());
+      if (checkTable && effectiveCheckPlateCol) {
+        for (const row of checkTable.rows) {
+          const n = normalizePlate(bankPlateToArabic(String(row[effectiveCheckPlateCol] ?? "")));
+          if (n) checkSet.add(n);
+        }
+      }
+      if (!checkSet.size) { alert("ارفع ملف التشييك الأول — من غيره البرنامج مايعرفش إيه الجديد."); return; }
+      const rows = newPlatesFromReferral(collectRefSources(), checkSet);
+      if (!rows.length) { alert("مفيش لوحات جديدة — كل لوحات الإحالة موجودة في ملف التشييك."); return; }
+      if (!confirm(newPlatesConfirmText(rows.length))) return;
+      const { blob, ext } = buildSpreadsheetBlob(rows, "لوحات جديدة");
+      await shareExcelBlob(blob, newPlatesShareName(referralFile?.name, ext, new Date()), "لوحات السيارات الجديدة", { keepName: true });
+      onSortShared("excel", rows.length, "لوحات جديدة");
+    } catch (err: unknown) {
+      alert((err as Error)?.message ?? "تعذّرت مشاركة اللوحات الجديدة");
+    } finally {
+      setSharingNew(false);
+    }
+  }
+
   async function shareTashyeekFile() {
     if (!tashyeekTable) return;
     try {
@@ -3911,6 +3944,10 @@ export default function SortingPage() {
         onParsed={(table, file) => persistAndSet("referral", table, file)}
         onClear={() => clearSlot("referral")}
         showReplaceButtons
+        /* 📤 مشاركة اللوحات الجديدة — «فرز جديد» بس، زرار صغير جوّه المربع على اليمين (المالك ٢٦ أكتوبر) */
+        onShare={sortMode === "new" ? () => void shareNewPlates() : undefined}
+        shareLabel="مشاركة اللوحات الجديدة"
+        sharing={sharingNew}
       />
       {/* ملف إحالة فيه أكتر من ورقة → المندوب يعلّم على اللي عايز يفرز عليه */}
       <ReferralSheetPicker
