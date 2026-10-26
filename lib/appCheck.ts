@@ -14,7 +14,7 @@
  *  · السيرفر (`docs/sql/app-check.sql`): `app_check_set` صف واحد (النسخة + الملفات) + مخزن `app-check` +
  *    `app_check_status` (حالة كل مندوب للأدمن) + إشعار فوري (realtime) أول ما الأدمن ينشر.
  *  · المزامنة نفسها **مابتنشرش** — النشر بس من `onUserCheckChanged` (المستخدم رفع/مسح بإيده).
- *  · ينشر السوبر أدمن + `APP_CHECK_PUBLISHER_IDS` بس. 🟢 `APP_CHECK_FOR_ALL = true`: كل الناس بتستقبل (المالك: «افتحه للكل»).
+ *  · ينشر `APP_CHECK_PUBLISHER_IDS` بس (محمد عفيفي) — السوبر أدمن بيشوف الكارت بس. 🟢 `APP_CHECK_FOR_ALL = true`: كل الناس بتستقبل (المالك: «افتحه للكل»).
  */
 import type { UploadedFileRecord } from "./idb";
 import { bankPlateToArabic, detectPlateColumn, normalizePlate } from "./plateParser";
@@ -44,13 +44,19 @@ export function slotForIndex(i: number): string {
 }
 
 /**
- * اللي ينشروا تشييك البرنامج: **السوبر أدمن + الأدمن ده بس** (المالك ٢٥ أكتوبر: «مش السوبر ادمن هو اللي هيرفع الملف دة
- * يوميا دة ادمن معايا» · «انا عايزها ل ادمن واحد معين» · «وانا» ⇒ محمد عفيفي). أي أدمن تاني يرفع ⇒ عنده هو بس.
+ * اللي ينشر تشييك البرنامج: **محمد عفيفي بس** (المالك ٢٥ أكتوبر: «انا عايزها ل ادمن واحد معين»؛ و٢٦ أكتوبر بعد ما ملف
+ * رفعه لنفسه من حسابه استبدل ملفين محمد عفيفي عند الكل: «محمد عفيفي بس ينشر»). أي حد تاني يرفع (حتى السوبر أدمن) ⇒ عنده هو بس.
  */
 export const APP_CHECK_PUBLISHER_IDS: readonly string[] = ["5659243d-8298-4e6d-88ef-42571491d162"];
 
 export function canPublishAppCheck(p: { isSuper?: boolean; uid?: string | null }): boolean {
-  return p.isSuper === true || (!!p.uid && APP_CHECK_PUBLISHER_IDS.includes(p.uid));
+  // 🛑 السوبر أدمن **مابينشرش** (المالك ٢٦ أكتوبر: ملف رفعه لنفسه استبدل ملفين محمد عفيفي عند الكل ⇒ «محمد عفيفي بس ينشر»)
+  return !!p.uid && APP_CHECK_PUBLISHER_IDS.includes(p.uid);
+}
+
+/** كارت «كام قاري وكام لأ»: الناشر + السوبر أدمن (بيتابع من غير ما ينشر). */
+export function canSeeAppCheckReport(p: { isSuper?: boolean; uid?: string | null }): boolean {
+  return p.isSuper === true || canPublishAppCheck(p);
 }
 
 export function canReceiveAppCheck(p: { isSuper?: boolean; email?: string | null }): boolean {
@@ -113,12 +119,14 @@ export interface AppCheckUiState {
   /** الميزة شغّالة على الحساب ده (ينشر أو يستقبل) */
   enabled: boolean;
   publisher: boolean;
+  /** يشوف كارت «كام قاري» (الناشر + السوبر أدمن) */
+  reporter: boolean;
   mode: AppCheckMode;
   files: number;
   syncing: boolean;
   lastPublish: AppCheckPublishResult;
 }
-let ui: AppCheckUiState = { enabled: false, publisher: false, mode: "none", files: 0, syncing: false, lastPublish: null };
+let ui: AppCheckUiState = { enabled: false, publisher: false, reporter: false, mode: "none", files: 0, syncing: false, lastPublish: null };
 const subs = new Set<() => void>();
 function setUi(patch: Partial<AppCheckUiState>): void {
   ui = { ...ui, ...patch };
@@ -420,7 +428,7 @@ export function startAppCheckSync(_uid: string): () => void {
     if (!alive || !me) return;
     const receive = canReceiveAppCheck(me);
     const publisher = canPublishAppCheck(me);
-    setUi({ enabled: receive || publisher, publisher });
+    setUi({ enabled: receive || publisher, publisher, reporter: canSeeAppCheckReport(me) });
     await refreshUi();
     if (!receive) return;
     void syncAppCheck();
@@ -447,5 +455,5 @@ export function startAppCheckSync(_uid: string): () => void {
 /** 🧪 الاختبارات بس */
 export function __resetAppCheckForTest(): void {
   meCache = null; lastReport = null; inflight = null; lastRun = 0; started = false;
-  ui = { enabled: false, publisher: false, mode: "none", files: 0, syncing: false, lastPublish: null };
+  ui = { enabled: false, publisher: false, reporter: false, mode: "none", files: 0, syncing: false, lastPublish: null };
 }
