@@ -65,6 +65,8 @@ const MAX_TEXT = 48;
 const ROUTINE_SKIPS = new Set([
   "silence_gate", "too_short", "utterance_too_short", "utterance_too_long",
   "busy_window", "yield_to_utterance",
+  // ⏱️ ساعة الصوت مااتحرّكتش (الصوت واقف) — بيتعدّ بس (`AUDIO_CLOCK_FOR_VOICE_PRO`)
+  "audio_stalled",
 ]);
 /** زحمة: النافذة اتشالت قبل ما تتبعت — مهمة للشكوى فبتاخد حدث (تحت السقف العادي). */
 const CONGESTION_SKIPS = new Set(["busy_window", "yield_to_utterance"]);

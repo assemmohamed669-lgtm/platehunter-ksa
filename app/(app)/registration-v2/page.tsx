@@ -1405,7 +1405,7 @@ export default function RegistrationV2Page() {
     try {
       // 🔧 جوّه الـtry عن قصد: الـfinally هو اللي بيرجّعه — رمية قبله كانت هتأجّل الهيكل للأبد
       startingRef.current = true;
-      const { startVoicexEngine } = await import("@/lib/voicexEngine");
+      const { startVoicexEngine, AUDIO_CLOCK_FOR_VOICE_PRO } = await import("@/lib/voicexEngine");
       marks.push({ label: "المحرّك", at: Date.now() });
       const ctrl = await startVoicexEngine({
         transcribeUrl: modelUrl.trim().replace(/\/+$/, "") + "/transcribe",
@@ -1414,6 +1414,8 @@ export default function RegistrationV2Page() {
         // صفحة الموديل الجديد فقط لحد ما أجرّب». صفحة التشييك على السلوك
         // القديم بالحرف لحد ما يتأكّد على جهاز حقيقي.
         fixes: true,
+        // ⏱️ النوافذ بساعة الصوت اللي وصل مش الحائط — «بيقول لوحات يظهر لوحات ولوحات لا» (٢٨ أكتوبر)
+        audioClock: AUDIO_CLOCK_FOR_VOICE_PRO,
         // ⚡ نافذة التأكيد الفورية للعربية المطلوبة (`lib/wantedConfirmNow.ts`) — للكل
         wantedConfirm: canConfirmNow(sup),
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس

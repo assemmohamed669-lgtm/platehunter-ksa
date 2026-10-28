@@ -21,12 +21,13 @@ describe("المحرّك", () => {
 
   it("النوافذ الزاحفة بتتسجّل بالعلم بس — من غيره المسار القديم بالحرف", () => {
     expect(ENGINE).toMatch(/const CONFIRM = FIXES && opts\.wantedConfirm === true;/);
-    expect(ENGINE).toMatch(/if \(CONFIRM\) noteSlide\(slideFrom, elapsed\);\n\s*sliceAndSend\(slideFrom, elapsed\);/);
+    expect(ENGINE).toMatch(/if \(CONFIRM\) noteSlide\(slideFrom, elapsed\);\n\s*(?:lastSlideAudioSec = elapsed;\n\s*)?sliceAndSend\(slideFrom, elapsed\);/);
   });
 
   it("confirmNow: بالخطة (`planConfirmWindow`)، مرة لكل نافذة، وواحدة في المرة", () => {
     expect(ENGINE).toMatch(/if \(!CONFIRM \|\| stopped \|\| weak \|\| gaveUp \|\| fatalFired\) return false;/);
-    expect(ENGINE).toMatch(/planConfirmWindow\(w, mic\.elapsedSec, lastSlideTo, STEP_MS \/ 1000, WIN_S\)/);
+    // ⏱️ بساعة المحرّك (`clockSec` — ساعة الصوت في Voice PRO من ٢٨ أكتوبر) زي النوافذ الزاحفة بالظبط
+    expect(ENGINE).toMatch(/planConfirmWindow\(w, clockSec\(\), lastSlideTo, STEP_MS \/ 1000, WIN_S\)/);
     expect(ENGINE).toMatch(/confirmAsked\.has\(tMs\)/);
     expect(ENGINE).toMatch(/confirmInflight >= 1/);
   });
