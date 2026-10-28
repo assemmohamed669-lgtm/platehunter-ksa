@@ -99,6 +99,14 @@ export function shouldSlideWindow(
 }
 /** أقصى قراءات نطق مستنية — فوقها بنعلن التخطّي بدل ما نبلعه. */
 const MAX_PENDING_UTTERANCES = 3;
+/**
+ * ⏱️ **ساعة الصوت لـ Voice PRO** (المالك ٢٨ أكتوبر ٢٠٢٦: «بيقول لوحات يظهر لوحات ولوحات لا»). على بعض الموبايلات الصوت
+ * اللي بيوصل بيتأخر عن ساعة الحائط (احمد سلام: ٨–١٣ث) ⇒ النوافذ بالحائط كانت بتطلب صوت لسه ماوصلش ⇒ `slice_failed`
+ * ⇒ اللوحة بتضيع أو بتتقري مرة واحدة (mult=1) والمطلوبة مابتتأكّدش. شوف `VoicexEngineOpts.audioClock`. الرجوع = false.
+ */
+export const AUDIO_CLOCK_FOR_VOICE_PRO = true;
+/** ساعة الصوت مااتحرّكتش قد كده من آخر نافذة ⇒ الصوت واقف ⇒ مانبعتش نفس النافذة تاني (تكرار = «تأكيد» كاذب). */
+export const MIN_SLIDE_ADVANCE_SEC = 0.5;
 const FATAL_FAILS = 8;        // فشل نفق متتالي كتير → رجوع لديبجرام
 const REQ_TIMEOUT_MS = 9000;
 /**
@@ -351,6 +359,12 @@ export interface VoicexEngineOpts {
    * **دلوقتي** بدل ما تستنى دورها. من غيره: ولا حاجة بتتسجّل و`confirmNow` بترجّع `false` — زي النهارده بالحرف.
    */
   wantedConfirm?: boolean;
+  /**
+   * ⏱️ **ساعة الصوت بدل ساعة الحائط** — الزحلقة والتصريف وطابور النطق والإعادة ونافذة التأكيد بـ`mic.durationSec`
+   * (الصوت اللي وصل فعلاً) مش `mic.elapsedSec` (الحائط). موبايل سليم: الساعتين واحد ⇒ نفس النوافذ. موبايل صوته متأخر:
+   * النوافذ بتقصّ صوت موجود بدل ما تترمى. Voice PRO بس (`AUDIO_CLOCK_FOR_VOICE_PRO`) — «صوتي» زي ما هي.
+   */
+  audioClock?: boolean;
   onSkip?: (reason: string) => void;
   /**
    * نافذة فايتة اتبعتت **تاني** بعد ما الشبكة رجعت (`fixes` بس). للعدّ في
@@ -529,6 +543,10 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   const FIXES = opts.fixes === true;
   /** ⚡ نافذة التأكيد الفورية — شوف `VoicexEngineOpts.wantedConfirm`. */
   const CONFIRM = FIXES && opts.wantedConfirm === true;
+  /** ⏱️ ساعة الصوت — شوف `VoicexEngineOpts.audioClock`. */
+  const AUDIO_CLOCK = opts.audioClock === true;
+  /** آخر نافذة زاحفة اتبعتت كانت لحد فين (بساعة المحرّك) — حارس «الصوت واقف». */
+  let lastSlideAudioSec = -Infinity;
   /** حدود النوافذ الزاحفة اللي اتبعتت (بمفتاح `tMs` بتاعها) — بالعلم بس. */
   const slideWins = new Map<number, SecWindow>();
   /** نهاية آخر نافذة زاحفة عادية اتبعتت (ثواني). */
@@ -861,6 +879,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     } : {}),
   });
 
+  /** ⏱️ ساعة المحرّك: الصوت اللي وصل (`audioClock`) أو الحائط (القديم بالحرف). */
+  function clockSec(): number {
+    return AUDIO_CLOCK ? mic.durationSec : mic.elapsedSec;
+  }
+
   try {
     await mic.start();
   } catch {
@@ -909,7 +932,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       if (weak) {
         // ⏱️ استسلمنا (`net_lost`) — الجلسة خلصت، مافيش حاجة تتبعت تاني
         if (gaveUp) { opts.onSkip?.("net_lost"); return; }
-        pruneStalePending(mic.elapsedSec);
+        pruneStalePending(clockSec());
         if (pending.length >= MAX_PENDING_UTTERANCES) { pending.shift(); opts.onSkip?.("utterance_queue_full"); }
         pending.push({ from, to });
         return;
@@ -1104,7 +1127,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       if (!FIXES) return;
       networkOk = ok;
       // 🔴 فشلت ⇒ تتسجّل وتتبعت تاني لما الشبكة ترجع (الصوت لسه في الذاكرة)
-      if (!ok) missed.record(fromSec, toSec, mic.elapsedSec);
+      if (!ok) missed.record(fromSec, toSec, clockSec());
     }, isReplay, probe);
     inflightSet.add(pr);
     inflightStarts.set(pr, Date.now());
@@ -1137,7 +1160,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     //    فمن غير الحارس ده كان بيكمّل في الخلفية بعد ما الصفحة خلصت.
     if (NET && stopped && !stopBudgetLeft()) return;
     // 🐢 (`netResilience` بس) اللي عدّى عليه ٧٥ث مايتقصّش — بعد رجوع الشبكة وبعد الإيقاف
-    if (NET) pruneStalePending(mic.elapsedSec);
+    if (NET) pruneStalePending(clockSec());
     while (pending.length > 0) {
       const plan = planVoicexAdmission({
         source: "utterance", inflight, maxInflight, utteranceQueued: true,
@@ -1167,7 +1190,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     if (NET && stopped) { drainReplayAfterStop(); return; }
     let guard = 0;
     while (guard++ < 100 && canReplay(inflight, maxInflight, pending.length)) {
-      const w = missed.take(mic.elapsedSec);
+      const w = missed.take(clockSec());
       if (!w) break;
       const before = inflight;
       sliceAndSend(w.from, w.to, true);
@@ -1197,7 +1220,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
    */
   function drainReplayAfterStop(): void {
     if (!stopBudgetLeft()) return;
-    const now = mic.elapsedSec;
+    const now = clockSec();
     for (let w = missed.take(now); w; w = missed.take(now)) stopTail.push(w);
     stopTail.sort((a, b) => a.from - b.from);
     const oldest = now - REPLAY_MAX_AGE_SEC;
@@ -1252,7 +1275,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   const segTimer = setInterval(() => {
     if (stopped) return;
-    const elapsed = mic.elapsedSec;
+    const elapsed = clockSec();
     // 🐢 وضع النت الضعيف (`netResilience` بس — `weak` مابيبقاش `true` من غيره)
     if (weak) { weakTick(elapsed); return; }
     // 🎯 اقرا أثناء الكلام، وبعده **لطول النافذة** — من غير كده آخر لوحة
@@ -1278,8 +1301,11 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       }
       return;
     }
+    // ⏱️ الصوت مااتحرّكش من آخر نافذة (ساعة الصوت) ⇒ نفس الصوت تاني = «تأكيد» كاذب — استنى لما صوت جديد يوصل
+    if (AUDIO_CLOCK && elapsed - lastSlideAudioSec < MIN_SLIDE_ADVANCE_SEC) { opts.onSkip?.("audio_stalled"); return; }
     const slideFrom = Math.max(0, elapsed - WIN_S);
     if (CONFIRM) noteSlide(slideFrom, elapsed);
+    lastSlideAudioSec = elapsed;
     sliceAndSend(slideFrom, elapsed);
   }, STEP_MS);
 
@@ -1291,7 +1317,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     // بتوصل بعد نطقها بـ(نص نافذة + شبكة) فكل عنقود كان بيتصرّف فوراً بـmult=1
     // والإجماع مايتجمّعش أصلاً. شوف `drainClockMs`.
     // 🔒 بلا `fixes`: الساعة الخام زي ما كانت (الإجماع مايتجمّعش).
-    const clock = FIXES ? drainClockMs(mic.elapsedSec * 1000, WIN_S) : mic.elapsedSec * 1000;
+    const clock = FIXES ? drainClockMs(clockSec() * 1000, WIN_S) : clockSec() * 1000;
     for (const c of consensus.drain(clock)) {
       emit(c.plate, { tier: c.tier, conf: c.conf, mult: c.mult, tMs: c.tMs });
     }
@@ -1368,7 +1394,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
 
   return {
     get stopped() { return stopped; },
-    get audioNowMs() { return mic.elapsedSec * 1000; },
+    get audioNowMs() { return clockSec() * 1000; },
     get lastVoiceEndMs() {
       const v = vad?.lastVoiceEndSec ?? 0;
       return v > 0 ? v * 1000 : null;
@@ -1383,7 +1409,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       if (confirmAsked.has(tMs) || confirmInflight >= 1) return false;
       const w = slideWins.get(tMs);
       if (!w) return false;
-      const plan = planConfirmWindow(w, mic.elapsedSec, lastSlideTo, STEP_MS / 1000, WIN_S);
+      const plan = planConfirmWindow(w, clockSec(), lastSlideTo, STEP_MS / 1000, WIN_S);
       if (!plan) return false;
       confirmAsked.add(tMs);
       const pr = sliceAndSend(plan.from, plan.to);

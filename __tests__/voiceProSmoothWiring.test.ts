@@ -109,7 +109,7 @@ describe("② 🔒 جلسة قديمة ماتوقّفش جلسة أحدث — ل
     expect(src).toMatch(/telRef\.current = !\(isSuper \|\| diagEnabledFor\(telAgentId\)\) \? null : startTelemetrySession\(/);
   });
   it("🔴 startingRef بيتحط **جوّه** الـtry اللي finally بتاعه بيرجّعه (رمية في النص ماتعلّقش الهيكل)", () => {
-    expect(startFn).toMatch(/try \{\s*(?:\/\/[^\n]*\n\s*)*startingRef\.current = true;\s*(?:\/\/[^\n]*\n\s*)*const \{ startVoicexEngine \} = await import\("@\/lib\/voicexEngine"\);/);
+    expect(startFn).toMatch(/try \{\s*(?:\/\/[^\n]*\n\s*)*startingRef\.current = true;\s*(?:\/\/[^\n]*\n\s*)*const \{ startVoicexEngine(?:, AUDIO_CLOCK_FOR_VOICE_PRO)? \} = await import\("@\/lib\/voicexEngine"\);/);
     expect(startFn.match(/startingRef\.current = true;/g)?.length).toBe(1);
     expect(startFn).toMatch(/finally \{\s*setStarting\(false\);\s*startingRef\.current = false;/);
   });
