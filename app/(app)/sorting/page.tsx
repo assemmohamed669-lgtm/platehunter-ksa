@@ -30,6 +30,7 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
 import { awaitRecords } from "@/lib/recordsReady";
+import { ensureRecordEdits, waitRecordEdits } from "@/lib/recordEditsPull";
 import { getRecordsSheet, getRecordsSummary, fmtCheckDate } from "@/lib/recordsSheet";
 import { onFieldChecksChanged } from "@/lib/idb";
 import RecordsSheetBox from "@/components/RecordsSheetBox";
@@ -330,6 +331,21 @@ export default function SortingPage() {
    *  · `builtRecordsTableRef`: الجدول اللي البرنامج بناه من السجلات (مش ملف اترفع) — «المندوب» بيتملي فيه بس.
    */
   const recordsReadyRef = useRef<Promise<void> | null>(null);
+  /**
+   * 📥 **تعديلات السجلات من السيرفر** (الحي/الشارع اللي الأدمن ملاه بـ«املأ الحي والشارع») — كانت بتنزل لما المندوب يفتح
+   * «التشييك» بس، والبرنامج بيفتح على «الفرز» ⇒ الفرز كان بيطلع من غير الحي اللي اتملى (المالك ٢٤ أكتوبر ٢٠٢٦). بتبدأ
+   * مع فتح الصفحة والرجوع ليها، و«فرز» بيستناها لحد ثواني (`lib/recordEditsPull.ts`). الجديد بس من آخر مرة.
+   */
+  const editsReadyRef = useRef<Promise<void> | null>(null);
+  const startRecordEdits = useCallback((): Promise<void> => (async () => {
+    const uid = (await supabase.auth.getSession()).data.session?.user?.id;
+    if (uid) await ensureRecordEdits(uid, async (u) => (await import("@/lib/syncFieldCheck")).pullEditedFieldChecks(u));
+  })().catch(() => {}), []);
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible") editsReadyRef.current = startRecordEdits(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [startRecordEdits]);
   const tashyeekTableRef = useRef<ExcelTable | null>(null);
   const builtRecordsTableRef = useRef<ExcelTable | null>(null);
   function applyTashyeekTable(t: ExcelTable | null) { tashyeekTableRef.current = t; setTashyeekTable(t); }
@@ -530,6 +546,8 @@ export default function SortingPage() {
       } catch { /* no field sheet yet */ }
     })().finally(() => { recordsLoadedRef.current = true; setRecordsLoaded(true); });
     recordsReadyRef.current = recordsReady;
+    // 📥 الحي/الشارع اللي اتملى على السيرفر ⇐ الموبايل (الفرز بيستناه) — `editsReadyRef`
+    editsReadyRef.current = startRecordEdits();
     // 📎 الإحالات والداتا الإضافية — من الجهاز بس، على طول (كانت قبل طلبات النت في نفس السلسلة). «فرز» بيستناها.
     void (async () => {
     // شيتات الإحالة الإضافية: نبحث في slots متتابعة (referral-2, referral-3, ...)
@@ -2584,6 +2602,7 @@ export default function SortingPage() {
    */
   async function recordsForSort(): Promise<{ table: ExcelTable | null; plateCol: string | null }> {
     if (!recordsLoadedRef.current) setWaitingRecords(true);
+    await waitRecordEdits(editsReadyRef.current);
     const { value: loaded, late } = await awaitRecords(recordsReadyRef.current, () => tashyeekTableRef.current);
     let table = loaded;
     // 🗂️ شيت السجلات (مش ملف اترفع) ⇒ **آخر نسخة**: لو اتصدّرت/اتمسحت لوحات بعد ما الصفحة فتحت بتدخل — من الذاكرة في لحظة
