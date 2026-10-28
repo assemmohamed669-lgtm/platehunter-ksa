@@ -34,6 +34,8 @@ export const DIAG_AGENT_IDS: string[] = [
   "db903add-ebc1-4b1e-96e8-8cacd87dc13b",
   // ٢٥ أكتوبر ٢٠٢٦: أندرويد (احمد سلام) — «المايك بيقفل بعد ٣ ثواني» في Voice PRO من غير بلوتوث ولا مكالمة (`rv2-mic` — `lib/micDiag.ts`)
   "050c0795-c21d-4ce5-8ee7-b2d2deb4d644",
+  // ٢٨ أكتوبر ٢٠٢٦: أندرويد (رامي عابد) — «بيقول لوحات يظهر لوحات ولوحات لا» وصوته واضح والنت كويس (الصندوق الكامل + مراقبة Voice PRO)
+  "1a4cafa0-34d6-40c9-bc70-d9954d83c403",
 ];
 
 export const DIAG_MAX_EVENTS = 600;

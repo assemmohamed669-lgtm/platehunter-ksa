@@ -18,6 +18,9 @@ describe("الصندوق على المندوب ده", () => {
   it("في القايمة", () => {
     expect(DIAG_AGENT_IDS).toContain("050c0795-c21d-4ce5-8ee7-b2d2deb4d644");
   });
+  it("رامي عابد (٢٨ أكتوبر): «بيقول لوحات يظهر لوحات ولوحات لا» ⇒ الصندوق الكامل + مراقبة Voice PRO عليه", () => {
+    expect(DIAG_AGENT_IDS).toContain("1a4cafa0-34d6-40c9-bc70-d9954d83c403");
+  });
   it("السطر بيتكتب في الخفيف كمان", () => {
     expect(lightKeepsNote("rv2-mic")).toBe(true);
   });
