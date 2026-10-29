@@ -30,6 +30,7 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
 import { awaitRecords } from "@/lib/recordsReady";
+import { GROUP_MATCH_MIN_MS, GROUP_RECORDS_WAIT_MS, pagesUpTo, waitUpTo } from "@/lib/groupRecordsWait";
 import { getRecordsSheet, getRecordsSummary, fmtCheckDate } from "@/lib/recordsSheet";
 import { onFieldChecksChanged } from "@/lib/idb";
 import RecordsSheetBox from "@/components/RecordsSheetBox";
@@ -335,6 +336,9 @@ export default function SortingPage() {
   function applyTashyeekTable(t: ExcelTable | null) { tashyeekTableRef.current = t; setTashyeekTable(t); }
   /** الفرز استنى السجلات ومالحقتش ⇒ رسالة للمندوب بدل الصمت */
   const [recordsLate, setRecordsLate] = useState(false);
+  // ⏱️ سجلات المجموعة ماوصلتش في الحد (النت معلّق/وقع) — النتيجة طلعت بالمحلي (`lib/groupRecordsWait.ts`)
+  const [groupMissed, setGroupMissed] = useState(false);
+  const [pasteGroupMissed, setPasteGroupMissed] = useState(false);
   const [waitingRecords, setWaitingRecords] = useState(false);
   const recordsLoadedRef = useRef(false);
   /**
@@ -2533,8 +2537,10 @@ export default function SortingPage() {
     index: Map<string, { row: Record<string, string>; norm: string }>,
   ): Promise<TashyeekResultRow[]> {
     // استنى بيانات المجموعة لو لسه في الطريق — من غير كده الفرز السريع بيطلع
-    // من غير سجلات المجموعة **في صمت**.
-    await teamReadyRef.current?.catch(() => {});
+    // من غير سجلات المجموعة **في صمت**. ⏱️ بحد (`lib/groupRecordsWait.ts`): النت المعلّق كان بيوقّف الفرز دقايق
+    // («الفرز مهنج مش بيفرز» — المالك ٢٩ أكتوبر ٢٠٢٦) — وبعد الحد النتيجة بتطلع بالمحلي + رسالة.
+    const deadline = Date.now() + GROUP_RECORDS_WAIT_MS;
+    if (!(await waitUpTo(teamReadyRef.current, GROUP_RECORDS_WAIT_MS))) { setGroupMissed(true); return []; }
     if (!hasTeamRef.current || recordsLockedNow()) return [];   // 🔒 السجلات مقفولة على العضو
     const norms = [...index.keys()];
     if (norms.length === 0) return [];
@@ -2542,19 +2548,14 @@ export default function SortingPage() {
       plate: string; method: string | null; maps_link: string | null;
       checked_at: string; agent_id: string; extra?: Record<string, string> | null;
     };
-    const raw: GroupRow[] = [];
     const RPC_PAGE = 1000;
-    try {
-      for (let from = 0; ; from += RPC_PAGE) {
-        const { data, error } = await supabase
-          .rpc("match_group_plates", { p_norms: norms })
-          .range(from, from + RPC_PAGE - 1);
-        if (error) break;
-        const got = (data ?? []) as GroupRow[];
-        raw.push(...got);
-        if (got.length < RPC_PAGE) break;
-      }
-    } catch { /* مافيش نت — النتيجة المحلية شغّالة */ }
+    const { rows: raw, late } = await pagesUpTo<GroupRow>(
+      (from, signal) => supabase
+        .rpc("match_group_plates", { p_norms: norms })
+        .range(from, from + RPC_PAGE - 1)
+        .abortSignal(signal),
+      RPC_PAGE, Math.max(GROUP_MATCH_MIN_MS, deadline - Date.now()));
+    if (late) setGroupMissed(true);
     // 👥 «كل المرات»: الإرسال المكرر لنفس التشييك (نفس المندوب والدقيقة والمكان) مرة واحدة — زي سجلاتي على الجهاز.
     const clean = collapseGroupRecordRepeats(raw);
     const out: TashyeekResultRow[] = [];
@@ -2605,7 +2606,7 @@ export default function SortingPage() {
     const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
     const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
     if (!(hasUploadedData || hasRecordsData || memberDataReady || teamDataReady) || !referralTable || !effectiveReferralPlateCol) return;
-    setSorting(true);
+    setSorting(true); setGroupMissed(false);
     await new Promise<void>((r) => setTimeout(r, 10));
     // ⏳ السجلات خلصت تحميل؟ — الفرز بيستناها وبيقرا آخر نسخة (`recordsForSort`)
     const rec = await recordsForSort();
@@ -2739,7 +2740,7 @@ export default function SortingPage() {
   // وبعدين بتتطابق على ملف الداتا وعلى شيت السجلات → الجديد بس في النتيجة.
   async function runNewSort() {
     if ((!dataTable && !memberDataReady && !teamDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady && !teamDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
-    setSorting(true);
+    setSorting(true); setGroupMissed(false);
     await new Promise<void>((r) => setTimeout(r, 10));
     // ⏳ السجلات خلصت تحميل؟ — الفرز بيستناها وبيقرا آخر نسخة (`recordsForSort`)
     const rec = await recordsForSort();
@@ -3401,44 +3402,43 @@ export default function SortingPage() {
 
     // المندوب اللي في مجموعة بيفرز اللصق على **سجلات المجموعة كلها** كمان —
     // في نفس ويندو السجلات. المطابقة على السيرفر والراجع هو المطابق بس.
-    // (نفس فخ التوقيت بتاع الفرز العادي: نستنى بيانات المجموعة الأول.)
-    await teamReadyRef.current?.catch(() => {});
-    if (hasTeamRef.current && !recordsLockedNow()) {   // 🔒 السجلات مقفولة على العضو
+    // (نفس فخ التوقيت بتاع الفرز العادي: نستنى بيانات المجموعة الأول — ⏱️ بحد زيه، `lib/groupRecordsWait.ts`.)
+    setPasteGroupMissed(false);
+    const deadline = Date.now() + GROUP_RECORDS_WAIT_MS;
+    if (!(await waitUpTo(teamReadyRef.current, GROUP_RECORDS_WAIT_MS))) setPasteGroupMissed(true);
+    else if (hasTeamRef.current && !recordsLockedNow()) {   // 🔒 السجلات مقفولة على العضو
       const norms = [...new Set(
         tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean)
       )];
       if (norms.length) {
         let idx = recordMatches.length;
         const RPC_PAGE = 1000;
-        try {
-          for (let from = 0; ; from += RPC_PAGE) {
-            const { data, error } = await supabase
-              .rpc("match_group_plates", { p_norms: norms })
-              .range(from, from + RPC_PAGE - 1);
-            if (error) break;
-            const got = (data ?? []) as Array<{
-              plate: string; method: string | null; maps_link: string | null;
-              checked_at: string; agent_id: string; extra?: Record<string, string> | null;
-            }>;
-            for (const g of got) {
-              // سجلاتي اتطابقت فوق من الشيت المحلي — مانكررهاش.
-              if (g.agent_id === myIdRef.current) continue;
-              recordMatches.push({
-                converted: String(g.plate ?? ""),
-                status: "exact",
-                dataIdx: idx++,
-                row: {
-                  ...(g.extra ?? {}),
-                  "رقم اللوحة": String(g.plate ?? ""),
-                  "GPS": g.maps_link ?? "",
-                  "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
-                  "المندوب": groupNamesRef.current[g.agent_id] ?? "",
-                },
-              });
-            }
-            if (got.length < RPC_PAGE) break;
-          }
-        } catch { /* مافيش نت — نتيجة السجلات المحلية شغّالة */ }
+        const { rows: got, late } = await pagesUpTo<{
+          plate: string; method: string | null; maps_link: string | null;
+          checked_at: string; agent_id: string; extra?: Record<string, string> | null;
+        }>(
+          (from, signal) => supabase
+            .rpc("match_group_plates", { p_norms: norms })
+            .range(from, from + RPC_PAGE - 1)
+            .abortSignal(signal),
+          RPC_PAGE, Math.max(GROUP_MATCH_MIN_MS, deadline - Date.now()));
+        if (late) setPasteGroupMissed(true);
+        for (const g of got) {
+          // سجلاتي اتطابقت فوق من الشيت المحلي — مانكررهاش.
+          if (g.agent_id === myIdRef.current) continue;
+          recordMatches.push({
+            converted: String(g.plate ?? ""),
+            status: "exact",
+            dataIdx: idx++,
+            row: {
+              ...(g.extra ?? {}),
+              "رقم اللوحة": String(g.plate ?? ""),
+              "GPS": g.maps_link ?? "",
+              "التاريخ": g.checked_at ? fmtCheckDate(g.checked_at) : "",
+              "المندوب": groupNamesRef.current[g.agent_id] ?? "",
+            },
+          });
+        }
       }
     }
 
@@ -4033,6 +4033,12 @@ export default function SortingPage() {
       {recordsLate && !sorting && (
         <p className="rounded-xl border border-alert/40 bg-alert/10 px-3 py-2 text-center text-[12px] font-bold text-alert">
           ⚠️ سجلاتك لسه بتتحمّل — نتيجة السجلات ممكن تكون ناقصة. استنى ثواني ودوس «فرز» تاني.
+        </p>
+      )}
+      {/* ⏱️ النت معلّق/وقع — النتيجة طلعت من غير سجلات المجموعة (كان الفرز بيفضل مستني دقايق) */}
+      {groupMissed && !sorting && (
+        <p className="rounded-xl border border-alert/40 bg-alert/10 px-3 py-2 text-center text-[12px] font-bold text-alert">
+          ⚠️ النت ضعيف — النتيجة طلعت من غير سجلات المجموعة. لما النت يرجع دوس «فرز» تاني.
         </p>
       )}
 
@@ -4783,6 +4789,11 @@ export default function SortingPage() {
         </button>
 
         {!dataTable && <p className="text-xs text-alert">رفع «ملف الداتا» بالأعلى مطلوب أولاً.</p>}
+        {pasteGroupMissed && pasteRan && !pasteBusy && (
+          <p className="rounded-xl border border-alert/40 bg-alert/10 px-3 py-2 text-center text-[12px] font-bold text-alert">
+            ⚠️ النت ضعيف — النتيجة طلعت من غير سجلات المجموعة. لما النت يرجع دوس «فرز» تاني.
+          </p>
+        )}
 
         {/* كل مصدر ليه ويندو لوحده وبعنوانه — الداتا المرفوعة وسجلات المندوب
             أعمدتهم مختلفة (السجلات فيها GPS والحي والتاريخ)، وخلطهم كان بيخلّي
