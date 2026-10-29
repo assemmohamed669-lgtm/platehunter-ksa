@@ -36,6 +36,11 @@ export const DIAG_AGENT_IDS: string[] = [
   "050c0795-c21d-4ce5-8ee7-b2d2deb4d644",
   // ٢٨ أكتوبر ٢٠٢٦: أندرويد (رامي عابد) — «بيقول لوحات يظهر لوحات ولوحات لا» وصوته واضح والنت كويس (الصندوق الكامل + مراقبة Voice PRO)
   "1a4cafa0-34d6-40c9-bc70-d9954d83c403",
+  // ٢٩ أكتوبر ٢٠٢٦: أندرويد — الفرز بيقع/يهنّج (سطور `sort-open` / `sort-run` / `sort-done` بالأحجام): احمد عبدالفتاح جلال
+  // (١٢٦ تهنيج ~١٥ث) · عبدالله فتحي (١٥ وقعة) · احمد بهاء انيس (١٢ وقعة)
+  "82b31667-6265-4c6c-89ed-f7762428fb9a",
+  "27fbbb4a-d657-4d61-ad41-ff6153578caa",
+  "fafa6a71-c61a-45b7-bb82-00a5e1767447",
 ];
 
 export const DIAG_MAX_EVENTS = 600;
@@ -84,6 +89,8 @@ export function lightBudget(prev: LightBudget | null, day: string): LightBudget 
 function riyadhDay(t: number): string {
   return new Date(t).toLocaleDateString("en-CA", { timeZone: "Asia/Riyadh" });
 }
+import { appAwaySince, onAppState, pageVisibility } from "./appForeground";
+
 const STATE_KEY = "ph:diag:state";
 const BUF_KEY = "ph:diag:buf";
 const BEAT_MS = 5_000;
@@ -251,7 +258,7 @@ function saveState(patch: Partial<DiagState>) {
     sid: sidRef,
     path: location.pathname,
     beat: Date.now(),
-    vis: document.visibilityState,
+    vis: pageVisibility(),
     ...(cur && cur.sid === sidRef ? cur : {}),
     ...patch,
   });
@@ -399,14 +406,15 @@ function startDiag(uid: string, m: "full" | "light"): () => void {
   void (navigator.storage?.estimate?.() ?? Promise.reject())
     .then((e) => push({ k: "storage", usedMB: Math.round((e.usage ?? 0) / 1e6), quotaMB: Math.round((e.quota ?? 0) / 1e6) }))
     .catch(() => {});
-  writeJson(STATE_KEY, { sid: sidRef, path: lastPath, beat: now, vis: document.visibilityState });
+  // 📱 «قدامه ولا في الخلفية» من التطبيق نفسه — أندرويد 1.8 والتسجيل في الخلفية بيقول للصفحة «ظاهرة» (`lib/appForeground.ts`)
+  writeJson(STATE_KEY, { sid: sidRef, path: lastPath, beat: now, vis: pageVisibility() });
 
-  const beat = setInterval(() => saveState({ beat: Date.now(), path: location.pathname, vis: document.visibilityState }), BEAT_MS);
+  const beat = setInterval(() => saveState({ beat: Date.now(), path: location.pathname, vis: pageVisibility() }), BEAT_MS);
   const tick = setInterval(() => void flush(), m === "light" ? LIGHT_FLUSH_MS : FLUSH_MS);
   const onVis = () => {
     push({ k: "vis", s: document.visibilityState, path: location.pathname });
     // رجع قدامه من غير إعادة تحميل (الصفحة اتحفظت في الذاكرة) ⇒ علامة «إعادة تحميل» تتشال
-    saveState({ vis: document.visibilityState, beat: Date.now(), ...(document.visibilityState === "visible" ? { reload: false } : {}) });
+    saveState({ vis: pageVisibility(), beat: Date.now(), ...(document.visibilityState === "visible" ? { reload: false } : {}) });
     if (document.visibilityState === "hidden") void flush();
   };
   const onHide = (e: PageTransitionEvent) => {
@@ -441,7 +449,7 @@ function startDiag(uid: string, m: "full" | "light"): () => void {
   const freeze = setInterval(() => {
     const n = Date.now();
     const g = freezeGap(lastTick, n);
-    if (g && document.visibilityState === "visible" && !(hiddenAt >= lastTick)) push({ k: "freeze", ms: g, path: location.pathname });
+    if (g && pageVisibility() === "visible" && !(hiddenAt >= lastTick) && !appAwaySince(lastTick)) push({ k: "freeze", ms: g, path: location.pathname });
     lastTick = n;
   }, 1000);
   const resetTick = () => {
@@ -504,17 +512,13 @@ function startDiag(uid: string, m: "full" | "light"): () => void {
   };
   window.fetch = wrappedFetch;
 
-  // حالة التطبيق نفسه (قدامه/في الخلفية) من الأصلي — لو متاح
-  let removeApp: (() => void) | undefined;
-  void import("@capacitor/app")
-    .then(async ({ App }) => {
-      const h = await App.addListener("appStateChange", (s) => {
-        if (!s.isActive) hiddenAt = Date.now();   // التطبيق راح الخلفية ⇒ الفجوة الجاية مش تهنيج
-        push({ k: "app", active: !!s.isActive });
-      });
-      removeApp = () => void h.remove();
-    })
-    .catch(() => {});
+  // حالة التطبيق نفسه (قدامه/في الخلفية) من الأصلي — لو متاح (`lib/appForeground.ts`)
+  const removeApp = onAppState((active) => {
+    if (!active) hiddenAt = Date.now();   // التطبيق راح الخلفية ⇒ الفجوة الجاية مش تهنيج
+    push({ k: "app", active });
+    // قفل الأندرويد للتطبيق وهو في الخلفية ⇒ «killed-hidden» مش «killed-visible»
+    saveState({ vis: pageVisibility(), beat: Date.now() });
+  });
 
   // اللي فضل من الفتحة اللي قبلها (اللي وقعت) يترفع على طول
   void flush();
@@ -535,7 +539,7 @@ function startDiag(uid: string, m: "full" | "light"): () => void {
     if (window.fetch === wrappedFetch) window.fetch = origFetch;
     console.error = origError;
     console.warn = origWarn;
-    removeApp?.();
+    removeApp();
     started = false;
     mode = null;
   };

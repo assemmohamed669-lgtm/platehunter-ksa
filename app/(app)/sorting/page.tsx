@@ -30,6 +30,7 @@ import { loadColumnOrder, saveColumnOrder, orderedLabels, toggleColumn, loadOrde
 import { AREA_COLUMN } from "@/lib/fieldCheckView";
 import { recordAreaRow, withRecordAreaColumn, addColumnOnce, RECORD_AREA_RESULT_LABEL } from "@/lib/recordArea";
 import { awaitRecords } from "@/lib/recordsReady";
+import { diagActive, diagNote } from "@/lib/deviceDiag";
 import { GROUP_MATCH_MIN_MS, GROUP_RECORDS_WAIT_MS, pagesUpTo, waitUpTo } from "@/lib/groupRecordsWait";
 import { getRecordsSheet, getRecordsSummary, fmtCheckDate } from "@/lib/recordsSheet";
 import { onFieldChecksChanged } from "@/lib/idb";
@@ -1884,6 +1885,28 @@ export default function SortingPage() {
   const allLoaded = recordsLoaded && boxesLoaded;
   const canSort = canSortFiles && allLoaded;
 
+  /**
+   * 🩺 الأحجام بس (مفيش لوحات ولا أسامي ملفات) — للي عليهم الصندوق الكامل (`DIAG_AGENT_IDS`): الفرز وقع/هنّج في أنهي
+   * خطوة وعلى قد إيه داتا (المالك ٢٩ أكتوبر ٢٠٢٦: «اعرف كل حاجه حصلت وحصلت ليه»). باقي المناديب: ولا سطر.
+   */
+  const sortSizes = () => ({
+    data: dataStreamed ? (dataStreamMeta?.rowCount ?? 0) : (dataTable?.rows.length ?? 0),
+    big: dataStreamed,
+    extraData: extraData.length,
+    extraRows: extraData.reduce((n, d) => n + (d.streamed ? (d.streamMeta?.rowCount ?? 0) : (d.table?.rows.length ?? 0)), 0),
+    ref: referralTable?.rows.length ?? 0,
+    extraRef: extraReferrals.length,
+    check: checkTable?.rows.length ?? 0,
+    records: tashyeekTable?.rows.length ?? 0,
+  });
+  const sortOpenNotedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated || !recordsLoaded || !boxesLoaded || sortOpenNotedRef.current) return;
+    sortOpenNotedRef.current = true;
+    if (diagActive()) diagNote("sort-open", sortSizes());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, recordsLoaded, boxesLoaded]);
+
   // ── Persist ──
   const persistAndSet = useCallback(async (slot: "data" | "referral", table: ExcelTable, file: File) => {
     const record: UploadedFileRecord = {
@@ -2607,6 +2630,7 @@ export default function SortingPage() {
     const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
     if (!(hasUploadedData || hasRecordsData || memberDataReady || teamDataReady) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true); setGroupMissed(false);
+    const sortT0 = Date.now();
     await new Promise<void>((r) => setTimeout(r, 10));
     // ⏳ السجلات خلصت تحميل؟ — الفرز بيستناها وبيقرا آخر نسخة (`recordsForSort`)
     const rec = await recordsForSort();
@@ -2732,7 +2756,7 @@ export default function SortingPage() {
       logAgentEvent("sort", { mode: "full", results: matches.length, records: finalTashyeek?.length ?? 0 });
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
-    finally { setSorting(false); }
+    finally { setSorting(false); if (diagActive()) diagNote("sort-done", { mode: "full", ms: Date.now() - sortT0 }); }
   }
 
   // ── New sort ──
@@ -2741,6 +2765,7 @@ export default function SortingPage() {
   async function runNewSort() {
     if ((!dataTable && !memberDataReady && !teamDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady && !teamDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true); setGroupMissed(false);
+    const sortT0 = Date.now();
     await new Promise<void>((r) => setTimeout(r, 10));
     // ⏳ السجلات خلصت تحميل؟ — الفرز بيستناها وبيقرا آخر نسخة (`recordsForSort`)
     const rec = await recordsForSort();
@@ -2890,10 +2915,11 @@ export default function SortingPage() {
       logAgentEvent("sort", { mode: "new", results: matches.length, records: finalTashyeek?.length ?? 0, newPlates: newEntries.length });
       void recordSortHistory(matches); // سجل السيارات (مايعوّقش عرض النتيجة)
     } catch (err) { console.error(err); }
-    finally { setSorting(false); }
+    finally { setSorting(false); if (diagActive()) diagNote("sort-done", { mode: "new", ms: Date.now() - sortT0 }); }
   }
 
   function handleSort() {
+    if (diagActive()) diagNote("sort-run", { mode: sortMode, ...sortSizes() });
     playSortBeep();   // تأكيد صوتي إن الفرز بدأ (الفرز الكبير بياخد ثواني)
     setResults(null); setSorted(false); setTashyeekResults(null);
     wipeSortResults(sortMode); // امسح كاش الوضع الحالي بس — الوضع التاني يفضل بنتايجه

@@ -29,6 +29,8 @@ export const ISSUE_RETENTION_DAYS = 2;
  */
 export const ISSUE_MAX_UPLOADS_PER_DAY = 20;
 
+import { appAwaySince, onAppState, pageVisibility } from "./appForeground";
+
 const STATE_KEY = "ph:issues:state";
 const BUF_KEY = "ph:issues:buf";
 const UPLOADS_KEY = "ph:issues:uploads";
@@ -112,7 +114,8 @@ export function startIssueLog(
   started = true;
   const insert = opts.insert ?? defaultInsert;
   const path = () => { try { return location.pathname; } catch { return ""; } };
-  const vis = () => { try { return document.visibilityState; } catch { return "visible"; } };
+  // 📱 حالة التطبيق نفسه مش رأي الصفحة — أندرويد 1.8 والتسجيل في الخلفية بيقول للصفحة «ظاهرة» (`lib/appForeground.ts`)
+  const vis = () => pageVisibility();
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let flushing = false;
@@ -198,6 +201,12 @@ export function startIssueLog(
     lastTick = Date.now();
   };
   const onHide = () => saveState({ reload: true, vis: "hidden" });
+  // التطبيق راح الخلفية ⇒ قفل الأندرويد ليه بعدها مش «وقعة» · رجع ⇒ الفجوة دي مش «تهنيج»
+  const offApp = onAppState((active) => {
+    if (!active) { hiddenAt = Date.now(); saveState({ vis: "hidden" }); void flush(); }
+    else saveState();
+    lastTick = Date.now();
+  });
   window.addEventListener("error", onErr);
   window.addEventListener("unhandledrejection", onRej);
   window.addEventListener("pagehide", onHide);
@@ -208,7 +217,7 @@ export function startIssueLog(
     try {
       const n = Date.now();
       const gap = n - lastTick;
-      if (gap - TICK_MS >= FREEZE_MS && vis() === "visible" && !(hiddenAt >= lastTick)) record({ k: "freeze", ms: gap });
+      if (gap - TICK_MS >= FREEZE_MS && vis() === "visible" && !(hiddenAt >= lastTick) && !appAwaySince(lastTick)) record({ k: "freeze", ms: gap });
       lastTick = n;
       if (n - lastBeat >= BEAT_MS) { lastBeat = n; saveState(); }
     } catch { /* نسكت */ }
@@ -216,6 +225,7 @@ export function startIssueLog(
 
   return () => {
     clearInterval(tick);
+    offApp();
     if (flushTimer) clearTimeout(flushTimer);
     window.removeEventListener("error", onErr);
     window.removeEventListener("unhandledrejection", onRej);
