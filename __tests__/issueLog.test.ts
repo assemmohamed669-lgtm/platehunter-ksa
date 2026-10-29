@@ -102,6 +102,46 @@ describe("🧯 بيسجّل إيه", () => {
   });
 });
 
+/**
+ * 🎙️ أندرويد 1.8 والتسجيل شغّال في الخلفية: `MainActivity.keepWebViewRunning` بيقول للصفحة إنها **ظاهرة** وهي مش ظاهرة
+ * ⇒ وقفات الخلفية كانت بتتحسب «تهنيج» (~٦٠ث — ايهاب محمد ٢٩ أكتوبر) وقفل الأندرويد للتطبيق «وقعة». الحَكَم دلوقتي حالة
+ * التطبيق نفسه (`lib/appForeground.ts`) مش رأي الصفحة.
+ */
+describe("🎙️ التطبيق في الخلفية والصفحة فاكرة نفسها ظاهرة", () => {
+  it("وقفة المؤقّت والتطبيق في الخلفية (وعند الرجوع) ⇒ مش «freeze» — والتهنيج الحقيقي بعد الرجوع بيتسجّل", async () => {
+    const { startIssueLog, readIssueBuffer } = await load();
+    const fg = await import("@/lib/appForeground");
+    const stop = startIssueLog(UID, { isSuper: true, insert: vi.fn(async () => ({ error: null })) });
+    const freezes = () => (readIssueBuffer()?.events ?? []).filter((e) => e.k === "freeze");
+    await vi.advanceTimersByTimeAsync(2000);
+    fg.setAppActive(false);
+    vi.setSystemTime(Date.now() + 60_000);          // الأندرويد خنق المؤقّت في الخلفية
+    await vi.advanceTimersByTimeAsync(2000);
+    fg.setAppActive(true);
+    vi.setSystemTime(Date.now() + 30_000);          // الفجوة اللي فيها الرجوع
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(freezes()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2000);
+    vi.setSystemTime(Date.now() + 6000);            // تهنيج حقيقي والتطبيق قدامه
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(freezes().length).toBe(1);
+    stop();
+  });
+
+  it("الأندرويد قفل التطبيق وهو في الخلفية ⇒ الفتحة الجاية مش «crash»", async () => {
+    const first = await load();
+    const fg = await import("@/lib/appForeground");
+    const stop = first.startIssueLog(UID, { isSuper: true, insert: vi.fn(async () => ({ error: null })) });
+    fg.setAppActive(false);
+    stop();
+    vi.setSystemTime(Date.now() + 20_000);
+    const again = await load();
+    const stop2 = again.startIssueLog(UID, { isSuper: true, insert: vi.fn(async () => ({ error: null })) });
+    expect((again.readIssueBuffer()?.events ?? []).filter((e) => e.k === "crash")).toEqual([]);
+    stop2();
+  });
+});
+
 describe("☁️ الرفع", () => {
   it("بعد دقيقتين من أول مشكلة ⇒ صف واحد «issues» لليوم، والموبايل بيتفضى بعده", async () => {
     const { startIssueLog, readIssueBuffer } = await load();
