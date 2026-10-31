@@ -26,9 +26,10 @@ export const MJ_PAUSE_FOR_DELEGATES = true;
 
 /**
  * 🛣️ مربع «اسم الشارع» في المجمّع (المالك ٣١ أكتوبر ٢٠٢٦: «تضيف مربع المشترك يحط فيه اسم الشارع ودة يبقي عامود
- * لوحدو … يظهر قدام اللوحات بعد التفريغ»). السوبر أدمن الأول — الفتح للكل بعد تجربة المالك.
+ * لوحدو … يظهر قدام اللوحات بعد التفريغ»). 🟢 لكل اللي بيشوفوا «التسجيل» — المالك (٣١ أكتوبر): «يلا افتحه للكل»
+ * (كان السوبر أدمن الأول، #519). الرجوع = false.
  */
-export const MJ_STREET_FOR_DELEGATES = false;
+export const MJ_STREET_FOR_DELEGATES = true;
 
 export interface AccessProfile {
   is_super?: boolean | null;
