@@ -67,7 +67,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { authHeader } from "@/lib/authHeader";
 import { exportRecordingsToExcel, parseExcelFile, buildSpreadsheetBlob, openExcelBlob, toSafeCacheFilename, type ExcelTable } from "@/lib/excel";
 import dynamic from "next/dynamic";
-import { MJ_FLAG_COL, MJ_PAUSE_FOR_DELEGATES, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
+import { MJ_FLAG_COL, MJ_PAUSE_FOR_DELEGATES, MJ_STREET_FOR_DELEGATES, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
 import { loadAgentPreview, saveAgentPreview } from "@/lib/mujammaaPreview";
 import SharedCheckFileBox from "@/components/SharedCheckFileBox";
 import { saveMujammaaRecords } from "@/lib/mujammaaRecords";
@@ -3011,6 +3011,8 @@ export default function RegistrationPage() {
             onCheckInfo={setMjCheckInfo}
             // ⏸️ «وقف مؤقت» — السوبر أدمن الأول (حتى في «زي المندوب»)، والمناديب لما المالك يفتحه
             canPause={superOk || MJ_PAUSE_FOR_DELEGATES}
+            // 🛣️ مربع «اسم الشارع» (٣١ أكتوبر) — السوبر أدمن الأول (حتى في «زي المندوب»)
+            streetBox={superOk || MJ_STREET_FOR_DELEGATES}
             // 🎙️ يكمّل والمندوب في واتساب/الخريطة (أندرويد 1.8) — السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`)
             bgAllowed={superOk}
           />

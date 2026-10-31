@@ -24,6 +24,12 @@ export const MUJAMMAA_FOR_DELEGATES = true;
  */
 export const MJ_PAUSE_FOR_DELEGATES = true;
 
+/**
+ * 🛣️ مربع «اسم الشارع» في المجمّع (المالك ٣١ أكتوبر ٢٠٢٦: «تضيف مربع المشترك يحط فيه اسم الشارع ودة يبقي عامود
+ * لوحدو … يظهر قدام اللوحات بعد التفريغ»). السوبر أدمن الأول — الفتح للكل بعد تجربة المالك.
+ */
+export const MJ_STREET_FOR_DELEGATES = false;
+
 export interface AccessProfile {
   is_super?: boolean | null;
   voicex_enabled?: boolean | null;
