@@ -49,6 +49,7 @@ export default function MujammaaSection({
   onCheckInfo,
   canPause = false,
   bgAllowed = false,
+  streetBox = false,
 }: {
   agentName: string;
   /** بيسجّل أو بيقفل المقطع — «التسجيل» بتقفل المفتاح وقتها */
@@ -66,6 +67,8 @@ export default function MujammaaSection({
   canPause?: boolean;
   /** 🎙️ التسجيل يكمّل في الخلفية (أندرويد 1.8) — السوبر أدمن الأول */
   bgAllowed?: boolean;
+  /** 🛣️ مربع «اسم الشارع» (٣١ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_STREET_FOR_DELEGATES`) */
+  streetBox?: boolean;
 }) {
   const errorLog = useMemo(() => (sessionLog ??= new ErrorLog()), []);
   // المندوب بيكلّم السيرفر الأساسي دايماً — العنوان البديل (للتجربة) للسوبر أدمن بس
@@ -217,6 +220,7 @@ export default function MujammaaSection({
         onCheckInfo={onCheckInfo}
         canPause={canPause}
         bgAllowed={bgAllowed}
+        streetBox={streetBox}
       />
     </div>
   );

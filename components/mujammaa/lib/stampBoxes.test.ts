@@ -20,14 +20,14 @@ describe("joinNotes — الجراج + ملاحظة كوهير الاتنين", 
 describe("loadBoxes / saveBoxes — المكتوب يفضل لو البرنامج اتقفل", () => {
   beforeEach(() => localStorage.clear());
   it("بيتحفظ ويرجع — وفاضي لو مافيش", () => {
-    expect(loadBoxes()).toEqual({ district: "", recorder: "", garage: "" });
-    saveBoxes({ district: "النرجس", recorder: "عاصم", garage: "" });
+    expect(loadBoxes()).toEqual({ district: "", recorder: "", garage: "", street: "" });
+    saveBoxes({ district: "النرجس", recorder: "عاصم", garage: "", street: "" });
     expect(JSON.parse(localStorage.getItem(BOXES_KEY)!)).toMatchObject({ district: "النرجس" });
-    expect(loadBoxes()).toEqual({ district: "النرجس", recorder: "عاصم", garage: "" });
+    expect(loadBoxes()).toEqual({ district: "النرجس", recorder: "عاصم", garage: "", street: "" });
   });
   it("قيمة بايظة ⇒ فاضي", () => {
     localStorage.setItem(BOXES_KEY, "{not json");
-    expect(loadBoxes()).toEqual({ district: "", recorder: "", garage: "" });
+    expect(loadBoxes()).toEqual({ district: "", recorder: "", garage: "", street: "" });
   });
 });
 

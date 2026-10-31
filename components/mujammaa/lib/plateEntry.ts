@@ -125,6 +125,8 @@ export interface PlateEntry {
   note?: string;
   /** 🧾 «اسم المسجّل» من المربع لحظة النطق (١٨ أكتوبر ٢٠٢٦) — فاضي ⇒ عموده مايظهرش */
   recorderName?: string;
+  /** 🛣️ «اسم الشارع» من المربع لحظة النطق (٣١ أكتوبر ٢٠٢٦) — عمود لوحده؛ فاضي ⇒ عموده مايظهرش */
+  streetName?: string;
   /** 🏘️ «اسم الحي» جه من موقع اللوحة (المندوب ماكتبوش) — `components/mujammaa/lib/autoDistrict.ts` */
   neighborhoodAuto?: boolean;
   /**
@@ -334,6 +336,7 @@ export function makePlateEntry(input: {
   neighborhood?: string;
   note?: string;
   recorderName?: string;
+  streetName?: string;
 }): PlateEntry {
   idCounter += 1;
   return {
@@ -349,6 +352,7 @@ export function makePlateEntry(input: {
     neighborhood: input.neighborhood,
     note: input.note,
     ...(input.recorderName ? { recorderName: input.recorderName } : {}),
+    ...(input.streetName ? { streetName: input.streetName } : {}),
   };
 }
 
@@ -598,6 +602,7 @@ function toExportRow(
     // حقول المندوب — الاسم للقراءة السريعة، والإحداثيات تحت للدقة
     "نوع السيارة": entry.vehicleType ?? "",
     الحي: entry.neighborhood ?? "",
+    "اسم الشارع": entry.streetName ?? "",
     "ملاحظة المندوب": entry.note ?? "",
     "شيت البنك": matchLabel(match),
     "نسبة التطابق ٪": match.kind === "none" ? "" : String(match.similarity),

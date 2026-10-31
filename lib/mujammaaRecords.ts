@@ -18,6 +18,7 @@
 import type { FieldCheckEntry } from "@/lib/idb";
 import { toMapsLink } from "@/lib/gps";
 import { areaOf } from "@/lib/fieldCheckView";
+import { STREET_KEY } from "@/lib/streetName";
 import type { PlateEntry } from "@/components/mujammaa/lib/plateEntry";
 import type { BankSheet } from "@/components/mujammaa/lib/bankSheet";
 
@@ -65,6 +66,8 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
   put("ملاحظة المندوب", entry.note);
   // 🏘️ «اسم الحي» في عمود لوحده (المالك ١٨ أكتوبر) — اللي المندوب كتبه، وإلا من موقع اللوحة
   put(MUJAMMAA_DISTRICT_KEY, entry.neighborhood);
+  // 🛣️ «اسم الشارع» (المالك ٣١ أكتوبر) — نفس عمود التشييك (`lib/streetName.ts`) ⇒ السجلات والفرز يقروه زي بعض
+  put(STREET_KEY, entry.streetName);
   if (entry.match?.kind === "exact") row["مطلوبة"] = "نعم";
   row["الحالة"] = entry.review.status === "solid" ? "مؤكّدة" : "محتاجة نظرة";
   const pin = entry.pin;
@@ -76,9 +79,9 @@ export function mujammaaRecordOf(entry: PlateEntry, ctx: MujammaaRecordCtx): Fie
   const sheetRow = entry.match?.kind === "exact" ? entry.match.row : undefined;
   if (ctx.sheet && sheetRow) {
     for (const h of ctx.sheet.headers) {
-      // ⛔ و«اسم الحي»/«اسم المسجّل» بتوع الملف (عنوان صاحب العربية عند البنك) مايبانوش كأنهم كلام المندوب
+      // ⛔ و«اسم الحي»/«اسم المسجّل»/«اسم الشارع» بتوع الملف (عنوان صاحب العربية عند البنك) مايبانوش كأنهم كلام المندوب
       if (h === ctx.sheet.plateColumn || h in row || /ملاح/.test(h) || h === "النوع"
-        || h === MUJAMMAA_DISTRICT_KEY || h === "اسم المسجّل") continue;
+        || h === MUJAMMAA_DISTRICT_KEY || h === "اسم المسجّل" || h === STREET_KEY) continue;
       put(h, sheetRow[h]);
     }
   }

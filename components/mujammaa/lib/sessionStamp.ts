@@ -33,10 +33,12 @@ export interface Stamp {
   type: string | null;
   /** «اسم المسجّل» (١٨ أكتوبر ٢٠٢٦) */
   recorder: string | null;
+  /** 🛣️ «اسم الشارع» — عمود لوحده (المالك ٣١ أكتوبر ٢٠٢٦) */
+  streetName: string | null;
 }
 
 /** المربعات اللي بتتكتب حرف حرف (`typeInto`) */
-export type StampField = "street" | "note" | "recorder";
+export type StampField = "street" | "note" | "recorder" | "streetName";
 
 /** كتابة متتالية في نفس المربع بفواصل أقل من كده = تعديل واحد من أول حرف */
 export const STAMP_TYPING_BURST_MS = 2000;
@@ -47,6 +49,7 @@ export interface SessionStampJSON {
   notes: StampEdit[];
   types?: StampEdit[];
   recorders?: StampEdit[];
+  streetNames?: StampEdit[];
 }
 
 export interface SessionStampOptions {
@@ -59,6 +62,7 @@ export class SessionStamp {
   private notes: StampEdit[] = [];
   private types: StampEdit[] = [];
   private recorders: StampEdit[] = [];
+  private streetNames: StampEdit[] = [];
   /** آخر حرف اتكتب في كل مربع (للدمج — مابيتحفظش) */
   private lastKey: Partial<Record<StampField, number>> = {};
   private startedAt: number;
@@ -83,6 +87,12 @@ export class SessionStamp {
     delete this.lastKey.recorder;
   }
 
+  /** 🛣️ «اسم الشارع» — ساري على اللوحات اللي بعده لحد ما يتغيّر أو يتمسح */
+  setStreetName(value: string, tMs: number): void {
+    this.streetNames.push({ tMs, value });
+    delete this.lastKey.streetName;
+  }
+
   /**
    * ⌨️ المندوب بيكتب **حرف حرف** — كل حرف كان بيبقى تعديل لوحده، فاللوحة اللي اتقالت وهو بيكتب كانت بتاخد
    * «اول جر». دلوقتي: حروف ورا بعض (أقل من `STAMP_TYPING_BURST_MS` بين كل حرف والتاني) = **تعديل واحد
@@ -100,7 +110,8 @@ export class SessionStamp {
   }
 
   private listOf(field: StampField): StampEdit[] {
-    return field === "street" ? this.streets : field === "note" ? this.notes : this.recorders;
+    return field === "street" ? this.streets : field === "note" ? this.notes
+      : field === "streetName" ? this.streetNames : this.recorders;
   }
 
   /**
@@ -118,6 +129,7 @@ export class SessionStamp {
       note: pick(this.notes, tMs),
       type: pick(this.types, tMs),
       recorder: pick(this.recorders, tMs),
+      streetName: pick(this.streetNames, tMs),
     };
   }
 
@@ -133,6 +145,7 @@ export class SessionStamp {
       notes: this.notes.slice(),
       types: this.types.slice(),
       recorders: this.recorders.slice(),
+      streetNames: this.streetNames.slice(),
     };
   }
 
@@ -142,6 +155,7 @@ export class SessionStamp {
     s.notes = (j.notes ?? []).slice();
     s.types = (j.types ?? []).slice();   // ?? عشان الجلسات المحفوظة قبل النوع
     s.recorders = (j.recorders ?? []).slice();   // الجلسات المحفوظة قبل ١٨ أكتوبر
+    s.streetNames = (j.streetNames ?? []).slice();   // المقاطع المحفوظة قبل «اسم الشارع» (٣١ أكتوبر)
     return s;
   }
 }

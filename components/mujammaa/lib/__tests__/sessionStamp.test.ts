@@ -72,7 +72,7 @@ describe("SessionStamp", () => {
     s.setStreet("شارع", 0);
     s.setNote("ملاحظة", 1_000);
     const back = SessionStamp.fromJSON(JSON.parse(JSON.stringify(s.toJSON())));
-    expect(back.at(2_000)).toEqual({ street: "شارع", note: "ملاحظة", type: null, recorder: null });
+    expect(back.at(2_000)).toEqual({ street: "شارع", note: "ملاحظة", type: null, recorder: null, streetName: null });
   });
 });
 

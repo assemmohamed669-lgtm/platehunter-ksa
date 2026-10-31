@@ -13,8 +13,8 @@ const SRC = readFileSync(fileURLToPath(new URL("../BatchPage.tsx", import.meta.u
 const TABLE = readFileSync(fileURLToPath(new URL("../../components/PlateTable.tsx", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
 describe("المربعات", () => {
-  it("التلاتة بالأسامي دي — والنوع اتشال (بيجي من الصوت أو من الجدول)", () => {
-    expect(SRC).toMatch(/\["district", "street", "اسم الحي"\],\s*\["recorder", "recorder", "اسم المسجّل"\],\s*\["garage", "note", "اسم أو رقم الجراج"\],/);
+  it("التلاتة بالأسامي دي (+ «اسم الشارع» ٣١ أكتوبر للي مسموحله) — والنوع اتشال (بيجي من الصوت أو من الجدول)", () => {
+    expect(SRC).toMatch(/\["district", "street", "اسم الحي"\],\s*(?:\/\/[^\n]*\n\s*)?\["street", "streetName", "اسم الشارع"\],\s*\["recorder", "recorder", "اسم المسجّل"\],\s*\["garage", "note", "اسم أو رقم الجراج"\],/);
     expect(SRC).toMatch(/placeholder=\{label\}/);
     expect(SRC).not.toMatch(/placeholder="اسم الشارع"/);
     expect(SRC).not.toMatch(/<option value="">النوع \(اختياري\)<\/option>/);
@@ -28,7 +28,7 @@ describe("المربعات", () => {
     expect(SRC).toMatch(/stampRef\.current\.setRecorder\("", elapsedMsRef\.current\(\)\)/);
     expect(SRC).toMatch(/stampRef\.current\.setNote\("", elapsedMsRef\.current\(\)\)/);
     // زرار «مسح» فوق كل مربع (جوّه نفس اللفّة على التلاتة)، ومقفول لو المربع فاضي
-    expect(SRC).toMatch(/disabled=\{!boxes\[k\]\}[\s\S]{0,600}?>\s*مسح\s*</);
+    expect(SRC).toMatch(/disabled=\{!boxes\[k\]\}[\s\S]{0,800}?>\s*مسح\s*</);
   });
 
   it("🔴 الوقت من لحظة ما الميك اشتغل فعلاً (نفس ساعة اللوحات) — مش من دوسة «سجّل»", () => {

@@ -11,9 +11,11 @@ export interface StampBoxes {
   district: string;
   recorder: string;
   garage: string;
+  /** 🛣️ «اسم الشارع» (٣١ أكتوبر ٢٠٢٦) */
+  street: string;
 }
 
-const EMPTY: StampBoxes = { district: "", recorder: "", garage: "" };
+const EMPTY: StampBoxes = { district: "", recorder: "", garage: "", street: "" };
 
 /** المكتوب في المربعات بيفضل لو البرنامج اتقفل واتفتح (الآيفون بيقفله كتير) */
 export function loadBoxes(): StampBoxes {
@@ -24,6 +26,7 @@ export function loadBoxes(): StampBoxes {
       district: typeof v.district === "string" ? v.district : "",
       recorder: typeof v.recorder === "string" ? v.recorder : "",
       garage: typeof v.garage === "string" ? v.garage : "",
+      street: typeof v.street === "string" ? v.street : "",
     };
   } catch {
     return { ...EMPTY };

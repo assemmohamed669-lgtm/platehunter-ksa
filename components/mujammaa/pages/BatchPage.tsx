@@ -490,6 +490,7 @@ export default function BatchPage({
   onCheckInfo,
   canPause = false,
   bgAllowed = false,
+  streetBox = false,
 }: {
   errorLog: ErrorLog;
   /** false = وضع المندوب النظيف (بلا شرح/اختيار محركات/خانات مفاتيح) */
@@ -532,6 +533,8 @@ export default function BatchPage({
    * السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`).
    */
   bgAllowed?: boolean;
+  /** 🛣️ مربع «اسم الشارع» (المالك ٣١ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_STREET_FOR_DELEGATES`) */
+  streetBox?: boolean;
 }) {
   const bank = useAppCheckSheet(errorLog);
   const gps = useGps(visible);
@@ -1394,6 +1397,7 @@ export default function BatchPage({
     if (boxes.district.trim()) stampRef.current.setStreet(boxes.district, 0);
     if (boxes.recorder.trim()) stampRef.current.setRecorder(boxes.recorder, 0);
     if (boxes.garage.trim()) stampRef.current.setNote(boxes.garage, 0);
+    if (streetBox && boxes.street.trim()) stampRef.current.setStreetName(boxes.street, 0);
     recStartRef.current = Date.now();
     setSource("record");
     setPlayback(null);
@@ -1710,6 +1714,7 @@ export default function BatchPage({
         note: stamp.note ?? undefined,
         neighborhood: stamp.street ?? undefined,
         recorderName: stamp.recorder ?? undefined,
+        streetName: stamp.streetName ?? undefined,
       });
     },
     // 🧮 الملف من `sheetRef` (آخر نسخة) — مش من الـclosure
@@ -2906,14 +2911,16 @@ export default function BatchPage({
           🔴 الختم بلحظة **نطق** اللوحة — التفريغ بيمشي وراه، فلو اتحسب وقته
           كانت اللوحة تاخد شارع غلط.
         */}
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className={`mt-3 grid grid-cols-1 gap-2 ${streetBox ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
           {(
             [
               ["district", "street", "اسم الحي"],
+              // 🛣️ «اسم الشارع» — عمود لوحده (المالك ٣١ أكتوبر) · السوبر أدمن الأول
+              ["street", "streetName", "اسم الشارع"],
               ["recorder", "recorder", "اسم المسجّل"],
               ["garage", "note", "اسم أو رقم الجراج"],
             ] as const
-          ).map(([k, field, label]) => (
+          ).filter(([k]) => k !== "street" || streetBox).map(([k, field, label]) => (
             <div key={k} className="flex flex-col gap-1">
               <div className="flex items-center justify-between px-0.5 text-[11px] text-slate-400">
                 <span>{label}</span>
@@ -2925,6 +2932,7 @@ export default function BatchPage({
                     setBox(k, "");
                     if (field === "street") stampRef.current.setStreet("", elapsedMsRef.current());
                     else if (field === "recorder") stampRef.current.setRecorder("", elapsedMsRef.current());
+                    else if (field === "streetName") stampRef.current.setStreetName("", elapsedMsRef.current());
                     else stampRef.current.setNote("", elapsedMsRef.current());
                   }}
                   className="rounded-md px-2 py-0.5 font-bold text-rose-300 disabled:opacity-30"
@@ -2941,6 +2949,7 @@ export default function BatchPage({
                   setBox(k, v);
                   if (field === "street") stampRef.current.typeInto("street", v, elapsedMsRef.current());
                   else if (field === "recorder") stampRef.current.typeInto("recorder", v, elapsedMsRef.current());
+                  else if (field === "streetName") stampRef.current.typeInto("streetName", v, elapsedMsRef.current());
                   else stampRef.current.typeInto("note", v, elapsedMsRef.current());
                 }}
               />
