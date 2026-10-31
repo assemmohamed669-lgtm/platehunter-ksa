@@ -121,8 +121,8 @@ describe("🛣️ الربط في الصفحة — السوبر أدمن الأ�
   const PAGE = read("components/mujammaa/pages/BatchPage.tsx");
   const SECTION = read("components/mujammaa/MujammaaSection.tsx");
   const REG = read("app/(app)/registration/page.tsx");
-  it("مقفول على المناديب لحد تجربة المالك", () => {
-    expect(MJ_STREET_FOR_DELEGATES).toBe(false);
+  it("لكل اللي بيشوفوا «التسجيل» — المالك ٣١ أكتوبر: «يلا افتحه للكل»", () => {
+    expect(MJ_STREET_FOR_DELEGATES).toBe(true);
     expect(REG).toContain("streetBox={superOk || MJ_STREET_FOR_DELEGATES}");
     expect(SECTION).toContain("streetBox={streetBox}");
     expect(PAGE).toContain("streetBox = false,");
