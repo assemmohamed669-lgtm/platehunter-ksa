@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { VOICEPRO_RESILIENCE_FOR_ALL, fatalText } from "@/lib/voiceProSmooth";
+import { DIAG_AGENT_IDS } from "@/lib/deviceDiag";
 
 const src = readFileSync(join(process.cwd(), "app/(app)/registration-v2/page.tsx"), "utf8").replace(/\r\n/g, "\n");
 const instant = readFileSync(join(process.cwd(), "app/(app)/instant-check/page.tsx"), "utf8");
@@ -40,6 +41,10 @@ describe("للكل", () => {
   it("الوقف (بعد ٣ دقايق) بالسبب الحقيقي — مش «دوس أعِد الفحص» (زرار مش ظاهر للمناديب)", () => {
     expect(fatalText("net_lost", true)).toMatch(/النت مقطوع/);
     expect(fatalText("net_lost", true)).not.toMatch(/أعِد الفحص/);
+  });
+
+  it("🩺 محمد حسين على الصندوق الكامل + مراقبة Voice PRO (عشان المرة الجاية نشوف كل طلب بكوده)", () => {
+    expect(DIAG_AGENT_IDS).toContain("e94eebbb-5375-4445-b74c-15b7b775e85e");
   });
 
   it("«صوتي» (التشييك) زي ما هي", () => {
