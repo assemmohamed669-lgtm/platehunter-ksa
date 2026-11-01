@@ -106,7 +106,7 @@ import { loadChassisMap, quickChassisMap, type LoadChassisOptions } from "@/lib/
  * `lib/voiceProSmooth.ts` و`__tests__/voiceProSmoothWiring.test.ts`.
  */
 import {
-  weakNetBanner, createOutageClock, isRequestFailSkip, fatalText, createSessionGate, reachabilityCheck, levelThrottle, createLevelStore, createThrottle,
+  weakNetBanner, createOutageClock, isRequestFailSkip, fatalText, VOICEPRO_RESILIENCE_FOR_ALL, createSessionGate, reachabilityCheck, levelThrottle, createLevelStore, createThrottle,
   exportProgressText, EXPORT_PROGRESS_GAP_MS, formatRowTime, createLatestJobs,
   mapInChunks, withinMs, CHASSIS_EXPORT_WAIT_MS, CHASSIS_WAIT_TEXT, CHASSIS_MISSING_NOTE,
   type LevelStore, type LatestJobs,
@@ -1364,14 +1364,16 @@ export default function RegistrationV2Page() {
      * `live()` دايماً `true` ⇒ زي النهارده بالحرف.
      */
     const sup = isSuper;
+    // 📶🔌 النت الضعيف / السيرفر مابيردش ⇒ انتظار بدل الوقف + حارس الجلسة — للكل من ١ نوفمبر (`VOICEPRO_RESILIENCE_FOR_ALL`)
+    const resil = sup || VOICEPRO_RESILIENCE_FOR_ALL;
     const sid = sessionRef.current.begin();
-    const live = () => !sup || sessionRef.current.isCurrent(sid);
+    const live = () => !resil || sessionRef.current.isCurrent(sid);
     /**
      * 📶 (السوبر أدمن) **بداية الانقطاع الفعلية** لشريط النت الضعيف — أول طلب
      * فشل بعد آخر رد ناجح. «ضعيف» بييجي بعدها بـ~٣٠ث (الفشل الـ٨)، والصوت
      * الفايت بيعيش ٧٥ث من لحظة ما اتقال — فالشريط بيتحسب من هنا. المناديب: `null`.
      */
-    const outage = sup ? createOutageClock() : null;
+    const outage = resil ? createOutageClock() : null;
     // 🔄 من اللحظة دي التحديث التلقائي بيستنى — لحد آخر خطوة في الإيقاف
     recReleaseRef.current?.();
     recReleaseRef.current = holdRef.current!.hold();
@@ -1430,7 +1432,7 @@ export default function RegistrationV2Page() {
          * بعض) وبيهدّي الشغل بدل ما يقفل التسجيل. شوف `netResilience`.
          * المناديب: الخيارات من غيره بالحرف.
          */
-        ...(sup ? {
+        ...(resil ? {
           netResilience: true,
           onWeakNet: (weak: boolean) => {
             if (!live()) return;
@@ -1452,7 +1454,7 @@ export default function RegistrationV2Page() {
          * بيكمّل، المحرّك بيعيد المحاولة ويرجّع الفايت، والشريط بيقول «السيرفر مش بيرد».
          * ٣ دقايق متواصلة ⇒ نفس الوقوع. شوف `outageResilience`. المناديب: الخيارات من غيره بالحرف.
          */
-        ...(sup ? {
+        ...(resil ? {
           outageResilience: true,
           onWaitReason: (kind: "net" | "server") => {
             if (!live()) return;
@@ -1742,7 +1744,7 @@ export default function RegistrationV2Page() {
            * السيرفر مش بيرد (بالكود)، الدخول اترفض، رد مش مفهوم، وأي سبب تاني
            * بكوده (`fatalText` في `lib/voiceProSmooth.ts`).
            */
-          setError(fatalText(reason, sup, code));
+          setError(fatalText(reason, resil, code));
         },
       });
       if (!ctrl) {
@@ -2304,7 +2306,7 @@ export default function RegistrationV2Page() {
    * فسطر «عيدها لما النت يرجع» بيظهر لوحده لما الانقطاع يعدّي ٧٥ث (عمر الصوت الفايت
    * في الذاكرة — `REPLAY_MAX_AGE_SEC` في `lib/voicexReplay.ts`).
    */
-  const weakBanner = isSuper ? weakNetBanner(weakSince, Date.now(), waitKind) : null;
+  const weakBanner = (isSuper || VOICEPRO_RESILIENCE_FOR_ALL) ? weakNetBanner(weakSince, Date.now(), waitKind) : null;
   /** 🔒 تصدير السوبر أدمن شغّال ⇒ التعديل والمسح مقفولين (المناديب: دايماً false). */
   const rowsLocked = isSuper && rowsLockedState;
 

@@ -31,21 +31,21 @@ describe("الحارس بيقيس المكان الصح", () => {
   });
 });
 
-describe("① 📶 النت الضعيف — للسوبر أدمن بس", () => {
+describe("① 📶 النت الضعيف — السوبر أدمن الأول، وللكل من ١ نوفمبر (`resil` — `__tests__/voiceProResilienceForAll.test.ts`)", () => {
   it("العلم بيتبعت جوّه فرع sup بس (المناديب: نفس الخيارات بالحرف)", () => {
     expect(startFn).toMatch(/const sup = isSuper;/);
-    expect(startFn).toMatch(/\.\.\.\(sup \? \{[\s\S]{0,400}?netResilience: true,[\s\S]{0,400}?onWeakNet: /);
+    expect(startFn).toMatch(/\.\.\.\(resil \? \{[\s\S]{0,400}?netResilience: true,[\s\S]{0,400}?onWeakNet: /);
     // الخيار نفسه (مش التعليقات) مكتوب مرة واحدة بس — جوّه فرع sup
     expect(src.match(/netResilience:/g)?.length).toBe(1);
   });
   it("الشريط من weakNetBanner وللسوبر أدمن بس، وبيتشال في البداية والإيقاف", () => {
-    expect(src).toMatch(/isSuper \? weakNetBanner\(weakSince, Date\.now\(\), waitKind\) : null/);
+    expect(src).toMatch(/\(isSuper \|\| VOICEPRO_RESILIENCE_FOR_ALL\) \? weakNetBanner\(weakSince, Date\.now\(\), waitKind\) : null/);
     expect(startFn).toMatch(/setWeakSince\(null\)/);
     expect(stopFn).toMatch(/setWeakSince\(null\)/);
   });
   it("🔴 الشريط بيتحسب من **بداية الانقطاع** (أول طلب فشل بعد آخر رد ناجح) — مش لحظة «ضعيف»", () => {
     // ساعة الانقطاع لكل جلسة، للسوبر أدمن بس (المناديب: null ⇒ ولا نداء بيعمل حاجة)
-    expect(startFn).toMatch(/const outage = sup \? createOutageClock\(\) : null;/);
+    expect(startFn).toMatch(/const outage = resil \? createOutageClock\(\) : null;/);
     expect(startFn.match(/createOutageClock\(/g)?.length).toBe(1);
     // الطلب الفاشل بيبدأها، وأي رد ناجح (onRead) بينهيها
     expect(startFn).toMatch(/onSkip: \(reason: string\) => \{ if \(outage && isRequestFailSkip\(reason\)\) outage\.fail\(Date\.now\(\)\); tel\?\.skip\(reason\); setSkips\(/);
@@ -63,7 +63,7 @@ describe("① 📶 النت الضعيف — للسوبر أدمن بس", () => 
     // نفس العنوان اللي `transcribeUrl` مبني منه — مش سيرفر تاني
     expect(startFn).toMatch(/transcribeUrl: modelUrl\.trim\(\)\.replace\(\/\\\/\+\$\/, ""\) \+ "\/transcribe",/);
     expect(startFn).toMatch(
-      /\.\.\.\(sup \? \{\s*netResilience: true,[\s\S]{0,600}?checkReachable: reachabilityCheck\(modelUrl\.trim\(\)\.replace\(\/\\\/\+\$\/, ""\) \+ "\/health"\),\s*\} : \{\}\),/,
+      /\.\.\.\(resil \? \{\s*netResilience: true,[\s\S]{0,600}?checkReachable: reachabilityCheck\(modelUrl\.trim\(\)\.replace\(\/\\\/\+\$\/, ""\) \+ "\/health"\),\s*\} : \{\}\),/,
     );
     // الخيار نفسه مكتوب مرة واحدة بس (المناديب: الخيارات من غيره بالحرف)
     expect(src.match(/checkReachable:/g)?.length).toBe(1);
@@ -73,7 +73,7 @@ describe("① 📶 النت الضعيف — للسوبر أدمن بس", () => 
 
 describe("①ب 🔌 انقطاع السيرفر/النفق ⇒ انتظار بدل الوقوع — للسوبر أدمن بس (١٥ أكتوبر)", () => {
   it("العلم بيتبعت جوّه فرع sup لوحده (المناديب: نفس الخيارات بالحرف)", () => {
-    expect(startFn).toMatch(/\.\.\.\(sup \? \{\s*outageResilience: true,\s*onWaitReason: \(kind: "net" \| "server"\) => \{\s*if \(!live\(\)\) return;\s*tel\?\.event\("wait_reason", \{ kind \}\);\s*setWaitKind\(kind\);\s*\},\s*\} : \{\}\),/);
+    expect(startFn).toMatch(/\.\.\.\(resil \? \{\s*outageResilience: true,\s*onWaitReason: \(kind: "net" \| "server"\) => \{\s*if \(!live\(\)\) return;\s*tel\?\.event\("wait_reason", \{ kind \}\);\s*setWaitKind\(kind\);\s*\},\s*\} : \{\}\),/);
     expect(src.match(/outageResilience:/g)?.length).toBe(1);
     expect(src.match(/onWaitReason:/g)?.length).toBe(1);
   });
@@ -90,7 +90,7 @@ describe("①ب 🔌 انقطاع السيرفر/النفق ⇒ انتظار ب�
 describe("② 🔒 جلسة قديمة ماتوقّفش جلسة أحدث — للسوبر أدمن", () => {
   it("كل بداية ليها رقم، والإيقاف بيقفله", () => {
     expect(startFn).toMatch(/const sid = sessionRef\.current\.begin\(\);/);
-    expect(startFn).toMatch(/const live = \(\) => !sup \|\| sessionRef\.current\.isCurrent\(sid\);/);
+    expect(startFn).toMatch(/const live = \(\) => !resil \|\| sessionRef\.current\.isCurrent\(sid\);/);
     expect(stopFn).toMatch(/sessionRef\.current\.end\(\);/);
   });
   it("كل نداء بيوقّف التسجيل بيتجاهل لو مش من الجلسة الحالية", () => {
@@ -99,7 +99,7 @@ describe("② 🔒 جلسة قديمة ماتوقّفش جلسة أحدث — ل
     expect(startFn).toMatch(/onWeakNet: \(weak: boolean\) => \{\s*if \(!live\(\)\) return;/);
   });
   it("نص الوقوع من fatalText بالكود (المناديب: النص القديم لأي كود — مثبّت في voiceProSmooth.test)", () => {
-    expect(startFn).toMatch(/setError\(fatalText\(reason, sup, code\)\);/);
+    expect(startFn).toMatch(/setError\(fatalText\(reason, resil, code\)\);/);
     expect(startFn).not.toMatch(/setError\(fatalText\(reason, sup\)\);/);
     expect(src).not.toMatch(/"السيرفر فصل وسط التسجيل/);
   });
