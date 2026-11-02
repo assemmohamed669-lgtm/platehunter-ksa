@@ -2151,6 +2151,38 @@ export function detectArabicPlateColumn(headers: string[]): string | null {
 }
 
 /**
+ * 🧭 عمود اللوحة العربي للإحالة — **بالاسم** (`detectArabicPlateColumn`) وإلا بالمحتوى، زي الأول بالحرف، ماعدا حالة
+ * واحدة: العمود اللي اسمه «لوحة» **مفيهوش ولا لوحة** (ولا خلية فيها حروف وأرقام مع بعض) وفيه عمود عربي تاني مليان
+ * لوحات ⇒ التاني.
+ *
+ * المالك (٢ نوفمبر ٢٠٢٦، «سحب مباشر.xlsx»): «لما المندوب … يحطها في خانه الاحاله مش بيطلع معاه لوحات ولما بياخدهم لصق
+ * نصي بيطلع». صف العناوين ١٧ عمود والصفوف ٢٥ قيمة ⇒ «رقم اللوحة» فيه «943630120» واللوحات («ر ل ه 2478») تحت «الطراز».
+ *
+ * ⚠️ مش توسيع لكشف المحتوى (#407): العمود البديل بييجي من `detectArabicPlateColumnByContent` زي ما هي. والحكم إن عمود
+ * الاسم «فاضي من اللوحات» متساهل بالقصد (أي حروف + أرقام = لوحة، فـ«ي ه ل 76» القصيرة بتتعدّ) ومحتاج ٥ خلايا على الأقل.
+ */
+export function pickArabicPlateColumn(headers: string[], rows: Record<string, string>[]): string | null {
+  const byName = detectArabicPlateColumn(headers);
+  if (!byName) return detectArabicPlateColumnByContent(headers, rows);
+  if (!columnLacksPlates(rows, byName)) return byName;
+  const byContent = detectArabicPlateColumnByContent(headers, rows);
+  return byContent ?? byName;
+}
+
+/** العمود مفيهوش لوحات خالص؟ (٥ خلايا على الأقل، وأقل من ٥٪ فيها حروف وأرقام مع بعض) */
+function columnLacksPlates(rows: Record<string, string>[], col: string, sampleSize = 200): boolean {
+  let nonEmpty = 0;
+  let plateish = 0;
+  for (const row of rows.slice(0, sampleSize)) {
+    const v = String(row[col] ?? "").trim();
+    if (!v) continue;
+    nonEmpty++;
+    if (/[؀-ۿa-zA-Z]/.test(v) && /[0-9٠-٩]/.test(v)) plateish++;
+  }
+  return nonEmpty >= 5 && plateish / nonEmpty < 0.05;
+}
+
+/**
  * أفضل عمود لوحاته **عربية** (حروفها عربي أكتر من لاتيني) بالمحتوى — أو null لو
  * مفيش عمود عربي واضح فوق العتبة. بيُستخدم للإحالة عشان نفضّل العمود العربي حتى
  * في ملف **مالوش صف عناوين** (detectArabicPlateColumn بيعتمد على اسم الهيدر

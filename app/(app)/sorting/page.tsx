@@ -14,7 +14,7 @@ import { parseExcelFile,
   openExcelBlob, shareExcelBlob, buildRowSummaryText, readAllSheetsRaw, readSheetNames,
 } from "@/lib/excel";
 import {
-  detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, detectArabicPlateColumnByContent, bankPlateToArabic, normalizePlate, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
+  detectPlateColumn, detectPlateColumnByContent, detectArabicPlateColumn, pickArabicPlateColumn, bankPlateToArabic, normalizePlate, matchTokensAgainstRows, tokenizePastedPlates, collectReferralEntries, type ReferralSource, type MatchResult, type TokenMatch,
 } from "@/lib/plateParser";
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
@@ -1064,7 +1064,8 @@ export default function SortingPage() {
   // نفضّل العمود العربي دايمًا — بالهيدر الأول، وبعدين بالمحتوى (للملفات اللي
   // مالهاش صف عناوين). الإنجليزي/البنكي بس لو مفيش عمود عربي خالص.
   const referralArabicPlateCol = referralTable
-    ? (detectArabicPlateColumn(referralTable.headers) ?? detectArabicPlateColumnByContent(referralTable.headers, referralTable.rows))
+    // 🧭 عمود اسمه «لوحة» ومفيهوش لوحات (عناوين مزحلقة — «سحب مباشر» ٢ نوفمبر) ⇒ العمود اللي فيه اللوحات (`pickArabicPlateColumn`)
+    ? pickArabicPlateColumn(referralTable.headers, referralTable.rows)
     : null;
   const referralPlateCol = referralArabicPlateCol ?? (referralTable ? detectPlateColumn(referralTable.headers, referralTable.rows) : null);
   // عدد **اللوحات** اللي البرنامج بيقراها من ورقة الإحالة — بيشمل الجداول
@@ -1325,7 +1326,7 @@ export default function SortingPage() {
     }
     for (const er of extraReferrals) {
       if (!er.table) continue;
-      const erPlate = detectArabicPlateColumn(er.table.headers) ?? detectArabicPlateColumnByContent(er.table.headers, er.table.rows) ?? detectPlateColumn(er.table.headers, er.table.rows);
+      const erPlate = pickArabicPlateColumn(er.table.headers, er.table.rows) ?? detectPlateColumn(er.table.headers, er.table.rows);
       sources.push({ kind: "referral", headers: er.table.headers, rows: er.table.rows, plateCol: erPlate });
     }
     const fixedRaw = resolveMergedResultColumns(sources);
@@ -2431,7 +2432,7 @@ export default function SortingPage() {
           continue;
         }
         // نفضّل العمود العربي (بالهيدر ثم بالمحتوى) — الإنجليزي بس لو مفيش عربي.
-        const arabicCol = detectArabicPlateColumn(s.headers) ?? detectArabicPlateColumnByContent(s.headers, s.rows);
+        const arabicCol = pickArabicPlateColumn(s.headers, s.rows);
         srcs.push({
           rows: s.rows,
           plateCol: arabicCol ?? s.headers[s.plateCol],
