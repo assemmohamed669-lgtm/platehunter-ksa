@@ -21,7 +21,7 @@ export function baseHeaderName(name: string): string {
 
 import {
   detectPlateColumn, detectPlateColumnByContent,
-  detectArabicPlateColumn, detectArabicPlateColumnByContent,
+  pickArabicPlateColumn, detectArabicPlateColumnByContent,
 } from "./plateParser";
 
 export interface SplitTable {
@@ -113,7 +113,8 @@ export function referralBlocks(
     detectPlateColumnByContent(h, r, 50, 0.5) !== null;
   const blocks = splitSideBySideTables(headers, rows, hasPlates) ?? [{ headers, rows }];
   return blocks.map((b) => {
-    const ar = detectArabicPlateColumn(b.headers) ?? detectArabicPlateColumnByContent(b.headers, b.rows);
+    // 🧭 عمود اسمه «لوحة» ومفيهوش لوحات ⇒ العمود اللي فيه اللوحات (`pickArabicPlateColumn` — «سحب مباشر» ٢ نوفمبر)
+    const ar = pickArabicPlateColumn(b.headers, b.rows);
     return {
       headers: b.headers,
       rows: b.rows,
