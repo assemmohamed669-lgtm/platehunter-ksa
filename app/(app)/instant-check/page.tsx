@@ -12,12 +12,12 @@ import { onUserCheckChanged } from "@/lib/appCheck";
 import AppCheckBadge from "@/components/AppCheckBadge";
 import AppCheckReportCard from "@/components/AppCheckReportCard";
 import { saveUploadedFile, getUploadedFile, deleteUploadedFile, type UploadedFileRecord, type FieldCheckEntry, saveFieldCheckEntry, getAllFieldCheckEntries, deleteFieldCheckEntry, deleteFieldCheckEntries } from "@/lib/idb";
-import { type ExcelTable, buildExcelBlob, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
+import { type ExcelTable, buildExcelBlob, buildSortBlobBestEffort, openExcelBlob, shareExcelBlob, readAllSheets } from "@/lib/excel";
 import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTranscript, pickBestHypothesis, similarityPercent, isStandardPlate, EN_TO_AR, mapEgyptianSpeech, extractVehicleType, deserializeLetterConfusions, deserializeWordBlend, plateNeedsReview, isValidManualPlate, type LetterConfusionMap, type WordBlendMap } from "@/lib/plateParser";
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis, searchChassisBySuffix, type ChassisMatch } from "@/lib/chassis";
 import { ocrFailureHint } from "@/lib/ocrHint";
-import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, chassisSheetRows, CHASSIS_EXCEL_FOR_ALL, type ChassisRecord } from "@/lib/chassisRecords";
+import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, chassisSheetRows, chassisShareName, CHASSIS_EXCEL_FOR_ALL, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import CertificateBadge from "@/components/CertificateBadge";
@@ -2985,13 +2985,14 @@ export default function InstantCheckPage() {
   }
 
   // 📊 مشاركة شيت رقم الشاص إكسيل — الشاص أول عمود (مكان «رقم اللوحة») وبعده النوع/الحي/ملاحظات/GPS/التاريخ.
+  // من غير الأعمدة الفاضية، والخط البولد الكبير + كل شاص متكرر بلون (نفس إكسيل الفرز)، والاسم بوقت المشاركة.
   async function shareChassisExcel() {
     const recs = getChassisRecords();
     if (!recs.length) { alert("مفيش سجلات شاصي بعد."); return; }
     await runShare("chassis", async () => {
-      const { rows, headers } = chassisSheetRows(recs, formatDate);
-      const blob = buildExcelBlob(rows, "شيت رقم الشاص", undefined, headers);
-      await shareExcelBlob(blob, "شيت-رقم-الشاص.xlsx", "شيت رقم الشاص");
+      const { rows, rowColors } = chassisSheetRows(recs, formatDate);
+      const { blob, ext } = await buildSortBlobBestEffort(rows, "شيت رقم الشاص", rowColors);
+      await shareExcelBlob(blob, chassisShareName(new Date(), ext), "ملف الشاص", { keepName: true });
     });
   }
 
