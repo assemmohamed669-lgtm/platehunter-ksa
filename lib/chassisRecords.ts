@@ -8,6 +8,7 @@
 import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis } from "./chassis";
 import { toMapsLink } from "./gps";
 import { typeToCode } from "./vehicleType";
+import { buildDupeColorMap } from "./dupeColors";
 
 export interface ChassisRecord {
   id: string;
@@ -93,18 +94,32 @@ export const CHASSIS_EXCEL_FOR_ALL = false;
 
 const CHASSIS_BASE_HEADERS = ["رقم الشاص", "نوع السيارة", "الحي-الشارع", "ملاحظات", "GPS", "التاريخ", "الحالة"];
 
+/** 🎨 ألوان الشاص المتكرر في الإكسيل — الدرجات الغامقة (‎-300) زي إكسيل الفرز، مش الباهتة (المالك: «واضح مش باهت»). */
+export const CHASSIS_DUP_COLORS: readonly string[] = [
+  "#FDE047", "#93C5FD", "#86EFAC", "#D8B4FE", "#FDBA74", "#F9A8D4", "#5EEAD4", "#FCA5A5",
+];
+
+/** «ملف الشاص 03-11-2026 09.05.xlsx» — تاريخ ووقت المشاركة (الساعة بنقطة: «:» ممنوعة في أسماء الملفات). */
+export function chassisShareName(now: Date, ext: string): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `ملف الشاص ${p(now.getDate())}-${p(now.getMonth() + 1)}-${now.getFullYear()} ${p(now.getHours())}.${p(now.getMinutes())}.${ext}`;
+}
+
 /**
  * صفوف إكسيل «شيت رقم الشاص» بترتيب المالك: الشاص (مكان «رقم اللوحة» في شيت اللوحات) ⇐ نوع السيارة ⇐ الحي-الشارع ⇐
  * ملاحظات ⇐ GPS ⇐ التاريخ (بالوقت) ⇐ الحالة، وبعدهم أي بيانات زيادة من صف ملف التشييك المطابق. عمود الهيكل اللي في
  * الصف (نفس الشاص) مابيتكررش. النوع بالحرف المختصر زي شيت اللوحات.
+ *
+ * 🧹 أي عمود فاضي في **كل** الصفوف بيتشال (المالك: «اعمده فاضيه مش عايزهها تظهر»). `rowColors` = لون كل صف: الشاص
+ * المتكرر (بعد التطبيع) بلون خاص بيه بترتيب أول ظهور، واللي مرة واحدة `null`.
  */
 export function chassisSheetRows(
   recs: readonly ChassisRecord[],
   fmtDate: (iso: string) => string,
-): { rows: Record<string, string>[]; headers: string[] } {
-  const headers = [...CHASSIS_BASE_HEADERS];
-  const seen = new Set(headers);
-  const rows = recs.map((r) => {
+): { rows: Record<string, string>[]; headers: string[]; rowColors: (string | null)[] } {
+  const allHeaders = [...CHASSIS_BASE_HEADERS];
+  const seen = new Set(allHeaders);
+  const built = recs.map((r) => {
     const gps = r.mapsLink || (r.lat != null && r.lng != null ? toMapsLink(r.lat, r.lng) : "");
     const obj: Record<string, string> = {
       "رقم الشاص": r.chassis,
@@ -120,12 +135,19 @@ export function chassisSheetRows(
       const val = String(v ?? "");
       if (CHASSIS_BASE_HEADERS.includes(k) || (vin && normalizeChassis(val) === vin)) continue;
       obj[k] = val;
-      if (!seen.has(k)) { seen.add(k); headers.push(k); }
+      if (!seen.has(k)) { seen.add(k); allHeaders.push(k); }
     }
     return obj;
   });
-  for (const row of rows) for (const h of headers) if (!(h in row)) row[h] = "";
-  return { rows, headers };
+  const headers = allHeaders.filter((h) => built.some((o) => String(o[h] ?? "").trim() !== ""));
+  // كل صف بنفس ترتيب العناوين بالظبط — مكتبة الإكسيل بتاخد الأعمدة من مفاتيح أول صف
+  const rows = built.map((o) => Object.fromEntries(headers.map((h) => [h, o[h] ?? ""])));
+  const dupIdx = buildDupeColorMap(recs.map((r) => normalizeChassis(r.chassis)), CHASSIS_DUP_COLORS.length);
+  const rowColors = recs.map((r) => {
+    const i = dupIdx.get(normalizeChassis(r.chassis));
+    return i === undefined ? null : CHASSIS_DUP_COLORS[i];
+  });
+  return { rows, headers, rowColors };
 }
 
 // ─── فرز أرقام الشاص على ملف الإحالة (صفحة الفرز) ──────────────────────────
