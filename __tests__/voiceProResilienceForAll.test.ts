@@ -18,7 +18,7 @@ import { DIAG_AGENT_IDS } from "@/lib/deviceDiag";
 
 const src = readFileSync(join(process.cwd(), "app/(app)/registration-v2/page.tsx"), "utf8").replace(/\r\n/g, "\n");
 const instant = readFileSync(join(process.cwd(), "app/(app)/instant-check/page.tsx"), "utf8");
-const startFn = src.slice(src.indexOf("async function start()"), src.indexOf("function stopTimer()"));
+const startFn = src.slice(src.indexOf("async function start("), src.indexOf("function stopTimer()"));
 
 describe("للكل", () => {
   it("العلم مفتوح (الرجوع = false)", () => {

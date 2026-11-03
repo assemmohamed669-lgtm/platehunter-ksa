@@ -44,10 +44,16 @@ export class MicLossDetector {
   private zeroRun = 0;
   private mutedSince: number | null = null;
   private suspendedSince: number | null = null;
+  private suspendGraceMs = CONTEXT_SUSPEND_GRACE_MS;
   private fired = false;
+  /** 📱 (`lib/iosRecover.ts`) مهلة لقطع الصوت (`interrupted`) بدل الوقف على طول — من غيرها زي ما هو بالحرف. */
+  private readonly interruptGraceMs: number | null;
+  private readonly mutedMs: number;
 
-  constructor(sampleRate: number) {
+  constructor(sampleRate: number, opts?: { interruptGraceMs?: number; mutedGraceMs?: number }) {
     this.rate = sampleRate > 0 ? sampleRate : 16000;
+    this.interruptGraceMs = opts?.interruptGraceMs && opts.interruptGraceMs > 0 ? opts.interruptGraceMs : null;
+    this.mutedMs = Math.max(MUTED_MS, opts?.mutedGraceMs ?? 0);
   }
 
   private fire(r: MicLossReason): MicLossReason | null {
@@ -78,9 +84,14 @@ export class MicLossDetector {
 
   /** بيتنده دورياً — الكتم أو تعليق الصوت لو طوّل. */
   tick(nowMs: number): MicLossReason | null {
-    if (this.mutedSince !== null && nowMs - this.mutedSince >= MUTED_MS) return this.fire("muted");
-    if (this.suspendedSince !== null && nowMs - this.suspendedSince >= CONTEXT_SUSPEND_GRACE_MS) return this.fire("interrupted");
+    if (this.mutedSince !== null && nowMs - this.mutedSince >= this.mutedMs) return this.fire("muted");
+    if (this.suspendedSince !== null && nowMs - this.suspendedSince >= this.suspendGraceMs) return this.fire("interrupted");
     return null;
+  }
+
+  /** الصوت متعلّق أو المايك مكتوم دلوقتي (جوّه المهلة) — المحرّك بيحاول يرجّعه. */
+  paused(): boolean {
+    return !this.fired && (this.suspendedSince !== null || this.mutedSince !== null);
   }
 
   /**
@@ -88,9 +99,15 @@ export class MicLossDetector {
    * `suspended` (أندرويد) = بيستنى `CONTEXT_SUSPEND_GRACE_MS` في `tick` — لحظة نقل المايك مابتقفلش التسجيل.
    */
   contextState(state: string, nowMs: number = Date.now()): MicLossReason | null {
-    if (state === "interrupted") return this.fire("interrupted");
-    if (state === "suspended") {
+    if (state === "interrupted") {
+      if (this.interruptGraceMs === null) return this.fire("interrupted");
+      // 📱 قطع قصير (إشعار/الخرائط/سيري) ⇒ مهلة؛ مكالمة ⇒ مارجعش ⇒ نفس الوقف بعدها
       if (this.suspendedSince === null) this.suspendedSince = nowMs;
+      this.suspendGraceMs = Math.max(this.suspendGraceMs, this.interruptGraceMs);
+      return null;
+    }
+    if (state === "suspended") {
+      if (this.suspendedSince === null) { this.suspendedSince = nowMs; this.suspendGraceMs = CONTEXT_SUSPEND_GRACE_MS; }
       return null;
     }
     if (state === "running") this.suspendedSince = null;

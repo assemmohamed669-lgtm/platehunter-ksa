@@ -461,6 +461,11 @@ export interface VoicexEngineOpts {
    */
   onAudioState?: (st: string) => void;
   /**
+   * 📱 (`lib/iosRecover.ts` — آيفون، مناديب بعينهم) قطع الصوت (`interrupted`) وكتم المايك ⇒ مهلة بالمللي بدل الوقف على
+   * طول، والمحرّك بيحاول يرجّع الصوت (`resumeContext`) كل ثانية جوّاها. مارجعش ⇒ نفس الوقف. من غيره زي ما هو بالحرف.
+   */
+  micGraceMs?: number;
+  /**
    * 🚚 **أسطول متسلسل** (`حبل1234 حبل1235 حبل1236`) — لوحتين بنفس الحروف
    * وأرقام متسلسلة **اتسمعوا في نافذة واحدة** = عربيتين، فالإجماع مابيلمّهمش
    * في لوحة واحدة. «الجديد» بس اللي بيبعته — «صوتي» زي ما هي بالحرف.
@@ -846,6 +851,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
    * فالميك بتاعه **مابيتربطلوش أي مستمع زيادة**.
    */
   const lossOn = FIXES && typeof opts.onMicLost === "function";
+  const MIC_GRACE = typeof opts.micGraceMs === "number" && opts.micGraceMs > 0 ? opts.micGraceMs : null;
+  let lastGraceResume = 0;
   let loss: MicLossDetector | null = null;
   const reportLoss = (r: MicLossReason | null) => {
     if (!r || stopped || !stopsRecording(r)) return;
@@ -873,7 +880,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       onContextState: (st: string) => {
         try { opts.onAudioState?.(st); } catch { /* ignore */ }
         if (!loss) return;
-        if (st === "suspended") mic.resumeContext();
+        if (st === "suspended" || (MIC_GRACE && st === "interrupted")) mic.resumeContext();
         reportLoss(loss.contextState(st, Date.now()));
       },
     } : {}),
@@ -894,7 +901,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   // و«الشبكة/السيرفر». بيتنده مرة واحدة، ومحميّ عشان كولباك بيرمي مايوقفش
   // فتح الميك (نفس عقد باقي الكولباكس في الملف ده).
   try { opts.onReady?.({ sampleRate: mic.sampleRate }); } catch { /* ignore */ }
-  if (lossOn) loss = new MicLossDetector(mic.sampleRate);
+  if (lossOn) loss = new MicLossDetector(mic.sampleRate, MIC_GRACE ? { interruptGraceMs: MIC_GRACE, mutedGraceMs: MIC_GRACE } : undefined);
 
   // الـVad **بعد** الميك عشان يعرف معدل العيّنات الحقيقي — قيم «المقاطع» من المعمل.
   vad = new Vad({
@@ -1313,6 +1320,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     if (stopped) return;
     // 📞 الكتم لو طوّل = الميك اتاخد (`fixes` + الصفحة طلبته بس)
     if (loss) reportLoss(loss.tick(Date.now()));
+    // 📱 جوّه مهلة قطع الصوت ⇒ نحاول نرجّعه كل ثانية (الآيفون بيرجّعه لما الإشعار/الخرائط تخلص)
+    if (loss && MIC_GRACE && loss.paused() && Date.now() - lastGraceResume >= 1000) { lastGraceResume = Date.now(); mic.resumeContext(); }
     // 🔴 **بتوقيت النطق مش الحائط.** كان `mic.elapsedSec * 1000` خام، والقراءة
     // بتوصل بعد نطقها بـ(نص نافذة + شبكة) فكل عنقود كان بيتصرّف فوراً بـmult=1
     // والإجماع مايتجمّعش أصلاً. شوف `drainClockMs`.

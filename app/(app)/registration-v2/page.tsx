@@ -60,6 +60,8 @@ import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
 import { onWantedAlertsCleared } from "@/lib/wantedAlert";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
+import { AUTO_RESUMED_TEXT, AUTO_RESUME_FAILED_TEXT, IOS_RECOVER_MIC_GRACE_MS, autoResumeMark, iosRecoverFor, shouldAutoResume, type AutoResumeMark } from "@/lib/iosRecover";
+import { appInBackground, onAppState } from "@/lib/appForeground";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
@@ -381,6 +383,8 @@ export default function RegistrationV2Page() {
   const sessionRef = useRef(createSessionGate());
   /** المايك بيتفتح دلوقتي (`starting`) — كمرجع عشان «مافيش قراية ملف وقت التسجيل». */
   const startingRef = useRef(false);
+  // 📱 (`lib/iosRecover.ts`) وقف تلقائي (خرج/الصوت اتقطع) ⇒ يرجع لوحده لما المندوب يرجع للبرنامج — للمناديب اللي في القايمة بس
+  const autoResumeRef = useRef<AutoResumeMark | null>(null);
   /**
    * 🎚️ مستوى الصوت للسوبر أدمن — **المؤشّر بس** بيشترك فيه (`LiveVuMeter`)،
    * فتحديثه مابيعيدش رسم الصفحة كلها (جدول ١٠٠٠ لوحة) ٦٠ مرة في الثانية.
@@ -775,8 +779,13 @@ export default function RegistrationV2Page() {
     // النظام بيسحب القفل لما الصفحة تتخفي — نمسكه تاني لما المندوب يرجع.
     const onVis = () => { if (document.visibilityState === "visible") void wake.acquire(); };
     document.addEventListener("visibilitychange", onVis);
+    // 📱 (`lib/iosRecover.ts`) الآيفون رفض الطلب (٣٥٪ من «ابدأ» — بييجي بعد الدوسة بشوية) ⇒ نعيده مع أول لمسة للشاشة
+    const retryWake = iosRecoverFor(agentRef.current, getDevicePlatform());
+    const onTouch = () => { if (!wake.isHeld()) void wake.acquire(); };
+    if (retryWake) window.addEventListener("pointerdown", onTouch, { passive: true });
     return () => {
       document.removeEventListener("visibilitychange", onVis);
+      if (retryWake) window.removeEventListener("pointerdown", onTouch);
       void wake.release();
     };
   }, [listening]);
@@ -811,6 +820,27 @@ export default function RegistrationV2Page() {
       // الصفحة اتقفلت ⇒ «الميك مشغول» يتشال (وإلا التحديث يفضل مستني للأبد)
       holdRef.current?.reset();
     };
+  }, []);
+
+  /**
+   * 📱 **رجع للبرنامج بعد وقف تلقائي ⇒ يكمّل لوحده** (`lib/iosRecover.ts` — المالك ٣ نوفمبر ٢٠٢٦: «لما يخلص اتصاله او لما يخرج
+   * يشوف رساله … ويرجع تاني … المفروض اللوحات اللي بيقولها تظهرله»). العلامة بتتحط في `stop` للمناديب اللي في القايمة بس
+   * (وقف تلقائي — مش «وقف» بإيده ولا المطلوبة ولا السيرفر)، وبتتشال مع أول محاولة. فشل ⇒ رسالة «دوس ابدأ» زي الأول.
+   */
+  useEffect(() => {
+    const tryResume = () => {
+      const visible = document.visibilityState === "visible" && !appInBackground();
+      if (!shouldAutoResume(autoResumeRef.current, Date.now(), !!engineRef.current || startingRef.current, visible)) return;
+      const why = autoResumeRef.current?.why;
+      autoResumeRef.current = null;
+      diagNote("rv2-auto", { why });
+      void startRef.current(true);
+    };
+    const later = () => { setTimeout(tryResume, 400); };
+    const onVis = () => { if (document.visibilityState === "visible") later(); };
+    document.addEventListener("visibilitychange", onVis);
+    const offApp = onAppState((active) => { if (active) later(); });
+    return () => { document.removeEventListener("visibilitychange", onVis); offApp(); };
   }, []);
 
   /**
@@ -1333,8 +1363,9 @@ export default function RegistrationV2Page() {
   };
 
   /* ─── التسجيل ─────────────────────────────────────────────────────── */
-  async function start() {
+  async function start(auto = false) {
     diagNote("rv2-rec", { on: true, rows: rowsRef.current.length });
+    autoResumeRef.current = null;   // 📱 أي بداية (بإيده أو لوحده) بتشيل علامة الرجوع
     pausedForWantedRef.current = false;
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
@@ -1729,6 +1760,8 @@ export default function RegistrationV2Page() {
          */
         // 🩺 حالة الصوت قبل أي وقف — الصندوق الأسود بس («المايك بيقفل بعد ٣ ثواني» ٢٥ أكتوبر — `lib/micDiag.ts`)
         onAudioState: (st: string) => { if (diagActive()) diagNote("rv2-mic", micDiag(st, startedAtRef.current)); },
+        // 📱 (`lib/iosRecover.ts`) قطع الصوت القصير على الآيفون ⇒ مهلة والمحرّك يرجّعه بدل الوقف على طول — القايمة بس
+        ...(iosRecoverFor(agentRef.current, getDevicePlatform()) ? { micGraceMs: IOS_RECOVER_MIC_GRACE_MS } : {}),
         onMicLost: (reason) => {
           if (!live()) return;   // 🔒 جلسة قديمة ماتوقّفش جلسة أحدث (السوبر أدمن)
           tel?.event("mic_lost", { reason }); stopRef.current(reason);
@@ -1738,6 +1771,8 @@ export default function RegistrationV2Page() {
           // 🩺 الكود (`http_503` …) بييجي بـ`netResilience` بس (السوبر أدمن) — من غيره نفس الحدث القديم
           tel?.event("fatal", code === undefined ? { reason } : { reason, code });
           stopRef.current("fatal");
+          // 📱 الرجوع التلقائي ماقدرش يفتح المايك ⇒ رسالة «دوس ابدأ» (تحت) مش «الميكروفون مرفوض»
+          if (auto && reason === "mic_denied") return;
           /**
            * المناديب: نفس النص القديم بالحرف (لأي سبب وأي كود) لحد ما المالك يوافق.
            * السوبر أدمن: **السبب الحقيقي** من غير «أعِد الفحص» — النت مقطوع ٣ دقايق،
@@ -1750,12 +1785,13 @@ export default function RegistrationV2Page() {
       if (!ctrl) {
         recReleaseRef.current?.(); recReleaseRef.current = null;
         try { telRef.current?.end("mic_failed"); telRef.current = null; } catch { /* ignore */ }
-        setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني.");
+        if (auto) setNotice(AUTO_RESUME_FAILED_TEXT); else setError("مش قادر يفتح الميكروفون — اسمح بالتسجيل وجرّب تاني.");
         return;
       }
       marks.push({ label: "المايك", at: Date.now() });
       engineRef.current = ctrl; clockRef.current = ctrl;
       setListening(true); setSeconds(0);
+      if (auto) setNotice(AUTO_RESUMED_TEXT);
       // 🎙️ أندرويد 1.8: إشعار «قناص بيسجّل» ⇒ يكمّل والمندوب في واتساب/الخريطة (السوبر أدمن الأول)
       bgActiveRef.current = canRecordInBackground(isSuperRef.current, meEmailRef.current) && startBackgroundRecording();
       // 🩺 الصندوق الأسود: نبضة المراقب كل ١٥ ثانية والتسجيل شغّال (الآيفون بيبعت تحديثات موقع قد إيه)
@@ -1782,7 +1818,7 @@ export default function RegistrationV2Page() {
         recReleaseRef.current?.(); recReleaseRef.current = null;
         try { telRef.current?.end("engine_failed"); telRef.current = null; } catch { /* ignore */ }
       }
-      setError("مش قادر يشغّل المحرك — جرّب تاني.");
+      if (auto) setNotice(AUTO_RESUME_FAILED_TEXT); else setError("مش قادر يشغّل المحرك — جرّب تاني.");
     }
     finally {
       setStarting(false);
@@ -1829,6 +1865,8 @@ export default function RegistrationV2Page() {
     if (why === "wanted") {
       setNotice("⏸️ التسجيل وقف عشان تسمع صفّارة العربية المطلوبة — لوحاتك كلها محفوظة، وهيرجع لوحده أول ما تدوس «تم».");
     } else if (why !== "manual" && why !== "fatal") setNotice(micLostNotice(why));
+    // 📱 (`lib/iosRecover.ts`) وقف تلقائي ⇒ يرجع لوحده لما المندوب يرجع للبرنامج — القايمة بس
+    autoResumeRef.current = iosRecoverFor(agentRef.current, getDevicePlatform()) ? autoResumeMark(why, Date.now()) : null;
     void (async () => {
       try {
         // ⏳ آخر اللوحات توصل الأول (بحد أقصى — عطل مايأجّلش التحديث للأبد)

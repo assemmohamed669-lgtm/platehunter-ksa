@@ -16,7 +16,7 @@ const between = (a: string, b: string) => {
   const j = src.indexOf(b, i + 1);
   return i >= 0 && j > i ? src.slice(i, j) : "";
 };
-const startFn = between("async function start()", "function stopTimer()");
+const startFn = between("async function start(", "function stopTimer()");   // 📱 start(auto = false) — `lib/iosRecover.ts`
 const stopFn = between("function stop(why", "const stopRef = useRef(stop);");
 const exportFn = between("async function exportRowsInner()", "function buildReportText()");
 const loadCheckFn = between("const loadCheck = useCallback(", "const onCheckParsed = useCallback(");
