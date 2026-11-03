@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff, Plus, Zap, ZapOff, CalendarDays } from "lucide-react";
+import { Camera, Images, Type, Mic, ChevronDown, X, CheckCircle2, XCircle, Loader2, Trash2, MapPin, AlertTriangle, Download, Share2, Copy, Check, ZoomIn, ZoomOut, CheckSquare, Square, ClipboardCheck, Search, History, Pencil, Navigation, RefreshCw, Wifi, WifiOff, Pause, Play, Barcode, ListFilter, FileText, MapPinOff, Plus, Zap, ZapOff, CalendarDays, FileSpreadsheet } from "lucide-react";
 import VoiceOnlySort from "@/components/VoiceOnlySort";
 import { twinGuardDecision, areTwins } from "@/lib/twinGuard";
 import { summarizeSkips } from "@/lib/skipLabels";
@@ -17,7 +17,7 @@ import { detectPlateColumn, normalizePlate, bankPlateToArabic, parsePlateFromTra
 import { matchesPreferred } from "@/lib/sortingCols";
 import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis, searchChassisBySuffix, type ChassisMatch } from "@/lib/chassis";
 import { ocrFailureHint } from "@/lib/ocrHint";
-import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, type ChassisRecord } from "@/lib/chassisRecords";
+import { getChassisRecords, addChassisRecord, deleteChassisRecord, updateChassisRecord, replaceChassisRecords, chassisSheetRows, CHASSIS_EXCEL_FOR_ALL, type ChassisRecord } from "@/lib/chassisRecords";
 import { toMapsLink, gpsService, haversineKm, gpsAccuracyLevel, gpsCellCoords, type GpsCoords } from "@/lib/gps";
 import { isRecordsLinked, linkRecords, unlinkRecords, type RecordsTarget } from "@/lib/recordsAsData";
 import CertificateBadge from "@/components/CertificateBadge";
@@ -2982,6 +2982,17 @@ export default function InstantCheckPage() {
       return lines.join("\n");
     }).join("\n\n──────────\n\n");
     void shareTextViaChooser(text);
+  }
+
+  // 📊 مشاركة شيت رقم الشاص إكسيل — الشاص أول عمود (مكان «رقم اللوحة») وبعده النوع/الحي/ملاحظات/GPS/التاريخ.
+  async function shareChassisExcel() {
+    const recs = getChassisRecords();
+    if (!recs.length) { alert("مفيش سجلات شاصي بعد."); return; }
+    await runShare("chassis", async () => {
+      const { rows, headers } = chassisSheetRows(recs, formatDate);
+      const blob = buildExcelBlob(rows, "شيت رقم الشاص", undefined, headers);
+      await shareExcelBlob(blob, "شيت-رقم-الشاص.xlsx", "شيت رقم الشاص");
+    });
   }
 
   // Read the VIN/chassis from a (resized) image and check it against the
@@ -6595,6 +6606,7 @@ export default function InstantCheckPage() {
             ) : (
               <>
                 {!memberLocks.download && <button onClick={shareChassisWhatsApp} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-xs font-bold text-night active:scale-95 transition"><Share2 size={14} /> مشاركة واتساب</button>}
+                {!memberLocks.download && (CHASSIS_EXCEL_FOR_ALL || isSuper) && <button onClick={shareChassisExcel} disabled={shareBusy === "chassis"} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-primary/40 bg-surface-2 py-2 text-xs font-bold text-primary active:scale-95 transition disabled:opacity-60"><FileSpreadsheet size={14} /> {shareBusy === "chassis" ? "جاري التجهيز..." : "مشاركة إكسيل"}</button>}
                 {!memberLocks.edit && <button onClick={enterChassisEdit} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 py-2 text-xs font-bold text-ink active:scale-95 transition"><Pencil size={14} /> تعديل</button>}
               </>
             )}

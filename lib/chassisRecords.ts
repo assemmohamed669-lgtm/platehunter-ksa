@@ -5,7 +5,9 @@
  * عشان الشيتين يفضلوا منفصلين والشاصي مايلخبطش عرض/عدّادات اللوحات.
  * بتفضل بعد إعادة فتح التطبيق، وبتتصدّر لشيت «شيت رقم الشاص».
  */
-import { detectChassisColumn, buildChassisIndex, matchChassis } from "./chassis";
+import { detectChassisColumn, buildChassisIndex, matchChassis, normalizeChassis } from "./chassis";
+import { toMapsLink } from "./gps";
+import { typeToCode } from "./vehicleType";
 
 export interface ChassisRecord {
   id: string;
@@ -82,6 +84,48 @@ export function mergeChassisRecords(incoming: ChassisRecord[]): ChassisRecord[] 
   const merged = [...byId.values()].sort((a, b) => (b.checkedAt || "").localeCompare(a.checkedAt || ""));
   persist(merged);
   return merged;
+}
+
+// ─── مشاركة شيت الشاص إكسيل (صفحة السجلات) ─────────────────────────────────
+
+/** 📊 «مشاركة إكسيل» تحت شيت الشاص — للسوبر أدمن بس لحد ما المالك يجرّب (٣ نوفمبر ٢٠٢٦). */
+export const CHASSIS_EXCEL_FOR_ALL = false;
+
+const CHASSIS_BASE_HEADERS = ["رقم الشاص", "نوع السيارة", "الحي-الشارع", "ملاحظات", "GPS", "التاريخ", "الحالة"];
+
+/**
+ * صفوف إكسيل «شيت رقم الشاص» بترتيب المالك: الشاص (مكان «رقم اللوحة» في شيت اللوحات) ⇐ نوع السيارة ⇐ الحي-الشارع ⇐
+ * ملاحظات ⇐ GPS ⇐ التاريخ (بالوقت) ⇐ الحالة، وبعدهم أي بيانات زيادة من صف ملف التشييك المطابق. عمود الهيكل اللي في
+ * الصف (نفس الشاص) مابيتكررش. النوع بالحرف المختصر زي شيت اللوحات.
+ */
+export function chassisSheetRows(
+  recs: readonly ChassisRecord[],
+  fmtDate: (iso: string) => string,
+): { rows: Record<string, string>[]; headers: string[] } {
+  const headers = [...CHASSIS_BASE_HEADERS];
+  const seen = new Set(headers);
+  const rows = recs.map((r) => {
+    const gps = r.mapsLink || (r.lat != null && r.lng != null ? toMapsLink(r.lat, r.lng) : "");
+    const obj: Record<string, string> = {
+      "رقم الشاص": r.chassis,
+      "نوع السيارة": typeToCode(r.vehicleType ?? "") || (r.vehicleType ?? ""),
+      "الحي-الشارع": r.region ?? "",
+      "ملاحظات": r.notes ?? "",
+      "GPS": gps,
+      "التاريخ": r.checkedAt ? fmtDate(r.checkedAt) : "",
+      "الحالة": r.found ? "مطلوب" : "غير مطلوب",
+    };
+    const vin = normalizeChassis(r.chassis);
+    for (const [k, v] of Object.entries(r.row ?? {})) {
+      const val = String(v ?? "");
+      if (CHASSIS_BASE_HEADERS.includes(k) || (vin && normalizeChassis(val) === vin)) continue;
+      obj[k] = val;
+      if (!seen.has(k)) { seen.add(k); headers.push(k); }
+    }
+    return obj;
+  });
+  for (const row of rows) for (const h of headers) if (!(h in row)) row[h] = "";
+  return { rows, headers };
 }
 
 // ─── فرز أرقام الشاص على ملف الإحالة (صفحة الفرز) ──────────────────────────
