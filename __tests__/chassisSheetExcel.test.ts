@@ -104,10 +104,10 @@ describe("📁 اسم الملف: «ملف الشاص» + تاريخ ووقت ا
   });
 });
 
-describe("🔌 الزرار في صفحة السجلات — السوبر أدمن الأول", () => {
+describe("🔌 الزرار في صفحة السجلات — للكل", () => {
   const P = readFileSync(path.join(process.cwd(), "app", "(app)", "instant-check", "page.tsx"), "utf8");
-  it("مقفول للمناديب لحد ما المالك يجرّب", () => {
-    expect(CHASSIS_EXCEL_FOR_ALL).toBe(false);
+  it("مفتوح لكل المناديب (المالك جرّب: «افتحه للكل» — ٣ نوفمبر ٢٠٢٦)", () => {
+    expect(CHASSIS_EXCEL_FOR_ALL).toBe(true);
   });
   it("«مشاركة إكسيل» جنب «مشاركة واتساب» — للسوبر أدمن (أو للكل بالمفتاح) ونفس قفل التنزيل", () => {
     expect(P).toContain("{!memberLocks.download && (CHASSIS_EXCEL_FOR_ALL || isSuper) && <button onClick={shareChassisExcel}");

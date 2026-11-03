@@ -89,8 +89,8 @@ export function mergeChassisRecords(incoming: ChassisRecord[]): ChassisRecord[] 
 
 // ─── مشاركة شيت الشاص إكسيل (صفحة السجلات) ─────────────────────────────────
 
-/** 📊 «مشاركة إكسيل» تحت شيت الشاص — للسوبر أدمن بس لحد ما المالك يجرّب (٣ نوفمبر ٢٠٢٦). */
-export const CHASSIS_EXCEL_FOR_ALL = false;
+/** 📊 «مشاركة إكسيل» تحت شيت الشاص — **للكل** (المالك جرّب وقال «افتحه للكل»، ٣ نوفمبر ٢٠٢٦). الرجوع: false. */
+export const CHASSIS_EXCEL_FOR_ALL = true;
 
 const CHASSIS_BASE_HEADERS = ["رقم الشاص", "نوع السيارة", "الحي-الشارع", "ملاحظات", "GPS", "التاريخ", "الحالة"];
 
