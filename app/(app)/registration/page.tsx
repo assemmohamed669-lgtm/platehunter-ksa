@@ -3015,6 +3015,7 @@ export default function RegistrationPage() {
             streetBox={superOk || MJ_STREET_FOR_DELEGATES}
             // 🎙️ يكمّل والمندوب في واتساب/الخريطة (أندرويد 1.8) — السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`)
             bgAllowed={superOk}
+            bgEmail={agentEmail}
           />
         </div>
       )}

@@ -1,7 +1,10 @@
 import UIKit
+import WebKit
 import Capacitor
 import FirebaseCore
 import FirebaseMessaging
+import CoreLocation
+import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -75,4 +78,126 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 
+}
+
+// MARK: - 🎙️ التسجيل في الخلفية (نسخة 1.4 — ٤ نوفمبر ٢٠٢٦)
+//
+// المالك: «عايز انزل ميزة ان الصوت يشتغل علي الايفون في فويس برو وفي التسجيل زي ما بيحصل علي الاندرويد».
+//  · الميكروفون: إذن «audio» في Info.plist بيخلّي ميكروفون الصفحة يكمّل والتطبيق في الخلفية.
+//  · الموقع: مكتبة الموقع بتقف في الخلفية ⇒ البلجن ده بيشغّل موقع الآيفون نفسه طول ما التسجيل شغّال ويبعته للصفحة
+//    (lib/backgroundRecording.ts ⇒ gpsService.feedNativeFix) — كل لوحة بمكان نطقها.
+//  · المكالمة ليها الأولوية: مكالمة قطعت الصوت ⇒ «call» ⇒ الصفحة تقفل الميك (زي الأندرويد).
+// الكود هنا مش في ملف لوحده عن قصد: أي ملف Swift جديد لازم يتضاف لمشروع Xcode بإيد، والملف ده متضاف خلاص.
+
+/// الشاشة الرئيسية (Main.storyboard) — نفس جسر Capacitor + تسجيل البلجن (طريقة Capacitor الرسمية «Custom Native iOS Code»).
+class MainViewController: CAPBridgeViewController {
+    let bgPlugin = PlateHunterBgPlugin()
+    private var loadingObservation: NSKeyValueObservation?
+
+    override open func capacitorDidLoad() {
+        bridge?.registerPluginInstance(bgPlugin)
+        // الصفحة اتعاد تحميلها (زي «تحديث البرنامج») ⇒ التسجيل اتقفل معاها ⇒ الموقع مايفضلش شغّال لوحده
+        loadingObservation = webView?.observe(\.isLoading, options: [.new]) { [weak self] view, _ in
+            guard view.isLoading else { return }
+            DispatchQueue.main.async { self?.bgPlugin.stopAll() }
+        }
+    }
+}
+
+/// «PlateHunterBackground» — الصفحة بتنده start لما التسجيل يبدأ و stop لما يقف (lib/backgroundRecording.ts).
+@objc(PlateHunterBgPlugin)
+public class PlateHunterBgPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
+    public let identifier = "PlateHunterBgPlugin"
+    public let jsName = "PlateHunterBackground"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
+    ]
+
+    private var running = false
+    private var location: CLLocationManager?
+    private var capTimer: Timer?
+
+    override public func load() {
+        NotificationCenter.default.addObserver(self, selector: #selector(audioInterrupted(_:)),
+                                               name: AVAudioSession.interruptionNotification, object: nil)
+    }
+
+    @objc func start(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.running = true
+            self.startLocation()
+            // أمان لو الصفحة ماقفلتش: أقصى ٦ ساعات (زي خدمة الأندرويد)
+            self.capTimer?.invalidate()
+            self.capTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: false) { [weak self] _ in
+                self?.stopAll()
+            }
+            call.resolve(["ok": true, "location": self.location != nil])
+        }
+    }
+
+    @objc func stop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.stopAll()
+            call.resolve()
+        }
+    }
+
+    func stopAll() {
+        running = false
+        capTimer?.invalidate()
+        capTimer = nil
+        if let m = location {
+            m.stopUpdatingLocation()
+            m.allowsBackgroundLocationUpdates = false
+            m.delegate = nil
+        }
+        location = nil
+    }
+
+    /// موقع الآيفون نفسه — بس لو المندوب مدّي إذن الموقع، و«location» في Info.plist (من غيرها الآيفون بيقفل التطبيق).
+    private func startLocation() {
+        guard location == nil else { return }
+        let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        guard modes.contains("location") else { return }
+        let m = CLLocationManager()
+        let status = m.authorizationStatus
+        guard status == .authorizedWhenInUse || status == .authorizedAlways else { return }
+        m.delegate = self
+        m.desiredAccuracy = kCLLocationAccuracyBest
+        m.distanceFilter = kCLDistanceFilterNone
+        m.activityType = .otherNavigation
+        m.pausesLocationUpdatesAutomatically = false
+        m.allowsBackgroundLocationUpdates = true
+        m.showsBackgroundLocationIndicator = true
+        m.startUpdatingLocation()
+        location = m
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard running, let l = locations.last, l.horizontalAccuracy >= 0 else { return }
+        notifyListeners("location", data: [
+            "lat": l.coordinate.latitude,
+            "lng": l.coordinate.longitude,
+            "accuracy": l.horizontalAccuracy,
+            "timestamp": l.timestamp.timeIntervalSince1970 * 1000
+        ])
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // مؤقت (مفيش أقمار لحظتها) — الآيفون بيكمّل يحاول لوحده
+    }
+
+    /// 📞 مكالمة (تليفون/واتساب/فيس تايم) قطعت الصوت ⇒ الصفحة تقفل الميك. أسباب تانية (زي قفل ميك الآيباد) ⇒ ولا حاجة.
+    @objc private func audioInterrupted(_ note: Notification) {
+        guard let info = note.userInfo,
+              let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+        if let reason = info[AVAudioSessionInterruptionReasonKey] as? UInt,
+           AVAudioSession.InterruptionReason(rawValue: reason) != .default { return }
+        DispatchQueue.main.async {
+            guard self.running else { return }
+            self.notifyListeners("call", data: [:])
+        }
+    }
 }

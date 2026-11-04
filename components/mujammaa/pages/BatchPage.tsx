@@ -490,6 +490,7 @@ export default function BatchPage({
   onCheckInfo,
   canPause = false,
   bgAllowed = false,
+  bgEmail = null,
   streetBox = false,
 }: {
   errorLog: ErrorLog;
@@ -533,6 +534,8 @@ export default function BatchPage({
    * السوبر أدمن الأول (`BG_RECORDING_FOR_ALL`).
    */
   bgAllowed?: boolean;
+  /** 🧪 إيميل الحساب — حساب مراجعين أبل/جوجل بيكمّل في الخلفية قبل الفتح للكل (`BG_RECORDING_EMAILS`) */
+  bgEmail?: string | null;
   /** 🛣️ مربع «اسم الشارع» (المالك ٣١ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_STREET_FOR_DELEGATES`) */
   streetBox?: boolean;
 }) {
@@ -1464,7 +1467,7 @@ export default function BatchPage({
     setSeconds(0);
     setPausedSince(null);
     // 🎙️ أندرويد 1.8: إشعار «قناص بيسجّل» ⇒ التسجيل يكمّل والمندوب في واتساب/الخريطة
-    bgActiveRef.current = canRecordInBackground(bgAllowed) && startBackgroundRecording();
+    bgActiveRef.current = canRecordInBackground(bgAllowed, bgEmail) && startBackgroundRecording();
     // 📍 داس تسجيل والعلامة لسه مش خضرا ⇒ تحذير كبير (وهزّة) لحد ما الموقع يجهز — التسجيل نفسه ماشي
     if (gpsStartWarning(gpsReadiness(currentFix(), lastFixRecvAt(), Date.now(), gpsStatus()))) {
       setGpsWarnArmed(true);
