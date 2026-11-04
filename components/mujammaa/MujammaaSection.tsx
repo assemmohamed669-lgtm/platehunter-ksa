@@ -49,6 +49,7 @@ export default function MujammaaSection({
   onCheckInfo,
   canPause = false,
   bgAllowed = false,
+  bgEmail = null,
   streetBox = false,
 }: {
   agentName: string;
@@ -67,6 +68,8 @@ export default function MujammaaSection({
   canPause?: boolean;
   /** 🎙️ التسجيل يكمّل في الخلفية (أندرويد 1.8) — السوبر أدمن الأول */
   bgAllowed?: boolean;
+  /** 🧪 إيميل الحساب — حساب مراجعين أبل/جوجل بيكمّل في الخلفية قبل الفتح للكل (`BG_RECORDING_EMAILS`) */
+  bgEmail?: string | null;
   /** 🛣️ مربع «اسم الشارع» (٣١ أكتوبر ٢٠٢٦) — السوبر أدمن الأول (`MJ_STREET_FOR_DELEGATES`) */
   streetBox?: boolean;
 }) {
@@ -220,6 +223,7 @@ export default function MujammaaSection({
         onCheckInfo={onCheckInfo}
         canPause={canPause}
         bgAllowed={bgAllowed}
+        bgEmail={bgEmail}
         streetBox={streetBox}
       />
     </div>

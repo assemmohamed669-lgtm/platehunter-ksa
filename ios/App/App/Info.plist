@@ -60,13 +60,13 @@
 	<key>NSCameraUsageDescription</key>
 	<string>التطبيق يستخدم الكاميرا لتصوير لوحات السيارات والتعرّف عليها.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>التطبيق يستخدم الميكروفون لإدخال أرقام اللوحات بالصوت.</string>
+	<string>التطبيق يستخدم الميكروفون لإدخال أرقام اللوحات بالصوت، والتسجيل بيكمّل لو خرجت من التطبيق لحد ما توقفه بنفسك.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>التطبيق يستخدم التعرّف على الكلام لتحويل نطق أرقام اللوحات إلى نص.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>التطبيق يستخدم موقعك لتسجيل مكان اللوحة على الخريطة أثناء التشييك.</string>
+	<string>التطبيق يستخدم موقعك لتسجيل مكان كل لوحة على الخريطة أثناء التشييك والتسجيل، حتى لو خرجت من التطبيق والتسجيل شغّال.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>التطبيق يستخدم موقعك لتسجيل مكان اللوحة على الخريطة أثناء التشييك.</string>
+	<string>التطبيق يستخدم موقعك لتسجيل مكان كل لوحة على الخريطة أثناء التشييك والتسجيل، حتى لو خرجت من التطبيق والتسجيل شغّال.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>التطبيق يستخدم صورك لاختيار صورة لوحة لتحليلها.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -93,9 +93,14 @@
 			</array>
 		</dict>
 	</array>
+	<!-- 🎙️ نسخة 1.4: الصوت + الموقع يكمّلوا والمندوب برّه التطبيق (Voice PRO والتسجيل) — زي «قناص بيسجّل» على أندرويد.
+	     audio: من غيره الآيفون بيقفل ميكروفون الصفحة أول ما التطبيق يروح الخلفية.
+	     location: موقع كل لوحة وهو برّه التطبيق (PlateHunterBgPlugin في AppDelegate.swift). -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>audio</string>
+		<string>location</string>
 	</array>
 	<key>UTImportedTypeDeclarations</key>
 	<array>

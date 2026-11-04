@@ -39,7 +39,7 @@ describe("Voice PRO", () => {
 
 describe("التسجيل (المجمّع)", () => {
   it("الخدمة بتبدأ مع التسجيل وبتقف مع «إيقاف» ومع الخروج من الصفحة", () => {
-    expect(MJ).toMatch(/bgActiveRef\.current = canRecordInBackground\(bgAllowed\) && startBackgroundRecording\(\);/);
+    expect(MJ).toMatch(/bgActiveRef\.current = canRecordInBackground\(bgAllowed, bgEmail\) && startBackgroundRecording\(\);/);
     expect(MJ.match(/if \(bgActiveRef\.current\) \{ bgActiveRef\.current = false; stopBackgroundRecording\(\); \}/g)?.length).toBe(2);
   });
 

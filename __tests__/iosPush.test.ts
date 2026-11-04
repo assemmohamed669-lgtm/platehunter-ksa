@@ -60,11 +60,12 @@ describe("🔴 AppDelegate بيحوّل توكن Apple لتوكن Firebase", () 
 });
 
 describe("🔴 رقم النسخة", () => {
-  it("1.3 (build 9) — والإشعار والتطبيق مفتوح بيعرضه الآيفون بنفسه من build 9", () => {
-    expect(PBX.match(/CURRENT_PROJECT_VERSION = 9;/g)?.length).toBe(2);
-    expect(PBX.match(/MARKETING_VERSION = 1\.3;/g)?.length).toBe(2);
+  it("1.4 (build 10 — التسجيل في الخلفية) — والإشعار والتطبيق مفتوح بيعرضه الآيفون بنفسه من build 9", () => {
+    expect(PBX.match(/CURRENT_PROJECT_VERSION = 10;/g)?.length).toBe(2);
+    expect(PBX.match(/MARKETING_VERSION = 1\.4;/g)?.length).toBe(2);
     expect(NATIVE_FOREGROUND_BUILD_IOS).toBe(9);
     expect(nativeShowsForegroundPush("9", "ios")).toBe(true);
+    expect(nativeShowsForegroundPush("10", "ios")).toBe(true);
     expect(nativeShowsForegroundPush("8", "ios")).toBe(false);
     // أندرويد زي ما هو (1.6 = build 7)
     expect(nativeShowsForegroundPush("7", "android")).toBe(true);

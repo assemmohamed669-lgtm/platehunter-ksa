@@ -123,6 +123,13 @@ const IOS_WATCH_FIRST_FIX_MS = 30_000;
 /** أقل مسافة بين إعادتين (لو لسه واقف) — مانفضلش نقفل ونفتح كل ثانية. */
 const IOS_WATCH_RESTART_GAP_MS = 15_000;
 
+/**
+ * 🍏 **الآيفون 1.4 والبرنامج في الخلفية** (`lib/backgroundRecording.ts`): مكتبة الموقع بتقف لما البرنامج يخرج، والآيفون
+ * نفسه بيبعت الموقع (`feedNativeFix`) طول ما التسجيل شغّال. وصلت قراية منه في آخر ٣ ثواني ⇒ اللوحة تاخدها على طول بدل
+ * ما تستنى ٨ ثواني على قراية من المكتبة مش جاية (وساعتها كانت هتاخد مكان أبعد من مكان نطقها).
+ */
+const NATIVE_FEED_FRESH_MS = 3_000;
+
 class GpsService {
   private watchId: number | null = null;
   private capWatchId: string | null = null;
@@ -192,6 +199,19 @@ class GpsService {
     } catch { /* المرة الجاية */ } finally {
       this.restarting = false;
     }
+  }
+
+  /** 🍏 آخر قراية من موقع الآيفون نفسه (التسجيل في الخلفية) وصلت إمتى */
+  private lastNativeAt = 0;
+
+  /** 🍏 قراية من موقع الآيفون نفسه وقت التسجيل في الخلفية — نفس طريق المراقب بالظبط (الأفضل + كل المشتركين). */
+  feedNativeFix(f: { lat: number; lng: number; accuracy: number; timestamp: number }): void {
+    if (!f || !Number.isFinite(f.lat) || !Number.isFinite(f.lng) || !Number.isFinite(f.accuracy)) return;
+    this.lastNativeAt = Date.now();
+    this.onCapWatch({
+      coords: { latitude: f.lat, longitude: f.lng, accuracy: f.accuracy },
+      timestamp: Number.isFinite(f.timestamp) ? f.timestamp : Date.now(),
+    });
   }
 
   watchStats(): { updates: number; lastAt: number; lastAcc: number | null; running: boolean } {
@@ -442,6 +462,11 @@ class GpsService {
      * ⇒ مصدر تمييز كل لوحة هو **المراقب الحي** (الفحص الدافي فوق)، مش نداءات
      *   متوازية. والمشاركة هنا بتمنع طوفان الطلبات لما المندوب ينطق بسرعة.
      */
+    // 🍏 البرنامج في الخلفية وموقع الآيفون نفسه شغّال ⇒ أحدث قراية على طول (المكتبة واقفة — شوف NATIVE_FEED_FRESH_MS)
+    if (typeof document !== "undefined" && document.visibilityState === "hidden"
+        && this.lastNativeAt && Date.now() - this.lastNativeAt <= NATIVE_FEED_FRESH_MS) {
+      return freshestOf(this.lastRaw, this.lastCoords);
+    }
     // 📍 الآيفون والموقع واقف ⇒ نعيد تشغيله دلوقتي — اللوحات اللي بعدها تاخد مكانها هي
     if (this.iosWatchNeedsRestart(Date.now())) void this.restartIosWatch("plate");
     if (this.freshInFlight) return this.freshInFlight;
