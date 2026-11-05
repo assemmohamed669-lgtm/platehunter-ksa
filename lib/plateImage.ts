@@ -43,23 +43,43 @@ const COL = {
   footer: "#94a3b8",
 };
 
-/** يلفّ نص التفاصيل على سطور بعرض متاح (بالبكسل). */
-function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+/**
+ * يلفّ نص التفاصيل على سطور بعرض متاح (بالبكسل).
+ * `breakLong`: الكلمة اللي من غير مسافات وأعرض من الخانة (رقم شهادة «CRN0000110583319») بتتكسر حروف جوّه
+ * الخانة — من غيره بتطلع سطر واحد وبتركب على العمود اللي جنبها (زي الأول بالحرف).
+ */
+export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, breakLong = false): string[] {
   if (!text) return [];
   const words = text.split(/\s+/);
   const lines: string[] = [];
   let line = "";
-  for (const w of words) {
-    const test = line ? `${line} ${w}` : w;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = w;
-    } else {
-      line = test;
+  for (const w0 of words) {
+    for (const w of breakLong ? splitLongWord(ctx, w0, maxWidth) : [w0]) {
+      const test = line ? `${line} ${w}` : w;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        lines.push(line);
+        line = w;
+      } else {
+        line = test;
+      }
     }
   }
   if (line) lines.push(line);
   return lines;
+}
+
+/** كلمة أعرض من `maxWidth` ⇒ أقل عدد حتت **متساوية** كل واحدة جوّه العرض («CRN00001» / «10583319»). */
+function splitLongWord(ctx: CanvasRenderingContext2D, w: string, maxWidth: number): string[] {
+  const width = ctx.measureText(w).width;
+  if (width <= maxWidth) return [w];
+  const chars = Array.from(w);
+  for (let k = Math.max(2, Math.ceil(width / maxWidth)); k <= chars.length; k++) {
+    const size = Math.ceil(chars.length / k);
+    const parts: string[] = [];
+    for (let i = 0; i < chars.length; i += size) parts.push(chars.slice(i, i + size).join(""));
+    if (parts.every((p) => ctx.measureText(p).width <= maxWidth)) return parts;
+  }
+  return chars;
 }
 
 function detailText(details: [string, string][]): string {
@@ -197,6 +217,13 @@ export interface TableImageOptions {
    * `GRID_DUP_PALETTE` (`gridGroupColors`) بدل `rowColors`، فمجموعتين في نفس الصورة عمرهم ما ياخدوا نفس اللون.
    */
   rowGroups?: (string | null)[];
+  /**
+   * 🅱️ الشكل القديم بخط عريض وأكبر شوية — صورة «شهايد النهارده» (المالك ٥ نوفمبر ٢٠٢٦: «الالوان فيها باهته
+   * والخطه صغير خليه كبير شوي مش كتير وبولد علشان يبقي واضح»): كل الخانات عريضة (~١٢٪ أكبر)، الكتابة غامقة،
+   * خطوط الجدول أوضح، والكلمة الطويلة من غير مسافات بتتكسر جوّه خانتها. الألوان بتترسم زي ما الصفحة بعتتها.
+   * من غيره = الشكل القديم بالحرف. (مالوش أثر مع «grid».)
+   */
+  bold?: boolean;
 }
 
 /** 🖼️ لوحات كل صورة في الشكل «grid» — المالك: «3 صور كل صورة فيها 20 لوحه بتفاصيلها». */
@@ -286,6 +313,24 @@ const T_TITLE_H = 88;
 const T_SUB_H = 42;
 const T_CELL_FONT = "34px system-ui, 'Segoe UI', Tahoma, sans-serif";
 const T_HEAD_FONT = "bold 33px system-ui, 'Segoe UI', Tahoma, sans-serif";
+const T_PLATE_FONT = "bold 37px system-ui, 'Segoe UI', Tahoma, sans-serif";
+
+// 🅱️ «bold» (`TableImageOptions.bold`) — أكبر شوية مش كتير (٣٤ ⇐ ٣٨) وكله عريض. عرض الأعمدة نفس الحدود ⇒ الصورة
+// تقريباً نفس العرض فالخط بيبان أكبر فعلاً على الموبايل (اللي زاد بيلفّ سطر تاني).
+const TB_CELL_FONT = "bold 38px system-ui, 'Segoe UI', Tahoma, sans-serif";
+const TB_HEAD_FONT = "bold 36px system-ui, 'Segoe UI', Tahoma, sans-serif";
+const TB_PLATE_FONT = "bold 41px system-ui, 'Segoe UI', Tahoma, sans-serif";
+const TB_LINE_H = 52;
+const TB_TEXT = "#0f172a";
+const TB_BORDER = "#94a3b8";
+
+/** سطور كل خانة في صف — «bold» بيقيس كل خانة بالخط اللي هتترسم بيه (اللوحة أكبر) ويكسر الكلمة الطويلة. */
+function tableCellLines(measure: CanvasRenderingContext2D, row: string[], n: number, innerW: number[], bold: boolean): string[][] {
+  return Array.from({ length: n }, (_, ci) => {
+    if (bold) measure.font = ci === 0 ? TB_PLATE_FONT : TB_CELL_FONT;
+    return wrapText(measure, String(row[ci] ?? ""), innerW[ci], bold);
+  });
+}
 
 // كثافة رسم الكانفاس (بيتضاعف بيها العرض والارتفاع بالبكسل).
 // كثافة رسم أقل (١.٥ بدل ٢) = صورة أخف فبتشيل صفوف أكتر قبل ما توصل حد آيفون،
@@ -305,14 +350,17 @@ function renderTableChunk(
   const totalW = tableW + T_PAD * 2;
   const innerW = colW.map((w) => w - T_CELL_PAD * 2);
   const measure = document.createElement("canvas").getContext("2d")!;
+  const bold = opts.bold === true;
+  const headFont = bold ? TB_HEAD_FONT : T_HEAD_FONT;
+  const lineH = bold ? TB_LINE_H : T_LINE_H;
 
   // لفّ الخانات + ارتفاع كل صف (والرؤوس).
-  measure.font = T_HEAD_FONT;
-  const headLines = opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci]));
-  const headH = T_CELL_PAD * 2 + Math.max(1, ...headLines.map((l) => l.length)) * T_LINE_H;
+  measure.font = headFont;
+  const headLines = opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci], bold));
+  const headH = T_CELL_PAD * 2 + Math.max(1, ...headLines.map((l) => l.length)) * lineH;
   measure.font = T_CELL_FONT;
-  const cellLines = rows.map((row) => opts.columns.map((_, ci) => wrapText(measure, String(row[ci] ?? ""), innerW[ci])));
-  const rowH = cellLines.map((cells) => T_CELL_PAD * 2 + Math.max(1, ...cells.map((l) => l.length)) * T_LINE_H);
+  const cellLines = rows.map((row) => tableCellLines(measure, row, opts.columns.length, innerW, bold));
+  const rowH = cellLines.map((cells) => T_CELL_PAD * 2 + Math.max(1, ...cells.map((l) => l.length)) * lineH);
 
   const titleBlock = T_TITLE_H + (opts.subtitle ? T_SUB_H : 0);
   const bodyH = rowH.reduce((a, b) => a + b, 0);
@@ -353,10 +401,10 @@ function renderTableChunk(
   ctx.fillStyle = "#e2e8f0";
   ctx.fillRect(T_PAD, y, tableW, headH);
   ctx.fillStyle = "#0f172a";
-  ctx.font = T_HEAD_FONT;
+  ctx.font = headFont;
   opts.columns.forEach((_, ci) => {
-    let ly = y + T_CELL_PAD + T_LINE_H / 2;
-    for (const line of headLines[ci]) { ctx.fillText(line, colRight[ci] - T_CELL_PAD, ly); ly += T_LINE_H; }
+    let ly = y + T_CELL_PAD + lineH / 2;
+    for (const line of headLines[ci]) { ctx.fillText(line, colRight[ci] - T_CELL_PAD, ly); ly += lineH; }
   });
   y += headH;
 
@@ -368,18 +416,18 @@ function renderTableChunk(
     const dup = rowColors?.[i];
     if (dup) { ctx.fillStyle = dup; ctx.fillRect(T_PAD, y, tableW, h); }
     row.forEach((_, ci) => {
-      // العمود الأول (اللوحة/المطلوب) بولد وغامق للتمييز.
-      ctx.font = ci === 0 ? "bold 37px system-ui, 'Segoe UI', Tahoma, sans-serif" : T_CELL_FONT;
-      ctx.fillStyle = ci === 0 ? COL.plate : COL.detail;
-      let ly = y + T_CELL_PAD + T_LINE_H / 2;
-      for (const line of cellLines[i][ci]) { ctx.fillText(line, colRight[ci] - T_CELL_PAD, ly); ly += T_LINE_H; }
+      // العمود الأول (اللوحة/المطلوب) بولد وغامق للتمييز. «bold»: كله عريض وغامق.
+      ctx.font = bold ? (ci === 0 ? TB_PLATE_FONT : TB_CELL_FONT) : ci === 0 ? T_PLATE_FONT : T_CELL_FONT;
+      ctx.fillStyle = bold ? TB_TEXT : ci === 0 ? COL.plate : COL.detail;
+      let ly = y + T_CELL_PAD + lineH / 2;
+      for (const line of cellLines[i][ci]) { ctx.fillText(line, colRight[ci] - T_CELL_PAD, ly); ly += lineH; }
     });
     y += h;
   });
 
   // خطوط الجدول (أفقي + رأسي)
-  ctx.strokeStyle = COL.border;
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = bold ? TB_BORDER : COL.border;
+  ctx.lineWidth = bold ? 1.5 : 1;
   // أفقي: تحت الرؤوس وتحت كل صف
   let hy = titleBlock + headH;
   ctx.beginPath(); ctx.moveTo(T_PAD, titleBlock + headH); ctx.lineTo(T_PAD + tableW, titleBlock + headH); ctx.stroke();
@@ -413,10 +461,11 @@ export interface TablePlan {
  */
 export function planTableImages(opts: TableImageOptions): TablePlan {
   const grid = opts.style === "grid";
-  const cellFont = grid ? G_CELL_FONT : T_CELL_FONT;
-  const headFont = grid ? G_HEAD_FONT : T_HEAD_FONT;
+  const bold = !grid && opts.bold === true;
+  const cellFont = grid ? G_CELL_FONT : bold ? TB_CELL_FONT : T_CELL_FONT;
+  const headFont = grid ? G_HEAD_FONT : bold ? TB_HEAD_FONT : T_HEAD_FONT;
   const cellPad = grid ? G_CELL_PAD : T_CELL_PAD;
-  const lineH = grid ? G_LINE_H : T_LINE_H;
+  const lineH = grid ? G_LINE_H : bold ? TB_LINE_H : T_LINE_H;
   const minW = grid ? G_MIN_COL_W : T_MIN_COL_W;
   const maxW = grid ? G_MAX_COL_W : T_MAX_COL_W;
   // نشيل الأعمدة الفاضية تماماً (كل خاناتها فاضية) — بتاخد عرض من غير أي فايدة
@@ -434,9 +483,18 @@ export function planTableImages(opts: TableImageOptions): TablePlan {
   const colW = opts.columns.map((h, ci) => {
     measure.font = headFont;
     let w = measure.measureText(h).width;
-    measure.font = grid && ci === 0 ? G_PLATE_FONT : grid ? G_BOLD_FONT : cellFont;
-    for (const row of opts.rows) w = Math.max(w, measure.measureText(String(row[ci] ?? "")).width);
-    return Math.min(maxW, Math.max(minW, Math.ceil(w) + cellPad * 2));
+    measure.font = grid && ci === 0 ? G_PLATE_FONT : grid ? G_BOLD_FONT : bold && ci === 0 ? TB_PLATE_FONT : cellFont;
+    let longWord = 0;
+    for (const row of opts.rows) {
+      const s = String(row[ci] ?? "");
+      w = Math.max(w, measure.measureText(s).width);
+      if (bold) for (const word of s.split(/\s+/)) longWord = Math.max(longWord, measure.measureText(word).width);
+    }
+    // «bold»: اللوحة مابتتقسمش على سطرين — عمودها بيوسع لحد ١٫٥ من الحد. وعمود فيه كلمة طويلة من غير مسافات
+    // (رقم الشهادة) بيوسع شوية (١٫٢٥) عشان تتقسم نصّين بس مش ٣ حتت.
+    const cap = bold && ci === 0 ? Math.round(maxW * 1.5)
+      : bold && longWord + cellPad * 2 > maxW ? Math.round(maxW * 1.25) : maxW;
+    return Math.min(cap, Math.max(minW, Math.ceil(w) + cellPad * 2));
   });
   const tableW = colW.reduce((a, b) => a + b, 0);
   const totalW = tableW + T_PAD * 2;
@@ -445,10 +503,10 @@ export function planTableImages(opts: TableImageOptions): TablePlan {
   //    تحت حدود iOS (مساحة/بُعد) — وإلا آيفون بيرجّع صورة فاضية.
   const innerW = colW.map((w) => w - cellPad * 2);
   measure.font = headFont;
-  const headH = cellPad * 2 + Math.max(1, ...opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci]).length)) * lineH;
+  const headH = cellPad * 2 + Math.max(1, ...opts.columns.map((h, ci) => wrapText(measure, h, innerW[ci], bold).length)) * lineH;
   measure.font = cellFont;
   const rowHeights = opts.rows.map((row) =>
-    cellPad * 2 + Math.max(1, ...opts.columns.map((_, ci) => wrapText(measure, String(row[ci] ?? ""), innerW[ci]).length)) * lineH,
+    cellPad * 2 + Math.max(1, ...tableCellLines(measure, row, opts.columns.length, innerW, bold).map((l) => l.length)) * lineH,
   );
   const titleH = T_TITLE_H + (opts.subtitle ? T_SUB_H : 0);
   const overhead = titleH + headH + FOOTER_H;

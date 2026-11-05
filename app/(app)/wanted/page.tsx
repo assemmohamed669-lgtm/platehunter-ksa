@@ -472,7 +472,7 @@ export default function WantedPage() {
       {error && <p className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-center text-sm text-danger" dir="rtl">{error}</p>}
 
       {/* 📄 «شهايد النهارده» — جملة خضرا بالعدد (بتتحدّث كل دقيقة) + زرار الفرز + نافذتين */}
-      {certsAllowed && <DailyCertSort variant="sorting" />}
+      {certsAllowed && <DailyCertSort variant="sorting" isSuper={isSuper} />}
 
       {/* بحث عن شهادة السحب — برقم اللوحة أو الهيكل، من Google Drive */}
       <CertificateSearch />
