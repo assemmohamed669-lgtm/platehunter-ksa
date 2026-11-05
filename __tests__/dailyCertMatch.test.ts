@@ -67,13 +67,13 @@ describe("🔴 التوصيل", () => {
     expect(DAILY_CERTS_FOR_ALL).toBe(true);
     const p = read("app/(app)/wanted/page.tsx");
     expect(p).toMatch(/DAILY_CERTS_FOR_ALL \|\| isSuper/);
-    expect(p).toMatch(/\{certsAllowed && <DailyCertSort variant="sorting" \/>\}/);
+    expect(p).toMatch(/\{certsAllowed && <DailyCertSort variant="sorting" isSuper=\{isSuper\} \/>\}/);
     expect(p).toMatch(/async function runSort\(\)/);
     expect(p).toMatch(/فرز المطلوبين/);
   });
   it("🔴 تبويب «شهايد» لمشتركين الصوت فقط: نفس المربع على داتا المجموعة", () => {
     const p = read("app/(app)/instant-check/page.tsx");
-    expect(p).toMatch(/\{voiceOnly && mode === "cert" && DAILY_CERTS_FOR_ALL && \(\s*<DailyCertSort variant="team" \/>/);
+    expect(p).toMatch(/\{voiceOnly && mode === "cert" && DAILY_CERTS_FOR_ALL && \(\s*<DailyCertSort variant="team" isSuper=\{isSuper\} \/>/);
   });
   it("🔴 فرز المطلوب العادي: الداتا الإضافية الكبيرة بتتقري من الجهاز (مش العيّنة)", () => {
     const p = read("app/(app)/wanted/page.tsx");

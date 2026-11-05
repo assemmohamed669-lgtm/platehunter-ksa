@@ -20,7 +20,7 @@ import WantedResultsTable, { type WantedRow } from "@/components/WantedResultsTa
 import ShareSortButton from "@/components/ShareSortButton";
 import LocationNeighborsModal, { type NeighborsView } from "@/components/LocationNeighborsModal";
 import { supabase } from "@/lib/supabaseClient";
-import { CERT_DAYS_BACK, certDayLabel, certDayDate, certSheetRows, dayMinus, riyadhDayStart, type DailyCertEntry } from "@/lib/certDaily";
+import { CERT_DAYS_BACK, CERT_SHARE_BOLD_FOR_ALL, certDayLabel, certDayDate, certSheetRows, dayMinus, riyadhDayStart, type DailyCertEntry } from "@/lib/certDaily";
 import { runDailyCertSort, type CertDataSource } from "@/lib/dailyCertSort";
 import { collectCertDataSources, type CertSourceDeps } from "@/lib/dailyCertSources";
 import {
@@ -37,7 +37,7 @@ import { detectChassisColumn, normalizeChassis } from "@/lib/chassis";
 import { fetchTeamDataState, downloadTeamData, TEAM_DATA_SLOT } from "@/lib/teamData";
 import { detectLocationColumn, neighborsInSameLocation, neighborsFromStream, findIndexByPlate, sameDataRow } from "@/lib/locationNeighbors";
 import { normalizePlate, bankPlateToArabic } from "@/lib/plateParser";
-import { buildColoredSortExcel, buildExcelBlob, shareExcelBlob } from "@/lib/excel";
+import { buildColoredSortExcel, buildExcelBlob, shareExcelBlob, vividDupColor } from "@/lib/excel";
 import { playSortBeep } from "@/lib/sortBeep";
 import { createSortRunner, withTimeout, TimeoutError } from "@/lib/sortRunner";
 import { shareFileName } from "@/lib/shareNames";
@@ -158,7 +158,13 @@ function offsetOf(day: string, today: string): number {
   return Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(day + "T00:00:00Z")) / 86_400_000);
 }
 
-export default function DailyCertSort({ variant }: { variant: Variant }) {
+export default function DailyCertSort({ variant, isSuper = false }: { variant: Variant; isSuper?: boolean }) {
+  // 🅱️ صورة النتيجة بخط عريض وأكبر شوية + ألوان المكرر الواضحة بتاعة الإكسيل (المالك ٥ نوفمبر ٢٠٢٦) — السوبر أدمن الأول
+  const boldShare = CERT_SHARE_BOLD_FOR_ALL || isSuper;
+  const imageColors = (rows: WantedRow[]) => {
+    const c = dupeHexColors(rows);
+    return boldShare ? c.map((x) => x && vividDupColor(x)) : c;
+  };
   // اليوم المختار: ٠ = النهارده … ٧ = قبل أسبوع. «النهارده» من السيرفر (ساعة الموبايل ممكن تبقى غلط).
   const [offset, setOffset] = useState(0);
   const [today, setToday] = useState<string>(() => riyadhDayStart(new Date()).day);
@@ -393,7 +399,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
       const full = rows.map((r) => certExportRow(r, cols));
       // من غير GPS (الرابط مالوش لازمة في الصورة) ومن غير الأعمدة الفاضية
       const columns = ["رقم اللوحة", ...cols.filter((c) => !CERT_ACTION_COLS.has(c) && c !== "GPS" && full.some((f) => f[c]))];
-      return { columns, rows: full.map((f) => columns.map((c) => f[c] ?? "")), rowColors: dupeHexColors(rows) };
+      return { columns, rows: full.map((f) => columns.map((c) => f[c] ?? "")), rowColors: imageColors(rows), bold: boldShare };
     };
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-3" dir="rtl">
@@ -537,7 +543,7 @@ export default function DailyCertSort({ variant }: { variant: Variant }) {
             const imageTable = () => {
               const full = certCombinedExportRows(result.dataRows, result.recordRows, cols);
               const columns = ["رقم اللوحة", "المصدر", ...cols.filter((c) => !CERT_ACTION_COLS.has(c) && c !== "GPS" && full.some((f) => f[c]))];
-              return { columns, rows: full.map((f) => columns.map((c) => f[c] ?? "")), rowColors: dupeHexColors(all) };
+              return { columns, rows: full.map((f) => columns.map((c) => f[c] ?? "")), rowColors: imageColors(all), bold: boldShare };
             };
             return (
               <div className="flex flex-col gap-2 rounded-2xl border border-green-600/40 bg-green-600/5 p-3" dir="rtl">

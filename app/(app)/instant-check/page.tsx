@@ -5157,7 +5157,7 @@ export default function InstantCheckPage() {
           كمان الميزة دي ل مشتركين الصوت فقط في الصفحه اللي فيها بحث علي الشهايد») — على داتا المجموعة
           وسجلاتهم. مش مشروط بملف التشييك (عمود «الحالة» بس اللي بيحتاجه). مع «انشر للكل». ── */}
       {voiceOnly && mode === "cert" && DAILY_CERTS_FOR_ALL && (
-        <DailyCertSort variant="team" />
+        <DailyCertSort variant="team" isSuper={isSuper} />
       )}
 
       {/* ── تبويب «شهايد» — نفس البحث عن الشهادة اللي في صفحة المطلوب ── */}
