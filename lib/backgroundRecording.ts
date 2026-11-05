@@ -14,15 +14,18 @@
  * الميك نفسه بيكمّل من إذن «الصوت في الخلفية» في Info.plist؛ البلجن بيشغّل **موقع الآيفون نفسه** وقت التسجيل (مكتبة الموقع
  * بتقف لما البرنامج يخرج ⇒ كل اللوحات كانت هتاخد آخر مكان جوّه البرنامج) وبيبعت «call» لما مكالمة تقطع الصوت.
  *  · نسخة الآيفون الأقدم (1.3) مافيهاش البلجن ⇒ ولا حاجة بتتغيّر.
- *  · 🛑 السوبر أدمن + حساب مراجعين أبل الأول (`BG_RECORDING_IOS_FOR_ALL`) — الفتح للكل من هنا من غير نسخة جديدة.
+ *  · 🟢 للكل (`BG_RECORDING_IOS_FOR_ALL`) من ٥ نوفمبر — أبل وافقت على 1.4 والمالك: «يلا نفتح للكل». الرجوع = false.
  */
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { gpsService } from "./gps";
 
 type Bridge = { start?: (text: string) => boolean; stop?: () => void; active?: () => boolean; ios?: boolean };
 
-/** 🍏 الآيفون للكل؟ — لأ لحد ما المالك يجرّب من TestFlight. الفتح = true (من غير نسخة جديدة). */
-export const BG_RECORDING_IOS_FOR_ALL = false;
+/**
+ * 🍏 الآيفون للكل — أبل وافقت على 1.4 (٤ نوفمبر) والمالك: «يلا نفتح للكل» (٥ نوفمبر ٢٠٢٦)، قبل تجربة على جهاز (تليفونه
+ * عطلان). الرجوع = false (من غير نسخة جديدة) — والأقدم من 1.4 مافيهوش البلجن أصلاً.
+ */
+export const BG_RECORDING_IOS_FOR_ALL = true;
 /** اسم البلجن في `AppDelegate.swift` (`jsName`) */
 export const BG_IOS_PLUGIN = "PlateHunterBackground";
 

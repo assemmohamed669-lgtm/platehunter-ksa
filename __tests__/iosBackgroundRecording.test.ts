@@ -82,14 +82,14 @@ afterEach(() => {
 });
 
 describe("🍏 مين يكمّل في الخلفية على الآيفون", () => {
-  it("🛑 السوبر أدمن + حساب مراجعين أبل بس — المناديب لسه لأ (`BG_RECORDING_IOS_FOR_ALL = false`)", async () => {
+  it("🟢 للكل — أبل وافقت على 1.4 والمالك: «يلا نفتح للكل» (٥ نوفمبر ٢٠٢٦)", async () => {
     const { bg } = await load();
-    expect(bg.BG_RECORDING_IOS_FOR_ALL).toBe(false);
+    expect(bg.BG_RECORDING_IOS_FOR_ALL).toBe(true);
     expect(bg.canRecordInBackground(true)).toBe(true);
     expect(bg.canRecordInBackground(false, "asemafify40@gmail.com")).toBe(true);
-    expect(bg.canRecordInBackground(false, " AsemAfify40@Gmail.com ")).toBe(true);
-    expect(bg.canRecordInBackground(false, "agent@qannas-ksa.com")).toBe(false);
-    expect(bg.canRecordInBackground(false, null)).toBe(false);
+    expect(bg.canRecordInBackground(false, "agent@qannas-ksa.com")).toBe(true);
+    expect(bg.canRecordInBackground(false, "")).toBe(true);
+    expect(bg.canRecordInBackground(false, null)).toBe(true);
   });
 
   it("نسخة الآيفون القديمة (1.3 — مافيهاش البلجن) ⇒ ولا حد، زي الأول بالحرف", async () => {
