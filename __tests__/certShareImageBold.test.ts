@@ -10,7 +10,8 @@ import { CERT_SHARE_BOLD_FOR_ALL } from "@/lib/certDaily";
  *  · كل الخانات عريضة (bold) وأكبر شوية (~١٢٪) · الكتابة غامقة (كانت رمادي) · خطوط الجدول أوضح.
  *  · ألوان المكرر = نفس ألوان الإكسيل الواضحة (`vividDupColor`) بدل الباهتة.
  *  · رقم الشهادة «CRN0000110583319» (من غير مسافات) كان بيركب على عمود «الحالة» ⇒ بيتكسر جوّه خانته.
- *  · 🛑 السوبر أدمن الأول (`CERT_SHARE_BOLD_FOR_ALL = false`) — باقي الصفحات والمناديب زي الأول بالحرف.
+ *  · 🟢 لكل المناديب (`CERT_SHARE_BOLD_FOR_ALL = true` — «افتح للكل» ٥ نوفمبر) بعد ما كانت للسوبر أدمن بس (#529).
+ *    باقي الصفحات (من غير bold) زي الأول بالحرف.
  */
 
 type Call = { text: string; font: string; fill: string };
@@ -119,12 +120,12 @@ describe("wrapText — تكسير الكلمة الطويلة بس لما نطل
   });
 });
 
-describe("🛑 التوصيل — السوبر أدمن الأول", () => {
+describe("🟢 التوصيل — للكل (المالك ٥ نوفمبر ٢٠٢٦: «افتح للكل»)", () => {
   const read = (p: string) => readFileSync(path.resolve(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n");
-  it("🔴 المفتاح مقفول للكل لحد تجربة المالك", () => {
-    expect(CERT_SHARE_BOLD_FOR_ALL).toBe(false);
+  it("🔴 المفتاح مفتوح لكل المناديب (الرجوع = false ⇒ السوبر أدمن بس)", () => {
+    expect(CERT_SHARE_BOLD_FOR_ALL).toBe(true);
   });
-  it("🔴 مربع الشهايد: bold + الألوان الواضحة للسوبر أدمن بس (النافذتين + «مشاركة الكل»)", () => {
+  it("🔴 مربع الشهايد: bold + الألوان الواضحة (النافذتين + «مشاركة الكل») ورا المفتاح", () => {
     const c = read("components/DailyCertSort.tsx");
     expect(c).toMatch(/const boldShare = CERT_SHARE_BOLD_FOR_ALL \|\| isSuper;/);
     expect(c).toMatch(/boldShare \? c\.map\(\(x\) => x && vividDupColor\(x\)\) : c/);
