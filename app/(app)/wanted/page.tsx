@@ -11,7 +11,7 @@
  * نزلت النهارده + زرار بيفرزها على نفس داتا صفحة الفرز والسجلات (`components/DailyCertSort.tsx` —
  * نفس المربع في تبويب «شهايد» لمشتركين الصوت فقط). فرز المطلوب العادي زي ما هو.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Crosshair, Trash2, RefreshCw } from "lucide-react";
 import WantedResultsTable, { wantedDataCols, type WantedRow } from "@/components/WantedResultsTable";
 import { supabase } from "@/lib/supabaseClient";
@@ -37,6 +37,7 @@ import LocationNeighborsModal, { type NeighborsView } from "@/components/Locatio
 import CertificateSearch from "@/components/CertificateSearch";
 import { shareFileName } from "@/lib/shareNames";
 import { buildDisplayRows } from "@/lib/exportColumns";
+import { useNearestShareOn, orderByIds } from "@/lib/nearestShare";
 
 // كاش على مستوى الموديول — بيخلّي نتيجة الفرز ثابتة لو المندوب خرج من الصفحة ورجع.
 let wantedCache: { dataRows: WantedRow[]; recordRows: WantedRow[]; sorted: boolean } | null = null;
@@ -121,6 +122,9 @@ export default function WantedPage() {
   // 📄 «شهايد النهارده» — للكل من «انشر للكل» (`DAILY_CERTS_FOR_ALL` — false يرجّعها للسوبر أدمن بس)
   const [isSuper, setIsSuper] = useState(false);
   const certsAllowed = DAILY_CERTS_FOR_ALL || isSuper;
+  // 📍 المشاركة بنفس ترتيب «الأقرب» (`lib/nearestShare.ts`) — كل نافذة بترتيبها (بالعنوان)
+  const nearestShare = useNearestShareOn();
+  const nearOrderRef = useRef<Record<string, string[] | null>>({});
   useEffect(() => {
     (async () => {
       try {
@@ -423,15 +427,18 @@ export default function WantedPage() {
   }
 
   function windowBlock(title: string, rows: WantedRow[], onDelete: (ids: string[]) => void, clearAll: () => void, onLocate?: (r: WantedRow) => void) {
+    // 📍 المشاركة بترتيب الشاشة لو المندوب داس «الأقرب» (المالك ٦ نوفمبر ٢٠٢٦ — السوبر أدمن الأول)
+    const shareRows = () => (nearestShare ? orderByIds(rows, nearOrderRef.current[title]) : rows);
     // صفوف التصدير من غير الأعمدة الفاضية (buildDisplayRows) — بترتيب المندوب
-    const exportRows = () => buildDisplayRows(toExportRows(rows, colOrder, orderMode)).rows;
+    const exportRows = () => buildDisplayRows(toExportRows(shareRows(), colOrder, orderMode)).rows;
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-3" dir="rtl">
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold text-ink">{title}</span>
           <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-bold text-brand">{rows.length} لوحة</span>
         </div>
-        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} colOrder={colOrder} orderMode={orderMode} />
+        <WantedResultsTable rows={rows} onDelete={onDelete} onLocate={onLocate} colOrder={colOrder} orderMode={orderMode}
+          onOrderChange={(ids) => { nearOrderRef.current[title] = ids; }} />
         {rows.length > 0 && (
           <div className="flex flex-col gap-2 pt-1">
             {/* زرّين تحت بعض: مشاركة النتيجة (قائمة: فتح إكسيل / واتساب / صورة) + مسح.
@@ -441,8 +448,8 @@ export default function WantedPage() {
               fileName={shareFileName("wanted")}
               label="مشاركة النتيجة"
               rows={exportRows}
-              excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(rows)), ext: "xlsx" })}
-              imageTable={() => toImageTable(rows, colOrder, orderMode)}
+              excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(shareRows())), ext: "xlsx" })}
+              imageTable={() => toImageTable(shareRows(), colOrder, orderMode)}
               shareAllAtOnce
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
             />
