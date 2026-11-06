@@ -9,7 +9,7 @@ import { render, screen, fireEvent, cleanup, act } from "@testing-library/react"
  * اللي في نتيجه الفرز بعد مايدوس الاقرب».
  *  · «المطلوب» و«شهايد النهارده» (`WantedResultsTable` + أزرار المشاركة تحته) · «فرز» بتاع «صوت فقط» · المحدد في سجلات
  *    صفحة الفرز. (أزرار المشاركة الكبيرة في صفحة الفرز كانت ماشية بترتيب الأقرب أصلاً.)
- *  · السوبر أدمن الأول (`NEAREST_SHARE_FOR_ALL = false`) — باقي المناديب زي الأول بالحرف.
+ *  · كان للسوبر أدمن الأول (#532) ⇐ **للكل** (`NEAREST_SHARE_FOR_ALL = true`) بعد تجربة المالك.
  */
 
 let nearOn = true;
@@ -28,8 +28,8 @@ import WantedResultsTable, { type WantedRow } from "@/components/WantedResultsTa
 import { gpsService } from "@/lib/gps";
 
 describe("🔒 مين ياخده", () => {
-  it("🔴 السوبر أدمن الأول — مش مفتوح للكل لسه", () => {
-    expect(NEAREST_SHARE_FOR_ALL).toBe(false);
+  it("🔴 مفتوح لكل المناديب — المالك (٦ نوفمبر ٢٠٢٦) بعد ما جرّبه: «افتح للكل»", () => {
+    expect(NEAREST_SHARE_FOR_ALL).toBe(true);
   });
 });
 

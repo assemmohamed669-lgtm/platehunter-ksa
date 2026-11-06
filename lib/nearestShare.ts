@@ -12,8 +12,8 @@
 import { useEffect, useState } from "react";
 import { fetchIsSuper } from "./certificateBatch";
 
-/** للكل؟ — false = السوبر أدمن بس (لحد ما المالك يجرّب). */
-export const NEAREST_SHARE_FOR_ALL = false;
+/** للكل؟ — كان السوبر أدمن بس (#532) ⇐ **للكل** بعد تجربة المالك (٦ نوفمبر ٢٠٢٦: «افتح للكل»). الرجوع: false. */
+export const NEAREST_SHARE_FOR_ALL = true;
 
 export function useNearestShareOn(): boolean {
   const [on, setOn] = useState<boolean>(NEAREST_SHARE_FOR_ALL);
