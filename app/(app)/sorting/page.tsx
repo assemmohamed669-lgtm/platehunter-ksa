@@ -19,6 +19,7 @@ import {
 import { referralBlocks, type ReferralBlock } from "@/lib/sideBySideTables";
 import { groupResultsBySource } from "@/lib/resultWindows";
 import { buildExportRows, buildDisplayRows } from "@/lib/exportColumns";
+import { useNearestShareOn } from "@/lib/nearestShare";
 import { combinedDupColorMap, recordRowKey } from "@/lib/dupColors";
 import DataEditLink from "@/components/DataEditLink";
 import { logAgentEvent, isMapsHref } from "@/lib/agentEvents";
@@ -452,6 +453,8 @@ export default function SortingPage() {
   }
   const [nearestActive, setNearestActive] = useState(false);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+  // 📍 المشاركة بنفس ترتيب «الأقرب» اللي على الشاشة (المالك ٦ نوفمبر ٢٠٢٦ — `lib/nearestShare.ts`)
+  const nearestShare = useNearestShareOn();
   const [locating, setLocating] = useState(false);
   const [newPlatesCount, setNewPlatesCount] = useState(0);
   // 🆕 من كام لوحة في المحفظة وكام منها موجودة في التشييك (آخر «فرز جديد»).
@@ -3284,7 +3287,10 @@ export default function SortingPage() {
   }
   /** نص المشاركة لصفوف التشييك المحددة — نفس النص للمشاركة وللنسخ. */
   function tashyeekSelectedShareText(): string {
-    const rows = (tashyeekResults ?? []).filter((_, idx) => tashyeekSelected.has(idx));
+    // 📍 بترتيب الشاشة لو «الأقرب» مفعّل (المالك ٦ نوفمبر ٢٠٢٦ — السوبر أدمن الأول)
+    const rows = nearestShare && nearestActive
+      ? displayTashyeek.filter((x) => tashyeekSelected.has(x.idx)).map((x) => x.r)
+      : (tashyeekResults ?? []).filter((_, idx) => tashyeekSelected.has(idx));
     if (!rows.length) return "";
     return `*سيارات مطلوبة (${rows.length})*\n\n` +
       rows.map((r, i) => `${i + 1}. ${tashyeekShareText(r)}`).join("\n\n──────────\n\n");

@@ -30,7 +30,8 @@ describe("🔝 ترتيب المشاركة في فرز الشهايد", () => {
   });
 
   it("بتستعمل الصفوف المجمّعة (داتا + سجلات) مش نافذة واحدة", () => {
-    expect(src).toMatch(/certCombinedExportRows\(result\.dataRows, result\.recordRows, cols\)/);
+    // (من ٦ نوفمبر ٢٠٢٦ كل نافذة بترتيبها لو «الأقرب» مفعّل — `shareRowsOf`؛ لسه الاتنين مع بعض)
+    expect(src).toMatch(/certCombinedExportRows\(shareRowsOf\("dataRows"\), shareRowsOf\("recordRows"\), cols\)/);
   });
 
   it("بتظهر لما النافذتين فيهم نتايج (لو واحدة بس، مشاركتها هي نفس الكلام)", () => {

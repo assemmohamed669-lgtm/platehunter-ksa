@@ -220,7 +220,7 @@ export function useCertStates(plates: readonly string[], enabled: boolean): (pla
 }
 
 let superPromise: Promise<boolean> | null = null;
-function fetchIsSuper(): Promise<boolean> {
+export function fetchIsSuper(): Promise<boolean> {
   if (!superPromise) {
     superPromise = (async () => {
       try {

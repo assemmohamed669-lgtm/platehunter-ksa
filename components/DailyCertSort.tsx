@@ -43,6 +43,7 @@ import { createSortRunner, withTimeout, TimeoutError } from "@/lib/sortRunner";
 import { shareFileName } from "@/lib/shareNames";
 import { buildDisplayRows } from "@/lib/exportColumns";
 import { useTableScrollFix, waitTableIdle } from "@/lib/tableScrollFix";
+import { useNearestShareOn, orderByIds } from "@/lib/nearestShare";
 
 type Variant = "sorting" | "team";
 type Row = Record<string, string>;
@@ -188,6 +189,14 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
   const scrollFix = useTableScrollFix();
   const scrollFixRef = useRef(scrollFix);
   scrollFixRef.current = scrollFix;
+  // 📍 المشاركة بنفس ترتيب «الأقرب» اللي على الشاشة (المالك ٦ نوفمبر ٢٠٢٦ — `lib/nearestShare.ts`) — السوبر أدمن الأول.
+  // الجدول بيبلّغ بترتيبه (null = «الأقرب» مقفول ⇒ نفس الترتيب اللي طلع).
+  const nearestShare = useNearestShareOn();
+  const nearOrderRef = useRef<Record<Which, string[] | null>>({ dataRows: null, recordRows: null });
+  const shareRowsOf = (which: Which): WantedRow[] => {
+    const rows = result?.[which] ?? [];
+    return nearestShare ? orderByIds(rows, nearOrderRef.current[which]) : rows;
+  };
   // للعدّاد اللي شغّال كل دقيقة (مايقراش حالة قديمة)
   const resultsRef = useRef(results);
   // فرز واحد في نفس الوقت — ودوسة المندوب وهو شغّال بتستناه بدل ما ترجع في صمت (lib/sortRunner.ts).
@@ -402,9 +411,12 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
 
   function windowBlock(title: string, which: Which, onLocate?: (r: WantedRow) => void) {
     const rows = result?.[which] ?? [];
+    // 📍 المشاركة بترتيب الشاشة لو المندوب داس «الأقرب» (`shareRowsOf`)
+    const shareRows = () => shareRowsOf(which);
     // صفوف التصدير بنفس أعمدة الجدول (من غير الأزرار والأعمدة الفاضية)
-    const exportRows = () => buildDisplayRows(rows.map((r) => certExportRow(r, cols))).rows;
+    const exportRows = () => buildDisplayRows(shareRows().map((r) => certExportRow(r, cols))).rows;
     const imageTable = () => {
+      const rows = shareRows();
       const full = rows.map((r) => certExportRow(r, cols));
       // من غير GPS (الرابط مالوش لازمة في الصورة) ومن غير الأعمدة الفاضية
       const columns = ["رقم اللوحة", ...cols.filter((c) => !CERT_ACTION_COLS.has(c) && c !== "GPS" && full.some((f) => f[c]))];
@@ -416,7 +428,8 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
           <span className="text-sm font-bold text-ink">{title}</span>
           <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-bold text-brand">{rows.length} لوحة</span>
         </div>
-        <WantedResultsTable rows={rows} onDelete={(ids) => deleteRows(which, ids)} onLocate={onLocate} mode="certs" certCols={cols} />
+        <WantedResultsTable rows={rows} onDelete={(ids) => deleteRows(which, ids)} onLocate={onLocate} mode="certs" certCols={cols}
+          onOrderChange={(ids) => { nearOrderRef.current[which] = ids; }} />
         {rows.length > 0 && (
           <div className="flex flex-col gap-2 pt-1">
             <ShareSortButton
@@ -424,7 +437,7 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
               fileName={shareFileName("wanted")}
               label="مشاركة النتيجة"
               rows={exportRows}
-              excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(rows)), ext: "xlsx" })}
+              excelBlob={async () => ({ blob: await buildColoredSortExcel(exportRows(), title, dupeHexColors(shareRows())), ext: "xlsx" })}
               imageTable={imageTable}
               shareAllAtOnce
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-night transition hover:bg-primary/90 disabled:opacity-60"
@@ -548,9 +561,12 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
           {result.dataRows.length > 0 && result.recordRows.length > 0 && (() => {
             const all = [...result.dataRows, ...result.recordRows];
             const title = `شهايد ${resultName}`;
-            const rows = () => buildDisplayRows(certCombinedExportRows(result.dataRows, result.recordRows, cols)).rows;
+            // 📍 المشاركة بترتيب الشاشة (كل نافذة بترتيبها لو «الأقرب» مفعّل فيها)
+            const shareAll = () => [...shareRowsOf("dataRows"), ...shareRowsOf("recordRows")];
+            const rows = () => buildDisplayRows(certCombinedExportRows(shareRowsOf("dataRows"), shareRowsOf("recordRows"), cols)).rows;
             const imageTable = () => {
-              const full = certCombinedExportRows(result.dataRows, result.recordRows, cols);
+              const all = shareAll();
+              const full = certCombinedExportRows(shareRowsOf("dataRows"), shareRowsOf("recordRows"), cols);
               const columns = ["رقم اللوحة", "المصدر", ...cols.filter((c) => !CERT_ACTION_COLS.has(c) && c !== "GPS" && full.some((f) => f[c]))];
               return { columns, rows: full.map((f) => columns.map((c) => f[c] ?? "")), rowColors: imageColors(all), bold: boldShare };
             };
@@ -562,7 +578,7 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
                   fileName={shareFileName("wanted")}
                   label="مشاركة الكل (الداتا + السجلات)"
                   rows={rows}
-                  excelBlob={async () => ({ blob: await buildColoredSortExcel(rows(), title, dupeHexColors(all)), ext: "xlsx" })}
+                  excelBlob={async () => ({ blob: await buildColoredSortExcel(rows(), title, dupeHexColors(shareAll())), ext: "xlsx" })}
                   imageTable={imageTable}
                   shareAllAtOnce
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-bold text-white transition hover:bg-green-700 disabled:opacity-60"

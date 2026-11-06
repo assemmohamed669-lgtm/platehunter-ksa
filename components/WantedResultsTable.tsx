@@ -17,6 +17,7 @@ import { CERT_DEFAULT_COLS, certCellValue, certShareText } from "@/lib/certColum
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
 import { useTableScrollFix, fromRightOf, scrollLeftFor, noteTableTouch } from "@/lib/tableScrollFix";
+import { useNearestShareOn } from "@/lib/nearestShare";
 
 // أعمدة بيانات المطلوب: label → قيمة الصف. الترتيب الأساسي لو المندوب ماختارش
 // ترتيب. رقم اللوحة (ثابت أول عمود) وموقعها (عمود إجراء آخر) مش هنا.
@@ -133,6 +134,7 @@ export default function WantedResultsTable({
   orderMode = "custom",
   mode = "wanted",
   certCols = [...CERT_DEFAULT_COLS],
+  onOrderChange,
 }: {
   rows: WantedRow[];
   onDelete: (ids: string[]) => void;
@@ -143,6 +145,11 @@ export default function WantedResultsTable({
   mode?: "wanted" | "certs";
   /** أعمدة جدول الشهايد بالترتيب (`lib/certColumns.ts`) — رقم اللوحة ثابت قبلهم. */
   certCols?: string[];
+  /**
+   * 📍 ترتيب الشاشة لما «الأقرب» مفعّل (معرّفات الصفوف) — `null` لما يتقفل. الصفحة بتستخدمه عشان أزرار المشاركة
+   * تحت الجدول تطلع بنفس الترتيب (المالك ٦ نوفمبر ٢٠٢٦ — `lib/nearestShare.ts`).
+   */
+  onOrderChange?: (ids: string[] | null) => void;
 }) {
   const certMode = mode === "certs";
   // أعمدة البيانات المعروضة (حسب الوضع). رقم اللوحة ثابت أول عمود وموقعها عمود
@@ -214,6 +221,12 @@ export default function WantedResultsTable({
 
   // مسافة الصف عن موقع المندوب (كم) — بتظهر في عمود «المسافة» والمشاركة لما «الأقرب» مفعّل.
   const showDist = nearest && !!userLoc;
+
+  // 📍 المشاركة بنفس ترتيب الشاشة (المالك ٦ نوفمبر ٢٠٢٦ — `lib/nearestShare.ts`) — السوبر أدمن الأول.
+  const nearestShare = useNearestShareOn();
+  const onOrderRef = useRef(onOrderChange);
+  onOrderRef.current = onOrderChange;
+  useEffect(() => { onOrderRef.current?.(showDist ? ordered.map((r) => r.id) : null); }, [showDist, ordered]);
   const distOf = (r: WantedRow): number =>
     showDist && r.lat != null && r.lng != null && userLoc
       ? haversineKm(userLoc.lat, userLoc.lng, r.lat, r.lng) : Infinity;
@@ -249,7 +262,7 @@ export default function WantedResultsTable({
   async function copyRow(r: WantedRow) { try { await navigator.clipboard.writeText(rowShareText(r)); setCopiedId(r.id); setTimeout(() => setCopiedId(null), 1200); } catch { /* no clipboard */ } }
   function shareRow(r: WantedRow) { void shareTextViaChooser(rowShareText(r)); }
   function selectedText(): string | null {
-    const rs = rows.filter((r) => selected.has(r.id));
+    const rs = (nearestShare ? ordered : rows).filter((r) => selected.has(r.id));
     if (!rs.length) return null;
     return `*لوحات (${rs.length})*\n\n` + rs.map((r, i) => `${i + 1}. ${rowShareText(r)}`).join("\n\n──────────\n\n");
   }

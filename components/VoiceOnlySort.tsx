@@ -40,6 +40,7 @@ import { buildExcelBlob, shareExcelBlob, parseExcelFile, type ExcelTable } from 
 import { renderTableImages } from "@/lib/plateImage";
 import { shareImageWithText, shareTextViaChooser } from "@/lib/share";
 import { gpsService, extractLatLngFromMapsLink, haversineKm, formatDistanceKm, type GpsCoords } from "@/lib/gps";
+import { useNearestShareOn, pickShareIndexes } from "@/lib/nearestShare";
 import {
   saveUploadedFile,
   getUploadedFile,
@@ -390,6 +391,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [zoom, setZoom] = useState(1);
   const [nearest, setNearest] = useState(false);
   const [userLoc, setUserLoc] = useState<GpsCoords | null>(null);
+  // 📍 المشاركة بنفس ترتيب «الأقرب أولاً» اللي على الشاشة (المالك ٦ نوفمبر ٢٠٢٦ — `lib/nearestShare.ts`)
+  const nearestShare = useNearestShareOn();
   /**
    * 🎛️ ترتيب الأعمدة **زي صفحة الفرز** — «الترتيب الأساسي (زي البرنامج)» أو «تخصيص». المالك (٩ أكتوبر ٢٠٢٦):
    * «تتحفظ حتي لو خرج من البرنامج او اتنقل للصفحات متتغيرش غير لو هو غيرها ب ايدو» ⇒ على الجهاز بحفظ خاص
@@ -564,7 +567,8 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
 
     const pickedTable: ShareTable = {
       columns: table.columns,
-      rows: sel.size > 0 ? table.rows.filter((_, i) => sel.has(i)) : table.rows,
+      // 📍 بترتيب «الأقرب أولاً» لو مفعّل (نفس ترتيب الشاشة) — وإلا نفس الترتيب اللي طلع (السوبر أدمن الأول)
+      rows: pickShareIndexes(table.rows.length, nearestShare && nearest && userLoc ? view.map((x) => x.i) : null, sel).map((i) => table.rows[i]),
     };
     const allSelected = sel.size === rows.length && rows.length > 0;
 
