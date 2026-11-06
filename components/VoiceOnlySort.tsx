@@ -41,6 +41,8 @@ import { renderTableImages } from "@/lib/plateImage";
 import { shareImageWithText, shareTextViaChooser } from "@/lib/share";
 import { gpsService, extractLatLngFromMapsLink, haversineKm, formatDistanceKm, type GpsCoords } from "@/lib/gps";
 import { useNearestShareOn, pickShareIndexes } from "@/lib/nearestShare";
+import { syncMyGroupFiles, loadLocalGroupFiles, type LocalGroupFile } from "@/lib/groupDataFiles";
+import { iterateRows } from "@/lib/dataStore";
 import {
   saveUploadedFile,
   getUploadedFile,
@@ -146,6 +148,33 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
   const [teamBusy, setTeamBusy] = useState(false);
   const [teamMsg, setTeamMsg] = useState<string | null>(null);
   const [teamTick, setTeamTick] = useState(0);
+  /**
+   * 📂 ملفات الداتا من مسئول المجموعة اللي ليا (المالك ٦ نوفمبر ٢٠٢٦ — `lib/groupDataFiles.ts`): بتتفرز مع سجلاتي وداتا
+   * المجموعة. الكبير صفوفه على الجهاز وبيتقري دفعات وقت الفرز (مابيتحمّلش كله في الذاكرة).
+   */
+  const [groupFiles, setGroupFiles] = useState<LocalGroupFile[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const local = await loadLocalGroupFiles().catch(() => [] as LocalGroupFile[]);
+      if (!cancelled) setGroupFiles(local);
+      const r = await syncMyGroupFiles().catch(() => null);
+      if (!cancelled && r) setGroupFiles(r.files);
+    })();
+    return () => { cancelled = true; };
+  }, [teamTick]);
+  /** صفوف ملفات المسئول دفعة دفعة — بعمود اللوحة بتاع كل ملف في `REC_PLATE_COL` (نفس شكل صفوف داتا المجموعة). */
+  const eachGroupFileChunk = useCallback(async (fn: (rows: Record<string, string>[]) => void) => {
+    for (const g of groupFiles) {
+      const st = g.state;
+      const pc = st.streamMeta?.plateCol || detectArabicPlateColumn(st.table.headers) || detectPlateColumn(st.table.headers, st.table.rows);
+      if (!pc) continue;
+      const tag = (rs: Record<string, string>[]) => rs.map((r) => ({ ...r, [REC_PLATE_COL]: String(r[pc] ?? "") }));
+      if (st.streamed) {
+        await iterateRows(async (batch) => { fn(tag(batch)); await new Promise<void>((res) => setTimeout(res, 0)); }, { slot: g.slot }).catch(() => {});
+      } else fn(tag(st.table.rows));
+    }
+  }, [groupFiles]);
   // 👥 أنا مين ومجموعتي مين — عشان الفرز يدخّل سجلات زمايلي (طلب المالك ١ أكتوبر ٢٠٢٦).
   const [me, setMe] = useState<{ id: string; name: string; names: Record<string, string>; inTeam: boolean }>(
     { id: "", name: "", names: {}, inTeam: false });
@@ -321,7 +350,11 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         : [];
       // ⚡ نتيجة سجلاتي (وداتا المجموعة) **على طول** — من غير ما نستنى السيرفر.
       //    **تام بس** (88, false) زي صفحة الفرز الأساسية — التقريبي كان ١٩ ثانية.
-      setResults(matchChunkAgainstIndex([...mine, ...teamDataRows], REC_PLATE_COL, index, 88, false));
+      // 📂 + ملفات الداتا من المسئول اللي ليا — دفعة دفعة (الكبير مابيتحمّلش كله في الذاكرة)
+      const gfMatches: MatchResult[] = [];
+      await eachGroupFileChunk((rows) => { for (const m of matchChunkAgainstIndex(rows, REC_PLATE_COL, index, 88, false)) gfMatches.push(m); });
+      if (run !== sortRunRef.current) return;
+      setResults([...matchChunkAgainstIndex([...mine, ...teamDataRows], REC_PLATE_COL, index, 88, false), ...gfMatches]);
       // 🔩 الشاص برقم الشاص — على الإحالة كلها (زي صفحة الفرز في «جديد» و«كلي»)
       setChassisMatches(matchChassisRecordsAgainstReferrals(getChassisRecords(), [{ headers: refTable.headers, rows: refTable.rows }]));
       setRecSummary((sm) => (sm ? { ...sm, chassis: getChassisRecords().length } : sm));
@@ -338,13 +371,13 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
         const removed = sortRemovedRef.current;
         // القايمة اتغيّرت (زادت سجلات الزمايل) — تحديد اتعمل قبلها كان بيبعت جزء منها بس.
         setSel(new Set());
-        setResults(matchChunkAgainstIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL, index, 88, false)
+        setResults([...matchChunkAgainstIndex([...mine, ...groupRows, ...teamDataRows], REC_PLATE_COL, index, 88, false), ...gfMatches]
           .filter((m) => !(m.dataRow && removed.has(m.dataRow))));
       }
     } finally {
       if (run === sortRunRef.current) { setBusy(false); setGroupPending(false); }
     }
-  }, [refTable, refPlateCol, sortMode, checkSet, busy, groupCache, myRows, teamRows, teamPlateCol, me.inTeam]);
+  }, [refTable, refPlateCol, sortMode, checkSet, busy, groupCache, myRows, teamRows, teamPlateCol, me.inTeam, eachGroupFileChunk]);
 
   // ── اللصق النصّي: لوحات مكتوبة → تتطابق على السجلات ────────────────────────
   const runPaste = useCallback(async () => {
@@ -364,7 +397,14 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       // 🎨 **كل** مرة اللوحة اتسجلت فيها (المالك ١١ أكتوبر ٢٠٢٦: «لو حبك1234 مكررة 3 مرات تطلع ال 3 مرات») —
       // الفهرس القديم كان بيحتفظ بصف واحد لكل لوحة. النتيجة ببيانات السجل الكاملة.
       // ⚡ نتيجة سجلاتي على طول — من غير ما نستنى السيرفر.
-      setPasteResults(matchPastedOnRecords(tokens, [...mine, ...teamDataRows]));
+      // 📂 + صفوف ملفات المسئول اللي فيها اللوحات الملصوقة بس (الملف الكبير مابيتحمّلش كله في الذاكرة)
+      const want = new Set(tokens.map((t) => normalizePlate(bankPlateToArabic(t))).filter(Boolean));
+      const gfRows: Record<string, string>[] = [];
+      await eachGroupFileChunk((rows) => {
+        for (const r of rows) if (want.has(normalizePlate(bankPlateToArabic(String(r[REC_PLATE_COL] ?? ""))))) gfRows.push(r);
+      });
+      if (run !== pasteRunRef.current) return;
+      setPasteResults(matchPastedOnRecords(tokens, [...mine, ...teamDataRows, ...gfRows]));
       setPasteRan(true);
       setBusy(false);
       if (!me.inTeam) return;
@@ -376,13 +416,13 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
       if (groupRows.length) {
         const removed = pasteRemovedRef.current;
         setSel(new Set());   // نفس السبب — التحديد القديم بيشاور على قايمة اتغيّرت
-        setPasteResults(matchPastedOnRecords(tokens, [...mine, ...groupRows, ...teamDataRows])
+        setPasteResults(matchPastedOnRecords(tokens, [...mine, ...groupRows, ...teamDataRows, ...gfRows])
           .filter((m) => !removed.has(m.referralRow)));
       }
     } finally {
       if (run === pasteRunRef.current) { setBusy(false); setGroupPending(false); }
     }
-  }, [pasteText, groupCache, myRows, teamRows, teamPlateCol, me.inTeam]);
+  }, [pasteText, groupCache, myRows, teamRows, teamPlateCol, me.inTeam, eachGroupFileChunk]);
 
   // ── المشاركة ──────────────────────────────────────────────────────────────
   /** يدمج صف الإحالة + صف السجل في صف واحد للعرض/التصدير (كل البيانات). */
@@ -821,6 +861,20 @@ export default function VoiceOnlySort({ checkTable }: VoiceOnlySortProps) {
               <p className="text-[11px] text-muted">
                 {(teamPlateCount ?? teamRows.length).toLocaleString("en-US")} لوحة — بتتفرز مع سجلاتك
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📂 ملفات الداتا من المسئول اللي ليا — للفرز بس */}
+      {groupFiles.length > 0 && (
+        <div className="rounded-2xl border border-primary/40 bg-primary/5 px-3 py-2.5">
+          <div className="flex items-start gap-2">
+            <Lock size={15} className="mt-0.5 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-ink">ملفات داتا من المسئول ({groupFiles.length}) · للفرز فقط</p>
+              <p className="truncate text-[11px] text-muted">{groupFiles.map((g) => g.fileName).join(" · ")}</p>
+              <p className="text-[11px] text-muted">بتتفرز مع سجلاتك</p>
             </div>
           </div>
         </div>

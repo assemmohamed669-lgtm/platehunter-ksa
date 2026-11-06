@@ -5,7 +5,7 @@ import {
   ListFilter, CheckCircle2, AlertTriangle, Copy, Check, Share2,
   Navigation, ZoomIn, ZoomOut, FileSpreadsheet,
   ChevronDown, CheckSquare, Square, Trash2, ScanLine, X, Plus, MapPin, History,
-  Lock, LockOpen, Pencil,
+  Lock, LockOpen, Pencil, Loader2,
 } from "lucide-react";
 import FileUploadBox from "@/components/FileUploadBox";
 import PlateBadge from "@/components/PlateBadge";
@@ -72,6 +72,7 @@ import {
   needsTeamDataRefresh, teamIngestMode, setTeamDataOpen, TEAM_DATA_SLOT, type TeamDataState,
 } from "@/lib/teamData";
 import { fetchMyMemberData, downloadMyMemberData, MEMBER_DATA_SLOT } from "@/lib/memberData";
+import { syncMyGroupFiles, loadLocalGroupFiles, type LocalGroupFile } from "@/lib/groupDataFiles";
 import { ingestRemoteData, loadLocalRemoteData, clearRemoteData, type RemoteDataState } from "@/lib/remoteDataSlot";
 import { combinedCheckPlates, loadAllCheckSources } from "@/lib/checkSheets";
 import { splitReferralByCheck, checkSourcesSignature, isNewCacheFresh, resultBelongsOnScreen } from "@/lib/newSortCheck";
@@ -891,6 +892,29 @@ export default function SortingPage() {
     } finally { setMemberBusy(false); }
   }, []);
   useEffect(() => { void syncMemberData(); }, [syncMemberData]);
+
+  // ── 📂 ملفات الداتا من مسئول المجموعة (كذا ملف — المالك ٦ نوفمبر ٢٠٢٦ — `lib/groupDataFiles.ts`) ──────────
+  // المسئول بيرفعها من «إدارة مجموعتي ← ملفات الداتا» ولكل ملف بيختار: المجموعة كلها أو أعضاء معيّنين. العضو بيفرز على
+  // **كل** اللي ليه مع بعض (ومع داتا المجموعة/المخصوصة القديمة)، من غير فتح ولا تنزيل. كل ملف في سلوت لوحده.
+  const [groupFiles, setGroupFiles] = useState<LocalGroupFile[]>([]);
+  const [groupFilesBusy, setGroupFilesBusy] = useState(false);
+  const [groupFilesMsg, setGroupFilesMsg] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const local = await loadLocalGroupFiles().catch(() => [] as LocalGroupFile[]);
+      if (!cancelled) setGroupFiles(local);
+      setGroupFilesBusy(true);
+      const r = await syncMyGroupFiles().catch(() => null);
+      if (cancelled) return;
+      setGroupFilesBusy(false);
+      if (!r) return;
+      setGroupFiles(r.files);
+      setGroupFilesMsg(r.failed.length ? `تعذّر تنزيل: ${r.failed.join("، ")} — جرّب تاني.` : null);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const groupFilesReady = groupFiles.length > 0;
   // 👥 شيت تشييك المجموعة كمان — العضو اللي بيفتح على الفرز على طول كان بيفرز
   //    على شيته القديم لحد ما يفتح صفحة التشييك (بلاغ ٢٩ سبتمبر). المزامنة
   //    بتبعت idbFileUpdated لو نزل شيت أحدث، والمستمع تحت بيعيد قراءته.
@@ -1229,6 +1253,11 @@ export default function SortingPage() {
       // 👥 العضو اللي بيفرز على داتا المجموعة بس (من غير ملف بتاعه) ⇒ أعمدة الداتا من ملف المجموعة.
       sources.push({ kind: "data", headers: teamTable.headers, rows: teamTable.rows,
         plateCol: teamStreamMeta?.plateCol || resolveDataPlateCol(teamTable.headers, teamTable.rows, null) });
+    } else if (groupFiles[0]) {
+      // 📂 العضو اللي بيفرز على ملفات المسئول بس ⇒ أعمدة الداتا من أول ملف (الملفات مفترض نفس الأعمدة).
+      const t = groupFiles[0].state.table;
+      sources.push({ kind: "data", headers: t.headers, rows: t.rows,
+        plateCol: groupFiles[0].state.streamMeta?.plateCol || resolveDataPlateCol(t.headers, t.rows, null) });
     }
     // سجلات المندوب كخانة داتا (ربط حي) — أعمدتها لازم تظهر في نتيجة الفرز زي أي داتا.
     if (recordsLinked && tashyeekTable && tashyeekPlateCol) {
@@ -1271,7 +1300,7 @@ export default function SortingPage() {
     return resolveMergedResultColumns(sources);
   }, [dataTable, referralTable, effectiveDataPlateCol, effectiveReferralPlateCol, extraReferrals,
       isMultiSheetRef, selectedRefSheets, recordsLinked, tashyeekTable, tashyeekPlateCol, memberTable, memberStreamMeta,
-      teamData.role, teamTable, teamStreamMeta]);
+      teamData.role, teamTable, teamStreamMeta, groupFiles]);
 
   // أعمدة الإحالة الإضافية المختارة — من المربع الأساسي (referralExtraCols) +
   // كل مربع إحالة إضافي (extraColsSel[er.id]). بتتقري من صف الإحالة وبتتلحق
@@ -1883,8 +1912,8 @@ export default function SortingPage() {
   // الفرز زي ما ملف الداتا العادي بيكفّي. عمود اللوحة بييجي من مصدر المجموعة.
   const teamDataReady = teamData.role === "member" && ((teamStreamed && !!teamStreamMeta) || !!teamTable);
   const canSortFiles = sortMode === "new"
-    ? (!!dataTable || teamDataReady || memberDataReady) && referralReady && !!checkTable && (!!effectiveDataPlateCol || teamDataReady || memberDataReady) && !!effectiveCheckPlateCol && dataSheetsReady
-    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || teamDataReady || memberDataReady || recordsAsDataReady);
+    ? (!!dataTable || teamDataReady || memberDataReady || groupFilesReady) && referralReady && !!checkTable && (!!effectiveDataPlateCol || teamDataReady || memberDataReady || groupFilesReady) && !!effectiveCheckPlateCol && dataSheetsReady
+    : referralReady && dataSheetsReady && ((!!dataTable && !!effectiveDataPlateCol) || teamDataReady || memberDataReady || groupFilesReady || recordsAsDataReady);
   // ✅ وكمان السجلات والمربعات الإضافية قارية (من الجهاز — في لحظة) ⇒ الفرز على **كل** الداتا و**كل** السجلات
   const allLoaded = recordsLoaded && boxesLoaded;
   const canSort = canSortFiles && allLoaded;
@@ -2228,6 +2257,15 @@ export default function SortingPage() {
         const pc = resolveDataPlateCol(teamTable.headers, teamTable.rows, effectiveDataPlateCol);
         if (pc) srcs.push({ rows: teamTable.rows, plateCol: pc });
       }
+    }
+    // 📂 ملفات الداتا من المسئول اللي ليا — **مع** اللي فوق (قرار المالك ٦ نوفمبر ٢٠٢٦: «الاتنين مع بعض»).
+    //    الكبير بيتقري من سلوته دفعات (زي الداتا الكبيرة)، والصغير صفوفه في الذاكرة.
+    for (const g of groupFiles) {
+      const st = g.state;
+      const pc = st.streamMeta?.plateCol || resolveDataPlateCol(st.table.headers, st.table.rows, effectiveDataPlateCol);
+      if (!pc) continue;
+      if (st.streamed && st.streamMeta) srcs.push({ rows: [], plateCol: pc, slot: g.slot, rowCount: st.streamMeta.rowCount, sheets: null });
+      else srcs.push({ rows: st.table.rows, plateCol: pc });
     }
     for (const ed of extraData) {
       if (!ed.table) continue;
@@ -2632,7 +2670,7 @@ export default function SortingPage() {
   async function runFullSort() {
     const hasUploadedData = !!dataTable && !!effectiveDataPlateCol;
     const hasRecordsData = recordsLinked && !!tashyeekTable && !!tashyeekPlateCol;
-    if (!(hasUploadedData || hasRecordsData || memberDataReady || teamDataReady) || !referralTable || !effectiveReferralPlateCol) return;
+    if (!(hasUploadedData || hasRecordsData || memberDataReady || teamDataReady || groupFilesReady) || !referralTable || !effectiveReferralPlateCol) return;
     setSorting(true); setGroupMissed(false);
     const sortT0 = Date.now();
     await new Promise<void>((r) => setTimeout(r, 10));
@@ -2767,7 +2805,7 @@ export default function SortingPage() {
   // اللوحات الجديدة = لوحات الإحالة (كل الشيتات) غير الموجودة في ملف التشييك،
   // وبعدين بتتطابق على ملف الداتا وعلى شيت السجلات → الجديد بس في النتيجة.
   async function runNewSort() {
-    if ((!dataTable && !memberDataReady && !teamDataReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady && !teamDataReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
+    if ((!dataTable && !memberDataReady && !teamDataReady && !groupFilesReady) || !referralTable || !checkTable || (!effectiveDataPlateCol && !memberDataReady && !teamDataReady && !groupFilesReady) || !effectiveReferralPlateCol || !effectiveCheckPlateCol) return;
     setSorting(true); setGroupMissed(false);
     const sortT0 = Date.now();
     await new Promise<void>((r) => setTimeout(r, 10));
@@ -3821,6 +3859,29 @@ export default function SortingPage() {
             <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-[11px] text-muted">جارٍ تنزيل الداتا من المسئول…</div>
           ) : null}
           {memberMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{memberMsg}</p>}
+        </div>
+      )}
+
+      {/* 📂 ملفات الداتا من المسئول اللي ليا (كذا ملف) — للفرز بس، من غير فتح ولا تنزيل */}
+      {(groupFiles.length > 0 || groupFilesMsg) && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <span className="text-xs font-bold text-muted">ملفات داتا من المسئول ({groupFiles.length})</span>
+            <span className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary">
+              <Lock size={11} /> للفرز بس
+            </span>
+          </div>
+          {groupFiles.map((g) => (
+            <div key={g.id} className="flex items-center gap-2 rounded-xl border border-primary/40 bg-primary/5 px-3 py-2">
+              <FileSpreadsheet size={14} className="shrink-0 text-primary" />
+              <span className="min-w-0 flex-1 truncate text-xs font-bold text-ink">{g.fileName}</span>
+              <span className="shrink-0 text-[11px] text-muted">
+                {(g.state.streamed && g.state.streamMeta ? g.state.streamMeta.rowCount : g.state.table.rows.length).toLocaleString("en-US")} صف
+              </span>
+            </div>
+          ))}
+          {groupFilesBusy && <p className="flex items-center gap-1 px-0.5 text-[11px] text-muted"><Loader2 size={11} className="animate-spin" /> بيشوف لو المسئول رفع حاجة جديدة…</p>}
+          {groupFilesMsg && <p className="px-0.5 text-[11px] font-bold text-danger">{groupFilesMsg}</p>}
         </div>
       )}
 
