@@ -6,7 +6,7 @@
  * بلون مختلف عن غيرها عشان تبان تحت بعضها. فيه زوم + تحديد الكل + نسخ/مشاركة/حذف
  * لكل لوحة + حذف جماعي.
  */
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Copy, Check, Share2, Trash2, MapPin, Navigation, CheckSquare, Square, FileText, Loader2 } from "lucide-react";
 import ZoomControl, { zoomFontPx } from "@/components/ZoomControl";
 import { usePinchZoom } from "@/components/usePinchZoom";
@@ -16,6 +16,7 @@ import { orderedLabels, type OrderMode } from "@/lib/columnOrder";
 import { CERT_DEFAULT_COLS, certCellValue, certShareText } from "@/lib/certColumns";
 import CertCell from "@/components/CertCell";
 import { useCertsEnabled, useCertStates, retryCertificate } from "@/lib/certificateBatch";
+import { useTableScrollFix, fromRightOf, scrollLeftFor, noteTableTouch } from "@/lib/tableScrollFix";
 
 // أعمدة بيانات المطلوب: label → قيمة الصف. الترتيب الأساسي لو المندوب ماختارش
 // ترتيب. رقم اللوحة (ثابت أول عمود) وموقعها (عمود إجراء آخر) مش هنا.
@@ -157,6 +158,35 @@ export default function WantedResultsTable({
   const certOf = useCertStates(certPlates, certsOn);
   const [zoom, setZoom] = useState(3);
   const pinchRef = usePinchZoom(zoom, setZoom);
+  // ↔️ الآيفون كان بيرجّع الجدول لأول الصف لوحده (العبيدي ٦ نوفمبر ٢٠٢٦ — `lib/tableScrollFix.ts`): المربع بيتسحب
+  // «شمال ⇐ يمين» من جوّه والجدول نفسه من اليمين، وفاكر المندوب واقف فين ويرجّعه هناك بعد أي تحديث.
+  const scrollFix = useTableScrollFix();
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const fromRightRef = useRef(0);
+  const setBox = useCallback((el: HTMLDivElement | null) => { boxRef.current = el; pinchRef(el); }, [pinchRef]);
+  const keepPlace = useCallback(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const want = scrollLeftFor(fromRightRef.current, el.scrollWidth, el.clientWidth);
+    if (Math.abs(el.scrollLeft - want) >= 1) el.scrollLeft = want;
+  }, []);
+  // بعد كل رسمة (صفوف جديدة/زوم/أعمدة) — قبل ما الشاشة تتلوّن
+  useLayoutEffect(() => { if (scrollFix) keepPlace(); });
+  // العرض اتغيّر من غير رسمة (لفّ الموبايل/الخط اتحمّل)
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!scrollFix || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => keepPlace());
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [scrollFix, keepPlace]);
+  const onBoxScroll = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    fromRightRef.current = fromRightOf(el.scrollLeft, el.scrollWidth, el.clientWidth);
+    noteTableTouch("scroll");
+  };
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [nearest, setNearest] = useState(false);
@@ -260,7 +290,15 @@ export default function WantedResultsTable({
         <ZoomControl zoom={zoom} setZoom={setZoom} />
       </div>
 
-      <div ref={pinchRef} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}>
+      <div ref={setBox} className="overflow-auto rounded-xl border border-border" style={{ maxHeight: "55vh", touchAction: "pan-x pan-y" }}
+        {...(scrollFix ? {
+          dir: "ltr",
+          onScroll: onBoxScroll,
+          onTouchStart: () => noteTableTouch("start"),
+          onTouchMove: () => noteTableTouch("move"),
+          onTouchEnd: () => noteTableTouch("end"),
+          onTouchCancel: () => noteTableTouch("end"),
+        } : {})}>
         <table className="border-collapse w-full" style={{ direction: "rtl", fontSize: `${px}px`, minWidth: "max-content" }}>
           <thead className="sticky top-0 z-10">
             <tr className="bg-surface-2 text-muted">

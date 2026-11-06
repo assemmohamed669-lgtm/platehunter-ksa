@@ -42,6 +42,7 @@ import { playSortBeep } from "@/lib/sortBeep";
 import { createSortRunner, withTimeout, TimeoutError } from "@/lib/sortRunner";
 import { shareFileName } from "@/lib/shareNames";
 import { buildDisplayRows } from "@/lib/exportColumns";
+import { useTableScrollFix, waitTableIdle } from "@/lib/tableScrollFix";
 
 type Variant = "sorting" | "team";
 type Row = Record<string, string>;
@@ -81,6 +82,8 @@ interface DailyResponse { day: string; today?: string; total?: number; parsed?: 
 const CERT_FETCH_MS = 20_000;
 /** حد أقصى لفرز اليوم كله (الشهايد + الداتا) — بعده القفل بيتفك والمندوب يقدر يدوس تاني. */
 const CERT_SORT_MAX_MS = 120_000;
+/** ↔️ التحديث التلقائي بيستنى صباع المندوب يتشال من الجدول قبل ما يرسمه (العبيدي — `lib/tableScrollFix.ts`) — بحد أقصى. */
+const CERT_TOUCH_WAIT_MAX_MS = 20_000;
 
 async function fetchDailyCerts(countOnly: boolean, offset: number): Promise<DailyResponse | null> {
   const { data: s } = await withTimeout(supabase.auth.getSession(), 8_000);
@@ -181,6 +184,10 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
   const [neighborView, setNeighborView] = useState<NeighborsView | null>(null);
   const [locating, setLocating] = useState(false);
   const cols = certDisplayCols(prefs);
+  // ↔️ الجدول مايرجعش لأول الصف وصباع المندوب عليه (العبيدي ٦ نوفمبر ٢٠٢٦) — العبيدي + السوبر أدمن الأول
+  const scrollFix = useTableScrollFix();
+  const scrollFixRef = useRef(scrollFix);
+  scrollFixRef.current = scrollFix;
   // للعدّاد اللي شغّال كل دقيقة (مايقراش حالة قديمة)
   const resultsRef = useRef(results);
   // فرز واحد في نفس الوقت — ودوسة المندوب وهو شغّال بتستناه بدل ما ترجع في صمت (lib/sortRunner.ts).
@@ -272,6 +279,8 @@ export default function DailyCertSort({ variant, isSuper = false }: { variant: V
         iterate: (slot, onBatch) => iterateRows((rows, base) => onBatch(rows, base), { slot }),
       });
       dn("done", { ms: Date.now() - t0, dataResults: out.dataRows.length, recordResults: out.recordRows.length });
+      // ✋ التحديث التلقائي مايرسمش الجدول وصباع المندوب عليه — بيستنى يشيله ويقف شوية (الدوسة على «فرز» لأ)
+      if (silent && scrollFixRef.current) await waitTableIdle(CERT_TOUCH_WAIT_MAX_MS);
       const prev = resultsRef.current[d.day];
       const deleted = new Set(prev?.deleted ?? []);
       const dataRows = out.dataRows.filter((r) => !deleted.has(r.id));
