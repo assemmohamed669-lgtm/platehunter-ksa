@@ -11,10 +11,10 @@ const S = readFileSync(path.resolve(__dirname, "..", "app/(app)/sorting/page.tsx
 
 describe("🔴 داتا المجموعة لوحدها بتكفّي للفرز", () => {
   it("الكلي", () => {
-    expect(S).toMatch(/if \(!\(hasUploadedData \|\| hasRecordsData \|\| memberDataReady \|\| teamDataReady\) \|\| !referralTable/);
+    expect(S).toMatch(/if \(!\(hasUploadedData \|\| hasRecordsData \|\| memberDataReady \|\| teamDataReady \|\| groupFilesReady\) \|\| !referralTable/);   // + ملفات المسئول (٦ نوفمبر ٢٠٢٦)
   });
   it("الجديد", () => {
-    expect(S).toMatch(/if \(\(!dataTable && !memberDataReady && !teamDataReady\) \|\| !referralTable \|\| !checkTable \|\| \(!effectiveDataPlateCol && !memberDataReady && !teamDataReady\) \|\|/);
+    expect(S).toMatch(/if \(\(!dataTable && !memberDataReady && !teamDataReady && !groupFilesReady\) \|\| !referralTable \|\| !checkTable \|\| \(!effectiveDataPlateCol && !memberDataReady && !teamDataReady && !groupFilesReady\) \|\|/);
   });
   it("أعمدة النتيجة (الحي/الموقع…) من ملف المجموعة لو مافيش ملف داتا للعضو", () => {
     // الحالة مش teamDataReady عشان دي متعرّفة تحت (useMemo بيتنفّذ قبلها ⇒ ReferenceError)

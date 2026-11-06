@@ -44,6 +44,7 @@ import { shareFileName } from "@/lib/shareNames";
 import { buildDisplayRows } from "@/lib/exportColumns";
 import { useTableScrollFix, waitTableIdle } from "@/lib/tableScrollFix";
 import { useNearestShareOn, orderByIds } from "@/lib/nearestShare";
+import { syncMyGroupFiles, loadLocalGroupFiles } from "@/lib/groupDataFiles";
 
 type Variant = "sorting" | "team";
 type Row = Record<string, string>;
@@ -154,6 +155,12 @@ const sourceDeps: CertSourceDeps = {
       fileName: file.fileName, headers: parsed.headers, rows: parsed.rows, uploadedAt: file.updatedAt, fileBlob: f,
     });
     return { headers: parsed.headers, rows: parsed.rows };
+  },
+  // 📂 ملفات الداتا من مسئول المجموعة اللي ليا (المالك ٦ نوفمبر ٢٠٢٦) — لو التنزيل طوّل بنفرز على اللي على الموبايل.
+  groupFiles: async () => {
+    const synced = await withTimeout(syncMyGroupFiles(), 20_000).catch(() => null);
+    const files = synced?.files ?? await loadLocalGroupFiles().catch(() => []);
+    return files.map((f) => ({ slot: f.slot, streamed: f.state.streamed, headers: f.state.table.headers, rows: f.state.table.rows }));
   },
 };
 

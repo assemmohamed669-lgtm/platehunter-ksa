@@ -11,6 +11,7 @@
 import { saveActiveTeam } from "./activeTeam";
 import { TEAM_DATA_SLOT } from "./teamData";
 import { MEMBER_DATA_SLOT } from "./memberData";
+import { clearAllGroupFiles } from "./groupDataFiles";
 
 /** خانة نسخة ملف التشييك بتاعة مجموعة على الجهاز. */
 export function checkSlotFor(team: string): string {
@@ -41,6 +42,8 @@ export async function switchActiveTeam(oldTeam: string | null, newTeam: string):
     // 🗂️ الداتا المخصوصة من مسئول المجموعة القديمة — ماتتفرزش في المجموعة الجديدة.
     await idb.deleteUploadedFile("local", MEMBER_DATA_SLOT).catch(() => {});
     await clearData(MEMBER_DATA_SLOT).catch(() => {});
+    // 📂 ملفات الداتا من مسئول المجموعة القديمة (`lib/groupDataFiles.ts`) — نفس الكلام.
+    await clearAllGroupFiles().catch(() => {});
   } catch { /* بتتجاب من جديد في أول فرز */ }
   saveActiveTeam(newTeam);
   return { ok: true };

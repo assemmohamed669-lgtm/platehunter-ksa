@@ -57,7 +57,7 @@ describe("🔴 تبويب «فرز» (صوت فقط) — كل مطابقة في�
 
   it("كل نداء لـmatchChunkAgainstIndex بيقفل التقريبي صراحة (88, false)", () => {
     const calls = SRC.split("matchChunkAgainstIndex(").slice(1).map((c) => c.slice(0, c.indexOf(";")));
-    expect(calls.length).toBe(2);   // فرز (نتيجتي + المجموعة)
+    expect(calls.length).toBe(3);   // فرز (نتيجتي + المجموعة) + ملفات المسئول دفعة دفعة (٦ نوفمبر ٢٠٢٦)
     for (const c of calls) expect(c, c).toContain(", 88, false)");
   });
 

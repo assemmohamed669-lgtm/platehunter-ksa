@@ -30,7 +30,12 @@ export interface CertSourceDeps {
   teamState(): Promise<{ role: TeamDataRole; file: TeamFileRef | null }>;
   /** تنزيل داتا المجموعة الأحدث وحفظها (مشتركين الصوت فقط). null = فشل. */
   refreshTeamData?(file: TeamFileRef): Promise<{ headers: string[]; rows: Row[] } | null>;
+  /** 📂 ملفات الداتا من المسئول اللي ليا (بعد المزامنة) — كل ملف في سلوته. */
+  groupFiles?(): Promise<GroupFileSource[]>;
 }
+
+/** ملف من مسئول المجموعة على الموبايل: الكبير (`streamed`) صفوفه دفعات في سلوته، والصغير صفوفه هنا. */
+export interface GroupFileSource { slot: string; streamed: boolean; headers: string[]; rows: Row[] }
 
 const safe = <T>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
 
@@ -48,20 +53,38 @@ async function localTeamSource(local: CertSourceRec | null, d: CertSourceDeps): 
   return (await streamSource(TEAM_DATA_SLOT, d)) ?? { kind: "mem", headers: local.headers, rows: local.rows, ref: TEAM_DATA_SLOT };
 }
 
+/**
+ * 📂 ملفات الداتا من مسئول المجموعة اللي ليا (`lib/groupDataFiles.ts` — المالك ٦ نوفمبر ٢٠٢٦: نفس أماكن داتا المجموعة).
+ * الكبير دفعات من سلوته، والصغير صفوفه في سجله.
+ */
+async function pushGroupFiles(out: CertDataSource[], d: CertSourceDeps): Promise<void> {
+  if (!d.groupFiles) return;
+  for (const g of await safe(d.groupFiles(), [] as GroupFileSource[])) {
+    if (g.streamed) {
+      const s = await streamSource(g.slot, d);
+      if (s) out.push(s);
+      continue;
+    }
+    out.push({ kind: "mem", headers: g.headers, rows: g.rows, ref: g.slot });
+  }
+}
+
 export async function collectCertDataSources(variant: "sorting" | "team", d: CertSourceDeps): Promise<CertDataSource[]> {
   const out: CertDataSource[] = [];
   const team = await safe(d.teamState(), { role: "off" as TeamDataRole, file: null });
   const teamLocal = team.role !== "off" && team.file ? await safe(d.getUploadedFile("local", TEAM_DATA_SLOT), null) : null;
 
   if (variant === "team") {
-    if (team.role === "off" || !team.file) return out;
-    const fresh = !!teamLocal && !needsTeamDataRefresh(teamLocal.uploadedAt ?? null, team.file.updatedAt);
-    if (!fresh && d.refreshTeamData) {
-      const t = await safe(d.refreshTeamData(team.file), null);
-      if (t) { out.push({ kind: "mem", headers: t.headers, rows: t.rows, ref: TEAM_DATA_SLOT }); return out; }
+    if (team.role !== "off" && team.file) {
+      const fresh = !!teamLocal && !needsTeamDataRefresh(teamLocal.uploadedAt ?? null, team.file.updatedAt);
+      const t = !fresh && d.refreshTeamData ? await safe(d.refreshTeamData(team.file), null) : null;
+      if (t) out.push({ kind: "mem", headers: t.headers, rows: t.rows, ref: TEAM_DATA_SLOT });
+      else {
+        const s = await localTeamSource(teamLocal, d);   // التنزيل فشل ⇒ القديمة أحسن من مفيش
+        if (s) out.push(s);
+      }
     }
-    const s = await localTeamSource(teamLocal, d);   // التنزيل فشل ⇒ القديمة أحسن من مفيش
-    if (s) out.push(s);
+    await pushGroupFiles(out, d);
     return out;
   }
 
@@ -77,6 +100,8 @@ export async function collectCertDataSources(variant: "sorting" | "team", d: Cer
     const s = await localTeamSource(teamLocal, d);
     if (s) out.push(s);
   }
+  // (٢ب) ملفات الداتا من المسئول (اللي ليا بس)
+  await pushGroupFiles(out, d);
   // (٣) الإضافي (data-2, data-3…)
   for (let n = 2; n < 100; n++) {
     const rec = await safe(d.getUploadedFile("local", `data-${n}`), null);

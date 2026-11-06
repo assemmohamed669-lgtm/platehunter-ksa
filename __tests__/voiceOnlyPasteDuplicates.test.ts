@@ -63,8 +63,9 @@ describe("🔴 التوصيل في «صوت فقط»", () => {
   const paste = s.slice(s.indexOf("const runPaste = useCallback"), s.indexOf("// ── المشاركة"));
   it("🔴 اللصق مابقاش بالفهرس اللي بيحتفظ بصف واحد لكل لوحة", () => {
     expect(paste).not.toMatch(/buildReferralIndex/);
-    expect(paste).toMatch(/matchPastedOnRecords\(tokens, \[\.\.\.mine, \.\.\.teamDataRows\]\)/);
-    expect(paste).toMatch(/matchPastedOnRecords\(tokens, \[\.\.\.mine, \.\.\.groupRows, \.\.\.teamDataRows\]\)/);
+    // (+ صفوف ملفات المسئول اللي فيها اللوحات الملصوقة — ٦ نوفمبر ٢٠٢٦)
+    expect(paste).toMatch(/matchPastedOnRecords\(tokens, \[\.\.\.mine, \.\.\.teamDataRows, \.\.\.gfRows\]\)/);
+    expect(paste).toMatch(/matchPastedOnRecords\(tokens, \[\.\.\.mine, \.\.\.groupRows, \.\.\.teamDataRows, \.\.\.gfRows\]\)/);
   });
   it("🔴 جدول اللصق بيلوّن المكرر", () => {
     expect(s).toMatch(/rows=\{pasteResults\}\n\s+colorDups/);

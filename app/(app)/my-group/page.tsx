@@ -9,12 +9,13 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Settings2, BarChart3, Users, AlertCircle, Activity, FolderLock } from "lucide-react";
+import { ChevronLeft, Settings2, BarChart3, Users, AlertCircle, Activity, FolderLock, FolderOpen } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { currentSession } from "@/lib/authSession";
 import GroupActivityView from "@/components/GroupActivityView";
 import TeamWorkLog from "@/components/TeamWorkLog";
 import MemberDataManager from "@/components/MemberDataManager";
+import GroupDataFilesManager from "@/components/GroupDataFilesManager";
 import { switchActiveTeam } from "@/lib/activeTeamSwitch";
 import type { LeaderView, NotifyMode } from "@/lib/leaderSettings";
 
@@ -47,7 +48,7 @@ export default function MyGroupPage() {
   const [groups, setGroups] = useState<LeaderGroup[]>([]);
   const [team, setTeam] = useState<string>("");
   const [activeTeam, setActiveTeam] = useState<string | null>(null);
-  const [tab, setTab] = useState<"settings" | "work" | "memberData" | "activity">("settings");
+  const [tab, setTab] = useState<"settings" | "work" | "dataFiles" | "memberData" | "activity">("settings");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -135,7 +136,7 @@ export default function MyGroupPage() {
         <p className="mb-3 text-center text-[11px] text-muted">مجموعة «{g.team}» — {g.members.length} عضو · إضافة وشيل الأعضاء من الإدارة</p>
 
         {/* التابات */}
-        <div className={`mb-3 grid ${g.settings.activityReport ? "grid-cols-4" : "grid-cols-3"} gap-1.5 rounded-2xl border border-border bg-surface-2 p-1.5`}>
+        <div className={`mb-3 grid ${g.settings.activityReport ? "grid-cols-5" : "grid-cols-4"} gap-1.5 rounded-2xl border border-border bg-surface-2 p-1.5`}>
           <button onClick={() => setTab("settings")}
             className={`flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[11px] font-bold leading-tight ${tab === "settings" ? "bg-primary text-night" : "text-muted"}`}>
             <Settings2 size={15} /> الإعدادات
@@ -143,6 +144,11 @@ export default function MyGroupPage() {
           <button onClick={() => setTab("work")}
             className={`flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[11px] font-bold leading-tight ${tab === "work" ? "bg-primary text-night" : "text-muted"}`}>
             <Activity size={15} /> شغل الأعضاء
+          </button>
+          {/* 📂 كذا ملف داتا — كل ملف للمجموعة كلها أو لأعضاء معيّنين (المالك ٦ نوفمبر ٢٠٢٦) */}
+          <button onClick={() => setTab("dataFiles")}
+            className={`flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[11px] font-bold leading-tight ${tab === "dataFiles" ? "bg-primary text-night" : "text-muted"}`}>
+            <FolderOpen size={15} /> ملفات الداتا
           </button>
           <button onClick={() => setTab("memberData")}
             className={`flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[11px] font-bold leading-tight ${tab === "memberData" ? "bg-primary text-night" : "text-muted"}`}>
@@ -216,6 +222,7 @@ export default function MyGroupPage() {
 
         {/* 🧭 الفرز وفتح المواقع والمشاركة لكل عضو — أعضاء المجموعة دي بس */}
         {tab === "work" && <TeamWorkLog team={g.team} members={g.members} />}
+        {tab === "dataFiles" && <GroupDataFilesManager team={g.team} />}
         {tab === "memberData" && <MemberDataManager team={g.team} />}
 
         {tab === "activity" && g.settings.activityReport && (

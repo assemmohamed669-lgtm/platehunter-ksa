@@ -23,7 +23,7 @@ const ACCEPT = ".xlsx,.xls,.xlsb,.xlsm,.csv,.ods";
 const COUNT_LIMIT_BYTES = 3 * 1024 * 1024;
 
 /** عدد الصفوف واللوحات (للملف الصغير بس). */
-async function countFile(file: File): Promise<{ rowCount: number | null; plateCount: number | null }> {
+export async function countFile(file: File): Promise<{ rowCount: number | null; plateCount: number | null }> {
   if (file.size > COUNT_LIMIT_BYTES) return { rowCount: null, plateCount: null };
   try {
     const [{ parseExcelFile }, { resolveDataPlateCol }, { normalizePlate, bankPlateToArabic }] = await Promise.all([
