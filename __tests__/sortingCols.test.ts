@@ -81,6 +81,14 @@ describe("matchesPreferred — English headers (case-insensitive)", () => {
     // فبتتحدد افتراضياً من guessDefaultColumns
     expect(guessDefaultColumns(["رقم اللوحة", "ملاحظات", "الحي"], "رقم اللوحة")).toContain("ملاحظات");
   });
+  it("📝 «ملحظه» (من غير ألف) و«ملحوظة» برضه بتتحدد لوحدها — المالك ٨ نوفمبر: «كل مرة بيرفع احاله … لازم يعلم عليها من الاول»", () => {
+    expect(matchesPreferred("ملحظه")).toBe(true);
+    expect(matchesPreferred("ملحظة")).toBe(true);
+    expect(matchesPreferred("الملحظه")).toBe(true);
+    expect(matchesPreferred("ملحوظه")).toBe(true);
+    expect(matchesPreferred("ملحوظات")).toBe(true);
+    expect(guessDefaultColumns(["اللوحه", "ملحظه", "اسم الحي", "GPS", "التاريخ"], "اللوحه")).toContain("ملحظه");
+  });
 });
 
 // ─── Columns from actual uploaded files ──────────────────────────────────────
