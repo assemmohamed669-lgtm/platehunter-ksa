@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Orbitron } from "next/font/google";
 import { supabase } from "@/lib/supabaseClient";
-import { lastPage, isWarmResume } from "@/lib/lastPage";
+import { lastPage, isWarmResume, SPLASH_SESSION_MAX_MS } from "@/lib/lastPage";
 
 // خط تقني للاسم — يتحمّل ذاتياً مع البناء فيشتغل حتى بدون نت.
 const brandFont = Orbitron({ subsets: ["latin"], weight: ["700", "900"] });
@@ -40,7 +40,15 @@ export default function HomePage() {
      */
     const splashMs = isWarmResume() ? 0 : 2000;
     const delay = new Promise<void>((r) => setTimeout(r, splashMs));
-    Promise.all([session, delay]).then(() => router.replace(dest));
+    /**
+     * ⬛ **ماتستناش النت للأبد** (المالك ٨ نوفمبر ٢٠٢٦: «صفحه سودا ومش بيفتح» — أندرويد وآيفون). `getSession` بيجدّد
+     * الجلسة من Supabase، ولو نت المندوب مش واصل كويس كانت الشاشة دي بتفضل واقفة. بعد الحد: اللي كان داخل قبل كده (آخر
+     * صفحة محفوظة) بيفتح على صفحته — الصفحات بتقرا الهوية من الجهاز. اللي ماعندوش ⇒ بيستنى الجلسة زي الأول.
+     */
+    const capped = Promise.race([session, new Promise<void>((r) => {
+      setTimeout(() => { const lp = lastPage(); if (lp) { dest = lp; r(); } }, SPLASH_SESSION_MAX_MS);
+    })]);
+    Promise.all([capped, delay]).then(() => router.replace(dest));
   }, [router]);
 
   return (
