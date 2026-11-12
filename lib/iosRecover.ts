@@ -32,7 +32,8 @@ export function iosRecoverFor(uid: string | null | undefined, platform: string |
 
 const AUTO_REASONS = new Set(["background", "interrupted", "muted", "ended"]);
 
-export interface AutoResumeMark { why: string; at: number }
+/** `windowMs`: مهلة خاصة بالعلامة (المكالمة على الأندرويد — `lib/callResume.ts`)؛ من غيرها `AUTO_RESUME_WINDOW_MS`. */
+export interface AutoResumeMark { why: string; at: number; windowMs?: number }
 
 /** وقف تلقائي (مش «وقف» بإيده ولا المطلوبة ولا السيرفر) ⇒ علامة إنه يرجع لوحده. */
 export function autoResumeMark(why: string, nowMs: number): AutoResumeMark | null {
@@ -41,7 +42,7 @@ export function autoResumeMark(why: string, nowMs: number): AutoResumeMark | nul
 
 /** رجع قدام الشاشة، خلال المهلة، ومفيش تسجيل شغّال أو بيبدأ. */
 export function shouldAutoResume(mark: AutoResumeMark | null, nowMs: number, busy: boolean, visible: boolean): boolean {
-  return !!mark && visible && !busy && nowMs - mark.at <= AUTO_RESUME_WINDOW_MS;
+  return !!mark && visible && !busy && nowMs - mark.at <= (mark.windowMs ?? AUTO_RESUME_WINDOW_MS);
 }
 
 export const AUTO_RESUMED_TEXT = "🎙️ رجعنا نسجّل لوحدنا بعد ما رجعت للبرنامج — لوحاتك كلها محفوظة.";
