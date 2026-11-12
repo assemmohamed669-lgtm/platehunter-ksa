@@ -61,6 +61,7 @@ import { onWantedAlertsCleared } from "@/lib/wantedAlert";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { AUTO_RESUMED_TEXT, AUTO_RESUME_FAILED_TEXT, IOS_RECOVER_MIC_GRACE_MS, autoResumeMark, iosRecoverFor, shouldAutoResume, type AutoResumeMark } from "@/lib/iosRecover";
+import { CALL_RESUME_COUNTDOWN_TEXT, CALL_RESUME_DELAY_MS, CALL_RESUME_WHY, callResumeFor, callResumeMark } from "@/lib/callResume";
 import { appInBackground, onAppState } from "@/lib/appForeground";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
@@ -385,6 +386,10 @@ export default function RegistrationV2Page() {
   const startingRef = useRef(false);
   // 📱 (`lib/iosRecover.ts`) وقف تلقائي (خرج/الصوت اتقطع) ⇒ يرجع لوحده لما المندوب يرجع للبرنامج — للمناديب اللي في القايمة بس
   const autoResumeRef = useRef<AutoResumeMark | null>(null);
+  // 📞 (`lib/callResume.ts`) العدّ قبل الرجوع بعد المكالمة + آخر مرة التسجيل رجع لوحده (المكالمة قفلته تاني على طول = لسه شغّالة)
+  const callResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoStartRef = useRef<number | null>(null);
+  const [callResumeArmed, setCallResumeArmed] = useState(false);
   /**
    * 🎚️ مستوى الصوت للسوبر أدمن — **المؤشّر بس** بيشترك فيه (`LiveVuMeter`)،
    * فتحديثه مابيعيدش رسم الصفحة كلها (جدول ١٠٠٠ لوحة) ٦٠ مرة في الثانية.
@@ -809,7 +814,12 @@ export default function RegistrationV2Page() {
       if (document.visibilityState === "hidden" && engineRef.current && !bgActiveRef.current) stopRef.current("background");
     };
     const onHide = () => { if (engineRef.current && !bgActiveRef.current) stopRef.current("background"); };
-    const offCall = onNativeCall(() => { if (engineRef.current) stopRef.current("background"); });
+    const offCall = onNativeCall(() => {
+      if (!engineRef.current) return;
+      stopRef.current("background");
+      // 📞 (`lib/callResume.ts`) حامد + السوبر أدمن (أندرويد): يكمّل لوحده لما يرجع للبرنامج بعد المكالمة
+      if (callResumeFor(agentRef.current, isSuperRef.current, getDevicePlatform())) autoResumeRef.current = callResumeMark(Date.now(), lastAutoStartRef.current);
+    });
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onHide);
     return () => {
@@ -828,20 +838,55 @@ export default function RegistrationV2Page() {
    * (وقف تلقائي — مش «وقف» بإيده ولا المطلوبة ولا السيرفر)، وبتتشال مع أول محاولة. فشل ⇒ رسالة «دوس ابدأ» زي الأول.
    */
   useEffect(() => {
+    /**
+     * 📞 (`lib/callResume.ts`) **بعد المكالمة** (حامد + السوبر أدمن، أندرويد): الصفحة ماتعرفش المكالمة خلصت ولا لأ ⇒ شريط
+     * «هنكمّل لوحدنا» بزرار «لأ» `CALL_RESUME_DELAY_MS`، وبعدين «ابدأ» لوحده لو لسه قدام الشاشة. خرج وهو بيعدّ ⇒ العدّ يتلغي
+     * والعلامة تفضل (يكمّل لما يرجع). باقي المناديب: مفيش عدّ أصلاً (`callResumeTimerRef` فاضي) ⇒ زي الأول بالحرف.
+     */
+    const fireCallResume = () => {
+      callResumeTimerRef.current = null;
+      setCallResumeArmed(false);
+      const mark = autoResumeRef.current;
+      const visible = document.visibilityState === "visible" && !appInBackground();
+      if (mark?.why !== CALL_RESUME_WHY || !shouldAutoResume(mark, Date.now(), !!engineRef.current || startingRef.current, visible)) return;
+      autoResumeRef.current = null;
+      diagNote("rv2-auto", { why: CALL_RESUME_WHY });
+      lastAutoStartRef.current = Date.now();
+      void startRef.current(true);
+    };
+    const armCallResume = () => {
+      if (callResumeTimerRef.current) return;
+      setCallResumeArmed(true);
+      callResumeTimerRef.current = setTimeout(fireCallResume, CALL_RESUME_DELAY_MS);
+    };
+    const pauseCallResume = () => {
+      if (!callResumeTimerRef.current) return;
+      clearTimeout(callResumeTimerRef.current);
+      callResumeTimerRef.current = null;
+      setCallResumeArmed(false);
+    };
     const tryResume = () => {
       const visible = document.visibilityState === "visible" && !appInBackground();
       if (!shouldAutoResume(autoResumeRef.current, Date.now(), !!engineRef.current || startingRef.current, visible)) return;
+      if (autoResumeRef.current?.why === CALL_RESUME_WHY) { armCallResume(); return; }
       const why = autoResumeRef.current?.why;
       autoResumeRef.current = null;
       diagNote("rv2-auto", { why });
       void startRef.current(true);
     };
     const later = () => { setTimeout(tryResume, 400); };
-    const onVis = () => { if (document.visibilityState === "visible") later(); };
+    const onVis = () => { if (document.visibilityState === "visible") later(); else pauseCallResume(); };
     document.addEventListener("visibilitychange", onVis);
-    const offApp = onAppState((active) => { if (active) later(); });
-    return () => { document.removeEventListener("visibilitychange", onVis); offApp(); };
+    const offApp = onAppState((active) => { if (active) later(); else pauseCallResume(); });
+    return () => { document.removeEventListener("visibilitychange", onVis); offApp(); pauseCallResume(); };
   }, []);
+
+  /** 📞 «لأ» على شريط «هنكمّل لوحدنا» — لسه في المكالمة ⇒ مفيش رجوع لوحده (يدوس «ابدأ» لما يخلص). */
+  function cancelCallResume() {
+    if (callResumeTimerRef.current) { clearTimeout(callResumeTimerRef.current); callResumeTimerRef.current = null; }
+    autoResumeRef.current = null;
+    setCallResumeArmed(false);
+  }
 
   /**
    * 🏘️ **يملا «الحي تلقائي»** للصفوف اللي اتعلّمت لحظة النطق — من إحداثيات
@@ -2600,8 +2645,16 @@ export default function RegistrationV2Page() {
             <p className="flex-1 text-[11px] leading-relaxed text-amber-900">{error}</p>
           </div>
         )}
+        {/* 📞 (`lib/callResume.ts`) رجع بعد المكالمة ⇒ «هنكمّل لوحدنا» بعد ثواني — «لأ» لو لسه في المكالمة */}
+        {callResumeArmed && !listening && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5">
+            <p className="flex-1 text-[11px] font-bold leading-relaxed text-emerald-900">{CALL_RESUME_COUNTDOWN_TEXT}</p>
+            <button type="button" onClick={cancelCallResume}
+              className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-bold text-emerald-800">لأ</button>
+          </div>
+        )}
         {/* 📞 التسجيل وقف لوحده (مكالمة/خلفية) — واللوحات محفوظة */}
-        {notice && !listening && (
+        {notice && !listening && !callResumeArmed && (
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-2.5">
             <p className="flex-1 text-[11px] font-bold leading-relaxed text-sky-900">{notice}</p>
             <button type="button" onClick={() => setNotice(null)} aria-label="إخفاء"

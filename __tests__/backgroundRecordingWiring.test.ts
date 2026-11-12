@@ -33,7 +33,8 @@ describe("Voice PRO", () => {
   });
 
   it("📞 المكالمة لسه بتقفل الميك (قرار المالك ٢٣ سبتمبر)", () => {
-    expect(VP).toMatch(/const offCall = onNativeCall\(\(\) => \{ if \(engineRef\.current\) stopRef\.current\("background"\); \}\);/);
+    // ١٢ نوفمبر ٢٠٢٦: نفس الوقف للكل — وبعده علامة «يكمّل بعد المكالمة» لحامد + السوبر أدمن بس (`__tests__/callResume.test.ts`)
+    expect(VP).toMatch(/const offCall = onNativeCall\(\(\) => \{\r?\n\s+if \(!engineRef\.current\) return;\r?\n\s+stopRef\.current\("background"\);\r?\n/);
   });
 });
 
