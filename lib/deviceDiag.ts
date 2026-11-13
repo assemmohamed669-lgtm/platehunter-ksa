@@ -68,10 +68,13 @@ export const DIAG_MAX_EVENTS = 600;
  */
 export const DIAG_LIGHT_FOR_ALL = true;
 export const DIAG_LIGHT_SERVER = "diag-lite";
-/** أقصى سطور في اليوم لكل موبايل (كل سطر ~١٥٠ بايت) */
-export const LIGHT_MAX_EVENTS_PER_DAY = 400;
-/** أقصى رفعات في اليوم لكل موبايل */
-export const LIGHT_MAX_UPLOADS_PER_DAY = 30;
+/**
+ * أقصى سطور / رفعات في اليوم لكل موبايل (كل سطر ~١٥٠ بايت).
+ * ١٣ نوفمبر ٢٠٢٦ — المالك «اة» على الضعف: ٤٠٠/٣٠ كانوا بيخلصوا العصر عند المناديب الشغّالين كتير (٥٣ من ٩٧ موبايل)
+ * ⇒ المسا كان أعمى (شكوى رامي محمد جديد ٨:٢٦م والصندوق واقف من ٥:١٢م). الحجم: ~٣ ⇐ أقصاه ~٦ ميجا/يوم، بيتمسح بعد يومين.
+ */
+export const LIGHT_MAX_EVENTS_PER_DAY = 800;
+export const LIGHT_MAX_UPLOADS_PER_DAY = 60;
 const LIGHT_FLUSH_MS = 180_000;
 const LIGHT_BUDGET_KEY = "ph:diag:lite:budget";
 const LIGHT_NOTES = new Set([
