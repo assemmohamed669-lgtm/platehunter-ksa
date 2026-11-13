@@ -84,8 +84,13 @@ describe("lightBudget — حد في اليوم لكل موبايل", () => {
   });
 
   it("الحدود صغيرة (سطور ورفعات)", () => {
-    expect(LIGHT_MAX_EVENTS_PER_DAY).toBeLessThanOrEqual(500);
-    expect(LIGHT_MAX_UPLOADS_PER_DAY).toBeLessThanOrEqual(40);
+    expect(LIGHT_MAX_EVENTS_PER_DAY).toBeLessThanOrEqual(1000);
+    expect(LIGHT_MAX_UPLOADS_PER_DAY).toBeLessThanOrEqual(80);
+  });
+
+  it("الضعف (١٣ نوفمبر ٢٠٢٦): ٣٠ رفعة/٤٠٠ سطر كانوا بيخلصوا العصر ⇒ المسا أعمى (رامي محمد جديد ٥:١٢م · ٥٣ من ٩٧ موبايل)", () => {
+    expect(LIGHT_MAX_EVENTS_PER_DAY).toBe(800);
+    expect(LIGHT_MAX_UPLOADS_PER_DAY).toBe(60);
   });
 
   it("السطور بعد الحد مابتتكتبش", () => {
