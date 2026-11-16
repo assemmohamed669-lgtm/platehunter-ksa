@@ -768,6 +768,14 @@ export default function BatchPage({
     /** اسمه في القايمة («مقطع ٣») — بيظهر في تقرير الجلسة جنب تسجيله */
     label?: string;
   } | null>(null);
+  /**
+   * 📍 التفريغ اتقطع بعد سطر اللوحات (النت) ⇒ مسار المقطع ده عشان كل لوحة تاخد «أقرب موقع» (آخر حل — المالك ١٦ نوفمبر
+   * ٢٠٢٦: «مش عايز اي لوحه تطلع بدون موقع … لو النت كان ضعيف»). ملف مرفوع (`upload`) مالوش مسار ⇒ من غير موقع زي الأول.
+   */
+  const platesOnlyCtx = () => {
+    const c = jobCtxRef.current;
+    return c && c.source !== "upload" ? { track: c.fixes, startEpoch: c.startedAtMs, pauses: c.pauses } : null;
+  };
 
   /**
    * ==========================================================================
@@ -1889,7 +1897,8 @@ export default function BatchPage({
     const giveUpAfterPlates = () => {
       setPrelim(null);
       if (!early.length) return;
-      const kept = platesOnlyEntries(early);
+      // 📍 مسار المقطع ⇒ «أقرب موقع» لكل لوحة (آخر حل — المالك ١٦ نوفمبر ٢٠٢٦)؛ ملف مرفوع (مافيش مسار) ⇒ من غير موقع زي الأول
+      const kept = platesOnlyEntries(early, platesOnlyCtx());
       const merged = entriesBaseRef.current.concat(kept);
       entriesRef.current = merged;
       setEntries(merged);
@@ -2391,7 +2400,7 @@ export default function BatchPage({
         // المحرّك وقع بعد سطر اللوحات من غير ما يقفله ⇒ نفس القاعدة: اللوحات
         // تفضل بلا دبوس والمقطع «الأنواع ماوصلتش» (عيب ٢)
         if (prelimRef.current) {
-          const kept = platesOnlyEntries(prelimRef.current);
+          const kept = platesOnlyEntries(prelimRef.current, platesOnlyCtx());
           entriesRef.current = entriesBaseRef.current.concat(kept);
           setEntries(entriesRef.current);
           if (kept.length) platesOnlyRef.current = true;
