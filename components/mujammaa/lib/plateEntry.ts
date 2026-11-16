@@ -129,6 +129,8 @@ export interface PlateEntry {
   streetName?: string;
   /** 🏘️ «اسم الحي» جه من موقع اللوحة (المندوب ماكتبوش) — `components/mujammaa/lib/autoDistrict.ts` */
   neighborhoodAuto?: boolean;
+  /** 🛣️ «اسم الشارع» جه من موقع اللوحة (المربع كان فاضي) — `fillStreets` (١٦ نوفمبر ٢٠٢٦) */
+  streetNameAuto?: boolean;
   /**
    * ✍️ النوع اللي البرنامج طلّعه **قبل** ما المندوب يغيّره من المنسدلة (`""` = ماكانش فيه نوع) — للتقرير بس
    * («قال ونيت وطلع فان»)، مابيتصدّرش. بيتحفظ أول تغيير بس (١٩ أكتوبر ٢٠٢٦).

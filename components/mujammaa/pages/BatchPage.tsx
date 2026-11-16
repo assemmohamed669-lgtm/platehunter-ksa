@@ -47,7 +47,7 @@ const WantedBatchModal = dynamic(() => import("../components/WantedBatchModal"),
 import { mergeWanted, newlyWanted, rematchEntries, wantedOf } from "../lib/wantedBatch";
 import { pickNextJob } from "../lib/clipQueue";
 import { joinNotes, loadBoxes, saveBoxes, type StampBoxes } from "../lib/stampBoxes";
-import { DistrictResolver, fillDistricts } from "../lib/autoDistrict";
+import { DistrictResolver, fillDistricts, fillStreets } from "../lib/autoDistrict";
 import { reverseGeocode } from "@/lib/geocoding";
 import ReadingSheetBox, { loadReadingSheet } from "../components/ReadingSheetBox";
 import { parseReadingSheet } from "../lib/batchReport";
@@ -641,14 +641,19 @@ export default function BatchPage({
    */
   const applyAutoDistricts = async (clipId: string, filled: PlateEntry[]) => {
     const auto = new Map(filled.filter((e) => e.neighborhoodAuto && e.neighborhood).map((e) => [e.id, e.neighborhood as string]));
-    if (!auto.size) return;
+    // 🛣️ (١٦ نوفمبر ٢٠٢٦) «اسم الشارع» التلقائي — نفس القاعدة: الفاضي بس
+    const autoStreet = new Map(filled.filter((e) => e.streetNameAuto && e.streetName).map((e) => [e.id, e.streetName as string]));
+    if (!auto.size && !autoStreet.size) return;
     const merge = (list: PlateEntry[]): PlateEntry[] => {
       let ch = false;
       const out = list.map((e) => {
+        let next = e;
         const d = auto.get(e.id);
-        if (!d || String(e.neighborhood ?? "").trim()) return e;
-        ch = true;
-        return { ...e, neighborhood: d, neighborhoodAuto: true };
+        if (d && !String(e.neighborhood ?? "").trim()) next = { ...next, neighborhood: d, neighborhoodAuto: true };
+        const s = autoStreet.get(e.id);
+        if (s && !String(e.streetName ?? "").trim()) next = { ...next, streetName: s, streetNameAuto: true };
+        if (next !== e) ch = true;
+        return next;
       });
       return ch ? out : list;
     };
@@ -1158,6 +1163,9 @@ export default function BatchPage({
   /** 🏘️ اسم الحي من موقع اللوحة لو المندوب ماكتبوش (`lib/autoDistrict.ts`) — واحد للصفحة (الكاش بيعيش) */
   const districtRef = useRef<DistrictResolver>(null as unknown as DistrictResolver);
   if (!districtRef.current) districtRef.current = new DistrictResolver(reverseGeocode);
+  /** 🛣️ مربع «اسم الشارع» ظاهر ⇒ الفاضي بياخد الشارع من الـGPS (`fillStreets`) — آخر قيمة للكولباكس */
+  const streetBoxRef = useRef(streetBox);
+  streetBoxRef.current = streetBox;
   const recordingStartedAtRef = useRef(0);
   /**
    * آخر لحظة نطق عرفناها من مدى مُثبَت.
@@ -2438,8 +2446,12 @@ export default function BatchPage({
         // 🏘️ «اسم الحي» من موقع كل لوحة للي المندوب ماكتبلهاش — في الخلفية (الطابور مايستناش)
         if (ok && next.clipId) {
           const clipId = next.clipId;
-          void fillDistricts(outcome.entries, districtRef.current).then((filled) => {
+          void fillDistricts(outcome.entries, districtRef.current).then(async (filled) => {
             if (filled !== outcome.entries) void applyAutoDistricts(clipId, filled);
+            // 🛣️ «اسم الشارع» من موقع كل لوحة للي المربع كان فاضي لحظة نطقها — بعد الحي (الحي أسرع: خانة ٢٢٠م)
+            if (!streetBoxRef.current) return;
+            const streeted = await fillStreets(filled, districtRef.current);
+            if (streeted !== filled) void applyAutoDistricts(clipId, streeted);
           }).catch(() => {});
         }
         // 🚨 المطلوبة من المقطع ده (بموقعها النهائي) ⇒ المربع بصوت — وحتى لو الأنواع ماوصلتش (اللوحات طلعت)
@@ -2711,7 +2723,9 @@ export default function BatchPage({
     // المقطع اللي الجدول بيعرضه **دلوقتي** — تفريغ يبدأ وإحنا بنحفظ مايغيّرش هو اتعلّم على أنهي مقطع
     const exportClipId = tableClipIdRef.current;
     // 🏘️ «اسم الحي» للي لسه فاضي (الخلفية ماخلصتش) — بحد أقصى ٨ث، والباقي بيتصدّر من غيره
-    const list = await fillDistricts(entries, districtRef.current, { timeoutMs: 8000 });
+    const districted = await fillDistricts(entries, districtRef.current, { timeoutMs: 8000 });
+    // 🛣️ «اسم الشارع» للي المربع كان فاضي لحظة نطقها — اللي الخلفية جابته اتحط خلاص، والباقي بحد أقصى ٣ث
+    const list = streetBoxRef.current ? await fillStreets(districted, districtRef.current, { timeoutMs: 3000 }) : districted;
     try {
       const clipKey = exportClipId ?? "restored";
       const res = await run(list, { sheet: bank.sheet, clipKey });
