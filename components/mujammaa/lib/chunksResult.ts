@@ -45,6 +45,38 @@ export interface ChunkPlateRow {
    * اللوحات بالتساوي جوّه المقطع» سقط قبل كده في التعنقد (شوف `stitch`).
    */
   t_s?: number | null;
+  /**
+   * ⏱️ وقت **النافذة** اللي اتسمعت فيها اللوحة — السيرفر بيبعته لكل صف، حتى اللي مالوش `t_s`.
+   * (١٦ نوفمبر ٢٠٢٦) بيتاخد بس لما `t_s` مش موجود — شوف `slotTimes`.
+   */
+  t_slot?: number | null;
+}
+
+/** 🚚 أنواع بتطلع من السيرفر وتتكتب بغيرها — «نقليات» محدش بينطقها (أرشيف التفريغ: صفر)، اللي بيتقال «نقل». */
+const TYPE_RENAME: Readonly<Record<string, string>> = { نقليات: "نقل" };
+
+const fin = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+
+/**
+ * 📍 لحظة النطق لكل صف (بترتيب السيرفر) — `t_s`، وإلا **`t_slot`** (١٦ نوفمبر ٢٠٢٦: «اللوحة مالهاش لحظة نطق» كانت
+ * نص اللوحات اللي من غير موقع في تقارير الموبايل، والسيرفر بيبعت `t_slot` جنبها دايماً).
+ * `t_slot` لازم يقع **بين** أقرب `t_s` قبله وبعده — غير كده (مقيس: فرقه عن `t_s` لحد ٩ث أحياناً) النص بينهم، عشان
+ * ترتيب اللوحات في الوقت مايتلخبطش. ولا ده ولا ده ⇒ من غير وقت زي الأول.
+ */
+function slotTimes(rows: ChunkPlateRow[]): Array<number | undefined> {
+  const ts = rows.map((r) => (r?.t_s !== null && r?.t_s !== undefined && fin(Number(r.t_s)) ? Number(r.t_s) : undefined));
+  return rows.map((r, i) => {
+    if (ts[i] !== undefined) return ts[i];
+    const slot = Number(r?.t_slot);
+    if (r?.t_slot === null || r?.t_slot === undefined || !fin(slot)) return undefined;
+    let lo: number | undefined;
+    for (let j = i - 1; j >= 0 && lo === undefined; j--) lo = ts[j];
+    let hi: number | undefined;
+    for (let j = i + 1; j < rows.length && hi === undefined; j++) hi = ts[j];
+    const inside = (lo === undefined || slot > lo) && (hi === undefined || slot < hi);
+    if (inside || lo === undefined || hi === undefined) return slot;
+    return (lo + hi) / 2;
+  });
 }
 
 export interface ChunkFields {
@@ -92,13 +124,16 @@ export function mapChunkFields(
   plates: Array<{ plate: string; heardPlate?: string }>
 ): ChunkFields[] {
   const pool = new Map<string, ChunkPlateRow[]>();
-  for (const r of rows) {
+  const times = new Map<ChunkPlateRow, number | undefined>();
+  const est = slotTimes(rows);
+  rows.forEach((r, i) => {
+    times.set(r, est[i]);
     const k = String(r.plate || "");
-    if (!k) continue;
+    if (!k) return;
     const arr = pool.get(k);
     if (arr) arr.push(r);
     else pool.set(k, [r]);
-  }
+  });
   const take = (k?: string): ChunkPlateRow | undefined => {
     if (!k) return undefined;
     const arr = pool.get(k);
@@ -109,14 +144,12 @@ export function mapChunkFields(
     // `pool.has` بيفضل صح بعد ما الصفوف تتاخد ⇒ «مفتاح اتاخد» ≠ «مش مفتاح»
     const heard = p.heardPlate && pool.has(p.heardPlate) ? p.heardPlate : undefined;
     const row = heard ? take(heard) : take(p.plate);
-    const t = Number(row?.t_s);
+    const type = row?.type ? String(row.type) : undefined;
     return {
-      vehicleType: row?.type ? String(row.type) : undefined,
+      vehicleType: type ? TYPE_RENAME[type] ?? type : undefined,
       note: noteOf(row),
-      // 🔴 صفر وقت صحيح (أول الشريط) — فبنفحص التمام مش الصدق
-      timeStart: row?.t_s !== null && row?.t_s !== undefined && Number.isFinite(t)
-        ? t
-        : undefined,
+      // 🔴 صفر وقت صحيح (أول الشريط) — `slotTimes` بيفحص التمام مش الصدق
+      timeStart: row ? times.get(row) : undefined,
     };
   });
 }
