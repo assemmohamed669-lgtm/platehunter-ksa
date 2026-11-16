@@ -55,7 +55,16 @@ describe("اللوحة بتاخد المربعات لحظة نطقها", () => {
     const rq = SRC.slice(SRC.indexOf("const runQueue = async"), SRC.indexOf("const runTranscription = async"));
     expect(rq).toMatch(/void fillDistricts\(outcome\.entries, districtRef\.current\)\.then\(/);
     const ex = SRC.slice(SRC.indexOf("const exportToRecords = async"), SRC.indexOf("const copyAll = async"));
-    expect(ex).toMatch(/const list = await fillDistricts\(entries, districtRef\.current, \{ timeoutMs: 8000 \}\);/);
+    expect(ex).toMatch(/const districted = await fillDistricts\(entries, districtRef\.current, \{ timeoutMs: 8000 \}\);/);
+  });
+
+  it("🛣️ «اسم الشارع» التلقائي (١٦ نوفمبر ٢٠٢٦) — بعد الحي في الخلفية وقبل التصدير (٣ث)، والمربع ظاهر بس", () => {
+    const rq = SRC.slice(SRC.indexOf("const runQueue = async"), SRC.indexOf("const runTranscription = async"));
+    expect(rq).toMatch(/if \(!streetBoxRef\.current\) return;\s*const streeted = await fillStreets\(filled, districtRef\.current\);\s*if \(streeted !== filled\) void applyAutoDistricts\(clipId, streeted\);/);
+    const ex = SRC.slice(SRC.indexOf("const exportToRecords = async"), SRC.indexOf("const copyAll = async"));
+    expect(ex).toMatch(/const list = streetBoxRef\.current \? await fillStreets\(districted, districtRef\.current, \{ timeoutMs: 3000 \}\) : districted;/);
+    // الدمج: الفاضي بس (اللي المندوب كتبه/عدّله في الجدول مايتلمسش)
+    expect(SRC).toMatch(/if \(s && !String\(e\.streetName \?\? ""\)\.trim\(\)\) next = \{ \.\.\.next, streetName: s, streetNameAuto: true \};/);
   });
 });
 

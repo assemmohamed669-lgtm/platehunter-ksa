@@ -25,10 +25,30 @@ export const DISTRICT_MIN_GAP_MS = 1100;
 
 const UNKNOWN = new Set(["", "غير معروف", "غير متاح"]);
 
+/**
+ * 🛣️ **«اسم الشارع» من الـGPS** (١٦ نوفمبر ٢٠٢٦) — المالك: «لما يشيل ميتكتبش وياخد اسم الحي واسم الشارع من الجي بي اس
+ * نفسه». نفس قواعد Voice PRO (`lib/autoArea.ts`): الشارع بيتاخد بس لو دقة موقع اللوحة **≤٣٥م** (أضعف ⇒ بيطلع غلط)،
+ * والشارع بيتغيّر أسرع من الحي ⇒ مش خانة ٢٢٠م: نفس الشارع بيتعاد لو اللوحة **أقل من ٢٥م** من آخر واحدة اتسألت.
+ */
+export const AUTO_STREET_MAX_ACCURACY_M = 35;
+export const STREET_REUSE_M = 25;
+
+function metersApart(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
 export class DistrictResolver {
   private cache = new Map<string, string>();
   private chain: Promise<unknown> = Promise.resolve();
-  private lastCallAt = 0;
+  /** 🛣️ طابور الشوارع لوحده — الحي مايستناش وراه — بس **نفس الدور** على الخدمة (`slot`) */
+  private streetChain: Promise<unknown> = Promise.resolve();
+  private lastStreet: { lat: number; lng: number; street: string } | null = null;
+  /** أول وقت مسموح فيه بالطلب الجاي (حي أو شارع) — طلب واحد في الثانية للخدمة كلها */
+  private nextAt = 0;
   private readonly minGapMs: number;
   private readonly cellDeg: number;
 
@@ -56,13 +76,46 @@ export class DistrictResolver {
     return job;
   }
 
+  /** دور على الخدمة: الحي والشارع بيتبادلوا، والاتنين مع بعض طلب واحد في الثانية */
+  private async slot(): Promise<void> {
+    const now = Date.now();
+    const at = Math.max(now, this.nextAt);
+    this.nextAt = at + this.minGapMs;
+    if (at > now) await new Promise((r) => setTimeout(r, at - now));
+  }
+
+  /** 🛣️ شارع النقطة دي — نفس الشارع لو أقل من `STREET_REUSE_M` من آخر واحدة. الفشل/«غير معروف» ⇒ "" (ومابيتخزّنش) */
+  resolveStreet(lat: number, lng: number): Promise<string> {
+    const job = this.streetChain.then(() => this.runStreet(lat, lng));
+    this.streetChain = job.catch(() => undefined);
+    return job;
+  }
+
+  private async runStreet(lat: number, lng: number): Promise<string> {
+    const l = this.lastStreet;
+    if (l && metersApart(l.lat, l.lng, lat, lng) < STREET_REUSE_M) return l.street;
+    await this.slot();
+    let a: DistrictAddress | null = null;
+    try {
+      a = await this.reverse(lat, lng);
+    } catch {
+      a = null;
+    }
+    const s = String(a?.street ?? "").trim();
+    const d = String(a?.district ?? "").trim();
+    // نفس الرد فيه الحي ⇒ الخانة دي مش محتاجة طلب حي
+    const k = this.key(lat, lng);
+    if (!UNKNOWN.has(d) && !this.cache.has(k)) this.cache.set(k, d);
+    if (UNKNOWN.has(s)) return "";
+    this.lastStreet = { lat, lng, street: s };
+    return s;
+  }
+
   private async run(lat: number, lng: number): Promise<string> {
     const k = this.key(lat, lng);
     const hit = this.cache.get(k);
     if (hit !== undefined) return hit;
-    const wait = this.lastCallAt + this.minGapMs - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    this.lastCallAt = Date.now();
+    await this.slot();
     let d = "";
     try {
       d = String((await this.reverse(lat, lng))?.district ?? "").trim();
@@ -96,16 +149,15 @@ export async function fillDistricts(
   })();
   const timeoutMs = opts.timeoutMs ?? 60_000;
   await Promise.race([work, new Promise((r) => setTimeout(r, timeoutMs))]);
-  // من موقعها هي، وإلا أقرب عربية قبلها (بوقت النطق) ليها حي، وإلا أقرب واحدة بعدها
-  const areaOf = (e: PlateEntry) => String(e.neighborhood ?? "").trim() || got.get(e.id) || "";
+  /**
+   * من موقعها هي، وإلا أقرب عربية قبلها (بوقت النطق) حيّها **من الـGPS**، وإلا أقرب واحدة بعدها.
+   * 🧹 (١٦ نوفمبر ٢٠٢٦) **مش** من حي المندوب كتبه: كتب ⇒ مسح ⇒ لوحة من غير موقع كانت بتاخد المكتوب اللي اتمسح —
+   * والمالك: «لما يشيل ميتكتبش وياخد اسم الحي … من الجي بي اس نفسه».
+   */
+  const autoOf = (x: PlateEntry) => got.get(x.id) || (x.neighborhoodAuto ? String(x.neighborhood ?? "").trim() : "");
   const timeline = entries.slice().sort((a, b) => (a.capturedAt ?? 0) - (b.capturedAt ?? 0));
-  const fallback = (e: PlateEntry): string => {
-    const i = timeline.indexOf(e);
-    for (let j = i - 1; j >= 0; j--) if (got.get(timeline[j].id) || (timeline[j].neighborhood ?? "").trim()) return areaOf(timeline[j]);
-    for (let j = i + 1; j < timeline.length; j++) if (got.get(timeline[j].id) || (timeline[j].neighborhood ?? "").trim()) return areaOf(timeline[j]);
-    return "";
-  };
-  if (got.size === 0) return entries;
+  const fallback = (e: PlateEntry): string => nearestAuto(timeline, e, autoOf);
+  if (got.size === 0 && !entries.some((x) => autoOf(x))) return entries;
   let changed = false;
   const out = entries.map((e) => {
     if (String(e.neighborhood ?? "").trim()) return e;
@@ -113,6 +165,62 @@ export async function fillDistricts(
     if (!d) return e;
     changed = true;
     return { ...e, neighborhood: d, neighborhoodAuto: true };
+  });
+  return changed ? out : entries;
+}
+
+/** أقرب لوحة قبلها (بوقت النطق) ليها قيمة **من الـGPS**، وإلا أقرب واحدة بعدها — وإلا "" */
+function nearestAuto(timeline: PlateEntry[], e: PlateEntry, autoOf: (x: PlateEntry) => string): string {
+  const i = timeline.indexOf(e);
+  for (let j = i - 1; j >= 0; j--) {
+    const a = autoOf(timeline[j]);
+    if (a) return a;
+  }
+  for (let j = i + 1; j < timeline.length; j++) {
+    const a = autoOf(timeline[j]);
+    if (a) return a;
+  }
+  return "";
+}
+
+/**
+ * 🛣️ بيملى «اسم الشارع» للوحات اللي المربع كان **فاضي** لحظة نطقها (١٦ نوفمبر ٢٠٢٦) — من موقعها هي لو دقته ≤٣٥م،
+ * واللي من غير موقع/دقة أضعف ⇒ شارع أقرب لوحة **من الـGPS** (مش اللي المندوب كتبه ومسحه). بيرجّع نسخة جديدة (المرجع
+ * نفسه لو مافيش تغيير). `timeoutMs`: اللي ماخلصش بيفضل فاضي — **مابياخدش** شارع لوحة تانية (ممكن تبقى بعيدة)،
+ * ومابيبعتش طلبات تانية بعد الوقت.
+ */
+export async function fillStreets(
+  entries: PlateEntry[],
+  resolver: DistrictResolver,
+  opts: { timeoutMs?: number } = {},
+): Promise<PlateEntry[]> {
+  const need = entries.filter((e) => !String(e.streetName ?? "").trim());
+  if (need.length === 0) return entries;
+  const ownFix = (e: PlateEntry) => !!e.pin && Number(e.pin.accuracy) <= AUTO_STREET_MAX_ACCURACY_M;
+  const timeline = entries.slice().sort((a, b) => (a.capturedAt ?? 0) - (b.capturedAt ?? 0));
+  const got = new Map<string, string>();
+  let stop = false;
+  const work = (async () => {
+    // بترتيب النطق ⇒ اللوحات اللي جنب بعض بتاخد نفس الطلب
+    for (const e of timeline) {
+      if (stop) return;
+      if (String(e.streetName ?? "").trim() || !ownFix(e)) continue;
+      const s = await resolver.resolveStreet(e.pin!.lat, e.pin!.lng);
+      if (s) got.set(e.id, s);
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([work, new Promise((r) => { timer = setTimeout(r, opts.timeoutMs ?? 180_000); })]);
+  clearTimeout(timer);
+  stop = true;
+  const autoOf = (x: PlateEntry) => got.get(x.id) || (x.streetNameAuto ? String(x.streetName ?? "").trim() : "");
+  let changed = false;
+  const out = entries.map((e) => {
+    if (String(e.streetName ?? "").trim()) return e;
+    const s = got.get(e.id) || (ownFix(e) ? "" : nearestAuto(timeline, e, autoOf));
+    if (!s) return e;
+    changed = true;
+    return { ...e, streetName: s, streetNameAuto: true };
   });
   return changed ? out : entries;
 }
