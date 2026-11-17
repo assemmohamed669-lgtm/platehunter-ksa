@@ -1,10 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
-import { getDriveAccessToken, driveSearch } from "@/lib/gdrive";
+import { getDriveAccessToken, driveSearch, type DriveFile } from "@/lib/gdrive";
 import { looksLikeChassis, looksLikeCertNumber, certSearchToken, plateDigitForms, matchCertFiles } from "@/lib/certificateMatch";
+import { certAccessOf } from "@/lib/certAccessStore";
+import { certSourcesFor } from "@/lib/certPrivate";
 
 // يهرب علامة التنصيص المفردة في استعلام درايف.
 function esc(s: string): string { return s.replace(/'/g, "\\'"); }
+
+/** نفس البحث بالظبط على حساب درايف واحد. */
+async function searchOne(q: string, token: string): Promise<{ files: DriveFile[]; scanned: number; mode: string } | null> {
+  if (looksLikeChassis(q)) {
+    // هيكل (VIN) — بحث بالمحتوى (فريد ومباشر).
+    const files = await driveSearch(`fullText contains '${esc(q)}' and mimeType='application/pdf'`, token);
+    return { files, scanned: files.length, mode: "chassis" };
+  }
+  if (looksLikeCertNumber(q)) {
+    // رقم شهادة (REPO/CRN أو أرقام ملزوقة) — نبحث بالتوكن المناسب (آخر ٨ للملزوق).
+    const tok = certSearchToken(q);
+    const files = await driveSearch(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`, token);
+    return { files, scanned: files.length, mode: "cert" };
+  }
+  // الأرقام بكل أشكالها («0076» / «76») — البنك بينزلها من غير الأصفار والمندوب بيها
+  const forms = plateDigitForms(q);
+  if (!forms.length) return null;
+  const all = await driveSearch(`(${forms.map((d) => `name contains '${esc(d)}'`).join(" or ")}) and mimeType='application/pdf'`, token);
+  return { files: matchCertFiles(q, all), scanned: all.length, mode: "plate" };
+}
 
 /**
  * بحث عن شهادة السحب في Google Drive برقم الهيكل أو اللوحة.
@@ -22,31 +44,24 @@ export async function GET(req: NextRequest) {
   const q = (req.nextUrl.searchParams.get("q") || "").trim();
   if (!q) return NextResponse.json({ error: "missing_q" }, { status: 400 });
 
-  const token = await getDriveAccessToken();
-  if (!token) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
-
-  let files;
+  // 🔒 الشهايد الخاصة (`lib/certPrivate.ts`): المختار بيدوّر في الحساب التاني كمان أو لوحده حسب وضعه.
+  //    اللي مش في القايمة ⇒ الحساب القديم بس زي الأول بالظبط.
+  const sources = certSourcesFor(await certAccessOf(userId));
+  const files: DriveFile[] = [];
   let scanned = 0;           // كام PDF رجع من درايف قبل الفلترة — للتشخيص
   let mode = "plate";
-  if (looksLikeChassis(q)) {
-    mode = "chassis";
-    // هيكل (VIN) — بحث بالمحتوى (فريد ومباشر).
-    files = await driveSearch(`fullText contains '${esc(q)}' and mimeType='application/pdf'`, token);
-    scanned = files.length;
-  } else if (looksLikeCertNumber(q)) {
-    mode = "cert";
-    // رقم شهادة (REPO/CRN أو أرقام ملزوقة) — نبحث بالتوكن المناسب (آخر ٨ للملزوق).
-    const tok = certSearchToken(q);
-    files = await driveSearch(`fullText contains '${esc(tok)}' and mimeType='application/pdf'`, token);
-    scanned = files.length;
-  } else {
-    // الأرقام بكل أشكالها («0076» / «76») — البنك بينزلها من غير الأصفار والمندوب بيها
-    const forms = plateDigitForms(q);
-    if (!forms.length) return NextResponse.json({ found: false, results: [] });
-    const all = await driveSearch(`(${forms.map((d) => `name contains '${esc(d)}'`).join(" or ")}) and mimeType='application/pdf'`, token);
-    scanned = all.length;
-    files = matchCertFiles(q, all);
+  let anyToken = false;
+  for (const source of sources) {
+    const token = await getDriveAccessToken(source);
+    if (!token) continue;
+    anyToken = true;
+    const r = await searchOne(q, token);
+    if (!r) return NextResponse.json({ found: false, results: [] });
+    mode = r.mode;
+    scanned += r.scanned;
+    for (const f of r.files) if (!files.some((x) => x.id === f.id)) files.push(f);
   }
+  if (!anyToken) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
 
   const results = files.map((f) => ({ id: f.id, name: f.name, link: f.webViewLink ?? null }));
   // `scanned` و`mode` بيفرّقوا بين «درايف رجع ملفات بس مفيش مطابق» و«درايف

@@ -7,7 +7,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCertLink } from "@/lib/certLink";
-import { getDriveAccessToken } from "@/lib/gdrive";
+import { getDriveAccessToken, driveDownloadPdf, privateDriveConfigured } from "@/lib/gdrive";
 import { rateLimit } from "@/lib/apiAuth";
 import { requestMeta } from "@/lib/securityLogServer";
 
@@ -30,13 +30,18 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
   const fileId = verifyCertLink(params.token, Date.now());
   if (!fileId) return page("الرابط ده انتهى أو مش صحيح — اطلب من المندوب يبعته تاني.", 404);
 
-  const token = await getDriveAccessToken();
-  if (!token) return page("الشهادة مش متاحة دلوقتي — جرّب كمان شوية.", 502);
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-    { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) return page("الشهادة مش متاحة دلوقتي — جرّب كمان شوية.", 502);
+  // 🔒 الشهايد الخاصة (`lib/certPrivate.ts`): اللينك بيتعمل بس للي مسموحله يشوفها، والتوقيع هو الإذن زي القديم —
+  //    فلو الملف مش على الحساب القديم بنجيبه من التاني.
+  let buf: ArrayBuffer | null = null;
+  for (const source of privateDriveConfigured() ? ["main", "private"] as const : ["main"] as const) {
+    const token = await getDriveAccessToken(source);
+    if (!token) continue;
+    buf = await driveDownloadPdf(fileId, token);
+    if (buf) break;
+  }
+  if (!buf) return page("الشهادة مش متاحة دلوقتي — جرّب كمان شوية.", 502);
 
-  return new NextResponse(await r.arrayBuffer(), {
+  return new NextResponse(buf, {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",

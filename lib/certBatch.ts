@@ -54,8 +54,14 @@ export function digitsQuery(digits: readonly string[]): string {
   return "(" + digits.map((d) => `name contains '${d}'`).join(" or ") + ") and mimeType='application/pdf'";
 }
 
+/**
+ * مفتاح الذاكرة: القديم بالأرقام زي الأول؛ الحساب التاني (🔒 الشهايد الخاصة — `lib/certPrivate.ts`) قدامه علامة،
+ * فشهادة خاصة مابتطلعش أبداً لحد بيدوّر في القديم.
+ */
+const keyOf = (scope: string, d: string) => (scope === "main" ? d : `${scope}:${d}`);
+
 /** يسأل درايف عن مجموعة أرقام ويحفظ كل مجموعة في الذاكرة. بيرجّع المجموعات اللي فشلت. */
-async function fetchDigits(digits: string[], search: DriveSearchFn, now: number): Promise<string[]> {
+async function fetchDigits(digits: string[], search: DriveSearchFn, now: number, scope: string): Promise<string[]> {
   let r: Awaited<ReturnType<DriveSearchFn>>;
   try {
     r = await search(digitsQuery(digits));
@@ -67,12 +73,12 @@ async function fetchDigits(digits: string[], search: DriveSearchFn, now: number)
     // ممكن ناقصة — نقسم نصين (كل نص أقل ملفات) لحد ما تكمل
     const mid = Math.ceil(digits.length / 2);
     return [
-      ...(await fetchDigits(digits.slice(0, mid), search, now)),
-      ...(await fetchDigits(digits.slice(mid), search, now)),
+      ...(await fetchDigits(digits.slice(0, mid), search, now, scope)),
+      ...(await fetchDigits(digits.slice(mid), search, now, scope)),
     ];
   }
   for (const d of digits) {
-    cache.set(d, { files: r.files.filter((f) => toLatinDigits(f.name).includes(d)), at: now });
+    cache.set(keyOf(scope, d), { files: r.files.filter((f) => toLatinDigits(f.name).includes(d)), at: now });
   }
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
   return [];
@@ -82,6 +88,8 @@ export async function batchFindCertificates(
   plates: readonly string[],
   search: DriveSearchFn,
   now: number = Date.now(),
+  /** أنهي حساب درايف — «main» (القديم، الافتراضي) أو «private». */
+  scope: string = "main",
 ): Promise<CertBatchResult> {
   const uniq = [...new Set(plates.map((p) => String(p ?? "").trim()).filter(Boolean))].slice(0, CERT_BATCH_MAX_PLATES);
   const byDigits = new Map<string, string[]>();
@@ -99,7 +107,7 @@ export async function batchFindCertificates(
   }
 
   const fresh = (d: string) => {
-    const c = cache.get(d);
+    const c = cache.get(keyOf(scope, d));
     return !!c && now - c.at >= 0 && now - c.at < CERT_CACHE_TTL_MS;
   };
   const need = [...byDigits.keys()].filter((d) => !fresh(d));
@@ -111,7 +119,7 @@ export async function batchFindCertificates(
   const worker = async () => {
     while (next < chunks.length) {
       const chunk = chunks[next++];
-      for (const d of await fetchDigits(chunk, search, now)) failedDigits.add(d);
+      for (const d of await fetchDigits(chunk, search, now, scope)) failedDigits.add(d);
     }
   };
   await Promise.all(Array.from({ length: Math.min(CERT_PARALLEL_QUERIES, chunks.length) }, worker));
@@ -120,7 +128,7 @@ export async function batchFindCertificates(
   for (const [p, forms] of formsOf) {
     if (forms.some((d) => failedDigits.has(d))) { failed.push(p); continue; }
     const seen = new Set<string>();
-    const files = forms.flatMap((d) => cache.get(d)?.files ?? []).filter((f) => !seen.has(f.id) && (seen.add(f.id), true));
+    const files = forms.flatMap((d) => cache.get(keyOf(scope, d))?.files ?? []).filter((f) => !seen.has(f.id) && (seen.add(f.id), true));
     results[p] = matchCertFiles(p, files).map((f) => ({ id: f.id, name: f.name }));
   }
   return { results, failed };
