@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { getDriveAccessToken, driveSearchWithStatus } from "@/lib/gdrive";
-import { batchFindCertificates, CERT_BATCH_MAX_PLATES } from "@/lib/certBatch";
+import { batchFindCertificates, CERT_BATCH_MAX_PLATES, type CertBatchResult } from "@/lib/certBatch";
+import { certAccessOf } from "@/lib/certAccessStore";
+import { certSourcesFor, mergeCertBatch } from "@/lib/certPrivate";
 
 /**
  * 📄 شهايد عربيات الفرز/المطلوب **دفعة واحدة** — `POST { plates: string[] }`.
@@ -28,9 +30,14 @@ export async function POST(req: NextRequest) {
     : [];
   if (!plates.length) return NextResponse.json({ results: {}, failed: [] });
 
-  const token = await getDriveAccessToken();
-  if (!token) return NextResponse.json({ results: {}, failed: plates, error: "drive_unavailable" });
-
-  const out = await batchFindCertificates(plates, (q) => driveSearchWithStatus(q, token));
-  return NextResponse.json(out);
+  // 🔒 الشهايد الخاصة (`lib/certPrivate.ts`): المختار بيدوّر في الحساب التاني كمان أو لوحده حسب وضعه، وكل حساب
+  //    ليه ذاكرة لوحده. اللي مش في القايمة ⇒ الحساب القديم بس زي الأول بالظبط.
+  const parts: CertBatchResult[] = [];
+  for (const source of certSourcesFor(await certAccessOf(userId))) {
+    const token = await getDriveAccessToken(source);
+    if (!token) continue;
+    parts.push(await batchFindCertificates(plates, (q) => driveSearchWithStatus(q, token), Date.now(), source));
+  }
+  if (!parts.length) return NextResponse.json({ results: {}, failed: plates, error: "drive_unavailable" });
+  return NextResponse.json(mergeCertBatch(parts));
 }

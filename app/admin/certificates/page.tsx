@@ -22,6 +22,7 @@ import type { CertStatsView } from "@/lib/certStats";
 import { driveHealthMessage, type HealthMessage } from "@/lib/driveHealth";
 import { certPushTestMessage } from "@/lib/certPush";
 import { cleanEmail } from "@/lib/cleanEmail";
+import PrivateCertsManager from "@/components/PrivateCertsManager";
 
 interface StatsResponse {
   setup?: boolean;
@@ -233,6 +234,9 @@ export default function CertStatsPage() {
             </p>
           )}
         </div>
+
+        {/* ── 🔒 الشهايد الخاصة (الحساب التاني) — المالك ١٧ نوفمبر ٢٠٢٦: ناس معيّنة بس هو بيختارهم ── */}
+        <PrivateCertsManager />
 
         {data?.setup && (
           <p className="rounded-2xl border border-alert/40 bg-alert/10 px-4 py-3 text-xs font-bold leading-relaxed text-alert">

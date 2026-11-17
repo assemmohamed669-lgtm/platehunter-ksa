@@ -2,17 +2,42 @@
  * Google Drive access للسيرفر — عبر refresh token مخزّن (السيرفر فقط).
  * بيجدّد access token تلقائياً ويتكاش في الذاكرة (~ساعة) عشان مانجدّدش كل نداء.
  * القيم السرّية في env: GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET / GDRIVE_REFRESH_TOKEN.
+ *
+ * 🔒 **الحساب التاني** (الشهايد الخاصة — `lib/certPrivate.ts`، المالك ١٧ نوفمبر ٢٠٢٦): `GDRIVE2_REFRESH_TOKEN`،
+ * وبيانات التطبيق `GDRIVE2_CLIENT_ID`/`GDRIVE2_CLIENT_SECRET` لو مختلفة (وإلا نفس بتاعة القديم). كل حساب
+ * ليه ذاكرة توكن لوحده. من غير اختيار ⇒ القديم زي الأول بالظبط.
  */
+import type { CertSource } from "./certPrivate";
 
-let cached: { token: string; exp: number } | null = null;
+const cachedBy: Partial<Record<CertSource, { token: string; exp: number }>> = {};
 
-export async function getDriveAccessToken(): Promise<string | null> {
+function credsOf(source: CertSource): { client_id?: string; client_secret?: string; refresh_token?: string } {
+  if (source === "private") {
+    return {
+      client_id: process.env.GDRIVE2_CLIENT_ID || process.env.GDRIVE_CLIENT_ID,
+      client_secret: process.env.GDRIVE2_CLIENT_SECRET || process.env.GDRIVE_CLIENT_SECRET,
+      refresh_token: process.env.GDRIVE2_REFRESH_TOKEN,
+    };
+  }
+  return {
+    client_id: process.env.GDRIVE_CLIENT_ID,
+    client_secret: process.env.GDRIVE_CLIENT_SECRET,
+    refresh_token: process.env.GDRIVE_REFRESH_TOKEN,
+  };
+}
+
+/** الحساب التاني متوصّل (مفتاحه متحط في Vercel)؟ */
+export function privateDriveConfigured(): boolean {
+  const c = credsOf("private");
+  return !!(c.client_id && c.client_secret && c.refresh_token);
+}
+
+export async function getDriveAccessToken(source: CertSource = "main"): Promise<string | null> {
   const now = Date.now();
+  const cached = cachedBy[source];
   if (cached && cached.exp > now + 60_000) return cached.token;
 
-  const client_id = process.env.GDRIVE_CLIENT_ID;
-  const client_secret = process.env.GDRIVE_CLIENT_SECRET;
-  const refresh_token = process.env.GDRIVE_REFRESH_TOKEN;
+  const { client_id, client_secret, refresh_token } = credsOf(source);
   if (!client_id || !client_secret || !refresh_token) return null;
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -23,8 +48,27 @@ export async function getDriveAccessToken(): Promise<string | null> {
   if (!res.ok) return null;
   const d = await res.json();
   if (!d?.access_token) return null;
-  cached = { token: d.access_token, exp: now + (Number(d.expires_in) || 3600) * 1000 };
+  cachedBy[source] = { token: d.access_token, exp: now + (Number(d.expires_in) || 3600) * 1000 };
   return d.access_token;
+}
+
+/** ملف الشهادة (PDF) من درايف بتوكن الحساب — قراية بس. null لو مانزلش. */
+export async function driveDownloadPdf(fileId: string, token: string, opts: { timeoutMs?: number; maxBytes?: number } = {}): Promise<ArrayBuffer | null> {
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(fileId)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 20_000);
+  try {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal });
+    if (!r.ok) return null;
+    const buf = await r.arrayBuffer();
+    if (buf.byteLength === 0 || (opts.maxBytes && buf.byteLength > opts.maxBytes)) return null;
+    return buf;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface DriveUser { displayName?: string; emailAddress?: string }

@@ -8,15 +8,18 @@ import type { CertDailyRow, PendingCert } from "./certDailyJob";
 import type { CertFields } from "./certParse";
 import type { DailyCertEntry } from "./certDaily";
 
-export async function insertNewCerts(rows: CertDailyRow[]): Promise<void> {
-  const { error } = await supabaseAdmin.from("cert_daily").upsert(rows, { onConflict: "file_id", ignoreDuplicates: true });
+/** الجدول القديم — الافتراضي في كل دالة. الشهايد الخاصة (🔒 `lib/certPrivate.ts`) بتبعت `cert_daily_private`. */
+const MAIN = "cert_daily";
+
+export async function insertNewCerts(rows: CertDailyRow[], table: string = MAIN): Promise<void> {
+  const { error } = await supabaseAdmin.from(table).upsert(rows, { onConflict: "file_id", ignoreDuplicates: true });
   if (error) throw new Error(error.message);
 }
 
 /** اللي لسه ماتقراش من `fromDay` لحد النهارده — الأحدث يوم الأول، فالنهارده دايماً قبل أي حاجة. */
-export async function pendingCerts(fromDay: string, limit: number): Promise<PendingCert[]> {
+export async function pendingCerts(fromDay: string, limit: number, table: string = MAIN): Promise<PendingCert[]> {
   const { data, error } = await supabaseAdmin
-    .from("cert_daily").select("file_id, name, tries")
+    .from(table).select("file_id, name, tries")
     .gte("day", fromDay).eq("parsed", false).lt("tries", 3)
     .order("day", { ascending: false }).order("created_at", { ascending: true }).limit(limit);
   if (error) throw new Error(error.message);
@@ -32,7 +35,7 @@ export async function pendingCerts(fromDay: string, limit: number): Promise<Pend
 const NO_CERT_NO = /cert_no/;
 const LATE_COLUMNS = ["cert_no", "tenant"] as const;
 
-export async function saveParsedCert(fileId: string, f: CertFields | null, tries: number, done: boolean): Promise<void> {
+export async function saveParsedCert(fileId: string, f: CertFields | null, tries: number, done: boolean, table: string = MAIN): Promise<void> {
   const patch: Record<string, unknown> = { tries, parsed: done, updated_at: new Date().toISOString() };
   if (f) {
     Object.assign(patch, {
@@ -40,12 +43,12 @@ export async function saveParsedCert(fileId: string, f: CertFields | null, tries
       model: f.model, year: f.year, color: f.color, status: f.status, cert_date: f.certDate, cert_no: f.certNo,
     });
   }
-  let { error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId);
+  let { error } = await supabaseAdmin.from(table).update(patch).eq("file_id", fileId);
   // العمود الناقص اسمه بيبان في رسالة الغلط ⇒ نشيله ونعيد (مرة لكل عمود).
   for (const col of LATE_COLUMNS) {
     if (!error || !(col in patch) || !new RegExp(col).test(error.message)) continue;
     delete patch[col];
-    ({ error } = await supabaseAdmin.from("cert_daily").update(patch).eq("file_id", fileId));
+    ({ error } = await supabaseAdmin.from(table).update(patch).eq("file_id", fileId));
   }
   if (error) throw new Error(error.message);
 }
@@ -60,17 +63,17 @@ export async function saveParsedCert(fileId: string, f: CertFields | null, tries
  * «المستأجر الناقص» مش بيشوفها. دي بترجّعها للقراية **مرة واحدة** (الشرط
  * `updated_at < beforeIso` بيمنع اللفّة الأبدية على شهادة مافيهاش بيانات فعلاً).
  */
-export async function requeueStaleFieldsCerts(fromDay: string, beforeIso: string): Promise<void> {
+export async function requeueStaleFieldsCerts(fromDay: string, beforeIso: string, table: string = MAIN): Promise<void> {
   const { error } = await supabaseAdmin
-    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .from(table).update({ parsed: false, tries: 0 })
     .gte("day", fromDay).eq("parsed", true).lt("updated_at", beforeIso)
     .or("make.eq.,make.is.null");
   if (error) throw new Error(error.message);
 }
 
-export async function requeueMissingTenantCerts(fromDay: string): Promise<void> {
+export async function requeueMissingTenantCerts(fromDay: string, table: string = MAIN): Promise<void> {
   const { error } = await supabaseAdmin
-    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .from(table).update({ parsed: false, tries: 0 })
     .gte("day", fromDay).eq("parsed", true).is("tenant", null);
   if (error) throw new Error(error.message);
 }
@@ -79,17 +82,17 @@ export async function requeueMissingTenantCerts(fromDay: string): Promise<void> 
  * اللي اتقرت قبل ما يبقى فيه عمود «رقم العقد» (قيمته لسه null) ⇒ ترجع تتقري مرة واحدة عشان الرقم
  * يتملى. بعد القراية بيبقى "" أو الرقم ⇒ مابتتعادش. العمود لسه ماتضافش ⇒ بترمي ودورة السيرفر بتكمّل.
  */
-export async function requeueMissingCertNoCerts(fromDay: string): Promise<void> {
+export async function requeueMissingCertNoCerts(fromDay: string, table: string = MAIN): Promise<void> {
   const { error } = await supabaseAdmin
-    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .from(table).update({ parsed: false, tries: 0 })
     .gte("day", fromDay).eq("parsed", true).is("cert_no", null);
   if (error) throw new Error(error.message);
 }
 
 /** اللي اتقرت قبل `beforeIso` ومالقيناش فيها لوحة ⇒ ترجع تتقري بالقارئ الجديد (مرة واحدة). */
-export async function requeueNoPlateCerts(fromDay: string, beforeIso: string): Promise<void> {
+export async function requeueNoPlateCerts(fromDay: string, beforeIso: string, table: string = MAIN): Promise<void> {
   const { error } = await supabaseAdmin
-    .from("cert_daily").update({ parsed: false, tries: 0 })
+    .from(table).update({ parsed: false, tries: 0 })
     .gte("day", fromDay).eq("parsed", true).eq("plate", "").lt("updated_at", beforeIso);
   if (error) throw new Error(error.message);
 }
@@ -103,8 +106,8 @@ export async function sampleNoPlateCerts(day: string, limit: number, any = false
   return ((data ?? []) as { file_id: string }[]).map((r) => r.file_id);
 }
 
-export async function cleanupCerts(beforeDay: string): Promise<void> {
-  await supabaseAdmin.from("cert_daily").delete().lt("day", beforeDay);
+export async function cleanupCerts(beforeDay: string, table: string = MAIN): Promise<void> {
+  await supabaseAdmin.from(table).delete().lt("day", beforeDay);
 }
 
 interface Row {
@@ -115,13 +118,13 @@ interface Row {
 }
 
 /** كل شهايد اليوم (صفحات ١٠٠٠ — حد الـAPI). */
-export async function readDayCerts(day: string): Promise<{ total: number; parsed: number; entries: DailyCertEntry[] }> {
+export async function readDayCerts(day: string, table: string = MAIN): Promise<{ total: number; parsed: number; entries: DailyCertEntry[] }> {
   const rows: Row[] = [];
   const COLS = "file_id, name, created_at, parsed, plate, plate_text, vin, bank, make, model, year, color, status, cert_date";
   // الأعمدة المتأخرة بتتشال واحد واحد لو الداتابيز لسه ماخدتهاش — مانقفش عشان عمود.
   let cols = `${COLS}, cert_no, tenant`;
   for (let from = 0; from < 50_000; from += 1000) {
-    const page = () => supabaseAdmin.from("cert_daily").select(cols)
+    const page = () => supabaseAdmin.from(table).select(cols)
       .eq("day", day).order("created_at", { ascending: true }).range(from, from + 999);
     let { data, error } = await page();
     if (error && cols.includes("tenant") && /tenant/.test(error.message)) {
@@ -144,10 +147,10 @@ export async function readDayCerts(day: string): Promise<{ total: number; parsed
 }
 
 /** العدد بس (للجملة الخضرا — من غير ما نجيب الشهايد كلها). */
-export async function countDayCerts(day: string): Promise<{ total: number; parsed: number }> {
-  const all = await supabaseAdmin.from("cert_daily").select("file_id", { count: "exact", head: true }).eq("day", day);
+export async function countDayCerts(day: string, table: string = MAIN): Promise<{ total: number; parsed: number }> {
+  const all = await supabaseAdmin.from(table).select("file_id", { count: "exact", head: true }).eq("day", day);
   if (all.error) throw Object.assign(new Error(all.error.message), { code: all.error.code });
-  const done = await supabaseAdmin.from("cert_daily").select("file_id", { count: "exact", head: true }).eq("day", day).eq("parsed", true);
+  const done = await supabaseAdmin.from(table).select("file_id", { count: "exact", head: true }).eq("day", day).eq("parsed", true);
   if (done.error) throw Object.assign(new Error(done.error.message), { code: done.error.code });
   return { total: all.count ?? 0, parsed: done.count ?? 0 };
 }

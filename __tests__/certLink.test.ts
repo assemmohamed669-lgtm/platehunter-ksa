@@ -45,7 +45,9 @@ describe("🔴 التوصيل", () => {
     const r = read("app/c/[token]/route.ts");
     expect(r).toMatch(/verifyCertLink\(/);
     expect(r).toMatch(/rateLimit\(/);
-    expect(r).toMatch(/getDriveAccessToken\(\)/);
+    // (القديم الأول، وبعدين الحساب التاني لو الملف مش عليه — 🔒 الشهايد الخاصة ١٧ نوفمبر ٢٠٢٦)
+    expect(r).toMatch(/getDriveAccessToken\(source\)/);
+    expect(r).toMatch(/\["main", "private"\]/);
     expect(r).toMatch(/"Content-Type": "application\/pdf"/);
     expect(r).toMatch(/export const fetchCache = "force-no-store"/);
   });
