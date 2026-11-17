@@ -92,10 +92,18 @@ describe("📍 كل مقطع بمساره هو — ٥ مقاطع ورا بعض،
     expect(clipJobFields(clip).fixes.every((x) => x.lat < 30)).toBe(true);
   });
 
-  it("لحظة نطق مالهاش قراءة قريبة (الموبايل وقف) ⇒ من غير موقع — مابنخترعش ولا بنستلف من مقطع تاني", () => {
+  /**
+   * 📍 (١٦ نوفمبر ٢٠٢٦) كانت «من غير موقع». المالك: «مش عايز اي لوحه تطلع بدون موقع … ياخد اقرب موقع ل اللوحه دي»
+   * ⇒ أقرب قراءة **من مسار المقطع ده نفسه** (قديمة ومتعلّمة) — ولسه مابنستلفش من مقطع تاني.
+   */
+  it("لحظة نطق مالهاش قراءة قريبة (الموبايل وقف) ⇒ أقرب موقع من المقطع ده بس (قديم) — مش من مقطع تاني", () => {
     const { clip } = recordClip(2, T0, 10);
     const f = clipJobFields(clip);
     const out = clipRunOutcome({ ok: true, entries: [entry("ابح1234", 30)], fixes: f.fixes, startEpoch: f.startedAtMs, tookSec: 1, now: 0 });
-    expect(out.entries[0].pin).toBeNull();
+    const pin = out.entries[0].pin!;
+    expect(pin).not.toBeNull();
+    expect(pin.stale).toBe(true);
+    const last = f.fixes.reduce((a, b) => (b.tMs > a.tMs ? b : a));
+    expect([pin.lat, pin.lng]).toEqual([last.lat, last.lng]);   // آخر قراءة في المقطع ده (الأقرب لثانية ٣٠)
   });
 });

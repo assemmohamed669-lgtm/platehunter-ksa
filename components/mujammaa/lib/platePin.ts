@@ -84,10 +84,17 @@ export function neighborPinOf(e: PlateEntry): "before" | "after" | null {
   return String(n).startsWith(`${NEIGHBOR_PIN} بعدها`) ? "after" : "before";
 }
 
+/**
+ * 📍 **«أقرب موقع» — آخر حل** (١٦ نوفمبر ٢٠٢٦). المالك: «مش عايز اي لوحه تطلع بدون موقع في اسوء الحالات لو الشبكه او
+ * النت كان ضعيف او اي سبب … ياخد اقرب موقع ل اللوحه دي يعني ياخد نفس موقع اللوحه اللي قبلها — دة فقط في حاله انه مش
+ * محصل الموقع». شوف `fillMissingPins`.
+ */
+export const NEAREST_PIN = "📍 أقرب موقع";
+
 /** علامات الموقع اللي بتتحسب من جديد مع كل ختم */
 export const isPinMark = (n: unknown) => {
   const s = String(n);
-  return s.startsWith(NO_PRECISE_PIN) || s.startsWith(NEIGHBOR_PIN);
+  return s.startsWith(NO_PRECISE_PIN) || s.startsWith(NEIGHBOR_PIN) || s.startsWith(NEAREST_PIN);
 };
 
 function metersBetween(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -480,6 +487,66 @@ function neighborCopies(
     }
     return null;
   });
+}
+
+/**
+ * 📍 **مافيش لوحة من غير موقع — آخر حل** (`NEAREST_PIN`). بيشتغل **بعد** القواعد الدقيقة (`stampEntriesWithTrack`:
+ * لحظة النطق ±٢ث · مميّز · «نفس اللي قبلها» بدليل) — على اللي لسه من غير موقع **بس**؛ اللي ليها موقع مابتتلمسش:
+ *  ١. أقرب قراءة GPS موثوقة (≤١٠٠م) للحظة نطقها — أي بُعد (فجوة GPS · اتحرّك · نفس القراءة اللي جنبها · النت).
+ *  ٢. مافيش لحظة نطق، أو مافيش قراءة موثوقة خالص ⇒ **موقع اللوحة اللي قبلها** (بالترتيب)، وأول لوحة ⇒ اللي بعدها.
+ *     القراءات اللي بالكيلو (أوسع من ١٠٠م) مابتتاخدش — المالك (٢٠ أكتوبر): «بالكيلو … ياخد موقع اللي قبلها».
+ *  ٣. مافيش ولا موقع في التسجيل كله (الموقع مقفول) ⇒ زي ما هي — مابنخترعش.
+ * الدبوس **«قديم»** (`stale` ⇒ «(قديم)» في الجدول و«الموقع قديم؟ نعم» في التصدير) ومتعلّم «📍 أقرب موقع …» في الملاحظات
+ * — عشان يبان إنه مش موقع لحظة النطق بالظبط. `why` = سبب زيادة بيتكتب جنبه (التفريغ اتقطع).
+ */
+export function fillMissingPins(
+  entries: PlateEntry[],
+  track: TrackFix[] | null | undefined,
+  startEpoch: number,
+  pauses?: readonly RecPause[] | null,
+  opts: { why?: string } = {},
+): PlateEntry[] {
+  if (!entries.some((e) => !e.pin)) return entries;
+  const suffix = opts.why ? ` — ${opts.why}` : "";
+  const reliable = (track || []).filter((f) => f && finite(f.tMs) && f.acc <= PIN_MAX_ACCURACY_M);
+  const times = entries.map((e) => {
+    const t = e?.review?.timeStart;
+    return finite(t) ? Math.round(audioToWallMs(t * 1000, pauses)) : undefined;
+  });
+  const mark = (e: PlateEntry, pin: GpsPin, note: string): PlateEntry => ({
+    ...e,
+    pin,
+    review: { ...e.review, notes: [...(e.review.notes || []).filter((n) => !isPinMark(n)), note] },
+  });
+  const out = entries.slice();
+  // ١. أقرب قراءة موثوقة للحظة النطق
+  for (let i = 0; i < out.length; i++) {
+    const t = times[i];
+    if (out[i].pin || !finite(t) || reliable.length === 0) continue;
+    let best = reliable[0];
+    for (const f of reliable) if (Math.abs(f.tMs - t) < Math.abs(best.tMs - t)) best = f;
+    const gap = Math.abs(best.tMs - t);
+    out[i] = mark(
+      out[i],
+      { lat: best.lat, lng: best.lng, accuracy: best.acc, at: startEpoch + best.tMs, ageMs: gap, stale: true },
+      `${NEAREST_PIN} — أقرب قراءة GPS للحظة نطقها (فرق ${Math.round(gap / 1000)}ث)${suffix}`,
+    );
+  }
+  // ٢. موقع اللوحة اللي قبلها، وإلا اللي بعدها (بالترتيب)
+  const had = out.map((e) => e.pin);
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].pin) continue;
+    let j = -1;
+    let side: "قبلها" | "بعدها" = "قبلها";
+    for (let k = i - 1; k >= 0 && j < 0; k--) if (had[k]) j = k;
+    if (j < 0) {
+      side = "بعدها";
+      for (let k = i + 1; k < out.length && j < 0; k++) if (had[k]) j = k;
+    }
+    if (j < 0) continue;
+    out[i] = mark(out[i], { ...had[j]!, stale: true }, `${NEAREST_PIN} — نفس موقع اللوحة اللي ${side}${suffix}`);
+  }
+  return out;
 }
 
 /** كام لوحة خدت موقع دقيق — للعرض في صف المقطع */

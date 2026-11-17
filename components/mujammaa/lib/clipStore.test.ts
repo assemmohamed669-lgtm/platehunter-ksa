@@ -37,7 +37,7 @@ import {
   type ClipBackend,
   type StoredClip,
 } from "./clipStore";
-import { NEIGHBOR_PIN, NO_PRECISE_PIN } from "./platePin";
+import { NEAREST_PIN, NEIGHBOR_PIN, NO_PRECISE_PIN } from "./platePin";
 import type { PlateEntry } from "./plateEntry";
 
 /**
@@ -335,9 +335,13 @@ describe("clipJobFields + clipRunOutcome — التفريغ بسياق المق�
       now: START + 99,
     });
     expect(out.entries[0].pin!.lat).toBeCloseTo(24.15, 9);
-    expect(out.entries[1].pin).toBeNull();
+    expect(out.entries[0].pin!.stale).toBe(false);
+    // 📍 (١٦ نوفمبر ٢٠٢٦) اللي مالهاش قراءة جنب لحظة نطقها ⇒ «أقرب موقع» (قديم + متعلّم) بدل من غير موقع
+    expect(out.entries[1].pin).not.toBeNull();
+    expect(out.entries[1].pin!.stale).toBe(true);
+    expect(out.entries[1].review.notes.some((n) => n.startsWith(NEAREST_PIN))).toBe(true);
     expect(out.patch.status).toBe("done");
-    expect(out.patch.result).toMatchObject({ plates: 2, pinned: 1, tookSec: 4.2, reportId: "r1", engine: "chunks", at: START + 99 });
+    expect(out.patch.result).toMatchObject({ plates: 2, pinned: 2, tookSec: 4.2, reportId: "r1", engine: "chunks", at: START + 99 });
     expect(out.patch.result!.entries).toBe(out.entries);
     expect("error" in out.patch && out.patch.error === undefined).toBe(true);
   });
@@ -1161,6 +1165,23 @@ describe("سطر اللوحات (أوقات مبدئية) ⇒ مافيش دبو�
     expect(pre[0].review.notes).toEqual(["مركونه", PIN_PENDING]);
     const only = platesOnlyEntries([copied]);
     expect(only[0].review.notes.some((n) => n.startsWith(NEIGHBOR_PIN))).toBe(false);
+  });
+
+  it("📍 platesOnlyEntries + مسار المقطع (١٦ نوفمبر ٢٠٢٦) ⇒ كل لوحة «أقرب موقع» (قديم) + «الأنواع ماوصلتش — فرّغ تاني»", () => {
+    const track = [
+      { tMs: 1000, lat: 24.11, lng: 46.7, acc: 6 },
+      { tMs: 9000, lat: 24.19, lng: 46.7, acc: 6 },
+      { tMs: 5000, lat: 25.9, lng: 46.7, acc: 3000 },   // بالكيلو ⇒ مابتتاخدش
+    ];
+    const out = platesOnlyEntries(preliminaryEntries([pinned("ابح1234"), pinned("حطس5678")]), { track, startEpoch: START });
+    expect(out.map((e) => e.pin!.lat)).toEqual([24.11, 24.11]);   // وقتهم المبدئي ٣ث ⇒ أقرب قراءة دقيقة ١ث
+    for (const e of out) {
+      expect(e.pin!.stale).toBe(true);
+      expect(e.review.notes).not.toContain(PIN_PENDING);
+      expect(e.review.notes.some((n) => n.startsWith(NO_PRECISE_PIN))).toBe(false);
+      expect(e.review.notes.filter((n) => n.startsWith(NEAREST_PIN))).toHaveLength(1);
+      expect(e.review.notes.join(" ")).toContain(PLATES_ONLY_ERROR);
+    }
   });
 
   it("platesOnlyEntries: الرد ماكملش ⇒ اللوحات تفضل بلا دبوس، ومتعلّمة «من غير موقع دقيق — الأنواع ماوصلتش»", () => {

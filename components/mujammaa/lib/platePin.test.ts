@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  NEAREST_PIN,
   NEIGHBOR_MAX_GAP_MS,
+  fillMissingPins,
   NEIGHBOR_PIN,
   NO_PRECISE_PIN,
   PIN_MAX_ACCURACY_M,
@@ -674,5 +676,93 @@ describe("stampEntriesWithTrack — وقف مؤقت وكمّل في نفس ال�
     const sparse = [fx(5000, 24), fx(625_000, 25, 46.7, 2000)]; // بعد الوقفة الموقع بالكيلو
     const [, b] = stampEntriesWithTrack([entry("ابح1234", 5), entry("حطس5678", 25)], sparse, START, pauses);
     expect(b.pin).toBeNull();
+  });
+});
+
+/**
+ * 📍 **«أقرب موقع» — آخر حل** (١٦ نوفمبر ٢٠٢٦). المالك: «مش عايز اي لوحه تطلع بدون موقع في اسوء الحالات لو الشبكه او
+ * النت كان ضعيف او اي سبب … ياخد اقرب موقع ل اللوحه دي يعني ياخد نفس موقع اللوحه اللي قبلها — دة فقط في حاله انه مش
+ * محصل الموقع». بيشتغل **بعد** `stampEntriesWithTrack` على اللي لسه من غير موقع بس:
+ *  ١. أقرب قراءة GPS موثوقة (≤١٠٠م) للحظة نطقها — أي بعد.
+ *  ٢. مافيش وقت نطق / مافيش قراءة موثوقة ⇒ موقع اللوحة اللي قبلها (وإلا اللي بعدها).
+ *  ٣. مافيش ولا موقع في التسجيل كله ⇒ زي ما هي.
+ */
+describe("fillMissingPins — مافيش لوحة من غير موقع (آخر حل)", () => {
+  const notes = (e: PlateEntry) => e.review.notes.join(" | ");
+  const stampAll = (es: PlateEntry[], track: TrackFix[]) =>
+    fillMissingPins(stampEntriesWithTrack(es, track, START), track, START);
+
+  it("اللوحة اللي ليها موقعها مابتتلمسش", () => {
+    const track = Array.from({ length: 10 }, (_, i) => fx(i * 1000, 24 + i * 0.0001));
+    const once = stampEntriesWithTrack([entry("ابح1234", 2.5)], track, START);
+    const out = fillMissingPins(once, track, START);
+    expect(out[0]).toBe(once[0]);
+  });
+
+  it("فجوة GPS (أبعد من ثانيتين) ⇒ أقرب قراءة للحظة نطقها، متعلّمة وقديمة", () => {
+    const track = [fx(1000, 24.5), fx(9000, 24.6)];
+    const [a] = stampAll([entry("ابح1234", 6.5)], track);
+    expect(a.pin).not.toBeNull();
+    expect(a.pin!.lat).toBe(24.6);           // ٩ث أقرب من ١ث للحظة ٦.٥ث
+    expect(a.pin!.stale).toBe(true);
+    expect(a.pin!.ageMs).toBe(2500);
+    expect(notes(a)).toContain(NEAREST_PIN);
+    expect(notes(a)).not.toContain(NO_PRECISE_PIN);
+  });
+
+  it("اتحرّك أكتر من ٥٠م (مابيتنسخش بالقاعدة الدقيقة) ⇒ برضه بياخد أقرب قراءة", () => {
+    const track = [fx(1000, 24.5), fx(3000, 24.501), fx(11000, 24.5)];
+    const [a, b] = stampAll([entry("ابح1234", 1), entry("حطس5678", 6)], track);
+    expect(a.review.notes.join(" ")).not.toContain(NEAREST_PIN);   // الدقيقة زي ما هي
+    expect(b.pin).not.toBeNull();
+    expect(b.pin!.lat).toBe(24.501);    // ٣ث هي الأقرب للحظة ٦ث
+    expect(notes(b)).toContain(NEAREST_PIN);
+  });
+
+  it("القراءات كلها بالكيلو (أوسع من ١٠٠م) ⇒ موقع اللوحة اللي قبلها مش القراية الخشنة", () => {
+    const track = [fx(1000, 24.5), fx(30000, 25.1, 46.7, 2000)];
+    const [a, b] = stampAll([entry("ابح1234", 1), entry("حطس5678", 30)], track);
+    expect(a.pin!.lat).toBe(24.5);
+    expect(b.pin!.lat).toBe(24.5);
+    expect(notes(b)).toContain(NEAREST_PIN);
+  });
+
+  it("لوحة من غير لحظة نطق ⇒ موقع اللوحة اللي قبلها، وأول لوحة ⇒ اللي بعدها", () => {
+    const track = Array.from({ length: 10 }, (_, i) => fx(i * 1000, 24 + i * 0.001));
+    const out = fillMissingPins(
+      stampEntriesWithTrack([entry("ابح1234", undefined), entry("حطس5678", 3), entry("ددق7622", undefined)], track, START),
+      track,
+      START,
+    );
+    // من غير وقت ⇒ مافيش «أقرب قراءة» — اللي قبلها/بعدها في الترتيب
+    expect(out[1].pin!.lat).toBeCloseTo(24.003, 9);
+    expect(out[0].pin!.lat).toBeCloseTo(24.003, 9);
+    expect(out[2].pin!.lat).toBeCloseTo(24.003, 9);
+    expect(notes(out[0])).toContain("بعدها");
+    expect(notes(out[2])).toContain("قبلها");
+  });
+
+  it("مافيش ولا قراءة في التسجيل كله ⇒ زي ما هي (مابنخترعش)", () => {
+    const out = fillMissingPins(stampEntriesWithTrack([entry("ابح1234", 1), entry("حطس5678", 2)], [], START), [], START);
+    expect(out.every((e) => e.pin === null)).toBe(true);
+    expect(out.every((e) => notes(e).includes(NO_PRECISE_PIN))).toBe(true);
+  });
+
+  it("إعادة التفريغ: العلامة مابتتكرّرش، ولو بقى ليها موقع دقيق «أقرب موقع» بتتشال", () => {
+    const track = [fx(1000, 24.5), fx(9000, 24.6)];
+    const once = stampAll([entry("ابح1234", 6.5, ["ملاحظة قديمة"])], track);
+    const twice = stampAll(once, track);
+    expect(twice[0].review.notes.filter((n) => n.startsWith(NEAREST_PIN))).toHaveLength(1);
+    const exact = stampAll([{ ...twice[0], pin: null, review: { ...twice[0].review, timeStart: 9 } }], track);
+    expect(exact[0].pin!.stale).toBe(false);
+    expect(notes(exact[0])).not.toContain(NEAREST_PIN);
+    expect(exact[0].review.notes).toContain("ملاحظة قديمة");
+  });
+
+  it("سبب زيادة بيتكتب جنب العلامة (التفريغ اتقطع)", () => {
+    const track = [fx(1000, 24.5)];
+    const [a] = fillMissingPins([entry("ابح1234", 5)], track, START, undefined, { why: "الأنواع ماوصلتش — فرّغ تاني" });
+    expect(notes(a)).toContain(NEAREST_PIN);
+    expect(notes(a)).toContain("الأنواع ماوصلتش — فرّغ تاني");
   });
 });

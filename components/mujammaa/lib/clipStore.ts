@@ -31,6 +31,7 @@ import type { PlateEntry } from "./plateEntry";
 import {
   NO_PRECISE_PIN,
   countPinned,
+  fillMissingPins,
   isPinMark,
   stampEntriesWithTrack,
   trackFromRaw,
@@ -1227,8 +1228,14 @@ export function clipRunOutcome(input: {
   if (!input.ok) {
     return { entries: input.entries, patch: { status: "failed", error: input.error || "التفريغ ماكملش" } };
   }
+  // 📍 الدقيق الأول، واللي فضل من غير موقع ⇒ «أقرب موقع» (آخر حل — المالك ١٦ نوفمبر ٢٠٢٦، `fillMissingPins`)
   const entries = input.fixes
-    ? stampEntriesWithTrack(input.entries, input.fixes, input.startEpoch, input.pauses)
+    ? fillMissingPins(
+      stampEntriesWithTrack(input.entries, input.fixes, input.startEpoch, input.pauses),
+      input.fixes,
+      input.startEpoch,
+      input.pauses,
+    )
     : input.entries;
   return {
     entries,
@@ -1320,8 +1327,16 @@ export function preliminaryEntries(entries: PlateEntry[]): PlateEntry[] {
  * الرد ماكملش بعد سطر اللوحات (اتقطع/اترفض/اتوقف) ⇒ اللوحات **تفضل** في
  * الجدول بلا دبوس، ومتعلّمة «من غير موقع دقيق — الأنواع ماوصلتش — فرّغ تاني».
  */
-export function platesOnlyEntries(entries: PlateEntry[]): PlateEntry[] {
-  return entries.map((e) => ({
+export function platesOnlyEntries(
+  entries: PlateEntry[],
+  /**
+   * 📍 (١٦ نوفمبر ٢٠٢٦) مسار المقطع ⇒ كل لوحة بتاخد **«أقرب موقع»** لوقتها المبدئي (آخر حل — المالك: «مش عايز اي لوحه
+   * تطلع بدون موقع … لو النت كان ضعيف») — متعلّم «قديم» + «الأنواع ماوصلتش — فرّغ تاني» (التفريغ تاني بيجيب الدقيق).
+   * من غير مسار (ملف مرفوع) ⇒ من غير موقع زي الأول.
+   */
+  ctx?: { track?: TrackFix[] | null; startEpoch?: number; pauses?: RecPause[] | null } | null,
+): PlateEntry[] {
+  const kept = entries.map((e) => ({
     ...e,
     pin: null,
     review: {
@@ -1329,6 +1344,8 @@ export function platesOnlyEntries(entries: PlateEntry[]): PlateEntry[] {
       notes: [...withoutPinMarks(e.review.notes), `${NO_PRECISE_PIN} — ${PLATES_ONLY_ERROR}`],
     },
   }));
+  if (!ctx?.track?.length || !Number.isFinite(ctx.startEpoch)) return kept;
+  return fillMissingPins(kept, ctx.track, ctx.startEpoch as number, ctx.pauses, { why: PLATES_ONLY_ERROR });
 }
 
 /** «اسمع» — صوت على الجهاز، أو صوت في الذاكرة بس (عيب ٧: كان مقفول بـ٠ بايت) */

@@ -13,7 +13,7 @@
  * القارئ: `mujammaa_report.py` في platehunter-server-scripts.
  */
 import type { PlateEntry } from "./plateEntry";
-import { NO_PRECISE_PIN, neighborPinOf, type TrackFix } from "./platePin";
+import { NEAREST_PIN, NO_PRECISE_PIN, neighborPinOf, type TrackFix } from "./platePin";
 import { pausedTotalMs, pausesForReport, type RecPause } from "./recPauses";
 
 export const OUTBOX_KEY = "mj:reports:outbox";
@@ -225,6 +225,9 @@ export function buildRunReport(i: RunReportInput): RunReport {
 function pinNote(e: PlateEntry): string | undefined {
   const side = neighborPinOf(e);
   if (side) return side === "before" ? "نفس اللي قبلها" : "نفس اللي بعدها";
+  // 📍 (١٦ نوفمبر ٢٠٢٦) «أقرب موقع» — آخر حل، مش لحظة النطق (`fillMissingPins`)
+  const near = e.pin ? (e.review?.notes || []).find((n) => String(n).startsWith(NEAREST_PIN)) : undefined;
+  if (near) return String(near).replace(`${NEAREST_PIN} — `, "أقرب موقع: ").slice(0, 120);
   if (e.pin) return undefined;
   const miss = (e.review?.notes || []).find((n) => String(n).startsWith(NO_PRECISE_PIN));
   if (!miss) return undefined;

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NEIGHBOR_PIN, NO_PRECISE_PIN } from "./platePin";
+import { NEAREST_PIN, NEIGHBOR_PIN, NO_PRECISE_PIN } from "./platePin";
 import {
   GPS_FIXES_MAX,
   OUTBOX_KEY,
@@ -226,6 +226,24 @@ describe("buildRunReport — 📍 تفاصيل الموقع", () => {
     expect(r.plates[1]).toMatchObject({ ts: 6, acc: 8, pm: "نفس اللي قبلها" });
     expect(r.plates[2]).toMatchObject({ ts: 8 });
     expect(r.plates[2].pm).toBeUndefined();
+  });
+
+  it("📍 «أقرب موقع» (آخر حل — ١٦ نوفمبر ٢٠٢٦) بيبان في التقرير — مش زي الدقيق", () => {
+    const r = buildRunReport({
+      kind: "run",
+      agent: "x",
+      uid: null,
+      clip: { sec: 40, startedAtMs: T0 },
+      entries: [
+        entry("ابح1234", 30, {
+          review: { plate: "ابح1234", timeStart: 30, notes: [`${NEAREST_PIN} — أقرب قراءة GPS للحظة نطقها (فرق 20ث)`] },
+        }),
+      ],
+      now: T0,
+      dev: {},
+    });
+    expect(r.plates[0].pm).toBe("أقرب موقع: أقرب قراءة GPS للحظة نطقها (فرق 20ث)");
+    expect(r.plates[0].acc).toBe(8);
   });
 
   it("تسجيل طويل: القراءات ليها حد (التقرير مايكبرش)", () => {
