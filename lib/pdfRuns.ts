@@ -16,7 +16,11 @@ export interface PdfOp { fn: string; args: unknown[] | null }
  * قطعة كلام = أمر رسم واحد: مكان أوله + عرضها (من عرض الحروف في الخط) + الحروف بالترتيب اللي اترسمت بيه
  * (شمال ⇒ يمين). `size` = حجم الخط (لحساب «فيه فراغ بين القطعتين ولا لازقين»).
  */
-export interface PdfRun { x: number; y: number; w: number; size: number; text: string }
+export interface PdfRun {
+  x: number; y: number; w: number; size: number; text: string;
+  /** الأشكال لوحدها بنفس الترتيب — شكل واحد ممكن يبقى حرفين (رباط «لا»/«لأ»/«لى»). */
+  units: string[];
+}
 
 type M = [number, number, number, number, number, number];
 const ID: M = [1, 0, 0, 1, 0, 0];
@@ -57,16 +61,18 @@ export function runsFromOps(ops: readonly PdfOp[]): PdfRun[] {
     if (!Array.isArray(items)) continue;
     const at = mul(tm, ctm);
     let text = "", advance = 0;
+    const units: string[] = [];
     for (const it of items) {
       if (typeof it === "number") { advance -= (it / 1000) * size; continue; }
       const glyph = it as { unicode?: unknown; width?: unknown } | null;
       if (!glyph) continue;
-      text += typeof glyph.unicode === "string" ? glyph.unicode : "";
+      const u = typeof glyph.unicode === "string" ? glyph.unicode : "";
+      if (u) { text += u; units.push(u); }
       advance += (num(glyph.width) / 1000) * size;
     }
     tm = mul([1, 0, 0, 1, advance, 0], tm);
     const end = mul(tm, ctm);
-    if (text) runs.push({ x: at[4], y: at[5], w: end[4] - at[4], size: Math.abs(size * ctm[0]) || size, text });
+    if (text) runs.push({ x: at[4], y: at[5], w: end[4] - at[4], size: Math.abs(size * ctm[0]) || size, text, units });
   }
   return runs;
 }
@@ -101,23 +107,69 @@ export function runsToText(runs: readonly PdfRun[]): string {
 }
 
 /**
- * الكلام من أوامر الرسم لكل صفحات ملف مفتوح (`PDFDocumentProxy` من unpdf). أي غلط ⇒ "" (اللي بينده يرجع
- * لقارئ الكلام العادي).
+ * ══════════════════════════════════════════════════════════════════════
+ *  🔗 الرباطات في «توثيق» (المالك ١٩ نوفمبر ٢٠٢٦ — `9439.pdf`/`5172.pdf`)
+ * ══════════════════════════════════════════════════════════════════════
+ * خط «توثيق» بيرسم «لا»/«لأ»/«لى» **شكل واحد بحرفين**، والكلمة مرسومة معكوسة (شمال ⇒ يمين). قارئ الكلام العادي
+ * بيقلبها **حرف حرف** فبيقلب الحرفين جوّه الشكل: «توكيلات» ⇒ «توكيالت»، «على» ⇒ «عىل»، «الاولى» ⇒ «االوىل».
+ * من أوامر الرسم بنعرف حدود كل شكل ⇒ لكل كلمة فيها شكل بحرفين: الشكل اللي القارئ العادي بيطلّعه ⇒ الكلمة الصح
+ * (الأشكال بترتيبها المعكوس). بنبدّل **الكلمات دي بس** في النص العادي — الباقي بيفضل بالحرف.
+ */
+const AR_LETTER = /[ء-ي]/;
+
+export function ligatureWordFixes(runs: readonly PdfRun[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const bad = new Set<string>();
+  const flush = (word: string[]) => {
+    if (!word.some((u) => [...u].length > 1)) return;
+    const fixed = [...word].reverse().join("");
+    const broken = [...word.join("")].reverse().join("");
+    if (fixed === broken || bad.has(broken)) return;
+    const had = out.get(broken);
+    if (had && had !== fixed) { out.delete(broken); bad.add(broken); return; }   // نفس الشكل الغلط لكلمتين ⇒ مانبدّلش
+    out.set(broken, fixed);
+  };
+  for (const r of runs) {
+    let word: string[] = [];
+    for (const u of r.units) {
+      if (u && [...u].every((c) => AR_LETTER.test(c))) word.push(u);
+      else { flush(word); word = []; }
+    }
+    flush(word);
+  }
+  return out;
+}
+
+/** بيبدّل الكلمات الغلط بالصح — الكلمة كاملة بس (مش جزء من كلمة أطول). */
+export function applyWordFixes(text: string, fixes: ReadonlyMap<string, string>): string {
+  if (!fixes.size) return text;
+  const keys = [...fixes.keys()].sort((a, b) => b.length - a.length);
+  const re = new RegExp(`(^|[^\\u0621-\\u064A])(${keys.join("|")})(?![\\u0621-\\u064A])`, "g");
+  return text.replace(re, (_m, pre: string, w: string) => pre + (fixes.get(w) ?? w));
+}
+
+/** القطع من أوامر الرسم لكل صفحة في ملف مفتوح (`PDFDocumentProxy` من unpdf). */
+export async function pdfRuns(pdf: { numPages: number; getPage(n: number): Promise<unknown> }): Promise<PdfRun[][]> {
+  const { getResolvedPDFJS } = await import("unpdf");
+  const { OPS } = await getResolvedPDFJS();
+  const names: Record<number, string> = {};
+  for (const [k, v] of Object.entries(OPS as Record<string, number>)) names[v] = k;
+  const pages: PdfRun[][] = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = (await pdf.getPage(p)) as { getOperatorList(): Promise<{ fnArray: number[]; argsArray: unknown[][] }> };
+    const ol = await page.getOperatorList();
+    const ops: PdfOp[] = ol.fnArray.map((f, i) => ({ fn: names[f] ?? "", args: (ol.argsArray[i] ?? null) as unknown[] | null }));
+    pages.push(runsFromOps(ops));
+  }
+  return pages;
+}
+
+/**
+ * الكلام من أوامر الرسم لكل صفحات ملف مفتوح. أي غلط ⇒ "" (اللي بينده يرجع لقارئ الكلام العادي).
  */
 export async function extractRunsText(pdf: { numPages: number; getPage(n: number): Promise<unknown> }): Promise<string> {
   try {
-    const { getResolvedPDFJS } = await import("unpdf");
-    const { OPS } = await getResolvedPDFJS();
-    const names: Record<number, string> = {};
-    for (const [k, v] of Object.entries(OPS as Record<string, number>)) names[v] = k;
-    const pages: string[] = [];
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = (await pdf.getPage(p)) as { getOperatorList(): Promise<{ fnArray: number[]; argsArray: unknown[][] }> };
-      const ol = await page.getOperatorList();
-      const ops: PdfOp[] = ol.fnArray.map((f, i) => ({ fn: names[f] ?? "", args: (ol.argsArray[i] ?? null) as unknown[] | null }));
-      pages.push(runsToText(runsFromOps(ops)));
-    }
-    return pages.join("\n");
+    return (await pdfRuns(pdf)).map((runs) => runsToText(runs)).join("\n");
   } catch {
     return "";
   }

@@ -94,15 +94,15 @@ export async function requeueMissingCertNoCerts(fromDay: string, table: string =
 }
 
 /**
- * 📄 **كل** شهايد «السجل» (رقم العقد CRN-) اللي اتقرت قبل آخر تصليح للقارئ ⇒ ترجع تتقري مرة واحدة.
+ * 📄 **كل** الشهايد («السجل» و«توثيق») اللي اتقرت قبل آخر تصليح للقارئ ⇒ ترجع تتقري مرة واحدة (المالك ١٩ نوفمبر
+ * ٢٠٢٦: «كل البيانات صح 100%» — «السجل» من أوامر الرسم، و«توثيق» الرباطات والخانات وتاريخ الشهادة).
  * اللوحة القديمة بتفضل ظاهرة لحد ما القراية الجديدة تخلص (العرض مابيبصّش على `parsed`)، والجديد اللي لسه
  * نازل بيتقري قبلها (`pendingCerts` — الأحدث `updated_at` الأول).
  */
 export async function requeueSijilGlyphCerts(fromDay: string, beforeIso: string, table: string = MAIN): Promise<void> {
   const { error } = await supabaseAdmin
     .from(table).update({ parsed: false, tries: 0 })
-    .gte("day", fromDay).eq("parsed", true).lt("updated_at", beforeIso)
-    .like("cert_no", "CRN-%");
+    .gte("day", fromDay).eq("parsed", true).lt("updated_at", beforeIso);
   if (error) throw new Error(error.message);
 }
 
