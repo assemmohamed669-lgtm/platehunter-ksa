@@ -40,6 +40,8 @@ export interface CertDailyDeps {
   requeueMissingTenant?(fromDay: string): Promise<void>;
   /** اللي خاناتها العربي فاضية من قبل إصلاح ١٤ أكتوبر ⇒ قراية واحدة تانية. */
   requeueStaleFields?(fromDay: string, beforeIso: string): Promise<void>;
+  /** شهايد «السجل» اللي اتقرت قبل تصليح الحروف (١٩ نوفمبر ٢٠٢٦) ولوحتها مشكوك فيها ⇒ قراية واحدة تانية. */
+  requeueSijilGlyphs?(fromDay: string, beforeIso: string): Promise<void>;
   download(fileId: string): Promise<Uint8Array | null>;
   extractText(bytes: Uint8Array): Promise<string>;
   /** `fields` = null ⇒ فشل (tries بيزيد ومش متقري لسه). */
@@ -65,7 +67,16 @@ export const PENDING_PER_TICK = 100;
  * **مرة واحدة** (بعد ما تتقري تاريخها بيبقى بعد كده فمابتتعادش). ٦ أكتوبر ٢٠٢٦: حروف «السجل»
  * الإنجليزي بمسافات. لو القارئ اتحسّن تاني ⇒ حرّك التاريخ ده لوقت النشر.
  */
-export const CERT_PARSER_AT = "2026-10-14T20:00:00Z";   // + فك رموز «السجل» وترتيب «توثيق» المقلوب
+export const CERT_PARSER_AT = "2026-11-19T13:02:00Z";   // + حروف «السجل» (أ/ح) — كان ١٤ أكتوبر (فك الرموز)
+
+/**
+ * 📄 حروف لوحات «السجل» (المالك ١٩ نوفمبر ٢٠٢٦: «مكتوب فيه رعا مش رعب» + «لوحات مش كامله»): رمز «أ» كان
+ * بيتقري «ب» ورمز «ح» كان بيضيع (`lib/sijilGlyphs.map.ts`). الشهايد اللي اتقرت **قبل** الوقت ده ولوحتها
+ * مشكوك فيها بترجع تتقري **مرة واحدة** (بعدها `updated_at` بيبقى بعده فمابتتعادش).
+ */
+export const CERT_SIJIL_GLYPHS_AT = CERT_PARSER_AT;
+/** لوحة ممكن تكون اتقرت غلط: فيها «ب» (يمكن «أ») أو حرفين بس (يمكن «ح» ضاعت). نفس الشكل في Postgres وJS. */
+export const SIJIL_SUSPECT_PLATE_RE = "ب|^[^ 0-9]+ [^ 0-9]+ [0-9]";
 
 /**
  * نفس الفكرة بس للخانات العربي: الشهايد اللي اتقرت قبل إصلاح ١٤ أكتوبر خاناتها
@@ -115,6 +126,7 @@ export async function certDailyTick(d: CertDailyDeps): Promise<{
   if (d.requeueMissingCertNo && timeLeft() > 10_000) await d.requeueMissingCertNo(dayMinus(day, KEEP_DAYS)).catch(() => {});
   if (d.requeueMissingTenant && timeLeft() > 10_000) await d.requeueMissingTenant(dayMinus(day, KEEP_DAYS)).catch(() => {});
   if (d.requeueStaleFields && timeLeft() > 10_000) await d.requeueStaleFields(dayMinus(day, KEEP_DAYS), CERT_FIELDS_AT).catch(() => {});
+  if (d.requeueSijilGlyphs && timeLeft() > 10_000) await d.requeueSijilGlyphs(dayMinus(day, KEEP_DAYS), CERT_SIJIL_GLYPHS_AT).catch(() => {});
   let parsed = 0, failed = 0;
   const queue = timeLeft() > 5_000 ? await d.pending(dayMinus(day, KEEP_DAYS), PENDING_PER_TICK) : [];
   const worker = async () => {

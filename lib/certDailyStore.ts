@@ -4,7 +4,7 @@
  * الجدول في `docs/sql/cert-daily.sql`.
  */
 import { supabaseAdmin } from "./supabaseAdmin";
-import type { CertDailyRow, PendingCert } from "./certDailyJob";
+import { SIJIL_SUSPECT_PLATE_RE, type CertDailyRow, type PendingCert } from "./certDailyJob";
 import type { CertFields } from "./certParse";
 import type { DailyCertEntry } from "./certDaily";
 
@@ -86,6 +86,19 @@ export async function requeueMissingCertNoCerts(fromDay: string, table: string =
   const { error } = await supabaseAdmin
     .from(table).update({ parsed: false, tries: 0 })
     .gte("day", fromDay).eq("parsed", true).is("cert_no", null);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * 📄 شهايد «السجل» (رقم العقد CRN-) اللي اتقرت قبل تصليح الحروف ولوحتها مشكوك فيها (`SIJIL_SUSPECT_PLATE_RE`)
+ * ⇒ ترجع تتقري مرة واحدة. اللوحة القديمة بتفضل ظاهرة لحد ما القراية الجديدة تخلص (العرض مابيبصّش على `parsed`).
+ */
+export async function requeueSijilGlyphCerts(fromDay: string, beforeIso: string, table: string = MAIN): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from(table).update({ parsed: false, tries: 0 })
+    .gte("day", fromDay).eq("parsed", true).lt("updated_at", beforeIso)
+    .like("cert_no", "CRN-%")
+    .filter("plate_text", "match", SIJIL_SUSPECT_PLATE_RE);
   if (error) throw new Error(error.message);
 }
 
