@@ -75,11 +75,11 @@ function decodeToken(tok: string, unknown: string): string {
   return out.join("");
 }
 
-function decodeLine(line: string, unknown: string): string {
+function decodeLine(line: string, unknown: string, merge: boolean): string {
   // كلمة كلمة، وترتيب الكلمات بيتقلب — أوضح وأأمن من قلب السطر كله لما يكون
   // فيه عربي وإنجليزي مع بعض (رقم الهيكل وسط الكلام).
   const decoded = line.split(/\s+/).filter(Boolean).map((t) => decodeToken(t, unknown)).reverse().join(" ");
-  return mergeStrayFragments(decoded);
+  return merge ? mergeStrayFragments(decoded) : decoded;
 }
 
 /**
@@ -87,11 +87,20 @@ function decodeLine(line: string, unknown: string): string {
  *
  * `unknown` = اللي بيتحط مكان رمز مش في الجدول: "" (بيتشال — للأسامي والخانات)، أو علامة (`UNKNOWN_GLYPH`)
  * لقراية **اللوحة**: أي حرف مش معروف فيها يبان، فماتطلعش لوحة ناقصة أو متخمّنة (المالك ١٩ نوفمبر ٢٠٢٦).
+ *
+ * `merge` = لزق القطع الصغيرة في اللي قبلها («تويو تا» ⇒ «تويوتا») — علاج تقطيع قارئ الكلام العادي. النص اللي
+ * من أوامر الرسم (`SIJIL_RUNS_MARK`) **كامل** فمابيتلزقش (وإلا «علي بن سعد» تبقى «عليبن سعد»).
  */
-export function decodeSijilText(text: string, unknown = ""): string {
+export function decodeSijilText(text: string, unknown = "", merge = true): string {
   if (!looksLikeSijilGlyphs(text)) return text;
-  return text.split("\n").map((l) => decodeLine(l, unknown)).join("\n");
+  return text.split("\n").map((l) => decodeLine(l, unknown, merge)).join("\n");
 }
+
+/**
+ * 📐 أول سطر في النص اللي `lib/pdfText.ts` بيرجّعه لشهادة «السجل» لما يقراها **من أوامر الرسم** (`lib/pdfRuns.ts`):
+ * كل قيمة كاملة في مكانها ⇒ القارئ (`parseCertText`) بياخد القيم زي ما هي بالظبط من غير أي علاج للتقطيع.
+ */
+export const SIJIL_RUNS_MARK = "%%sijil-runs%%";
 
 /** علامة «رمز مش في الجدول» — لقراية اللوحة بس. */
 export const UNKNOWN_GLYPH = "�";
@@ -129,7 +138,7 @@ const ALL_LABELS = [
 /** أقصى طول لقيمة — حاجز أمان ضد ابتلاع فقرة كاملة. */
 const MAX_VALUE = 60;
 
-function between(text: string, label: string, stops: string[]): string {
+function between(text: string, label: string, stops: string[], exact = false): string {
   const start = new RegExp(labelRe(label) + "\\s*:?\\s*").exec(text);
   if (!start) return "";
   const rest = text.slice(start.index + start[0].length).replace(/\n/g, " ");
@@ -139,6 +148,8 @@ function between(text: string, label: string, stops: string[]): string {
     const m = new RegExp(labelRe(s)).exec(rest);
     if (m && m.index > 0 && m.index < end) end = m.index;
   }
+  // 📐 من أوامر الرسم: القيمة كاملة ⇒ زي ما هي (مسافة واحدة بين الكلمات) — من غير أي لزق أو قص.
+  if (exact) return rest.slice(0, end).replace(/[:\s]+$/, "").replace(/\s+/g, " ").trim();
   // «ة» لوحدها في الآخر = أول حرف «ةرقم الهوية» اللي بعدها — مش من الاسم.
   // ⚠️ **بس «ة»**: شيل أي حرف كان بيكسر «كي ا» ⇒ «كي» بدل «كيا».
   const raw = rest.slice(0, end).replace(/[:\s]+$/, "").trim().replace(/\sة$/, "");
@@ -209,28 +220,32 @@ export function completeLessor(value: string, crNumber = ""): string {
   return hits.length === 1 ? hits[0] : value;
 }
 
-/** الخانات من نص شهادة «سجل» **بعد فكّها**. أي خانة مش موجودة بترجع "". */
-export function extractSijilFields(decoded: string): SijilFields {
+/**
+ * الخانات من نص شهادة «سجل» **بعد فكّها**. أي خانة مش موجودة بترجع "".
+ *
+ * `exact` = النص من أوامر الرسم (`SIJIL_RUNS_MARK`): القيم كاملة ⇒ بتطلع **زي المكتوب في الشهادة بالظبط** —
+ * المسافات بتفضل («لاند كروزر»)، والمؤجر مابيتكمّلش من قايمة (المالك ١٩ نوفمبر ٢٠٢٦: «كل البيانات صح 100%»).
+ */
+export function extractSijilFields(decoded: string, exact = false): SijilFields {
   /**
    * القيمة اللي كلمة واحدة: من غير مسافات، **وبترجع فاضية لو طلعت غريبة** —
    * الملف بيقطّع الكلمة على سطرين بعيدين أحياناً فالقيمة بتطلع ناقصة أو بتبلع
    * كلام الشهادة الثابت. **فاضي أحسن من غلط** في شيت المالك.
    */
   const one = (v: string) => {
-    const s = v.replace(/\s+/g, "");
-    if (!s || s.length > 20 || /تعد|الشهادة|سندا|التنفيذ/.test(s)) return "";
+    const s = exact ? v.trim() : v.replace(/\s+/g, "");
+    if (!s || s.length > (exact ? 40 : 20) || /تعد|الشهادة|سندا|التنفيذ/.test(s)) return "";
     return s;
   };
   const PLATE = "رقم اللوحة";
+  const get = (label: string, stops: string[]) => between(decoded, label, stops, exact);
+  const lessor = get("اسم المؤجر", ["رقم السجل", "الرقم الوطني", "\n"]);
   return {
-    make: one(between(decoded, "المصنع", [PLATE, "نوع المركبة"])),
-    model: one(between(decoded, "نوع المركبة", [PLATE, "رقم الهيكل"])),
-    color: one(between(decoded, "لون المركبة", ["رقم الهيكل", "\n"])),
-    bank: completeLessor(
-      between(decoded, "اسم المؤجر", ["رقم السجل", "الرقم الوطني", "\n"]),
-      between(decoded, "رقم السجل التجاري", ["الرقم الوطني", "المنفذ"]),
-    ),
-    tenant: between(decoded, "اسم المستأجر", ["رقم الهوية", "نوع الهوية", "\n"]),
-    plateAr: between(decoded, "رقم اللوحة باللغة العربية", ["رقم اللوحة", "نوع المركبة", "رقم الهيكل"]),
+    make: one(get("المصنع", [PLATE, "نوع المركبة"])),
+    model: one(get("نوع المركبة", [PLATE, "رقم الهيكل"])),
+    color: one(get("لون المركبة", ["رقم الهيكل", "\n"])),
+    bank: exact ? lessor : completeLessor(lessor, get("رقم السجل التجاري", ["الرقم الوطني", "المنفذ"])),
+    tenant: get("اسم المستأجر", ["رقم الهوية", "نوع الهوية", "\n"]),
+    plateAr: get("رقم اللوحة باللغة العربية", ["رقم اللوحة", "نوع المركبة", "رقم الهيكل"]),
   };
 }

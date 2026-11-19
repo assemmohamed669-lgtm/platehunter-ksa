@@ -83,7 +83,7 @@ describe("🔁 شهايد «السجل» بتتقري تاني بالقارئ ا
     await certDailyTick(d);
     expect(requeue).toHaveBeenCalledWith("2026-11-12", CERT_SIJIL_GLYPHS_AT);
     // بعد نشر الجدول اللي من الخط (#545 كان ١٣:٠٢)
-    expect(Date.parse(CERT_SIJIL_GLYPHS_AT)).toBeGreaterThan(Date.parse("2026-11-19T13:30:00Z"));
+    expect(Date.parse(CERT_SIJIL_GLYPHS_AT)).toBeGreaterThan(Date.parse("2026-11-19T13:33:00Z"));   // بعد #546 (قراية أوامر الرسم)
   });
 
   it("🔴 التخزين: «السجل» بس (CRN-) · اتقرت قبل الإصلاح · **كلها** (مش المشكوك فيها بس) — في الجدولين", () => {
