@@ -372,13 +372,20 @@ export function parseCertText(rawInput: string, fileName = ""): CertFields {
      *  · العربي بيتقري **بعلامة للرمز المجهول** — أي حرف مش في الجدول ⇒ مفيش لوحة عربي (مش لوحة ناقصة).
      *  · الاتنين موجودين ومختلفين ⇒ **مفيش لوحة خالص** — مانختارش واحدة ونخاطر (المالك ١٩ نوفمبر ٢٠٢٦:
      *    «مش عايز اي غلط ابدا … مشكله مع الشرطه»). الشهادة بتفضل بالشاص.
-     *  · واحدة بس ⇒ هي.
+     *  · 🔴 **العربي هو الأساس.** الإنجليزي مكتوب بطريقتين: معكوس زي اللوحة («4285LAS» = س ا ل) أو بنفس ترتيب
+     *    العربي («1212REA» = ر ع ا — REPO-119-00289579). كنا بنفترض المعكوس دايماً وناخد الإنجليزي ⇒ «ا ع ر 1212»
+     *    (لوحة عربية تانية!). دلوقتي الإنجليزي «موافق» لو طابق العربي **بأي طريقة**.
+     *  · الإنجليزي لوحده (العربي مش مقروء) ⇒ بس لو الطريقتين نفس اللوحة («RER»)، وإلا مفيش لوحة.
      */
     const strict = cleanText(decodeSijilText(rawText, UNKNOWN_GLYPH, !exact));
     const arValue = extractSijilFields(strict, exact).plateAr;
     const ar = arValue ? sijilPlate(arValue) : null;
-    const en = plate.key ? plate : null;
-    plate = ar && en ? (ar.key === en.key ? en : NO_PLATE) : ar ?? en ?? NO_PLATE;
+    const flip = (key: string) => [...key.replace(/\d/g, "")].reverse().join("") + key.replace(/\D/g, "");
+    const ens = latinPlates(text).filter((c) => FULL_PLATE.test(c.key));
+    const enKeys = new Set(ens.flatMap((c) => [c.key, flip(c.key)]));
+    if (ar) plate = !ens.length || enKeys.has(ar.key) ? ar : NO_PLATE;
+    else if (ens.length) plate = enKeys.size === 1 ? { key: ens[0].key, display: ens[0].display } : NO_PLATE;
+    // (مفيش عربي ولا إنجليزي ⇒ `pickPlate` زي ما هو: اسم الملف لو لوحة كاملة)
   }
   const bank = sij?.bank || pickBank(fields);
   return {
