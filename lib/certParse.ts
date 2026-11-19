@@ -17,7 +17,7 @@
  */
 import { bankPlateToArabic, normalizePlate } from "./plateParser";
 import { plateOf } from "./certStats";
-import { decodeSijilText, extractSijilFields } from "./sijilGlyphs";
+import { decodeSijilText, extractSijilFields, UNKNOWN_GLYPH } from "./sijilGlyphs";
 import { normalizeReversedLabels } from "./certReversed";
 
 export interface CertFields {
@@ -48,6 +48,14 @@ export interface CertFields {
 
 /** حروف اللوحات السعودية (بعد توحيد أ/إ/آ ⇒ ا و ى ⇒ ي). */
 const AR_PLATE_LETTERS = new Set("ابحدرسصطعقكلمنهوي".split(""));
+
+/**
+ * 🛑 اللوحة الوحيدة اللي بتطلع: **٣ حروف من حروف اللوحات + ١–٤ أرقام** — وإلا مفيش لوحة خالص.
+ * المالك (١٩ نوفمبر ٢٠٢٦): «مش عايز اي غلط ابدا … ممكن يحصلهم مشكله مع الشرطه انهم بيسحبو سيارات مش مطلوبه».
+ * لوحة بحرف أو حرفين (حرف ضاع) أو متخمّنة أخطر من مفيش — الشهادة بتفضل بالشاص.
+ */
+const FULL_PLATE = /^[ابحدرسصطعقكلمنهوي]{3}\d{1,4}$/;
+const NO_PLATE = { key: "", display: "" };
 
 function cleanText(t: string): string {
   return String(t ?? "")
@@ -107,7 +115,7 @@ function latinPlates(text: string): Cand[] {
 function pickPlate(text: string, fileName: string): { key: string; display: string } {
   const nameDigits = (fileName.replace(/\.[A-Za-z0-9]{2,4}$/, "").match(/\d{1,4}/) ?? [""])[0];
   const label = text.search(/رقم\s*اللوحة/);
-  const cands = [...arabicPlates(text), ...latinPlates(text)];
+  const cands = [...arabicPlates(text), ...latinPlates(text)].filter((c) => FULL_PLATE.test(c.key));
   let best: Cand | null = null;
   let bestScore = -1;
   for (const c of cands) {
@@ -117,16 +125,16 @@ function pickPlate(text: string, fileName: string): { key: string; display: stri
     if (score > bestScore || (score === bestScore && best && c.index < best.index)) { best = c; bestScore = score; }
   }
   if (best) return { key: best.key, display: best.display };
-  // من اسم الملف لو اسمه لوحة
+  // من اسم الملف لو اسمه لوحة (كاملة بس)
   const base = fileName.replace(/\.[A-Za-z0-9]{2,4}$/, "").replace(/_\d+$/, "").trim();
   if (plateOf(base)) {
     const ar = bankPlateToArabic(base);
     const key = normalizePlate(ar);
     const letters = ar.replace(/[^ء-ي]/g, "").split("").map(normLetter);
     const digits = ar.replace(/\D/g, "");
-    return { key, display: letters.length ? `${letters.join(" ")} ${digits}` : digits };
+    if (FULL_PLATE.test(key)) return { key, display: `${letters.join(" ")} ${digits}` };
   }
-  return { key: "", display: "" };
+  return NO_PLATE;
 }
 
 function pickVin(text: string): string {
@@ -295,16 +303,16 @@ function pickCertNo(text: string): string {
  */
 function sijilPlate(value: string): { key: string; display: string } | null {
   // الحروف **قبل** الأرقام بس — اللي بعدها بقايا الخانة اللي بعدها («3447د»).
-  const m = /^([^0-9]*?)(\d{3,4})/.exec(value.replace(/\s+/g, ""));
+  const m = /^([^0-9]*?)(\d{1,4})(?!\d)/.exec(value.replace(/\s+/g, ""));
   if (!m) return null;
-  const letters = [...m[1]].filter((c) => AR_PLATE_LETTERS.has(normLetter(c)));
+  // 🛑 كل اللي قبل الأرقام لازم يكون حروف لوحة — أي حاجة تانية (رمز مش معروف «�»، حرف مش من
+  //    حروف اللوحات) ⇒ مفيش لوحة. **مابنشيلش الغريب ونكمّل** (كده كانت «رع4925» بتطلع من «رعأ4925»).
+  const norm = [...m[1]].map(normLetter);
   const digits = m[2];
-  if (letters.length < 2 || letters.length > 3) return null;
-  const norm = letters.map(normLetter);
-  return {
-    key: normalizePlate(norm.join("") + digits),
-    display: `${norm.join(" ")} ${digits}`,
-  };
+  if (norm.length !== 3 || !norm.every((c) => AR_PLATE_LETTERS.has(c))) return null;
+  const key = normalizePlate(norm.join("") + digits);
+  if (!FULL_PLATE.test(key)) return null;
+  return { key, display: `${norm.join(" ")} ${digits}` };
 }
 
 export function parseCertText(rawText: string, fileName = ""): CertFields {
@@ -330,17 +338,25 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
   // «السجل» ليه استخراج بالعناوين — القيم فيه مش بتتلاقى بقوايم الماركات.
   const sij = issuer === "sijil" ? extractSijilFields(decoded) : null;
 
-  const plate = pickPlate(text, fileName);
-  /**
-   * 🔴 شهايد «السجل» اللي خانة اللوحة **الإنجليزية فاضية** فيها (المالك ١٤
-   * أكتوبر): اللوحة العربي موجودة جوّه الشهادة، وبعد الفك بقينا نقدر نقراها.
-   * من غير كده الصف بيطلع من غير لوحة خالص.
-   */
-  const arPlate = !plate.key && sij?.plateAr ? sijilPlate(sij.plateAr) : null;
+  let plate = pickPlate(text, fileName);
+  if (issuer === "sijil") {
+    /**
+     * 🔴 «السجل» فيها اللوحة **مرتين**: بالعربي (رموز بنفكّها) وبالإنجليزي (ساعات «None»).
+     *  · العربي بيتقري **بعلامة للرمز المجهول** — أي حرف مش في الجدول ⇒ مفيش لوحة عربي (مش لوحة ناقصة).
+     *  · الاتنين موجودين ومختلفين ⇒ **مفيش لوحة خالص** — مانختارش واحدة ونخاطر (المالك ١٩ نوفمبر ٢٠٢٦:
+     *    «مش عايز اي غلط ابدا … مشكله مع الشرطه»). الشهادة بتفضل بالشاص.
+     *  · واحدة بس ⇒ هي.
+     */
+    const strict = cleanText(decodeSijilText(String(rawText ?? ""), UNKNOWN_GLYPH));
+    const arValue = extractSijilFields(strict).plateAr;
+    const ar = arValue ? sijilPlate(arValue) : null;
+    const en = plate.key ? plate : null;
+    plate = ar && en ? (ar.key === en.key ? en : NO_PLATE) : ar ?? en ?? NO_PLATE;
+  }
   const bank = sij?.bank || pickBank(fields);
   return {
-    plate: arPlate?.key || plate.key,
-    plateText: arPlate?.display || plate.display,
+    plate: plate.key,
+    plateText: plate.display,
     vin: pickVin(text),
     bank,
     tenant: sij?.tenant || pickTenant(fields, bank),
