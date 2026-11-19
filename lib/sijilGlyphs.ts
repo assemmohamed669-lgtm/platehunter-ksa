@@ -61,34 +61,40 @@ function mergeStrayFragments(s: string): string {
  * بيفك سطر: المقاطع العربي بتتقلب وتترجم، والأرقام واللاتيني بيفضلوا زي ما هم
  * وفي ترتيبهم (زي ما المتصفّح بيعرض النص ثنائي الاتجاه).
  */
-function decodeToken(tok: string): string {
+function decodeToken(tok: string, unknown: string): string {
   // الكلمة العربي متخزّنة مقلوبة؛ الأرقام واللاتيني جوّه نفس الكلمة بيفضلوا بترتيبهم.
   const out: string[] = [];
   let latin = "";
   for (const ch of [...tok].reverse()) {
     if (isGlyph(ch) || ARABIC.test(ch)) {
       if (latin) { out.push([...latin].reverse().join("")); latin = ""; }
-      out.push(isGlyph(ch) ? SIJIL_GLYPHS[ch] ?? "" : ch);
+      out.push(isGlyph(ch) ? SIJIL_GLYPHS[ch] ?? unknown : ch);
     } else latin += ch;
   }
   if (latin) out.push([...latin].reverse().join(""));
   return out.join("");
 }
 
-function decodeLine(line: string): string {
+function decodeLine(line: string, unknown: string): string {
   // كلمة كلمة، وترتيب الكلمات بيتقلب — أوضح وأأمن من قلب السطر كله لما يكون
   // فيه عربي وإنجليزي مع بعض (رقم الهيكل وسط الكلام).
-  const decoded = line.split(/\s+/).filter(Boolean).map(decodeToken).reverse().join(" ");
+  const decoded = line.split(/\s+/).filter(Boolean).map((t) => decodeToken(t, unknown)).reverse().join(" ");
   return mergeStrayFragments(decoded);
 }
 
 /**
  * بيفك نص الشهادة كله. لو الملف مش من «السجل» بيرجّعه **زي ما هو** من غير أي لمس.
+ *
+ * `unknown` = اللي بيتحط مكان رمز مش في الجدول: "" (بيتشال — للأسامي والخانات)، أو علامة (`UNKNOWN_GLYPH`)
+ * لقراية **اللوحة**: أي حرف مش معروف فيها يبان، فماتطلعش لوحة ناقصة أو متخمّنة (المالك ١٩ نوفمبر ٢٠٢٦).
  */
-export function decodeSijilText(text: string): string {
+export function decodeSijilText(text: string, unknown = ""): string {
   if (!looksLikeSijilGlyphs(text)) return text;
-  return text.split("\n").map(decodeLine).join("\n");
+  return text.split("\n").map((l) => decodeLine(l, unknown)).join("\n");
 }
+
+/** علامة «رمز مش في الجدول» — لقراية اللوحة بس. */
+export const UNKNOWN_GLYPH = "�";
 
 /**
  * ══════════════════════════════════════════════════════════════════════

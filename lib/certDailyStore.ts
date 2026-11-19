@@ -4,7 +4,7 @@
  * الجدول في `docs/sql/cert-daily.sql`.
  */
 import { supabaseAdmin } from "./supabaseAdmin";
-import { SIJIL_SUSPECT_PLATE_RE, type CertDailyRow, type PendingCert } from "./certDailyJob";
+import type { CertDailyRow, PendingCert } from "./certDailyJob";
 import type { CertFields } from "./certParse";
 import type { DailyCertEntry } from "./certDaily";
 
@@ -16,12 +16,16 @@ export async function insertNewCerts(rows: CertDailyRow[], table: string = MAIN)
   if (error) throw new Error(error.message);
 }
 
-/** اللي لسه ماتقراش من `fromDay` لحد النهارده — الأحدث يوم الأول، فالنهارده دايماً قبل أي حاجة. */
+/**
+ * اللي لسه ماتقراش من `fromDay` لحد النهارده — الأحدث يوم الأول، فالنهارده دايماً قبل أي حاجة. وجوّه اليوم
+ * **الأحدث `updated_at` الأول**: اللي لسه نازل (اتضاف دلوقتي) قبل اللي راجعة تتقري تاني (`updated_at` بتاعها
+ * من قرايتها القديمة) — فإعادة القراية مابتأخرش شهايد النهارده الجديدة.
+ */
 export async function pendingCerts(fromDay: string, limit: number, table: string = MAIN): Promise<PendingCert[]> {
   const { data, error } = await supabaseAdmin
     .from(table).select("file_id, name, tries")
     .gte("day", fromDay).eq("parsed", false).lt("tries", 3)
-    .order("day", { ascending: false }).order("created_at", { ascending: true }).limit(limit);
+    .order("day", { ascending: false }).order("updated_at", { ascending: false }).limit(limit);
   if (error) throw new Error(error.message);
   return (data ?? []) as PendingCert[];
 }
@@ -90,15 +94,15 @@ export async function requeueMissingCertNoCerts(fromDay: string, table: string =
 }
 
 /**
- * 📄 شهايد «السجل» (رقم العقد CRN-) اللي اتقرت قبل تصليح الحروف ولوحتها مشكوك فيها (`SIJIL_SUSPECT_PLATE_RE`)
- * ⇒ ترجع تتقري مرة واحدة. اللوحة القديمة بتفضل ظاهرة لحد ما القراية الجديدة تخلص (العرض مابيبصّش على `parsed`).
+ * 📄 **كل** شهايد «السجل» (رقم العقد CRN-) اللي اتقرت قبل آخر تصليح للقارئ ⇒ ترجع تتقري مرة واحدة.
+ * اللوحة القديمة بتفضل ظاهرة لحد ما القراية الجديدة تخلص (العرض مابيبصّش على `parsed`)، والجديد اللي لسه
+ * نازل بيتقري قبلها (`pendingCerts` — الأحدث `updated_at` الأول).
  */
 export async function requeueSijilGlyphCerts(fromDay: string, beforeIso: string, table: string = MAIN): Promise<void> {
   const { error } = await supabaseAdmin
     .from(table).update({ parsed: false, tries: 0 })
     .gte("day", fromDay).eq("parsed", true).lt("updated_at", beforeIso)
-    .like("cert_no", "CRN-%")
-    .filter("plate_text", "match", SIJIL_SUSPECT_PLATE_RE);
+    .like("cert_no", "CRN-%");
   if (error) throw new Error(error.message);
 }
 

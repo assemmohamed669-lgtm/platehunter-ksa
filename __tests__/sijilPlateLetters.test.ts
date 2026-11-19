@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSijilText } from "@/lib/sijilGlyphs";
 import { SIJIL_GLYPHS } from "@/lib/sijilGlyphs.map";
 import { parseCertText } from "@/lib/certParse";
-import { certDailyTick, CERT_SIJIL_GLYPHS_AT, SIJIL_SUSPECT_PLATE_RE, type CertDailyDeps } from "@/lib/certDailyJob";
+import { certDailyTick, CERT_SIJIL_GLYPHS_AT, type CertDailyDeps } from "@/lib/certDailyJob";
 
 /**
  * ══════════════════════════════════════════════════════════════════════
@@ -60,18 +60,11 @@ describe("🔴 حروف اللوحة من الشهادة نفسها", () => {
   });
 });
 
-describe("🔁 الشهايد اللي اتقرت غلط بتتقري تاني (مرة واحدة)", () => {
-  const re = new RegExp(SIJIL_SUSPECT_PLATE_RE);
-
-  it("المشكوك فيها بس: فيها «ب» أو حرفين بس", () => {
-    expect(re.test("ر ع ب 4925")).toBe(true);
-    expect(re.test("ر ع 8970")).toBe(true);
-    expect(re.test("ب ق 8499")).toBe(true);
-    expect(re.test("ر ع ا 4925")).toBe(false);
-    expect(re.test("د ل س 8377")).toBe(false);
-    expect(re.test("")).toBe(false);
-  });
-
+/**
+ * 🔁 بعد الجدول اللي من الخط + قواعد «يا صح يا مفيش» (`certPlateStrict.test.ts`): **كل** شهايد «السجل» من آخر أسبوع
+ * بتتقري تاني مرة واحدة (مش المشكوك فيها بس) — والجديد اللي لسه نازل بيتقري **قبلها** عشان مايستناش.
+ */
+describe("🔁 شهايد «السجل» بتتقري تاني بالقارئ الجديد (مرة واحدة)", () => {
   it("🔴 الدورة بتبعتها بتاريخ الإصلاح — من آخر أسبوع", async () => {
     const requeue = vi.fn(async () => {});
     const d: CertDailyDeps = {
@@ -89,16 +82,20 @@ describe("🔁 الشهايد اللي اتقرت غلط بتتقري تاني (
     };
     await certDailyTick(d);
     expect(requeue).toHaveBeenCalledWith("2026-11-12", CERT_SIJIL_GLYPHS_AT);
-    expect(Date.parse(CERT_SIJIL_GLYPHS_AT)).toBeGreaterThan(Date.parse("2026-11-19T12:50:00Z"));
+    // بعد نشر الجدول اللي من الخط (#545 كان ١٣:٠٢)
+    expect(Date.parse(CERT_SIJIL_GLYPHS_AT)).toBeGreaterThan(Date.parse("2026-11-19T13:30:00Z"));
   });
 
-  it("🔴 التخزين: «السجل» بس (CRN-) · اتقرت قبل الإصلاح · لوحتها مشكوك فيها — في الجدولين", () => {
+  it("🔴 التخزين: «السجل» بس (CRN-) · اتقرت قبل الإصلاح · **كلها** (مش المشكوك فيها بس) — في الجدولين", () => {
     const store = readFileSync("lib/certDailyStore.ts", "utf8");
-    const fn = store.slice(store.indexOf("export async function requeueSijilGlyphCerts"));
+    const fn = store.slice(store.indexOf("export async function requeueSijilGlyphCerts"), store.indexOf("export async function requeueNoPlateCerts"));
     expect(fn).toMatch(/\.like\("cert_no", "CRN-%"\)/);
     expect(fn).toMatch(/\.lt\("updated_at", beforeIso\)/);
     expect(fn).toMatch(/\.eq\("parsed", true\)/);
-    expect(fn).toMatch(/\.filter\("plate_text", "match", SIJIL_SUSPECT_PLATE_RE\)/);
+    expect(fn).not.toMatch(/plate_text/);
+    // الجديد اللي لسه نازل قبل المُعاد (المُعاد `updated_at` بتاعه قديم) — من غير كده شهايد النهارده الجديدة تستنى
+    const pending = store.slice(store.indexOf("export async function pendingCerts"), store.indexOf("export async function saveParsedCert"));
+    expect(pending).toMatch(/\.order\("day", \{ ascending: false \}\)\.order\("updated_at", \{ ascending: false \}\)/);
     expect(readFileSync("app/api/cron/cert-daily/route.ts", "utf8")).toMatch(/requeueSijilGlyphs: requeueSijilGlyphCerts/);
     expect(readFileSync("app/api/cron/cert-daily-private/route.ts", "utf8"))
       .toMatch(/requeueSijilGlyphs: \(fromDay, beforeIso\) => requeueSijilGlyphCerts\(fromDay, beforeIso, T\)/);
