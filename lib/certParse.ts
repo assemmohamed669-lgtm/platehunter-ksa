@@ -376,16 +376,21 @@ export function parseCertText(rawInput: string, fileName = ""): CertFields {
      *  · 🔴 **العربي هو الأساس.** الإنجليزي مكتوب بطريقتين: معكوس زي اللوحة («4285LAS» = س ا ل) أو بنفس ترتيب
      *    العربي («1212REA» = ر ع ا — REPO-119-00289579). كنا بنفترض المعكوس دايماً وناخد الإنجليزي ⇒ «ا ع ر 1212»
      *    (لوحة عربية تانية!). دلوقتي الإنجليزي «موافق» لو طابق العربي **بأي طريقة**.
-     *  · الإنجليزي لوحده (العربي مش مقروء) ⇒ بس لو الطريقتين نفس اللوحة («RER»)، وإلا مفيش لوحة.
+     *  · الإنجليزي لوحده والعربي **موجود بس مش مقروء** ⇒ بس لو الطريقتين نفس اللوحة («RER»)، وإلا مفيش لوحة.
+     *  · 🔴 خانة العربي **فاضية في الشهادة نفسها** (بنك الجزيرة REPO-116: «8979 UER» بس) ⇒ الإنجليزي **بالمعكوس زي
+     *    اللوحة الحقيقية** — قرار المالك (١٩ نوفمبر ٢٠٢٦): «معكوس زي اللوحة الحقيقية: «ر ع و 8979». ده اللي البرنامج
+     *    كان بيعمله قبل النهارده» (`latinPlates` / `bankPlateToArabic`).
      */
     const strict = cleanText(decodeSijilText(rawText, UNKNOWN_GLYPH, !exact));
-    const arValue = extractSijilFields(strict, exact).plateAr;
-    const ar = arValue ? sijilPlate(arValue) : null;
+    const field = extractSijilFields(strict, exact);
+    const ar = field.plateAr ? sijilPlate(field.plateAr) : null;
+    const arEmpty = field.plateArLabel && !field.plateAr.replace(/[\s\-–_:]+/g, "");
     const flip = (key: string) => [...key.replace(/\d/g, "")].reverse().join("") + key.replace(/\D/g, "");
     const ens = latinPlates(text).filter((c) => FULL_PLATE.test(c.key));
     const enKeys = new Set(ens.flatMap((c) => [c.key, flip(c.key)]));
+    const oneEn = new Set(ens.map((c) => c.key)).size === 1;
     if (ar) plate = !ens.length || enKeys.has(ar.key) ? ar : NO_PLATE;
-    else if (ens.length) plate = enKeys.size === 1 ? { key: ens[0].key, display: ens[0].display } : NO_PLATE;
+    else if (ens.length) plate = enKeys.size === 1 || (arEmpty && oneEn) ? { key: ens[0].key, display: ens[0].display } : NO_PLATE;
     // (مفيش عربي ولا إنجليزي ⇒ `pickPlate` زي ما هو: اسم الملف لو لوحة كاملة)
   }
   const bank = sij?.bank || pickBank(fields);
