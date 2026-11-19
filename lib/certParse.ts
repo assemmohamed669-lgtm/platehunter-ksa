@@ -17,7 +17,7 @@
  */
 import { bankPlateToArabic, normalizePlate } from "./plateParser";
 import { plateOf } from "./certStats";
-import { decodeSijilText, extractSijilFields, UNKNOWN_GLYPH } from "./sijilGlyphs";
+import { decodeSijilText, extractSijilFields, UNKNOWN_GLYPH, SIJIL_RUNS_MARK } from "./sijilGlyphs";
 import { normalizeReversedLabels } from "./certReversed";
 
 export interface CertFields {
@@ -315,7 +315,13 @@ function sijilPlate(value: string): { key: string; display: string } | null {
   return { key, display: `${norm.join(" ")} ${digits}` };
 }
 
-export function parseCertText(rawText: string, fileName = ""): CertFields {
+export function parseCertText(rawInput: string, fileName = ""): CertFields {
+  /**
+   * 📐 «السجل» مقرية **من أوامر الرسم** (`lib/pdfText.ts` ⇒ أول سطر `SIJIL_RUNS_MARK`): كل قيمة كاملة في مكانها
+   * ⇒ القيم بتطلع زي المكتوب بالظبط من غير علاج التقطيع (المالك ١٩ نوفمبر ٢٠٢٦: «كل البيانات صح 100%»).
+   */
+  const exact = String(rawInput ?? "").startsWith(SIJIL_RUNS_MARK);
+  const rawText = exact ? String(rawInput).slice(SIJIL_RUNS_MARK.length) : String(rawInput ?? "");
   const text = cleanText(rawText);
   const issuer: CertFields["issuer"] = /توثيق|TawtheeqCo/i.test(text)
     ? "tawtheeq"
@@ -333,10 +339,10 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
    */
   // ⚠️ الفك لازم يتم على النص **الخام** — `cleanText` بيشيل العلامات، ورموز
   //    «السجل» نفسها علامات، فلو نضّفنا الأول مابيبقاش فيه حاجة تتفكّ.
-  const decoded = cleanText(decodeSijilText(String(rawText ?? "")));
+  const decoded = cleanText(decodeSijilText(rawText, "", !exact));
   const fields = normalizeReversedLabels(decoded);
   // «السجل» ليه استخراج بالعناوين — القيم فيه مش بتتلاقى بقوايم الماركات.
-  const sij = issuer === "sijil" ? extractSijilFields(decoded) : null;
+  const sij = issuer === "sijil" ? extractSijilFields(decoded, exact) : null;
 
   let plate = pickPlate(text, fileName);
   if (issuer === "sijil") {
@@ -347,8 +353,8 @@ export function parseCertText(rawText: string, fileName = ""): CertFields {
      *    «مش عايز اي غلط ابدا … مشكله مع الشرطه»). الشهادة بتفضل بالشاص.
      *  · واحدة بس ⇒ هي.
      */
-    const strict = cleanText(decodeSijilText(String(rawText ?? ""), UNKNOWN_GLYPH));
-    const arValue = extractSijilFields(strict).plateAr;
+    const strict = cleanText(decodeSijilText(rawText, UNKNOWN_GLYPH, !exact));
+    const arValue = extractSijilFields(strict, exact).plateAr;
     const ar = arValue ? sijilPlate(arValue) : null;
     const en = plate.key ? plate : null;
     plate = ar && en ? (ar.key === en.key ? en : NO_PLATE) : ar ?? en ?? NO_PLATE;
