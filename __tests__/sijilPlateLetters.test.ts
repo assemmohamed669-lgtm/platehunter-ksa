@@ -86,10 +86,11 @@ describe("🔁 شهايد «السجل» بتتقري تاني بالقارئ ا
     expect(Date.parse(CERT_SIJIL_GLYPHS_AT)).toBeGreaterThan(Date.parse("2026-11-19T13:33:00Z"));   // بعد #546 (قراية أوامر الرسم)
   });
 
-  it("🔴 التخزين: «السجل» بس (CRN-) · اتقرت قبل الإصلاح · **كلها** (مش المشكوك فيها بس) — في الجدولين", () => {
+  // ١٩ نوفمبر ٢٠٢٦ (بعد «توثيق» كمان — `tawtheeqExact.test.ts`): **كل** الشهايد مش «السجل» بس
+  it("🔴 التخزين: كل الشهايد اللي اتقرت قبل الإصلاح («السجل» و«توثيق») — في الجدولين", () => {
     const store = readFileSync("lib/certDailyStore.ts", "utf8");
     const fn = store.slice(store.indexOf("export async function requeueSijilGlyphCerts"), store.indexOf("export async function requeueNoPlateCerts"));
-    expect(fn).toMatch(/\.like\("cert_no", "CRN-%"\)/);
+    expect(fn).not.toMatch(/cert_no/);
     expect(fn).toMatch(/\.lt\("updated_at", beforeIso\)/);
     expect(fn).toMatch(/\.eq\("parsed", true\)/);
     expect(fn).not.toMatch(/plate_text/);

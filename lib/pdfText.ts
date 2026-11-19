@@ -5,9 +5,12 @@
  * 📐 شهايد «السجل» (sijil.sa) بتتقري **من أوامر الرسم** (`lib/pdfRuns.ts`) — قارئ الكلام العادي بيقطّع قيمها
  * («اسو» بدل «اسود») — والنص بيبدأ بـ`SIJIL_RUNS_MARK` عشان القارئ ياخد القيم زي ما هي. لو قراية الأوامر فشلت
  * أو مالقتش الشهادة ⇒ النص العادي زي الأول.
+ *
+ * 🔗 باقي الشهايد («توثيق»): النص العادي، بس الكلمات اللي فيها رباط («لا»/«لأ»/«لى») بتتصلّح من أوامر الرسم
+ * («توكيالت» ⇒ «توكيلات»، «عىل» ⇒ «على»). لو قراية الأوامر فشلت ⇒ النص العادي زي ما هو.
  */
 import { SIJIL_RUNS_MARK } from "./sijilGlyphs";
-import { extractRunsText } from "./pdfRuns";
+import { pdfRuns, runsToText, ligatureWordFixes, applyWordFixes } from "./pdfRuns";
 
 const SIJIL = /sijil\.sa|Saudi Finance Leasing Contracts Registry/i;
 
@@ -17,11 +20,13 @@ export async function extractPdfText(bytes: Uint8Array): Promise<string> {
     const pdf = await getDocumentProxy(bytes);
     const { text } = await extractText(pdf, { mergePages: true });
     const plain = Array.isArray(text) ? text.join("\n") : String(text ?? "");
+    const pages = await pdfRuns(pdf).catch(() => null);
+    if (!pages) return plain;
     if (SIJIL.test(plain)) {
-      const runs = await extractRunsText(pdf);
-      if (SIJIL.test(runs)) return `${SIJIL_RUNS_MARK}\n${runs}`;
+      const runs = pages.map((p) => runsToText(p)).join("\n");
+      return SIJIL.test(runs) ? `${SIJIL_RUNS_MARK}\n${runs}` : plain;
     }
-    return plain;
+    return applyWordFixes(plain, ligatureWordFixes(pages.flat()));
   } catch {
     return "";
   }

@@ -207,31 +207,41 @@ function wordIn(text: string, word: string): boolean {
   return !isAr(before) && !isAr(after);
 }
 
-/** «الخانة: القيمة» في نفس السطر (أول كلمتين/تلاتة). */
-function labelValue(text: string, label: RegExp, maxWords = 3): string {
+const ASSET = "(?:الأصل|األصل|الاصل|االصل)";
+
+/**
+ * اسم خانة تانية جوّه القيمة (خانتين في نفس السطر: «المصنع: كيا لون الأصل: فضي») ⇒ القيمة بتقف قبله.
+ * كان قبل كده **عدد كلمات ثابت** (المصنع كلمتين) فـ«جا سي بي» بقت «جا سي» (المالك ١٩ نوفمبر ٢٠٢٦: «كل البيانات صح 100%»).
+ */
+const NEXT_LABEL = new RegExp(
+  `(^|\\s)(?:لون\\s*${ASSET}|نوع\\s*${ASSET}|رقم\\s*اللوحة|رقم\\s*الهيكل|الرقم\\s*التسلسلي|بلد\\s*المنشأ|سنة\\s*الصنع|المصنع|التامين|التأمين|نوع\\s*مستند|حالة\\s*العقد|مكان\\s*الوفاء|مكان\\s*التحرير)(?=\\s|$)`,
+);
+
+/** «الخانة: القيمة» في نفس السطر — لحد اسم الخانة اللي بعدها (وبحد أقصى `maxWords` أمان). */
+function labelValue(text: string, label: RegExp, maxWords = 6): string {
   const m = text.match(label);
   if (!m) return "";
-  const v = (m[1] ?? "").trim();
+  let v = (m[1] ?? "").trim();
+  const cut = v.search(NEXT_LABEL);
+  if (cut >= 0) v = v.slice(0, cut).trim();
   if (!v || /[:：]/.test(v)) return "";
   return v.split(/\s+/).slice(0, maxWords).join(" ");
 }
 
-const ASSET = "(?:الأصل|األصل|الاصل|االصل)";
-
 function pickMake(text: string): string {
-  const v = labelValue(text, /المصنع\s*:[ \t]*([^\n:]+)/, 2);
+  const v = labelValue(text, /المصنع\s*:[ \t]*([^\n:]+)/, 5);
   if (v && !/التامين|التأمين/.test(v)) return v;
   for (const mk of MAKES) if (wordIn(text, mk)) return mk;
   return "";
 }
 
 function pickModel(text: string): string {
-  const v = labelValue(text, new RegExp(`نوع\\s*${ASSET}\\s*:[ \\t]*([^\\n:]+)`), 3);
+  const v = labelValue(text, new RegExp(`نوع\\s*${ASSET}\\s*:[ \\t]*([^\\n:]+)`), 6);
   return v && !/الملكية|وثيقة|مستند/.test(v) ? v : "";
 }
 
 function pickColor(text: string): string {
-  return labelValue(text, new RegExp(`لون\\s*${ASSET}\\s*:[ \\t]*([^\\s:]+)`), 1);
+  return labelValue(text, new RegExp(`لون\\s*${ASSET}\\s*:[ \\t]*([^\\n:]+)`), 3);
 }
 
 function pickYear(text: string): string {
@@ -265,9 +275,20 @@ const fmtDate = (d: string, m: string, y: string) => `${pad2(d)}/${pad2(m)}/${y}
 
 function pickCertDate(text: string): string {
   const DATE = "(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})";
-  for (const label of ["تاريخ\\s*(?:اصدار|إصدار)\\s*السند", "تاريخ\\s*طباعة\\s*الشهادة"]) {
-    const m = text.match(new RegExp(`${label}\\s*:[ \\t]*(?:\\d{1,2}:\\d{2}:\\d{2}[ \\t]+)?${DATE}`));
+  const TIME = "(?:\\d{1,2}:\\d{2}:\\d{2})";
+  const LABELS: [string, string][] = [
+    ["تاريخ\\s*(?:اصدار|إصدار)\\s*السند", "السند\\s*(?:اصدار|إصدار)\\s*تاريخ"],
+    ["تاريخ\\s*طباعة\\s*الشهادة", "الشهادة\\s*طباعة\\s*تاريخ"],
+  ];
+  for (const [label, reversed] of LABELS) {
+    const m = text.match(new RegExp(`${label}\\s*:[ \\t]*(?:${TIME}[ \\t]+)?${DATE}`));
     if (m) return fmtDate(m[1], m[2], m[3]);
+    /**
+     * 🔴 «توثيق» بالترتيب المقلوب: «12/11/2026 15:39:35 :السند اصدار تاريخ» — من غير ده كان بياخد «أحدث تاريخ
+     * في الشهادة» = تاريخ انتهاء **هوية المستأجر** (2028) (المالك ١٩ نوفمبر ٢٠٢٦: «كل البيانات صح 100%»).
+     */
+    const r = text.match(new RegExp(`${DATE}[ \\t]+(?:${TIME}[ \\t]+)?:\\s*${reversed}`));
+    if (r) return fmtDate(r[1], r[2], r[3]);
   }
   // من غير خانة (السجل السعودي) ⇒ أحدث تاريخ ميلادي في الشهادة
   let best = "";
