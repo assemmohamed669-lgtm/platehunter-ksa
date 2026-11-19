@@ -146,7 +146,9 @@ function between(text: string, label: string, stops: string[], exact = false): s
   for (const s of [...stops, ...ALL_LABELS]) {
     if (!s.replace(/\s+/g, "")) continue;   // وقف فاضي = تعبير فاضي بيطابق فوراً
     const m = new RegExp(labelRe(s)).exec(rest);
-    if (m && m.index > 0 && m.index < end) end = m.index;
+    // 📐 من أوامر الرسم: عنوان الخانة اللي بعدها **على طول** = القيمة فاضية (بنك الجزيرة: خانة العربي فاضية
+    //    كانت بتبلع «نوع المركبة: 6»). في النص العادي بنسيبها زي الأول.
+    if (m && (m.index > 0 || exact) && m.index < end) end = m.index;
   }
   // 📐 من أوامر الرسم: القيمة كاملة ⇒ زي ما هي (مسافة واحدة بين الكلمات) — من غير أي لزق أو قص.
   if (exact) return rest.slice(0, end).replace(/[:\s]+$/, "").replace(/\s+/g, " ").trim();
@@ -180,6 +182,11 @@ export interface SijilFields {
   make: string; model: string; color: string; bank: string; tenant: string;
   /** اللوحة العربي من جوّه الشهادة — بتنفع لما الخانة الإنجليزية تكون فاضية. */
   plateAr: string;
+  /**
+   * عنوان «رقم اللوحة باللغة العربية» موجود في الشهادة؟ مع `plateAr` فاضية = **الخانة فاضية في الشهادة نفسها**
+   * (بنك الجزيرة REPO-116) — غير «العنوان مالقيناهوش» (نص متلخبط) اللي مانعرفش فيه حاجة.
+   */
+  plateArLabel: boolean;
 }
 
 /**
@@ -247,5 +254,6 @@ export function extractSijilFields(decoded: string, exact = false): SijilFields 
     bank: exact ? lessor : completeLessor(lessor, get("رقم السجل التجاري", ["الرقم الوطني", "المنفذ"])),
     tenant: get("اسم المستأجر", ["رقم الهوية", "نوع الهوية", "\n"]),
     plateAr: get("رقم اللوحة باللغة العربية", ["رقم اللوحة", "نوع المركبة", "رقم الهيكل"]),
+    plateArLabel: new RegExp(labelRe("رقم اللوحة باللغة العربية")).test(decoded),
   };
 }
