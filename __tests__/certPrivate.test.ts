@@ -86,8 +86,12 @@ describe("🔔 الإشعار", () => {
   const access = new Map([["b", "both" as const], ["c", "private_only" as const], ["d", "both" as const], ["e", "both" as const]]);
   const ids = (g: { url: string; ids: string[] }[]) => g.flatMap((x) => x.ids).sort();
 
-  it("🔴 شهايد القديم ⇒ كل المشتركين زي دلوقتي، إلا اللي مختارله «الجديد بس»", () => {
-    expect(ids(pushAudience(profiles, today, "main", access))).toEqual(["a", "b"]);
+  /**
+   * 🔴 المالك (١٩ نوفمبر ٢٠٢٦): «اهم حاجه اللي اختارة يجيلو فقط اشعار ل الشهادات اللي بتنزل علي الايميل دة فقط
+   * اما اللي مش هختارة دة يفضل شغال زي ماهو» ⇒ أي حد في القايمة (أي وضع) **مايجيلوش** إشعار القديم.
+   */
+  it("🔴 شهايد القديم ⇒ كل المشتركين زي دلوقتي، إلا **أي حد مختار** («الجديد بس» أو «الجديد والقديم»)", () => {
+    expect(ids(pushAudience(profiles, today, "main", access))).toEqual(["a"]);
   });
   it("🔴 شهايد الجديد ⇒ المختارين بس (واشتراكهم شغّال)", () => {
     expect(ids(pushAudience(profiles, today, "private", access))).toEqual(["b", "c"]);
