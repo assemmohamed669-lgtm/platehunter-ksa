@@ -41,6 +41,9 @@ vi.mock("@/lib/certDailyStore", () => ({
     countCalls.push(args);
     return args[1] === "cert_daily_private" ? { total: 1, parsed: 1 } : { total: 2, parsed: 2 };
   },
+  // (البحث في الشهايد المقرية — `certSearchParsed.test.ts`؛ هنا فاضي عشان نشوف درايف لوحده)
+  findParsedCerts: async () => [],
+  findParsedByPlates: async () => new Map(),
 }));
 vi.mock("@/lib/gdrive", () => ({
   getDriveAccessToken: async (source?: string) => { tokenCalls.push(source); return `tok-${source ?? "main"}`; },

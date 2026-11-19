@@ -146,6 +146,51 @@ export async function readDayCerts(day: string, table: string = MAIN): Promise<{
   };
 }
 
+/**
+ * 🔎 الشهايد اللي **اتقرت من جوّه الملف** باللوحة/الشاص — للبحث بالرقم (المالك ١٩ نوفمبر ٢٠٢٦: «رعب4925 ببحث عليها
+ * … مش موجوده»). أغلب الملفات اسمها رقم عقد («REPO-301-…») فالبحث بالاسم في درايف مايلاقيهاش.
+ * `plate` = المفتاح المطبّع بالظبط · `digits` = آخر اللوحة بالأرقام دي · `vin` = الشاص. أي غلط ⇒ فاضي.
+ */
+export async function findParsedCerts(
+  query: { plate?: string; digits?: string; vin?: string },
+  table: string = MAIN,
+): Promise<{ id: string; name: string }[]> {
+  try {
+    let q = supabaseAdmin.from(table).select("file_id, name, created_at");
+    if (query.plate) q = q.eq("plate", query.plate);
+    else if (query.digits) q = q.like("plate", `%${query.digits}`);
+    else if (query.vin) q = q.eq("vin", query.vin);
+    else return [];
+    const { data, error } = await q.order("created_at", { ascending: false }).limit(50);
+    if (error) return [];
+    return ((data ?? []) as { file_id: string; name: string }[]).map((r) => ({ id: r.file_id, name: r.name }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 📄 نفس اللي فوق بس **لكتير لوحات مرة واحدة** — لعمود «شهايد» في نتايج الفرز. `keys` = مفاتيح مطبّعة.
+ * بيرجّع المفتاح ⇐ شهاداته (اللي ملهاش مش في الخريطة). أي غلط ⇒ خريطة فاضية (والعمود بيكمّل بدرايف زي الأول).
+ */
+export async function findParsedByPlates(keys: readonly string[], table: string = MAIN): Promise<Map<string, { id: string; name: string }[]>> {
+  const out = new Map<string, { id: string; name: string }[]>();
+  const uniq = [...new Set(keys.filter(Boolean))];
+  try {
+    for (let i = 0; i < uniq.length; i += 200) {
+      const { data, error } = await supabaseAdmin.from(table).select("file_id, name, plate, created_at")
+        .in("plate", uniq.slice(i, i + 200)).order("created_at", { ascending: false }).limit(2000);
+      if (error) return out;
+      for (const r of (data ?? []) as { file_id: string; name: string; plate: string }[]) {
+        const list = out.get(r.plate) ?? [];
+        if (!list.some((x) => x.id === r.file_id)) list.push({ id: r.file_id, name: r.name });
+        out.set(r.plate, list);
+      }
+    }
+  } catch { /* فاضية */ }
+  return out;
+}
+
 /** العدد بس (للجملة الخضرا — من غير ما نجيب الشهايد كلها). */
 export async function countDayCerts(day: string, table: string = MAIN): Promise<{ total: number; parsed: number }> {
   const all = await supabaseAdmin.from(table).select("file_id", { count: "exact", head: true }).eq("day", day);

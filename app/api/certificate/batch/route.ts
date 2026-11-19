@@ -3,7 +3,23 @@ import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { getDriveAccessToken, driveSearchWithStatus } from "@/lib/gdrive";
 import { batchFindCertificates, CERT_BATCH_MAX_PLATES, type CertBatchResult } from "@/lib/certBatch";
 import { certAccessOf } from "@/lib/certAccessStore";
-import { certSourcesFor, mergeCertBatch } from "@/lib/certPrivate";
+import { certSourcesFor, mergeCertBatch, CERT_SOURCE_TABLES, type CertSource } from "@/lib/certPrivate";
+import { findParsedByPlates } from "@/lib/certDailyStore";
+import { bankPlateToArabic, normalizePlate } from "@/lib/plateParser";
+
+/**
+ * 🔎 الشهايد اللي اتقرت من جوّه الملف (`cert_daily`) لكل لوحة — المالك (١٩ نوفمبر ٢٠٢٦): أغلب الملفات اسمها رقم عقد
+ * («REPO-301-…») فالبحث بالاسم في درايف مايلاقيهاش. نتيجة على شكل نتيجة درايف عشان تتدمج بنفس القاعدة.
+ */
+async function parsedBatch(plates: string[], source: CertSource): Promise<CertBatchResult> {
+  const keyOf = new Map(plates.map((p) => [p, normalizePlate(bankPlateToArabic(p))] as const));
+  const found = await (source === "main"
+    ? findParsedByPlates([...keyOf.values()])
+    : findParsedByPlates([...keyOf.values()], CERT_SOURCE_TABLES[source]));
+  const results: CertBatchResult["results"] = {};
+  for (const [p, key] of keyOf) results[p] = found.get(key) ?? [];
+  return { results, failed: [] };
+}
 
 /**
  * 📄 شهايد عربيات الفرز/المطلوب **دفعة واحدة** — `POST { plates: string[] }`.
@@ -37,6 +53,7 @@ export async function POST(req: NextRequest) {
     const token = await getDriveAccessToken(source);
     if (!token) continue;
     parts.push(await batchFindCertificates(plates, (q) => driveSearchWithStatus(q, token), Date.now(), source));
+    parts.push(await parsedBatch(plates, source));
   }
   if (!parts.length) return NextResponse.json({ results: {}, failed: plates, error: "drive_unavailable" });
   return NextResponse.json(mergeCertBatch(parts));
