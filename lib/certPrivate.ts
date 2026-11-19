@@ -78,7 +78,8 @@ export function mergeCertBatch(parts: readonly CertBatchResult[]): CertBatchResu
 
 /**
  * مين ياخد إشعار دفعة شهايد:
- *  · القديم ⇒ كل المشتركين زي دلوقتي، **إلا** اللي مختارله «الجديد بس».
+ *  · القديم ⇒ كل المشتركين زي دلوقتي، **إلا أي حد مختار** (أي وضع) — المالك (١٩ نوفمبر ٢٠٢٦): «اللي اختارة يجيلو
+ *    فقط اشعار ل الشهادات اللي بتنزل علي الايميل دة فقط». («الجديد والقديم» = بيشوف القديم في الصفحة بس.)
  *  · الجديد ⇒ المختارين بس (أي وضع)، واشتراكهم شغّال.
  * الدوسة بتفتح نفس المكان بتاع الإشعار الحالي (`certPushUrl`). مجمّعين حسب المكان.
  */
@@ -92,7 +93,7 @@ export function pushAudience(
   for (const p of profiles) {
     if (!isActiveSubscriber(p, today)) continue;
     const mode = access.get(p.id) ?? null;
-    if (source === "main" ? mode === "private_only" : mode === null) continue;
+    if (source === "main" ? mode !== null : mode === null) continue;
     const url = certPushUrl(p);
     groups.set(url, [...(groups.get(url) ?? []), p.id]);
   }
