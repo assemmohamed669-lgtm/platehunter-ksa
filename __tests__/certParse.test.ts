@@ -139,9 +139,14 @@ describe("🔴 شهادة «توثيق» القديمة (الخانات في ح�
 
 describe("🔴 شهادة «السجل السعودي» (العربي متلخبط جوّه الملف)", () => {
   const f = parseCertText(SIJIL, "4321JGR.pdf");
-  it("🔴 اللوحة من الحروف الإنجليزي (اتقلبت لعربي زي باقي البرنامج) + الشاص + تاريخ الشهادة", () => {
-    expect(f.plate).toBe("رقح4321");
-    expect(f.plateText).toBe("ر ق ح 4321");
+  /**
+   * 🔴 ١٩ نوفمبر ٢٠٢٦ (المالك بعت REPO-119-00289579/00289525): الإنجليزي في «السجل» مكتوب **بطريقتين** — معكوس
+   * («4285LAS» = س ا ل) أو بنفس ترتيب العربي («1212REA» = ر ع ا). هنا العربي مش مقروء (السطر متلخبط) والإنجليزي
+   * «4321JGR» ممكن يبقى «ر ق ح» أو «ح ق ر» ⇒ **مفيش لوحة** بدل ما نخمّن (كانت «رقح4321» بافتراض المعكوس).
+   * الشهادة بتفضل بالشاص والتاريخ. (`certPlateStrict.test.ts` ٤)
+   */
+  it("🔴 الإنجليزي لوحده وترتيبه مش معروف ⇒ مفيش لوحة · الشاص والتاريخ بيتقروا", () => {
+    expect([f.plate, f.plateText]).toEqual(["", ""]);
     expect(f).toMatchObject({ vin: "KMHLN41E8RU000001", certDate: "22/01/2025", issuer: "sijil" });
   });
   it("الخانات العربي المتلخبطة بتفضل فاضية (مش كلام غلط)", () => {
@@ -165,11 +170,14 @@ Riyadh 12361 ± 6858, Saudi Arabia, 920002942, www.sijil.sa
 REPO-119-00000001: ̡̺͙͛̓̾͡ Ͳ̷ͣͨ̓̀`;
 
 describe("🔴 «السجل» — حروف اللوحة الإنجليزي بمسافات", () => {
-  it("🔴 «4321 J G R» ⇒ نفس «4321JGR» (رقح4321) — من غير ما الكلام اللي تحت يلخبطها", () => {
+  it("🔴 «4321 J G R» ⇒ نفس «4321JGR» — من غير ما الكلام اللي تحت يلخبطها", () => {
+    // «السجل» والعربي فاضي ⇒ الإنجليزي لوحده ترتيبه مش معروف ⇒ مفيش لوحة (زي «4321JGR» بالظبط)
     const f = parseCertText(SIJIL_SPACED, "REPO-119-00000001.pdf");
-    expect(f.plate).toBe("رقح4321");
-    expect(f.plateText).toBe("ر ق ح 4321");
-    expect(f.vin).toBe("KMHLN41E8RU000001");
+    expect([f.plate, f.vin]).toEqual(["", "KMHLN41E8RU000001"]);
+    expect(parseCertText(SIJIL_SPACED.replace("4321 J G R", "4321JGR"), "REPO-119-00000001.pdf").plate).toBe("");
+    // والحروف بمسافات بتتقري زي اللازقة (شهادة مش «السجل»)
+    expect(parseCertText("Plate: 4321 J G R", "x.pdf").plate).toBe("رقح4321");
+    expect(parseCertText("Plate: 4321 J G R", "x.pdf").plate).toBe(parseCertText("Plate: 4321JGR", "x.pdf").plate);
   });
   it("«J G R 4321» (الحروف الأول) ⇒ زي «JGR 4321»", () => {
     expect(parseCertText("Plate: J G R 4321", "x.pdf").plate).toBe(parseCertText("Plate: JGR 4321", "x.pdf").plate);
