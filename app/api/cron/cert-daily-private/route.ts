@@ -13,7 +13,7 @@ import { certDailyTick } from "@/lib/certDailyJob";
 import { extractPdfText } from "@/lib/pdfText";
 import {
   insertNewCerts, pendingCerts, saveParsedCert, cleanupCerts, requeueNoPlateCerts,
-  requeueMissingCertNoCerts, requeueMissingTenantCerts, requeueStaleFieldsCerts,
+  requeueMissingCertNoCerts, requeueMissingTenantCerts, requeueStaleFieldsCerts, requeueSijilGlyphCerts,
 } from "@/lib/certDailyStore";
 import { runCertPush } from "@/lib/certPushStore";
 import { CERT_SOURCE_TABLES } from "@/lib/certPrivate";
@@ -55,6 +55,7 @@ export async function GET(req: Request) {
       requeueMissingCertNo: (fromDay) => requeueMissingCertNoCerts(fromDay, T),
       requeueMissingTenant: (fromDay) => requeueMissingTenantCerts(fromDay, T),
       requeueStaleFields: (fromDay, beforeIso) => requeueStaleFieldsCerts(fromDay, beforeIso, T),
+      requeueSijilGlyphs: (fromDay, beforeIso) => requeueSijilGlyphCerts(fromDay, beforeIso, T),
       download: async (fileId) => {
         const buf = await driveDownloadPdf(fileId, token, { maxBytes: MAX_BYTES });
         return buf ? new Uint8Array(buf) : null;
