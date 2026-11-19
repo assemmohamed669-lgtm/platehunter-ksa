@@ -53,6 +53,11 @@ export interface CertDailyDeps {
 export const MAX_TRIES = 3;
 /** بنحتفظ بالنهارده + أسبوع قبله — اللي المندوب يقدر يفرز عليه. */
 export const KEEP_DAYS = CERT_DAYS_BACK;
+/**
+ * 🔎 **بنحتفظ بالشهايد المقرية سنة** (مش أسبوع) — عشان البحث بالرقم يلاقي الملفات اللي اسمها رقم عقد مش لوحة
+ * (المالك ١٩ نوفمبر ٢٠٢٦: «رعب4925 ببحث عليها … مش موجوده»). القراية والإعادة والفرز لسه على الأسبوع.
+ */
+export const STORE_KEEP_DAYS = 400;
 /** أقصى شهايد بتتقري في الدورة الواحدة (الباقي الدورة الجاية). */
 export const PENDING_PER_TICK = 100;
 /**
@@ -134,7 +139,7 @@ export async function certDailyTick(d: CertDailyDeps): Promise<{
   };
   await Promise.all(Array.from({ length: Math.max(1, d.concurrency) }, worker));
 
-  // ٤) القديم
-  await d.cleanup(dayMinus(day, KEEP_DAYS)).catch(() => {});
+  // ٤) القديم (بعد سنة — `STORE_KEEP_DAYS`)
+  await d.cleanup(dayMinus(day, STORE_KEEP_DAYS)).catch(() => {});
   return { day, listed, older, parsed, failed };
 }

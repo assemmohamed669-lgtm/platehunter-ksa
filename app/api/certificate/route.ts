@@ -3,7 +3,25 @@ import { verifySession, rateLimit } from "@/lib/apiAuth";
 import { getDriveAccessToken, driveSearch, type DriveFile } from "@/lib/gdrive";
 import { looksLikeChassis, looksLikeCertNumber, certSearchToken, plateDigitForms, matchCertFiles } from "@/lib/certificateMatch";
 import { certAccessOf } from "@/lib/certAccessStore";
-import { certSourcesFor } from "@/lib/certPrivate";
+import { certSourcesFor, CERT_SOURCE_TABLES, type CertSource } from "@/lib/certPrivate";
+import { findParsedCerts } from "@/lib/certDailyStore";
+import { bankPlateToArabic, normalizePlate } from "@/lib/plateParser";
+
+/**
+ * 🔎 الشهايد اللي اتقرت من جوّه الملف (`cert_daily`) — المالك (١٩ نوفمبر ٢٠٢٦): «رعب4925 ببحث عليها … مش موجوده».
+ * أغلب الملفات اسمها رقم عقد («REPO-301-…») فالبحث بالاسم في درايف مايلاقيهاش، بس لوحتها متقرية من جوّاها.
+ */
+async function parsedHits(q: string, source: CertSource): Promise<{ id: string; name: string }[]> {
+  const table = source === "main" ? undefined : CERT_SOURCE_TABLES[source];
+  const find = (query: { plate?: string; digits?: string; vin?: string }) => (table ? findParsedCerts(query, table) : findParsedCerts(query));
+  if (looksLikeChassis(q)) return find({ vin: q.trim().toUpperCase() });
+  if (looksLikeCertNumber(q)) return [];
+  const key = normalizePlate(bankPlateToArabic(q));
+  if (!key) return [];
+  const digits = key.replace(/\D/g, "");
+  if (!digits) return [];
+  return key.replace(/\d/g, "") ? find({ plate: key }) : find({ digits });
+}
 
 // يهرب علامة التنصيص المفردة في استعلام درايف.
 function esc(s: string): string { return s.replace(/'/g, "\\'"); }
@@ -60,6 +78,7 @@ export async function GET(req: NextRequest) {
     mode = r.mode;
     scanned += r.scanned;
     for (const f of r.files) if (!files.some((x) => x.id === f.id)) files.push(f);
+    for (const f of await parsedHits(q, source)) if (!files.some((x) => x.id === f.id)) files.push({ id: f.id, name: f.name });
   }
   if (!anyToken) return NextResponse.json({ found: false, results: [], error: "drive_unavailable" });
 
