@@ -1558,13 +1558,14 @@ export default function RegistrationV2Page() {
           tel?.shown(plate, meta);
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
-           * 🔔 **مطلوبة بعد التأكد بس** — الإجماع شافها في نافذتين أو أكتر، أو
-           * القراءات المباشرة أكّدتها قبله. لوحة الإجماع طلّعها من نافذة واحدة
-           * (`mult = 1`) مش متأكّدة ⇒ مابتتعلّمش ولا بتصفّر.
+           * 🔔 **كل عربية مطلوبة بتصفّر** — المالك (٢٣ نوفمبر ٢٠٢٦): «قولت واحده مطلوبه ومظهرتش ولا رن … ولما قفلت
+           * البرنامج وفتحته اتعلم عليها انها مطلوبه … كل سيارة مطلوبه يطلع ليها تنبيه صوتي». الصف ده هيظهر في الجدول
+           * باللوحة دي، فلو في الشيت ⇒ «مطلوبة» + صفّارة حتى من نافذة واحدة (`mult = 1`) — نفس اللي `rehydrateMatch`
+           * بيعمله لما البرنامج يتفتح تاني. كانت «نافذتين» (٢٥ سبتمبر) فالصف بيتحفظ عادي ويتعلّم بعدين من غير صفّارة.
+           * القراية المباشرة (قبل الإجماع، تحت في `onRead`) لسه بنافذتين. `__tests__/everyWantedAlerts.test.ts`
            */
           const inSheet = checkIndexRef.current.get(key) ?? null;
-          const hit = inSheet && (meta.mult >= 2 || wantedReadCount(wantedSeenRef.current, key, meta.tMs) >= 2)
-            ? inSheet : null;
+          const hit = inSheet;
           // 🩺 الصندوق بس (من غير لوحة): المطلوبة اتأكدت ولا اتسمعت مرة واحدة؟ — «ساعات مابتصفّرش» (٢٤ أكتوبر)
           if (inSheet && diagActive()) diagNote("rv2-wanted", { via: "plate", ok: !!hit, mult: meta.mult, reads: wantedReadCount(wantedSeenRef.current, key, meta.tMs) });
           /**

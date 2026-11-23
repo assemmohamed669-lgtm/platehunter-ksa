@@ -70,7 +70,8 @@ describe("sheetReadyAlerts — الشيت جهز بعد ما المندوب بد
 
   it("مبدئية أو من نافذة واحدة ⇒ لأ (نفس قاعدة التأكيد)", () => {
     expect(sheetReadyAlerts([row({ provisional: true })], idx, key, start, now)).toEqual([]);
-    expect(sheetReadyAlerts([row({ mult: 1 })], idx, key, start, now)).toEqual([]);
+    // (٢٣ نوفمبر ٢٠٢٦) من نافذة واحدة بقت تصفّر — «كل سيارة مطلوبه يطلع ليها تنبيه صوتي» (`__tests__/everyWantedAlerts.test.ts`)
+    expect(sheetReadyAlerts([row({ mult: 1 })], idx, key, start, now).map((h) => h.plate)).toEqual(["حبك5813"]);
   });
 
   it("من جلسة فاتت (مسودّة) أو أقدم من دقيقة ⇒ لأ", () => {

@@ -18,10 +18,10 @@ import {
   wantedPushPayload,
 } from "@/lib/wantedBgAlert";
 
-describe("مين يشوفها — السوبر أدمن الأول", () => {
-  it("مقفولة على المناديب لحد ما المالك يجرّب", () => {
-    expect(WANTED_BG_ALERT_FOR_ALL).toBe(false);
-    expect(wantedBgAlertFor(false)).toBe(false);
+describe("مين يشوفها — للكل (المالك: «ادمج … وانشر للكل»)", () => {
+  it("مفتوحة للمناديب والسوبر أدمن", () => {
+    expect(WANTED_BG_ALERT_FOR_ALL).toBe(true);
+    expect(wantedBgAlertFor(false)).toBe(true);
     expect(wantedBgAlertFor(true)).toBe(true);
   });
 });

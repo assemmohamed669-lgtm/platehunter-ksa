@@ -96,10 +96,10 @@ describe("/api/wanted-self-push", () => {
     expect(h.sent[0].p.body).toBe("الماركة: تويوتا\nاللون: أبيض");
   });
 
-  it("مندوب عادي ⇒ مقفول لحد ما المالك يجرّب", async () => {
+  it("مندوب عادي ⇒ لموبايله هو بس (مفتوحة للكل — ٢٣ نوفمبر)", async () => {
     const r = await POST(req(AGENT, { plate: "رلع7528", info: [] }));
-    expect(await r.json()).toEqual({ ok: true, sent: 0, skipped: "not-enabled" });
-    expect(h.sent).toEqual([]);
+    expect(await r.json()).toEqual({ ok: true, sent: 1 });
+    expect(h.sent[0].tokens).toEqual(["tok-agent"]);
   });
 
   it("بيانات بشكل غلط ⇒ بتتجاهل، والإشعار يطلع باللوحة", async () => {
