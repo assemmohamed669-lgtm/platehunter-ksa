@@ -19,7 +19,8 @@ const SERVICE = read("android/app/src/main/java/com/platehunter/ksa/BackgroundRe
 describe("Voice PRO", () => {
   it("الخدمة بتبدأ مع المحرّك وبتقف مع «إيقاف»", () => {
     expect(VP).toMatch(/engineRef\.current = ctrl; clockRef\.current = ctrl;\s*setListening\(true\); setSeconds\(0\);[\s\S]{0,300}?bgActiveRef\.current = canRecordInBackground\(isSuperRef\.current, meEmailRef\.current\) && startBackgroundRecording\(\);/);
-    expect(VP).toMatch(/engineRef\.current = null; stopTimer\(\);[^\n]*\n\s*if \(bgActiveRef\.current\) \{ bgActiveRef\.current = false; stopBackgroundRecording\(\); \}/);
+    // (٢٣ نوفمبر ٢٠٢٦) قبلها سطر «المطلوبة والمندوب برّه ⇒ الخدمة تفضل لحد تم» — `__tests__/wantedBgAlertWiring.test.ts`
+    expect(VP).toMatch(/engineRef\.current = null; stopTimer\(\);[^\n]*\n(?:[^\n]*\n){0,2}\s*if \(bgActiveRef\.current\) \{ bgActiveRef\.current = false; stopBackgroundRecording\(\); \}/);
   });
 
   it("🧪 إيميل الحساب بيتقرا مع البروفايل (حساب مراجعين جوجل)", () => {
