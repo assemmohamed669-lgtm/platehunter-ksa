@@ -84,7 +84,7 @@ export interface SheetRow {
 }
 
 /**
- * الشيت جهز (أو اتغيّر) **وسط الجلسة**: اللوحات اللي اتأكّدت قبله (نافذتين+) في الجلسة دي وفي آخر دقيقة
+ * الشيت جهز (أو اتغيّر) **وسط الجلسة**: اللوحات اللي ظهرت في الجدول قبله (مش المبدئية) في الجلسة دي وفي آخر دقيقة
  * ومش متعلّمة «مطلوبة» ⇒ تصفّر. من غيره اللوحة المطلوبة اللي اتقالت قبل ما الشيت يخلص تحميل بتتعلّم «مطلوبة»
  * في الجدول **من غير صفّارة** (`rehydrateMatch`).
  */
@@ -99,7 +99,8 @@ export function sheetReadyAlerts<R extends SheetRow>(
   const out: Array<{ plate: string; row: Record<string, string> }> = [];
   const seen = new Set<string>();
   for (const r of rows) {
-    if (r.match || r.provisional || (r.mult ?? 0) < 2 || r.edited?.plate) continue;
+    // 🔔 (٢٣ نوفمبر ٢٠٢٦) من نافذة واحدة كمان — «كل سيارة مطلوبه يطلع ليها تنبيه صوتي» (`__tests__/everyWantedAlerts.test.ts`)
+    if (r.match || r.provisional || r.edited?.plate) continue;
     if (r.shownAt < sessionStartMs || nowMs - r.shownAt > recentMs) continue;
     const k = keyOf(r.plate);
     if (!k || seen.has(k)) continue;

@@ -62,7 +62,8 @@ import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { AUTO_RESUMED_TEXT, AUTO_RESUME_FAILED_TEXT, IOS_RECOVER_MIC_GRACE_MS, autoResumeMark, iosRecoverFor, shouldAutoResume, type AutoResumeMark } from "@/lib/iosRecover";
 import { CALL_RESUME_COUNTDOWN_TEXT, CALL_RESUME_DELAY_MS, CALL_RESUME_WHY, callResumeFor, callResumeMark } from "@/lib/callResume";
-import { appInBackground, onAppState } from "@/lib/appForeground";
+import { appInBackground, onAppState, pageVisibility } from "@/lib/appForeground";
+import { WantedBgHold, postWantedSelfPush, wantedBgAlertFor, wantedBgPlan, type WantedBgPlan } from "@/lib/wantedBgAlert";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
@@ -152,6 +153,18 @@ async function sendVoiceTelemetry(rows: TelBatch[]): Promise<boolean> {
 }
 function telemetryStorage(): Storage | null {
   try { return typeof window !== "undefined" ? window.localStorage : null; } catch { return null; }
+}
+/**
+ * 🔔 (`lib/wantedBgAlert.ts`) العربية المطلوبة والمندوب برّه البرنامج ⇒ إشعار فوق الشاشة لموبايله باللوحة وبيانات العربية.
+ * مابيرميش ولا بيأخّر حاجة — التنبيه جوّه البرنامج شغّال في كل الأحوال.
+ */
+function sendWantedSelfPush(plate: string, info: [string, string][]): void {
+  void (async () => {
+    let at: string | null = null;
+    try { at = (await supabase.auth.getSession()).data.session?.access_token ?? null; } catch { /* من غير جلسة ⇒ مفيش إشعار */ }
+    const r = await postWantedSelfPush(plate, info, at);
+    diagNote("rv2-bg-wanted", { ...r });
+  })();
 }
 function hostOf(url: string): string {
   try { return new URL(url.trim()).host; } catch { return ""; }
@@ -824,6 +837,7 @@ export default function RegistrationV2Page() {
     window.addEventListener("pagehide", onHide);
     return () => {
       offCall();
+      bgHoldRef.current.release();
       if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("pagehide", onHide);
@@ -1412,6 +1426,8 @@ export default function RegistrationV2Page() {
     diagNote("rv2-rec", { on: true, rows: rowsRef.current.length });
     autoResumeRef.current = null;   // 📱 أي بداية (بإيده أو لوحده) بتشيل علامة الرجوع
     pausedForWantedRef.current = false;
+    // 🚨 (`lib/wantedBgAlert.ts`) الخدمة اللي كانت ماسكة البرنامج للصفّارة تتقفل (بتبدأ من جديد مع المايك تحت)
+    bgHoldRef.current.release(); micHeldForWantedRef.current = false;
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
     setWaitKind("net");
@@ -1542,13 +1558,14 @@ export default function RegistrationV2Page() {
           tel?.shown(plate, meta);
           const key = normalizePlate(bankPlateToArabic(plate));
           /**
-           * 🔔 **مطلوبة بعد التأكد بس** — الإجماع شافها في نافذتين أو أكتر، أو
-           * القراءات المباشرة أكّدتها قبله. لوحة الإجماع طلّعها من نافذة واحدة
-           * (`mult = 1`) مش متأكّدة ⇒ مابتتعلّمش ولا بتصفّر.
+           * 🔔 **كل عربية مطلوبة بتصفّر** — المالك (٢٣ نوفمبر ٢٠٢٦): «قولت واحده مطلوبه ومظهرتش ولا رن … ولما قفلت
+           * البرنامج وفتحته اتعلم عليها انها مطلوبه … كل سيارة مطلوبه يطلع ليها تنبيه صوتي». الصف ده هيظهر في الجدول
+           * باللوحة دي، فلو في الشيت ⇒ «مطلوبة» + صفّارة حتى من نافذة واحدة (`mult = 1`) — نفس اللي `rehydrateMatch`
+           * بيعمله لما البرنامج يتفتح تاني. كانت «نافذتين» (٢٥ سبتمبر) فالصف بيتحفظ عادي ويتعلّم بعدين من غير صفّارة.
+           * القراية المباشرة (قبل الإجماع، تحت في `onRead`) لسه بنافذتين. `__tests__/everyWantedAlerts.test.ts`
            */
           const inSheet = checkIndexRef.current.get(key) ?? null;
-          const hit = inSheet && (meta.mult >= 2 || wantedReadCount(wantedSeenRef.current, key, meta.tMs) >= 2)
-            ? inSheet : null;
+          const hit = inSheet;
           // 🩺 الصندوق بس (من غير لوحة): المطلوبة اتأكدت ولا اتسمعت مرة واحدة؟ — «ساعات مابتصفّرش» (٢٤ أكتوبر)
           if (inSheet && diagActive()) diagNote("rv2-wanted", { via: "plate", ok: !!hit, mult: meta.mult, reads: wantedReadCount(wantedSeenRef.current, key, meta.tMs) });
           /**
@@ -1893,6 +1910,8 @@ export default function RegistrationV2Page() {
     diagNote("rv2-rec", { on: false, why, rows: rowsRef.current.length });
     const ctrl = engineRef.current;
     engineRef.current = null; stopTimer(); setListening(false); setSpeaking(false); setLevel(0);
+    // 🚨 (`lib/wantedBgAlert.ts`) أندرويد برّه البرنامج + مطلوبة ⇒ الخدمة تفضل لحد «تم» (الصفحة صاحية ⇒ النغمة المختارة ترن)
+    if (why === "wanted" && bgActiveRef.current && wantedBgRef.current?.holdService) { bgActiveRef.current = false; bgHoldRef.current.hold(); }
     if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
     levelStoreRef.current!.set(0);
     // 🔒 الجلسة دي خلصت — أي نداء متأخّر منها بيتجاهل (السوبر أدمن)، والشريط يتشال
@@ -1963,11 +1982,37 @@ export default function RegistrationV2Page() {
    * مشكله المهم الرنه تظهر معاه». آخر «تم» ⇒ بيرجع لوحده. المندوب وقّف بإيده/بدأ تاني ⇒ بيتلغي.
    */
   const pausedForWantedRef = useRef(false);
+  /**
+   * 🚨 (`lib/wantedBgAlert.ts`) المطلوبة طلعت والمندوب **برّه البرنامج** (المالك ٢٣ نوفمبر ٢٠٢٦ — السوبر أدمن الأول):
+   *  · `wantedBgRef` — القرار اللي اتاخد مع آخر تنبيه.
+   *  · 🤖 `bgHoldRef` — خدمة الخلفية متسابة شغّالة بعد وقف المايك لحد «تم» (الصفحة صاحية ⇒ النغمة ترن).
+   *  · 🍏 `micHeldForWantedRef` — المايك متساب شغّال (هو اللي مصحّي البرنامج على الآيفون) لحد ما يرجع ⇒ ساعتها يقف زي الأول.
+   */
+  const wantedBgRef = useRef<WantedBgPlan | null>(null);
+  const bgHoldRef = useRef(new WantedBgHold(() => stopBackgroundRecording()));
+  const micHeldForWantedRef = useRef(false);
   useEffect(() => onWantedAlertsCleared(() => {
-    if (!pausedForWantedRef.current || engineRef.current || startingRef.current) return;
+    // 🍏 داس «تم» والمايك لسه شغّال (ماوقفش أصلاً) ⇒ مفيش حاجة ترجع
+    if (micHeldForWantedRef.current) { micHeldForWantedRef.current = false; pausedForWantedRef.current = false; }
+    if (!pausedForWantedRef.current || engineRef.current || startingRef.current) { bgHoldRef.current.release(); return; }
     pausedForWantedRef.current = false;
     void startRef.current();
   }), []);
+  /**
+   * 🍏 (`lib/wantedBgAlert.ts`) المايك كان متساب شغّال والمندوب برّه ⇒ رجع للبرنامج ⇒ دلوقتي يقف زي الأول (المايك المفتوح
+   * بيوطّي الصفّارة — #461)، والنغمة بصوتها الكامل لحد «تم» اللي بيرجّع التسجيل.
+   */
+  useEffect(() => {
+    const back = () => {
+      if (!micHeldForWantedRef.current || pageVisibility() === "hidden") return;
+      micHeldForWantedRef.current = false;
+      if (engineRef.current && pausedForWantedRef.current) stopRef.current("wanted");
+    };
+    const onVis = () => { if (document.visibilityState === "visible") back(); };
+    document.addEventListener("visibilitychange", onVis);
+    const offApp = onAppState((active) => { if (active) back(); });
+    return () => { document.removeEventListener("visibilitychange", onVis); offApp(); };
+  }, []);
   /** آخر نسخة من الصفوف والتصدير — الإيقاف بيستنى آخر لوحات قبل ما يسأل. */
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -2038,18 +2083,28 @@ export default function RegistrationV2Page() {
     if (!shouldAlertNow(alertedRef.current, key, now)) { diagNote("rv2-alert", { skip: "repeat" }); return; }
     alertedRef.current.set(key, now);
     try {
+      const info: [string, string][] = row
+        ? Object.entries(row)
+            .filter(([, v]) => String(v ?? "").trim())
+            .map(([k, v]) => [k, String(v)] as [string, string])
+        : [];
       fireWantedAlert({
         plate,
         matchType: "exact",
         source: "voice",
-        info: row
-          ? Object.entries(row)
-              .filter(([, v]) => String(v ?? "").trim())
-              .map(([k, v]) => [k, String(v)] as [string, string])
-          : [],
+        info,
       });
       setSirenOn(true);
       diagNote("rv2-alert", { fire: true, rec: !!engineRef.current });
+      /**
+       * 🚨 (`lib/wantedBgAlert.ts`) المندوب **برّه البرنامج**؟ ⇒ إشعار فوق الشاشة لموبايله + البرنامج يفضل صاحي عشان النغمة
+       * المختارة ترن (أندرويد: الخدمة لحد «تم» · آيفون: المايك لحد ما يرجع). قدام الشاشة ⇒ زي الأول بالحرف. السوبر أدمن الأول.
+       * الحالة من التطبيق نفسه — أندرويد 1.8 بيقول للصفحة إنها ظاهرة وهي مش ظاهرة.
+       */
+      const bgPlan = wantedBgPlan({ platform: getDevicePlatform(), inBackground: pageVisibility() === "hidden", bgActive: bgActiveRef.current, enabled: wantedBgAlertFor(isSuperRef.current) });
+      wantedBgRef.current = bgPlan;
+      if (bgPlan.push) sendWantedSelfPush(plate, info);
+      if (bgPlan.push) diagNote("rv2-bg-plan", { hold: bgPlan.holdService, mic: bgPlan.keepMic });
       /**
        * 🔕 المايك مفتوح بـ«إلغاء الصدى» ⇒ الموبايل (الآيفون خصوصاً) بيوطّي الصفّارة لحد ما يتقفل، فالمندوب كان بيشوف المربع
        * من غير صوت (ولما يخرج للواتس اب والتسجيل يقف كانت ترن). ⇒ بنوقّف التسجيل (اللوحات محفوظة)، و«تم» بيرجّعه لوحده.
@@ -2057,7 +2112,8 @@ export default function RegistrationV2Page() {
       if (engineRef.current) {
         pausedForWantedRef.current = true;
         // بعد ما القراية دي تخلص — مانوقّفش المحرّك من جوّه ردّه
-        setTimeout(() => { if (engineRef.current && pausedForWantedRef.current) stopRef.current("wanted"); }, 0);
+        if (bgPlan.keepMic) micHeldForWantedRef.current = true;   // 🍏 برّه ⇒ يقف لما يرجع للبرنامج (المايك مصحّيه)
+        else setTimeout(() => { if (engineRef.current && pausedForWantedRef.current) stopRef.current("wanted"); }, 0);
       }
     } catch { /* التنبيه إضافة — مايوقّفش التسجيل */ }
   }, []);

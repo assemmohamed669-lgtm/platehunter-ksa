@@ -79,11 +79,13 @@ describe("🔴 الآيفون يرن حتى لو صامت أول ما الماي
 describe("🔴 Voice PRO", () => {
   const P = read("app/(app)/registration-v2/page.tsx");
   it("العربية المطلوبة بتوقّف التسجيل (لو شغّال) عشان الصفّارة تتسمع", () => {
-    expect(P).toMatch(/if \(engineRef\.current\) \{\s*pausedForWantedRef\.current = true;[\s\S]{0,200}stopRef\.current\("wanted"\)/);
+    // (٢٣ نوفمبر ٢٠٢٦) قبلها سطر الآيفون برّه البرنامج ⇒ المايك بيقف لما يرجع — `__tests__/wantedBgAlertWiring.test.ts`
+    expect(P).toMatch(/if \(engineRef\.current\) \{\s*pausedForWantedRef\.current = true;[\s\S]{0,400}stopRef\.current\("wanted"\)/);
   });
   it("آخر «تم» ⇒ التسجيل بيرجع لوحده (لو كان واقف عشان المطلوبة بس)", () => {
     expect(P).toMatch(/onWantedAlertsCleared\(\(\) => \{/);
-    expect(P).toMatch(/if \(!pausedForWantedRef\.current \|\| engineRef\.current \|\| startingRef\.current\) return;/);
+    // (٢٣ نوفمبر ٢٠٢٦) مابيرجعش ⇒ خدمة الخلفية اللي كانت ماسكة البرنامج للصفّارة بتتساب (`lib/wantedBgAlert.ts`)
+    expect(P).toMatch(/if \(!pausedForWantedRef\.current \|\| engineRef\.current \|\| startingRef\.current\) (?:return;|\{ bgHoldRef\.current\.release\(\); return; \})/);
     expect(P).toMatch(/void startRef\.current\(\);/);
   });
   it("المندوب وقّف بإيده ⇒ مايرجعش لوحده", () => {
