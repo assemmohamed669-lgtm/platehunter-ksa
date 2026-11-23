@@ -106,10 +106,55 @@ export interface WantedPush {
   title: string;
   body: string;
   data: Record<string, string>;
+  /** 🔁 نفس المعرّف لكل إشعارات العربية دي ⇒ بيحدّث نفسه (`lib/fcm.ts`). */
+  collapseId: string;
+}
+
+/**
+ * 🔁 **الإشعار بيتكرّر لحد «تم»** — المالك (٢٣ نوفمبر ٢٠٢٦): «لو المندوب مسمعش الرنه ولا شاف الاشعار الاهتزاز ينبه ان فيه
+ * حاجه» ⇒ «يلا» + «وانشر للكل». الآيفون مابيسمحش للبرنامج يهزّ الموبايل من غير نسخة جديدة — بس **الإشعار نفسه بيهزّه**. كل
+ * ٥ث طول ما المندوب لسه برّه والتنبيه شغّال، أقصاه دقيقة، وكله **إشعار واحد بيتحدّث** (`wantedCollapseId`).
+ */
+export const WANTED_PUSH_REPEAT_MS = 5000;
+export const WANTED_PUSH_REPEAT_MAX = 11;
+
+/** معرّف إشعار العربية — نفس اللوحة (بمسافات أو من غير) ⇒ نفس المعرّف. */
+export function wantedCollapseId(plate: string): string {
+  return `w-${String(plate ?? "").replace(/\s+/g, "").slice(0, 20)}`;
+}
+
+export class PushRepeater {
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private n = 0;
+
+  constructor(private readonly everyMs: number = WANTED_PUSH_REPEAT_MS, private readonly max: number = WANTED_PUSH_REPEAT_MAX) {}
+
+  get active(): boolean {
+    return this.timer !== null;
+  }
+
+  /** الإشعار الأول اتبعت برّه — ده بيبعت التكرار ١، ٢، … كل `everyMs` طول ما `keepGoing()`. */
+  start(send: (n: number) => void, keepGoing: () => boolean): void {
+    this.stop();
+    this.n = 0;
+    const tick = () => {
+      this.timer = null;
+      if (this.n >= this.max || !keepGoing()) return;
+      this.n++;
+      try { send(this.n); } catch { /* الإرسال مابيوقّفش التكرار */ }
+      if (this.n < this.max) this.timer = setTimeout(tick, this.everyMs);
+    };
+    this.timer = setTimeout(tick, this.everyMs);
+  }
+
+  stop(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
 }
 
 /** الإشعار: العنوان باللوحة، والجسم بيانات العربية «المفتاح: القيمة» سطر لكل واحدة. */
-export function wantedPushPayload(plate: string, info: [string, string][]): WantedPush {
+export function wantedPushPayload(plate: string, info: [string, string][], repeat?: number): WantedPush {
   const lines: string[] = [];
   let len = 0;
   for (const [k, v] of info) {
@@ -124,7 +169,12 @@ export function wantedPushPayload(plate: string, info: [string, string][]): Want
   return {
     title: `🚨 عربية مطلوبة: ${spacedPlate(plate)}`,
     body: lines.length ? lines.join("\n") : "افتح البرنامج ودوس «تم»",
-    data: { kind: "self-wanted", plate: String(plate ?? "").trim() },
+    data: {
+      kind: "self-wanted",
+      plate: String(plate ?? "").trim(),
+      ...(repeat && Number.isFinite(repeat) ? { repeat: String(Math.trunc(repeat)) } : {}),
+    },
+    collapseId: wantedCollapseId(plate),
   };
 }
 
@@ -136,13 +186,14 @@ export async function postWantedSelfPush(
   info: [string, string][],
   accessToken: string | null | undefined,
   fetchImpl: typeof fetch = fetch,
+  repeat?: number,
 ): Promise<SelfPushResult> {
   if (!accessToken) return { ok: false, sent: 0, why: "no-session" };
   try {
     const res = await fetchImpl(WANTED_SELF_PUSH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ plate, info }),
+      body: JSON.stringify(repeat ? { plate, info, repeat } : { plate, info }),
     });
     const j = (await res.json().catch(() => ({}))) as Partial<SelfPushResult>;
     if (!res.ok) return { ok: false, sent: 0, why: `http_${res.status}` };

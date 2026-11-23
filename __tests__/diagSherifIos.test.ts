@@ -23,7 +23,8 @@ describe("شريف فرج ايفون على الصندوق الكامل", () => 
 
   it("سطور تجربة الإشعار والنغمة برّه البرنامج موجودة في Voice PRO", () => {
     expect(VP).toMatch(/diagNote\("rv2-bg-plan", \{ hold: bgPlan\.holdService, mic: bgPlan\.keepMic \}\)/);
-    expect(VP).toMatch(/diagNote\("rv2-bg-wanted", \{ \.\.\.r \}\)/);
+    expect(VP).toMatch(/diagNote\("rv2-bg-wanted", \{ \.\.\.r, n: repeat \?\? 0 \}\)/);
+    expect(VP).toMatch(/diagNote\("rv2-bg-tone", \{ ok/);
   });
 
   it("مكرّرش (كل حساب مرة واحدة)", () => {

@@ -107,6 +107,13 @@ describe("/api/wanted-self-push", () => {
     expect(h.sent[0].p.body).toBe("افتح البرنامج ودوس «تم»");
   });
 
+  it("🔁 كل إشعار للعربية دي بنفس المعرّف (بيحدّث نفسه) + رقم التكرار في البيانات", async () => {
+    await POST(req(SUPER, { plate: "رلع7528", info: [], repeat: 4 }));
+    const p = h.sent[0].p as { collapseId?: string; data?: Record<string, string> };
+    expect(p.collapseId).toBe("w-رلع7528");
+    expect(p.data).toEqual({ kind: "self-wanted", plate: "رلع7528", repeat: "4" });
+  });
+
   it("التوكن الميت بيتمسح", async () => {
     h.dead = ["tok-super-old"];
     const r = await POST(req(SUPER, { plate: "رلع7528", info: [] }));

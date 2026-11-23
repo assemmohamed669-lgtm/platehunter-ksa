@@ -9,8 +9,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   WANTED_BG_ALERT_FOR_ALL,
   WANTED_BG_HOLD_MAX_MS,
+  WANTED_PUSH_REPEAT_MAX,
+  WANTED_PUSH_REPEAT_MS,
   WANTED_SELF_PUSH_URL,
+  PushRepeater,
   WantedBgHold,
+  wantedCollapseId,
   postWantedSelfPush,
   spacedPlate,
   wantedBgAlertFor,
@@ -141,6 +145,66 @@ describe("WantedBgHold — 🤖 الخدمة متسابة لحد «تم» وبس
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("🔁 الإشعار بيتكرّر لحد «تم» — الاهتزاز (المالك ٢٣ نوفمبر: «لو المندوب مسمعش الرنه ولا شاف الاشعار الاهتزاز ينبه»)", () => {
+  it("كل ٥ ثواني وأقصاه دقيقة (١١ تكرار بعد الأول)", () => {
+    expect(WANTED_PUSH_REPEAT_MS).toBe(5000);
+    expect(WANTED_PUSH_REPEAT_MAX).toBe(11);
+  });
+
+  it("بيبعت كل ٥ ثواني طول ما لسه برّه والتنبيه شغّال، وبيقف عند الحد", () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn();
+      const r = new PushRepeater(5000, 3);
+      r.start(send, () => true);
+      expect(send).not.toHaveBeenCalled();   // الأول اتبعت برّه — التكرار بعد ٥ث
+      vi.advanceTimersByTime(5000);
+      expect(send).toHaveBeenLastCalledWith(1);
+      vi.advanceTimersByTime(10_000);
+      expect(send).toHaveBeenCalledTimes(3);
+      vi.advanceTimersByTime(30_000);
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(r.active).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("رجع للبرنامج / داس «تم» ⇒ يقف على طول", () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn();
+      let go = true;
+      const r = new PushRepeater(5000, 11);
+      r.start(send, () => go);
+      vi.advanceTimersByTime(5000);
+      go = false;
+      vi.advanceTimersByTime(20_000);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(r.active).toBe(false);
+      r.start(send, () => true);
+      r.stop();
+      vi.advanceTimersByTime(20_000);
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("الإشعار بيحدّث نفسه (نفس المعرّف للعربية) — مش ١٢ إشعار", () => {
+    expect(wantedCollapseId("رلع7528")).toBe(wantedCollapseId("ر ل ع 7528"));
+    expect(wantedCollapseId("رلع7528")).not.toBe(wantedCollapseId("رلع7529"));
+    expect(new TextEncoder().encode(wantedCollapseId("رلع7528")).length).toBeLessThanOrEqual(64);   // حد أبل
+  });
+
+  it("postWantedSelfPush بيبعت رقم التكرار", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, sent: 1 }), { status: 200 }));
+    await postWantedSelfPush("رلع7528", [], "T", fetchImpl as unknown as typeof fetch, 3);
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ plate: "رلع7528", info: [], repeat: 3 });
   });
 });
 
