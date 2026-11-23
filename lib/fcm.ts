@@ -70,6 +70,11 @@ export interface PushPayload {
   body: string;
   /** بيانات إضافية بتوصل للتطبيق (قيم نصّية بس — ده شرط FCM). */
   data?: Record<string, string>;
+  /**
+   * 🔁 إشعار بنفس المعرّف **بيحدّث** اللي قبله بدل ما يتحط جنبه (أندرويد `tag` · آيفون `apns-collapse-id`، حد ٦٤ بايت) —
+   * تكرار تنبيه العربية المطلوبة (`lib/wantedBgAlert.ts`). من غيره ⇒ الرسالة القديمة بالحرف.
+   */
+  collapseId?: string;
 }
 
 export interface PushResult {
@@ -98,8 +103,8 @@ export async function sendPush(tokens: string[], p: PushPayload): Promise<PushRe
             token: to,
             notification: { title: p.title, body: p.body },
             data: p.data ?? {},
-            android: { priority: "HIGH", notification: { channel_id: PUSH_CHANNEL_ID, sound: "default" } },
-            apns: { payload: { aps: { sound: "default" } } },
+            android: { priority: "HIGH", notification: { channel_id: PUSH_CHANNEL_ID, sound: "default", ...(p.collapseId ? { tag: p.collapseId } : {}) } },
+            apns: { ...(p.collapseId ? { headers: { "apns-collapse-id": p.collapseId } } : {}), payload: { aps: { sound: "default" } } },
           },
         }),
       });

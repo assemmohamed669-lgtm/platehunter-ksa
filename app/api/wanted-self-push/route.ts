@@ -47,7 +47,9 @@ export async function POST(req: NextRequest) {
   const tokens = [...new Set(((rows ?? []) as { token: string }[]).map((r) => r.token).filter(Boolean))];
   if (!tokens.length) return NextResponse.json({ ok: true, sent: 0, skipped: "no-device" });
 
-  const r = await sendPush(tokens, wantedPushPayload(plate, cleanInfo(body?.info)));
+  // 🔁 رقم التكرار (الاهتزاز لحد «تم») — نفس الإشعار بيتحدّث (`collapseId`)
+  const repeat = Math.max(0, Math.min(99, Math.trunc(Number(body?.repeat) || 0)));
+  const r = await sendPush(tokens, wantedPushPayload(plate, cleanInfo(body?.info), repeat || undefined));
   if (r.dead.length) await supabaseAdmin.from("device_tokens").delete().in("token", r.dead);
   return NextResponse.json({ ok: true, sent: r.sent });
 }

@@ -11,12 +11,13 @@ const VP = readFileSync(path.join(process.cwd(), "app/(app)/registration-v2/page
 
 describe("Voice PRO ⇐ lib/wantedBgAlert.ts", () => {
   it("القرار من حالة التطبيق نفسه (أندرويد 1.8 بيقول للصفحة إنها ظاهرة) + خدمة الخلفية + السوبر أدمن", () => {
-    expect(VP).toMatch(/wantedBgPlan\(\{ platform: getDevicePlatform\(\), inBackground: pageVisibility\(\) === "hidden", bgActive: bgActiveRef\.current, enabled: wantedBgAlertFor\(isSuperRef\.current\) \}\)/);
+    expect(VP).toMatch(/const plat = getDevicePlatform\(\);/);
+    expect(VP).toMatch(/wantedBgPlan\(\{ platform: plat, inBackground: pageVisibility\(\) === "hidden", bgActive: bgActiveRef\.current, enabled: wantedBgAlertFor\(isSuperRef\.current\) \}\)/);
   });
 
   it("🔔 الإشعار لموبايله باللوحة وبيانات العربية", () => {
     expect(VP).toMatch(/if \(bgPlan\.push\) sendWantedSelfPush\(plate, info\);/);
-    expect(VP).toMatch(/await postWantedSelfPush\(plate, info, at\)/);
+    expect(VP).toMatch(/await postWantedSelfPush\(plate, info, at[,)]/);
   });
 
   it("🍏 الآيفون برّه ⇒ المايك مايقفش دلوقتي — وإلا زي الأول بالحرف", () => {
@@ -24,7 +25,8 @@ describe("Voice PRO ⇐ lib/wantedBgAlert.ts", () => {
   });
 
   it("🍏 رجع للبرنامج ⇒ المايك يقف (الصفّارة بصوتها الكامل لحد «تم»)", () => {
-    expect(VP).toMatch(/if \(!micHeldForWantedRef\.current \|\| pageVisibility\(\) === "hidden"\) return;\s*micHeldForWantedRef\.current = false;\s*if \(engineRef\.current && pausedForWantedRef\.current\) stopRef\.current\("wanted"\);/);
+    // (٢٣ نوفمبر) قبلها: «لسه برّه ⇒ مفيش» + نغمة الخلفية والتكرار يقفوا — `__tests__/iosBgToneWiring.test.ts`
+    expect(VP).toMatch(/if \(pageVisibility\(\) === "hidden"\) return;[\s\S]{0,120}if \(!micHeldForWantedRef\.current\) return;\s*micHeldForWantedRef\.current = false;\s*if \(engineRef\.current && pausedForWantedRef\.current\) stopRef\.current\("wanted"\);/);
   });
 
   it("🤖 أندرويد برّه ⇒ الخدمة ماتتقفلش مع وقف المايك", () => {

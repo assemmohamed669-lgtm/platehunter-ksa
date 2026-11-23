@@ -56,14 +56,16 @@ import { TypeAskQueue, TYPE_ASK_TIMEOUT_MS, type TypeAskResult } from "@/lib/typ
 
 /** 🏷️ سؤال كوهير واحد — `primary` = نافذة اللوحة نفسها (مش النوافذ اللي بعدها) */
 type TypeAskJob = { wav: Blob; tMs: number; forPlates: readonly string[]; primary: boolean };
-import { stopAlertSiren, ensureSirenAudioUnlocked } from "@/lib/alertSiren";
+import { stopAlertSiren, ensureSirenAudioUnlocked, isAlertSirenPlaying } from "@/lib/alertSiren";
+import { loadAlertToneId } from "@/lib/alertTones";
+import { BgTone, bgToneFile, iosBgToneFor } from "@/lib/iosBgTone";
 import { onWantedAlertsCleared } from "@/lib/wantedAlert";
 import { fireWantedAlert } from "@/lib/wantedAlert";
 import { browserScreenWake } from "@/lib/screenWake";
 import { AUTO_RESUMED_TEXT, AUTO_RESUME_FAILED_TEXT, IOS_RECOVER_MIC_GRACE_MS, autoResumeMark, iosRecoverFor, shouldAutoResume, type AutoResumeMark } from "@/lib/iosRecover";
 import { CALL_RESUME_COUNTDOWN_TEXT, CALL_RESUME_DELAY_MS, CALL_RESUME_WHY, callResumeFor, callResumeMark } from "@/lib/callResume";
 import { appInBackground, onAppState, pageVisibility } from "@/lib/appForeground";
-import { WantedBgHold, postWantedSelfPush, wantedBgAlertFor, wantedBgPlan, type WantedBgPlan } from "@/lib/wantedBgAlert";
+import { PushRepeater, WantedBgHold, postWantedSelfPush, wantedBgAlertFor, wantedBgPlan, type WantedBgPlan } from "@/lib/wantedBgAlert";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
@@ -156,14 +158,14 @@ function telemetryStorage(): Storage | null {
 }
 /**
  * 🔔 (`lib/wantedBgAlert.ts`) العربية المطلوبة والمندوب برّه البرنامج ⇒ إشعار فوق الشاشة لموبايله باللوحة وبيانات العربية.
- * مابيرميش ولا بيأخّر حاجة — التنبيه جوّه البرنامج شغّال في كل الأحوال.
+ * مابيرميش ولا بيأخّر حاجة — التنبيه جوّه البرنامج شغّال في كل الأحوال. `repeat` = رقم التكرار (🔁 الاهتزاز لحد «تم»).
  */
-function sendWantedSelfPush(plate: string, info: [string, string][]): void {
+function sendWantedSelfPush(plate: string, info: [string, string][], repeat?: number): void {
   void (async () => {
     let at: string | null = null;
     try { at = (await supabase.auth.getSession()).data.session?.access_token ?? null; } catch { /* من غير جلسة ⇒ مفيش إشعار */ }
-    const r = await postWantedSelfPush(plate, info, at);
-    diagNote("rv2-bg-wanted", { ...r });
+    const r = await postWantedSelfPush(plate, info, at, fetch, repeat);
+    diagNote("rv2-bg-wanted", { ...r, n: repeat ?? 0 });
   })();
 }
 function hostOf(url: string): string {
@@ -837,7 +839,7 @@ export default function RegistrationV2Page() {
     window.addEventListener("pagehide", onHide);
     return () => {
       offCall();
-      bgHoldRef.current.release();
+      bgHoldRef.current.release(); bgToneRef.current.stop(); pushRepeatRef.current.stop();
       if (bgActiveRef.current) { bgActiveRef.current = false; stopBackgroundRecording(); }
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("pagehide", onHide);
@@ -1427,7 +1429,7 @@ export default function RegistrationV2Page() {
     autoResumeRef.current = null;   // 📱 أي بداية (بإيده أو لوحده) بتشيل علامة الرجوع
     pausedForWantedRef.current = false;
     // 🚨 (`lib/wantedBgAlert.ts`) الخدمة اللي كانت ماسكة البرنامج للصفّارة تتقفل (بتبدأ من جديد مع المايك تحت)
-    bgHoldRef.current.release(); micHeldForWantedRef.current = false;
+    bgHoldRef.current.release(); micHeldForWantedRef.current = false; bgToneRef.current.stop(); pushRepeatRef.current.stop();
     setError(null); setNotice(null); setSkips({}); setReads([]); setReplays(0);
     setWeakSince(null);
     setWaitKind("net");
@@ -1991,7 +1993,11 @@ export default function RegistrationV2Page() {
   const wantedBgRef = useRef<WantedBgPlan | null>(null);
   const bgHoldRef = useRef(new WantedBgHold(() => stopBackgroundRecording()));
   const micHeldForWantedRef = useRef(false);
+  /** 🍏🔊 (`lib/iosBgTone.ts`) النغمة العالية برّه البرنامج · 🔁 (`PushRepeater`) الإشعار بيتكرّر لحد «تم» — للكل. */
+  const bgToneRef = useRef(new BgTone());
+  const pushRepeatRef = useRef(new PushRepeater());
   useEffect(() => onWantedAlertsCleared(() => {
+    bgToneRef.current.stop(); pushRepeatRef.current.stop();
     // 🍏 داس «تم» والمايك لسه شغّال (ماوقفش أصلاً) ⇒ مفيش حاجة ترجع
     if (micHeldForWantedRef.current) { micHeldForWantedRef.current = false; pausedForWantedRef.current = false; }
     if (!pausedForWantedRef.current || engineRef.current || startingRef.current) { bgHoldRef.current.release(); return; }
@@ -2000,11 +2006,14 @@ export default function RegistrationV2Page() {
   }), []);
   /**
    * 🍏 (`lib/wantedBgAlert.ts`) المايك كان متساب شغّال والمندوب برّه ⇒ رجع للبرنامج ⇒ دلوقتي يقف زي الأول (المايك المفتوح
-   * بيوطّي الصفّارة — #461)، والنغمة بصوتها الكامل لحد «تم» اللي بيرجّع التسجيل.
+   * بيوطّي الصفّارة — #461)، والنغمة بصوتها الكامل لحد «تم» اللي بيرجّع التسجيل. وأي رجوع ⇒ نغمة الخلفية والإشعار المتكرّر
+   * يقفوا (الصفّارة العادية جوّه البرنامج بتكمّل — المايك واقف).
    */
   useEffect(() => {
     const back = () => {
-      if (!micHeldForWantedRef.current || pageVisibility() === "hidden") return;
+      if (pageVisibility() === "hidden") return;
+      bgToneRef.current.stop(); pushRepeatRef.current.stop();
+      if (!micHeldForWantedRef.current) return;
       micHeldForWantedRef.current = false;
       if (engineRef.current && pausedForWantedRef.current) stopRef.current("wanted");
     };
@@ -2101,10 +2110,32 @@ export default function RegistrationV2Page() {
        * المختارة ترن (أندرويد: الخدمة لحد «تم» · آيفون: المايك لحد ما يرجع). قدام الشاشة ⇒ زي الأول بالحرف. السوبر أدمن الأول.
        * الحالة من التطبيق نفسه — أندرويد 1.8 بيقول للصفحة إنها ظاهرة وهي مش ظاهرة.
        */
-      const bgPlan = wantedBgPlan({ platform: getDevicePlatform(), inBackground: pageVisibility() === "hidden", bgActive: bgActiveRef.current, enabled: wantedBgAlertFor(isSuperRef.current) });
+      const plat = getDevicePlatform();
+      const bgPlan = wantedBgPlan({ platform: plat, inBackground: pageVisibility() === "hidden", bgActive: bgActiveRef.current, enabled: wantedBgAlertFor(isSuperRef.current) });
       wantedBgRef.current = bgPlan;
       if (bgPlan.push) sendWantedSelfPush(plate, info);
       if (bgPlan.push) diagNote("rv2-bg-plan", { hold: bgPlan.holdService, mic: bgPlan.keepMic });
+      /**
+       * 🔁 (`PushRepeater` — المالك ٢٣ نوفمبر: «لو المندوب مسمعش الرنه ولا شاف الاشعار الاهتزاز ينبه») الإشعار بيتكرّر كل ٥ث
+       * (بيهزّ الموبايل كل مرة — الآيفون مابيسمحش للبرنامج يهزّه بنفسه) طول ما لسه برّه والتنبيه شغّال، أقصاه دقيقة، وكله
+       * **إشعار واحد بيتحدّث** (`collapseId`). «تم» / الرجوع ⇒ يقف.
+       */
+      if (bgPlan.push) pushRepeatRef.current.start((n) => sendWantedSelfPush(plate, info, n), () => pageVisibility() === "hidden" && isAlertSirenPlaying());
+      /**
+       * 🍏🔊 (`lib/iosBgTone.ts`) الآيفون برّه: المايك المتساب بيوطّي النغمة ⇒ النغمة بعنصر صوت عادي **لحظة التنبيه بس**، ولو
+       * اشتغلت **فعلاً** ⇒ المايك يقف (مفيش توطية) وبلجن الخلفية يتمسك لحد «تم». ماشتغلتش ⇒ زي قبل كده بالحرف.
+       */
+      const ringBgTone = async () => {
+        const ok = await bgToneRef.current.ring(bgToneFile(loadAlertToneId()));
+        diagNote("rv2-bg-tone", { ok, mic: micHeldForWantedRef.current });
+        if (!ok) return;
+        if (!micHeldForWantedRef.current || !engineRef.current || !pausedForWantedRef.current) { bgToneRef.current.stop(); return; }
+        micHeldForWantedRef.current = false;
+        wantedBgRef.current = { ...bgPlan, holdService: true };
+        stopRef.current("wanted");
+        // 🩺 لسه شغّالة بعد ما المايك وقف؟ (الآيفون ممكن يوقّفها مع تغيير وضع الصوت)
+        setTimeout(() => diagNote("rv2-bg-tone", { at: "2s", ringing: bgToneRef.current.ringing }), 2000);
+      };
       /**
        * 🔕 المايك مفتوح بـ«إلغاء الصدى» ⇒ الموبايل (الآيفون خصوصاً) بيوطّي الصفّارة لحد ما يتقفل، فالمندوب كان بيشوف المربع
        * من غير صوت (ولما يخرج للواتس اب والتسجيل يقف كانت ترن). ⇒ بنوقّف التسجيل (اللوحات محفوظة)، و«تم» بيرجّعه لوحده.
@@ -2115,6 +2146,7 @@ export default function RegistrationV2Page() {
         if (bgPlan.keepMic) micHeldForWantedRef.current = true;   // 🍏 برّه ⇒ يقف لما يرجع للبرنامج (المايك مصحّيه)
         else setTimeout(() => { if (engineRef.current && pausedForWantedRef.current) stopRef.current("wanted"); }, 0);
       }
+      if (bgPlan.keepMic && iosBgToneFor(plat)) void ringBgTone();
     } catch { /* التنبيه إضافة — مايوقّفش التسجيل */ }
   }, []);
 
