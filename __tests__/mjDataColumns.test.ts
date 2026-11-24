@@ -24,8 +24,9 @@ describe("داتا التسجيلات — الأعمدة", () => {
 
   it("التصدير والمشاركة بنفس الأعمدة — وسجل التشييك زي ما هو", () => {
     const i = SRC.indexOf("function buildFieldRows()");
-    const body = SRC.slice(i, i + 1600);
-    expect(body).toMatch(/if \(recTab === "mjdata"\) obj\["اسم الحي"\] = mujammaaDistrictOf\(e\.row\);\s*else obj\["الحي-الشارع"\] = areaOf\(e\.row\);/);
-    expect(body).toMatch(/if \(showRecorderCol\) obj\[RECORDER_KEY\] = String\(e\.row\?\.\[RECORDER_KEY\] \?\? ""\);/);
+    const body = SRC.slice(i, i + 2600);
+    // (٢٤ نوفمبر ٢٠٢٦) الحي لكل سجل من مصدره + «اسم المسجّل» و«اسم الشارع» وباقي بيانات المندوب في التابين (`__tests__/recordsShareColumns.test.ts`)
+    expect(body).toMatch(/if \(recTab === "mjdata"\) obj\["اسم الحي"\] = mujammaaDistrictOf\(e\.row\);[\s\S]{0,200}else obj\["الحي-الشارع"\] = recordDistrictOf\(e\);/);
+    expect(body).toMatch(/for \(const k of ownCols\) obj\[k\] = String\(e\.row\?\.\[k\] \?\? ""\);/);
   });
 });

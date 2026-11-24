@@ -56,6 +56,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { diagEnabledFor, diagNote } from "@/lib/deviceDiag";
 import { localRecordStats, pickAreaProbeIds, areaProbeRow } from "@/lib/recordsSyncDiag";
 import { isMujammaaRecord, mujammaaDistrictOf } from "@/lib/mujammaaRecords";
+import { ownRecordColumns, recordDistrictOf } from "@/lib/recordsShareColumns";
 /** 🧾 عمود «اسم المسجّل» في سجلات المجمّع (`lib/mujammaaRecords.ts`) */
 const RECORDER_KEY = "اسم المسجّل";
 import { MJ_FLAG_COL, canUseMujammaa, selectWithOptional } from "@/lib/mujammaaAccess";
@@ -2780,14 +2781,21 @@ export default function InstantCheckPage() {
   function buildFieldRows() {
     // النوع والملاحظات ليهم أعمدة خاصة تحت — نستبعدهم عشان مايتكرروش
     const dynCols = checkTable?.headers.filter((h) => h !== checkPlateCol && selectedCheckCols.has(h) && h !== TYPE_KEY && !/ملاح/.test(h)) ?? [];
+    /**
+     * 📤 (المالك ٢٤ نوفمبر ٢٠٢٦: «لما يشارك داتا السجلات الشيت مش بيبقي فيه اسم الشارع … عايز يبقي فيه كل البيانات») —
+     * «اسم الشارع» · «اسم المسجّل» · بيانات العربية من Voice PRO · مطلوبة · دقة الموقع: اللي ليه قيمة في سجل واحد على الأقل
+     * (`lib/recordsShareColumns.ts`). مشاركة · فتح الشيت · التصدير — التلاتة من هنا.
+     */
+    const ownCols = ownRecordColumns(tabEntries, dynCols);
     return tabEntries.map((e) => {
       const obj: Record<string, unknown> = { "رقم اللوحة": e.plate };
       obj["النوع"] = typeToCode(entryType(e)) || entryType(e);
       // ملاحظات المندوب — لازم تطلع في التصدير والمشاركة زي ما هي قدام السيارة
       obj[NOTES_KEY] = entryNotes(e);
       if (recTab === "mjdata") obj["اسم الحي"] = mujammaaDistrictOf(e.row);
-      else obj["الحي-الشارع"] = areaOf(e.row);
-      if (showRecorderCol) obj[RECORDER_KEY] = String(e.row?.[RECORDER_KEY] ?? "");
+      // الحي لكل سجل من مصدره — من غير تابات «الكل» فيه سجلات المجمّع كمان (حيّها في «اسم الحي»)
+      else obj["الحي-الشارع"] = recordDistrictOf(e);
+      for (const k of ownCols) obj[k] = String(e.row?.[k] ?? "");
       for (const h of dynCols) obj[h] = e.row[h] ?? "";
       obj["الحالة"] = e.method;
       obj["GPS"] = e.mapsLink ?? "";
@@ -2796,10 +2804,19 @@ export default function InstantCheckPage() {
     });
   }
 
+  /**
+   * 📋 شيت السجلات **منسّق** (المالك ٢٤ نوفمبر ٢٠٢٦: «اتأكد ان الشيت اللي بيتشارك مرتب والخط فيه بولد وظاهر والشيت بيفتح
+   * والاعمدة بتظهر من اليمين لليسار») — نفس شيت نتيجة الفرز: بولد، حدود، العناوين ثابتة فوق، عرض على قد الكلام، من اليمين
+   * لليسار. الموبايل ماقدرش ⇒ إكسيل عادي ⇒ CSV (`buildSortBlobBestEffort`). مشاركة · فتح الشيت · تصدير.
+   */
+  async function buildFieldSheet(rows: Record<string, unknown>[]): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
+    return buildSortBlobBestEffort(rows, "التشييك الميداني", rows.map(() => null));
+  }
+
   async function exportFieldExcel() {
-    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+    const { blob, ext } = await buildFieldSheet(buildFieldRows());
     try {
-      await openExcelBlob(blob, `التشييك-الميداني-${Date.now()}.xlsx`);
+      await openExcelBlob(blob, `التشييك-الميداني-${Date.now()}.${ext}`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     }
@@ -2819,8 +2836,8 @@ export default function InstantCheckPage() {
 
   async function shareFieldExcel() {
     await runShare("field", async () => {
-      const blob = buildExcelBlob(shareNoLocation ? withoutLocation(buildFieldRows()) : buildFieldRows(), "التشييك الميداني");
-      await shareExcelBlob(blob, "التشييك-الميداني.xlsx", "التشييك الميداني");
+      const { blob, ext } = await buildFieldSheet(shareNoLocation ? withoutLocation(buildFieldRows()) : buildFieldRows());
+      await shareExcelBlob(blob, `التشييك-الميداني.${ext}`, "التشييك الميداني");
     });
   }
 
@@ -6832,7 +6849,7 @@ export default function InstantCheckPage() {
             {/* Export / Share Excel — 🔒 مستخبي عن عضو المجموعة المقفول عليه التحميل */}
             <div className={`flex gap-2 ${memberLocks.download ? "hidden" : ""}`}>
               <OpenDownloadButton
-                build={() => ({ blob: buildExcelBlob(buildFieldRows(), "التشييك الميداني"), name: `التشييك-الميداني-${Date.now()}.xlsx` })}
+                build={async () => { const { blob, ext } = await buildFieldSheet(buildFieldRows()); return { blob, name: `التشييك-الميداني-${Date.now()}.${ext}` }; }}
                 label="فتح الشيت"
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
               />
