@@ -2804,10 +2804,19 @@ export default function InstantCheckPage() {
     });
   }
 
+  /**
+   * 📋 شيت السجلات **منسّق** (المالك ٢٤ نوفمبر ٢٠٢٦: «اتأكد ان الشيت اللي بيتشارك مرتب والخط فيه بولد وظاهر والشيت بيفتح
+   * والاعمدة بتظهر من اليمين لليسار») — نفس شيت نتيجة الفرز: بولد، حدود، العناوين ثابتة فوق، عرض على قد الكلام، من اليمين
+   * لليسار. الموبايل ماقدرش ⇒ إكسيل عادي ⇒ CSV (`buildSortBlobBestEffort`). مشاركة · فتح الشيت · تصدير.
+   */
+  async function buildFieldSheet(rows: Record<string, unknown>[]): Promise<{ blob: Blob; ext: "xlsx" | "csv" }> {
+    return buildSortBlobBestEffort(rows, "التشييك الميداني", rows.map(() => null));
+  }
+
   async function exportFieldExcel() {
-    const blob = buildExcelBlob(buildFieldRows(), "التشييك الميداني");
+    const { blob, ext } = await buildFieldSheet(buildFieldRows());
     try {
-      await openExcelBlob(blob, `التشييك-الميداني-${Date.now()}.xlsx`);
+      await openExcelBlob(blob, `التشييك-الميداني-${Date.now()}.${ext}`);
     } catch (err: any) {
       alert(err?.message ?? "تعذّر فتح الملف");
     }
@@ -2827,8 +2836,8 @@ export default function InstantCheckPage() {
 
   async function shareFieldExcel() {
     await runShare("field", async () => {
-      const blob = buildExcelBlob(shareNoLocation ? withoutLocation(buildFieldRows()) : buildFieldRows(), "التشييك الميداني");
-      await shareExcelBlob(blob, "التشييك-الميداني.xlsx", "التشييك الميداني");
+      const { blob, ext } = await buildFieldSheet(shareNoLocation ? withoutLocation(buildFieldRows()) : buildFieldRows());
+      await shareExcelBlob(blob, `التشييك-الميداني.${ext}`, "التشييك الميداني");
     });
   }
 
@@ -6840,7 +6849,7 @@ export default function InstantCheckPage() {
             {/* Export / Share Excel — 🔒 مستخبي عن عضو المجموعة المقفول عليه التحميل */}
             <div className={`flex gap-2 ${memberLocks.download ? "hidden" : ""}`}>
               <OpenDownloadButton
-                build={() => ({ blob: buildExcelBlob(buildFieldRows(), "التشييك الميداني"), name: `التشييك-الميداني-${Date.now()}.xlsx` })}
+                build={async () => { const { blob, ext } = await buildFieldSheet(buildFieldRows()); return { blob, name: `التشييك-الميداني-${Date.now()}.${ext}` }; }}
                 label="فتح الشيت"
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 py-2.5 text-sm text-muted hover:text-ink transition disabled:opacity-60"
               />
