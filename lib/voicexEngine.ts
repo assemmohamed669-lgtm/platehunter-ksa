@@ -14,6 +14,7 @@
  */
 import { MissedWindows, REPLAY_MAX_AGE_SEC, canReplay, isStalled } from "./voicexReplay";
 import { postAudioForPlate } from "./plateJudgeClient";
+import { NetBytes, formatRefused, toFlacBody } from "./voiceFlac";
 import { LiveConsensus, drainClockMs } from "./liveConsensus";
 import { FleetMemory } from "./fleetPairs";
 import { MicEngine } from "./micEngine";
@@ -314,6 +315,8 @@ export interface VoicexEngineOpts {
   onFatal?: (reason: string, code?: string) => void;
   /** هوية المندوب — تتمرّر لـ postAudioForPlate كترويسة X-Agent-Id (وسم الحصاد). */
   agentId?: string | null;
+  /** 🗜️ النوافذ تطلع للنت FLAC (نفس الصوت بالبِت، ~٤٢٪ أصغر) — `lib/voiceFlac.ts`. من غيره ⇒ WAV زي الأول بالحرف. */
+  flac?: boolean;
   /**
    * سقف الطلبات المتوازية. الافتراضي `MAX_INFLIGHT` — **ماترفعوش إلا لو
    * السيرفر أعلن سقفه فعلاً** (اقرا التحذير فوق الثابت).
@@ -535,10 +538,15 @@ export interface VoicexEngineController {
    * `true` = اتبعتت. `false` = مالهاش لازمة/مش مسموح ⇒ النوافذ العادية بتأكّد زي ما هي.
    */
   confirmNow?: (tMs: number) => boolean;
+  /** 🗜️ حجم الصوت في الجلسة: اللي كان هيطلع WAV · اللي طلع فعلاً (`lib/voiceFlac.ts`) — للصندوق. */
+  netBytes?: () => { wavKB: number; sentKB: number; windows: number; pct: number; flac: boolean };
 }
 
 export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexEngineController | null> {
   let stopped = false;
+  /** 🗜️ (`lib/voiceFlac.ts`) بيتقفل لو السيرفر رفض FLAC ⇒ باقي الجلسة WAV */
+  let flacOn = opts.flac === true;
+  const netBytes = new NetBytes();
   let inflight = 0;
   let fails = 0;
   let speaking = false;        // الـVad بيقول دلوقتي فيه كلام؟
@@ -998,12 +1006,30 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
       // `network` · `bad_token` …). من غيره كل فشل بيبان «الطلب فشل» وخلاص،
       // وبنفضل نخمّن السبب بدل ما الجهاز يقوله.
       let lastErr: string | null = null;
+      /**
+       * 🗜️ (`lib/voiceFlac.ts` — المالك ٢٦ نوفمبر: «بيستهلك انترنت كتير جدا») نفس النافذة **مضغوطة من غير فقد** (FLAC ⇒
+       * نفس العيّنات بالبِت عند السيرفر) **لحظة الإرسال بس** — الذاكرة والإعادة وسؤال النوع لسه على نفس الـWAV.
+       */
+      const body = flacOn ? await toFlacBody(wav) : wav;
+      let sentBytes = body.size;
       const t0 = Date.now();
-      const resp = await postAudioForPlate(wav, {
+      let resp = await postAudioForPlate(body, {
         transcribeUrl: opts.transcribeUrl, token: opts.token,
-        mimeType: "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
+        mimeType: body.type || "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
         onError: (code: string) => { lastErr = code; },
       });
+      // السيرفر رفض الصيغة نفسها ⇒ نفس النافذة WAV دلوقتي، وباقي الجلسة WAV (مابنخاطرش بلوحة)
+      if (!resp && body !== wav && formatRefused(lastErr)) {
+        flacOn = false;
+        lastErr = null;
+        resp = await postAudioForPlate(wav, {
+          transcribeUrl: opts.transcribeUrl, token: opts.token,
+          mimeType: "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
+          onError: (code: string) => { lastErr = code; },
+        });
+        sentBytes += wav.size;
+      }
+      netBytes.add(wav.size, sentBytes);
       const msWall = Date.now() - t0;
       if (!resp) {
         /**
@@ -1404,6 +1430,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   return {
     get stopped() { return stopped; },
     get audioNowMs() { return clockSec() * 1000; },
+    netBytes: () => ({ ...netBytes.snapshot(), flac: flacOn }),
     get lastVoiceEndMs() {
       const v = vad?.lastVoiceEndSec ?? 0;
       return v > 0 ? v * 1000 : null;

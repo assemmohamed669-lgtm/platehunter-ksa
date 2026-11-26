@@ -82,6 +82,8 @@ const LIGHT_FLUSH_MS = 180_000;
 const LIGHT_BUDGET_KEY = "ph:diag:lite:budget";
 const LIGHT_NOTES = new Set([
   "rv2-rec", "rv2-wanted", "rv2-alert", "rv2-export", "rv2-mic",
+  // 🗜️ حجم الصوت اللي طلع للنت في كل جلسة Voice PRO (`lib/voiceFlac.ts` — المالك ٢٦ نوفمبر: «بيستهلك انترنت كتير جدا»)
+  "rv2-bytes",
   "siren", "siren-2s", "siren-stop",
   "wake", "wake-lost",
 ]);
