@@ -66,6 +66,7 @@ import { AUTO_RESUMED_TEXT, AUTO_RESUME_FAILED_TEXT, IOS_RECOVER_MIC_GRACE_MS, a
 import { CALL_RESUME_COUNTDOWN_TEXT, CALL_RESUME_DELAY_MS, CALL_RESUME_WHY, callResumeFor, callResumeMark } from "@/lib/callResume";
 import { appInBackground, onAppState, pageVisibility } from "@/lib/appForeground";
 import { PushRepeater, WantedBgHold, postWantedSelfPush, wantedBgAlertFor, wantedBgPlan, type WantedBgPlan } from "@/lib/wantedBgAlert";
+import { formatRefused, toFlacBody, voiceFlacFor } from "@/lib/voiceFlac";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
@@ -1332,12 +1333,16 @@ export default function RegistrationV2Page() {
     const ac = new AbortController();
     const kill = setTimeout(() => ac.abort(), TYPE_ASK_TIMEOUT_MS);
     try {
-      const res = await fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
+      // 🗜️ نفس قاعدة نوافذ اللوحات (`lib/voiceFlac.ts`): FLAC = نفس الصوت بالبِت؛ السيرفر رفضه ⇒ نفس النافذة WAV
+      const body = voiceFlacFor(isSuperRef.current) ? await toFlacBody(wav) : wav;
+      const postType = (b: Blob) => fetch(TRIAL_TYPE_BASE.replace(/\/+$/, "") + "/type", {
         method: "POST",
-        headers: { "Content-Type": "audio/wav", "Authorization": "Bearer " + modelToken.trim() },
-        body: wav,
+        headers: { "Content-Type": b.type || "audio/wav", "Authorization": "Bearer " + modelToken.trim() },
+        body: b,
         signal: ac.signal,
       });
+      let res = await postType(body);
+      if (body !== wav && formatRefused(`http_${res.status}`)) res = await postType(wav);
       if (res.status === 503) return "busy";
       if (!res.ok) return "fail";
       const j = await res.json() as { ok?: boolean; text?: string | null };
@@ -1514,6 +1519,8 @@ export default function RegistrationV2Page() {
         audioClock: AUDIO_CLOCK_FOR_VOICE_PRO,
         // ⚡ نافذة التأكيد الفورية للعربية المطلوبة (`lib/wantedConfirmNow.ts`) — للكل
         wantedConfirm: canConfirmNow(sup),
+        // 🗜️ النوافذ تطلع للنت FLAC — نفس الصوت بالبِت، ~٤٢٪ أقل نت (`lib/voiceFlac.ts` — السوبر أدمن الأول)
+        flac: voiceFlacFor(isSuperRef.current),
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
         fleetSequence: true,
@@ -1938,6 +1945,8 @@ export default function RegistrationV2Page() {
         // ⏳ آخر اللوحات توصل الأول (بحد أقصى — عطل مايأجّلش التحديث للأبد)
         await Promise.race([done.catch(() => {}), new Promise((r) => setTimeout(r, STOP_SETTLE_MAX_MS))]);
         try { telSession?.end(why); } catch { /* المراقبة ماتوقّفش حاجة */ }
+        // 🗜️ الصوت اللي طلع للنت في الجلسة دي (WAV كان هيبقى كام · اتبعت كام) — الصندوق (`lib/voiceFlac.ts`)
+        try { const b = ctrl?.netBytes?.(); if (b && b.windows > 0) diagNote("rv2-bytes", b); } catch { /* ignore */ }
         /**
          * 🔧 تحميل هيكل اتأجّل وقت التسجيل (السوبر أدمن) ⇒ دلوقتي، **بعد** ما آخر
          * اللوحات وصلت — قبل سؤال التصدير التلقائي عشان التصدير يلاقيه. لو المندوب
