@@ -218,6 +218,11 @@ export interface PostAudioOptions {
   fetchImpl?: typeof fetch | null;
   /** هوية المندوب — تتبعت ترويسة X-Agent-Id (عمود ٥ في حصاد السيرفر log.tsv). */
   agentId?: string | null;
+  /**
+   * عدد المحاولات (الافتراضي ٢ زي ما كان). «الجديد بس» (`lib/voiceDelta.ts`) بيبعت ١: لو الوسيط مش رادد، الطريق القديم
+   * يلحق النافذة على طول بدل ما تستنى محاولة تانية.
+   */
+  attempts?: number;
 }
 
 const MAX_PLATE_CHARS = 64;
@@ -995,7 +1000,8 @@ export async function postAudioForPlate(
     // هوية المندوب للحصاد (تدريب) — encodeURIComponent يطابق unquote في السيرفر.
     if (options.agentId) headers["X-Agent-Id"] = encodeURIComponent(String(options.agentId));
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const attempts = Math.max(1, Math.min(2, options.attempts ?? 2));
+    for (let attempt = 0; attempt < attempts; attempt++) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => { try { ctrl.abort(); } catch { /* ignore */ } }, timeoutMs);
       const t0 = Date.now();
@@ -1022,7 +1028,7 @@ export async function postAudioForPlate(
         if (name === "AbortError") { safeCall(onError, "timeout"); return null; }
         const isNetwork = e instanceof TypeError;
         if (!isNetwork) { safeCall(onError, "error"); return null; }
-        if (attempt === 1) { safeCall(onError, "network"); return null; }
+        if (attempt === attempts - 1) { safeCall(onError, "network"); return null; }
         const delay = options.retryDelayMs ?? 250;
         if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       } finally {

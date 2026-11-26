@@ -71,6 +71,26 @@ describe.skipIf(!HAVE_FF)("FLAC ⇐ ffmpeg — نفس العيّنات بالب�
     for (const rate of [48000, 44100, 8000]) expectSame(pcm, rate);
   });
 
+  it("٢٤-بت (الخام لـ«الجديد بس» — `lib/voiceDelta.ts`): نفس القيم بالبِت، كل الأطوال والحدود", () => {
+    const r = rng(11);
+    for (const n of [1, 4095, 4096, 4097, 24_000, 30_000]) {
+      const pcm = new Int32Array(n);
+      for (let i = 0; i < n; i++) pcm[i] = Math.round(8388607 * 0.3 * Math.sin(i / 7) * Math.sin(i / 1900)) + Math.floor(r() * 2000) - 1000;
+      pcm[0] = 8388607; if (n > 1) pcm[n - 1] = -8388608;
+      const flac = encodeFlac(pcm, 16000, 24);
+      const f = path.join(dir, `t${seq++}.flac`);
+      writeFileSync(f, flac);
+      const out = spawnSync(FF, ["-nostdin", "-v", "error", "-i", f, "-f", "s32le", "-acodec", "pcm_s32le", "-ac", "1", "-"], { maxBuffer: 64 << 20 });
+      expect(String(out.stderr ?? "").trim()).toBe("");
+      const b = out.stdout as Buffer;
+      const got = new Int32Array(b.buffer, b.byteOffset, Math.floor(b.length / 4));
+      expect(got.length).toBe(n);
+      let firstDiff = -1;
+      for (let i = 0; i < n; i++) if ((got[i] >> 8) !== pcm[i]) { firstDiff = i; break; }
+      expect(firstDiff).toBe(-1);
+    }
+  });
+
   it("wavBytesToFlac: نفس WAV بتاع البرنامج (`encodeWav` + `normalizePeak`) ⇒ نفس العيّنات", async () => {
     const f = new Float32Array(86_400);
     for (let i = 0; i < f.length; i++) f[i] = 0.3 * Math.sin(i / 9) * Math.sin(i / 3000);

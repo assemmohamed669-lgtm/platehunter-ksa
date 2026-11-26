@@ -115,7 +115,10 @@ function writeUtf8Num(w: BitWriter, v: number) {
 }
 
 /** بواقي المتنبّئ الثابت برتبة `order` (من العيّنة `order` لآخر الكتلة) — zigzag. */
-function fixedResiduals(x: Int16Array, from: number, n: number, order: number, out: Uint32Array): void {
+/** عيّنات صحيحة: ١٦-بت (نوافذ اللوحات) أو ٢٤-بت في Int32Array (الخام لـ`lib/voiceDelta.ts`). */
+type Samples = Int16Array | Int32Array;
+
+function fixedResiduals(x: Samples, from: number, n: number, order: number, out: Uint32Array): void {
   for (let i = order; i < n; i++) {
     const s = from + i;
     let e: number;
@@ -170,23 +173,23 @@ function planResidual(u: Uint32Array, n: number, order: number): ResidualPlan {
   return best;
 }
 
-function writeBlock(w: BitWriter, x: Int16Array, from: number, n: number, u: Uint32Array, scratch: Uint32Array): void {
+function writeBlock(w: BitWriter, x: Samples, from: number, n: number, u: Uint32Array, scratch: Uint32Array, bps: number): void {
   // CONSTANT
   let allSame = true;
   for (let i = 1; i < n && allSame; i++) if (x[from + i] !== x[from]) allSame = false;
   if (allSame) {
     w.write(0b0_000000_0, 8);
-    w.signed(x[from], 16);
+    w.signed(x[from], bps);
     return;
   }
   // أحسن FIXED
   let bestOrder = -1;
   let bestPlan: ResidualPlan | null = null;
-  let bestBits = 16 * n;   // VERBATIM
+  let bestBits = bps * n;   // VERBATIM
   for (let order = 0; order <= 4 && order < n; order++) {
     fixedResiduals(x, from, n, order, scratch);
     const plan = planResidual(scratch, n, order);
-    const bits = order * 16 + 6 + plan.bits;
+    const bits = order * bps + 6 + plan.bits;
     if (bits < bestBits) {
       bestBits = bits; bestOrder = order; bestPlan = plan;
       u.set(scratch.subarray(order, n), order);
@@ -194,13 +197,13 @@ function writeBlock(w: BitWriter, x: Int16Array, from: number, n: number, u: Uin
   }
   if (bestOrder < 0 || !bestPlan) {
     w.write(0b0_000001_0, 8);
-    for (let i = 0; i < n; i++) w.signed(x[from + i], 16);
+    for (let i = 0; i < n; i++) w.signed(x[from + i], bps);
     return;
   }
   w.write(0, 1);
   w.write(0b001000 | bestOrder, 6);
   w.write(0, 1);
-  for (let i = 0; i < bestOrder; i++) w.signed(x[from + i], 16);
+  for (let i = 0; i < bestOrder; i++) w.signed(x[from + i], bps);
   const rice2 = bestPlan.params.some((k) => k > 14);
   w.write(rice2 ? 1 : 0, 2);
   w.write(bestPlan.porder, 4);
@@ -219,8 +222,8 @@ function writeBlock(w: BitWriter, x: Int16Array, from: number, n: number, u: Uin
   }
 }
 
-/** عيّنات ١٦-بت مونو ⇒ ملف FLAC كامل. */
-export function encodeFlac(pcm: Int16Array, sampleRate: number): Uint8Array {
+/** عيّنات مونو ⇒ ملف FLAC كامل. ١٦-بت (Int16Array) أو ٢٤-بت (Int32Array بقيم في مدى ٢٤-بت + `bps = 24`). */
+export function encodeFlac(pcm: Samples, sampleRate: number, bps: 16 | 24 = 16): Uint8Array {
   const total = pcm.length;
   const w = new BitWriter(Math.ceil(total * 2 * 0.8) + 128);
   // "fLaC" + STREAMINFO (آخر بلوك ميتاداتا)
@@ -228,7 +231,7 @@ export function encodeFlac(pcm: Int16Array, sampleRate: number): Uint8Array {
   w.write(1, 1); w.write(0, 7); w.write(34, 24);
   w.write(BLOCK, 16); w.write(BLOCK, 16);
   w.write(0, 24); w.write(0, 24);
-  w.write(sampleRate, 20); w.write(0, 3); w.write(15, 5);
+  w.write(sampleRate, 20); w.write(0, 3); w.write(bps - 1, 5);
   w.write(total, 36);
   for (let i = 0; i < 4; i++) w.write(0, 32);   // MD5 = غير محسوب (مسموح)
 
@@ -243,12 +246,12 @@ export function encodeFlac(pcm: Int16Array, sampleRate: number): Uint8Array {
     w.write(custom ? 0b0111 : BLOCK_CODE_4096, 4);
     w.write(0b0000, 4);   // معدل العيّنات من STREAMINFO
     w.write(0b0000, 4);   // قناة واحدة
-    w.write(0b100, 3);    // ١٦ بت
+    w.write(bps === 24 ? 0b110 : 0b100, 3);    // ٢٤ / ١٦ بت
     w.write(0, 1);
     writeUtf8Num(w, frame);
     if (custom) w.write(n - 1, 16);
     w.write(crc8(w.buf, start, w.pos), 8);
-    writeBlock(w, pcm, from, n, u, scratch);
+    writeBlock(w, pcm, from, n, u, scratch, bps);
     w.alignZero();
     w.write(crc16(w.buf, start, w.pos), 16);
   }

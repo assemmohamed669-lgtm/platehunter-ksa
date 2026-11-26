@@ -73,7 +73,8 @@ describe("الربط — المحرّك والصفحة", () => {
     expect(E).toMatch(/const body = flacOn \? await toFlacBody\(wav\) : wav;/);
     expect(E).toMatch(/mimeType: body\.type \|\| "audio\/wav"/);
     expect(E).toMatch(/if \(!resp && body !== wav && formatRefused\(lastErr\)\) \{\s*flacOn = false;/);
-    expect(E).toMatch(/sentBytes \+= wav\.size;\s*\}\s*netBytes\.add\(wav\.size, sentBytes\);/);
+    // (٢٦ نوفمبر) جوّه `if (!resp) {` — «الجديد بس» (`lib/voiceDelta.ts`) بيتجرّب الأول
+    expect(E).toMatch(/sentBytes \+= wav\.size;(\s*\})+\s*netBytes\.add\(wav\.size, sentBytes\);/);
   });
 
   it("الصفحة: الحساب + سيرفر النوع بنفس القاعدة + سطر القياس عند الوقف", () => {
