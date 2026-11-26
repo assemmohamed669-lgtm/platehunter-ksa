@@ -14,10 +14,10 @@ import {
 } from "@/lib/voiceDelta";
 
 describe("مين", () => {
-  it("السوبر أدمن الأول", () => {
-    expect(VOICE_DELTA_FOR_ALL).toBe(false);
+  it("للكل (المالك: «طيب انشرة للكل»)", () => {
+    expect(VOICE_DELTA_FOR_ALL).toBe(true);
     expect(voiceDeltaFor(true)).toBe(true);
-    expect(voiceDeltaFor(false)).toBe(false);
+    expect(voiceDeltaFor(false)).toBe(true);
   });
   it("مسار ‎/d/‎ على نفق المجمّع، ومهلة قصيرة (الطريق القديم يلحق بدري)", () => {
     expect(DELTA_URL).toBe("https://batch.qannas-ksa.com/d/transcribe");
@@ -104,10 +104,13 @@ describe("الربط — المحرّك والميك والصفحة", () => {
   });
 
   it("المحرّك: «الجديد بس» الأول (مش الإعادة ولا الجسّة) — وأي فشل ⇒ نفس النافذة على الطريق القديم", () => {
-    expect(E).toMatch(/const delta = deltaState && !isReplay && !probe && deltaState\.usable\(Date\.now\(\)\) \? mic\.sliceRaw\(fromSec, toSec, 0\.2\) : null;/);
+    expect(E).toMatch(/delta = deltaState && !isReplay && !probe && deltaState\.usable\(Date\.now\(\)\) \? mic\.sliceRaw\(fromSec, toSec, 0\.2\) : null;/);
     expect(E).toMatch(/timeoutMs: DELTA_TIMEOUT_MS, attempts: 1/);
     expect(E).toMatch(/if \(resp\) deltaHits \+= 1;\s*else if \(deltaFailureKind\(dErr\) === "missing"\) deltaState\.missing\(\);\s*else deltaState\.down\(Date\.now\(\)\);/);
     expect(E).toMatch(/if \(!resp\) \{\s*const body = flacOn \? await toFlacBody\(wav\) : wav;/);
+    // 🛟 أي استثناء في «الجديد بس» ⇒ الطريق القديم (النافذة مابتضيعش)
+    expect(E).toMatch(/\} catch \{\s*resp = null;\s*deltaState\.down\(Date\.now\(\)\);\s*\}/);
+    expect(E).toMatch(/\} catch \{ delta = null; \/\* أي غلط ⇒ الطريق القديم \*\/ \}/);
   });
 
   it("الصفحة: للسوبر أدمن الأول", () => {

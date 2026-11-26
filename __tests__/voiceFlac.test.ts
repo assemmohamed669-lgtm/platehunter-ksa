@@ -16,10 +16,10 @@ function speechLike(n: number): Float32Array {
 }
 
 describe("مين", () => {
-  it("السوبر أدمن الأول لحد ما الصندوق يقيس", () => {
-    expect(VOICE_FLAC_FOR_ALL).toBe(false);
+  it("للكل (المالك: «طيب انشرة للكل»)", () => {
+    expect(VOICE_FLAC_FOR_ALL).toBe(true);
     expect(voiceFlacFor(true)).toBe(true);
-    expect(voiceFlacFor(false)).toBe(false);
+    expect(voiceFlacFor(false)).toBe(true);
   });
 });
 

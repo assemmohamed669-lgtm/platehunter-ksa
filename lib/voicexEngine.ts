@@ -1028,20 +1028,26 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
        * تحت** في نفس اللحظة (ومحاولة واحدة بمهلة قصيرة عشان مايأخّرش).
        */
       if (delta && deltaState) {
-        const u = deltaState.plan(delta.a, delta.b);
-        const up = u < delta.b ? encodeFlac(quantize24(delta.raw.subarray(u - delta.a)), delta.rate, 24) : new Uint8Array(0);
-        deltaState.sent(delta.b);
-        const dBody = new Blob([up as BlobPart], { type: "audio/flac" });
-        let dErr: string | null = null;
-        resp = await postAudioForPlate(dBody, {
-          transcribeUrl: deltaUrl(DELTA_URL, deltaState.sid, { a: delta.a, b: delta.b, u, rate: delta.rate }),
-          token: opts.token, mimeType: "audio/flac", timeoutMs: DELTA_TIMEOUT_MS, attempts: 1, agentId: opts.agentId,
-          onError: (code: string) => { dErr = code; },
-        });
-        sentBytes += dBody.size;
-        if (resp) deltaHits += 1;
-        else if (deltaFailureKind(dErr) === "missing") deltaState.missing();
-        else deltaState.down(Date.now());
+        // 🛟 أي استثناء هنا (تشفير/Blob/…) ⇒ «الجديد بس» يتقفل دقيقة والنافذة تكمّل على الطريق القديم تحت — مابتضيعش
+        try {
+          const u = deltaState.plan(delta.a, delta.b);
+          const up = u < delta.b ? encodeFlac(quantize24(delta.raw.subarray(u - delta.a)), delta.rate, 24) : new Uint8Array(0);
+          deltaState.sent(delta.b);
+          const dBody = new Blob([up as BlobPart], { type: "audio/flac" });
+          let dErr: string | null = null;
+          resp = await postAudioForPlate(dBody, {
+            transcribeUrl: deltaUrl(DELTA_URL, deltaState.sid, { a: delta.a, b: delta.b, u, rate: delta.rate }),
+            token: opts.token, mimeType: "audio/flac", timeoutMs: DELTA_TIMEOUT_MS, attempts: 1, agentId: opts.agentId,
+            onError: (code: string) => { dErr = code; },
+          });
+          sentBytes += dBody.size;
+          if (resp) deltaHits += 1;
+          else if (deltaFailureKind(dErr) === "missing") deltaState.missing();
+          else deltaState.down(Date.now());
+        } catch {
+          resp = null;
+          deltaState.down(Date.now());
+        }
       }
       if (!resp) {
       const body = flacOn ? await toFlacBody(wav) : wav;
@@ -1191,7 +1197,10 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     opts.onStatus?.("processing");
     try { opts.onAudioWindow?.(wav, tMs); } catch { /* ignore */ }
     // 🗜️➕ (`lib/voiceDelta.ts`) «الجديد بس»: نفس عيّنات النافذة دي بأرقامها — مش للإعادة ولا الجسّة (دول على القديم)
-    const delta = deltaState && !isReplay && !probe && deltaState.usable(Date.now()) ? mic.sliceRaw(fromSec, toSec, 0.2) : null;
+    let delta: ReturnType<typeof mic.sliceRaw> = null;
+    try {
+      delta = deltaState && !isReplay && !probe && deltaState.usable(Date.now()) ? mic.sliceRaw(fromSec, toSec, 0.2) : null;
+    } catch { delta = null; /* أي غلط ⇒ الطريق القديم */ }
     const pr = sendWav(wav, tMs, (ok) => {
       if (!FIXES) return;
       networkOk = ok;
