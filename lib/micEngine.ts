@@ -298,6 +298,23 @@ export class MicEngine {
     return encodeWav(normalizePeak(new Float32Array(audio.subarray(start, end))), rate);
   }
 
+  /**
+   * 🗜️➕ (`lib/voiceDelta.ts`) **نفس عيّنات `sliceWav(from, to, padding, true)` بالظبط** قبل التعلية، بأرقامها المطلقة من أول
+   * الجلسة [a, b) — عشان السيرفر يبني نفس النافذة من اللي اتبعت قبل كده. نفس الحساب والقصّ حرف بحرف.
+   */
+  sliceRaw(fromSec: number, toSec: number, paddingSec = 0.2): { a: number; b: number; raw: Float32Array; rate: number } | null {
+    const rate = this.actualSampleRate;
+    const from = Math.max(0, fromSec - paddingSec);
+    const to = toSec + paddingSec;
+    const absoluteStart = Math.floor(from * rate) - this.droppedSamples;
+    const absoluteEnd = Math.ceil(to * rate) - this.droppedSamples;
+    const audio = this.getAudio(true);
+    const start = Math.max(0, absoluteStart);
+    const end = Math.min(audio.length, absoluteEnd);
+    if (end - start < rate * 0.2) return null;
+    return { a: this.droppedSamples + start, b: this.droppedSamples + end, raw: new Float32Array(audio.subarray(start, end)), rate };
+  }
+
   /** جودة النافذة على الصوت **الخام قبل التعلية** — لبوابة السكوت. */
   sliceQuality(fromSec: number, toSec: number, paddingSec = 0.2): ClipQuality | null {
     const rate = this.actualSampleRate;

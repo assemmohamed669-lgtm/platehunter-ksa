@@ -67,6 +67,7 @@ import { CALL_RESUME_COUNTDOWN_TEXT, CALL_RESUME_DELAY_MS, CALL_RESUME_WHY, call
 import { appInBackground, onAppState, pageVisibility } from "@/lib/appForeground";
 import { PushRepeater, WantedBgHold, postWantedSelfPush, wantedBgAlertFor, wantedBgPlan, type WantedBgPlan } from "@/lib/wantedBgAlert";
 import { formatRefused, toFlacBody, voiceFlacFor } from "@/lib/voiceFlac";
+import { voiceDeltaFor } from "@/lib/voiceDelta";
 import { toMapsLink, gpsService, gpsAccuracyLevel, type GpsCoords } from "@/lib/gps";
 import { startGpsAutoRefresh } from "@/lib/gpsAutoRefresh";
 import { voiceProNames } from "@/lib/voiceProName";
@@ -1521,6 +1522,8 @@ export default function RegistrationV2Page() {
         wantedConfirm: canConfirmNow(sup),
         // 🗜️ النوافذ تطلع للنت FLAC — نفس الصوت بالبِت، ~٤٢٪ أقل نت (`lib/voiceFlac.ts` — السوبر أدمن الأول)
         flac: voiceFlacFor(isSuperRef.current),
+        // 🗜️➕ «الجديد بس» عبر الوسيط (`lib/voiceDelta.ts`) — أي فشل ⇒ نفس النافذة كاملة على الطريق القديم (السوبر أدمن الأول)
+        delta: voiceDeltaFor(isSuperRef.current),
         // 🚚 الأسطول المتسلسل مايتلمّش في لوحة واحدة — «الجديد» بس
         fleetSplit: true,
         fleetSequence: true,

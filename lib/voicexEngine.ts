@@ -15,6 +15,8 @@
 import { MissedWindows, REPLAY_MAX_AGE_SEC, canReplay, isStalled } from "./voicexReplay";
 import { postAudioForPlate } from "./plateJudgeClient";
 import { NetBytes, formatRefused, toFlacBody } from "./voiceFlac";
+import { DELTA_TIMEOUT_MS, DELTA_URL, DeltaState, deltaFailureKind, deltaUrl, newDeltaSid, quantize24 } from "./voiceDelta";
+import { encodeFlac } from "./flac";
 import { LiveConsensus, drainClockMs } from "./liveConsensus";
 import { FleetMemory } from "./fleetPairs";
 import { MicEngine } from "./micEngine";
@@ -317,6 +319,8 @@ export interface VoicexEngineOpts {
   agentId?: string | null;
   /** 🗜️ النوافذ تطلع للنت FLAC (نفس الصوت بالبِت، ~٤٢٪ أصغر) — `lib/voiceFlac.ts`. من غيره ⇒ WAV زي الأول بالحرف. */
   flac?: boolean;
+  /** 🗜️➕ «الجديد بس» عبر `serving/delta_gateway.py` (~٣٤٪ من الـWAV) — `lib/voiceDelta.ts`. أي فشل ⇒ الطريق القديم. */
+  delta?: boolean;
   /**
    * سقف الطلبات المتوازية. الافتراضي `MAX_INFLIGHT` — **ماترفعوش إلا لو
    * السيرفر أعلن سقفه فعلاً** (اقرا التحذير فوق الثابت).
@@ -539,7 +543,7 @@ export interface VoicexEngineController {
    */
   confirmNow?: (tMs: number) => boolean;
   /** 🗜️ حجم الصوت في الجلسة: اللي كان هيطلع WAV · اللي طلع فعلاً (`lib/voiceFlac.ts`) — للصندوق. */
-  netBytes?: () => { wavKB: number; sentKB: number; windows: number; pct: number; flac: boolean };
+  netBytes?: () => { wavKB: number; sentKB: number; windows: number; pct: number; flac: boolean; delta: number };
 }
 
 export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexEngineController | null> {
@@ -547,6 +551,9 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   /** 🗜️ (`lib/voiceFlac.ts`) بيتقفل لو السيرفر رفض FLAC ⇒ باقي الجلسة WAV */
   let flacOn = opts.flac === true;
   const netBytes = new NetBytes();
+  /** 🗜️➕ (`lib/voiceDelta.ts`) «الجديد بس» — جلسة جديدة مع كل «ابدأ»؛ من غيره ⇒ الطريق القديم بالحرف */
+  const deltaState = opts.delta === true ? new DeltaState(newDeltaSid()) : null;
+  let deltaHits = 0;
   let inflight = 0;
   let fails = 0;
   let speaking = false;        // الـVad بيقول دلوقتي فيه كلام؟
@@ -1000,6 +1007,8 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
      * 401 ومااتعدّتش كانت الجلسة هتفضل «ضعيفة» للأبد.
      */
     probe = false,
+    /** 🗜️➕ عيّنات النافذة الخام بأرقامها (`mic.sliceRaw`) — موجودة ⇒ «الجديد بس» الأول (`lib/voiceDelta.ts`). */
+    delta: { a: number; b: number; raw: Float32Array; rate: number } | null = null,
   ): Promise<void> {
     try {
       // 🔍 `onError` بيدّي **الكود الحقيقي** (`http_503` · `timeout` ·
@@ -1010,10 +1019,34 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
        * 🗜️ (`lib/voiceFlac.ts` — المالك ٢٦ نوفمبر: «بيستهلك انترنت كتير جدا») نفس النافذة **مضغوطة من غير فقد** (FLAC ⇒
        * نفس العيّنات بالبِت عند السيرفر) **لحظة الإرسال بس** — الذاكرة والإعادة وسؤال النوع لسه على نفس الـWAV.
        */
-      const body = flacOn ? await toFlacBody(wav) : wav;
-      let sentBytes = body.size;
+      let sentBytes = 0;
       const t0 = Date.now();
-      let resp = await postAudioForPlate(body, {
+      let resp: Awaited<ReturnType<typeof postAudioForPlate>> = null;
+      /**
+       * 🗜️➕ (`lib/voiceDelta.ts` — المالك: «نفذ انت … اهم حاجه انه ميأثرش») «الجديد بس» الأول: اللي ماتبعتش قبل كده من
+       * النافذة (خام ٢٤-بت) لوسيط بيبني نفس النافذة ويسلّمها لسيرفر اللوحات. أي فشل ⇒ **نفس النافذة كاملة على الطريق القديم
+       * تحت** في نفس اللحظة (ومحاولة واحدة بمهلة قصيرة عشان مايأخّرش).
+       */
+      if (delta && deltaState) {
+        const u = deltaState.plan(delta.a, delta.b);
+        const up = u < delta.b ? encodeFlac(quantize24(delta.raw.subarray(u - delta.a)), delta.rate, 24) : new Uint8Array(0);
+        deltaState.sent(delta.b);
+        const dBody = new Blob([up as BlobPart], { type: "audio/flac" });
+        let dErr: string | null = null;
+        resp = await postAudioForPlate(dBody, {
+          transcribeUrl: deltaUrl(DELTA_URL, deltaState.sid, { a: delta.a, b: delta.b, u, rate: delta.rate }),
+          token: opts.token, mimeType: "audio/flac", timeoutMs: DELTA_TIMEOUT_MS, attempts: 1, agentId: opts.agentId,
+          onError: (code: string) => { dErr = code; },
+        });
+        sentBytes += dBody.size;
+        if (resp) deltaHits += 1;
+        else if (deltaFailureKind(dErr) === "missing") deltaState.missing();
+        else deltaState.down(Date.now());
+      }
+      if (!resp) {
+      const body = flacOn ? await toFlacBody(wav) : wav;
+      sentBytes += body.size;
+      resp = await postAudioForPlate(body, {
         transcribeUrl: opts.transcribeUrl, token: opts.token,
         mimeType: body.type || "audio/wav", timeoutMs: REQ_TIMEOUT_MS, agentId: opts.agentId,
         onError: (code: string) => { lastErr = code; },
@@ -1028,6 +1061,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
           onError: (code: string) => { lastErr = code; },
         });
         sentBytes += wav.size;
+      }
       }
       netBytes.add(wav.size, sentBytes);
       const msWall = Date.now() - t0;
@@ -1156,12 +1190,14 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
     if (probe) { probing = true; probeStartedAt = Date.now(); probeFailCode = null; }
     opts.onStatus?.("processing");
     try { opts.onAudioWindow?.(wav, tMs); } catch { /* ignore */ }
+    // 🗜️➕ (`lib/voiceDelta.ts`) «الجديد بس»: نفس عيّنات النافذة دي بأرقامها — مش للإعادة ولا الجسّة (دول على القديم)
+    const delta = deltaState && !isReplay && !probe && deltaState.usable(Date.now()) ? mic.sliceRaw(fromSec, toSec, 0.2) : null;
     const pr = sendWav(wav, tMs, (ok) => {
       if (!FIXES) return;
       networkOk = ok;
       // 🔴 فشلت ⇒ تتسجّل وتتبعت تاني لما الشبكة ترجع (الصوت لسه في الذاكرة)
       if (!ok) missed.record(fromSec, toSec, clockSec());
-    }, isReplay, probe);
+    }, isReplay, probe, delta);
     inflightSet.add(pr);
     inflightStarts.set(pr, Date.now());
     void pr.finally(() => {
@@ -1430,7 +1466,7 @@ export async function startVoicexEngine(opts: VoicexEngineOpts): Promise<VoicexE
   return {
     get stopped() { return stopped; },
     get audioNowMs() { return clockSec() * 1000; },
-    netBytes: () => ({ ...netBytes.snapshot(), flac: flacOn }),
+    netBytes: () => ({ ...netBytes.snapshot(), flac: flacOn, delta: deltaHits }),
     get lastVoiceEndMs() {
       const v = vad?.lastVoiceEndSec ?? 0;
       return v > 0 ? v * 1000 : null;
