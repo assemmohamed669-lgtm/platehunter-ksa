@@ -16,8 +16,12 @@
  *  · الإعادة بعد وقعة النت والجسّات ⇒ الطريق القديم على طول.
  */
 
-/** 🔒 السوبر أدمن الأول — المالك يجرّب على موبايله، والصندوق يقيس (`rv2-bytes`)، وبعدين `true` (من غير نسخة جديدة). */
-export const VOICE_DELTA_FOR_ALL = false;
+/**
+ * 🟢 للكل — المالك (٢٦ نوفمبر ٢٠٢٦): «طيب انشرة للكل». الرجوع الفوري من غير نشر: وقّف الوسيط على إيطاليا
+ * (`pkill -f /root/serving/delta_gateway.py` + شيل سطر `delta-supervise.sh` من الكرون) ⇒ كل الموبايلات بترجع للطريق القديم لوحدها.
+ * أو هنا `false` (نشر).
+ */
+export const VOICE_DELTA_FOR_ALL = true;
 
 export function voiceDeltaFor(isSuper: boolean): boolean {
   return VOICE_DELTA_FOR_ALL || isSuper === true;

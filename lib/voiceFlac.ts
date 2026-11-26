@@ -16,8 +16,8 @@
  */
 import { wavBytesToFlac } from "./flac";
 
-/** 🔒 السوبر أدمن الأول — المالك يسجّل شوية، الصندوق يقيس (`rv2-bytes`)، وبعدين `true` (من غير نسخة جديدة). */
-export const VOICE_FLAC_FOR_ALL = false;
+/** 🟢 للكل — المالك (٢٦ نوفمبر ٢٠٢٦): «طيب انشرة للكل». الرجوع = `false` (من غير نسخة جديدة). */
+export const VOICE_FLAC_FOR_ALL = true;
 
 export function voiceFlacFor(isSuper: boolean): boolean {
   return VOICE_FLAC_FOR_ALL || isSuper === true;
